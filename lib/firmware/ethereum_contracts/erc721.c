@@ -17,7 +17,7 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "keepkey/firmware/erc721.h"
+#include "keepkey/firmware/ethereum_contracts/erc721.h"
 
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/board/confirm_sm.h"
@@ -316,5 +316,52 @@ bool erc721_CK_confirmGiveBirth(const EthereumSignTx *msg)
     return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "CryptoKitties",
                    "Do you want to deliver matron #%" PRIu64 "'s baby cryptokitty?",
                    matron);
+}
+
+bool erc721_isERC721(uint32_t data_total, const EthereumSignTx *msg, const HDNode *node)
+{
+    if (!erc721_isKnown(msg))
+        return false;
+
+    if (erc721_isCryptoKitties(msg)) {
+        if (erc721_CK_isTransfer(data_total, msg))
+            return true;
+
+        if (erc721_CK_isBreedWithAuto(data_total, msg))
+            return true;
+
+        if (erc721_CK_isGiveBirth(data_total, msg))
+            return true;
+    }
+
+    if (erc721_isTransferFrom(data_total, msg, node))
+        return true;
+
+    if (erc721_isApprove(data_total, msg))
+        return true;
+
+    return false;
+}
+
+bool erc721_confirmERC721(uint32_t data_total, const EthereumSignTx *msg, const HDNode *node)
+{
+    if (erc721_isCryptoKitties(msg)) {
+        if (erc721_CK_isTransfer(data_total, msg))
+            return erc721_CK_confirmTransfer(msg);
+
+        if (erc721_CK_isBreedWithAuto(data_total, msg))
+            return erc721_CK_confirmBreedWithAuto(msg);
+
+        if (erc721_CK_isGiveBirth(data_total, msg))
+            return erc721_CK_confirmGiveBirth(msg);
+    }
+
+    if (erc721_isTransferFrom(data_total, msg, node))
+        return erc721_confirmTransferFrom(msg);
+
+    if (erc721_isApprove(data_total, msg))
+        return erc721_confirmApprove(msg);
+
+    return false;
 }
 

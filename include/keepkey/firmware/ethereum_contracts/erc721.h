@@ -17,8 +17,8 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef KEEPKEY_FIRMWARE_ERC721_H
-#define KEEPKEY_FIRMWARE_ERC721_H
+#ifndef KEEPKEY_FIRMWARE_ETHEREUMCONTRACTS_ERC721_H
+#define KEEPKEY_FIRMWARE_ETHEREUMCONTRACTS_ERC721_H
 
 #include "trezor/crypto/bip32.h"
 
@@ -34,18 +34,17 @@ const ERC721Token *erc721_byContractAddress(const uint8_t *contract);
 bool erc721_isKnown(const EthereumSignTx *msg);
 
 bool erc721_isTransfer(uint32_t data_total, const EthereumSignTx *msg);
-
 bool erc721_confirmTransfer(const EthereumSignTx *msg);
 
 bool erc721_isTransferFrom(uint32_t data_total, const EthereumSignTx *msg,
                            const HDNode *node);
-
 bool erc721_confirmTransferFrom(const EthereumSignTx *msg);
 
 bool erc721_isApprove(uint32_t data_total, const EthereumSignTx *msg);
-
 bool erc721_confirmApprove(const EthereumSignTx *msg);
 
+bool erc721_isERC721(uint32_t data_total, const EthereumSignTx *msg, const HDNode *node);
+bool erc721_confirmERC721(uint32_t data_total, const EthereumSignTx *msg, const HDNode *node);
 
 // CryptoKitties
 
@@ -54,15 +53,12 @@ bool erc721_isCryptoKitties(const EthereumSignTx *msg);
 uint64_t erc721_CK_kittyID(const uint8_t *kittyId);
 
 bool erc721_CK_isTransfer(uint32_t data_total, const EthereumSignTx *msg);
-
 bool erc721_CK_confirmTransfer(const EthereumSignTx *msg);
 
 bool erc721_CK_isBreedWithAuto(uint32_t data_total, const EthereumSignTx *msg);
-
 bool erc721_CK_confirmBreedWithAuto(const EthereumSignTx *msg);
 
 bool erc721_CK_isGiveBirth(uint32_t data_total, const EthereumSignTx *msg);
-
 bool erc721_CK_confirmGiveBirth(const EthereumSignTx *msg);
 
 #endif

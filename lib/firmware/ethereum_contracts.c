@@ -19,32 +19,17 @@
 
 #include "keepkey/firmware/ethereum_contracts.h"
 
-#include "keepkey/firmware/erc721.h"
+#include "keepkey/firmware/ethereum_contracts/erc721.h"
+#include "keepkey/firmware/ethereum_contracts/makerdao.h"
 
 bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx *msg,
                               const HDNode *node)
 {
-    if (erc721_isKnown(msg)) {
-        if (erc721_isCryptoKitties(msg)) {
-            if (erc721_CK_isTransfer(data_total, msg))
-                return true;
+    if (erc721_isERC721(data_total, msg, node))
+        return true;
 
-            if (erc721_CK_isBreedWithAuto(data_total, msg))
-                return true;
-
-            if (erc721_CK_isGiveBirth(data_total, msg))
-                return true;
-        }
-
-        if (erc721_isTransfer(data_total, msg))
-            return true;
-
-        if (erc721_isTransferFrom(data_total, msg, node))
-            return true;
-
-        if (erc721_isApprove(data_total, msg))
-            return true;
-    }
+    if (makerdao_isMakerDAO(data_total, msg))
+        return true;
 
     return false;
 }
@@ -52,28 +37,11 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx *msg,
 bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx *msg,
                                 const HDNode *node)
 {
-    if (erc721_isKnown(msg)) {
-        if (erc721_isCryptoKitties(msg)) {
-            if (erc721_CK_isTransfer(data_total, msg))
-                return erc721_CK_confirmTransfer(msg);
+    if (erc721_confirmERC721(data_total, msg, node))
+        return true;
 
-            if (erc721_CK_isBreedWithAuto(data_total, msg))
-                return erc721_CK_confirmBreedWithAuto(msg);
-
-            if (erc721_CK_isGiveBirth(data_total, msg))
-                return erc721_CK_confirmGiveBirth(msg);
-        }
-
-        if (erc721_isTransfer(data_total, msg))
-            return erc721_confirmTransfer(msg);
-
-        if (erc721_isTransferFrom(data_total, msg, node))
-            return erc721_confirmTransferFrom(msg);
-
-        if (erc721_isApprove(data_total, msg))
-            return erc721_confirmApprove(msg);
-    }
+    if (makerdao_isMakerDAO(data_total, msg))
+        return makerdao_confirmMakerDAO(data_total, msg);
 
     return false;
 }
-
