@@ -45,7 +45,7 @@ static bool isTub(const uint8_t *address)
     return memcmp(address, "\x44\x8a\x50\x65\xae\xbb\x8e\x42\x3f\x08\x96\xe6\xc5\xd5\x25\xc0\x40\xf5\x9a\xf3", 20) == 0;
 }
 
-static bool isOtcAddress(const uint8_t *address)
+bool makerdao_isMakerOTCAddress(const uint8_t *address)
 {
     // https://github.com/makerdao/scd-cdp-portal/blob/fac7b0571dc4128e89dcd5f7f8d44ded4b66073b/src/settings.json#L17
     return memcmp(address, "\x39\x75\x53\x57\x75\x9c\xe0\xd7\xf3\x2d\xc8\xdc\x45\x41\x4c\xca\x40\x9a\xe2\x4e", 20) == 0;
@@ -127,10 +127,6 @@ bool makerdao_isClose(const EthereumSignTx *msg)
     if (!getCupId(getParam(msg, 1), &cupId))
         return false;
 
-    if (isMethod(msg, "\x79\x20\x37\xe3", 3) &&
-        !isOtcAddress(getParam(msg, 2)))
-        return false;
-
     return true;
 }
 
@@ -140,11 +136,16 @@ bool makerdao_confirmClose(const EthereumSignTx *msg)
     if (!getCupId(getParam(msg, 1), &cupId))
         return false;
 
-    bool isOtc = isMethod(msg, "\x79\x20\x37\xe3", 3);
+    const char *otcProvider = "";
+    if (isMethod(msg, "\x79\x20\x37\xe3", 3)) {
+        if (makerdao_isMakerOTCAddress(getParam(msg, 2)))
+            otcProvider = " via MakerOTC";
+        else
+            otcProvider = " via Unknown OTC";
+    }
 
     return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
-                   "Close CDP %" PRIu32 "%s", cupId,
-                   isOtc ? "" : " on OTC market?");
+                   "Close CDP %" PRIu32 "%s?", cupId, otcProvider);
 }
 
 bool makerdao_isGive(const EthereumSignTx *msg)
@@ -408,10 +409,6 @@ bool makerdao_isWipe(const EthereumSignTx *msg)
     if (!getCupId(getParam(msg, 1), &cupId))
         return false;
 
-    if (isMethod(msg, "\x8a\x9f\xc4\x75", 4) &&
-        !isOtcAddress(getParam(msg, 3)))
-        return false;
-
     return true;
 }
 
@@ -431,11 +428,17 @@ bool makerdao_confirmWipe(const EthereumSignTx *msg)
     char deposit[32];
     ethereumFormatAmount(&deposit_val, DAI, msg->chain_id, deposit, sizeof(deposit));
 
-    bool isOtc = isMethod(msg, "\x8a\x9f\xc4\x75", 4);
+    const char *otcProvider = "";
+    if (isMethod(msg, "\x8a\x9f\xc4\x75", 4)) {
+        if (makerdao_isMakerOTCAddress(getParam(msg, 2)))
+            otcProvider = " via MakerOTC";
+        else
+            otcProvider = " via Unknown OTC";
+    }
 
     return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
                    "Payback %s into CDP %" PRIu32 "%s?",
-                   deposit, cupId, isOtc ? " on OTC market" : "");
+                   deposit, cupId, otcProvider);
 }
 
 bool makerdao_isWipeAndFree(const EthereumSignTx *msg)
@@ -478,11 +481,17 @@ bool makerdao_confirmWipeAndFree(const EthereumSignTx *msg)
     char withdraw[32];
     ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw, sizeof(withdraw));
 
-    bool isOtc = isMethod(msg, "\x1b\x96\x81\x60", 5);
+    const char *otcProvider = "";
+    if (isMethod(msg, "\x1b\x96\x81\x60", 5)) {
+        if (makerdao_isMakerOTCAddress(getParam(msg, 4)))
+            otcProvider = " via MakerOTC";
+        else
+            otcProvider = " via Unknown OTC";
+    }
 
     return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
                    "Payback %s and withdraw %s from CDP %" PRIu32 "%s?",
-                   deposit, withdraw, cupId, isOtc ? " on OTC market" : "");
+                   deposit, withdraw, cupId, otcProvider);
 }
 
 bool makerdao_isMakerDAO(uint32_t data_total, const EthereumSignTx *msg)

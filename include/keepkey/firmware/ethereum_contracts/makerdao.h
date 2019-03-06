@@ -25,7 +25,8 @@
 
 typedef struct _EthereumSignTx EthereumSignTx;
 
-bool makerdao_isSaiProxy(const EthereumSignTx *msg);
+bool makerdao_isMakerOTCAddress(const uint8_t *address);
+
 bool makerdao_isOpen(const EthereumSignTx *msg);
 bool makerdao_confirmOpen(const EthereumSignTx *msg);
 bool makerdao_isClose(const EthereumSignTx *msg);
