@@ -38,29 +38,61 @@ static bool getCupId(const uint8_t *param, uint32_t *val)
     return true;
 }
 
-static bool isTub(const uint8_t *address)
+static bool isTub(const uint8_t *address, uint32_t chain_id)
 {
+    // Mainnet
     // saiValuesAggregator: https://github.com/makerdao/scd-cdp-portal/blob/fac7b0571dc4128e89dcd5f7f8d44ded4b66073b/src/settings.json#L16
     // saiValuesAggregator.tub: https://etherscan.io/readContract?m=normal&a=0x83f6ed3d377674186d8898a89d9032216e07e659#collapse4
-    return memcmp(address, "\x44\x8a\x50\x65\xae\xbb\x8e\x42\x3f\x08\x96\xe6\xc5\xd5\x25\xc0\x40\xf5\x9a\xf3", 20) == 0;
+    if (chain_id ==  1 && memcmp(address, "\x44\x8a\x50\x65\xae\xbb\x8e\x42\x3f\x08\x96\xe6\xc5\xd5\x25\xc0\x40\xf5\x9a\xf3", 20) == 0)
+        return true;
+
+    // Kovan
+    if (chain_id == 42 && memcmp(address, "\xa7\x19\x37\x14\x7b\x55\xde\xb8\xa5\x30\xc7\x22\x9c\x44\x2f\xd3\xf3\x1b\x7d\xb2", 20) == 0)
+        return true;
+
+    return false;
 }
 
-bool makerdao_isMakerOTCAddress(const uint8_t *address)
+bool makerdao_isMakerOTCAddress(const uint8_t *address, uint32_t chain_id)
 {
+    // Mainnet
     // https://github.com/makerdao/scd-cdp-portal/blob/fac7b0571dc4128e89dcd5f7f8d44ded4b66073b/src/settings.json#L17
-    return memcmp(address, "\x39\x75\x53\x57\x75\x9c\xe0\xd7\xf3\x2d\xc8\xdc\x45\x41\x4c\xca\x40\x9a\xe2\x4e", 20) == 0;
+    if (chain_id ==  1 && memcmp(address, "\x39\x75\x53\x57\x75\x9c\xe0\xd7\xf3\x2d\xc8\xdc\x45\x41\x4c\xca\x40\x9a\xe2\x4e", 20) == 0)
+        return true;
+
+    // Kovan
+    if (chain_id == 42 && memcmp(address, "\x4a\x6b\xc4\xe8\x03\xc6\x20\x81\xff\xeb\xcc\x8d\x22\x7b\x5a\x87\xa5\x8f\x1f\x8f", 20) == 0)
+        return true;
+
+    return false;
 }
 
-static bool isRegistryAddress(const uint8_t *address)
+static bool isRegistryAddress(const uint8_t *address, uint32_t chain_id)
 {
+    // Mainnet
     // https://github.com/makerdao/scd-cdp-portal/blob/fac7b0571dc4128e89dcd5f7f8d44ded4b66073b/src/settings.json#L21
-    return memcmp(address, "\x46\x78\xf0\xa6\x95\x8e\x4d\x2b\xc4\xf1\xba\xf7\xbc\x52\xe8\xf3\x56\x4f\x3f\xe4", 20) == 0;
+    if (chain_id ==  1 && memcmp(address, "\x46\x78\xf0\xa6\x95\x8e\x4d\x2b\xc4\xf1\xba\xf7\xbc\x52\xe8\xf3\x56\x4f\x3f\xe4", 20) == 0)
+        return true;
+
+    // Kovan
+    if (chain_id == 42 && memcmp(address, "\x64\xa4\x36\xae\x83\x1c\x16\x72\xae\x81\xf6\x74\xca\xb8\xb6\x77\x5d\xf3\x47\x5c", 20) == 0)
+        return true;
+
+    return false;
 }
 
-static bool isSaiProxyCreateAndExecuteAddress(const uint8_t *address)
+static bool isSaiProxyCreateAndExecuteAddress(const uint8_t *address, uint32_t chain_id)
 {
+    // Mainnet
     // https://github.com/makerdao/scd-cdp-portal/blob/fac7b0571dc4128e89dcd5f7f8d44ded4b66073b/src/settings.json#L22
-    return memcmp(address, "\x52\x6a\xf3\x36\xd6\x14\xad\xe5\xcc\x25\x2a\x40\x70\x62\xb8\x86\x1a\xf9\x98\xf5", 20) == 0;
+    if (chain_id ==  1 && memcmp(address, "\x52\x6a\xf3\x36\xd6\x14\xad\xe5\xcc\x25\x2a\x40\x70\x62\xb8\x86\x1a\xf9\x98\xf5", 20) == 0)
+        return true;
+
+    // Kovan
+    if (chain_id == 42 && memcmp(address, "\x96\xfc\x00\x5a\x8b\xa8\x2b\x84\xb1\x1e\x0f\xf2\x11\xa2\xa1\x36\x2f\x10\x7e\xf0", 20) == 0)
+        return true;
+
+    return false;
 }
 
 static inline bool hasParams(const EthereumSignTx *msg, size_t count)
@@ -99,7 +131,7 @@ bool makerdao_isOpen(const EthereumSignTx *msg)
     if (!isMethod(msg, "\xc7\x40\x73\xa1", 1))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     return true;
@@ -120,7 +152,7 @@ bool makerdao_isClose(const EthereumSignTx *msg)
         !isMethod(msg, "\x79\x20\x37\xe3", 3))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -138,7 +170,7 @@ bool makerdao_confirmClose(const EthereumSignTx *msg)
 
     const char *otcProvider = "";
     if (isMethod(msg, "\x79\x20\x37\xe3", 3)) {
-        if (makerdao_isMakerOTCAddress(getParam(msg, 2)))
+        if (makerdao_isMakerOTCAddress(getParam(msg, 2), msg->chain_id))
             otcProvider = " via MakerOTC";
         else
             otcProvider = " via Unknown OTC";
@@ -154,7 +186,7 @@ bool makerdao_isGive(const EthereumSignTx *msg)
     if (!isMethod(msg, "\xda\x93\xdf\xcf", 3))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -183,7 +215,7 @@ bool makerdao_isLockAndDraw2(const EthereumSignTx *msg)
     if (!isMethod(msg, "\x51\x6e\x9a\xec", 2))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     return true;
@@ -218,10 +250,10 @@ bool makerdao_isCreateOpenLockAndDraw(const EthereumSignTx *msg)
     if (!isMethod(msg, "\xd3\x14\x0a\x65", 3))
         return false;
 
-    if (!isRegistryAddress(getParam(msg, 0)))
+    if (!isRegistryAddress(getParam(msg, 0), msg->chain_id))
         return false;
 
-    if (!isTub(getParam(msg, 1)))
+    if (!isTub(getParam(msg, 1), msg->chain_id))
         return false;
 
     return false;
@@ -256,7 +288,7 @@ bool makerdao_isLock(const EthereumSignTx *msg)
     if (!isMethod(msg, "\xbc\x25\xa8\x10", 2))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -288,7 +320,7 @@ bool makerdao_isDraw(const EthereumSignTx *msg)
     if (!isMethod(msg, "\x03\x44\xa3\x6f", 3))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -324,7 +356,7 @@ bool makerdao_isLockAndDraw3(const EthereumSignTx *msg)
     if (!isMethod(msg, "\x1e\xdf\x0c\x1e", 3))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -367,7 +399,7 @@ bool makerdao_isFree(const EthereumSignTx *msg)
     if (!isMethod(msg, "\xf9\xef\x04\xbe", 3))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -402,7 +434,7 @@ bool makerdao_isWipe(const EthereumSignTx *msg)
         !isMethod(msg, "\x8a\x9f\xc4\x75", 4))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -430,7 +462,7 @@ bool makerdao_confirmWipe(const EthereumSignTx *msg)
 
     const char *otcProvider = "";
     if (isMethod(msg, "\x8a\x9f\xc4\x75", 4)) {
-        if (makerdao_isMakerOTCAddress(getParam(msg, 2)))
+        if (makerdao_isMakerOTCAddress(getParam(msg, 2), msg->chain_id))
             otcProvider = " via MakerOTC";
         else
             otcProvider = " via Unknown OTC";
@@ -449,7 +481,7 @@ bool makerdao_isWipeAndFree(const EthereumSignTx *msg)
         !isMethod(msg, "\x1b\x96\x81\x60", 5))
         return false;
 
-    if (!isTub(getParam(msg, 0)))
+    if (!isTub(getParam(msg, 0), msg->chain_id))
         return false;
 
     uint32_t cupId;
@@ -483,7 +515,7 @@ bool makerdao_confirmWipeAndFree(const EthereumSignTx *msg)
 
     const char *otcProvider = "";
     if (isMethod(msg, "\x1b\x96\x81\x60", 5)) {
-        if (makerdao_isMakerOTCAddress(getParam(msg, 4)))
+        if (makerdao_isMakerOTCAddress(getParam(msg, 4), msg->chain_id))
             otcProvider = " via MakerOTC";
         else
             otcProvider = " via Unknown OTC";
@@ -502,7 +534,7 @@ bool makerdao_isMakerDAO(uint32_t data_total, const EthereumSignTx *msg)
     if (data_total != msg->data_initial_chunk.size)
         return false;
 
-    if (!isSaiProxyCreateAndExecuteAddress(msg->to.bytes))
+    if (!isSaiProxyCreateAndExecuteAddress(msg->to.bytes, msg->chain_id))
         return false;
 
     return true;
