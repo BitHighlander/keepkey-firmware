@@ -30,6 +30,7 @@
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/ethereum_contracts.h"
+#include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/transaction.h"
@@ -386,9 +387,9 @@ static void layoutEthereumConfirmTx(const uint8_t *to, uint32_t to_len, const ui
 		ethereumFormatAmount(&val, token, chain_id, amount, sizeof(amount));
 	}
 
-	char address[43] = "0x";
+	char addr[43] = "0x";
 	if (to_len) {
-		ethereum_address_checksum(to, address + 2, false, chain_id);
+		ethereum_address_checksum(to, addr + 2, false, chain_id);
 	}
 
 	bool approve_all = approve && value_len == 32 &&
@@ -396,6 +397,11 @@ static void layoutEthereumConfirmTx(const uint8_t *to, uint32_t to_len, const ui
 	    memcmp(value + 8,  "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0 &&
 	    memcmp(value + 16, "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0 &&
 	    memcmp(value + 24, "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0;
+
+	const char *address = addr;
+	if (to_len && makerdao_isMakerOTCAddress(to)) {
+		address = "MakerOTC";
+	}
 
 	int cx;
 	if (approve && bn_is_zero(&val) && token) {
