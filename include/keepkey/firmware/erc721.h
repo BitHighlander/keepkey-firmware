@@ -46,5 +46,24 @@ bool erc721_isApprove(uint32_t data_total, const EthereumSignTx *msg);
 
 bool erc721_confirmApprove(const EthereumSignTx *msg);
 
+
+// CryptoKitties
+
+bool erc721_isCryptoKitties(const EthereumSignTx *msg);
+
+uint64_t erc721_CK_kittyID(const uint8_t *kittyId);
+
+bool erc721_CK_isTransfer(uint32_t data_total, const EthereumSignTx *msg);
+
+bool erc721_CK_confirmTransfer(const EthereumSignTx *msg);
+
+bool erc721_CK_isBreedWithAuto(uint32_t data_total, const EthereumSignTx *msg);
+
+bool erc721_CK_confirmBreedWithAuto(const EthereumSignTx *msg);
+
+bool erc721_CK_isGiveBirth(uint32_t data_total, const EthereumSignTx *msg);
+
+bool erc721_CK_confirmGiveBirth(const EthereumSignTx *msg);
+
 #endif
 

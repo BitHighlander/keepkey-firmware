@@ -19,6 +19,7 @@
 
 #include "keepkey/firmware/erc721.h"
 
+#include "keepkey/firmware/ethereum.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/fsm.h"
@@ -193,5 +194,127 @@ bool erc721_confirmApprove(const EthereumSignTx *msg)
     return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Approve", "Grant %s permission to take %s token with id %s?",
                    address, erc721->name, token_id);
+}
+
+bool erc721_isCryptoKitties(const EthereumSignTx *msg)
+{
+    const ERC721Token *erc721 = erc721_byContractAddress(msg->to.bytes);
+    if (!erc721)
+        return false;
+
+    return strcmp(erc721->name, "CryptoKitties") == 0;
+}
+
+uint64_t erc721_CK_kittyID(const uint8_t *kittyId)
+{
+    bignum256 val;
+    bn_from_bytes(kittyId, 32, &val);
+
+    if (63 < bn_bitcount(&val))
+        return 0;
+
+    return bn_write_uint64(&val);
+}
+
+bool erc721_CK_isTransfer(uint32_t data_total, const EthereumSignTx *msg)
+{
+    if (data_total != 4 + 32 + 32)
+        return false;
+
+    if (data_total != msg->data_initial_chunk.size)
+        return false;
+
+    // transfer(address,uint256)
+    if (memcmp(msg->data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4) != 0)
+        return false;
+
+    // 'to' padding
+    if (memcmp(msg->data_initial_chunk.bytes + 4,
+               "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", 12) != 0)
+        return false;
+
+    // kittyId
+    if (!erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32))
+        return false;
+
+    return true;
+}
+
+bool erc721_CK_confirmTransfer(const EthereumSignTx *msg)
+{
+    const ERC721Token *erc721 = erc721_byContractAddress(msg->to.bytes);
+    if (!erc721)
+        return false;
+
+    char address[43] = { '0', 'x' };
+    ethereum_address_checksum(msg->data_initial_chunk.bytes + 4 + 12,
+                              address + 2, false,
+                              msg->has_chain_id ? msg->chain_id : 1);
+
+    uint64_t kittyId = erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32);
+
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "CryptoKitties",
+                   "Transfer kitty #%" PRIu64 " to %s?", kittyId, address);
+}
+
+bool erc721_CK_isBreedWithAuto(uint32_t data_total, const EthereumSignTx *msg)
+{
+    if (data_total != 4 + 32 + 32)
+        return false;
+
+    if (data_total != msg->data_initial_chunk.size)
+        return false;
+
+    // `breedWithAuto(uint256,uint256)`
+    if (memcmp(msg->data_initial_chunk.bytes, "\xf7\xd8\xc8\x83", 4) != 0)
+        return false;
+
+    // matron
+    if (!erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32))
+        return false;
+
+    // sire
+    if (!erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32 + 32))
+        return false;
+
+    return true;
+}
+
+bool erc721_CK_confirmBreedWithAuto(const EthereumSignTx *msg)
+{
+    uint64_t matron = erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32);
+    uint64_t sire   = erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32 + 32);
+
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "CryptoKitties",
+                   "Do you want to breed your matron #%" PRIu64 " with the sire #%" PRIu64 " ?",
+                   matron, sire);
+}
+
+bool erc721_CK_isGiveBirth(uint32_t data_total, const EthereumSignTx *msg)
+{
+    if (data_total != 4 + 32)
+        return false;
+
+    if (data_total != msg->data_initial_chunk.size)
+        return false;
+
+    // `giveBirth(uint256)`
+    if (memcmp(msg->data_initial_chunk.bytes, "\x88\xc2\xa0\xbf", 4) != 0)
+        return false;
+
+    // matron
+    if (!erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32))
+        return false;
+
+    return true;
+}
+
+bool erc721_CK_confirmGiveBirth(const EthereumSignTx *msg)
+{
+    uint64_t matron = erc721_CK_kittyID(msg->data_initial_chunk.bytes + 4 + 32);
+
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "CryptoKitties",
+                   "Do you want to deliver matron #%" PRIu64 "'s baby cryptokitty?",
+                   matron);
 }
 

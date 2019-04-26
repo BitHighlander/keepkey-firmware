@@ -25,6 +25,17 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx *msg,
                               const HDNode *node)
 {
     if (erc721_isKnown(msg)) {
+        if (erc721_isCryptoKitties(msg)) {
+            if (erc721_CK_isTransfer(data_total, msg))
+                return true;
+
+            if (erc721_CK_isBreedWithAuto(data_total, msg))
+                return true;
+
+            if (erc721_CK_isGiveBirth(data_total, msg))
+                return true;
+        }
+
         if (erc721_isTransfer(data_total, msg))
             return true;
 
@@ -42,6 +53,17 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx *msg,
                                 const HDNode *node)
 {
     if (erc721_isKnown(msg)) {
+        if (erc721_isCryptoKitties(msg)) {
+            if (erc721_CK_isTransfer(data_total, msg))
+                return erc721_CK_confirmTransfer(msg);
+
+            if (erc721_CK_isBreedWithAuto(data_total, msg))
+                return erc721_CK_confirmBreedWithAuto(msg);
+
+            if (erc721_CK_isGiveBirth(data_total, msg))
+                return erc721_CK_confirmGiveBirth(msg);
+        }
+
         if (erc721_isTransfer(data_total, msg))
             return erc721_confirmTransfer(msg);
 
