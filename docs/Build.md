@@ -1,9 +1,11 @@
 Prerequisites
 -------------
 
-Install nanopb-0.2.9.2 from:
+download nanopb-0.2.9.2 from:
 
 `https://github.com/nanopb/nanopb/releases/tag/nanopb-0.2.9.2`
+
+set generator in $PATH for ```PATH=$PATH:/home/*username*/nanopb-nanopb-0.2.9.2/generator```
 
 
 Building the Emulator
@@ -13,7 +15,7 @@ Building the Emulator
 $ git clone https://github.com/keepkey/keepkey-firmware.git
 $ cd keepkey-firmware/deps
 $ git clone https://github.com/keepkey/device-protocol.git
-$ cd ../../
+$ cd ../
 $ mkdir build
 $ cd build
 $ cmake -C ../../keepkey-firmware/cmake/caches/emulator.cmake ../keepkey-firmware \
