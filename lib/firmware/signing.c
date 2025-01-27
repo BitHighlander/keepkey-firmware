@@ -146,7 +146,7 @@ void send_fsm_co_error_message(int co_error) {
     const char *msg;
     FailureType type;
   } errorCodes[] = {
-      {TXOUT_COMPILE_ERROR, "Failed to compile output",
+      {TXOUT_COMPILE_ERROR, "Failed to compile output bro",
        FailureType_Failure_Other},
       {TXOUT_CANCEL, "Transaction cancelled",
        FailureType_Failure_ActionCancelled},
