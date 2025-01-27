@@ -266,6 +266,9 @@ int compile_output(const CoinType *coin, const HDNode *root, TxOutputType *in,
       case OutputScriptType_PAYTOP2SHWITNESS:
         input_script_type = InputScriptType_SPENDP2SHWITNESS;
         break;
+      case OutputScriptType_PAYTOTAPROOT:
+        input_script_type = InputScriptType_SPENDTAPROOT;
+        break;
       default:
         return 0;  // failed to compile output
     }
@@ -351,10 +354,19 @@ int compile_output(const CoinType *coin, const HDNode *root, TxOutputType *in,
     // segwit:
     // push 1 byte version id (opcode OP_0 = 0, OP_i = 80+i)
     // push addr_raw (segwit_addr_decode makes sure addr_raw_len is at most 40)
-    out->script_pubkey.bytes[0] = witver == 0 ? 0 : 80 + witver;
-    out->script_pubkey.bytes[1] = addr_raw_len;
-    memcpy(out->script_pubkey.bytes + 2, addr_raw, addr_raw_len);
-    out->script_pubkey.size = addr_raw_len + 2;
+    if (witver == 1 && addr_raw_len == 32) {
+      // Taproot (v1 segwit)
+      out->script_pubkey.bytes[0] = 0x51;  // OP_1 
+      out->script_pubkey.bytes[1] = 0x20;  // Push 32 bytes
+      memcpy(out->script_pubkey.bytes + 2, addr_raw, 32);
+      out->script_pubkey.size = 34;
+    } else {
+      // v0 segwit or other future versions
+      out->script_pubkey.bytes[0] = witver == 0 ? 0 : 80 + witver;
+      out->script_pubkey.bytes[1] = addr_raw_len;
+      memcpy(out->script_pubkey.bytes + 2, addr_raw, addr_raw_len);
+      out->script_pubkey.size = addr_raw_len + 2;
+    }
   } else {
     return 0;
   }
@@ -374,6 +386,10 @@ int compile_output(const CoinType *coin, const HDNode *root, TxOutputType *in,
         if (in->address_type == OutputAddressType_TRANSFER)
           if (in->address_n_count < 5 || in->address_n[3] != 0) return 0;
       } break;
+
+      default:
+        if (!in->has_address) return 0;
+        break;
     }
   }
 
@@ -383,7 +399,15 @@ int compile_output(const CoinType *coin, const HDNode *root, TxOutputType *in,
       case OutputScriptType_PAYTOSCRIPTHASH:
       case OutputScriptType_PAYTOMULTISIG:
       case OutputScriptType_PAYTOOPRETURN:
+      case OutputScriptType_PAYTOTAPROOT: {
+        char amount_str[32];
+        coin_amnt_to_str(coin, in->amount, amount_str, sizeof(amount_str));
+        if (!confirm_transfer_output(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                                   amount_str, in->address)) {
+          return TXOUT_CANCEL;
+        }
         break;
+      }
       case OutputScriptType_PAYTOADDRESS:
       case OutputScriptType_PAYTOWITNESS:
       case OutputScriptType_PAYTOP2SHWITNESS: {
