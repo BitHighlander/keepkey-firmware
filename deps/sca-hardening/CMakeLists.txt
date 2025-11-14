@@ -7,6 +7,7 @@ if(NOT ${KK_EMULATOR})
 endif()
 
 include_directories(
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/SecAESSTM32/src/aes)
 
 add_library(SecAESSTM32 ${sources})
