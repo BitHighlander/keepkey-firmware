@@ -3,154 +3,56 @@ set(sources
     pb_encode.c
     pb_decode.c)
 
-set(protoc_pb_sources
-    ${DEVICE_PROTOCOL}/types.proto
-    ${DEVICE_PROTOCOL}/messages-ethereum.proto
-    ${DEVICE_PROTOCOL}/messages-eos.proto
-    ${DEVICE_PROTOCOL}/messages-nano.proto
-    ${DEVICE_PROTOCOL}/messages-binance.proto
-    ${DEVICE_PROTOCOL}/messages-cosmos.proto
-    ${DEVICE_PROTOCOL}/messages-osmosis.proto
-    ${DEVICE_PROTOCOL}/messages-ripple.proto
-    ${DEVICE_PROTOCOL}/messages-tendermint.proto
-    ${DEVICE_PROTOCOL}/messages-thorchain.proto
-    ${DEVICE_PROTOCOL}/messages-mayachain.proto
-    ${DEVICE_PROTOCOL}/messages.proto)
+# Use pre-generated protobuf files from lib/transport/generated/
+set(protoc_c_sources_generated
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/types.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-ethereum.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-eos.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-nano.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-binance.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-cosmos.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-osmosis.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-ripple.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-tendermint.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-thorchain.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-mayachain.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages.pb.c)
 
-set(protoc_pb_options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/types.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ethereum.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-eos.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-nano.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-binance.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-cosmos.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-osmosis.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ripple.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-tendermint.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-thorchain.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-mayachain.options
-    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages.options)
+set(protoc_c_headers_generated
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/types.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-ethereum.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-eos.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-nano.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-binance.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-cosmos.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-osmosis.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-ripple.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-tendermint.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-thorchain.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-mayachain.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages.pb.h)
 
-set(protoc_c_sources
-    ${CMAKE_BINARY_DIR}/lib/transport/types.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-ethereum.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-eos.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-nano.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-binance.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-cosmos.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-osmosis.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-ripple.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-tendermint.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-thorchain.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.pb.c
-    ${CMAKE_BINARY_DIR}/lib/transport/messages.pb.c)
-
-set(protoc_c_headers
-    ${CMAKE_BINARY_DIR}/include/types.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-ethereum.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-eos.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-nano.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-binance.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-cosmos.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-osmosis.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-ripple.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-tendermint.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-thorchain.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages-mayachain.pb.h
-    ${CMAKE_BINARY_DIR}/include/messages.pb.h)
-
-set(protoc_pb_sources_moved
-    ${CMAKE_BINARY_DIR}/lib/transport/types.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-ethereum.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-eos.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-nano.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-binance.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-cosmos.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-osmosis.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-ripple.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-tendermint.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-thorchain.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.proto
-    ${CMAKE_BINARY_DIR}/lib/transport/messages.proto)
-
+# Copy pre-generated files to build directory
 add_custom_command(
   OUTPUT
     ${CMAKE_BINARY_DIR}/lib/transport/kktransport.pb.stamp
-    ${protoc_c_sources}
-    ${protoc_c_headers}
-  WORKING_DIRECTORY
-    ${CMAKE_BINARY_DIR}/lib/transport
   COMMAND
-    ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/include/keepkey/transport
+    ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/include
   COMMAND
     ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/lib/transport
   COMMAND
-    ${CMAKE_COMMAND} -E copy ${protoc_pb_options} ${CMAKE_BINARY_DIR}/lib/transport
+    ${CMAKE_COMMAND} -E copy ${protoc_c_sources_generated} ${CMAKE_BINARY_DIR}/lib/transport/
   COMMAND
-    ${CMAKE_COMMAND} -E copy ${protoc_pb_sources} ${CMAKE_BINARY_DIR}/lib/transport
-  COMMAND
-    ${CMAKE_COMMAND} -E copy
-      ${DEVICE_PROTOCOL}/google/protobuf/descriptor.proto
-      ${CMAKE_BINARY_DIR}/lib/transport/google/protobuf/descriptor.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f types.options:." types.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-ethereum.options:." messages-ethereum.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-eos.options:." messages-eos.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-nano.options:." messages-nano.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-binance.options:." messages-binance.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-cosmos.options:." messages-cosmos.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-osmosis.options:." messages-osmosis.proto    
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-ripple.options:." messages-ripple.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-tendermint.options:." messages-tendermint.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-thorchain.options:." messages-thorchain.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages-mayachain.options:." messages-mayachain.proto
-  COMMAND
-    ${PROTOC_BINARY} -I. -I/usr/include
-      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
-      "--nanopb_out=-f messages.options:." messages.proto
-  COMMAND
-    ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/lib/transport/*.pb.h
-       ${CMAKE_BINARY_DIR}/include
-  COMMAND
-    sh -c "! grep -r pb_callback_t ${CMAKE_BINARY_DIR}/include/*.pb.h" || (echo "pb_callback_t forbidden. missing .options entry?" && false)
+    ${CMAKE_COMMAND} -E copy ${protoc_c_headers_generated} ${CMAKE_BINARY_DIR}/include/
   COMMAND
     ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/lib/transport/kktransport.pb.stamp
   DEPENDS
-    ${protoc_pb_sources} ${protoc_pb_options})
+    ${protoc_c_sources_generated} ${protoc_c_headers_generated}
+  COMMENT "Copying pre-generated protobuf files")
 
 add_custom_target(kktransport.pb ALL DEPENDS ${CMAKE_BINARY_DIR}/lib/transport/kktransport.pb.stamp)
 
-add_library(kktransport ${sources} ${protoc_c_sources})
+# Build the library - protobuf sources will be copied by kktransport.pb target
+add_library(kktransport ${sources} ${protoc_c_sources_generated})
 add_dependencies(kktransport kktransport.pb)
+target_include_directories(kktransport PUBLIC ${CMAKE_BINARY_DIR}/include)

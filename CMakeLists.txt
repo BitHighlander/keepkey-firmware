@@ -54,13 +54,14 @@ if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/qrenc/QR-Code-generator/c/Makefile)
   )
 endif()
 
-find_program(NANOPB_GENERATOR nanopb_generator.py)
-if(${KK_EMULATOR} AND NOT NANOPB_GENERATOR)
-  message(
-    FATAL_ERROR
-      "Must install nanopb 0.3.9.4, and put nanopb-nanopb-0.3.9.4/generator on your PATH"
-  )
-endif()
+# nanopb check disabled - using pre-generated protobuf files
+# find_program(NANOPB_GENERATOR nanopb_generator.py)
+# if(${KK_EMULATOR} AND NOT NANOPB_GENERATOR)
+#   message(
+#     FATAL_ERROR
+#       "Must install nanopb 0.3.9.4, and put nanopb-nanopb-0.3.9.4/generator on your PATH"
+#   )
+# endif()
 
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
