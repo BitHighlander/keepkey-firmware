@@ -16,6 +16,7 @@ set(protoc_c_sources_generated
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-tendermint.pb.c
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-thorchain.pb.c
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-mayachain.pb.c
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-solana.pb.c
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages.pb.c)
 
 set(protoc_c_headers_generated
@@ -30,6 +31,7 @@ set(protoc_c_headers_generated
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-tendermint.pb.h
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-thorchain.pb.h
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-mayachain.pb.h
+    ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages-solana.pb.h
     ${CMAKE_SOURCE_DIR}/lib/transport/generated/messages.pb.h)
 
 # Copy pre-generated files to build directory
