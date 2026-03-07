@@ -40,6 +40,9 @@ set(altcoin_sources
     ripple_base58.c
     signtx_tendermint.c
     tendermint.c
+    solana.c
+    solana_msg.c
+    solana_tx.c
     thorchain.c
     tiny-json.c)
 
