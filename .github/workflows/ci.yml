@@ -95,7 +95,6 @@ jobs:
         run: |
           echo "Checking required submodule declarations..."
           REQUIRED=(
-            "deps/crypto/trezor-firmware"
             "deps/device-protocol"
             "deps/python-keepkey"
             "deps/googletest"
@@ -127,7 +126,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init deps/python-keepkey
           git submodule update --init deps/googletest
@@ -181,7 +179,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init deps/python-keepkey
           git submodule update --init deps/googletest
@@ -300,7 +297,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init deps/python-keepkey
           git submodule update --init deps/googletest
