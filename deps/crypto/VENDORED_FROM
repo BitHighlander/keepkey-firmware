@@ -1,0 +1,30 @@
+Source:       https://github.com/keepkey/trezor-firmware
+Commit:       03d8a55a832fb61bb89477ef7239a80ecb367080
+Subdirectory: crypto/
+Vendored:     2025-02-28
+
+Only files compiled by CMakeLists.txt were vendored (the build-relevant
+subset of trezor-firmware/crypto/).  Files intentionally omitted:
+
+  schnorr.c/h              BCH Schnorr signatures (unused)
+  shamir.c/h               SLIP-39 Shamir backup (unused, may be needed later)
+  slip39.c/h               SLIP-39 word list (unused, may be needed later)
+  slip39_wordlist.h
+  chacha_drbg.c/h          ChaCha20-based DRBG (unused)
+  chacha20poly1305/         ChaCha20-Poly1305 AEAD (unused, xmmintrin.h issue)
+  monero/                  Monero-specific crypto (USE_MONERO=0)
+  tests/                   Unit tests (run separately)
+  tools/                   CLI utilities (mktable, xpubaddrgen, etc.)
+  fuzzer/                  Fuzz harnesses
+  gui/                     GUI test tools
+  Makefile                 Standalone build (we use CMake)
+  setup.py                 Python bindings
+  .gitignore/.gitmodules   Repo metadata
+
+Updating from upstream
+----------------------
+1. Clone https://github.com/keepkey/trezor-firmware
+2. Checkout the target commit
+3. diff -r trezor-firmware/crypto/ deps/crypto/ --exclude=VENDORED_FROM \
+        --exclude=CMakeLists.txt
+4. Copy changed files, update this commit hash, rebuild and test

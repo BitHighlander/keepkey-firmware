@@ -2,6 +2,3 @@ bin
 build
 .DS_Store
 .vscode/
-.idea/
-planning/
-examples/
