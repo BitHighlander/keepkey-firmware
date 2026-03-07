@@ -119,6 +119,10 @@ void fsm_msgMayachainGetAddress(const MayachainGetAddress *msg);
 void fsm_msgMayachainSignTx(const MayachainSignTx *msg);
 void fsm_msgMayachainMsgAck(const MayachainMsgAck *msg);
 
+void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg);
+void fsm_msgSolanaSignTx(SolanaSignTx *msg);
+void fsm_msgSolanaSignMessage(SolanaSignMessage *msg);
+
 #endif  // BITCOIN_ONLY
 
 #if DEBUG_LINK

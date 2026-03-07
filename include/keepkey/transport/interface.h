@@ -41,6 +41,7 @@
 #include "messages-tendermint.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
+#include "messages-solana.pb.h"
 
 #endif  // BITCOIN_ONLY
 

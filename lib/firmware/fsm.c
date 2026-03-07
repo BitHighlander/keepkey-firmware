@@ -80,6 +80,8 @@
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
+#include "keepkey/firmware/solana.h"
+#include "keepkey/firmware/solana_tx.h"
 
 #include "messages-ethereum.pb.h"
 #include "messages-binance.pb.h"
@@ -90,6 +92,7 @@
 #include "messages-ripple.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
+#include "messages-solana.pb.h"
 #endif // BITCOIN_ONLY
 
 #define _(X) (X)
@@ -290,4 +293,5 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_tendermint.h"
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
+#include "fsm_msg_solana.h"
 #endif // BITCOIN_ONLY

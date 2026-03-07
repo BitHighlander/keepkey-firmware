@@ -36,7 +36,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${DEVICE_PROTOCOL}/messages-ripple.proto
       ${DEVICE_PROTOCOL}/messages-tendermint.proto
       ${DEVICE_PROTOCOL}/messages-thorchain.proto
-      ${DEVICE_PROTOCOL}/messages-mayachain.proto)
+      ${DEVICE_PROTOCOL}/messages-mayachain.proto
+      ${DEVICE_PROTOCOL}/messages-solana.proto)
 
   list(APPEND protoc_pb_options
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ethereum.options
@@ -48,7 +49,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ripple.options
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-tendermint.options
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-thorchain.options
-      ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-mayachain.options)
+      ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-mayachain.options
+      ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-solana.options)
 
   list(APPEND protoc_c_sources
       ${CMAKE_BINARY_DIR}/lib/transport/messages-ethereum.pb.c
@@ -60,7 +62,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_BINARY_DIR}/lib/transport/messages-ripple.pb.c
       ${CMAKE_BINARY_DIR}/lib/transport/messages-tendermint.pb.c
       ${CMAKE_BINARY_DIR}/lib/transport/messages-thorchain.pb.c
-      ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.pb.c)
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.pb.c
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-solana.pb.c)
 
   list(APPEND protoc_c_headers
       ${CMAKE_BINARY_DIR}/include/messages-ethereum.pb.h
@@ -72,7 +75,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_BINARY_DIR}/include/messages-ripple.pb.h
       ${CMAKE_BINARY_DIR}/include/messages-tendermint.pb.h
       ${CMAKE_BINARY_DIR}/include/messages-thorchain.pb.h
-      ${CMAKE_BINARY_DIR}/include/messages-mayachain.pb.h)
+      ${CMAKE_BINARY_DIR}/include/messages-mayachain.pb.h
+      ${CMAKE_BINARY_DIR}/include/messages-solana.pb.h)
 
   list(APPEND protoc_pb_sources_moved
       ${CMAKE_BINARY_DIR}/lib/transport/messages-ethereum.proto
@@ -84,7 +88,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_BINARY_DIR}/lib/transport/messages-ripple.proto
       ${CMAKE_BINARY_DIR}/lib/transport/messages-tendermint.proto
       ${CMAKE_BINARY_DIR}/lib/transport/messages-thorchain.proto
-      ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.proto)
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.proto
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-solana.proto)
 endif()
 
 # Protobuf nanopb code generation
@@ -165,6 +170,9 @@ else()
     COMMAND ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
       "--nanopb_out=-f messages-mayachain.options:." messages-mayachain.proto
+    COMMAND ${PROTOC_BINARY} -I. -I/usr/include
+      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
+      "--nanopb_out=-f messages-solana.options:." messages-solana.proto
     COMMAND ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
       "--nanopb_out=-f messages.options:." messages.proto
