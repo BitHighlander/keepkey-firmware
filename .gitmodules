@@ -2,9 +2,6 @@
 path = deps/device-protocol
 url = https://github.com/keepkey/device-protocol.git
 branch = master
-[submodule "deps/trezor-firmware"]
-path = deps/crypto/trezor-firmware
-url = https://github.com/keepkey/trezor-firmware.git
 [submodule "googletest"]
 path = deps/googletest
 url = https://github.com/google/googletest.git
@@ -21,3 +18,6 @@ url = https://github.com/keepkey/QR-Code-generator.git
 [submodule "deps/sca-hardening/SecAESSTM32"]
 path = deps/sca-hardening/SecAESSTM32
 url = https://github.com/keepkey/SecAESSTM32.git
+[submodule "deps/crypto/hw-crypto"]
+	path = deps/crypto/hw-crypto
+	url = https://github.com/markrypt0/hw-crypto.git
