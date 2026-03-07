@@ -229,27 +229,30 @@ jobs:
               cp bin/*.elf /root/keepkey-firmware/bin/ && \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
-      - name: Rename firmware artifacts
+      - name: List built firmware
         run: |
-          cd bin
-          for f in *.bin; do
-            [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${f}"
-          done
-          for f in *.elf; do
-            [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${f}"
-          done
-          ls -lh
+          ls -lh bin/
           echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} built successfully"
 
-      - name: Upload firmware artifacts
+      - name: Upload firmware.keepkey.bin
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}
-          path: |
-            bin/*.bin
-            bin/*.elf
+          name: firmware.keepkey-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}.bin
+          path: bin/firmware.keepkey.bin
+          retention-days: 90
+
+      - name: Upload firmware.keepkey.elf
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware.keepkey-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}.elf
+          path: bin/firmware.keepkey.elf
+          retention-days: 90
+
+      - name: Upload bootloader.elf
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootloader-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}.elf
+          path: bin/bootloader.elf
           retention-days: 90
 
   build-arm-firmware-btconly:
@@ -310,11 +313,18 @@ jobs:
               cp bin/firmware.keepkey.elf /root/keepkey-firmware/bin-btconly/ && \
               chmod -R a+rw /root/keepkey-firmware/bin-btconly"
 
-      - name: Upload BTC-only firmware artifacts
+      - name: Upload BTC-only firmware.keepkey.bin
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-btconly-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}
-          path: bin-btconly/*
+          name: firmware.keepkey.btconly-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}.bin
+          path: bin-btconly/firmware.keepkey.bin
+          retention-days: 90
+
+      - name: Upload BTC-only firmware.keepkey.elf
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware.keepkey.btconly-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}.elf
+          path: bin-btconly/firmware.keepkey.elf
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════
