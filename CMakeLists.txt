@@ -40,10 +40,10 @@ if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/googletest/CMakeLists.txt)
       "googletest missing. Need to 'git submodule update --init --recursive")
 endif()
 
-if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/Makefile)
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/crypto/crypto/bip32.c)
   message(
     FATAL_ERROR
-      " trezor-crypto missing. Need to 'git submodule update --init --recursive"
+      " deps/crypto/crypto missing. Vendored crypto source not found."
   )
 endif()
 
@@ -54,13 +54,6 @@ if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/qrenc/QR-Code-generator/c/Makefile)
   )
 endif()
 
-find_program(NANOPB_GENERATOR nanopb_generator.py)
-if(${KK_EMULATOR} AND NOT NANOPB_GENERATOR)
-  message(
-    FATAL_ERROR
-      "Must install nanopb 0.3.9.4, and put nanopb-nanopb-0.3.9.4/generator on your PATH"
-  )
-endif()
 
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
