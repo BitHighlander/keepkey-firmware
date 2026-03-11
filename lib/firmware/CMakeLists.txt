@@ -46,7 +46,9 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       thorchain.c
       solana.c
       solana_msg.c
-      solana_tx.c)
+      solana_tx.c
+      tron.c
+      ton.c)
 endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"

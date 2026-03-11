@@ -42,6 +42,8 @@
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
 #include "messages-solana.pb.h"
+#include "messages-tron.pb.h"
+#include "messages-ton.pb.h"
 
 #endif  // BITCOIN_ONLY
 
