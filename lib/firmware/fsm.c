@@ -34,6 +34,7 @@
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/app_layout.h"
+#include "keepkey/firmware/bip85.h"
 #if !BITCOIN_ONLY
 #include "keepkey/firmware/authenticator.h"
 #endif
@@ -304,3 +305,4 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
 #endif
+#include "fsm_msg_bip85.h"

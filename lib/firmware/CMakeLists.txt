@@ -1,6 +1,7 @@
 set(base_sources
     app_confirm.c
     app_layout.c
+    bip85.c
     coins.c
     crypto.c
     fsm.c
