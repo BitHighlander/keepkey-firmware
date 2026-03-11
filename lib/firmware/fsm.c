@@ -71,6 +71,8 @@
 #if !BITCOIN_ONLY
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
+#include "keepkey/firmware/tron.h"
+#include "keepkey/firmware/ton.h"
 #endif
 #include "keepkey/firmware/transaction.h"
 #include "keepkey/firmware/txin_check.h"
@@ -99,6 +101,8 @@
 #include "messages-ripple.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
+#include "messages-tron.pb.h"
+#include "messages-ton.pb.h"
 #endif
 
 #include <stdio.h>
@@ -303,4 +307,6 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_tendermint.h"
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
+#include "fsm_msg_tron.h"
+#include "fsm_msg_ton.h"
 #endif
