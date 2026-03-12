@@ -19,5 +19,5 @@ branch = master
 path = deps/qrenc/QR-Code-generator
 url = https://github.com/keepkey/QR-Code-generator.git
 [submodule "deps/sca-hardening/SecAESSTM32"]
-path = deps/sca-hardening/SecAESSTM32
-url = https://github.com/keepkey/SecAESSTM32.git
+	path = deps/sca-hardening/SecAESSTM32
+	url = https://github.com/keepkey/SecAESSTM32.git

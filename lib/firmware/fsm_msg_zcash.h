@@ -19,8 +19,7 @@
 
 /* All headers included via fsm.c:
  * keepkey/firmware/zcash.h, trezor/crypto/blake2b.h,
- * trezor/crypto/pallas.h, trezor/crypto/redpallas.h,
- * trezor/crypto/memzero.h
+ * pallas.h, redpallas.h, trezor/crypto/memzero.h
  */
 
 /* Precomputed empty digest constants for shielded-only transactions.

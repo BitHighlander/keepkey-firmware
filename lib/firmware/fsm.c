@@ -86,8 +86,8 @@
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/ton.h"
 #include "keepkey/firmware/zcash.h"
-#include "trezor/crypto/pallas.h"
-#include "trezor/crypto/redpallas.h"
+#include "pallas.h"
+#include "redpallas.h"
 #include "trezor/crypto/blake2b.h"
 
 #include "messages-ethereum.pb.h"

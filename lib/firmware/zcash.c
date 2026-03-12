@@ -25,8 +25,8 @@
 #include "trezor/crypto/blake2b.h"
 #include "trezor/crypto/hasher.h"
 #include "trezor/crypto/memzero.h"
-#include "trezor/crypto/pallas.h"
-#include "trezor/crypto/redpallas.h"
+#include "pallas.h"
+#include "redpallas.h"
 
 /*
  * ZIP-32 Orchard key derivation.
