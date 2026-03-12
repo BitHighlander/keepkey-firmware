@@ -1,0 +1,362 @@
+# KeepKey Firmware Release Pipeline
+#
+# Triggered by version tags (v*) on master.
+# Builds full + BTC-only firmware, computes reproducible hashes,
+# and creates a draft GitHub Release with all artifacts.
+#
+# Git-flow: tag master after merging a release/* or hotfix/* branch.
+#
+# Usage:
+#   git tag v7.11.0
+#   git push origin v7.11.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  BASE_IMAGE: kktech/firmware:v15
+
+permissions:
+  contents: write
+
+jobs:
+  # ═══════════════════════════════════════════════════════════
+  # VALIDATE — sanity checks before building release artifacts
+  # ═══════════════════════════════════════════════════════════
+
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      fw_version: ${{ steps.version.outputs.fw_version }}
+      tag_version: ${{ steps.version.outputs.tag_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Extract and verify version
+        id: version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+')
+          echo "tag_version=${TAG_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "fw_version=${FW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Tag: v${TAG_VERSION} | CMakeLists: ${FW_VERSION}"
+          if [ "$TAG_VERSION" != "$FW_VERSION" ]; then
+            echo "::error::Tag version (${TAG_VERSION}) does not match CMakeLists.txt (${FW_VERSION})"
+            exit 1
+          fi
+
+      - name: Verify submodules
+        run: |
+          REQUIRED=(
+            "deps/crypto/trezor-firmware"
+            "deps/device-protocol"
+            "deps/python-keepkey"
+            "deps/googletest"
+            "deps/qrenc/QR-Code-generator"
+            "deps/sca-hardening/SecAESSTM32"
+          )
+          for sub in "${REQUIRED[@]}"; do
+            if [ ! -f "$sub/CMakeLists.txt" ] && [ ! -f "$sub/Makefile" ] && [ ! -f "$sub/setup.py" ]; then
+              echo "::error::Submodule not initialized: $sub"
+              exit 1
+            fi
+            echo "  ok $sub"
+          done
+
+  # ═══════════════════════════════════════════════════════════
+  # BUILD — full firmware + BTC-only, both with hash manifests
+  # ═══════════════════════════════════════════════════════════
+
+  build-full:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: /tmp/base-image.tar
+          key: base-image-${{ env.BASE_IMAGE }}
+
+      - name: Pull and cache base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          docker pull ${{ env.BASE_IMAGE }}
+          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+
+      - name: Load base image from cache
+        if: steps.cache-base.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/base-image.tar
+
+      - name: Cross-compile firmware
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/root/keepkey-firmware:z \
+            ${{ env.BASE_IMAGE }} /bin/sh -c "\
+              mkdir /root/build && cd /root/build && \
+              cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
+                -DCMAKE_BUILD_TYPE=MinSizeRel \
+                -DCMAKE_COLOR_MAKEFILE=ON && \
+              make && \
+              mkdir -p /root/keepkey-firmware/release && \
+              cp bin/firmware.keepkey.bin /root/keepkey-firmware/release/ && \
+              cp bin/firmware.keepkey.elf /root/keepkey-firmware/release/ && \
+              cp bin/bootloader.bin /root/keepkey-firmware/release/ 2>/dev/null || true && \
+              chmod -R a+rw /root/keepkey-firmware/release"
+
+      - name: Compute hashes
+        working-directory: release
+        run: |
+          echo "# KeepKey Firmware v${{ needs.validate.outputs.fw_version }} — Hash Manifest" > HASHES.txt
+          echo "# Full firmware build" >> HASHES.txt
+          echo "" >> HASHES.txt
+
+          for f in *.bin; do
+            [ -f "$f" ] || continue
+
+            # Full file hash
+            FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
+            echo "sha256 (full)    $f  $FULL_HASH" >> HASHES.txt
+
+            # Payload hash (skip 256-byte KPKY header) — this is what the
+            # device reports and what the manifest uses for verification
+            FILE_SIZE=$(stat -c%s "$f")
+            if [ "$FILE_SIZE" -gt 256 ]; then
+              PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
+              echo "sha256 (payload) $f  $PAYLOAD_HASH" >> HASHES.txt
+            fi
+            echo "" >> HASHES.txt
+          done
+
+          cat HASHES.txt
+
+      - name: Rename artifacts
+        working-directory: release
+        run: |
+          VER="${{ needs.validate.outputs.fw_version }}"
+          [ -f firmware.keepkey.bin ] && mv firmware.keepkey.bin "firmware.keepkey.v${VER}.bin"
+          [ -f firmware.keepkey.elf ] && mv firmware.keepkey.elf "firmware.keepkey.v${VER}.elf"
+          [ -f bootloader.bin ] && mv bootloader.bin "bootloader.v${VER}.bin"
+          ls -lh
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-full
+          path: release/*
+          retention-days: 90
+
+  build-btconly:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: /tmp/base-image.tar
+          key: base-image-${{ env.BASE_IMAGE }}
+
+      - name: Pull and cache base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          docker pull ${{ env.BASE_IMAGE }}
+          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+
+      - name: Load base image from cache
+        if: steps.cache-base.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/base-image.tar
+
+      - name: Cross-compile BTC-only firmware
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/root/keepkey-firmware:z \
+            ${{ env.BASE_IMAGE }} /bin/sh -c "\
+              mkdir /root/build && cd /root/build && \
+              cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
+                -DCMAKE_BUILD_TYPE=MinSizeRel \
+                -DKK_BITCOIN_ONLY=ON && \
+              make && \
+              mkdir -p /root/keepkey-firmware/release-btconly && \
+              cp bin/firmware.keepkey.bin /root/keepkey-firmware/release-btconly/ && \
+              cp bin/firmware.keepkey.elf /root/keepkey-firmware/release-btconly/ && \
+              chmod -R a+rw /root/keepkey-firmware/release-btconly"
+
+      - name: Compute hashes
+        working-directory: release-btconly
+        run: |
+          echo "# KeepKey Firmware v${{ needs.validate.outputs.fw_version }} — BTC-Only Hash Manifest" > HASHES-btconly.txt
+          echo "" >> HASHES-btconly.txt
+
+          for f in *.bin; do
+            [ -f "$f" ] || continue
+            FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
+            echo "sha256 (full)    $f  $FULL_HASH" >> HASHES-btconly.txt
+            FILE_SIZE=$(stat -c%s "$f")
+            if [ "$FILE_SIZE" -gt 256 ]; then
+              PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
+              echo "sha256 (payload) $f  $PAYLOAD_HASH" >> HASHES-btconly.txt
+            fi
+            echo "" >> HASHES-btconly.txt
+          done
+
+          cat HASHES-btconly.txt
+
+      - name: Rename artifacts
+        working-directory: release-btconly
+        run: |
+          VER="${{ needs.validate.outputs.fw_version }}"
+          [ -f firmware.keepkey.bin ] && mv firmware.keepkey.bin "firmware.keepkey.btconly.v${VER}.bin"
+          [ -f firmware.keepkey.elf ] && mv firmware.keepkey.elf "firmware.keepkey.btconly.v${VER}.elf"
+          ls -lh
+
+      - name: Upload BTC-only artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-btconly
+          path: release-btconly/*
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════
+  # TEST — emulator tests on the tagged commit
+  # ═══════════════════════════════════════════════════════════
+
+  test:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: /tmp/base-image.tar
+          key: base-image-${{ env.BASE_IMAGE }}
+
+      - name: Pull and cache base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          docker pull ${{ env.BASE_IMAGE }}
+          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+
+      - name: Load base image from cache
+        if: steps.cache-base.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/base-image.tar
+
+      - name: Build emulator
+        run: |
+          docker build \
+            -t kkemu-release \
+            -f scripts/emulator/Dockerfile \
+            .
+
+      - name: Run unit tests
+        run: |
+          docker run --rm \
+            --entrypoint /bin/sh \
+            kkemu-release \
+            -c "make xunit; RC=\$?; exit \$RC"
+
+  # ═══════════════════════════════════════════════════════════
+  # RELEASE — create draft GitHub Release with all artifacts
+  # ═══════════════════════════════════════════════════════════
+
+  create-release:
+    needs: [validate, build-full, build-btconly, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download full firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: release-full
+          path: artifacts/full
+
+      - name: Download BTC-only firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: release-btconly
+          path: artifacts/btconly
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cp artifacts/full/*.bin artifacts/full/*.elf artifacts/full/HASHES.txt release-assets/
+          cp artifacts/btconly/*.bin artifacts/btconly/*.elf artifacts/btconly/HASHES-btconly.txt release-assets/
+          ls -lh release-assets/
+
+      - name: Generate release body
+        id: body
+        run: |
+          VER="${{ needs.validate.outputs.fw_version }}"
+          cat > release-body.md << 'RELEASE_EOF'
+          ## KeepKey Firmware v${{ needs.validate.outputs.fw_version }}
+
+          ### Artifacts
+
+          | File | Description |
+          |------|-------------|
+          | `firmware.keepkey.v$VER.bin` | Full firmware (all chains) |
+          | `firmware.keepkey.btconly.v$VER.bin` | Bitcoin-only firmware |
+          | `HASHES.txt` | SHA-256 hashes (full + payload) |
+          | `HASHES-btconly.txt` | SHA-256 hashes for BTC-only build |
+
+          ### Reproducible Build Verification
+
+          ```bash
+          # Build in Docker (same as CI)
+          ./scripts/build/docker/device/release.sh
+
+          # Compare payload hash (skip 256-byte KPKY header)
+          tail -c +257 bin/firmware.keepkey.bin | shasum -a 256
+          ```
+
+          > **Note:** This is a DRAFT release. Firmware must be signed by 3/5 key holders
+          > on an air-gapped machine before publishing. Replace the unsigned `.bin` with
+          > the signed version after the signing ceremony.
+
+          ### Signing Checklist
+
+          - [ ] Built on multiple machines, hashes match
+          - [ ] Signed on air-gapped machine (3/5 signers)
+          - [ ] Storage upgrade tested on production device
+          - [ ] Signed `.bin` uploaded, replacing unsigned
+          - [ ] Release notes finalized
+          RELEASE_EOF
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: "Firmware v${{ needs.validate.outputs.fw_version }}"
+          body_path: release-body.md
+          files: release-assets/*
+          fail_on_unmatched_files: true
