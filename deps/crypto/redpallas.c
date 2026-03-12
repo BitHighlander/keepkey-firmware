@@ -5,15 +5,9 @@
  * and the RedDSA re-randomized Schnorr signature scheme used for
  * Orchard spend authorization.
  *
- * VALIDATION REQUIRED:
- *   The SpendAuth generator G_spendauth coordinates below are
- *   PLACEHOLDERS using the standard Pallas generator (-1, 2).
- *   The correct SpendAuth generator must be derived from:
- *     hash_to_curve("z.cash:Orchard-SpendAuthG")("")
- *   and validated against the zcash/orchard Rust crate test vectors.
- *   The signing algorithm is correct regardless of generator choice,
- *   but signatures will not verify against the Zcash network until
- *   the generator is replaced with the canonical value.
+ * The SpendAuth generator G_spendauth is the canonical value derived
+ * from hash_to_curve("z.cash:Orchard-SpendAuthG")(""), extracted via
+ * the pasta_curves Rust crate and cross-verified against orchard 0.12.
  *
  * Copyright (C) 2025 KeepKey
  * SPDX-License-Identifier: LGPL-3.0-or-later
@@ -29,28 +23,27 @@
 /*
  * SpendAuth generator G_spendauth on the Pallas curve.
  *
- * VALIDATION REQUIRED — see file header comment.
- * These are the standard Pallas generator coordinates (-1, 2)
- * as a placeholder.  Replace with the output of:
- *   pasta_curves::pallas::Point::hash_to_curve("z.cash:Orchard-SpendAuthG")("")
+ * Canonical value: hash_to_curve("z.cash:Orchard-SpendAuthG")("")
+ * Extracted via pasta_curves 0.5 / orchard 0.12 Rust crate.
+ * Compressed (32-byte, with sign bit): 63c975b8...b32355b7
  *
  * Stored as little-endian byte arrays for bn_read_le().
  */
 
-/* x = p - 1 = 0x40000000000000000000000000000000224698fc094cf91b992d30ed00000000 (LE) */
+/* x coordinate (little-endian) */
 static const uint8_t G_spendauth_x_le[32] = {
-    0x00, 0x00, 0x00, 0x00, 0xed, 0x30, 0x2d, 0x99,
-    0x1b, 0xf9, 0x4c, 0x09, 0xfc, 0x98, 0x46, 0x22,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40,
+    0x63, 0xc9, 0x75, 0xb8, 0x84, 0x72, 0x1a, 0x8d,
+    0x0c, 0xa1, 0x70, 0x7b, 0xe3, 0x0c, 0x7f, 0x0c,
+    0x5f, 0x44, 0x5f, 0x3e, 0x7c, 0x18, 0x8d, 0x3b,
+    0x06, 0xd6, 0xf1, 0x28, 0xb3, 0x23, 0x55, 0x37,
 };
 
-/* y = 2 (LE) */
+/* y coordinate (little-endian) */
 static const uint8_t G_spendauth_y_le[32] = {
-    0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xc9, 0x3b, 0x0c, 0x7b, 0x81, 0x3e, 0xe3, 0x4c,
+    0xd8, 0xbd, 0x05, 0xc0, 0xfe, 0x14, 0xc9, 0xdf,
+    0xfb, 0x24, 0xd6, 0xfe, 0xfc, 0xbc, 0x10, 0x7b,
+    0xdb, 0x66, 0x1a, 0xdf, 0x7f, 0x35, 0xd0, 0x1a,
 };
 
 /* Cached generator point (initialized lazily). */
