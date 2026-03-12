@@ -90,6 +90,9 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg) {
     return;
   }
 
+  /* Zero signing state from any prior session */
+  memzero(&zcash_signing, sizeof(zcash_signing));
+
   /* Determine account from path or explicit account field */
   uint32_t account = 0;
   if (msg->has_account) {
@@ -163,7 +166,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg) {
   zcash_signing.current_action = 0;
   zcash_signing.total_amount = total;
   zcash_signing.fee = fee;
-  zcash_signing.branch_id = msg->has_branch_id ? msg->branch_id : 0x37519621;
+  zcash_signing.branch_id = msg->has_branch_id ? msg->branch_id : 0xC8E71055;
   zcash_signing.has_device_sighash = false;
   zcash_signing.verify_orchard_digest = false;
 
@@ -414,8 +417,16 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg) {
       blake2b_Update(&orchard_ctx, memos_hash, 32);
       blake2b_Update(&orchard_ctx, noncompact_hash, 32);
       blake2b_Update(&orchard_ctx, &zcash_signing.orchard_flags, 1);
-      blake2b_Update(&orchard_ctx,
-                     (const uint8_t *)&zcash_signing.orchard_value_balance, 8);
+      /* Write value_balance as explicit little-endian bytes */
+      {
+        uint8_t vb_le[8];
+        int64_t vb = zcash_signing.orchard_value_balance;
+        for (int i = 0; i < 8; i++) {
+          vb_le[i] = (uint8_t)(vb & 0xFF);
+          vb >>= 8;
+        }
+        blake2b_Update(&orchard_ctx, vb_le, 8);
+      }
       blake2b_Update(&orchard_ctx, zcash_signing.orchard_anchor, 32);
 
       uint8_t computed_orchard_digest[32];

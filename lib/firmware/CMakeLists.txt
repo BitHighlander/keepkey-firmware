@@ -48,7 +48,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       solana_msg.c
       solana_tx.c
       tron.c
-      ton.c)
+      ton.c
+      zcash.c)
 endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
