@@ -39,7 +39,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${DEVICE_PROTOCOL}/messages-mayachain.proto
       ${DEVICE_PROTOCOL}/messages-solana.proto
       ${DEVICE_PROTOCOL}/messages-tron.proto
-      ${DEVICE_PROTOCOL}/messages-ton.proto)
+      ${DEVICE_PROTOCOL}/messages-ton.proto
+      ${DEVICE_PROTOCOL}/messages-zcash.proto)
 
   list(APPEND protoc_pb_options
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ethereum.options
@@ -54,7 +55,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-mayachain.options
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-solana.options
       ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-tron.options
-      ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ton.options)
+      ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-ton.options
+      ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-zcash.options)
 
   list(APPEND protoc_c_sources
       ${CMAKE_BINARY_DIR}/lib/transport/messages-ethereum.pb.c
@@ -69,7 +71,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.pb.c
       ${CMAKE_BINARY_DIR}/lib/transport/messages-solana.pb.c
       ${CMAKE_BINARY_DIR}/lib/transport/messages-tron.pb.c
-      ${CMAKE_BINARY_DIR}/lib/transport/messages-ton.pb.c)
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-ton.pb.c
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-zcash.pb.c)
 
   list(APPEND protoc_c_headers
       ${CMAKE_BINARY_DIR}/include/messages-ethereum.pb.h
@@ -84,7 +87,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_BINARY_DIR}/include/messages-mayachain.pb.h
       ${CMAKE_BINARY_DIR}/include/messages-solana.pb.h
       ${CMAKE_BINARY_DIR}/include/messages-tron.pb.h
-      ${CMAKE_BINARY_DIR}/include/messages-ton.pb.h)
+      ${CMAKE_BINARY_DIR}/include/messages-ton.pb.h
+      ${CMAKE_BINARY_DIR}/include/messages-zcash.pb.h)
 
   list(APPEND protoc_pb_sources_moved
       ${CMAKE_BINARY_DIR}/lib/transport/messages-ethereum.proto
@@ -99,7 +103,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       ${CMAKE_BINARY_DIR}/lib/transport/messages-mayachain.proto
       ${CMAKE_BINARY_DIR}/lib/transport/messages-solana.proto
       ${CMAKE_BINARY_DIR}/lib/transport/messages-tron.proto
-      ${CMAKE_BINARY_DIR}/lib/transport/messages-ton.proto)
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-ton.proto
+      ${CMAKE_BINARY_DIR}/lib/transport/messages-zcash.proto)
 endif()
 
 # Protobuf nanopb code generation
@@ -189,6 +194,9 @@ else()
     COMMAND ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
       "--nanopb_out=-f messages-ton.options:." messages-ton.proto
+    COMMAND ${PROTOC_BINARY} -I. -I/usr/include
+      --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
+      "--nanopb_out=-f messages-zcash.options:." messages-zcash.proto
     COMMAND ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
       "--nanopb_out=-f messages.options:." messages.proto
