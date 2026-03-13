@@ -48,7 +48,8 @@ if(NOT "${COIN_SUPPORT}" STREQUAL "BTC")
       solana_msg.c
       solana_tx.c
       tron.c
-      ton.c)
+      ton.c
+      zcash.c)
 endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
@@ -56,7 +57,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
 
 include_directories(
   ${CMAKE_BINARY_DIR}/include
-  ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto
+  ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto
   ${CMAKE_SOURCE_DIR}/lib/firmware
   ${CMAKE_CURRENT_BINARY_DIR})
 

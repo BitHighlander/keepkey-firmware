@@ -44,6 +44,7 @@
 #include "messages-solana.pb.h"
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
+#include "messages-zcash.pb.h"
 
 #endif  // BITCOIN_ONLY
 

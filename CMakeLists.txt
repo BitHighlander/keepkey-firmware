@@ -43,7 +43,7 @@ endif()
 if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/Makefile)
   message(
     FATAL_ERROR
-      " trezor-crypto missing. Need to 'git submodule update --init --recursive"
+      " trezor-firmware missing. Need to 'git submodule update --init --recursive"
   )
 endif()
 

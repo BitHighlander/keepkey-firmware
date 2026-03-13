@@ -85,6 +85,10 @@
 #include "keepkey/firmware/solana_tx.h"
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/ton.h"
+#include "keepkey/firmware/zcash.h"
+#include "pallas.h"
+#include "redpallas.h"
+#include "trezor/crypto/blake2b.h"
 
 #include "messages-ethereum.pb.h"
 #include "messages-binance.pb.h"
@@ -98,6 +102,7 @@
 #include "messages-solana.pb.h"
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
+#include "messages-zcash.pb.h"
 #endif // BITCOIN_ONLY
 
 #include <stdio.h>
@@ -303,5 +308,6 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_solana.h"
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
+#include "fsm_msg_zcash.h"
 #endif // BITCOIN_ONLY
 #include "fsm_msg_bip85.h"
