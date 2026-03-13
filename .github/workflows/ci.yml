@@ -250,6 +250,16 @@ jobs:
     needs: [check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: btc
+            coin_support: "-DCOIN_SUPPORT=BTC"
+            label: "BTC-only"
+          - variant: multichain
+            coin_support: ""
+            label: "Multi-chain"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -289,14 +299,14 @@ jobs:
           echo "git_short=${GIT_SHORT}" >> "$GITHUB_OUTPUT"
           echo "Firmware version: ${FW_VERSION} (${GIT_SHORT})"
 
-      - name: Cross-compile firmware for ARM (BTC-only)
+      - name: Cross-compile firmware for ARM (${{ matrix.label }})
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/root/keepkey-firmware:z \
             ${{ env.BASE_IMAGE }} /bin/sh -c "\
               mkdir /root/build && cd /root/build && \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
-                -DCOIN_SUPPORT=BTC \
+                ${{ matrix.coin_support }} \
                 -DVARIANTS=NoObsoleteVariants \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
                 -DCMAKE_COLOR_MAKEFILE=ON && \
@@ -311,19 +321,19 @@ jobs:
           cd bin
           for f in *.bin; do
             [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${f}"
+            mv "$f" "${{ matrix.variant }}-${f}"
           done
           for f in *.elf; do
             [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${f}"
+            mv "$f" "${{ matrix.variant }}-${f}"
           done
           ls -lh
-          echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} built successfully"
+          echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} (${{ matrix.label }}) built successfully"
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}
+          name: firmware-${{ matrix.variant }}-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}
           path: |
             bin/*.bin
             bin/*.elf
