@@ -123,6 +123,10 @@ void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg);
 void fsm_msgSolanaSignTx(const SolanaSignTx *msg);
 void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg);
 
+void fsm_msgTronGetAddress(const TronGetAddress *msg);
+void fsm_msgTronSignTx(TronSignTx *msg);
+void fsm_msgTonGetAddress(const TonGetAddress *msg);
+void fsm_msgTonSignTx(TonSignTx *msg);
 #endif  // BITCOIN_ONLY
 
 void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg);
