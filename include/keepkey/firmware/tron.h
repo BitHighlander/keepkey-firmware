@@ -37,7 +37,7 @@
  * @param address_len Length of output buffer
  * @return true on success, false on failure
  */
-bool tron_getAddress(const uint8_t public_key[33], char *address,
+bool tron_getAddress(const uint8_t public_key[33], char* address,
                      size_t address_len);
 
 /**
@@ -46,7 +46,7 @@ bool tron_getAddress(const uint8_t public_key[33], char *address,
  * @param len Length of output buffer
  * @param amount Amount in SUN (1 TRX = 1,000,000 SUN)
  */
-void tron_formatAmount(char *buf, size_t len, uint64_t amount);
+void tron_formatAmount(char* buf, size_t len, uint64_t amount);
 
 /**
  * Sign a TRON transaction
@@ -54,7 +54,6 @@ void tron_formatAmount(char *buf, size_t len, uint64_t amount);
  * @param msg TronSignTx request message
  * @param resp TronSignedTx response message (will be filled with signature)
  */
-bool tron_signTx(const HDNode *node, const TronSignTx *msg,
-                 TronSignedTx *resp);
+bool tron_signTx(const HDNode* node, const TronSignTx* msg, TronSignedTx* resp);
 
 #endif
