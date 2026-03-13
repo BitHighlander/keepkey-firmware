@@ -98,25 +98,6 @@ jobs:
               cp bin/*.elf /root/keepkey-firmware/release/ && \
               chmod -R a+rw /root/keepkey-firmware/release"
 
-      - name: Compute hashes
-        working-directory: release
-        run: |
-          VER="${{ needs.validate.outputs.fw_version }}"
-          echo "# KeepKey Firmware v${VER} (${{ matrix.label }}) — Hash Manifest" > HASHES.txt
-          echo "" >> HASHES.txt
-          for f in *.bin; do
-            [ -f "$f" ] || continue
-            FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
-            echo "sha256 (full)    $f  $FULL_HASH" >> HASHES.txt
-            FILE_SIZE=$(stat -c%s "$f")
-            if [ "$FILE_SIZE" -gt 256 ]; then
-              PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
-              echo "sha256 (payload) $f  $PAYLOAD_HASH" >> HASHES.txt
-            fi
-            echo "" >> HASHES.txt
-          done
-          cat HASHES.txt
-
       - name: Rename artifacts
         working-directory: release
         run: |
@@ -130,8 +111,27 @@ jobs:
             [ -f "$f" ] || continue
             mv "$f" "${VARIANT}-${f%.elf}.v${VER}.elf"
           done
-          mv HASHES.txt "HASHES-${VARIANT}.txt"
           ls -lh
+
+      - name: Compute hashes
+        working-directory: release
+        run: |
+          VER="${{ needs.validate.outputs.fw_version }}"
+          VARIANT="${{ matrix.variant }}"
+          echo "# KeepKey Firmware v${VER} (${{ matrix.label }}) — Hash Manifest" > "HASHES-${VARIANT}.txt"
+          echo "" >> "HASHES-${VARIANT}.txt"
+          for f in *.bin; do
+            [ -f "$f" ] || continue
+            FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
+            echo "sha256 (full)    $f  $FULL_HASH" >> "HASHES-${VARIANT}.txt"
+            FILE_SIZE=$(stat -c%s "$f")
+            if [ "$FILE_SIZE" -gt 256 ]; then
+              PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
+              echo "sha256 (payload) $f  $PAYLOAD_HASH" >> "HASHES-${VARIANT}.txt"
+            fi
+            echo "" >> "HASHES-${VARIANT}.txt"
+          done
+          cat "HASHES-${VARIANT}.txt"
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
