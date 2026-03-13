@@ -47,6 +47,7 @@
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/transaction.h"
 #include "keepkey/firmware/txin_check.h"
 #include "keepkey/firmware/u2f.h"
@@ -291,3 +292,4 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
 #endif // BITCOIN_ONLY
+#include "fsm_msg_bip85.h"

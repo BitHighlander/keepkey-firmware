@@ -121,6 +121,8 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck *msg);
 
 #endif  // BITCOIN_ONLY
 
+void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg);
+
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);
 void fsm_msgDebugLinkGetState(DebugLinkGetState *msg);
