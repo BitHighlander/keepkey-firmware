@@ -63,6 +63,10 @@ static struct {
   uint8_t orchard_anchor[32];
   /* Signatures buffer: up to 16 actions (64 bytes each) */
   uint8_t signatures[16][64];
+  /* Phase 3: transparent shielding support */
+  uint32_t n_transparent_inputs;
+  uint32_t current_transparent_input;
+  bool transparent_phase_done;
 } zcash_signing;
 
 #define ZCASH_MAX_ACTIONS 16
@@ -168,6 +172,13 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg) {
   zcash_signing.branch_id = msg->has_branch_id ? msg->branch_id : 0xC8E71055;
   zcash_signing.has_device_sighash = false;
   zcash_signing.verify_orchard_digest = false;
+
+  /* Phase 3: transparent shielding support */
+  zcash_signing.n_transparent_inputs =
+      msg->has_n_transparent_inputs ? msg->n_transparent_inputs : 0;
+  zcash_signing.current_transparent_input = 0;
+  zcash_signing.transparent_phase_done =
+      (zcash_signing.n_transparent_inputs == 0);
 
   /* Phase 2a: Compute sighash on-device if sub-digests are provided */
   if (msg->has_header_digest && msg->header_digest.size == 32 &&
@@ -304,6 +315,14 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg) {
   if (!zcash_signing.active) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Not in Zcash signing mode"));
+    layoutHome();
+    return;
+  }
+
+  /* Phase 3: Orchard actions only accepted after transparent phase completes */
+  if (!zcash_signing.transparent_phase_done) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Transparent signing phase not yet complete"));
     layoutHome();
     return;
   }
@@ -470,4 +489,86 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg) {
     resp_ack->next_index = zcash_signing.current_action;
     msg_write(MessageType_MessageType_ZcashPCZTActionAck, resp_ack);
   }
+}
+
+/* ── Phase 3: Transparent input signing for hybrid shielding txs ────── */
+
+void fsm_msgZcashTransparentInput(const ZcashTransparentInput *msg) {
+  if (!zcash_signing.active) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Not in Zcash signing session"));
+    layoutHome();
+    return;
+  }
+
+  if (zcash_signing.transparent_phase_done) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Transparent phase already complete"));
+    layoutHome();
+    return;
+  }
+
+  if (msg->index != zcash_signing.current_transparent_input) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Unexpected transparent input index"));
+    zcash_signing.active = false;
+    layoutHome();
+    return;
+  }
+
+  if (msg->sighash.size != 32) {
+    fsm_sendFailure(FailureType_Failure_ProcessError,
+                    _("Transparent sighash must be 32 bytes"));
+    zcash_signing.active = false;
+    layoutHome();
+    return;
+  }
+
+  /* Derive secp256k1 key at the provided BIP44 path */
+  HDNode *node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) {
+    zcash_signing.active = false;
+    return;
+  }
+
+  hdnode_fill_public_key(node);
+
+  /* ECDSA sign the 32-byte sighash */
+  uint8_t sig[64];
+  if (ecdsa_sign_digest(&secp256k1, node->private_key,
+                        msg->sighash.bytes, sig, NULL, NULL) != 0) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("ECDSA signing failed"));
+    zcash_signing.active = false;
+    layoutHome();
+    return;
+  }
+
+  memzero(node, sizeof(*node));
+
+  /* DER-encode the signature */
+  uint8_t der_sig[73];
+  int der_len = ecdsa_sig_to_der(sig, der_sig);
+
+  /* Send response */
+  RESP_INIT(ZcashTransparentSig);
+  resp->signature.size = der_len;
+  memcpy(resp->signature.bytes, der_sig, der_len);
+
+  zcash_signing.current_transparent_input++;
+
+  if (zcash_signing.current_transparent_input >=
+      zcash_signing.n_transparent_inputs) {
+    /* Done with transparent phase — transition to Orchard */
+    zcash_signing.transparent_phase_done = true;
+    resp->has_next_index = true;
+    resp->next_index = 0xFF; /* signals end of transparent phase */
+  } else {
+    resp->has_next_index = true;
+    resp->next_index = zcash_signing.current_transparent_input;
+  }
+
+  msg_write(MessageType_MessageType_ZcashTransparentSig, resp);
 }
