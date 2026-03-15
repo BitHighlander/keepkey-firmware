@@ -509,7 +509,7 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput *msg) {
   }
 
   if (msg->index != zcash_signing.current_transparent_input) {
-    fsm_sendFailure(FailureType_Failure_ProcessError,
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Unexpected transparent input index"));
     zcash_signing.active = false;
     layoutHome();
@@ -517,7 +517,7 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput *msg) {
   }
 
   if (msg->sighash.size != 32) {
-    fsm_sendFailure(FailureType_Failure_ProcessError,
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Transparent sighash must be 32 bytes"));
     zcash_signing.active = false;
     layoutHome();
