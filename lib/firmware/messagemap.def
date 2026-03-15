@@ -86,6 +86,7 @@
     MSG_IN(MessageType_MessageType_ZcashSignPCZT,                   ZcashSignPCZT,               fsm_msgZcashSignPCZT)
     MSG_IN(MessageType_MessageType_ZcashGetOrchardFVK,              ZcashGetOrchardFVK,          fsm_msgZcashGetOrchardFVK)
     MSG_IN(MessageType_MessageType_ZcashPCZTAction,                 ZcashPCZTAction,             fsm_msgZcashPCZTAction)
+    MSG_IN(MessageType_MessageType_ZcashTransparentInput,           ZcashTransparentInput,       fsm_msgZcashTransparentInput)
 #endif // BITCOIN_ONLY
 
     MSG_IN(MessageType_MessageType_GetBip85Mnemonic,               GetBip85Mnemonic,            fsm_msgGetBip85Mnemonic)
@@ -162,6 +163,7 @@
     MSG_OUT(MessageType_MessageType_ZcashPCZTActionAck,             ZcashPCZTActionAck,          NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_ZcashSignedPCZT,                ZcashSignedPCZT,             NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_ZcashOrchardFVK,                ZcashOrchardFVK,             NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_ZcashTransparentSig,            ZcashTransparentSig,         NO_PROCESS_FUNC)
 #endif  // BITCOIN_ONLY
 
     MSG_OUT(MessageType_MessageType_Bip85Mnemonic,                 Bip85Mnemonic,               NO_PROCESS_FUNC)
