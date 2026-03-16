@@ -160,7 +160,12 @@ static void to_base(const uint8_t input[64], uint8_t output[32]) {
   pallas_add_mod_p(&result, &lo, &sum);
   bn_copy(&sum, &result);
   memzero(&sum, sizeof(sum));
-  pallas_mod_p(&result);  /* Ensure fully reduced before serialization */
+  /* bn_mod may not fully reduce in one pass for Pallas prime (trezor-crypto
+   * bignum256 internal representation can leave values > modulus after
+   * add/multiply). Reduce repeatedly until result < p. */
+  pallas_mod_p(&result);
+  pallas_mod_p(&result);
+  pallas_mod_p(&result);
 
   bn_write_le(&result, output);
 
