@@ -267,28 +267,17 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
     curve_point ak_test;
     redpallas_scalar_mult_spendauth_G(&ask_test, &ak_test);
     if (bn_is_odd(&ak_test.y)) {
-      /* ask = order - ask (negate mod q) */
-      bignum256 neg_ask;
-      bn_copy(&pallas_order, &neg_ask);
-      bignum256 ask_val;
-      bn_read_le(keys->ask, &ask_val);
-      bn_normalize(&ask_val);
-      bn_normalize(&neg_ask);
-      /* neg_ask = order - ask */
-      int32_t borrow = 0;
-      for (int i = 0; i < 9; i++) {
-        int32_t diff = (int32_t)neg_ask.val[i] - (int32_t)ask_val.val[i] + borrow;
-        if (diff < 0) {
-          diff += (1 << 29);
-          borrow = -1;
-        } else {
-          borrow = 0;
-        }
-        neg_ask.val[i] = (uint32_t)diff;
+      /* ask = order - ask (negate mod q), using byte-level subtraction
+       * to avoid trezor-crypto bignum representation issues */
+      uint8_t order_bytes[32];
+      bn_write_le(&pallas_order, order_bytes);
+      uint16_t borrow = 0;
+      for (int i = 0; i < 32; i++) {
+        uint16_t diff = (uint16_t)order_bytes[i] - (uint16_t)keys->ask[i] - borrow;
+        keys->ask[i] = (uint8_t)(diff & 0xFF);
+        borrow = (diff >> 15) & 1;
       }
-      bn_write_le(&neg_ask, keys->ask);
-      memzero(&neg_ask, sizeof(neg_ask));
-      memzero(&ask_val, sizeof(ask_val));
+      memzero(order_bytes, sizeof(order_bytes));
     }
     memzero(&ask_test, sizeof(ask_test));
     memzero(&ak_test, sizeof(ak_test));
