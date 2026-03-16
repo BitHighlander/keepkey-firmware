@@ -108,6 +108,38 @@ static const uint8_t two_256_mod_p[32] = {
  *   result = (lo + hi * 2^256) mod q
  * where lo = input[0..31], hi = input[32..63] (little-endian).
  */
+/* Force-reduce a bignum256 so that the serialized LE bytes are < modulus.
+ * trezor-crypto's bn_mod may leave internal representation > modulus.
+ * This serializes to bytes, compares, and subtracts if needed. */
+static void force_reduce_le(bignum256 *val, const bignum256 *prime) {
+  uint8_t vbytes[32], pbytes[32];
+  bn_write_le(val, vbytes);
+  bn_write_le(prime, pbytes);
+  /* Compare from MSB */
+  int cmp = 0;
+  for (int i = 31; i >= 0; i--) {
+    if (vbytes[i] > pbytes[i]) { cmp = 1; break; }
+    if (vbytes[i] < pbytes[i]) { cmp = -1; break; }
+  }
+  while (cmp >= 0) {
+    /* Subtract prime from bytes */
+    uint16_t borrow = 0;
+    for (int i = 0; i < 32; i++) {
+      uint16_t diff = (uint16_t)vbytes[i] - (uint16_t)pbytes[i] - borrow;
+      vbytes[i] = (uint8_t)(diff & 0xFF);
+      borrow = (diff >> 15) & 1;
+    }
+    /* Re-compare */
+    cmp = 0;
+    for (int i = 31; i >= 0; i--) {
+      if (vbytes[i] > pbytes[i]) { cmp = 1; break; }
+      if (vbytes[i] < pbytes[i]) { cmp = -1; break; }
+    }
+  }
+  bn_read_le(vbytes, val);
+  memzero(vbytes, sizeof(vbytes));
+}
+
 static void to_scalar(const uint8_t input[64], uint8_t output[32]) {
   bignum256 lo, hi, t256, result;
 
@@ -125,10 +157,8 @@ static void to_scalar(const uint8_t input[64], uint8_t output[32]) {
 
   /* result = result + lo mod q */
   pallas_add_mod_q(&result, &lo);
-  /* bn_addmod may not fully reduce — ensure result < q */
-  pallas_mod_q(&result);
-  pallas_mod_q(&result);
-  pallas_mod_q(&result);
+  /* Force full reduction — bn_mod unreliable for Pallas order */
+  force_reduce_le(&result, &pallas_order);
 
   bn_write_le(&result, output);
 
@@ -164,12 +194,8 @@ static void to_base(const uint8_t input[64], uint8_t output[32]) {
   pallas_add_mod_p(&result, &lo, &sum);
   bn_copy(&sum, &result);
   memzero(&sum, sizeof(sum));
-  /* bn_mod may not fully reduce in one pass for Pallas prime (trezor-crypto
-   * bignum256 internal representation can leave values > modulus after
-   * add/multiply). Reduce repeatedly until result < p. */
-  pallas_mod_p(&result);
-  pallas_mod_p(&result);
-  pallas_mod_p(&result);
+  /* Force full reduction — bn_mod unreliable for Pallas prime */
+  force_reduce_le(&result, &pallas_prime);
 
   bn_write_le(&result, output);
 
