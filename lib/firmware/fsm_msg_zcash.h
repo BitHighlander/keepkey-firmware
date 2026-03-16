@@ -264,25 +264,13 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK *msg) {
   }
   memzero(seed_proxy, sizeof(seed_proxy));
 
-  /* Compute ak = [ask]G_spendauth on Pallas curve (SpendAuth basepoint) */
-  bignum256 ask_scalar;
-  bn_read_le(keys.ask, &ask_scalar);
-  curve_point ak_point;
-  redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
-
-  /* Serialize ak as Pallas point (LE x-coord, sign bit in high byte) */
-  uint8_t ak_bytes[32];
-  bignum256 x_copy;
-  bn_copy(&ak_point.x, &x_copy);
-  bn_write_le(&x_copy, ak_bytes);
-  if (bn_is_odd(&ak_point.y)) {
-    ak_bytes[31] |= 0x80;
-  }
+  /* ak is pre-computed during zcash_derive_orchard_keys() with correct
+   * byte-level parity check and reduction. Use it directly. */
 
   /* Build response */
   resp->has_ak = true;
   resp->ak.size = 32;
-  memcpy(resp->ak.bytes, ak_bytes, 32);
+  memcpy(resp->ak.bytes, keys.ak, 32);
 
   resp->has_nk = true;
   resp->nk.size = 32;
@@ -293,7 +281,6 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK *msg) {
   memcpy(resp->rivk.bytes, keys.rivk, 32);
 
   /* Clean up sensitive data */
-  memzero(&ask_scalar, sizeof(ask_scalar));
   memzero(&keys, sizeof(keys));
 
   msg_write(MessageType_MessageType_ZcashOrchardFVK, resp);

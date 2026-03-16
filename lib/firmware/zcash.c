@@ -108,6 +108,44 @@ static const uint8_t two_256_mod_p[32] = {
  *   result = (lo + hi * 2^256) mod q
  * where lo = input[0..31], hi = input[32..63] (little-endian).
  */
+/* Force-reduce a bignum256 so serialized LE bytes are < modulus.
+ * trezor-crypto's bn_mod may leave internal representation > modulus.
+ * Serializes to bytes, compares against prime bytes, subtracts in loop. */
+static void force_reduce_bytes(uint8_t val[32], const uint8_t prime[32]) {
+  int cmp = 0;
+  for (int i = 31; i >= 0; i--) {
+    if (val[i] > prime[i]) { cmp = 1; break; }
+    if (val[i] < prime[i]) { cmp = -1; break; }
+  }
+  while (cmp >= 0) {
+    uint16_t borrow = 0;
+    for (int i = 0; i < 32; i++) {
+      uint16_t diff = (uint16_t)val[i] - (uint16_t)prime[i] - borrow;
+      val[i] = (uint8_t)(diff & 0xFF);
+      borrow = (diff >> 15) & 1;
+    }
+    cmp = 0;
+    for (int i = 31; i >= 0; i--) {
+      if (val[i] > prime[i]) { cmp = 1; break; }
+      if (val[i] < prime[i]) { cmp = -1; break; }
+    }
+  }
+}
+
+/* Pallas prime p and scalar order q in LE bytes (avoids bignum roundtrip) */
+static const uint8_t PALLAS_P_LE[32] = {
+  0x01,0x00,0x00,0x00,0xed,0x30,0x2d,0x99,
+  0x1b,0xf9,0x4c,0x09,0xfc,0x98,0x46,0x22,
+  0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+  0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,
+};
+static const uint8_t PALLAS_Q_LE[32] = {
+  0x01,0x00,0x00,0x00,0x21,0xeb,0x46,0x8c,
+  0xdd,0xa8,0x94,0x09,0xfc,0x98,0x46,0x22,
+  0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+  0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,
+};
+
 static void to_scalar(const uint8_t input[64], uint8_t output[32]) {
   bignum256 lo, hi, t256, result;
 
@@ -127,6 +165,7 @@ static void to_scalar(const uint8_t input[64], uint8_t output[32]) {
   pallas_add_mod_q(&result, &lo);
 
   bn_write_le(&result, output);
+  force_reduce_bytes(output, PALLAS_Q_LE);
 
   memzero(&lo, sizeof(lo));
   memzero(&hi, sizeof(hi));
@@ -162,6 +201,7 @@ static void to_base(const uint8_t input[64], uint8_t output[32]) {
   memzero(&sum, sizeof(sum));
 
   bn_write_le(&result, output);
+  force_reduce_bytes(output, PALLAS_P_LE);
 
   memzero(&lo, sizeof(lo));
   memzero(&hi, sizeof(hi));
@@ -221,41 +261,35 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
   to_scalar(expanded, keys->ask);
 
   /*
-   * Zcash spec (§ 4.2.3): If [ask]*G_spendauth has odd y (ỹ = 1),
-   * negate ask so that the resulting ak always has ỹ = 0.
-   * This matches the orchard crate's SpendAuthorizingKey::from() behavior.
+   * Zcash spec (§ 4.2.3): Compute ak = [ask]*G_spendauth.
+   * If y is odd, negate ask so ak has even y (sign bit = 0).
+   * Use pallas_point_serialize (now fixed with byte-level parity)
+   * to serialize and check, then store in keys->ak.
    */
   {
-    bignum256 ask_test;
-    bn_read_le(keys->ask, &ask_test);
-    curve_point ak_test;
-    redpallas_scalar_mult_spendauth_G(&ask_test, &ak_test);
-    if (bn_is_odd(&ak_test.y)) {
-      /* ask = order - ask (negate mod q) */
-      bignum256 neg_ask;
-      bn_copy(&pallas_order, &neg_ask);
-      bignum256 ask_val;
-      bn_read_le(keys->ask, &ask_val);
-      bn_normalize(&ask_val);
-      bn_normalize(&neg_ask);
-      /* neg_ask = order - ask */
-      int32_t borrow = 0;
-      for (int i = 0; i < 9; i++) {
-        int32_t diff = (int32_t)neg_ask.val[i] - (int32_t)ask_val.val[i] + borrow;
-        if (diff < 0) {
-          diff += (1 << 29);
-          borrow = -1;
-        } else {
-          borrow = 0;
-        }
-        neg_ask.val[i] = (uint32_t)diff;
+    bignum256 ask_scalar;
+    curve_point ak_point;
+
+    bn_read_le(keys->ask, &ask_scalar);
+    redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
+    pallas_point_serialize(&ak_point, keys->ak);
+
+    if (keys->ak[31] & 0x80) {
+      /* y is odd — negate ask: ask = order - ask (byte-level) */
+      uint16_t borrow = 0;
+      for (int i = 0; i < 32; i++) {
+        uint16_t diff = (uint16_t)PALLAS_Q_LE[i] - (uint16_t)keys->ask[i] - borrow;
+        keys->ask[i] = (uint8_t)(diff & 0xFF);
+        borrow = (diff >> 15) & 1;
       }
-      bn_write_le(&neg_ask, keys->ask);
-      memzero(&neg_ask, sizeof(neg_ask));
-      memzero(&ask_val, sizeof(ask_val));
+      /* Recompute ak with negated ask */
+      bn_read_le(keys->ask, &ask_scalar);
+      redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
+      pallas_point_serialize(&ak_point, keys->ak);
     }
-    memzero(&ask_test, sizeof(ask_test));
-    memzero(&ak_test, sizeof(ak_test));
+
+    memzero(&ask_scalar, sizeof(ask_scalar));
+    memzero(&ak_point, sizeof(ak_point));
   }
 
   /* nk = ToBase(PRF^expand(sk, [0x07])) */

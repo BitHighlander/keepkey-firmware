@@ -189,14 +189,37 @@ static void pallas_scalar_mult(const bignum256 *k, const curve_point *G,
  * Format: little-endian x-coordinate, sign of y in bit 255.
  */
 static void pallas_point_serialize(const curve_point *P, uint8_t out[32]) {
-  bignum256 x_copy;
-  bn_copy(&P->x, &x_copy);
-  bn_mod(&x_copy, &pallas_prime);
-  bn_write_le(&x_copy, out);
-  if (bn_is_odd(&P->y)) {
+  /* Pallas prime p in LE bytes — hardcoded to avoid bn_write_le roundtrip
+   * issues where the bignum internal representation produces values >= p. */
+  static const uint8_t pallas_p_le[32] = {
+    0x01,0x00,0x00,0x00,0xed,0x30,0x2d,0x99,
+    0x1b,0xf9,0x4c,0x09,0xfc,0x98,0x46,0x22,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,
+  };
+
+  /* Serialize x-coord to LE bytes and reduce mod p */
+  bignum256 tmp;
+  bn_copy(&P->x, &tmp);
+  bn_write_le(&tmp, out);
+  { int c=0; for(int i=31;i>=0;i--){if(out[i]>pallas_p_le[i]){c=1;break;}if(out[i]<pallas_p_le[i]){c=-1;break;}}
+    while(c>=0){uint16_t b=0;for(int i=0;i<32;i++){uint16_t d=(uint16_t)out[i]-(uint16_t)pallas_p_le[i]-b;out[i]=(uint8_t)(d&0xFF);b=(d>>15)&1;}
+    c=0;for(int i=31;i>=0;i--){if(out[i]>pallas_p_le[i]){c=1;break;}if(out[i]<pallas_p_le[i]){c=-1;break;}}} }
+
+  /* Check y parity using serialized bytes (bn_is_odd is unreliable for
+   * Pallas-sized bignums — the internal limb representation may not be
+   * fully reduced, causing bn_is_odd to return wrong results). */
+  uint8_t y_bytes[32];
+  bn_copy(&P->y, &tmp);
+  bn_write_le(&tmp, y_bytes);
+  { int c=0; for(int i=31;i>=0;i--){if(y_bytes[i]>pallas_p_le[i]){c=1;break;}if(y_bytes[i]<pallas_p_le[i]){c=-1;break;}}
+    while(c>=0){uint16_t b=0;for(int i=0;i<32;i++){uint16_t d=(uint16_t)y_bytes[i]-(uint16_t)pallas_p_le[i]-b;y_bytes[i]=(uint8_t)(d&0xFF);b=(d>>15)&1;}
+    c=0;for(int i=31;i>=0;i--){if(y_bytes[i]>pallas_p_le[i]){c=1;break;}if(y_bytes[i]<pallas_p_le[i]){c=-1;break;}}} }
+  if (y_bytes[0] & 1) {
     out[31] |= 0x80;
   }
-  memzero(&x_copy, sizeof(x_copy));
+  memzero(&tmp, sizeof(tmp));
+  memzero(y_bytes, sizeof(y_bytes));
 }
 
 /*
