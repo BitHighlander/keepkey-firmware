@@ -125,6 +125,10 @@ static void to_scalar(const uint8_t input[64], uint8_t output[32]) {
 
   /* result = result + lo mod q */
   pallas_add_mod_q(&result, &lo);
+  /* bn_addmod may not fully reduce — ensure result < q */
+  pallas_mod_q(&result);
+  pallas_mod_q(&result);
+  pallas_mod_q(&result);
 
   bn_write_le(&result, output);
 
