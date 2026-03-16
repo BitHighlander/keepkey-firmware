@@ -272,13 +272,21 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
     bn_read_le(keys->ask, &ask_scalar);
     redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
 
-    /* Serialize y to bytes and check LSB for parity.
-     * Reduce mod p first — unreduced bignum can give wrong parity. */
+    /* Serialize y to bytes, reduce mod p, check parity.
+     * Use hardcoded p to avoid any bignum roundtrip issues. */
     {
+      static const uint8_t pp[32] = {
+        0x01,0x00,0x00,0x00,0xed,0x30,0x2d,0x99,
+        0x1b,0xf9,0x4c,0x09,0xfc,0x98,0x46,0x22,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,
+      };
       bignum256 y_tmp;
       bn_copy(&ak_point.y, &y_tmp);
-      force_reduce_le(&y_tmp, &pallas_prime);
       bn_write_le(&y_tmp, y_bytes);
+      { int c=0; for(int i=31;i>=0;i--){if(y_bytes[i]>pp[i]){c=1;break;}if(y_bytes[i]<pp[i]){c=-1;break;}}
+        while(c>=0){uint16_t b=0;for(int i=0;i<32;i++){uint16_t d=(uint16_t)y_bytes[i]-(uint16_t)pp[i]-b;y_bytes[i]=(uint8_t)(d&0xFF);b=(d>>15)&1;}
+        c=0;for(int i=31;i>=0;i--){if(y_bytes[i]>pp[i]){c=1;break;}if(y_bytes[i]<pp[i]){c=-1;break;}}} }
       memzero(&y_tmp, sizeof(y_tmp));
     }
 
@@ -299,25 +307,35 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
       redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
     }
 
-    /* Serialize ak: x-coord LE with sign bit from y parity.
-     * CRITICAL: reduce x and y mod p after bn_write_le — the bignum
-     * internal representation can produce values >= p. */
+    /* Serialize ak x-coord and y-coord to LE bytes, then reduce mod p
+     * using hardcoded Pallas prime bytes (avoids bn_write_le roundtrip on p). */
     {
-      bignum256 x_tmp;
-      bn_copy(&ak_point.x, &x_tmp);
-      force_reduce_le(&x_tmp, &pallas_prime);
-      bn_write_le(&x_tmp, keys->ak);
-      memzero(&x_tmp, sizeof(x_tmp));
-    }
-    {
-      bignum256 y_tmp;
-      bn_copy(&ak_point.y, &y_tmp);
-      force_reduce_le(&y_tmp, &pallas_prime);
-      bn_write_le(&y_tmp, y_bytes);
-      memzero(&y_tmp, sizeof(y_tmp));
-    }
-    if (y_bytes[0] & 1) {
-      keys->ak[31] |= 0x80;
+      static const uint8_t pp[32] = {
+        0x01,0x00,0x00,0x00,0xed,0x30,0x2d,0x99,
+        0x1b,0xf9,0x4c,0x09,0xfc,0x98,0x46,0x22,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x40,
+      };
+      bignum256 tmp;
+
+      /* x-coord → bytes → reduce mod p */
+      bn_copy(&ak_point.x, &tmp);
+      bn_write_le(&tmp, keys->ak);
+      { int c=0; for(int i=31;i>=0;i--){if(keys->ak[i]>pp[i]){c=1;break;}if(keys->ak[i]<pp[i]){c=-1;break;}}
+        while(c>=0){uint16_t b=0;for(int i=0;i<32;i++){uint16_t d=(uint16_t)keys->ak[i]-(uint16_t)pp[i]-b;keys->ak[i]=(uint8_t)(d&0xFF);b=(d>>15)&1;}
+        c=0;for(int i=31;i>=0;i--){if(keys->ak[i]>pp[i]){c=1;break;}if(keys->ak[i]<pp[i]){c=-1;break;}}} }
+
+      /* y-coord → bytes → reduce mod p → check parity */
+      bn_copy(&ak_point.y, &tmp);
+      bn_write_le(&tmp, y_bytes);
+      { int c=0; for(int i=31;i>=0;i--){if(y_bytes[i]>pp[i]){c=1;break;}if(y_bytes[i]<pp[i]){c=-1;break;}}
+        while(c>=0){uint16_t b=0;for(int i=0;i<32;i++){uint16_t d=(uint16_t)y_bytes[i]-(uint16_t)pp[i]-b;y_bytes[i]=(uint8_t)(d&0xFF);b=(d>>15)&1;}
+        c=0;for(int i=31;i>=0;i--){if(y_bytes[i]>pp[i]){c=1;break;}if(y_bytes[i]<pp[i]){c=-1;break;}}} }
+
+      if (y_bytes[0] & 1) {
+        keys->ak[31] |= 0x80;
+      }
+      memzero(&tmp, sizeof(tmp));
     }
 
     memzero(&ask_scalar, sizeof(ask_scalar));
