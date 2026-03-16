@@ -272,10 +272,12 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
     bn_read_le(keys->ask, &ask_scalar);
     redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
 
-    /* Serialize y to bytes and check LSB for parity */
+    /* Serialize y to bytes and check LSB for parity.
+     * Reduce mod p first — unreduced bignum can give wrong parity. */
     {
       bignum256 y_tmp;
       bn_copy(&ak_point.y, &y_tmp);
+      force_reduce_le(&y_tmp, &pallas_prime);
       bn_write_le(&y_tmp, y_bytes);
       memzero(&y_tmp, sizeof(y_tmp));
     }
@@ -297,17 +299,20 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
       redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
     }
 
-    /* Serialize ak: x-coord LE with sign bit from y parity */
+    /* Serialize ak: x-coord LE with sign bit from y parity.
+     * CRITICAL: reduce x and y mod p after bn_write_le — the bignum
+     * internal representation can produce values >= p. */
     {
       bignum256 x_tmp;
       bn_copy(&ak_point.x, &x_tmp);
+      force_reduce_le(&x_tmp, &pallas_prime);
       bn_write_le(&x_tmp, keys->ak);
       memzero(&x_tmp, sizeof(x_tmp));
     }
-    /* Check y parity of final point */
     {
       bignum256 y_tmp;
       bn_copy(&ak_point.y, &y_tmp);
+      force_reduce_le(&y_tmp, &pallas_prime);
       bn_write_le(&y_tmp, y_bytes);
       memzero(&y_tmp, sizeof(y_tmp));
     }
