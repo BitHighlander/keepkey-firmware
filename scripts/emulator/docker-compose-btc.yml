@@ -17,6 +17,7 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/python-keepkey.Dockerfile'
+    entrypoint: ['/bin/sh', './scripts/emulator/python-keepkey-tests-btconly.sh']
     volumes:
       - test-reports:/kkemu/test-reports:rw
     networks:
