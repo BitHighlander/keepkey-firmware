@@ -283,6 +283,27 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
     memzero(&ak_test, sizeof(ak_test));
   }
 
+  /* Compute and store ak = [ask]*G (after potential negation).
+   * This is the canonical ak with sign bit = 0. Store it so the FVK
+   * export doesn't need to re-derive it (avoids bignum roundtrip issues). */
+  {
+    bignum256 final_ask;
+    bn_read_le(keys->ask, &final_ask);
+    curve_point ak_final;
+    redpallas_scalar_mult_spendauth_G(&final_ask, &ak_final);
+
+    bignum256 x_copy;
+    bn_copy(&ak_final.x, &x_copy);
+    bn_write_le(&x_copy, keys->ak);
+    if (bn_is_odd(&ak_final.y)) {
+      keys->ak[31] |= 0x80;
+    }
+
+    memzero(&final_ask, sizeof(final_ask));
+    memzero(&ak_final, sizeof(ak_final));
+    memzero(&x_copy, sizeof(x_copy));
+  }
+
   /* nk = ToBase(PRF^expand(sk, [0x07])) */
   uint8_t t_nk = 0x07;
   prf_expand(sk, &t_nk, 1, expanded);
