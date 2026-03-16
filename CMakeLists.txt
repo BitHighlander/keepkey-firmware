@@ -6,8 +6,8 @@ project(
   LANGUAGES C CXX ASM)
 
 set(BOOTLOADER_MAJOR_VERSION 2)
-set(BOOTLOADER_MINOR_VERSION 1)
-set(BOOTLOADER_PATCH_VERSION 5)
+set(BOOTLOADER_MINOR_VERSION 2)
+set(BOOTLOADER_PATCH_VERSION 0)
 
 option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
@@ -112,6 +112,9 @@ endif()
 
 if("${COIN_SUPPORT}" STREQUAL "BTC")
   add_definitions(-DBITCOIN_ONLY)
+  add_definitions(-DFIRMWARE_VARIANT_ID=0x01)
+else()
+  add_definitions(-DFIRMWARE_VARIANT_ID=0x00)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")

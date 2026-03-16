@@ -52,6 +52,68 @@ static uint8_t firmware_hash[SHA256_DIGEST_LENGTH];
 static bool old_firmware_was_unsigned;
 extern bool reset_msg_stack;
 
+/*
+ * Variant gating state — saved before firmware erase, checked after upload.
+ *
+ * Rules:
+ *   1. Legacy firmware (no KKEX magic) → accept anything (no enforcement)
+ *   2. btconly → btconly only (one-way gate, prevents multi-chain exploits)
+ *   3. Version must be >= current (downgrade protection)
+ */
+static bool     prev_has_ext = false;
+static uint8_t  prev_variant_id = 0;
+static uint8_t  prev_ver_major = 0;
+static uint8_t  prev_ver_minor = 0;
+static uint8_t  prev_ver_patch = 0;
+
+/* Save current firmware's variant info before erase wipes it. */
+static void save_variant_info(void) {
+  const fw_meta_ext_t *ext = FLASH_META_EXT;
+  if (magic_ok() && fw_meta_ext_valid(ext)) {
+    prev_has_ext    = true;
+    prev_variant_id = ext->variant_id;
+    prev_ver_major  = ext->ver_major;
+    prev_ver_minor  = ext->ver_minor;
+    prev_ver_patch  = ext->ver_patch;
+  } else {
+    prev_has_ext = false;
+  }
+}
+
+/*
+ * Check new firmware's variant against saved state.
+ * Called after upload is complete and data is in flash (but magic not yet armed).
+ */
+static bool check_variant_gate(void) {
+  /* If previous firmware had no extended header, allow anything. */
+  if (!prev_has_ext) return true;
+
+  /* Read new firmware's extended metadata from flash. */
+  const fw_meta_ext_t *new_ext = FLASH_META_EXT;
+
+  /* New firmware has no extended header → allow (forward compat). */
+  if (!fw_meta_ext_valid(new_ext)) return true;
+
+  /* VARIANT GATE: btconly can only upgrade to btconly */
+  if (prev_variant_id == FW_VARIANT_BTCONLY &&
+      new_ext->variant_id != FW_VARIANT_BTCONLY) {
+    return false;
+  }
+
+  /* VERSION GATE: new version must be >= old version */
+  uint32_t old_ver = ((uint32_t)prev_ver_major << 16) |
+                     ((uint32_t)prev_ver_minor << 8) |
+                     (uint32_t)prev_ver_patch;
+  uint32_t new_ver = ((uint32_t)new_ext->ver_major << 16) |
+                     ((uint32_t)new_ext->ver_minor << 8) |
+                     (uint32_t)new_ext->ver_patch;
+  if (new_ver < old_ver) {
+    return false;
+  }
+
+  return true;
+}
+
 static const MessagesMap_t MessagesMap[] = {
     /* Normal Messages */
     MSG_IN(MessageType_MessageType_Initialize, Initialize,
@@ -219,6 +281,14 @@ bool usb_flash_firmware(void) {
 
         /* Check CRC of firmware that was flashed */
         if (check_firmware_hash()) {
+          /* Enforce variant gating + downgrade protection. */
+          if (!check_variant_gate()) {
+            flash_lock();
+            send_failure(FailureType_Failure_FirmwareError,
+                         "Firmware variant/version rejected");
+            return false;
+          }
+
           /* Fingerprint has been verified.  Install "KPKY" magic in meta header
            */
           if (flash_write(FLASH_APP, 0, META_MAGIC_SIZE,
@@ -432,6 +502,9 @@ void handler_erase(FirmwareErase *msg) {
                  "Firmware erase cancelled");
     return;
   }
+
+  /* Save variant + version info before erasing flash sectors. */
+  save_variant_info();
 
   layoutProgress("Preparing for upgrade", 0);
 

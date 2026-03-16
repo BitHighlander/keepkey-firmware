@@ -158,6 +158,17 @@ extern uint8_t *emulator_flash_base;
 
 #define META_FLAGS (*(uint32_t const *)FLASH_META_FLAGS)
 
+/* Pointer to the extended metadata in flash (inside the reserved area) */
+#define FLASH_META_EXT ((const fw_meta_ext_t *)FLASH_META_RESERVE)
+
+/*
+ * fw_meta_ext_valid() - Check whether flash contains extended metadata.
+ * Returns true if the first 4 bytes of the reserved area are "KKEX".
+ */
+static inline bool fw_meta_ext_valid(const fw_meta_ext_t *ext) {
+  return ext->ext_magic[0] == 'K' && ext->ext_magic[1] == 'K' &&
+         ext->ext_magic[2] == 'E' && ext->ext_magic[3] == 'X';
+}
 
 /* Misc Info. */
 #define FLASH_BOOTSTRAP_SECTOR 0
@@ -202,6 +213,44 @@ extern uint8_t *emulator_flash_base;
 #define STORAGE_PROTECT_DISABLED 0x5ac35ac3
 #define STORAGE_PROTECT_ENABLED 0x00000000
 
+/*
+ * Firmware variant IDs — embedded in the header's reserved area.
+ * Once a device runs btconly firmware with a variant-aware bootloader,
+ * it can only accept btconly upgrades (one-way gate).
+ */
+#define FW_VARIANT_KEEPKEY  0x00  /* multi-chain (default / legacy) */
+#define FW_VARIANT_BTCONLY  0x01  /* bitcoin-only */
+
+/* Magic bytes marking an extended metadata header (inside rsv[]) */
+#define META_EXT_MAGIC "KKEX"
+#define META_EXT_MAGIC_SIZE 4
+
+/*
+ * Extended firmware metadata — occupies the first 8 bytes of rsv[48].
+ *
+ * Layout (offset from start of rsv[]):
+ *   0x00  4B  ext_magic    "KKEX" — marks header as extended
+ *   0x04  1B  variant_id   FW_VARIANT_KEEPKEY or FW_VARIANT_BTCONLY
+ *   0x05  1B  ver_major
+ *   0x06  1B  ver_minor
+ *   0x07  1B  ver_patch
+ *   0x08  40B (remaining reserved)
+ *
+ * Legacy firmware has all-zeros here; bootloader treats that as
+ * "no variant enforcement" (accepts any signed firmware).
+ */
+typedef struct {
+  uint8_t ext_magic[4];   /* "KKEX" */
+  uint8_t variant_id;
+  uint8_t ver_major;
+  uint8_t ver_minor;
+  uint8_t ver_patch;
+  uint8_t rsv_remaining[40];
+} fw_meta_ext_t;
+
+_Static_assert(sizeof(fw_meta_ext_t) == 48,
+               "fw_meta_ext_t must fit in the 48-byte reserved area");
+
 /* Application Meta format */
 typedef struct {
   uint32_t magic;
@@ -211,7 +260,10 @@ typedef struct {
   uint8_t sig_index3;
   uint8_t sig_flag;
   uint32_t meta_flags;
-  uint8_t rsv[48];
+  union {
+    uint8_t rsv[48];
+    fw_meta_ext_t ext;
+  };
   uint8_t sig1[64];
   uint8_t sig2[64];
   uint8_t sig3[64];
