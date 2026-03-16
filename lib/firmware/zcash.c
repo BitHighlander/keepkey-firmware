@@ -258,28 +258,30 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
 
   /*
    * Zcash spec (§ 4.2.3): Compute ak = [ask]*G_spendauth.
-   * Serialize ak. If sign bit is set (odd y), negate ask and recompute.
-   * Check the SERIALIZED byte (not bignum internal state).
+   * If y is odd, negate ask so ak has even y (sign bit = 0).
+   *
+   * Use serialized y bytes to check parity — bn_is_odd() is unreliable
+   * for Pallas-sized bignum values in trezor-crypto.
    */
   {
     bignum256 ask_scalar;
     curve_point ak_point;
-    bignum256 x_copy;
+    uint8_t y_bytes[32];
 
-    /* First pass: compute ak from current ask */
+    /* Compute [ask]*G */
     bn_read_le(keys->ask, &ask_scalar);
     redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
-    bn_copy(&ak_point.x, &x_copy);
-    bn_write_le(&x_copy, keys->ak);
-    /* Set sign bit based on y parity */
-    keys->ak[31] &= 0x7f;  /* clear first */
-    if (bn_is_odd(&ak_point.y)) {
-      keys->ak[31] |= 0x80;
+
+    /* Serialize y to bytes and check LSB for parity */
+    {
+      bignum256 y_tmp;
+      bn_copy(&ak_point.y, &y_tmp);
+      bn_write_le(&y_tmp, y_bytes);
+      memzero(&y_tmp, sizeof(y_tmp));
     }
 
-    /* If sign bit is set, negate ask and recompute */
-    if (keys->ak[31] & 0x80) {
-      /* ask = order - ask (byte-level subtraction) */
+    if (y_bytes[0] & 1) {
+      /* y is odd — negate ask and recompute */
       uint8_t order_bytes[32];
       bn_write_le(&pallas_order, order_bytes);
       uint16_t borrow = 0;
@@ -290,23 +292,32 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
       }
       memzero(order_bytes, sizeof(order_bytes));
 
-      /* Second pass: recompute ak with negated ask */
+      /* Recompute [negated_ask]*G */
       bn_read_le(keys->ask, &ask_scalar);
       redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
-      bn_copy(&ak_point.x, &x_copy);
-      bn_write_le(&x_copy, keys->ak);
-      keys->ak[31] &= 0x7f;
-      if (bn_is_odd(&ak_point.y)) {
-        keys->ak[31] |= 0x80;
-      }
-      /* After negation, sign bit MUST be 0. If still set, something is wrong
-       * with the curve arithmetic — clear it anyway for safety. */
-      keys->ak[31] &= 0x7f;
+    }
+
+    /* Serialize ak: x-coord LE with sign bit from y parity */
+    {
+      bignum256 x_tmp;
+      bn_copy(&ak_point.x, &x_tmp);
+      bn_write_le(&x_tmp, keys->ak);
+      memzero(&x_tmp, sizeof(x_tmp));
+    }
+    /* Check y parity of final point */
+    {
+      bignum256 y_tmp;
+      bn_copy(&ak_point.y, &y_tmp);
+      bn_write_le(&y_tmp, y_bytes);
+      memzero(&y_tmp, sizeof(y_tmp));
+    }
+    if (y_bytes[0] & 1) {
+      keys->ak[31] |= 0x80;
     }
 
     memzero(&ask_scalar, sizeof(ask_scalar));
     memzero(&ak_point, sizeof(ak_point));
-    memzero(&x_copy, sizeof(x_copy));
+    memzero(y_bytes, sizeof(y_bytes));
   }
 
   /* nk = ToBase(PRF^expand(sk, [0x07])) */
