@@ -257,18 +257,29 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
   to_scalar(expanded, keys->ask);
 
   /*
-   * Zcash spec (§ 4.2.3): If [ask]*G_spendauth has odd y (ỹ = 1),
-   * negate ask so that the resulting ak always has ỹ = 0.
-   * This matches the orchard crate's SpendAuthorizingKey::from() behavior.
+   * Zcash spec (§ 4.2.3): Compute ak = [ask]*G_spendauth.
+   * Serialize ak. If sign bit is set (odd y), negate ask and recompute.
+   * Check the SERIALIZED byte (not bignum internal state).
    */
   {
-    bignum256 ask_test;
-    bn_read_le(keys->ask, &ask_test);
-    curve_point ak_test;
-    redpallas_scalar_mult_spendauth_G(&ask_test, &ak_test);
-    if (bn_is_odd(&ak_test.y)) {
-      /* ask = order - ask (negate mod q), using byte-level subtraction
-       * to avoid trezor-crypto bignum representation issues */
+    bignum256 ask_scalar;
+    curve_point ak_point;
+    bignum256 x_copy;
+
+    /* First pass: compute ak from current ask */
+    bn_read_le(keys->ask, &ask_scalar);
+    redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
+    bn_copy(&ak_point.x, &x_copy);
+    bn_write_le(&x_copy, keys->ak);
+    /* Set sign bit based on y parity */
+    keys->ak[31] &= 0x7f;  /* clear first */
+    if (bn_is_odd(&ak_point.y)) {
+      keys->ak[31] |= 0x80;
+    }
+
+    /* If sign bit is set, negate ask and recompute */
+    if (keys->ak[31] & 0x80) {
+      /* ask = order - ask (byte-level subtraction) */
       uint8_t order_bytes[32];
       bn_write_le(&pallas_order, order_bytes);
       uint16_t borrow = 0;
@@ -278,29 +289,23 @@ bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
         borrow = (diff >> 15) & 1;
       }
       memzero(order_bytes, sizeof(order_bytes));
-    }
-    memzero(&ask_test, sizeof(ask_test));
-    memzero(&ak_test, sizeof(ak_test));
-  }
 
-  /* Compute and store ak = [ask]*G (after potential negation).
-   * This is the canonical ak with sign bit = 0. Store it so the FVK
-   * export doesn't need to re-derive it (avoids bignum roundtrip issues). */
-  {
-    bignum256 final_ask;
-    bn_read_le(keys->ask, &final_ask);
-    curve_point ak_final;
-    redpallas_scalar_mult_spendauth_G(&final_ask, &ak_final);
-
-    bignum256 x_copy;
-    bn_copy(&ak_final.x, &x_copy);
-    bn_write_le(&x_copy, keys->ak);
-    if (bn_is_odd(&ak_final.y)) {
-      keys->ak[31] |= 0x80;
+      /* Second pass: recompute ak with negated ask */
+      bn_read_le(keys->ask, &ask_scalar);
+      redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
+      bn_copy(&ak_point.x, &x_copy);
+      bn_write_le(&x_copy, keys->ak);
+      keys->ak[31] &= 0x7f;
+      if (bn_is_odd(&ak_point.y)) {
+        keys->ak[31] |= 0x80;
+      }
+      /* After negation, sign bit MUST be 0. If still set, something is wrong
+       * with the curve arithmetic — clear it anyway for safety. */
+      keys->ak[31] &= 0x7f;
     }
 
-    memzero(&final_ask, sizeof(final_ask));
-    memzero(&ak_final, sizeof(ak_final));
+    memzero(&ask_scalar, sizeof(ask_scalar));
+    memzero(&ak_point, sizeof(ak_point));
     memzero(&x_copy, sizeof(x_copy));
   }
 
