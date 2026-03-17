@@ -131,6 +131,37 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
             return;
         }
 
+        /* Show memo/data if present (max 256 bytes, matching Trezor) */
+        if (msg->has_data && msg->data.size > 0) {
+            if (msg->data.size > 256) {
+                memzero(node, sizeof(*node));
+                fsm_sendFailure(FailureType_Failure_SyntaxError,
+                                _("Data/memo field too long (max 256)"));
+                layoutHome();
+                return;
+            }
+            /* Display as hex since memo may not be valid UTF-8 */
+            char memo_hex[64];
+            size_t show_len = msg->data.size < 24 ? msg->data.size : 24;
+            for (size_t i = 0; i < show_len; i++) {
+                snprintf(memo_hex + i * 2, 3, "%02x", msg->data.bytes[i]);
+            }
+            if (msg->data.size > 24) {
+                snprintf(memo_hex + show_len * 2,
+                         sizeof(memo_hex) - show_len * 2, "...");
+            }
+            if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                         "Memo",
+                         "Note: %s (%zu bytes)", memo_hex,
+                         msg->data.size)) {
+                memzero(node, sizeof(*node));
+                fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                                _("Signing cancelled"));
+                layoutHome();
+                return;
+            }
+        }
+
         if (msg->has_transfer) {
             /* HIGH-3: Validate to_address BEFORE displaying to user */
             uint8_t validate_raw[TRON_ADDRESS_SIZE];
@@ -158,6 +189,17 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
                 return;
             }
         } else if (msg->has_trigger_smart) {
+            /* Validate contract_address BEFORE any display */
+            uint8_t contract_validate_raw[TRON_ADDRESS_SIZE];
+            if (!tron_decodeAddress(msg->trigger_smart.contract_address,
+                                    contract_validate_raw)) {
+                memzero(node, sizeof(*node));
+                fsm_sendFailure(FailureType_Failure_SyntaxError,
+                                _("Invalid TRON contract address"));
+                layoutHome();
+                return;
+            }
+
             /* Smart contract call — try to decode TRC-20 transfer */
             uint8_t trc20_to[TRON_ADDRESS_SIZE];
             uint8_t trc20_amount[32];

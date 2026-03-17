@@ -219,19 +219,18 @@ bool tron_decodeTRC20Transfer(const uint8_t *data, size_t data_len,
         return false;
     }
 
-    /* Address is in bytes 4..35 — last 20 bytes are the address,
-     * first 11 bytes of the 32-byte word must be zero,
-     * byte 12 (index 15) is the 0x41 TRON prefix. */
+    /* Address is in bytes 4..35 — ABI-encoded as 32-byte word:
+     * 12 leading zero bytes + 20-byte EVM address (no 0x41 prefix).
+     * TRON truncates the mainnet prefix from ABI-encoded addresses.
+     * This matches Trezor's implementation and actual on-chain format. */
     const uint8_t *addr_word = data + 4;
-    for (int i = 0; i < 11; i++) {
+    for (int i = 0; i < 12; i++) {
         if (addr_word[i] != 0) return false;
     }
 
-    /* HIGH-1: Validate the TRON mainnet prefix byte (0x41) */
-    if (addr_word[11] != TRON_MAINNET_PREFIX) return false;
-
-    /* The 21-byte raw TRON address starts at offset 11 in the word */
-    memcpy(to_raw, addr_word + 11, TRON_ADDRESS_SIZE);
+    /* Reconstruct 21-byte raw TRON address: 0x41 prefix + 20-byte EVM addr */
+    to_raw[0] = TRON_MAINNET_PREFIX;
+    memcpy(to_raw + 1, addr_word + 12, 20);
 
     /* Amount is bytes 36..67 */
     memcpy(amount_bytes, data + 36, 32);
@@ -350,10 +349,11 @@ bool tron_serializeRawTransaction(const TronSignTx *msg,
     size_t pos = 0;
 
     /*
-     * Tron Transaction.raw protobuf field numbers:
+     * Tron Transaction.raw protobuf field numbers (must be in order):
      *  1: ref_block_bytes (bytes)
      *  4: ref_block_hash (bytes)   — note: field 4, not 3!
      *  8: expiration (int64)
+     * 10: data (bytes, optional memo/note)
      * 11: contract (repeated Contract, nested)
      * 14: timestamp (int64)
      * 18: fee_limit (int64, optional)
@@ -386,6 +386,13 @@ bool tron_serializeRawTransaction(const TronSignTx *msg,
             return false;
     } else {
         return false;
+    }
+
+    /* Field 10: data (optional memo/note) */
+    if (msg->has_data && msg->data.size > 0) {
+        if (!pb_write_bytes_safe(out, &pos, max_len, 10,
+                                 msg->data.bytes, msg->data.size))
+            return false;
     }
 
     /* Field 11: contract (nested message) */

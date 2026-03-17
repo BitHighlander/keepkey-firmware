@@ -80,16 +80,17 @@ TEST(Tron, FormatAmount) {
 TEST(Tron, DecodeTRC20Transfer) {
     /* ABI: transfer(address,uint256)
      * selector: 0xa9059cbb
-     * address: padded 32 bytes with 0x41 prefix at offset 11
-     * amount: 32 bytes big-endian */
+     * address: 12 zero bytes + 20-byte EVM address (no 0x41 prefix)
+     * amount: 32 bytes big-endian
+     * Matches Trezor reference and actual on-chain format. */
     uint8_t data[68];
     memset(data, 0, sizeof(data));
 
     /* Selector */
     data[0] = 0xa9; data[1] = 0x05; data[2] = 0x9c; data[3] = 0xbb;
 
-    /* Address: 0x41 prefix at byte 15, then 20 bytes of address */
-    data[15] = 0x41;
+    /* Address: 12 zero bytes (4..15), then 20-byte EVM address (16..35) */
+    /* No 0x41 prefix in ABI data — it's added by the decoder */
     for (int i = 0; i < 20; i++) data[16 + i] = (uint8_t)(0x10 + i);
 
     /* Amount: 1000000 (0xF4240) in last 3 bytes of 32-byte word */
@@ -103,13 +104,79 @@ TEST(Tron, DecodeTRC20Transfer) {
     ASSERT_TRUE(tron_decodeTRC20Transfer(data, sizeof(data),
                                           to_raw, amount_bytes));
 
-    /* Verify recipient starts with 0x41 */
+    /* Verify recipient starts with 0x41 (added by decoder) */
     EXPECT_EQ(to_raw[0], TRON_MAINNET_PREFIX);
+
+    /* Verify the 20-byte EVM address follows the prefix */
+    for (int i = 0; i < 20; i++) {
+        EXPECT_EQ(to_raw[1 + i], (uint8_t)(0x10 + i));
+    }
 
     /* Verify amount bytes */
     EXPECT_EQ(amount_bytes[29], 0x0F);
     EXPECT_EQ(amount_bytes[30], 0x42);
     EXPECT_EQ(amount_bytes[31], 0x40);
+}
+
+TEST(Tron, DecodeTRC20RejectsOld0x41Format) {
+    /* Verify that the old format with 0x41 embedded in ABI data is rejected.
+     * On-chain, TRON ABI uses standard EVM 20-byte addresses without prefix. */
+    uint8_t data[68];
+    memset(data, 0, sizeof(data));
+
+    /* Selector */
+    data[0] = 0xa9; data[1] = 0x05; data[2] = 0x9c; data[3] = 0xbb;
+
+    /* Old incorrect format: 11 zeros + 0x41 + 20 bytes */
+    data[15] = 0x41;
+    for (int i = 0; i < 20; i++) data[16 + i] = (uint8_t)(0x10 + i);
+
+    uint8_t to_raw[TRON_ADDRESS_SIZE];
+    uint8_t amount_bytes[32];
+
+    /* Should fail: byte 15 (index 11 in addr_word) is 0x41, not 0x00 */
+    EXPECT_FALSE(tron_decodeTRC20Transfer(data, sizeof(data),
+                                           to_raw, amount_bytes));
+}
+
+TEST(Tron, DecodeTRC20WithTrezorVector) {
+    /* Test with actual Trezor test vector:
+     * USDT transfer from Trezor fixtures sign_tx.json
+     * data: a9059cbb000000000000000000000000d093f24888ab06073a4bdffbb8107db1ea9dc0a0
+     *       00000000000000000000000000000000000000000000000000000000013bb450 */
+    uint8_t data[68];
+    const uint8_t hex_data[] = {
+        0xa9, 0x05, 0x9c, 0xbb,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0xd0, 0x93, 0xf2, 0x48,
+        0x88, 0xab, 0x06, 0x07, 0x3a, 0x4b, 0xdf, 0xfb,
+        0xb8, 0x10, 0x7d, 0xb1, 0xea, 0x9d, 0xc0, 0xa0,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x3b, 0xb4, 0x50
+    };
+    memcpy(data, hex_data, 68);
+
+    uint8_t to_raw[TRON_ADDRESS_SIZE];
+    uint8_t amount_bytes[32];
+
+    ASSERT_TRUE(tron_decodeTRC20Transfer(data, sizeof(data),
+                                          to_raw, amount_bytes));
+
+    /* Should have 0x41 prefix (added by decoder) */
+    EXPECT_EQ(to_raw[0], TRON_MAINNET_PREFIX);
+
+    /* Verify EVM address bytes match */
+    EXPECT_EQ(to_raw[1], 0xd0);
+    EXPECT_EQ(to_raw[2], 0x93);
+    EXPECT_EQ(to_raw[20], 0xa0);
+
+    /* Verify amount = 0x013bb450 = 20_726_864 */
+    EXPECT_EQ(amount_bytes[28], 0x01);
+    EXPECT_EQ(amount_bytes[29], 0x3b);
+    EXPECT_EQ(amount_bytes[30], 0xb4);
+    EXPECT_EQ(amount_bytes[31], 0x50);
 }
 
 TEST(Tron, DecodeTRC20RejectsWrongSelector) {
