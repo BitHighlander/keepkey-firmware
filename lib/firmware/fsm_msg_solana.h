@@ -17,17 +17,34 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+/* Helper: Raw base58 encode (no checksum) for Solana pubkeys/addresses.
+ * Uses b58enc() from trezor-crypto, which is the raw base58 encoder.
+ * Solana addresses are raw base58-encoded 32-byte Ed25519 public keys. */
+static bool solana_base58_encode(const uint8_t *data, size_t data_len,
+                                  char *out, size_t *out_len) {
+    return b58enc(out, out_len, data, data_len);
+}
+
 /* Helper: Base58-encode a 32-byte pubkey for display (truncated) */
 static void solana_pubkeyToShort(const uint8_t key[SOL_PUBKEY_SIZE],
                                  char *out, size_t out_len) {
     char full[45];
-    /* Use hex for display since we don't have Solana base58 encoder */
-    snprintf(full, sizeof(full),
-             "%02x%02x%02x%02x...%02x%02x%02x%02x",
-             key[0], key[1], key[2], key[3],
-             key[28], key[29], key[30], key[31]);
-    strncpy(out, full, out_len - 1);
-    out[out_len - 1] = '\0';
+    size_t full_len = sizeof(full);
+    if (solana_base58_encode(key, SOL_PUBKEY_SIZE, full, &full_len)) {
+        /* Truncate: first 4 chars ... last 4 chars */
+        size_t slen = strlen(full);
+        if (slen > 9 && out_len > 10) {
+            snprintf(out, out_len, "%.4s...%.4s", full, full + slen - 4);
+        } else {
+            strncpy(out, full, out_len - 1);
+            out[out_len - 1] = '\0';
+        }
+    } else {
+        /* Fallback to hex if base58 fails */
+        snprintf(out, out_len,
+                 "%02x%02x...%02x%02x",
+                 key[0], key[1], key[30], key[31]);
+    }
 }
 
 /* Confirm a single parsed instruction */
@@ -124,12 +141,13 @@ void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg) {
     if (!node) return;
     hdnode_fill_public_key(node);
 
-    /* Solana address = Base58 of the 32-byte Ed25519 public key.
-     * node->public_key is 33 bytes (0x00 prefix + 32 bytes for Ed25519) */
+    /* Solana address = raw Base58 of the 32-byte Ed25519 public key.
+     * node->public_key is 33 bytes (0x00 prefix + 32 bytes for Ed25519).
+     * Use b58enc() for raw base58 encoding (no checksum). */
     char address[45];
     size_t addr_len = sizeof(address);
-    if (base58_encode(node->public_key + 1, SOL_PUBKEY_SIZE,
-                      address, &addr_len) != 0) {
+    if (solana_base58_encode(node->public_key + 1, SOL_PUBKEY_SIZE,
+                             address, &addr_len)) {
         resp->has_address = true;
         strncpy(resp->address, address, sizeof(resp->address) - 1);
     } else {

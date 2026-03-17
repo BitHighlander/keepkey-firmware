@@ -65,6 +65,9 @@ static int read_compact_u16(const uint8_t *data, size_t len, uint16_t *out) {
     }
 
     if (len < 3) return -1;
+    /* Third byte uses bits 14-15, so only values 0-3 are valid
+     * (max compact-u16 value is 0xFFFF = 65535). */
+    if (data[2] > 3) return -1;
     *out = (uint16_t)((data[0] & 0x7F) | ((data[1] & 0x7F) << 7) |
                        ((uint16_t)data[2] << 14));
     return 3;
@@ -124,10 +127,12 @@ bool solana_parseTx(const uint8_t *raw, size_t raw_len, SolanaParsedTx *tx) {
     pos += n;
 
     if (num_instructions > 8) {
-        tx->num_instructions = 8; /* cap at max we can store */
-    } else {
-        tx->num_instructions = (uint8_t)num_instructions;
+        /* Too many instructions to parse — reject so the caller falls
+         * back to the blind-sign warning path rather than silently
+         * signing instructions the user never saw on-screen. */
+        return false;
     }
+    tx->num_instructions = (uint8_t)num_instructions;
 
     /* Parse each instruction */
     for (uint16_t i = 0; i < num_instructions; i++) {
@@ -147,6 +152,11 @@ bool solana_parseTx(const uint8_t *raw, size_t raw_len, SolanaParsedTx *tx) {
         const uint8_t *acct_indices = raw + pos;
         pos += num_acct_indices;
 
+        /* Bounds-check every account index before we use them */
+        for (uint16_t j = 0; j < num_acct_indices; j++) {
+            if (acct_indices[j] >= num_accounts) return false;
+        }
+
         /* Instruction data */
         uint16_t data_len;
         n = read_compact_u16(raw + pos, raw_len - pos, &data_len);
@@ -156,8 +166,6 @@ bool solana_parseTx(const uint8_t *raw, size_t raw_len, SolanaParsedTx *tx) {
         if (pos + data_len > raw_len) return false;
         const uint8_t *instr_data = raw + pos;
         pos += data_len;
-
-        if (i >= 8) continue; /* skip parsing beyond our buffer */
 
         SolanaParsedInstruction *pi = &tx->instructions[i];
         memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
