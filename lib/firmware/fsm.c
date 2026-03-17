@@ -52,14 +52,20 @@
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
+#if !BITCOIN_ONLY
 #include "keepkey/firmware/ripple.h"
-#include "keepkey/firmware/signing.h"
-#include "keepkey/firmware/signtx_tendermint.h"
-#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/solana.h"
+#endif
+#include "keepkey/firmware/signing.h"
+#if !BITCOIN_ONLY
+#include "keepkey/firmware/signtx_tendermint.h"
+#endif
+#include "keepkey/firmware/storage.h"
+#if !BITCOIN_ONLY
 #include "keepkey/firmware/solana_tx.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
+#endif
 #include "keepkey/firmware/transaction.h"
 #include "keepkey/firmware/txin_check.h"
 #include "keepkey/firmware/u2f.h"
@@ -84,9 +90,9 @@
 #include "messages-eos.pb.h"
 #include "messages-nano.pb.h"
 #include "messages-ripple.pb.h"
+#include "messages-solana.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
-#include "messages-solana.pb.h"
 
 #include <stdio.h>
 
@@ -288,3 +294,4 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
 #include "fsm_msg_solana.h"
+#endif
