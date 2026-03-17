@@ -258,10 +258,9 @@ bool ton_cellHash(const TonCell *cell, uint8_t hash_out[TON_CELL_HASH_SIZE]) {
 /* ------------------------------------------------------------------ */
 
 /* Write variable-length nanoTON amount in "coins" format */
-static void ton_writeCoins(TonBitBuffer *bb, uint64_t amount) {
+static bool ton_writeCoins(TonBitBuffer *bb, uint64_t amount) {
     if (amount == 0) {
-        ton_writeBits(bb, 0, 4); /* len = 0 nibble */
-        return;
+        return ton_writeBits(bb, 0, 4); /* len = 0 nibble */
     }
 
     /* Count bytes needed */
@@ -274,12 +273,14 @@ static void ton_writeCoins(TonBitBuffer *bb, uint64_t amount) {
     }
 
     /* Write length nibble (number of bytes) */
-    ton_writeBits(bb, (uint64_t)nbytes, 4);
+    if (!ton_writeBits(bb, (uint64_t)nbytes, 4)) return false;
 
     /* Write bytes big-endian */
     for (int i = nbytes - 1; i >= 0; i--) {
-        ton_writeBits(bb, bytes[i], 8);
+        if (!ton_writeBits(bb, bytes[i], 8)) return false;
     }
+
+    return true;
 }
 
 bool ton_buildInternalMessage(const TonParsedAddress *dest,
@@ -310,47 +311,47 @@ bool ton_buildInternalMessage(const TonParsedAddress *dest,
      */
 
     /* int_msg_info$0 */
-    ton_writeBits(bb, 0, 1);
+    if (!ton_writeBits(bb, 0, 1)) return false;
 
     /* ihr_disabled = 1 */
-    ton_writeBits(bb, 1, 1);
+    if (!ton_writeBits(bb, 1, 1)) return false;
 
     /* bounce */
-    ton_writeBits(bb, bounce ? 1 : 0, 1);
+    if (!ton_writeBits(bb, bounce ? 1 : 0, 1)) return false;
 
     /* bounced = 0 */
-    ton_writeBits(bb, 0, 1);
+    if (!ton_writeBits(bb, 0, 1)) return false;
 
     /* src = addr_none$00 */
-    ton_writeBits(bb, 0, 2);
+    if (!ton_writeBits(bb, 0, 2)) return false;
 
     /* dest = addr_std$10 + anycast:0 */
-    ton_writeBits(bb, 0b100, 3); /* 10 + 0 */
+    if (!ton_writeBits(bb, 0b100, 3)) return false; /* 10 + 0 */
 
     /* workchain_id: int8 */
-    ton_writeBits(bb, (uint64_t)(uint8_t)dest->workchain, 8);
+    if (!ton_writeBits(bb, (uint64_t)(uint8_t)dest->workchain, 8)) return false;
 
     /* address: bits256 */
-    ton_writeBytes(bb, dest->hash, 32);
+    if (!ton_writeBytes(bb, dest->hash, 32)) return false;
 
     /* value: amount in coins + no other currencies */
-    ton_writeCoins(bb, amount);
-    ton_writeBits(bb, 0, 1); /* empty ExtraCurrencyCollection */
+    if (!ton_writeCoins(bb, amount)) return false;
+    if (!ton_writeBits(bb, 0, 1)) return false; /* empty ExtraCurrencyCollection */
 
     /* ihr_fee = 0 coins */
-    ton_writeCoins(bb, 0);
+    if (!ton_writeCoins(bb, 0)) return false;
 
     /* fwd_fee = 0 coins */
-    ton_writeCoins(bb, 0);
+    if (!ton_writeCoins(bb, 0)) return false;
 
     /* created_lt = 0 */
-    ton_writeBits(bb, 0, 64);
+    if (!ton_writeBits(bb, 0, 64)) return false;
 
     /* created_at = 0 */
-    ton_writeBits(bb, 0, 32);
+    if (!ton_writeBits(bb, 0, 32)) return false;
 
     /* init: Maybe = 0 (no StateInit) */
-    ton_writeBits(bb, 0, 1);
+    if (!ton_writeBits(bb, 0, 1)) return false;
 
     /* body: if comment exists, use inline text
      * For simple transfers with short comments, inline the body */
@@ -359,9 +360,9 @@ bool ton_buildInternalMessage(const TonParsedAddress *dest,
         /* Check if comment fits inline (with 32-bit zero prefix for text op) */
         uint16_t body_bits = 32 + (uint16_t)(clen * 8);
         if (bb->bit_len + 1 + body_bits <= TON_MAX_CELL_BITS) {
-            ton_writeBits(bb, 0, 1); /* inline body */
-            ton_writeBits(bb, 0, 32); /* op = 0 (text comment) */
-            ton_writeBytes(bb, (const uint8_t *)comment, clen);
+            if (!ton_writeBits(bb, 0, 1)) return false; /* inline body */
+            if (!ton_writeBits(bb, 0, 32)) return false; /* op = 0 (text comment) */
+            if (!ton_writeBytes(bb, (const uint8_t *)comment, clen)) return false;
         } else {
             /* Comment too long for inline — put in ref cell */
             /* Reject if comment exceeds single cell bit capacity */
@@ -369,14 +370,15 @@ bool ton_buildInternalMessage(const TonParsedAddress *dest,
                 return false; /* comment exceeds cell bit capacity */
             }
 
-            ton_writeBits(bb, 1, 1); /* body in ref */
+            if (!ton_writeBits(bb, 1, 1)) return false; /* body in ref */
 
             /* Build body cell */
             TonCell body_cell;
             memset(&body_cell, 0, sizeof(body_cell));
             ton_initBitBuffer(&body_cell.bits);
-            ton_writeBits(&body_cell.bits, 0, 32); /* op = 0 */
-            ton_writeBytes(&body_cell.bits, (const uint8_t *)comment, clen);
+            if (!ton_writeBits(&body_cell.bits, 0, 32)) return false; /* op = 0 */
+            if (!ton_writeBytes(&body_cell.bits, (const uint8_t *)comment, clen))
+                return false;
 
             /* Hash body cell and store as ref */
             uint8_t body_hash[TON_CELL_HASH_SIZE];
@@ -389,7 +391,7 @@ bool ton_buildInternalMessage(const TonParsedAddress *dest,
         }
     } else {
         /* No body */
-        ton_writeBits(bb, 0, 1); /* inline empty body */
+        if (!ton_writeBits(bb, 0, 1)) return false; /* inline empty body */
     }
 
     return true;
@@ -420,11 +422,11 @@ bool ton_buildSigningMessage(uint32_t wallet_id,
      *   ref → internal message cell
      */
 
-    ton_writeBits(bb, wallet_id, 32);
-    ton_writeBits(bb, expire_at, 32);
-    ton_writeBits(bb, seqno, 32);
-    ton_writeBits(bb, op, 8);
-    ton_writeBits(bb, mode, 8);
+    if (!ton_writeBits(bb, wallet_id, 32)) return false;
+    if (!ton_writeBits(bb, expire_at, 32)) return false;
+    if (!ton_writeBits(bb, seqno, 32)) return false;
+    if (!ton_writeBits(bb, op, 8)) return false;
+    if (!ton_writeBits(bb, mode, 8)) return false;
 
     /* Add internal message as ref */
     uint8_t msg_hash[TON_CELL_HASH_SIZE];
@@ -476,9 +478,12 @@ bool ton_signTx(const HDNode *node, const TonSignTx *msg, TonSignedTx *resp) {
             return false;
         }
 
-        /* Build internal message */
+        /* Build internal message — use the parsed destination's bounceable flag
+         * as the authority on bounce semantics, NOT the host-supplied msg->bounce.
+         * A malicious host could present a non-bounceable UQ... address but set
+         * msg->bounce=true, causing a bounceable transfer to be signed. */
         TonCell internal_msg;
-        bool bounce = msg->has_bounce ? msg->bounce : true;
+        bool bounce = dest.bounceable;
         const char *comment = (msg->has_comment && msg->comment[0]) ?
                               msg->comment : NULL;
 

@@ -100,6 +100,16 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
         char amount_str[32];
         ton_formatAmount(amount_str, sizeof(amount_str), msg->ton_amount);
 
+        /* Parse destination to extract bounce flag from address */
+        TonParsedAddress dest_parsed;
+        if (!ton_parseDestination(msg->destination, &dest_parsed)) {
+            memzero(node, sizeof(*node));
+            fsm_sendFailure(FailureType_Failure_DataError,
+                            _("Invalid TON destination address"));
+            layoutHome();
+            return;
+        }
+
         /* Truncate destination for display */
         char dest_short[20];
         size_t dlen = strlen(msg->destination);
@@ -116,6 +126,19 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                      "Send TON",
                      "Send %s to %s?", amount_str, dest_short)) {
+            memzero(node, sizeof(*node));
+            fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                            _("Signing cancelled"));
+            layoutHome();
+            return;
+        }
+
+        /* Show bounce status derived from the destination address */
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                     "Address Type",
+                     "%s",
+                     dest_parsed.bounceable ? "Bounceable: Yes"
+                                            : "Non-bounceable address")) {
             memzero(node, sizeof(*node));
             fsm_sendFailure(FailureType_Failure_ActionCancelled,
                             _("Signing cancelled"));
