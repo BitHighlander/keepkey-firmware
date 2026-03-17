@@ -30,38 +30,71 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/*  Protobuf encoding helpers                                         */
+/*  Protobuf encoding helpers — bounded-write variants                 */
+/*                                                                     */
+/*  Every helper checks remaining capacity BEFORE writing.  On failure */
+/*  the buffer is left unchanged and the function returns false.       */
 /* ------------------------------------------------------------------ */
 
-static size_t pb_encode_varint(uint8_t *buf, uint64_t value) {
-    size_t pos = 0;
+/* Compute the encoded size of a varint without writing anything. */
+static size_t pb_varint_size(uint64_t value) {
+    size_t n = 1;
     while (value >= 0x80) {
-        buf[pos++] = (uint8_t)((value & 0x7F) | 0x80);
+        n++;
         value >>= 7;
     }
-    buf[pos++] = (uint8_t)(value & 0x7F);
-    return pos;
+    return n;
 }
 
-static size_t pb_write_tag(uint8_t *buf, uint32_t field, uint32_t wire) {
-    return pb_encode_varint(buf, ((uint64_t)field << 3) | wire);
+/* Encode a varint into buf, checking capacity first.
+ * Returns true on success, advances *pos. */
+static bool pb_encode_varint_safe(uint8_t *buf, size_t *pos, size_t max_len,
+                                  uint64_t value) {
+    size_t need = pb_varint_size(value);
+    if (*pos + need > max_len) return false;
+    while (value >= 0x80) {
+        buf[(*pos)++] = (uint8_t)((value & 0x7F) | 0x80);
+        value >>= 7;
+    }
+    buf[(*pos)++] = (uint8_t)(value & 0x7F);
+    return true;
 }
 
-static size_t pb_write_bytes(uint8_t *buf, uint32_t field,
-                             const uint8_t *data, size_t len) {
-    size_t pos = 0;
-    pos += pb_write_tag(buf + pos, field, 2);
-    pos += pb_encode_varint(buf + pos, len);
-    memcpy(buf + pos, data, len);
-    return pos + len;
+/* Write a protobuf tag (field number + wire type). */
+static bool pb_write_tag_safe(uint8_t *buf, size_t *pos, size_t max_len,
+                              uint32_t field, uint32_t wire) {
+    return pb_encode_varint_safe(buf, pos, max_len,
+                                 ((uint64_t)field << 3) | wire);
 }
 
-static size_t pb_write_varint_field(uint8_t *buf, uint32_t field,
-                                    uint64_t value) {
-    size_t pos = 0;
-    pos += pb_write_tag(buf + pos, field, 0);
-    pos += pb_encode_varint(buf + pos, value);
-    return pos;
+/* Write a length-delimited field (wire type 2): tag + length + data.
+ * Checks total space needed BEFORE touching the buffer. */
+static bool pb_write_bytes_safe(uint8_t *buf, size_t *pos, size_t max_len,
+                                uint32_t field,
+                                const uint8_t *data, size_t len) {
+    size_t tag_size = pb_varint_size(((uint64_t)field << 3) | 2);
+    size_t len_size = pb_varint_size((uint64_t)len);
+    if (*pos + tag_size + len_size + len > max_len) return false;
+
+    if (!pb_write_tag_safe(buf, pos, max_len, field, 2)) return false;
+    if (!pb_encode_varint_safe(buf, pos, max_len, (uint64_t)len)) return false;
+    memcpy(buf + *pos, data, len);
+    *pos += len;
+    return true;
+}
+
+/* Write a varint field (wire type 0): tag + varint value.
+ * Checks total space needed BEFORE touching the buffer. */
+static bool pb_write_varint_field_safe(uint8_t *buf, size_t *pos,
+                                       size_t max_len,
+                                       uint32_t field, uint64_t value) {
+    size_t tag_size = pb_varint_size(((uint64_t)field << 3) | 0);
+    size_t val_size = pb_varint_size(value);
+    if (*pos + tag_size + val_size > max_len) return false;
+
+    if (!pb_write_tag_safe(buf, pos, max_len, field, 0)) return false;
+    if (!pb_encode_varint_safe(buf, pos, max_len, value)) return false;
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -194,9 +227,11 @@ bool tron_decodeTRC20Transfer(const uint8_t *data, size_t data_len,
         if (addr_word[i] != 0) return false;
     }
 
+    /* HIGH-1: Validate the TRON mainnet prefix byte (0x41) */
+    if (addr_word[11] != TRON_MAINNET_PREFIX) return false;
+
     /* The 21-byte raw TRON address starts at offset 11 in the word */
-    to_raw[0] = TRON_MAINNET_PREFIX;
-    memcpy(to_raw + 1, addr_word + 12, 20);
+    memcpy(to_raw, addr_word + 11, TRON_ADDRESS_SIZE);
 
     /* Amount is bytes 36..67 */
     memcpy(amount_bytes, data + 36, 32);
@@ -212,109 +247,101 @@ static bool tron_serializeTransferContract(
     const TronTransferContract *tc,
     const uint8_t *owner_raw,
     uint8_t *buf, size_t *len, size_t max_len) {
-    size_t pos = 0;
 
-    /* Inner contract: TransferContract protobuf
-     * field 1: owner_address (bytes, 21)
-     * field 2: to_address (bytes, 21)
-     * field 3: amount (int64)
-     */
     uint8_t inner[128];
     size_t inner_pos = 0;
 
-    /* owner_address (field 1) */
-    inner_pos += pb_write_bytes(inner + inner_pos, 1,
-                                owner_raw, TRON_ADDRESS_SIZE);
+    if (!pb_write_bytes_safe(inner, &inner_pos, sizeof(inner), 1,
+                             owner_raw, TRON_ADDRESS_SIZE))
+        return false;
 
-    /* to_address (field 2) — decode from Base58 */
     uint8_t to_raw[TRON_ADDRESS_SIZE];
     if (!tron_decodeAddress(tc->to_address, to_raw)) return false;
-    inner_pos += pb_write_bytes(inner + inner_pos, 2,
-                                to_raw, TRON_ADDRESS_SIZE);
+    if (!pb_write_bytes_safe(inner, &inner_pos, sizeof(inner), 2,
+                             to_raw, TRON_ADDRESS_SIZE))
+        return false;
 
-    /* amount (field 3) */
-    inner_pos += pb_write_varint_field(inner + inner_pos, 3, tc->amount);
+    if (!pb_write_varint_field_safe(inner, &inner_pos, sizeof(inner),
+                                    3, tc->amount))
+        return false;
 
-    /* Outer Contract wrapper:
-     * field 1: type (enum ContractType = 1 for TransferContract)
-     * field 2: parameter (Any { type_url, value })
-     */
     uint8_t param[256];
     size_t param_pos = 0;
 
-    /* parameter.type_url (field 1, string) */
-    param_pos += pb_write_bytes(param + param_pos, 1,
-                                (const uint8_t *)TRON_CONTRACT_TRANSFER,
-                                strlen(TRON_CONTRACT_TRANSFER));
+    if (!pb_write_bytes_safe(param, &param_pos, sizeof(param), 1,
+                             (const uint8_t *)TRON_CONTRACT_TRANSFER,
+                             strlen(TRON_CONTRACT_TRANSFER)))
+        return false;
 
-    /* parameter.value (field 2, bytes) */
-    param_pos += pb_write_bytes(param + param_pos, 2, inner, inner_pos);
+    if (!pb_write_bytes_safe(param, &param_pos, sizeof(param), 2,
+                             inner, inner_pos))
+        return false;
 
-    /* Contract.type (field 1, varint = 1) */
-    pos += pb_write_varint_field(buf + pos, 1, 1);
+    size_t pos = 0;
 
-    /* Contract.parameter (field 2, nested message) */
-    pos += pb_write_bytes(buf + pos, 2, param, param_pos);
+    if (!pb_write_varint_field_safe(buf, &pos, max_len, 1, 1))
+        return false;
 
-    if (pos > max_len) return false;
+    if (!pb_write_bytes_safe(buf, &pos, max_len, 2, param, param_pos))
+        return false;
+
     *len = pos;
     return true;
 }
+
 
 static bool tron_serializeTriggerSmartContract(
     const TronTriggerSmartContract *tsc,
     const uint8_t *owner_raw,
     uint8_t *buf, size_t *len, size_t max_len) {
-    size_t pos = 0;
 
-    /* Inner: TriggerSmartContract protobuf
-     * field 1: owner_address (bytes)
-     * field 2: contract_address (bytes)
-     * field 3: call_value (int64, optional)
-     * field 4: data (bytes)
-     */
     uint8_t inner[768];
     size_t inner_pos = 0;
 
-    /* owner_address (field 1) */
-    inner_pos += pb_write_bytes(inner + inner_pos, 1,
-                                owner_raw, TRON_ADDRESS_SIZE);
+    if (!pb_write_bytes_safe(inner, &inner_pos, sizeof(inner), 1,
+                             owner_raw, TRON_ADDRESS_SIZE))
+        return false;
 
-    /* contract_address (field 2) */
     uint8_t contract_raw[TRON_ADDRESS_SIZE];
     if (!tron_decodeAddress(tsc->contract_address, contract_raw)) return false;
-    inner_pos += pb_write_bytes(inner + inner_pos, 2,
-                                contract_raw, TRON_ADDRESS_SIZE);
+    if (!pb_write_bytes_safe(inner, &inner_pos, sizeof(inner), 2,
+                             contract_raw, TRON_ADDRESS_SIZE))
+        return false;
 
-    /* call_value (field 3) */
     if (tsc->has_call_value && tsc->call_value > 0) {
-        inner_pos += pb_write_varint_field(inner + inner_pos, 3,
-                                           tsc->call_value);
+        if (!pb_write_varint_field_safe(inner, &inner_pos, sizeof(inner),
+                                        3, tsc->call_value))
+            return false;
     }
 
-    /* data (field 4) */
     if (tsc->data.size > 0) {
-        inner_pos += pb_write_bytes(inner + inner_pos, 4,
-                                    tsc->data.bytes, tsc->data.size);
+        if (!pb_write_bytes_safe(inner, &inner_pos, sizeof(inner), 4,
+                                 tsc->data.bytes, tsc->data.size))
+            return false;
     }
 
-    /* Outer wrapper */
     uint8_t param[900];
     size_t param_pos = 0;
 
-    param_pos += pb_write_bytes(param + param_pos, 1,
-                                (const uint8_t *)TRON_CONTRACT_TRIGGER_SMART,
-                                strlen(TRON_CONTRACT_TRIGGER_SMART));
-    param_pos += pb_write_bytes(param + param_pos, 2, inner, inner_pos);
+    if (!pb_write_bytes_safe(param, &param_pos, sizeof(param), 1,
+                             (const uint8_t *)TRON_CONTRACT_TRIGGER_SMART,
+                             strlen(TRON_CONTRACT_TRIGGER_SMART)))
+        return false;
+    if (!pb_write_bytes_safe(param, &param_pos, sizeof(param), 2,
+                             inner, inner_pos))
+        return false;
 
-    /* Contract.type = 31 (TriggerSmartContract) */
-    pos += pb_write_varint_field(buf + pos, 1, 31);
-    pos += pb_write_bytes(buf + pos, 2, param, param_pos);
+    size_t pos = 0;
 
-    if (pos > max_len) return false;
+    if (!pb_write_varint_field_safe(buf, &pos, max_len, 1, 31))
+        return false;
+    if (!pb_write_bytes_safe(buf, &pos, max_len, 2, param, param_pos))
+        return false;
+
     *len = pos;
     return true;
 }
+
 
 bool tron_serializeRawTransaction(const TronSignTx *msg,
                                   const uint8_t *owner_raw,
@@ -334,25 +361,29 @@ bool tron_serializeRawTransaction(const TronSignTx *msg,
 
     /* Field 1: ref_block_bytes */
     if (msg->has_ref_block_bytes && msg->ref_block_bytes.size == 2) {
-        pos += pb_write_bytes(out + pos, 1,
-                              msg->ref_block_bytes.bytes,
-                              msg->ref_block_bytes.size);
+        if (!pb_write_bytes_safe(out, &pos, max_len, 1,
+                                 msg->ref_block_bytes.bytes,
+                                 msg->ref_block_bytes.size))
+            return false;
     } else {
         return false;
     }
 
     /* Field 4: ref_block_hash */
     if (msg->has_ref_block_hash && msg->ref_block_hash.size == 8) {
-        pos += pb_write_bytes(out + pos, 4,
-                              msg->ref_block_hash.bytes,
-                              msg->ref_block_hash.size);
+        if (!pb_write_bytes_safe(out, &pos, max_len, 4,
+                                 msg->ref_block_hash.bytes,
+                                 msg->ref_block_hash.size))
+            return false;
     } else {
         return false;
     }
 
     /* Field 8: expiration */
     if (msg->has_expiration) {
-        pos += pb_write_varint_field(out + pos, 8, msg->expiration);
+        if (!pb_write_varint_field_safe(out, &pos, max_len, 8,
+                                        msg->expiration))
+            return false;
     } else {
         return false;
     }
@@ -377,19 +408,24 @@ bool tron_serializeRawTransaction(const TronSignTx *msg,
         return false;
     }
 
-    pos += pb_write_bytes(out + pos, 11, contract_buf, contract_len);
+    if (!pb_write_bytes_safe(out, &pos, max_len, 11,
+                             contract_buf, contract_len))
+        return false;
 
     /* Field 14: timestamp */
     if (msg->has_timestamp) {
-        pos += pb_write_varint_field(out + pos, 14, msg->timestamp);
+        if (!pb_write_varint_field_safe(out, &pos, max_len, 14,
+                                        msg->timestamp))
+            return false;
     }
 
     /* Field 18: fee_limit */
     if (msg->has_fee_limit && msg->fee_limit > 0) {
-        pos += pb_write_varint_field(out + pos, 18, msg->fee_limit);
+        if (!pb_write_varint_field_safe(out, &pos, max_len, 18,
+                                        msg->fee_limit))
+            return false;
     }
 
-    if (pos > max_len) return false;
     *out_len = pos;
     return true;
 }
@@ -401,14 +437,19 @@ bool tron_serializeRawTransaction(const TronSignTx *msg,
 bool tron_signTx(const HDNode *node, const TronSignTx *msg,
                  TronSignedTx *resp) {
     uint8_t hash[32];
+    uint8_t sig[64];
+    uint8_t pby = 0;
+    bool ok = false;
+
+    memzero(hash, sizeof(hash));
+    memzero(sig, sizeof(sig));
 
     if (msg->has_transfer || msg->has_trigger_smart) {
         /* Structured mode: reconstruct-then-sign */
-        /* Get owner address raw bytes from pubkey */
         uint8_t uncompressed[65];
         if (ecdsa_uncompress_pubkey(&secp256k1, node->public_key,
                                     uncompressed) == 0) {
-            return false;
+            goto cleanup;
         }
         uint8_t keccak[32];
         keccak_256(uncompressed + 1, 64, keccak);
@@ -423,37 +464,40 @@ bool tron_signTx(const HDNode *node, const TronSignTx *msg,
         if (!tron_serializeRawTransaction(msg, owner_raw,
                                           serialized, &serialized_len,
                                           sizeof(serialized))) {
-            return false;
+            memzero(keccak, sizeof(keccak));
+            memzero(owner_raw, sizeof(owner_raw));
+            goto cleanup;
         }
 
-        /* Hash the reconstructed raw_data */
         sha256_Raw(serialized, serialized_len, hash);
 
-        /* Return serialized_tx for host verification */
         resp->has_serialized_tx = true;
         resp->serialized_tx.size = serialized_len;
         memcpy(resp->serialized_tx.bytes, serialized, serialized_len);
 
+        memzero(keccak, sizeof(keccak));
+        memzero(owner_raw, sizeof(owner_raw));
+
     } else if (msg->has_raw_data && msg->raw_data.size > 0) {
-        /* Legacy mode: blind-sign the host-supplied raw_data */
         sha256_Raw(msg->raw_data.bytes, msg->raw_data.size, hash);
     } else {
-        return false;
+        goto cleanup;
     }
 
-    /* ECDSA sign the digest */
-    uint8_t sig[64];
-    uint8_t pby;
     if (ecdsa_sign_digest(&secp256k1, node->private_key, hash,
                           sig, &pby, NULL) != 0) {
-        return false;
+        goto cleanup;
     }
 
-    /* Tron signature format: r(32) + s(32) + v(1) where v = recovery_id */
     resp->has_signature = true;
     resp->signature.size = TRON_SIGNATURE_SIZE;
     memcpy(resp->signature.bytes, sig, 64);
     resp->signature.bytes[64] = pby;
 
-    return true;
+    ok = true;
+
+cleanup:
+    memzero(hash, sizeof(hash));
+    memzero(sig, sizeof(sig));
+    return ok;
 }

@@ -132,6 +132,16 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
         }
 
         if (msg->has_transfer) {
+            /* HIGH-3: Validate to_address BEFORE displaying to user */
+            uint8_t validate_raw[TRON_ADDRESS_SIZE];
+            if (!tron_decodeAddress(msg->transfer.to_address, validate_raw)) {
+                memzero(node, sizeof(*node));
+                fsm_sendFailure(FailureType_Failure_SyntaxError,
+                                _("Invalid TRON recipient address"));
+                layoutHome();
+                return;
+            }
+
             /* TRX Transfer — show verified amount and destination */
             char amount_str[32];
             tron_formatAmount(amount_str, sizeof(amount_str),
