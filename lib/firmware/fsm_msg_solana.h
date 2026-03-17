@@ -191,20 +191,13 @@ void fsm_msgSolanaSignTx(SolanaSignTx *msg) {
     if (!node) return;
     hdnode_fill_public_key(node);
 
-    /* Parse transaction for per-instruction confirmation */
+    /* Classify transaction for verified vs opaque signing UX */
     SolanaParsedTx parsed;
-    bool parse_ok = solana_parseTx(msg->raw_tx.bytes, msg->raw_tx.size,
-                                   &parsed);
+    SolanaTxReview review = solana_inspectTx(msg->raw_tx.bytes,
+                                             msg->raw_tx.size, &parsed);
 
-    if (parse_ok && parsed.num_instructions > 0) {
-        /* Per-instruction confirmation */
-        uint8_t unknown_count = 0;
-        for (uint8_t i = 0; i < parsed.num_instructions; i++) {
-            if (parsed.instructions[i].type == SOL_INSTR_UNKNOWN) {
-                unknown_count++;
-            }
-        }
-
+    if (review == SOL_TX_REVIEW_VERIFIED) {
+        /* Per-instruction confirmation for fully verified messages */
         for (uint8_t i = 0; i < parsed.num_instructions; i++) {
             if (!solana_confirmInstruction(&parsed.instructions[i], msg,
                                            i, parsed.num_instructions)) {
@@ -215,32 +208,24 @@ void fsm_msgSolanaSignTx(SolanaSignTx *msg) {
                 return;
             }
         }
-
-        /* Summary warning if there were unknown instructions */
-        if (unknown_count > 0) {
-            if (!confirm(ButtonRequestType_ButtonRequest_SignTx,
-                         "Warning",
-                         "%d of %d instructions could not be verified.",
-                         unknown_count, parsed.num_instructions)) {
-                memzero(node, sizeof(*node));
-                fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                                _("Signing cancelled"));
-                layoutHome();
-                return;
-            }
-        }
-    } else {
-        /* Parse failed — blind sign with warning */
+    } else if (review == SOL_TX_REVIEW_OPAQUE) {
+        /* Unsupported or opaque message: allow explicit blind-sign only. */
         if (!confirm(ButtonRequestType_ButtonRequest_SignTx,
                      "Blind Sign",
                      "Sign unverified Solana transaction? "
-                     "The device cannot parse the contents.")) {
+                     "The device cannot fully verify the contents.")) {
             memzero(node, sizeof(*node));
             fsm_sendFailure(FailureType_Failure_ActionCancelled,
                             _("Signing cancelled"));
             layoutHome();
             return;
         }
+    } else {
+        memzero(node, sizeof(*node));
+        fsm_sendFailure(FailureType_Failure_DataError,
+                        _("Malformed Solana transaction"));
+        layoutHome();
+        return;
     }
 
     /* Final confirmation */

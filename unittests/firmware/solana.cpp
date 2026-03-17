@@ -71,6 +71,7 @@ TEST(Solana, ParseSystemTransfer) {
     raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
 
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
     ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
     EXPECT_EQ(tx.num_accounts, 3);
@@ -124,6 +125,7 @@ TEST(Solana, ParseMultiInstruction) {
     raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
 
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
     ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
     EXPECT_EQ(tx.num_instructions, 2);
@@ -168,6 +170,7 @@ TEST(Solana, ParseSPLTokenTransfer) {
     raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
 
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
     ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
     EXPECT_EQ(tx.num_instructions, 1);
@@ -198,8 +201,8 @@ TEST(Solana, UnknownProgram) {
     raw[pos++] = 0xDE; raw[pos++] = 0xAD; raw[pos++] = 0xBE; raw[pos++] = 0xEF;
 
     SolanaParsedTx tx;
-    ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
-
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+    ASSERT_FALSE(solana_parseTx(raw, pos, &tx));
     EXPECT_EQ(tx.num_instructions, 1);
     EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 }
@@ -207,6 +210,7 @@ TEST(Solana, UnknownProgram) {
 TEST(Solana, ParseTxTooShort) {
     uint8_t raw[2] = {0, 0};
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, sizeof(raw), &tx), SOL_TX_REVIEW_MALFORMED);
     EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
 }
 
@@ -238,12 +242,14 @@ TEST(Solana, RejectsTrailingBytes) {
 
     /* Verify the base transaction parses OK */
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
     ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
     /* Append trailing garbage */
     raw[pos++] = 0xDE;
     raw[pos++] = 0xAD;
 
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
     EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
@@ -276,6 +282,7 @@ TEST(Solana, RejectsOOBAccountIndex) {
     raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
 
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
     EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
@@ -299,5 +306,13 @@ TEST(Solana, RejectsExcessInstructions) {
     raw[pos++] = 9;
 
     SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
     EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}
+
+TEST(Solana, VersionedMessageIsOpaque) {
+    uint8_t raw[1] = {0x80}; /* Versioned message prefix */
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, sizeof(raw), &tx), SOL_TX_REVIEW_OPAQUE);
+    EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
 }
