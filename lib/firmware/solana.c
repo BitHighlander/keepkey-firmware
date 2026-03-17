@@ -38,12 +38,52 @@ const uint8_t SOL_TOKEN_PROGRAM[SOL_PUBKEY_SIZE] = {
     0x3a, 0x8c, 0xf5, 0x85, 0x7e, 0xff, 0x00, 0xa9
 };
 
+/* TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb */
+const uint8_t SOL_TOKEN_2022_PROGRAM[SOL_PUBKEY_SIZE] = {
+    0x06, 0xdd, 0xf6, 0xe1, 0xee, 0x75, 0x8f, 0xde,
+    0x18, 0x42, 0x5d, 0xbc, 0xe4, 0x6c, 0xcd, 0xda,
+    0xb6, 0x1a, 0xfc, 0x4d, 0x83, 0xb9, 0x0d, 0x27,
+    0xfe, 0xbd, 0xf9, 0x28, 0xd8, 0xa1, 0x8b, 0xfc
+};
+
 /* Stake11111111111111111111111111111111111111 */
 const uint8_t SOL_STAKE_PROGRAM[SOL_PUBKEY_SIZE] = {
     0x06, 0xa1, 0xd8, 0x17, 0x91, 0x37, 0x54, 0x2a,
     0x98, 0x34, 0x37, 0xbd, 0xfe, 0x2a, 0x7a, 0xb2,
     0x55, 0x7f, 0x53, 0x5c, 0x8a, 0x78, 0x72, 0x2b,
     0x68, 0xa4, 0x9d, 0xc0, 0x00, 0x00, 0x00, 0x00
+};
+
+/* Vote111111111111111111111111111111111111111 */
+const uint8_t SOL_VOTE_PROGRAM[SOL_PUBKEY_SIZE] = {
+    0x07, 0x61, 0x48, 0x1d, 0x35, 0x74, 0x74, 0xbb,
+    0x7c, 0x4d, 0x76, 0x24, 0xeb, 0xd3, 0xbd, 0xb3,
+    0xd8, 0x35, 0x5e, 0x73, 0xd1, 0x10, 0x43, 0xfc,
+    0x0d, 0xa3, 0x53, 0x80, 0x00, 0x00, 0x00, 0x00
+};
+
+/* ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL */
+const uint8_t SOL_ATA_PROGRAM[SOL_PUBKEY_SIZE] = {
+    0x8c, 0x97, 0x25, 0x8f, 0x4e, 0x24, 0x89, 0xf1,
+    0xbb, 0x3d, 0x10, 0x29, 0x14, 0x8e, 0x0d, 0x83,
+    0x0b, 0x5a, 0x13, 0x99, 0xda, 0xff, 0x10, 0x84,
+    0x04, 0x8e, 0x7b, 0xd8, 0xdb, 0xe9, 0xf8, 0x59
+};
+
+/* ComputeBudget111111111111111111111111111111 */
+const uint8_t SOL_COMPUTE_BUDGET_PROGRAM[SOL_PUBKEY_SIZE] = {
+    0x03, 0x06, 0x46, 0x6f, 0xe5, 0x21, 0x17, 0x32,
+    0xff, 0xec, 0xad, 0xba, 0x72, 0xc3, 0x9b, 0xe7,
+    0xbc, 0x8c, 0xe5, 0xbb, 0xc5, 0xf7, 0x12, 0x6b,
+    0x2c, 0x43, 0x9b, 0x3a, 0x40, 0x00, 0x00, 0x00
+};
+
+/* MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr */
+const uint8_t SOL_MEMO_PROGRAM[SOL_PUBKEY_SIZE] = {
+    0x05, 0x4a, 0x53, 0x5a, 0x99, 0x29, 0x21, 0x06,
+    0x4d, 0x24, 0xe8, 0x71, 0x60, 0xda, 0x38, 0x7c,
+    0x7c, 0x35, 0xb5, 0xdd, 0xbc, 0x92, 0xbb, 0x81,
+    0xe4, 0x1f, 0xa8, 0x40, 0x41, 0x05, 0x44, 0x8d
 };
 
 /* ------------------------------------------------------------------ */
@@ -83,6 +123,16 @@ static uint64_t read_le64(const uint8_t *p) {
 static uint32_t read_le32(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
            ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void copy_account(uint8_t out[SOL_PUBKEY_SIZE],
+                         const SolanaParsedTx *tx,
+                         const uint8_t *acct_indices,
+                         uint16_t num_acct_indices,
+                         uint16_t idx) {
+    if (idx < num_acct_indices) {
+        memcpy(out, tx->accounts[acct_indices[idx]], SOL_PUBKEY_SIZE);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,28 +224,47 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
         if (memcmp(pi->program_id, SOL_SYSTEM_PROGRAM,
                    SOL_PUBKEY_SIZE) == 0) {
             /* System program */
-            if (data_len >= 12) {
+            if (data_len >= 4) {
                 uint32_t instr_type = read_le32(instr_data);
-                if (instr_type == 2) {
+                if (instr_type == 2 && data_len >= 12) {
                     /* Transfer */
                     pi->type = SOL_INSTR_SYSTEM_TRANSFER;
                     pi->lamports = read_le64(instr_data + 4);
-                    if (num_acct_indices >= 2) {
-                        memcpy(pi->from, tx->accounts[acct_indices[0]],
-                               SOL_PUBKEY_SIZE);
-                        memcpy(pi->to, tx->accounts[acct_indices[1]],
-                               SOL_PUBKEY_SIZE);
-                    }
-                } else if (instr_type == 0) {
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                } else if (instr_type == 0 && data_len >= 12) {
                     /* CreateAccount */
                     pi->type = SOL_INSTR_SYSTEM_CREATE_ACCOUNT;
                     pi->lamports = read_le64(instr_data + 4);
-                    if (num_acct_indices >= 2) {
-                        memcpy(pi->from, tx->accounts[acct_indices[0]],
-                               SOL_PUBKEY_SIZE);
-                        memcpy(pi->to, tx->accounts[acct_indices[1]],
-                               SOL_PUBKEY_SIZE);
-                    }
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                } else if (instr_type == 4) {
+                    pi->type = SOL_INSTR_SYSTEM_ADVANCE_NONCE;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (instr_type == 5 && data_len >= 12) {
+                    pi->type = SOL_INSTR_SYSTEM_WITHDRAW_NONCE;
+                    pi->lamports = read_le64(instr_data + 4);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
+                } else if (instr_type == 6 && data_len >= 36) {
+                    pi->type = SOL_INSTR_SYSTEM_INITIALIZE_NONCE;
+                    memcpy(pi->authority, instr_data + 4, SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                } else if (instr_type == 7 && data_len >= 36) {
+                    pi->type = SOL_INSTR_SYSTEM_AUTHORIZE_NONCE;
+                    memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                } else if (instr_type == 1 && data_len >= 36) {
+                    pi->type = SOL_INSTR_SYSTEM_ASSIGN;
+                    memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                } else if (instr_type == 8 && data_len >= 12) {
+                    pi->type = SOL_INSTR_SYSTEM_ALLOCATE;
+                    pi->extra_value = read_le64(instr_data + 4);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
                     has_unknown = true;
@@ -205,6 +274,8 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                 has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_TOKEN_PROGRAM,
+                          SOL_PUBKEY_SIZE) == 0 ||
+                   memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
             /* SPL Token program */
             if (data_len >= 1) {
@@ -213,35 +284,74 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     /* Transfer */
                     pi->type = SOL_INSTR_TOKEN_TRANSFER;
                     pi->amount = read_le64(instr_data + 1);
-                    if (num_acct_indices >= 3) {
-                        memcpy(pi->from, tx->accounts[acct_indices[0]],
-                               SOL_PUBKEY_SIZE);
-                        memcpy(pi->to, tx->accounts[acct_indices[1]],
-                               SOL_PUBKEY_SIZE);
-                    }
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
                 } else if (token_instr == 12 && data_len >= 9) {
                     /* TransferChecked */
                     pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
                     pi->amount = read_le64(instr_data + 1);
-                    if (num_acct_indices >= 4) {
-                        memcpy(pi->from, tx->accounts[acct_indices[0]],
-                               SOL_PUBKEY_SIZE);
-                        memcpy(pi->mint, tx->accounts[acct_indices[1]],
-                               SOL_PUBKEY_SIZE);
-                        pi->has_mint = true;
-                        memcpy(pi->to, tx->accounts[acct_indices[2]],
-                               SOL_PUBKEY_SIZE);
-                    }
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
+                    pi->has_mint = (num_acct_indices >= 2);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 2);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
+                    pi->extra_u8 = data_len >= 10 ? instr_data[9] : 0;
                 } else if (token_instr == 4 && data_len >= 9) {
                     /* Approve */
                     pi->type = SOL_INSTR_TOKEN_APPROVE;
                     pi->amount = read_le64(instr_data + 1);
-                    if (num_acct_indices >= 2) {
-                        memcpy(pi->from, tx->accounts[acct_indices[0]],
-                               SOL_PUBKEY_SIZE);
-                        memcpy(pi->to, tx->accounts[acct_indices[1]],
-                               SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (token_instr == 5) {
+                    pi->type = SOL_INSTR_TOKEN_REVOKE;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                } else if (token_instr == 6 && data_len >= 2) {
+                    pi->type = SOL_INSTR_TOKEN_SET_AUTHORITY;
+                    pi->extra_u8 = instr_data[1];
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                    if (data_len >= 35 && instr_data[2] == 1) {
+                        memcpy(pi->extra, instr_data + 3, SOL_PUBKEY_SIZE);
                     }
+                } else if ((token_instr == 7 || token_instr == 14) && data_len >= 9) {
+                    pi->type = SOL_INSTR_TOKEN_MINT_TO;
+                    pi->amount = read_le64(instr_data + 1);
+                    copy_account(pi->mint, tx, acct_indices, num_acct_indices, 0);
+                    pi->has_mint = (num_acct_indices >= 1);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                    pi->extra_u8 = (token_instr == 14 && data_len >= 10) ? instr_data[9] : 0;
+                } else if ((token_instr == 8 || token_instr == 15) && data_len >= 9) {
+                    pi->type = SOL_INSTR_TOKEN_BURN;
+                    pi->amount = read_le64(instr_data + 1);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
+                    pi->has_mint = (num_acct_indices >= 2);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                    pi->extra_u8 = (token_instr == 15 && data_len >= 10) ? instr_data[9] : 0;
+                } else if (token_instr == 9) {
+                    pi->type = SOL_INSTR_TOKEN_CLOSE_ACCOUNT;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (token_instr == 10) {
+                    pi->type = SOL_INSTR_TOKEN_FREEZE_ACCOUNT;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
+                    pi->has_mint = (num_acct_indices >= 2);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (token_instr == 11) {
+                    pi->type = SOL_INSTR_TOKEN_THAW_ACCOUNT;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
+                    pi->has_mint = (num_acct_indices >= 2);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (token_instr == 17) {
+                    pi->type = SOL_INSTR_TOKEN_SYNC_NATIVE;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
                     has_unknown = true;
@@ -256,9 +366,36 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                 uint32_t stake_instr = read_le32(instr_data);
                 if (stake_instr == 2) {
                     pi->type = SOL_INSTR_STAKE_DELEGATE;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 5);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
                 } else if (stake_instr == 4 && data_len >= 12) {
                     pi->type = SOL_INSTR_STAKE_WITHDRAW;
                     pi->lamports = read_le64(instr_data + 4);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
+                } else if (stake_instr == 1 && data_len >= 36) {
+                    pi->type = SOL_INSTR_STAKE_AUTHORIZE;
+                    memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                    pi->extra_u8 = (uint8_t)read_le32(instr_data + 36);
+                } else if (stake_instr == 3 && data_len >= 12) {
+                    pi->type = SOL_INSTR_STAKE_SPLIT;
+                    pi->lamports = read_le64(instr_data + 4);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (stake_instr == 5) {
+                    pi->type = SOL_INSTR_STAKE_DEACTIVATE;
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (stake_instr == 7) {
+                    pi->type = SOL_INSTR_STAKE_MERGE;
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
                     has_unknown = true;
@@ -267,6 +404,80 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                 pi->type = SOL_INSTR_UNKNOWN;
                 has_unknown = true;
             }
+        } else if (memcmp(pi->program_id, SOL_VOTE_PROGRAM,
+                          SOL_PUBKEY_SIZE) == 0) {
+            if (data_len >= 4) {
+                uint32_t vote_instr = read_le32(instr_data);
+                if (vote_instr == 1 && data_len >= 40) {
+                    pi->type = SOL_INSTR_VOTE_AUTHORIZE;
+                    memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                    pi->extra_u8 = (uint8_t)read_le32(instr_data + 36);
+                } else if (vote_instr == 3 && data_len >= 12) {
+                    pi->type = SOL_INSTR_VOTE_WITHDRAW;
+                    pi->lamports = read_le64(instr_data + 4);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                } else if (vote_instr == 4 && data_len >= 36) {
+                    pi->type = SOL_INSTR_VOTE_UPDATE_VALIDATOR;
+                    memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                } else if (vote_instr == 5 && data_len >= 5) {
+                    pi->type = SOL_INSTR_VOTE_UPDATE_COMMISSION;
+                    pi->extra_u8 = instr_data[4];
+                    copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                    copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+                } else {
+                    pi->type = SOL_INSTR_UNKNOWN;
+                    has_unknown = true;
+                }
+            } else {
+                pi->type = SOL_INSTR_UNKNOWN;
+                has_unknown = true;
+            }
+        } else if (memcmp(pi->program_id, SOL_ATA_PROGRAM,
+                          SOL_PUBKEY_SIZE) == 0) {
+            if (data_len == 0 || (data_len == 1 && instr_data[0] == 0)) {
+                pi->type = SOL_INSTR_ATA_CREATE;
+                copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
+                copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
+                copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
+                copy_account(pi->mint, tx, acct_indices, num_acct_indices, 3);
+                pi->has_mint = (num_acct_indices >= 4);
+            } else {
+                pi->type = SOL_INSTR_UNKNOWN;
+                has_unknown = true;
+            }
+        } else if (memcmp(pi->program_id, SOL_COMPUTE_BUDGET_PROGRAM,
+                          SOL_PUBKEY_SIZE) == 0) {
+            if (data_len >= 1) {
+                uint8_t cb_instr = instr_data[0];
+                if (cb_instr == 1 && data_len >= 5) {
+                    pi->type = SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME;
+                    pi->extra_value = read_le32(instr_data + 1);
+                } else if (cb_instr == 2 && data_len >= 5) {
+                    pi->type = SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT;
+                    pi->extra_value = read_le32(instr_data + 1);
+                } else if (cb_instr == 3 && data_len >= 9) {
+                    pi->type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+                    pi->extra_value = read_le64(instr_data + 1);
+                } else if (cb_instr == 4 && data_len >= 5) {
+                    pi->type = SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE;
+                    pi->extra_value = read_le32(instr_data + 1);
+                } else {
+                    pi->type = SOL_INSTR_UNKNOWN;
+                    has_unknown = true;
+                }
+            } else {
+                pi->type = SOL_INSTR_UNKNOWN;
+                has_unknown = true;
+            }
+        } else if (memcmp(pi->program_id, SOL_MEMO_PROGRAM,
+                          SOL_PUBKEY_SIZE) == 0) {
+            pi->type = SOL_INSTR_MEMO;
         } else {
             pi->type = SOL_INSTR_UNKNOWN;
             has_unknown = true;

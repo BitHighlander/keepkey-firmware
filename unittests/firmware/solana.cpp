@@ -178,6 +178,64 @@ TEST(Solana, ParseSPLTokenTransfer) {
     EXPECT_EQ(tx.instructions[0].amount, 1000000ULL);
 }
 
+TEST(Solana, ParseAssociatedTokenAccountCreate) {
+    uint8_t raw[512];
+    size_t pos = 0;
+
+    raw[pos++] = 1; raw[pos++] = 0; raw[pos++] = 1;
+
+    raw[pos++] = 5;
+    memset(raw + pos, 0x11, 32); pos += 32; /* funder */
+    memset(raw + pos, 0x22, 32); pos += 32; /* ata */
+    memset(raw + pos, 0x33, 32); pos += 32; /* owner */
+    memset(raw + pos, 0x44, 32); pos += 32; /* mint */
+    memcpy(raw + pos, SOL_ATA_PROGRAM, 32); pos += 32; /* program */
+
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    raw[pos++] = 1;
+    raw[pos++] = 4; /* ata program */
+    raw[pos++] = 4; /* 4 account indices */
+    raw[pos++] = 0;
+    raw[pos++] = 1;
+    raw[pos++] = 2;
+    raw[pos++] = 3;
+    raw[pos++] = 0; /* empty data */
+
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+    ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
+    EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+    EXPECT_TRUE(tx.instructions[0].has_mint);
+}
+
+TEST(Solana, ParseComputeBudgetUnitPrice) {
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    raw[pos++] = 1; raw[pos++] = 0; raw[pos++] = 1;
+
+    raw[pos++] = 2;
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memcpy(raw + pos, SOL_COMPUTE_BUDGET_PROGRAM, 32); pos += 32;
+
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    raw[pos++] = 1;
+    raw[pos++] = 1; /* compute budget program */
+    raw[pos++] = 0; /* no account indices */
+    raw[pos++] = 9; /* data length */
+    raw[pos++] = 3; /* SetComputeUnitPrice */
+    raw[pos++] = 0x40; raw[pos++] = 0x42; raw[pos++] = 0x0F; raw[pos++] = 0x00;
+    raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
+
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+    ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
+    EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE);
+    EXPECT_EQ(tx.instructions[0].extra_value, 1000000ULL);
+}
+
 TEST(Solana, UnknownProgram) {
     uint8_t raw[256];
     size_t pos = 0;
