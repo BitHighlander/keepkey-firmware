@@ -41,7 +41,8 @@ set(altcoin_sources
     signtx_tendermint.c
     tendermint.c
     thorchain.c
-    tiny-json.c)
+    tiny-json.c
+    tron.c)
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/scm_revision.h" @ONLY)
