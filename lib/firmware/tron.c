@@ -80,6 +80,144 @@ void tron_formatAmount(char *buf, size_t len, uint64_t amount) {
   bn_format(&val, NULL, " TRX", TRON_DECIMALS, 0, false, buf, len);
 }
 
+/*
+ * Minimal protobuf wire-format parser for TRON TransferContract.
+ *
+ * TRON Transaction.raw layout (protobuf):
+ *   field 11 (contract, repeated message) → Contract {
+ *     field 1 (type, enum): ContractType  (1 = TransferContract)
+ *     field 2 (parameter, Any message) → google.protobuf.Any {
+ *       field 1 (type_url, string)
+ *       field 2 (value, bytes) → serialized TransferContract {
+ *         field 1 (owner_address, bytes): 21 bytes
+ *         field 2 (to_address, bytes):    21 bytes
+ *         field 3 (amount, int64):        varint
+ *       }
+ *     }
+ *   }
+ */
+
+// Read a protobuf varint, return bytes consumed (0 on error)
+static size_t pb_read_varint(const uint8_t *buf, size_t len, uint64_t *val) {
+  *val = 0;
+  size_t i = 0;
+  unsigned shift = 0;
+  while (i < len && shift < 64) {
+    uint64_t byte = buf[i];
+    *val |= (byte & 0x7F) << shift;
+    shift += 7;
+    i++;
+    if (!(byte & 0x80)) return i;
+  }
+  return 0;  // malformed
+}
+
+// Skip a protobuf field given its wire type (0=varint, 2=length-delimited, etc)
+static size_t pb_skip_field(const uint8_t *buf, size_t len, unsigned wire_type) {
+  if (wire_type == 0) {  // varint
+    uint64_t dummy;
+    return pb_read_varint(buf, len, &dummy);
+  } else if (wire_type == 2) {  // length-delimited
+    uint64_t flen;
+    size_t n = pb_read_varint(buf, len, &flen);
+    if (n == 0 || n + flen > len) return 0;
+    return n + (size_t)flen;
+  } else if (wire_type == 5) {  // 32-bit
+    return len >= 4 ? 4 : 0;
+  } else if (wire_type == 1) {  // 64-bit
+    return len >= 8 ? 8 : 0;
+  }
+  return 0;
+}
+
+// Find a length-delimited field by field number in a protobuf message.
+// Returns pointer to the field data and sets *out_len. NULL if not found.
+static const uint8_t *pb_find_bytes(const uint8_t *buf, size_t len,
+                                    unsigned field_num, size_t *out_len) {
+  size_t pos = 0;
+  while (pos < len) {
+    uint64_t tag;
+    size_t n = pb_read_varint(buf + pos, len - pos, &tag);
+    if (n == 0) return NULL;
+    pos += n;
+    unsigned fn = (unsigned)(tag >> 3);
+    unsigned wt = (unsigned)(tag & 7);
+    if (fn == field_num && wt == 2) {
+      uint64_t flen;
+      n = pb_read_varint(buf + pos, len - pos, &flen);
+      if (n == 0 || pos + n + flen > len) return NULL;
+      *out_len = (size_t)flen;
+      return buf + pos + n;
+    }
+    n = pb_skip_field(buf + pos, len - pos, wt);
+    if (n == 0) return NULL;
+    pos += n;
+  }
+  return NULL;
+}
+
+// Find a varint field by field number. Returns true if found.
+static bool pb_find_varint(const uint8_t *buf, size_t len,
+                           unsigned field_num, uint64_t *val) {
+  size_t pos = 0;
+  while (pos < len) {
+    uint64_t tag;
+    size_t n = pb_read_varint(buf + pos, len - pos, &tag);
+    if (n == 0) return false;
+    pos += n;
+    unsigned fn = (unsigned)(tag >> 3);
+    unsigned wt = (unsigned)(tag & 7);
+    if (fn == field_num && wt == 0) {
+      n = pb_read_varint(buf + pos, len - pos, val);
+      return n > 0;
+    }
+    n = pb_skip_field(buf + pos, len - pos, wt);
+    if (n == 0) return false;
+    pos += n;
+  }
+  return false;
+}
+
+bool tron_parseTransfer(const uint8_t *raw_data, size_t raw_data_len,
+                        TronParsedTransfer *out) {
+  memset(out, 0, sizeof(*out));
+
+  // Find field 11 (contract) in Transaction.raw
+  size_t contract_len = 0;
+  const uint8_t *contract = pb_find_bytes(raw_data, raw_data_len, 11,
+                                          &contract_len);
+  if (!contract) return false;
+
+  // Check contract type (field 1): must be 1 (TransferContract)
+  uint64_t contract_type = 0;
+  if (!pb_find_varint(contract, contract_len, 1, &contract_type)) return false;
+  if (contract_type != 1) return false;  // not a simple transfer
+
+  // Find parameter (field 2) = google.protobuf.Any
+  size_t any_len = 0;
+  const uint8_t *any = pb_find_bytes(contract, contract_len, 2, &any_len);
+  if (!any) return false;
+
+  // Find value (field 2 inside Any) = serialized TransferContract
+  size_t tc_len = 0;
+  const uint8_t *tc = pb_find_bytes(any, any_len, 2, &tc_len);
+  if (!tc) return false;
+
+  // Parse TransferContract: field 2 = to_address (bytes, 21)
+  size_t addr_len = 0;
+  const uint8_t *to_addr = pb_find_bytes(tc, tc_len, 2, &addr_len);
+  if (!to_addr || addr_len != 21) return false;
+  memcpy(out->to_address, to_addr, 21);
+
+  // Parse TransferContract: field 3 = amount (varint, signed zigzag or plain)
+  uint64_t amount_raw = 0;
+  if (!pb_find_varint(tc, tc_len, 3, &amount_raw)) return false;
+  out->amount = (int64_t)amount_raw;
+
+  out->valid = true;
+  return true;
+}
+
 /**
  * Sign a TRON transaction with secp256k1
  */

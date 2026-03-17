@@ -57,4 +57,22 @@ void tron_formatAmount(char *buf, size_t len, uint64_t amount);
 bool tron_signTx(const HDNode *node, const TronSignTx *msg,
                  TronSignedTx *resp);
 
+/**
+ * Parsed TRON TransferContract fields extracted from raw_data.
+ * Used to verify on-device display against the actual signed payload.
+ */
+typedef struct {
+  uint8_t to_address[21];   // 0x41 prefix + 20 bytes
+  int64_t amount;           // SUN
+  bool valid;               // true if parsing succeeded
+} TronParsedTransfer;
+
+/**
+ * Parse a TRON Transaction.raw protobuf to extract TransferContract fields.
+ * Only succeeds for simple TRX transfers (contract type 1).
+ * @return true if a TransferContract was found and parsed
+ */
+bool tron_parseTransfer(const uint8_t *raw_data, size_t raw_data_len,
+                        TronParsedTransfer *out);
+
 #endif

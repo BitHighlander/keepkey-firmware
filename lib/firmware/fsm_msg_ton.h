@@ -115,15 +115,14 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
     return;
   }
 
-  bool needs_confirm = true;
-
-  // Display transaction details if available
-  if (needs_confirm && msg->has_to_address && msg->has_amount) {
+  // TON uses Cell/BoC encoding which cannot be parsed on-device.
+  // Display host-supplied fields with explicit blind-sign warning.
+  if (msg->has_to_address && msg->has_amount) {
     char amount_str[32];
     ton_formatAmount(amount_str, sizeof(amount_str), msg->amount);
 
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Send", "Send %s TON to %s?",
+                 "TON Transfer", "Send %s to\n%s?",
                  amount_str, msg->to_address)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
@@ -132,8 +131,9 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
     }
   }
 
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction",
-               "Really sign this TON transaction?")) {
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Signature",
+               "TON TX details cannot be verified on device. "
+               "Sign only if you trust the sending app.")) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
     layoutHome();

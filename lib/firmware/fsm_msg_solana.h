@@ -192,16 +192,14 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg) {
   uint8_t public_key[32];
   ed25519_publickey(node->private_key, public_key);
 
-  // Confirm message signing with user (shows message preview)
-  // Default to showing confirmation when client doesn't set the field
-  if (!msg->has_show_display || msg->show_display) {
-    if (!solana_confirmMessage(msg->message.bytes, msg->message.size)) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Message signing cancelled"));
-      layoutHome();
-      return;
-    }
+  // Always require user confirmation — signed messages can authorize
+  // on-chain actions.  Never allow host to bypass via show_display=false.
+  if (!solana_confirmMessage(msg->message.bytes, msg->message.size)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Message signing cancelled"));
+    layoutHome();
+    return;
   }
 
   // Sign the message

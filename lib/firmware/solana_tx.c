@@ -313,16 +313,18 @@ bool solana_confirmTransaction(const SolanaParsedTransaction *tx,
         return false;
     }
 
-    // For now, handle simple single-instruction transactions
     const SolanaInstruction *instr = &tx->instructions[0];
 
-    if (instr->type == SOLANA_INSTRUCTION_SYSTEM_TRANSFER) {
+    // Only show verified transfer details for single-instruction system
+    // transfers.  Multi-instruction TXs could hide malicious instructions
+    // behind a benign first one — the user must be warned.
+    if (tx->num_instructions == 1 &&
+        instr->type == SOLANA_INSTRUCTION_SYSTEM_TRANSFER) {
         SolanaSystemTransfer transfer;
         if (!solana_parseSystemTransfer(instr->data, instr->data_len, &transfer)) {
             return false;
         }
 
-        // Get recipient address (account index 1 for System Transfer)
         if (instr->num_accounts < 2) return false;
         uint8_t to_idx = instr->account_indices[1];
         if (to_idx >= tx->num_accounts) return false;
@@ -342,9 +344,11 @@ bool solana_confirmTransaction(const SolanaParsedTransaction *tx,
                        amount_str, to_address);
     }
 
-    // Unknown or complex transaction - show warning
+    // Multi-instruction or unknown program — blind sign with warning
     return confirm(ButtonRequestType_ButtonRequest_SignTx,
-                   "Solana Transaction",
-                   "Sign transaction with %d instruction(s)?",
+                   "Blind Signature",
+                   "TX has %d instruction(s) that cannot be "
+                   "fully verified on device. Sign only if "
+                   "you trust the sending app.",
                    tx->num_instructions);
 }

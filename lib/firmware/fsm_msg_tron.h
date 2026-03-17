@@ -105,16 +105,36 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
     return;
   }
 
-  bool needs_confirm = true;
+  // Try to parse a TransferContract from the signed payload so the device
+  // can show verified transfer details instead of host-asserted fields.
+  TronParsedTransfer parsed;
+  if (tron_parseTransfer(msg->raw_data.bytes, msg->raw_data.size, &parsed)) {
+    // Simple TRX transfer — show on-device-verified details
+    char to_addr[TRON_ADDRESS_MAX_LEN];
+    if (!base58_encode_check(parsed.to_address, 21, HASHER_SHA2D,
+                             to_addr, sizeof(to_addr))) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_Other, _("Bad to_address in TX"));
+      layoutHome();
+      return;
+    }
 
-  // Display transaction details if available
-  if (needs_confirm && msg->has_to_address && msg->has_amount) {
     char amount_str[32];
-    tron_formatAmount(amount_str, sizeof(amount_str), msg->amount);
+    tron_formatAmount(amount_str, sizeof(amount_str), (uint64_t)parsed.amount);
 
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Send", "Send %s TRX to %s?",
-                 amount_str, msg->to_address)) {
+                 "TRON Transfer", "Send %s to\n%s?",
+                 amount_str, to_addr)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+      layoutHome();
+      return;
+    }
+  } else {
+    // Token / contract / complex TX — blind sign with explicit warning
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Signature",
+                 "Cannot verify TX details on device. "
+                 "Sign only if you trust the sending app.")) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
       layoutHome();
@@ -122,8 +142,8 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
     }
   }
 
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction",
-               "Really sign this TRON transaction?")) {
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Confirm",
+               "Sign this TRON transaction?")) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
     layoutHome();
