@@ -108,6 +108,7 @@ bool solana_parseTransaction(const uint8_t *raw_tx, size_t tx_size,
     uint16_t num_instructions;
     if (!read_compact_u16(&data, &remaining, &num_instructions)) return false;
     parsed->num_instructions = MIN(num_instructions, 8);
+    parsed->total_instructions = num_instructions;
 
     for (int i = 0; i < num_instructions; i++) {
         // Use a stack variable for instructions beyond our storage limit
@@ -318,7 +319,7 @@ bool solana_confirmTransaction(const SolanaParsedTransaction *tx,
     // Only show verified transfer details for single-instruction system
     // transfers.  Multi-instruction TXs could hide malicious instructions
     // behind a benign first one — the user must be warned.
-    if (tx->num_instructions == 1 &&
+    if (tx->total_instructions == 1 &&
         instr->type == SOLANA_INSTRUCTION_SYSTEM_TRANSFER) {
         SolanaSystemTransfer transfer;
         if (!solana_parseSystemTransfer(instr->data, instr->data_len, &transfer)) {
@@ -350,5 +351,5 @@ bool solana_confirmTransaction(const SolanaParsedTransaction *tx,
                    "TX has %d instruction(s) that cannot be "
                    "fully verified on device. Sign only if "
                    "you trust the sending app.",
-                   tx->num_instructions);
+                   tx->total_instructions);
 }

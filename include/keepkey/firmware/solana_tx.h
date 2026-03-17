@@ -60,7 +60,8 @@ typedef struct {
     uint16_t num_accounts;
     uint8_t account_keys[16][32];  // 16 accounts (512 bytes)
     uint8_t recent_blockhash[32];
-    uint8_t num_instructions;
+    uint8_t num_instructions;      // min(actual, 8) — parsed instructions
+    uint16_t total_instructions;   // actual count from TX (for display)
     SolanaInstruction instructions[8];  // 8 instructions
 } SolanaParsedTransaction;
 

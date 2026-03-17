@@ -178,11 +178,35 @@ static bool pb_find_varint(const uint8_t *buf, size_t len,
   return false;
 }
 
+// Count occurrences of a length-delimited field in a protobuf message.
+static unsigned pb_count_field(const uint8_t *buf, size_t len,
+                               unsigned field_num) {
+  unsigned count = 0;
+  size_t pos = 0;
+  while (pos < len) {
+    uint64_t tag;
+    size_t n = pb_read_varint(buf + pos, len - pos, &tag);
+    if (n == 0) break;
+    pos += n;
+    unsigned fn = (unsigned)(tag >> 3);
+    unsigned wt = (unsigned)(tag & 7);
+    if (fn == field_num && wt == 2) count++;
+    n = pb_skip_field(buf + pos, len - pos, wt);
+    if (n == 0) break;
+    pos += n;
+  }
+  return count;
+}
+
 bool tron_parseTransfer(const uint8_t *raw_data, size_t raw_data_len,
                         TronParsedTransfer *out) {
   memset(out, 0, sizeof(*out));
 
-  // Find field 11 (contract) in Transaction.raw
+  // Reject if there are multiple contract entries (repeated field 11).
+  // A malicious payload could hide extra contracts after a benign transfer.
+  if (pb_count_field(raw_data, raw_data_len, 11) != 1) return false;
+
+  // Find the single contract entry
   size_t contract_len = 0;
   const uint8_t *contract = pb_find_bytes(raw_data, raw_data_len, 11,
                                           &contract_len);
