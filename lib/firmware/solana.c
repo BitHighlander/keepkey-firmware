@@ -135,87 +135,53 @@ static void copy_account(uint8_t out[SOL_PUBKEY_SIZE],
     }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Transaction parser                                                 */
-/* ------------------------------------------------------------------ */
-
-static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
-                                           SolanaParsedTx *tx) {
-    memset(tx, 0, sizeof(*tx));
-    size_t pos = 0;
-    bool has_unknown = false;
-
-    /* Header: num_required_sigs, num_readonly_signed, num_readonly_unsigned */
-    if (raw_len < 3) return SOL_TX_REVIEW_MALFORMED;
-    tx->num_required_sigs = raw[pos++];
-    tx->num_readonly_signed = raw[pos++];
-    tx->num_readonly_unsigned = raw[pos++];
-
-    /* Account keys count (compact-u16) */
-    uint16_t num_accounts;
-    int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
-    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
-    pos += n;
-
-    if (num_accounts > 32) return SOL_TX_REVIEW_OPAQUE;
-    tx->num_accounts = (uint8_t)num_accounts;
-
-    /* Read account keys */
-    for (uint16_t i = 0; i < num_accounts; i++) {
-        if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
-        memcpy(tx->accounts[i], raw + pos, SOL_PUBKEY_SIZE);
-        pos += SOL_PUBKEY_SIZE;
-    }
-
-    /* Recent blockhash */
-    if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
-    memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
-    pos += SOL_PUBKEY_SIZE;
-
-    /* Instructions count (compact-u16) */
+static int parse_instruction_section(const uint8_t *raw, size_t raw_len,
+                                     size_t *pos_io, SolanaParsedTx *tx,
+                                     uint16_t num_accounts, bool *has_unknown,
+                                     bool *force_opaque) {
+    size_t pos = *pos_io;
     uint16_t num_instructions;
-    n = read_compact_u16(raw + pos, raw_len - pos, &num_instructions);
-    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+    int n = read_compact_u16(raw + pos, raw_len - pos, &num_instructions);
+    if (n < 0) return -1;
     pos += n;
 
     if (num_instructions > 8) {
-        /* Structurally valid but beyond what the firmware can verify. */
-        return SOL_TX_REVIEW_OPAQUE;
+        *force_opaque = true;
+        tx->num_instructions = 0;
+    } else {
+        tx->num_instructions = (uint8_t)num_instructions;
     }
-    tx->num_instructions = (uint8_t)num_instructions;
 
-    /* Parse each instruction */
     for (uint16_t i = 0; i < num_instructions; i++) {
-        /* Program ID index */
-        if (pos >= raw_len) return SOL_TX_REVIEW_MALFORMED;
+        if (pos >= raw_len) return -1;
         uint8_t program_idx = raw[pos++];
-        if (program_idx >= num_accounts) return SOL_TX_REVIEW_MALFORMED;
+        if (program_idx >= num_accounts) return -1;
 
-        /* Account indices */
         uint16_t num_acct_indices;
         n = read_compact_u16(raw + pos, raw_len - pos, &num_acct_indices);
-        if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+        if (n < 0) return -1;
         pos += n;
 
-        if (pos + num_acct_indices > raw_len) return SOL_TX_REVIEW_MALFORMED;
-
+        if (pos + num_acct_indices > raw_len) return -1;
         const uint8_t *acct_indices = raw + pos;
         pos += num_acct_indices;
 
-        /* Bounds-check every account index before we use them */
         for (uint16_t j = 0; j < num_acct_indices; j++) {
-            if (acct_indices[j] >= num_accounts) return SOL_TX_REVIEW_MALFORMED;
+            if (acct_indices[j] >= num_accounts) return -1;
         }
 
-        /* Instruction data */
         uint16_t data_len;
         n = read_compact_u16(raw + pos, raw_len - pos, &data_len);
-        if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+        if (n < 0) return -1;
         pos += n;
 
-        if (pos + data_len > raw_len) return SOL_TX_REVIEW_MALFORMED;
+        if (pos + data_len > raw_len) return -1;
         const uint8_t *instr_data = raw + pos;
         pos += data_len;
+
+        if (i >= 8) {
+            continue;
+        }
 
         SolanaParsedInstruction *pi = &tx->instructions[i];
         memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
@@ -227,13 +193,11 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
             if (data_len >= 4) {
                 uint32_t instr_type = read_le32(instr_data);
                 if (instr_type == 2 && data_len >= 12) {
-                    /* Transfer */
                     pi->type = SOL_INSTR_SYSTEM_TRANSFER;
                     pi->lamports = read_le64(instr_data + 4);
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
                     copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
                 } else if (instr_type == 0 && data_len >= 12) {
-                    /* CreateAccount */
                     pi->type = SOL_INSTR_SYSTEM_CREATE_ACCOUNT;
                     pi->lamports = read_le64(instr_data + 4);
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -267,28 +231,25 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
-                    has_unknown = true;
+                    *has_unknown = true;
                 }
             } else {
                 pi->type = SOL_INSTR_UNKNOWN;
-                has_unknown = true;
+                *has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_TOKEN_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0 ||
                    memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
-            /* SPL Token program */
             if (data_len >= 1) {
                 uint8_t token_instr = instr_data[0];
                 if (token_instr == 3 && data_len >= 9) {
-                    /* Transfer */
                     pi->type = SOL_INSTR_TOKEN_TRANSFER;
                     pi->amount = read_le64(instr_data + 1);
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
                     copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
                     copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
                 } else if (token_instr == 12 && data_len >= 9) {
-                    /* TransferChecked */
                     pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
                     pi->amount = read_le64(instr_data + 1);
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -298,7 +259,6 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
                     pi->extra_u8 = data_len >= 10 ? instr_data[9] : 0;
                 } else if (token_instr == 4 && data_len >= 9) {
-                    /* Approve */
                     pi->type = SOL_INSTR_TOKEN_APPROVE;
                     pi->amount = read_le64(instr_data + 1);
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -354,11 +314,11 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
-                    has_unknown = true;
+                    *has_unknown = true;
                 }
             } else {
                 pi->type = SOL_INSTR_UNKNOWN;
-                has_unknown = true;
+                *has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_STAKE_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
@@ -398,11 +358,11 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
-                    has_unknown = true;
+                    *has_unknown = true;
                 }
             } else {
                 pi->type = SOL_INSTR_UNKNOWN;
-                has_unknown = true;
+                *has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_VOTE_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
@@ -432,11 +392,11 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
-                    has_unknown = true;
+                    *has_unknown = true;
                 }
             } else {
                 pi->type = SOL_INSTR_UNKNOWN;
-                has_unknown = true;
+                *has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_ATA_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
@@ -449,7 +409,7 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                 pi->has_mint = (num_acct_indices >= 4);
             } else {
                 pi->type = SOL_INSTR_UNKNOWN;
-                has_unknown = true;
+                *has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_COMPUTE_BUDGET_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
@@ -469,26 +429,140 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
                     pi->extra_value = read_le32(instr_data + 1);
                 } else {
                     pi->type = SOL_INSTR_UNKNOWN;
-                    has_unknown = true;
+                    *has_unknown = true;
                 }
             } else {
                 pi->type = SOL_INSTR_UNKNOWN;
-                has_unknown = true;
+                *has_unknown = true;
             }
         } else if (memcmp(pi->program_id, SOL_MEMO_PROGRAM,
                           SOL_PUBKEY_SIZE) == 0) {
             pi->type = SOL_INSTR_MEMO;
         } else {
             pi->type = SOL_INSTR_UNKNOWN;
-            has_unknown = true;
+            *has_unknown = true;
         }
     }
+
+    *pos_io = pos;
+    return num_instructions;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Transaction parser                                                 */
+/* ------------------------------------------------------------------ */
+
+static SolanaTxReview solana_parseLegacyTx(const uint8_t *raw, size_t raw_len,
+                                           SolanaParsedTx *tx) {
+    memset(tx, 0, sizeof(*tx));
+    size_t pos = 0;
+    bool has_unknown = false;
+    bool force_opaque = false;
+
+    /* Header: num_required_sigs, num_readonly_signed, num_readonly_unsigned */
+    if (raw_len < 3) return SOL_TX_REVIEW_MALFORMED;
+    tx->num_required_sigs = raw[pos++];
+    tx->num_readonly_signed = raw[pos++];
+    tx->num_readonly_unsigned = raw[pos++];
+
+    /* Account keys count (compact-u16) */
+    uint16_t num_accounts;
+    int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
+    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+    pos += n;
+
+    if (num_accounts > 32) return SOL_TX_REVIEW_OPAQUE;
+    tx->num_accounts = (uint8_t)num_accounts;
+
+    /* Read account keys */
+    for (uint16_t i = 0; i < num_accounts; i++) {
+        if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
+        memcpy(tx->accounts[i], raw + pos, SOL_PUBKEY_SIZE);
+        pos += SOL_PUBKEY_SIZE;
+    }
+
+    /* Recent blockhash */
+    if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
+    memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
+    pos += SOL_PUBKEY_SIZE;
+
+    n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
+                                  &has_unknown, &force_opaque);
+    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
     /* Reject if there are unconsumed bytes — prevents hidden trailing data */
     if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
 
-    if (num_instructions == 0 || has_unknown) return SOL_TX_REVIEW_OPAQUE;
+    if (tx->num_instructions == 0 || has_unknown || force_opaque) {
+        return SOL_TX_REVIEW_OPAQUE;
+    }
     return SOL_TX_REVIEW_VERIFIED;
+}
+
+static SolanaTxReview solana_parseVersionedTx(const uint8_t *raw, size_t raw_len,
+                                              SolanaParsedTx *tx) {
+    memset(tx, 0, sizeof(*tx));
+    size_t pos = 0;
+    bool has_unknown = false;
+    bool force_opaque = true;
+
+    if (raw_len < 1) return SOL_TX_REVIEW_MALFORMED;
+    uint8_t version_prefix = raw[pos++];
+    if ((version_prefix & 0x80) == 0) return SOL_TX_REVIEW_MALFORMED;
+    if ((version_prefix & 0x7f) != 0) return SOL_TX_REVIEW_OPAQUE;
+
+    if (raw_len - pos < 3) return SOL_TX_REVIEW_MALFORMED;
+    tx->num_required_sigs = raw[pos++];
+    tx->num_readonly_signed = raw[pos++];
+    tx->num_readonly_unsigned = raw[pos++];
+
+    uint16_t num_accounts;
+    int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
+    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+    pos += n;
+
+    if (num_accounts > 32) return SOL_TX_REVIEW_OPAQUE;
+    tx->num_accounts = (uint8_t)num_accounts;
+
+    for (uint16_t i = 0; i < num_accounts; i++) {
+        if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
+        memcpy(tx->accounts[i], raw + pos, SOL_PUBKEY_SIZE);
+        pos += SOL_PUBKEY_SIZE;
+    }
+
+    if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
+    memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
+    pos += SOL_PUBKEY_SIZE;
+
+    n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
+                                  &has_unknown, &force_opaque);
+    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+
+    uint16_t lookup_table_count;
+    n = read_compact_u16(raw + pos, raw_len - pos, &lookup_table_count);
+    if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+    pos += n;
+
+    for (uint16_t i = 0; i < lookup_table_count; i++) {
+        uint16_t writable_count, readonly_count;
+        if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
+        pos += SOL_PUBKEY_SIZE; /* lookup table account key */
+
+        n = read_compact_u16(raw + pos, raw_len - pos, &writable_count);
+        if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+        pos += n;
+        if (pos + writable_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
+        pos += writable_count;
+
+        n = read_compact_u16(raw + pos, raw_len - pos, &readonly_count);
+        if (n < 0) return SOL_TX_REVIEW_MALFORMED;
+        pos += n;
+        if (pos + readonly_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
+        pos += readonly_count;
+    }
+
+    if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
+    return SOL_TX_REVIEW_OPAQUE;
 }
 
 SolanaTxReview solana_inspectTx(const uint8_t *raw, size_t raw_len,
@@ -499,10 +573,10 @@ SolanaTxReview solana_inspectTx(const uint8_t *raw, size_t raw_len,
     }
 
     /* Versioned Solana messages set the top bit in byte 0.
-     * We do not verify v0/ALT messages yet, so downgrade to opaque. */
+     * Parse them structurally so malformed v0/ALT payloads fail closed,
+     * but keep the result opaque until the firmware can verify semantics. */
     if (raw[0] & 0x80) {
-        memset(tx, 0, sizeof(*tx));
-        return SOL_TX_REVIEW_OPAQUE;
+        return solana_parseVersionedTx(raw, raw_len, tx);
     }
 
     return solana_parseLegacyTx(raw, raw_len, tx);

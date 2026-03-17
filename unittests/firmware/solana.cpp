@@ -369,8 +369,94 @@ TEST(Solana, RejectsExcessInstructions) {
 }
 
 TEST(Solana, VersionedMessageIsOpaque) {
-    uint8_t raw[1] = {0x80}; /* Versioned message prefix */
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    raw[pos++] = 0x80; /* v0 prefix */
+    raw[pos++] = 1;    /* num_required_sigs */
+    raw[pos++] = 0;    /* num_readonly_signed */
+    raw[pos++] = 1;    /* num_readonly_unsigned */
+
+    raw[pos++] = 3; /* static accounts */
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memset(raw + pos, 0x22, 32); pos += 32;
+    memset(raw + pos, 0x00, 32); pos += 32; /* system program */
+
+    memset(raw + pos, 0xBB, 32); pos += 32; /* blockhash */
+
+    raw[pos++] = 1; /* instructions */
+    raw[pos++] = 2; /* program = system */
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 1; /* account indices */
+    raw[pos++] = 12; /* data length */
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 0; raw[pos++] = 0;
+    raw[pos++] = 0x00; raw[pos++] = 0xCA; raw[pos++] = 0x9A; raw[pos++] = 0x3B;
+    raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
+
+    raw[pos++] = 0; /* zero lookup tables */
+
     SolanaParsedTx tx;
-    EXPECT_EQ(solana_inspectTx(raw, sizeof(raw), &tx), SOL_TX_REVIEW_OPAQUE);
-    EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+    EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}
+
+TEST(Solana, VersionedMessageWithLookupTableIsOpaque) {
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    raw[pos++] = 0x80; /* v0 prefix */
+    raw[pos++] = 1;
+    raw[pos++] = 0;
+    raw[pos++] = 1;
+
+    raw[pos++] = 3;
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memset(raw + pos, 0x22, 32); pos += 32;
+    memset(raw + pos, 0x00, 32); pos += 32;
+
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    raw[pos++] = 1;
+    raw[pos++] = 2;
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 1;
+    raw[pos++] = 12;
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 0; raw[pos++] = 0;
+    raw[pos++] = 0x00; raw[pos++] = 0xCA; raw[pos++] = 0x9A; raw[pos++] = 0x3B;
+    raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
+
+    raw[pos++] = 1; /* one lookup table */
+    memset(raw + pos, 0x55, 32); pos += 32; /* table key */
+    raw[pos++] = 1; /* writable indexes count */
+    raw[pos++] = 0; /* writable index */
+    raw[pos++] = 2; /* readonly indexes count */
+    raw[pos++] = 1;
+    raw[pos++] = 2;
+
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+    EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}
+
+TEST(Solana, MalformedVersionedLookupTableRejects) {
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    raw[pos++] = 0x80;
+    raw[pos++] = 1;
+    raw[pos++] = 0;
+    raw[pos++] = 1;
+
+    raw[pos++] = 3;
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memset(raw + pos, 0x22, 32); pos += 32;
+    memset(raw + pos, 0x00, 32); pos += 32;
+
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    raw[pos++] = 0; /* zero instructions */
+    raw[pos++] = 1; /* one lookup table */
+    memset(raw + pos, 0x55, 16); pos += 16; /* truncated table key */
+
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+    EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
