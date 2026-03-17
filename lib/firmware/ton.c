@@ -183,60 +183,43 @@ bool ton_writeBytes(TonBitBuffer *bb, const uint8_t *data, size_t len) {
 
 bool ton_cellHash(const TonCell *cell, uint8_t hash_out[TON_CELL_HASH_SIZE]) {
     /*
-     * Cell representation for hashing (standard cell, no exotic):
-     *   d1 = refs_count + (has_bits ? 0 : 0) + level*32 (we use level 0)
-     *   d2 = ceil(bit_len / 8) * 2 + (bit_len % 8 != 0 ? 1 : 0)
-     *        actually: d2 = floor(bit_len/8)*2 + ceil(bit_len%8 ? 1 : 0)
+     * TVM standard cell representation hash (level 0, non-exotic):
+     *   SHA256(d1 || d2 || data || ref_depths || ref_hashes)
      *
-     * Standard formula:
-     *   d1 = ref_count (low 3 bits) | (exotic << 3) | (level << 5)
-     *   d2 = (bit_len / 8) * 2 + ((bit_len % 8) ? 1 : 0)
-     *        but byte count uses ceiling: ceil(bit_len / 8)
-     *   data bytes = ceil(bit_len / 8), with padding bit if not byte-aligned
-     *   then for each ref: 2 bytes depth (big-endian), then hash (32 bytes)
-     *   wait — depth comes first for ALL refs, then hashes for ALL refs
+     * d1 = ref_count (bits 0-2) | (exotic << 3) | (level << 5)
+     * d2 = floor(bit_len/8)*2 + (bit_len%8 ? 1 : 0)
+     * data = ceil(bit_len/8) bytes, with completion tag if not byte-aligned
+     * ref_depths: 2 bytes big-endian per ref (all depths, then all hashes)
      */
 
     SHA256_CTX ctx;
     sha256_Init(&ctx);
 
-    /* d1: refs_descriptor */
-    uint8_t d1 = cell->ref_count;  /* level 0, not exotic */
+    /* d1: refs_descriptor (level 0, not exotic) */
+    uint8_t d1 = cell->ref_count;
     sha256_Update(&ctx, &d1, 1);
 
     /* d2: bits_descriptor */
     uint16_t byte_len = (cell->bits.bit_len + 7) / 8;
-    uint8_t d2_val = (uint8_t)(byte_len * 2);
-    if (cell->bits.bit_len % 8 != 0) {
-        d2_val--; /* incomplete byte: floor(bit_len/8)*2 + 1 */
-    }
-    /* Actually the standard formula is:
-     * d2 = ceil(bit_len / 8) * 2
-     * if bit_len % 8 != 0, we need the padding bit set
-     * Let me use the standard: d2 = floor(bit_len/8)*2 + (bit_len%8 ? 1 : 0) */
-    d2_val = (uint8_t)((cell->bits.bit_len / 8) * 2 +
-                       (cell->bits.bit_len % 8 ? 1 : 0));
+    uint8_t d2_val = (uint8_t)((cell->bits.bit_len / 8) * 2 +
+                               (cell->bits.bit_len % 8 ? 1 : 0));
     sha256_Update(&ctx, &d2_val, 1);
 
-    /* Data bytes: ceil(bit_len / 8) */
+    /* Data: ceil(bit_len/8) bytes with completion tag if not byte-aligned */
     uint8_t data_copy[128];
     memcpy(data_copy, cell->bits.data, byte_len);
 
-    /* If not byte-aligned, add completion tag: set bit after last data bit,
-     * clear remaining bits */
     if (cell->bits.bit_len % 8 != 0) {
         uint8_t last_byte_idx = (uint8_t)(cell->bits.bit_len / 8);
         uint8_t used_bits = cell->bits.bit_len % 8;
-        /* Set the completion bit */
+        /* Set completion bit, clear trailing bits */
         data_copy[last_byte_idx] |= (1 << (7 - used_bits));
-        /* Clear remaining bits after completion bit */
-        uint8_t mask = (uint8_t)(0xFF << (7 - used_bits));
-        data_copy[last_byte_idx] &= mask;
+        data_copy[last_byte_idx] &= (uint8_t)(0xFF << (7 - used_bits));
     }
 
     sha256_Update(&ctx, data_copy, byte_len);
 
-    /* Depths for each ref (2 bytes big-endian) */
+    /* Ref depths (2 bytes big-endian each) */
     for (uint8_t i = 0; i < cell->ref_count; i++) {
         uint8_t depth_be[2];
         depth_be[0] = (cell->ref_depths[i] >> 8) & 0xFF;
@@ -244,7 +227,7 @@ bool ton_cellHash(const TonCell *cell, uint8_t hash_out[TON_CELL_HASH_SIZE]) {
         sha256_Update(&ctx, depth_be, 2);
     }
 
-    /* Hashes for each ref (32 bytes each) */
+    /* Ref hashes (32 bytes each) */
     for (uint8_t i = 0; i < cell->ref_count; i++) {
         sha256_Update(&ctx, cell->ref_hashes[i], TON_CELL_HASH_SIZE);
     }
