@@ -266,6 +266,9 @@ bool solana_parseTx(const uint8_t *raw, size_t raw_len, SolanaParsedTx *tx) {
         }
     }
 
+    /* Reject if there are unconsumed bytes — prevents hidden trailing data */
+    if (pos != raw_len) return false;
+
     return true;
 }
 

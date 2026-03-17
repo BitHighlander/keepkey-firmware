@@ -209,3 +209,95 @@ TEST(Solana, ParseTxTooShort) {
     SolanaParsedTx tx;
     EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
 }
+
+TEST(Solana, RejectsTrailingBytes) {
+    /* Build a valid 1-instruction system transfer, then append extra bytes */
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    /* Header */
+    raw[pos++] = 1; raw[pos++] = 0; raw[pos++] = 1;
+
+    /* 3 accounts */
+    raw[pos++] = 3;
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memset(raw + pos, 0x22, 32); pos += 32;
+    memset(raw + pos, 0x00, 32); pos += 32;
+
+    /* Blockhash */
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    /* 1 instruction */
+    raw[pos++] = 1;
+    raw[pos++] = 2; /* program = system */
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 1;
+    raw[pos++] = 12;
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 0; raw[pos++] = 0;
+    raw[pos++] = 0x00; raw[pos++] = 0xCA; raw[pos++] = 0x9A; raw[pos++] = 0x3B;
+    raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
+
+    /* Verify the base transaction parses OK */
+    SolanaParsedTx tx;
+    ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
+
+    /* Append trailing garbage */
+    raw[pos++] = 0xDE;
+    raw[pos++] = 0xAD;
+
+    EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}
+
+TEST(Solana, RejectsOOBAccountIndex) {
+    /* Transaction with acct_indices[0] = 99 (> num_accounts) */
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    /* Header */
+    raw[pos++] = 1; raw[pos++] = 0; raw[pos++] = 1;
+
+    /* 3 accounts */
+    raw[pos++] = 3;
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memset(raw + pos, 0x22, 32); pos += 32;
+    memset(raw + pos, 0x00, 32); pos += 32;
+
+    /* Blockhash */
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    /* 1 instruction */
+    raw[pos++] = 1;
+    raw[pos++] = 2; /* program = system */
+    raw[pos++] = 2; /* 2 account indices */
+    raw[pos++] = 99; /* OOB: only 3 accounts exist */
+    raw[pos++] = 1;
+    raw[pos++] = 12;
+    raw[pos++] = 2; raw[pos++] = 0; raw[pos++] = 0; raw[pos++] = 0;
+    raw[pos++] = 0x00; raw[pos++] = 0xCA; raw[pos++] = 0x9A; raw[pos++] = 0x3B;
+    raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00; raw[pos++] = 0x00;
+
+    SolanaParsedTx tx;
+    EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}
+
+TEST(Solana, RejectsExcessInstructions) {
+    /* Transaction with num_instructions = 9 (max is 8) */
+    uint8_t raw[256];
+    size_t pos = 0;
+
+    /* Header */
+    raw[pos++] = 1; raw[pos++] = 0; raw[pos++] = 1;
+
+    /* 2 accounts */
+    raw[pos++] = 2;
+    memset(raw + pos, 0x11, 32); pos += 32;
+    memset(raw + pos, 0x00, 32); pos += 32;
+
+    /* Blockhash */
+    memset(raw + pos, 0xBB, 32); pos += 32;
+
+    /* 9 instructions (exceeds limit of 8) */
+    raw[pos++] = 9;
+
+    SolanaParsedTx tx;
+    EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}

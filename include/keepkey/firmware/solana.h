@@ -77,12 +77,6 @@ typedef struct {
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t *raw, size_t raw_len, SolanaParsedTx *tx);
 
-/* Classify an instruction */
-SolanaInstrType solana_classifyInstruction(const SolanaParsedTx *tx,
-                                           uint8_t program_idx,
-                                           const uint8_t *data,
-                                           size_t data_len);
-
 /* Format SOL amount */
 void solana_formatAmount(char *buf, size_t len, uint64_t lamports);
 
