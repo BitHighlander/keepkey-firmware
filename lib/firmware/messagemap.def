@@ -63,6 +63,8 @@
     MSG_IN(MessageType_MessageType_MayachainGetAddress,             MayachainGetAddress,         fsm_msgMayachainGetAddress)
     MSG_IN(MessageType_MessageType_MayachainSignTx,                 MayachainSignTx,             fsm_msgMayachainSignTx)
     MSG_IN(MessageType_MessageType_MayachainMsgAck,                 MayachainMsgAck,             fsm_msgMayachainMsgAck)
+    MSG_IN(MessageType_MessageType_TonGetAddress,                   TonGetAddress,               fsm_msgTonGetAddress)
+    MSG_IN(MessageType_MessageType_TonSignTx,                       TonSignTx,                   fsm_msgTonSignTx)
 #endif
 
     /* Normal Out Messages */
@@ -115,6 +117,8 @@
     MSG_OUT(MessageType_MessageType_MayachainAddress,               MayachainAddress,            NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_MayachainMsgRequest,            MayachainMsgRequest,         NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_MayachainSignedTx,              MayachainSignedTx,           NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_TonAddress,                     TonAddress,                  NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_TonSignedTx,                    TonSignedTx,                 NO_PROCESS_FUNC)
 #endif
 
 #if DEBUG_LINK

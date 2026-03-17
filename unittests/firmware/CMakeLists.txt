@@ -7,6 +7,7 @@ set(sources
     recovery.cpp
     ripple.cpp
     storage.cpp
+    ton.cpp
     usb_rx.cpp
     u2f.cpp)
 
