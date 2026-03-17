@@ -210,6 +210,14 @@ void fsm_msgSolanaSignTx(SolanaSignTx *msg) {
         }
     } else if (review == SOL_TX_REVIEW_OPAQUE) {
         /* Unsupported or opaque message: allow explicit blind-sign only. */
+        if (!storage_isPolicyEnabled("SolanaBlindSigning")) {
+            memzero(node, sizeof(*node));
+            fsm_sendFailure(FailureType_Failure_Other,
+                            _("Solana blind signing is disabled"));
+            layoutHome();
+            return;
+        }
+
         if (!confirm(ButtonRequestType_ButtonRequest_SignTx,
                      "Blind Sign",
                      "Sign unverified Solana transaction? "
