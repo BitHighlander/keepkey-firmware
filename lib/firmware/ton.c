@@ -132,7 +132,10 @@ bool ton_parseDestination(const char *address, TonParsedAddress *parsed) {
 
     /* Parse flags */
     uint8_t flags = decoded[0];
-    parsed->bounceable = (flags & 0x11) == 0x11;
+    /* Bit 6 (0x40) indicates non-bounceable when set.
+     * 0x11 = bounceable mainnet, 0x51 = non-bounceable mainnet,
+     * 0x91 = bounceable testnet, 0xD1 = non-bounceable testnet. */
+    parsed->bounceable = !(flags & 0x40);
     parsed->testnet = (flags & 0x80) != 0;
 
     /* Workchain (signed byte) */
@@ -153,23 +156,25 @@ void ton_initBitBuffer(TonBitBuffer *bb) {
     bb->bit_len = 0;
 }
 
-void ton_writeBits(TonBitBuffer *bb, uint64_t value, uint8_t bits) {
+bool ton_writeBits(TonBitBuffer *bb, uint64_t value, uint8_t bits) {
     for (int i = bits - 1; i >= 0; i--) {
         uint16_t byte_idx = bb->bit_len / 8;
         uint8_t bit_idx = 7 - (bb->bit_len % 8);
-        if (byte_idx >= sizeof(bb->data)) return; /* overflow guard */
+        if (byte_idx >= sizeof(bb->data)) return false; /* overflow */
 
         if ((value >> i) & 1) {
             bb->data[byte_idx] |= (1 << bit_idx);
         }
         bb->bit_len++;
     }
+    return true;
 }
 
-void ton_writeBytes(TonBitBuffer *bb, const uint8_t *data, size_t len) {
+bool ton_writeBytes(TonBitBuffer *bb, const uint8_t *data, size_t len) {
     for (size_t i = 0; i < len; i++) {
-        ton_writeBits(bb, data[i], 8);
+        if (!ton_writeBits(bb, data[i], 8)) return false;
     }
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -359,6 +364,11 @@ bool ton_buildInternalMessage(const TonParsedAddress *dest,
             ton_writeBytes(bb, (const uint8_t *)comment, clen);
         } else {
             /* Comment too long for inline — put in ref cell */
+            /* Reject if comment exceeds single cell bit capacity */
+            if (32 + (uint16_t)(clen * 8) > TON_MAX_CELL_BITS) {
+                return false; /* comment exceeds cell bit capacity */
+            }
+
             ton_writeBits(bb, 1, 1); /* body in ref */
 
             /* Build body cell */
@@ -477,9 +487,13 @@ bool ton_signTx(const HDNode *node, const TonSignTx *msg, TonSignedTx *resp) {
             return false;
         }
 
-        /* Build signing message */
+        /* Build signing message — require expire_at to prevent
+         * expired-by-default transactions (defaulting to 0 = epoch). */
+        if (!msg->has_expire_at || msg->expire_at == 0) {
+            return false;
+        }
         uint32_t wallet_id = TON_V4R2_WALLET_ID;
-        uint32_t expire_at = msg->has_expire_at ? msg->expire_at : 0;
+        uint32_t expire_at = msg->expire_at;
         uint8_t mode = msg->has_mode ? (uint8_t)msg->mode : 3;
 
         TonCell signing_msg;

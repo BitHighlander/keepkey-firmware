@@ -62,8 +62,8 @@ bool ton_parseDestination(const char *address, TonParsedAddress *parsed);
 
 /* Cell construction */
 void ton_initBitBuffer(TonBitBuffer *bb);
-void ton_writeBits(TonBitBuffer *bb, uint64_t value, uint8_t bits);
-void ton_writeBytes(TonBitBuffer *bb, const uint8_t *data, size_t len);
+bool ton_writeBits(TonBitBuffer *bb, uint64_t value, uint8_t bits);
+bool ton_writeBytes(TonBitBuffer *bb, const uint8_t *data, size_t len);
 
 /* Cell hashing (SHA256 of cell representation) */
 bool ton_cellHash(const TonCell *cell, uint8_t hash_out[TON_CELL_HASH_SIZE]);

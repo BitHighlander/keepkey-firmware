@@ -187,3 +187,96 @@ TEST(Ton, FormatAmount) {
     ton_formatAmount(buf, sizeof(buf), 1500000000ULL);
     EXPECT_STREQ(buf, "1.500000000 TON");
 }
+
+TEST(Ton, ParseDestinationNonBounceable) {
+    /* 0x51 = non-bounceable, mainnet (bit 6 set) */
+    uint8_t raw[36];
+    raw[0] = 0x51;
+    raw[1] = 0x00;
+    memset(raw + 2, 0xCC, 32);
+
+    uint16_t crc = 0;
+    for (int i = 0; i < 34; i++) {
+        crc ^= (uint16_t)raw[i] << 8;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x8000)
+                crc = (crc << 1) ^ 0x1021;
+            else
+                crc <<= 1;
+        }
+    }
+    raw[34] = (crc >> 8) & 0xFF;
+    raw[35] = crc & 0xFF;
+
+    static const char b64[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char encoded[49];
+    int pos = 0;
+    for (int i = 0; i < 36; i += 3) {
+        uint32_t triple = ((uint32_t)raw[i] << 16);
+        if (i + 1 < 36) triple |= ((uint32_t)raw[i+1] << 8);
+        if (i + 2 < 36) triple |= raw[i+2];
+        encoded[pos++] = b64[(triple >> 18) & 0x3F];
+        encoded[pos++] = b64[(triple >> 12) & 0x3F];
+        encoded[pos++] = (i + 1 < 36) ? b64[(triple >> 6) & 0x3F] : '=';
+        encoded[pos++] = (i + 2 < 36) ? b64[triple & 0x3F] : '=';
+    }
+    encoded[48] = '\0';
+
+    TonParsedAddress parsed;
+    ASSERT_TRUE(ton_parseDestination(encoded, &parsed));
+    EXPECT_EQ(parsed.workchain, 0);
+    EXPECT_FALSE(parsed.bounceable);
+    EXPECT_FALSE(parsed.testnet);
+}
+
+TEST(Ton, ParseDestinationBounceableTestnet) {
+    /* 0x91 = bounceable, testnet */
+    uint8_t raw[36];
+    raw[0] = 0x91;
+    raw[1] = 0x00;
+    memset(raw + 2, 0xDD, 32);
+
+    uint16_t crc = 0;
+    for (int i = 0; i < 34; i++) {
+        crc ^= (uint16_t)raw[i] << 8;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x8000)
+                crc = (crc << 1) ^ 0x1021;
+            else
+                crc <<= 1;
+        }
+    }
+    raw[34] = (crc >> 8) & 0xFF;
+    raw[35] = crc & 0xFF;
+
+    static const char b64[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char encoded[49];
+    int pos = 0;
+    for (int i = 0; i < 36; i += 3) {
+        uint32_t triple = ((uint32_t)raw[i] << 16);
+        if (i + 1 < 36) triple |= ((uint32_t)raw[i+1] << 8);
+        if (i + 2 < 36) triple |= raw[i+2];
+        encoded[pos++] = b64[(triple >> 18) & 0x3F];
+        encoded[pos++] = b64[(triple >> 12) & 0x3F];
+        encoded[pos++] = (i + 1 < 36) ? b64[(triple >> 6) & 0x3F] : '=';
+        encoded[pos++] = (i + 2 < 36) ? b64[triple & 0x3F] : '=';
+    }
+    encoded[48] = '\0';
+
+    TonParsedAddress parsed;
+    ASSERT_TRUE(ton_parseDestination(encoded, &parsed));
+    EXPECT_TRUE(parsed.bounceable);
+    EXPECT_TRUE(parsed.testnet);
+}
+
+TEST(Ton, WriteBitsOverflow) {
+    TonBitBuffer bb;
+    ton_initBitBuffer(&bb);
+
+    for (int i = 0; i < 128; i++) {
+        ASSERT_TRUE(ton_writeBits(&bb, 0xFF, 8));
+    }
+    EXPECT_FALSE(ton_writeBits(&bb, 1, 1));
+}
