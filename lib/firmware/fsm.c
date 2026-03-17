@@ -62,6 +62,7 @@
 #include "keepkey/firmware/reset.h"
 #if !BITCOIN_ONLY
 #include "keepkey/firmware/ripple.h"
+#include "keepkey/firmware/solana.h"
 #endif
 #include "keepkey/firmware/signing.h"
 #if !BITCOIN_ONLY
@@ -97,6 +98,7 @@
 #include "messages-eos.pb.h"
 #include "messages-nano.pb.h"
 #include "messages-ripple.pb.h"
+#include "messages-solana.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
 #endif
@@ -303,4 +305,5 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_tendermint.h"
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
+#include "fsm_msg_solana.h"
 #endif
