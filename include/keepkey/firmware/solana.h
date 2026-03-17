@@ -74,6 +74,17 @@ typedef struct {
     SolanaParsedInstruction instructions[8]; /* max 8 instructions */
 } SolanaParsedTx;
 
+/* Firmware review result for a Solana message */
+typedef enum {
+    SOL_TX_REVIEW_MALFORMED = 0,
+    SOL_TX_REVIEW_OPAQUE,
+    SOL_TX_REVIEW_VERIFIED,
+} SolanaTxReview;
+
+/* Inspect a raw Solana transaction and classify it for signing UX */
+SolanaTxReview solana_inspectTx(const uint8_t *raw, size_t raw_len,
+                                SolanaParsedTx *tx);
+
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t *raw, size_t raw_len, SolanaParsedTx *tx);
 
