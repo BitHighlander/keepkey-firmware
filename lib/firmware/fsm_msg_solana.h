@@ -280,7 +280,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction *pi,
 
 /* Validate Solana derivation path: m/44'/501'/account'[/change'] */
 static bool solana_pathIsStandard(const uint32_t *path, size_t count) {
-    if (count < 2 || count > 4) return false;
+    if (count < 3 || count > 4) return false;
     if (path[0] != (0x80000000 | 44)) return false;   /* 44' */
     if (path[1] != (0x80000000 | 501)) return false;  /* 501' */
     for (size_t i = 2; i < count; i++) {
@@ -493,7 +493,7 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg) {
     /* Always require on-device confirmation (matches Ethereum behavior).
      * Display message content if printable, hex preview otherwise. */
     {
-        char msgBuf[129];
+        char msgBuf[129] = {0};
         const char *typeLabel;
         bool printable = true;
         for (unsigned i = 0; i < msg->message.size; i++) {
@@ -514,6 +514,7 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg) {
             for (unsigned i = 0; i < show; i++) {
                 snprintf(&msgBuf[2 * i], 3, "%02x", msg->message.bytes[i]);
             }
+            msgBuf[2 * show] = '\0';
             if (msg->message.size > 32) {
                 snprintf(&msgBuf[64], sizeof(msgBuf) - 64, "... (%u bytes)",
                          (unsigned)msg->message.size);
