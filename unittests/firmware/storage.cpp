@@ -775,7 +775,7 @@ TEST(Storage, UpgradePolicies) {
   EXPECT_EQ(src.pub.policies[1].enabled, true);
 
   EXPECT_EQ(src.pub.policies[4].has_policy_name, true);
-  EXPECT_EQ(std::string(src.pub.policies[4].policy_name), "SolanaBlindSigning");
+  EXPECT_EQ(std::string(src.pub.policies[4].policy_name), "SolBlindSign");
   EXPECT_EQ(src.pub.policies[4].has_enabled, true);
   EXPECT_EQ(src.pub.policies[4].enabled, false);
 }

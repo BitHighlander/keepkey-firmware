@@ -52,16 +52,16 @@
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
-#if !BITCOIN_ONLY
+#if !defined(BITCOIN_ONLY) || !BITCOIN_ONLY
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/solana.h"
 #endif
 #include "keepkey/firmware/signing.h"
-#if !BITCOIN_ONLY
+#if !defined(BITCOIN_ONLY) || !BITCOIN_ONLY
 #include "keepkey/firmware/signtx_tendermint.h"
 #endif
 #include "keepkey/firmware/storage.h"
-#if !BITCOIN_ONLY
+#if !defined(BITCOIN_ONLY) || !BITCOIN_ONLY
 #include "keepkey/firmware/solana_tx.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -294,4 +294,3 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
 #include "fsm_msg_solana.h"
-#endif

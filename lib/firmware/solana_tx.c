@@ -21,6 +21,7 @@
 #include "keepkey/firmware/solana.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/layout.h"
+#include "trezor/crypto/base58.h"
 #include "trezor/crypto/memzero.h"
 
 #include <string.h>
@@ -29,6 +30,15 @@
 #ifndef MIN
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
+
+#define SOLANA_ADDRESS_SIZE 45
+
+static bool solana_tx_publicKeyToAddress(const uint8_t pubkey[SOL_PUBKEY_SIZE],
+                                         char *address,
+                                         size_t address_len) {
+    size_t encoded_len = address_len;
+    return b58enc(address, &encoded_len, pubkey, SOL_PUBKEY_SIZE);
+}
 
 // Compact-u16 encoding used by Solana (little-endian varint, bit 7 = continuation)
 bool read_compact_u16(const uint8_t **data, size_t *remaining, uint16_t *out) {
@@ -328,8 +338,8 @@ bool solana_confirmTransaction(const SolanaParsedTransaction *tx,
         if (to_idx >= tx->num_accounts) return false;
 
         char to_address[SOLANA_ADDRESS_SIZE];
-        if (!solana_publicKeyToAddress(tx->account_keys[to_idx],
-                                        to_address, sizeof(to_address))) {
+        if (!solana_tx_publicKeyToAddress(tx->account_keys[to_idx],
+                                          to_address, sizeof(to_address))) {
             return false;
         }
 

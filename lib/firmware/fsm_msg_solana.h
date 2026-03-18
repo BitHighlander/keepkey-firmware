@@ -321,7 +321,7 @@ void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg) {
     layoutHome();
 }
 
-void fsm_msgSolanaSignTx(SolanaSignTx *msg) {
+void fsm_msgSolanaSignTx(const SolanaSignTx *msg) {
     RESP_INIT(SolanaSignedTx);
 
     CHECK_INITIALIZED
@@ -358,7 +358,7 @@ void fsm_msgSolanaSignTx(SolanaSignTx *msg) {
         }
     } else if (review == SOL_TX_REVIEW_OPAQUE) {
         /* Unsupported or opaque message: allow explicit blind-sign only. */
-        if (!storage_isPolicyEnabled("SolanaBlindSigning")) {
+        if (!storage_isPolicyEnabled("SolBlindSign")) {
             memzero(node, sizeof(*node));
             fsm_sendFailure(FailureType_Failure_Other,
                             _("Solana blind signing is disabled"));
@@ -378,7 +378,7 @@ void fsm_msgSolanaSignTx(SolanaSignTx *msg) {
         }
     } else {
         memzero(node, sizeof(*node));
-        fsm_sendFailure(FailureType_Failure_DataError,
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Malformed Solana transaction"));
         layoutHome();
         return;

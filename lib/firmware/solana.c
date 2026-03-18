@@ -21,6 +21,7 @@
 
 #include "trezor/crypto/memzero.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -614,15 +615,20 @@ void solana_formatTokenAmount(char *buf, size_t len, uint64_t amount,
     uint8_t show_dec = decimals > 9 ? 9 : decimals;
     uint64_t show_div = 1;
     for (uint8_t i = 0; i < show_dec; i++) show_div *= 10;
+    (void)show_div;
     uint64_t show_frac = frac;
     if (decimals > 9) {
         for (uint8_t i = 0; i < decimals - 9; i++) show_frac /= 10;
     }
 
-    char fmt[32];
-    snprintf(fmt, sizeof(fmt), "%%llu.%%0%dllu %%s", show_dec);
-    snprintf(buf, len, fmt, (unsigned long long)whole,
-             (unsigned long long)show_frac, symbol);
+    char frac_str[10];
+    for (int8_t i = (int8_t)show_dec - 1; i >= 0; i--) {
+        frac_str[i] = '0' + (show_frac % 10);
+        show_frac /= 10;
+    }
+    frac_str[show_dec] = '\0';
+    snprintf(buf, len, "%llu.%s %s", (unsigned long long)whole, frac_str,
+             symbol);
 }
 
 const SolanaTokenInfo *solana_findTokenInfo(const SolanaSignTx *msg,
