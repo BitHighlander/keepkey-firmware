@@ -278,11 +278,41 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction *pi,
     }
 }
 
+/* Validate Solana derivation path: m/44'/501'/account'[/change'] */
+static bool solana_pathIsStandard(const uint32_t *path, size_t count) {
+    if (count < 2 || count > 4) return false;
+    if (path[0] != (0x80000000 | 44)) return false;   /* 44' */
+    if (path[1] != (0x80000000 | 501)) return false;  /* 501' */
+    for (size_t i = 2; i < count; i++) {
+        if (!(path[i] & 0x80000000)) return false;    /* must be hardened */
+    }
+    return true;
+}
+
+/* Verify derived pubkey appears in tx accounts[0..num_required_sigs) */
+static bool solana_signerInTx(const uint8_t *pubkey, const SolanaParsedTx *tx) {
+    for (uint8_t i = 0; i < tx->num_required_sigs && i < tx->num_accounts; i++) {
+        if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0)
+            return true;
+    }
+    return false;
+}
+
 void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg) {
     RESP_INIT(SolanaAddress);
 
     CHECK_INITIALIZED
     CHECK_PIN
+
+    /* Path validation: warn on non-standard derivation */
+    if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
+        if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
+                     "Non-standard Solana derivation path. Continue?")) {
+            fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+            layoutHome();
+            return;
+        }
+    }
 
     HDNode *node = fsm_getDerivedNode(ED25519_NAME, msg->address_n,
                                       msg->address_n_count, NULL);
@@ -334,6 +364,16 @@ void fsm_msgSolanaSignTx(const SolanaSignTx *msg) {
         return;
     }
 
+    /* Path validation: warn on non-standard derivation */
+    if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
+        if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
+                     "Non-standard Solana derivation path. Continue?")) {
+            fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+            layoutHome();
+            return;
+        }
+    }
+
     HDNode *node = fsm_getDerivedNode(ED25519_NAME, msg->address_n,
                                       msg->address_n_count, NULL);
     if (!node) return;
@@ -343,6 +383,20 @@ void fsm_msgSolanaSignTx(const SolanaSignTx *msg) {
     SolanaParsedTx parsed;
     SolanaTxReview review = solana_inspectTx(msg->raw_tx.bytes,
                                              msg->raw_tx.size, &parsed);
+
+    /* Signer verification: derived key must be a required signer.
+     * For verified txs this is mandatory. For opaque txs we still check
+     * when we were able to parse the header (num_accounts > 0). */
+    if (review == SOL_TX_REVIEW_VERIFIED ||
+        (review == SOL_TX_REVIEW_OPAQUE && parsed.num_accounts > 0)) {
+        if (!solana_signerInTx(node->public_key + 1, &parsed)) {
+            memzero(node, sizeof(*node));
+            fsm_sendFailure(FailureType_Failure_Other,
+                            _("Derived key is not a signer for this tx"));
+            layoutHome();
+            return;
+        }
+    }
 
     if (review == SOL_TX_REVIEW_VERIFIED) {
         /* Per-instruction confirmation for fully verified messages */
@@ -421,16 +475,52 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg) {
         return;
     }
 
+    /* Path validation: warn on non-standard derivation */
+    if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
+        if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
+                     "Non-standard Solana derivation path. Continue?")) {
+            fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+            layoutHome();
+            return;
+        }
+    }
+
     HDNode *node = fsm_getDerivedNode(ED25519_NAME, msg->address_n,
                                       msg->address_n_count, NULL);
     if (!node) return;
     hdnode_fill_public_key(node);
 
-    if (msg->has_show_display && msg->show_display) {
-        if (!confirm(ButtonRequestType_ButtonRequest_SignMessage,
-                     "Sign Message",
-                     "Sign this Solana message (%u bytes)?",
-                     (unsigned)msg->message.size)) {
+    /* Always require on-device confirmation (matches Ethereum behavior).
+     * Display message content if printable, hex preview otherwise. */
+    {
+        char msgBuf[129];
+        const char *typeLabel;
+        bool printable = true;
+        for (unsigned i = 0; i < msg->message.size; i++) {
+            if (msg->message.bytes[i] < 0x20 || msg->message.bytes[i] > 0x7e) {
+                printable = false;
+                break;
+            }
+        }
+        if (printable && msg->message.size <= sizeof(msgBuf) - 1) {
+            typeLabel = "Sign Message";
+            memcpy(msgBuf, msg->message.bytes, msg->message.size);
+            msgBuf[msg->message.size] = '\0';
+        } else {
+            typeLabel = "Sign Bytes";
+            /* Show hex preview (up to 64 hex chars = 32 bytes) */
+            unsigned show = msg->message.size;
+            if (show > 32) show = 32;
+            for (unsigned i = 0; i < show; i++) {
+                snprintf(&msgBuf[2 * i], 3, "%02x", msg->message.bytes[i]);
+            }
+            if (msg->message.size > 32) {
+                snprintf(&msgBuf[64], sizeof(msgBuf) - 64, "... (%u bytes)",
+                         (unsigned)msg->message.size);
+            }
+        }
+        if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+                     _(typeLabel), "%s", msgBuf)) {
             memzero(node, sizeof(*node));
             fsm_sendFailure(FailureType_Failure_ActionCancelled,
                             _("Signing cancelled"));
