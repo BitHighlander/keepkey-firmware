@@ -149,6 +149,9 @@ static int parse_instruction_section(const uint8_t *raw, size_t raw_len,
     if (num_instructions > 8) {
         *force_opaque = true;
         tx->num_instructions = 0;
+        /* Don't attempt to parse instruction data — treat as opaque. */
+        *pos_io = raw_len;
+        return 0;
     } else {
         tx->num_instructions = (uint8_t)num_instructions;
     }
