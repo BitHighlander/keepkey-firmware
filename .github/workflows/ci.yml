@@ -515,6 +515,67 @@ jobs:
         working-directory: scripts/emulator
         run: docker compose down -v || true
 
+  screen-zoo:
+    needs: build-emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Init submodules
+        run: |
+          git submodule update --init deps/crypto/trezor-firmware
+          git submodule update --init deps/device-protocol
+          git submodule update --init --recursive deps/python-keepkey
+          git submodule update --init deps/qrenc/QR-Code-generator
+          git submodule update --init deps/sca-hardening/SecAESSTM32
+
+      - name: Download emulator image
+        uses: actions/download-artifact@v4
+        with:
+          name: emu-image
+          path: /tmp
+
+      - name: Load emulator image
+        run: docker load -i /tmp/emu-image.tar
+
+      - name: Generate screen zoo
+        run: |
+          # Start emulator in background
+          docker run -d --name kkemu \
+            -p 127.0.0.1:11044:11044/udp \
+            -p 127.0.0.1:11045:11045/udp \
+            ${{ env.EMU_IMAGE }}
+
+          # Wait for emulator to be ready
+          sleep 3
+
+          # Run zoo generator inside a python container
+          docker run --rm \
+            --network host \
+            -v ${{ github.workspace }}:/kkemu:z \
+            -v ${{ github.workspace }}/screen-zoo:/kkemu/screen-zoo:rw \
+            -e KEEPKEY_SCREENSHOT=1 \
+            -e KK_TRANSPORT_MAIN=127.0.0.1:11044 \
+            -e KK_TRANSPORT_DEBUG=127.0.0.1:11045 \
+            ${{ env.EMU_IMAGE }} \
+            /bin/sh /kkemu/scripts/emulator/screen-zoo.sh
+
+      - name: Upload screen zoo
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screen-zoo
+          path: screen-zoo/
+          retention-days: 90
+
+      - name: Tear down
+        if: always()
+        run: docker rm -f kkemu 2>/dev/null || true
+
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
   # ═══════════════════════════════════════════════════════════
