@@ -26,6 +26,9 @@ with open("/kkemu/deps/python-keepkey/keepkeylib/client.py", "w") as f:
             f.write(line)
 PYEOF
     echo "[screen-zoo] Patched client.py"
+    # Also fix Python 2 integer division for Python 3 compatibility
+    sed -i 's|ry / 8|ry // 8|g' "$CLIENT_PY"
+    echo "[screen-zoo] Fixed ry/8 integer division for Python 3"
     python3 -c "from PIL import Image; print('[screen-zoo] Pillow OK')" 2>&1 || echo "[screen-zoo] WARNING: Pillow not available"
 else
     echo "[screen-zoo] client.py already patched or not found"
