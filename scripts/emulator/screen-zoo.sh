@@ -3,103 +3,59 @@
 # test flows against the emulator via the debug link.
 #
 # Outputs: /kkemu/screen-zoo/<chain>/*.png
-#
-# Requires: emulator running on kkemu:11044/11045 (or localhost via env vars)
 
 set -e
 
-# Deps (Pillow, pytest, python-keepkey) are pre-installed in the Docker image.
-# If running outside Docker, install them:
-pip3 install --quiet Pillow pytest 2>/dev/null || true
-cd /kkemu/deps/python-keepkey && pip3 install --quiet -e . 2>/dev/null || true
-cd /kkemu
-
-# Patch client.py to enable screenshots via env var (non-destructive sed).
-# The original has SCREENSHOT = False hardcoded. We insert an env-var check.
+# Patch client.py to enable screenshots when KEEPKEY_SCREENSHOT=1.
+# The original has SCREENSHOT = False hardcoded. We replace it in-place.
 CLIENT_PY="/kkemu/deps/python-keepkey/keepkeylib/client.py"
-if [ -f "$CLIENT_PY" ] && grep -q "^SCREENSHOT = False" "$CLIENT_PY"; then
-    # Replace the single line with a multi-line env-var check
-    python3 -c "
-import re
-with open('$CLIENT_PY', 'r') as f:
-    content = f.read()
-patch = '''# Screenshot support: enable with KEEPKEY_SCREENSHOT=1
-import os as _screenshot_os
-SCREENSHOT = False
-if _screenshot_os.environ.get('KEEPKEY_SCREENSHOT', '') in ('1', 'true', 'yes'):
-    try:
-        from PIL import Image
-        SCREENSHOT = True
-    except ImportError:
-        pass'''
-content = content.replace('SCREENSHOT = False', patch, 1)
-with open('$CLIENT_PY', 'w') as f:
-    f.write(content)
-"
-    echo "[screen-zoo] Patched client.py for screenshot support"
+if grep -q "^SCREENSHOT = False" "$CLIENT_PY" 2>/dev/null; then
+    sed -i 's/^SCREENSHOT = False/from PIL import Image; SCREENSHOT = True/' "$CLIENT_PY"
+    echo "[screen-zoo] Patched client.py: SCREENSHOT = True"
+else
+    echo "[screen-zoo] client.py already patched or not found"
 fi
-
-# Verify patch worked
-python3 -c "
-import os
-os.environ['KEEPKEY_SCREENSHOT'] = '1'
-import importlib, sys
-# Force reimport
-if 'keepkeylib.client' in sys.modules:
-    del sys.modules['keepkeylib.client']
-from keepkeylib.client import SCREENSHOT
-print('[screen-zoo] SCREENSHOT =', SCREENSHOT)
-if not SCREENSHOT:
-    print('[screen-zoo] WARNING: SCREENSHOT is still False after patching!')
-    # Check what the file actually contains
-    with open('$CLIENT_PY') as f:
-        for i, line in enumerate(f):
-            if 'SCREENSHOT' in line and i < 80:
-                print(f'  line {i+1}: {line.rstrip()}')
-" 2>&1
 
 cd /kkemu/deps/python-keepkey/tests
 
 run_zoo() {
-    local chain="$1"
-    local test_file="$2"
-    local out_dir="/kkemu/screen-zoo/${chain}"
+    chain="$1"
+    test_file="$2"
+    out_dir="/kkemu/screen-zoo/${chain}"
 
     mkdir -p "${out_dir}"
-    echo "=== Generating ${chain} screen zoo ==="
+    echo "=== ${chain} ==="
 
     if [ ! -f "${test_file}" ]; then
-        echo "  -> SKIP (${test_file} not found)"
+        echo "  SKIP (not found)"
         return
     fi
 
-    # Run from tests dir so imports work
-    cd /kkemu/deps/python-keepkey/tests
-    KEEPKEY_SCREENSHOT=1 \
-    python3 -m pytest -x -v "${test_file}" 2>&1 | tail -5 || true
+    # pytest runs from tests/ dir, imports keepkeylib via sys.path=['../']
+    python3 -m pytest -x -v "${test_file}" 2>&1 | tail -3 || true
 
-    # Collect screenshots
+    # Collect screenshots (written to cwd by call_raw)
     mv scr*.png "${out_dir}/" 2>/dev/null || true
     COUNT=$(ls "${out_dir}"/*.png 2>/dev/null | wc -l | tr -d ' ')
-    echo "  -> ${COUNT} screens captured for ${chain}"
+    echo "  -> ${COUNT} screens"
 }
 
-# ── Zcash ──────────────────────────────────────────────────
-run_zoo "zcash-orchard-fvk" "test_msg_zcash_orchard.py"
+# ── Zcash ──────────────────────────────────────────
+run_zoo "zcash-orchard-fvk"  "test_msg_zcash_orchard.py"
 run_zoo "zcash-orchard-pczt" "test_msg_zcash_sign_pczt.py"
-run_zoo "zcash-transparent" "test_msg_signtx_zcash.py"
+run_zoo "zcash-transparent"  "test_msg_signtx_zcash.py"
 
-# ── Solana ─────────────────────────────────────────────────
+# ── Solana ─────────────────────────────────────────
 run_zoo "solana" "test_msg_solana_getaddress.py"
 
-# ── Ethereum / EVM ─────────────────────────────────────────
+# ── Ethereum / EVM ─────────────────────────────────
 run_zoo "ethereum-address" "test_msg_ethereum_getaddress.py"
-run_zoo "ethereum-sign" "test_msg_ethereum_signtx.py"
-run_zoo "ethereum-xfer" "test_msg_ethereum_signtx_xfer.py"
-run_zoo "ethereum-erc20" "test_msg_ethereum_erc20_approve.py"
+run_zoo "ethereum-sign"    "test_msg_ethereum_signtx.py"
+run_zoo "ethereum-xfer"    "test_msg_ethereum_signtx_xfer.py"
+run_zoo "ethereum-erc20"   "test_msg_ethereum_erc20_approve.py"
 run_zoo "ethereum-message" "test_msg_ethereum_message.py"
 
-# ── Summary ────────────────────────────────────────────────
+# ── Summary ────────────────────────────────────────
 echo ""
 echo "=== Screen Zoo Summary ==="
 TOTAL=0

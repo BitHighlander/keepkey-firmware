@@ -14,10 +14,9 @@ RUN cmake -C ./cmake/caches/emulator.cmake . \
 
 RUN make -j
 
-# Screen zoo + test deps (Pillow for OLED capture, pytest for test runner)
-RUN pip3 install --quiet Pillow pytest 2>/dev/null || \
-    (apt-get update -qq && apt-get install -y -qq python3-pip && pip3 install Pillow pytest) || true
-RUN cd /kkemu/deps/python-keepkey && pip3 install --quiet -e . 2>/dev/null || true
+# Screen zoo deps (Pillow for OLED capture, pytest for test runner)
+RUN pip3 install Pillow pytest 2>/dev/null || \
+    (apt-get update -qq && apt-get install -y -qq python3-pip python3-pil && pip3 install pytest) || true
 
 EXPOSE 11044/udp 11045/udp
 EXPOSE 5000
