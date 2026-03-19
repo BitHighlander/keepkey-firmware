@@ -8,15 +8,10 @@
 
 set -e
 
-echo "[screen-zoo] Installing dependencies..."
-pip install --quiet Pillow pytest 2>/dev/null || pip3 install --quiet Pillow pytest 2>/dev/null || {
-    echo "[screen-zoo] ERROR: Failed to install Pillow/pytest"
-    exit 1
-}
-
-# Install python-keepkey package itself (needed for imports)
-cd /kkemu/deps/python-keepkey
-pip install --quiet -e . 2>/dev/null || pip3 install --quiet -e . 2>/dev/null || true
+# Deps (Pillow, pytest, python-keepkey) are pre-installed in the Docker image.
+# If running outside Docker, install them:
+pip3 install --quiet Pillow pytest 2>/dev/null || true
+cd /kkemu/deps/python-keepkey && pip3 install --quiet -e . 2>/dev/null || true
 cd /kkemu
 
 # Patch client.py to enable screenshots via env var (non-destructive sed).

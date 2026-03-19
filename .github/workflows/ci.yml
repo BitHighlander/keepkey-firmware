@@ -204,10 +204,10 @@ jobs:
   # STAGE 2: BUILD — compile only after gate passes
   # ═══════════════════════════════════════════════════════════
 
-  build-emulator:
+  build-and-test-emulator:
     needs: [check-submodules, secret-scan]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -250,17 +250,66 @@ jobs:
             -f scripts/emulator/Dockerfile \
             .
 
-      - name: Save emulator image
+      - name: Run unit tests
+        run: |
+          mkdir -p test-reports/firmware-unit
+          docker run --rm \
+            -v ${{ github.workspace }}/test-reports:/kkemu/test-reports \
+            --entrypoint /bin/sh \
+            ${{ env.EMU_IMAGE }} \
+            -c "mkdir -p /kkemu/test-reports/firmware-unit && \
+                make xunit; RC=\$?; \
+                cp -r unittests/*.xml /kkemu/test-reports/firmware-unit/ 2>/dev/null; \
+                exit \$RC"
+
+      - name: Generate screen zoo
+        if: always()
+        run: |
+          mkdir -p screen-zoo
+          docker run --rm \
+            -v ${{ github.workspace }}/screen-zoo:/kkemu/screen-zoo:rw \
+            -v ${{ github.workspace }}/scripts/emulator/screen-zoo.sh:/kkemu/scripts/emulator/screen-zoo.sh:ro \
+            -e KEEPKEY_SCREENSHOT=1 \
+            -e KK_TRANSPORT_MAIN=127.0.0.1:11044 \
+            -e KK_TRANSPORT_DEBUG=127.0.0.1:11045 \
+            ${{ env.EMU_IMAGE }} \
+            /bin/sh -c "\
+              python3 ./scripts/emulator/bridge.py & \
+              ./bin/kkemu & \
+              sleep 2 && \
+              /bin/sh /kkemu/scripts/emulator/screen-zoo.sh"
+
+      - name: Upload unit test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: test-reports/firmware-unit/
+          retention-days: 30
+
+      - name: Upload screen zoo
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screen-zoo
+          path: screen-zoo/
+          retention-days: 90
+
+      - name: Save emulator image (publish only)
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.publish_emulator == 'true'
         run: docker save ${{ env.EMU_IMAGE }} -o /tmp/emu-image.tar
 
-      - name: Upload emulator image artifact
+      - name: Upload emulator image (publish only)
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.publish_emulator == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: emu-image
           path: /tmp/emu-image.tar
           retention-days: 1
-          # Note: emu-image (~887MB) is used by unit-tests, screen-zoo, and
-          # publish-emulator. Retention is 1 day to avoid bloating storage.
 
   build-arm-firmware:
     needs: [check-submodules, secret-scan]
@@ -434,40 +483,7 @@ jobs:
   # STAGE 3: TEST — run only after builds succeed
   # ═══════════════════════════════════════════════════════════
 
-  unit-tests:
-    needs: build-emulator
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Download emulator image
-        uses: actions/download-artifact@v4
-        with:
-          name: emu-image
-          path: /tmp
-
-      - name: Load emulator image
-        run: docker load -i /tmp/emu-image.tar
-
-      - name: Run unit tests
-        run: |
-          # make xunit returns non-zero if any test fails — capture
-          # exit code so JUnit XML still gets copied for reporting
-          docker run --rm \
-            -v ${{ github.workspace }}/test-reports:/kkemu/test-reports \
-            --entrypoint /bin/sh \
-            ${{ env.EMU_IMAGE }} \
-            -c "mkdir -p /kkemu/test-reports/firmware-unit && \
-                make xunit; RC=\$?; \
-                cp -r unittests/*.xml /kkemu/test-reports/firmware-unit/ 2>/dev/null; \
-                exit \$RC"
-
-      - name: Upload unit test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: unit-test-results
-          path: test-reports/firmware-unit/
-          retention-days: 30
+  # unit-tests and screen-zoo are now part of build-and-test-emulator above
 
   python-integration-tests:
     needs: [check-submodules, secret-scan]
@@ -517,65 +533,14 @@ jobs:
         working-directory: scripts/emulator
         run: docker compose down -v || true
 
-  screen-zoo:
-    needs: build-emulator
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Init submodules
-        run: |
-          git submodule update --init deps/crypto/trezor-firmware
-          git submodule update --init deps/device-protocol
-          git submodule update --init --recursive deps/python-keepkey
-
-      - name: Download emulator image
-        uses: actions/download-artifact@v4
-        with:
-          name: emu-image
-          path: /tmp
-
-      - name: Load emulator image
-        run: docker load -i /tmp/emu-image.tar
-
-      - name: Generate screen zoo
-        run: |
-          mkdir -p ${{ github.workspace }}/screen-zoo
-
-          # Run emulator + zoo script in one container.
-          # The emu image has the compiled binary at /kkemu/bin/kkemu.
-          # We mount only the screen-zoo output dir and the zoo script.
-          docker run --rm \
-            -v ${{ github.workspace }}/screen-zoo:/kkemu/screen-zoo:rw \
-            -v ${{ github.workspace }}/scripts/emulator/screen-zoo.sh:/kkemu/scripts/emulator/screen-zoo.sh:ro \
-            -e KEEPKEY_SCREENSHOT=1 \
-            -e KK_TRANSPORT_MAIN=127.0.0.1:11044 \
-            -e KK_TRANSPORT_DEBUG=127.0.0.1:11045 \
-            ${{ env.EMU_IMAGE }} \
-            /bin/sh -c "\
-              python3 ./scripts/emulator/bridge.py & \
-              ./bin/kkemu & \
-              sleep 2 && \
-              /bin/sh /kkemu/scripts/emulator/screen-zoo.sh"
-
-      - name: Upload screen zoo
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: screen-zoo
-          path: screen-zoo/
-          retention-days: 90
+  # screen-zoo is now part of build-and-test-emulator above
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
   # ═══════════════════════════════════════════════════════════
 
   publish-emulator:
-    needs: [unit-tests, python-integration-tests, build-arm-firmware, build-arm-firmware-btc-only]
+    needs: [build-and-test-emulator, python-integration-tests, build-arm-firmware, build-arm-firmware-btc-only]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.publish_emulator == 'true'
