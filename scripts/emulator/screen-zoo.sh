@@ -10,18 +10,22 @@ set -e
 # The original has SCREENSHOT = False hardcoded. We replace it in-place.
 CLIENT_PY="/kkemu/deps/python-keepkey/keepkeylib/client.py"
 if grep -q "^SCREENSHOT = False" "$CLIENT_PY" 2>/dev/null; then
-    # Replace with try/except so missing Pillow doesn't crash the module
-    python3 -c "
-p = '$CLIENT_PY'
-with open(p) as f: c = f.read()
-c = c.replace(
-    'SCREENSHOT = False',
-    'try:\\n    from PIL import Image\\n    SCREENSHOT = True\\nexcept ImportError:\\n    SCREENSHOT = False',
-    1)
-with open(p, 'w') as f: f.write(c)
-"
+    # Replace the hardcoded False with a try/except block
+    python3 << 'PYEOF'
+with open("/kkemu/deps/python-keepkey/keepkeylib/client.py") as f:
+    lines = f.readlines()
+with open("/kkemu/deps/python-keepkey/keepkeylib/client.py", "w") as f:
+    for line in lines:
+        if line.strip() == "SCREENSHOT = False":
+            f.write("try:\n")
+            f.write("    from PIL import Image\n")
+            f.write("    SCREENSHOT = True\n")
+            f.write("except ImportError:\n")
+            f.write("    SCREENSHOT = False\n")
+        else:
+            f.write(line)
+PYEOF
     echo "[screen-zoo] Patched client.py"
-    # Verify Pillow is available
     python3 -c "from PIL import Image; print('[screen-zoo] Pillow OK')" 2>&1 || echo "[screen-zoo] WARNING: Pillow not available"
 else
     echo "[screen-zoo] client.py already patched or not found"
