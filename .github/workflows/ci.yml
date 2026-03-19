@@ -294,7 +294,6 @@ jobs:
           name: screen-zoo
           path: screen-zoo/
           retention-days: 90
-          if-no-files-found: error
 
       - name: Save emulator image (publish only)
         if: >-

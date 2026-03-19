@@ -29,6 +29,9 @@ fi
 
 cd /kkemu/deps/python-keepkey/tests
 
+# Write a manifest so the artifact always has at least one file
+echo "screen-zoo generated at $(date -u)" > /kkemu/screen-zoo/manifest.txt
+
 run_zoo() {
     chain="$1"
     test_file="$2"
@@ -43,7 +46,8 @@ run_zoo() {
     fi
 
     # pytest runs from tests/ dir, imports keepkeylib via sys.path=['../']
-    python3 -m pytest -x -v "${test_file}" 2>&1 | tail -3 || true
+    # Full output so we can debug collection errors
+    python3 -m pytest -x -v "${test_file}" 2>&1 || true
 
     # Collect screenshots (written to cwd by call_raw)
     mv scr*.png "${out_dir}/" 2>/dev/null || true
