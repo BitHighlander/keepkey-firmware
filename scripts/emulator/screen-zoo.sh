@@ -57,7 +57,7 @@ run_zoo() {
     # Run from tests dir so imports work
     cd /kkemu/deps/python-keepkey/tests
     KEEPKEY_SCREENSHOT=1 \
-    python -m pytest -x -v "${test_file}" 2>&1 | tail -5 || true
+    python3 -m pytest -x -v "${test_file}" 2>&1 | tail -5 || true
 
     # Collect screenshots
     mv scr*.png "${out_dir}/" 2>/dev/null || true
