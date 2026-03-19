@@ -26,9 +26,25 @@ with open("/kkemu/deps/python-keepkey/keepkeylib/client.py", "w") as f:
             f.write(line)
 PYEOF
     echo "[screen-zoo] Patched client.py"
-    # Also fix Python 2 integer division for Python 3 compatibility
-    sed -i 's|ry / 8|ry // 8|g' "$CLIENT_PY"
-    echo "[screen-zoo] Fixed ry/8 integer division for Python 3"
+    # Fix Python 2 integer division + wrap in try/except for robustness
+    python3 << 'PYEOF2'
+with open("/kkemu/deps/python-keepkey/keepkeylib/client.py") as f:
+    c = f.read()
+# Fix integer division
+c = c.replace("ry / 8", "ry // 8")
+# Wrap the screenshot block in try/except so layout issues don't crash tests
+c = c.replace(
+    "        if SCREENSHOT and self.debug:\n            layout = self.debug.read_layout()",
+    "        if SCREENSHOT and self.debug:\n          try:\n            layout = self.debug.read_layout()"
+)
+c = c.replace(
+    "            self.screenshot_id += 1\n\n        resp = super(DebugLinkMixin, self).call_raw(msg)",
+    "            self.screenshot_id += 1\n          except Exception as _e:\n            pass\n\n        resp = super(DebugLinkMixin, self).call_raw(msg)"
+)
+with open("/kkemu/deps/python-keepkey/keepkeylib/client.py", "w") as f:
+    f.write(c)
+PYEOF2
+    echo "[screen-zoo] Patched integer division + exception guard"
     python3 -c "from PIL import Image; print('[screen-zoo] Pillow OK')" 2>&1 || echo "[screen-zoo] WARNING: Pillow not available"
 else
     echo "[screen-zoo] client.py already patched or not found"
