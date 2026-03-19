@@ -14,9 +14,11 @@ RUN cmake -C ./cmake/caches/emulator.cmake . \
 
 RUN make -j
 
-# Screen zoo deps (Pillow for OLED capture, pytest for test runner)
-RUN pip3 install Pillow pytest 2>/dev/null || \
-    (apt-get update -qq && apt-get install -y -qq python3-pip python3-pil && pip3 install pytest) || true
+# Screen zoo: Pillow for OLED capture (pytest already in base image)
+# Base image is Alpine-based, so use apk for native deps then pip for Pillow
+RUN apk add --no-cache py3-pillow 2>/dev/null || \
+    (apk add --no-cache python3-dev zlib-dev jpeg-dev gcc musl-dev && pip3 install Pillow) 2>/dev/null || \
+    echo "WARNING: Pillow not installed — screen zoo will be empty"
 
 EXPOSE 11044/udp 11045/udp
 EXPOSE 5000
