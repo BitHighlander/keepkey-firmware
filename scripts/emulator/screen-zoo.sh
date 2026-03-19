@@ -39,6 +39,25 @@ with open('$CLIENT_PY', 'w') as f:
     echo "[screen-zoo] Patched client.py for screenshot support"
 fi
 
+# Verify patch worked
+python3 -c "
+import os
+os.environ['KEEPKEY_SCREENSHOT'] = '1'
+import importlib, sys
+# Force reimport
+if 'keepkeylib.client' in sys.modules:
+    del sys.modules['keepkeylib.client']
+from keepkeylib.client import SCREENSHOT
+print('[screen-zoo] SCREENSHOT =', SCREENSHOT)
+if not SCREENSHOT:
+    print('[screen-zoo] WARNING: SCREENSHOT is still False after patching!')
+    # Check what the file actually contains
+    with open('$CLIENT_PY') as f:
+        for i, line in enumerate(f):
+            if 'SCREENSHOT' in line and i < 80:
+                print(f'  line {i+1}: {line.rstrip()}')
+" 2>&1
+
 cd /kkemu/deps/python-keepkey/tests
 
 run_zoo() {
