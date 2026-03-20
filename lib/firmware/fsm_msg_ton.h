@@ -145,8 +145,12 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
   }
 
   // Determine clear-sign vs blind-sign mode
+  // Deploy txs (is_deploy=true) include StateInit which changes the cell tree;
+  // firmware cannot reconstruct that, so deploy always uses blind-sign.
+  bool is_deploy = msg->has_is_deploy && msg->is_deploy;
   bool clear_sign = false;
-  if (msg->has_to_address && msg->has_amount &&
+  if (!is_deploy &&
+      msg->has_to_address && msg->has_amount &&
       msg->has_seqno && msg->has_expire_at &&
       msg->raw_tx.size == 32) {
     // All clear-sign fields present and raw_tx is a 32-byte hash — attempt verification
@@ -204,9 +208,11 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
       }
     }
 
+    const char *blind_msg = is_deploy
+        ? "Wallet deployment TX\ncannot be verified on\ndevice. Sign only if you\ntrust the sending app."
+        : "TON TX details cannot be\nverified on device.\nSign only if you trust\nthe sending app.";
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Signature",
-                 "TON TX details cannot be\nverified on device.\n"
-                 "Sign only if you trust\nthe sending app.")) {
+                 "%s", blind_msg)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
