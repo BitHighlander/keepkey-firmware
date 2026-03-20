@@ -110,7 +110,6 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
     return;
   }
 
-
   // Derive node using Ed25519 curve
   HDNode *node = fsm_getDerivedNode(ED25519_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -134,10 +133,7 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
     return;
   }
 
-  // TON uses Cell/BoC encoding which cannot be parsed on-device.
-  // Display host-supplied fields with explicit blind-sign warning.
-
-  // Validate destination address if provided (independent of amount)
+  // Validate destination address if provided
   if (msg->has_to_address) {
     if (!ton_validateAddress(msg->to_address)) {
       memzero(node, sizeof(*node));
@@ -148,8 +144,25 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
     }
   }
 
-  // Show transfer details if both destination and amount are provided
-  if (msg->has_to_address && msg->has_amount) {
+  // Determine clear-sign vs blind-sign mode
+  bool clear_sign = false;
+  if (msg->has_to_address && msg->has_amount &&
+      msg->has_seqno && msg->has_expire_at &&
+      msg->raw_tx.size == 32) {
+    // All clear-sign fields present and raw_tx is a 32-byte hash — attempt verification
+    bool bounce = msg->has_bounce ? msg->bounce : true;
+    const char *memo = (msg->has_memo && msg->memo[0] != '\0') ? msg->memo : NULL;
+    size_t memo_len = memo ? strlen(memo) : 0;
+
+    clear_sign = ton_verify_transfer_hash(
+        msg->to_address, msg->amount,
+        msg->seqno, msg->expire_at, bounce,
+        memo, memo_len,
+        msg->raw_tx.bytes);
+  }
+
+  if (clear_sign) {
+    // ── Clear-sign: verified fields match raw_tx hash ──────────────
     char amount_str[32];
     ton_formatAmount(amount_str, sizeof(amount_str), msg->amount);
 
@@ -162,18 +175,44 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
       layoutHome();
       return;
     }
-  }
 
-  // Always require explicit blind-sign acknowledgment — TON Cell/BoC
-  // encoding cannot be verified on-device
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Signature",
-               "TON TX details cannot be\nverified on device.\n"
-               "Sign only if you trust\nthe sending app.")) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Signing cancelled"));
-    layoutHome();
-    return;
+    // Show memo if present
+    if (msg->has_memo && msg->memo[0] != '\0') {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Memo", "%s", msg->memo)) {
+        memzero(node, sizeof(*node));
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        _("Signing cancelled"));
+        layoutHome();
+        return;
+      }
+    }
+  } else {
+    // ── Blind-sign: show fields if available + explicit warning ─────
+    if (msg->has_to_address && msg->has_amount) {
+      char amount_str[32];
+      ton_formatAmount(amount_str, sizeof(amount_str), msg->amount);
+
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "TON Transfer", "Send %s to\n%s?",
+                   amount_str, msg->to_address)) {
+        memzero(node, sizeof(*node));
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        _("Signing cancelled"));
+        layoutHome();
+        return;
+      }
+    }
+
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Signature",
+                 "TON TX details cannot be\nverified on device.\n"
+                 "Sign only if you trust\nthe sending app.")) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
   }
 
   // Sign the transaction with Ed25519

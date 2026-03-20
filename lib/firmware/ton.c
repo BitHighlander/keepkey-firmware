@@ -282,6 +282,253 @@ void ton_formatAmount(char *buf, size_t len, uint64_t amount) {
   bn_format(&val, NULL, " TON", TON_DECIMALS, 0, false, buf, len);
 }
 
+// ── Bit-level writer for cell construction ──────────────────────────
+
+typedef struct {
+  uint8_t buf[256]; // max 2048 bits
+  uint16_t len;     // bits written
+} BitWriter;
+
+static void bw_init(BitWriter *w) {
+  memset(w->buf, 0, sizeof(w->buf));
+  w->len = 0;
+}
+
+static void bw_write_bit(BitWriter *w, bool v) {
+  if (v) w->buf[w->len >> 3] |= (0x80 >> (w->len & 7));
+  w->len++;
+}
+
+static void bw_write_uint(BitWriter *w, uint64_t value, int bits) {
+  for (int i = bits - 1; i >= 0; i--) {
+    bw_write_bit(w, (value >> i) & 1);
+  }
+}
+
+static void bw_write_bytes(BitWriter *w, const uint8_t *data, size_t len) {
+  for (size_t i = 0; i < len; i++) bw_write_uint(w, data[i], 8);
+}
+
+static void bw_write_coins(BitWriter *w, uint64_t amount) {
+  if (amount == 0) { bw_write_uint(w, 0, 4); return; }
+  int byte_len = 0;
+  uint64_t v = amount;
+  while (v > 0) { byte_len++; v >>= 8; }
+  bw_write_uint(w, byte_len, 4);
+  for (int i = byte_len - 1; i >= 0; i--) {
+    bw_write_uint(w, (amount >> (i * 8)) & 0xFF, 8);
+  }
+}
+
+/** Get augmented byte length and apply completion tag */
+static size_t bw_augmented(BitWriter *w, uint8_t *out, size_t out_len) {
+  size_t byte_len = (w->len + 7) / 8;
+  if (byte_len > out_len) return 0;
+  memcpy(out, w->buf, byte_len);
+  if (w->len % 8 != 0) {
+    out[byte_len - 1] |= (0x80 >> (w->len & 7));
+  }
+  return byte_len;
+}
+
+/** Compute cell representation hash: SHA256(d1 || d2 || data [|| ref_depths || ref_hashes]) */
+static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
+                       const uint16_t *ref_depths, int ref_count, uint8_t *out) {
+  uint8_t d1 = (uint8_t)ref_count;
+  uint8_t d2 = (uint8_t)((bits->len + 7) / 8 + bits->len / 8);
+
+  uint8_t aug_data[256];
+  size_t aug_len = (bits->len + 7) / 8;
+  memcpy(aug_data, bits->buf, aug_len);
+  if (bits->len % 8 != 0) {
+    aug_data[aug_len - 1] |= (0x80 >> (bits->len & 7));
+  }
+
+  SHA256_CTX ctx;
+  sha256_Init(&ctx);
+  sha256_Update(&ctx, &d1, 1);
+  sha256_Update(&ctx, &d2, 1);
+  sha256_Update(&ctx, aug_data, aug_len);
+
+  for (int i = 0; i < ref_count; i++) {
+    uint8_t depth_be[2] = { (ref_depths[i] >> 8) & 0xFF, ref_depths[i] & 0xFF };
+    sha256_Update(&ctx, depth_be, 2);
+  }
+  for (int i = 0; i < ref_count; i++) {
+    sha256_Update(&ctx, ref_hashes[i], 32);
+  }
+  sha256_Final(&ctx, out);
+}
+
+// ── Base64 URL-safe decode ──────────────────────────────────────────
+
+static int b64url_decode_char(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '-' || c == '+') return 62;
+  if (c == '_' || c == '/') return 63;
+  return -1;
+}
+
+static bool base64_url_decode(const char *in, size_t in_len, uint8_t *out, size_t *out_len) {
+  size_t max_out = *out_len;
+  size_t j = 0;
+
+  // Process groups of 4 characters
+  for (size_t i = 0; i < in_len; ) {
+    int vals[4] = {0, 0, 0, 0};
+    int count = 0;
+    for (int k = 0; k < 4 && i < in_len; k++, i++) {
+      if (in[i] == '=') continue;
+      vals[k] = b64url_decode_char(in[i]);
+      if (vals[k] < 0) return false;
+      count = k + 1;
+    }
+    if (count >= 2 && j < max_out) out[j++] = (vals[0] << 2) | (vals[1] >> 4);
+    if (count >= 3 && j < max_out) out[j++] = ((vals[1] & 0xF) << 4) | (vals[2] >> 2);
+    if (count >= 4 && j < max_out) out[j++] = ((vals[2] & 0x3) << 6) | vals[3];
+  }
+  *out_len = j;
+  return true;
+}
+
+/**
+ * Validate a TON user-friendly address (Base64 URL-safe, 48 chars → 36 bytes)
+ */
+bool ton_validateAddress(const char *address) {
+  size_t addr_len = strlen(address);
+  if (addr_len < 46 || addr_len > 48) return false;
+
+  uint8_t raw[36];
+  size_t raw_len = sizeof(raw);
+  if (!base64_url_decode(address, addr_len, raw, &raw_len)) return false;
+  if (raw_len != 36) return false;
+
+  uint16_t expected_crc = (raw[34] << 8) | raw[35];
+  uint16_t actual_crc = ton_crc16(raw, 34);
+  return expected_crc == actual_crc;
+}
+
+/**
+ * Parse a TON user-friendly address → workchain + 32-byte hash
+ */
+static bool ton_parse_address(const char *address, int8_t *workchain, uint8_t *hash) {
+  size_t addr_len = strlen(address);
+  uint8_t raw[36];
+  size_t raw_len = sizeof(raw);
+  if (!base64_url_decode(address, addr_len, raw, &raw_len)) return false;
+  if (raw_len != 36) return false;
+
+  uint16_t expected_crc = (raw[34] << 8) | raw[35];
+  uint16_t actual_crc = ton_crc16(raw, 34);
+  if (expected_crc != actual_crc) return false;
+
+  *workchain = (int8_t)raw[1];
+  memcpy(hash, raw + 2, 32);
+  return true;
+}
+
+/**
+ * Verify a v4r2 transfer body hash by reconstructing it from structured fields.
+ * Reproduces the exact same cell tree as the host-side buildUnsignedBody().
+ */
+bool ton_verify_transfer_hash(
+    const char *to_address, uint64_t amount,
+    uint32_t seqno, uint32_t expire_at, bool bounce,
+    const char *memo, size_t memo_len,
+    const uint8_t *expected_hash) {
+
+  // Parse destination address
+  int8_t dest_wc;
+  uint8_t dest_hash[32];
+  if (!ton_parse_address(to_address, &dest_wc, dest_hash)) return false;
+
+  // ── Build memo body cell (if present) ────────────────────────────
+  uint8_t memo_cell_hash[32];
+  uint16_t memo_cell_depth = 0;
+  bool has_memo = (memo != NULL && memo_len > 0);
+
+  if (has_memo) {
+    BitWriter memo_bits;
+    bw_init(&memo_bits);
+    bw_write_uint(&memo_bits, 0, 32); // op = 0 (text comment)
+    bw_write_bytes(&memo_bits, (const uint8_t *)memo, memo_len);
+    cell_hash(&memo_bits, NULL, NULL, 0, memo_cell_hash);
+  }
+
+  // ── Build internal message cell ──────────────────────────────────
+  BitWriter im_bits;
+  bw_init(&im_bits);
+
+  bw_write_bit(&im_bits, false);  // int_msg_info tag = 0
+  bw_write_bit(&im_bits, true);   // ihr_disabled
+  bw_write_bit(&im_bits, bounce); // bounce
+  bw_write_bit(&im_bits, false);  // bounced
+  bw_write_uint(&im_bits, 0, 2);  // src = addr_none
+
+  // dest = addr_std$10 + no anycast + workchain(8) + hash(256)
+  bw_write_uint(&im_bits, 2, 2);  // addr_std tag
+  bw_write_bit(&im_bits, false);  // no anycast
+  bw_write_uint(&im_bits, (uint8_t)dest_wc, 8);
+  bw_write_bytes(&im_bits, dest_hash, 32);
+
+  bw_write_coins(&im_bits, amount);
+  bw_write_bit(&im_bits, false);  // no extra_currencies
+  bw_write_coins(&im_bits, 0);    // ihr_fee = 0
+  bw_write_coins(&im_bits, 0);    // fwd_fee = 0
+  bw_write_uint(&im_bits, 0, 64); // created_lt = 0
+  bw_write_uint(&im_bits, 0, 32); // created_at = 0
+  bw_write_bit(&im_bits, false);  // no StateInit
+
+  if (has_memo) {
+    bw_write_bit(&im_bits, true); // body is ref
+  } else {
+    bw_write_bit(&im_bits, false); // no body
+  }
+
+  uint8_t im_hash[32];
+  uint16_t im_depth;
+
+  if (has_memo) {
+    uint8_t ref_hashes[1][32];
+    memcpy(ref_hashes[0], memo_cell_hash, 32);
+    uint16_t ref_depths[1] = { memo_cell_depth };
+    cell_hash(&im_bits, ref_hashes, ref_depths, 1, im_hash);
+    im_depth = 1 + memo_cell_depth;
+  } else {
+    cell_hash(&im_bits, NULL, NULL, 0, im_hash);
+    im_depth = 0;
+  }
+
+  // ── Build unsigned body cell ─────────────────────────────────────
+  BitWriter ub_bits;
+  bw_init(&ub_bits);
+
+  bw_write_uint(&ub_bits, V4R2_WALLET_ID, 32); // wallet_id
+  bw_write_uint(&ub_bits, expire_at, 32);       // valid_until
+  bw_write_uint(&ub_bits, seqno, 32);           // seqno
+  bw_write_uint(&ub_bits, 0, 8);                // op = 0 (simple send)
+  bw_write_uint(&ub_bits, 3, 8);                // send_mode = 3
+
+  uint8_t ub_hash[32];
+  {
+    uint8_t ref_hashes[1][32];
+    memcpy(ref_hashes[0], im_hash, 32);
+    uint16_t ref_depths[1] = { im_depth };
+    cell_hash(&ub_bits, ref_hashes, ref_depths, 1, ub_hash);
+  }
+
+  // ── Compare with expected hash ───────────────────────────────────
+  bool match = (memcmp(ub_hash, expected_hash, 32) == 0);
+
+  // Clean up
+  memzero(&im_bits, sizeof(im_bits));
+  memzero(&ub_bits, sizeof(ub_bits));
+
+  return match;
+}
+
 /**
  * Sign a TON transaction with Ed25519
  */
