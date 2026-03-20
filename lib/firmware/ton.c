@@ -320,17 +320,6 @@ static void bw_write_coins(BitWriter *w, uint64_t amount) {
   }
 }
 
-/** Get augmented byte length and apply completion tag */
-static size_t bw_augmented(BitWriter *w, uint8_t *out, size_t out_len) {
-  size_t byte_len = (w->len + 7) / 8;
-  if (byte_len > out_len) return 0;
-  memcpy(out, w->buf, byte_len);
-  if (w->len % 8 != 0) {
-    out[byte_len - 1] |= (0x80 >> (w->len & 7));
-  }
-  return byte_len;
-}
-
 /** Compute cell representation hash: SHA256(d1 || d2 || data [|| ref_depths || ref_hashes]) */
 static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
                        const uint16_t *ref_depths, int ref_count, uint8_t *out) {
@@ -362,65 +351,20 @@ static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
 
 // ── Base64 URL-safe decode ──────────────────────────────────────────
 
-static int b64url_decode_char(char c) {
-  if (c >= 'A' && c <= 'Z') return c - 'A';
-  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-  if (c >= '0' && c <= '9') return c - '0' + 52;
-  if (c == '-' || c == '+') return 62;
-  if (c == '_' || c == '/') return 63;
-  return -1;
-}
-
-static bool base64_url_decode(const char *in, size_t in_len, uint8_t *out, size_t *out_len) {
-  size_t max_out = *out_len;
-  size_t j = 0;
-
-  // Process groups of 4 characters
-  for (size_t i = 0; i < in_len; ) {
-    int vals[4] = {0, 0, 0, 0};
-    int count = 0;
-    for (int k = 0; k < 4 && i < in_len; k++, i++) {
-      if (in[i] == '=') continue;
-      vals[k] = b64url_decode_char(in[i]);
-      if (vals[k] < 0) return false;
-      count = k + 1;
-    }
-    if (count >= 2 && j < max_out) out[j++] = (vals[0] << 2) | (vals[1] >> 4);
-    if (count >= 3 && j < max_out) out[j++] = ((vals[1] & 0xF) << 4) | (vals[2] >> 2);
-    if (count >= 4 && j < max_out) out[j++] = ((vals[2] & 0x3) << 6) | vals[3];
-  }
-  *out_len = j;
-  return true;
-}
-
 /**
- * Validate a TON user-friendly address (Base64 URL-safe, 48 chars → 36 bytes)
- */
-bool ton_validateAddress(const char *address) {
-  size_t addr_len = strlen(address);
-  if (addr_len < 46 || addr_len > 48) return false;
-
-  uint8_t raw[36];
-  size_t raw_len = sizeof(raw);
-  if (!base64_url_decode(address, addr_len, raw, &raw_len)) return false;
-  if (raw_len != 36) return false;
-
-  uint16_t expected_crc = (raw[34] << 8) | raw[35];
-  uint16_t actual_crc = ton_crc16(raw, 34);
-  return expected_crc == actual_crc;
-}
-
-/**
- * Parse a TON user-friendly address → workchain + 32-byte hash
+ * Parse a TON user-friendly address → workchain + 32-byte hash.
+ * Uses the base64_url_decode() already defined above.
  */
 static bool ton_parse_address(const char *address, int8_t *workchain, uint8_t *hash) {
+  if (!address) return false;
   size_t addr_len = strlen(address);
-  uint8_t raw[36];
-  size_t raw_len = sizeof(raw);
-  if (!base64_url_decode(address, addr_len, raw, &raw_len)) return false;
-  if (raw_len != 36) return false;
+  if (addr_len != 48) return false;
 
-  uint16_t expected_crc = (raw[34] << 8) | raw[35];
+  uint8_t raw[36];
+  int dlen = base64_url_decode(address, addr_len, raw, sizeof(raw));
+  if (dlen != 36) return false;
+
+  uint16_t expected_crc = ((uint16_t)raw[34] << 8) | raw[35];
   uint16_t actual_crc = ton_crc16(raw, 34);
   if (expected_crc != actual_crc) return false;
 

@@ -74,13 +74,6 @@ void ton_formatAmount(char *buf, size_t len, uint64_t amount);
 bool ton_signTx(const HDNode *node, const TonSignTx *msg, TonSignedTx *resp);
 
 /**
- * Validate a TON user-friendly address (Base64 URL-safe with CRC16).
- * @param address  Base64 URL-safe encoded TON address (48 chars)
- * @return true if address is valid
- */
-bool ton_validateAddress(const char *address);
-
-/**
  * Verify a v4r2 transfer body hash by reconstructing it from structured fields.
  * Returns true if the computed hash matches expected_hash (32 bytes).
  *
