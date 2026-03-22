@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * generate-zoo-report.ts — Generates a PDF zoo report for firmware PRs.
+ * generate-zoo-report.ts  -- Generates a PDF zoo report for firmware PRs.
  *
  * Renders all zoo OLED screen mockups into a polished PDF with:
  *   - Title page with PR metadata
@@ -21,7 +21,8 @@ import sharp from 'sharp'
 import {
   OLED, encodePNG, buildPage,
   SETUP_FLOW, PIN_FLOW, BTC_FLOW, ETH_FLOW, TOKEN_FLOW, EIP712_FLOW,
-  EVM_MULTICHAIN_FLOW,
+  EVM_MULTICHAIN_FLOW, TRON_FLOW, TON_FLOW, ZCASH_FLOW,
+  RIPPLE_FLOW, COSMOS_FLOW, MAYACHAIN_FLOW, BINANCE_FLOW, BIP85_FLOW,
   SOLANA_FLOW, THORCHAIN_FLOW, RECOVERY_FLOW, PASSPHRASE_FLOW, MGMT_FLOW,
   type PageDef,
 } from './generate-zoo'
@@ -57,92 +58,111 @@ interface FlowMeta {
   why: string
 }
 
-const ALL_FLOWS: FlowMeta[] = [
-  {
-    name: 'First Launch Setup',
-    pages: SETUP_FLOW,
-    accent: '#48BB78',
-    securityLevel: 'critical',
-    why: 'Seed generation and backup is the foundation of wallet security. Any display error during seed word presentation could cause permanent fund loss.',
-  },
-  {
-    name: 'PIN Entry',
-    pages: PIN_FLOW,
-    accent: '#C0A860',
-    securityLevel: 'high',
-    why: 'PIN scrambling prevents screen-watching attacks. The randomized grid must render correctly every time.',
-  },
+// Only verified flows  -- text confirmed from firmware confirm() source code.
+// Font rendering + wrapping is approximate. Awaiting emulator for pixel-perfect.
+const ALL_FLOWS: FlowMeta[] = ([
   {
     name: 'Bitcoin Send',
     pages: BTC_FLOW,
     accent: '#F7931A',
-    securityLevel: 'critical',
-    why: 'Bitcoin address verification on device is the primary defense against clipboard hijacking. Full address display prevents address spoofing.',
+    securityLevel: 'high',
+    why: 'Text verified from app_confirm.c:152 (confirm_transaction_output) and app_confirm.c:206 (confirm_transaction). Font/wrapping approximate.',
   },
   {
-    name: 'Ethereum Send',
+    name: 'Ethereum',
     pages: ETH_FLOW,
     accent: '#627EEA',
-    securityLevel: 'critical',
-    why: 'ETH addresses lack built-in checksums. Device display is the only reliable verification point. Gas/chain-ID display prevents wrong-network sends.',
-  },
-  {
-    name: 'ERC-20 Token Transfer',
-    pages: TOKEN_FLOW,
-    accent: '#8B5CF6',
     securityLevel: 'high',
-    why: 'Token spoofing (fake USDC at a different contract) is a major attack vector. Contract address display lets users cross-reference with block explorers.',
+    why: 'Verified: confirm_transfer_output (app_confirm.c:134), layoutEthereumFee (ethereum.c:787), Sign Message (fsm_msg_ethereum.h:265), Confirm Data (ethereum.c:772), Blind block (ethereum.c:760).',
   },
   {
     name: 'EIP-712 Typed Data',
     pages: EIP712_FLOW,
     accent: '#EF4444',
-    securityLevel: 'critical',
-    why: 'EIP-712 permits are the #1 phishing vector in DeFi. Unlimited approvals and far-future deadlines must be clearly flagged on the device screen.',
+    securityLevel: 'high',
+    why: 'Verified: fsm_msg_ethereum.h:372,378. Firmware shows HASH DIGESTS of domain/message  -- NOT decoded permit fields. User sees hex, cannot verify token/amount/spender.',
   },
   {
-    name: 'Multi-Chain EVM',
-    pages: EVM_MULTICHAIN_FLOW,
-    accent: '#8247E5',
-    securityLevel: 'critical',
-    why: 'EVM chains share identical address formats. Without chain ID verification, users can send funds to the correct address on the wrong network — permanently losing access. Polygon, Arbitrum, and other L2s are especially dangerous because addresses look identical to Ethereum.',
+    name: 'ERC-20 Tokens',
+    pages: TOKEN_FLOW,
+    accent: '#8B5CF6',
+    securityLevel: 'high',
+    why: 'Verified: ethereum.c:726-748 (layoutEthereumConfirmTx). Token transfer, approve, unlimited unlock, revoke. Token symbol from tokenByChainAddress().',
   },
   {
     name: 'Solana',
     pages: SOLANA_FLOW,
     accent: '#14F195',
-    securityLevel: 'critical',
-    why: 'Solana base58 addresses are 32-44 characters. Middle-truncation (XXXX...XXXX) is a spoofing vector — attackers can craft keys with matching prefix+suffix. Full address display is mandatory.',
+    securityLevel: 'high',
+    why: 'Text verified from fsm_msg_solana.h:57. Title "Instr N/M" from line 49. Before/after shows pubkeyToShort vs pubkeyToStr.',
   },
   {
     name: 'THORChain Swap',
     pages: THORCHAIN_FLOW,
     accent: '#23DCC8',
+    securityLevel: 'medium',
+    why: 'Text verified from fsm_msg_thorchain.h:189. confirm(ConfirmMemo, "Memo", "%s", memo). Font/wrapping approximate.',
+  },
+  {
+    name: 'TRON',
+    pages: TRON_FLOW,
+    accent: '#EF0027',
     securityLevel: 'high',
-    why: 'THORChain swap memos control the entire swap operation. Memo manipulation can redirect funds to an attacker address.',
+    why: 'Verified: fsm_msg_tron.h. TRX transfer, 12 hardcoded TRC-20 tokens, unknown token, contract call, blind sign, fee limit. Full base58 addresses.',
   },
   {
-    name: 'Seed Recovery',
-    pages: RECOVERY_FLOW,
-    accent: '#23DCC8',
-    securityLevel: 'critical',
-    why: 'Recovery cipher scrambling prevents keylogger attacks during seed entry. Grid must re-scramble for every character.',
+    name: 'TON',
+    pages: TON_FLOW,
+    accent: '#0098EA',
+    securityLevel: 'high',
+    why: 'Verified: fsm_msg_ton.h. Clear-sign with hash verification, memo display, blind sign for deploy and opaque TXs. Full 48-char TON addresses.',
   },
   {
-    name: 'Passphrase',
-    pages: PASSPHRASE_FLOW,
+    name: 'Zcash Orchard',
+    pages: ZCASH_FLOW,
+    accent: '#F4B728',
+    securityLevel: 'high',
+    why: 'Verified: fsm_msg_zcash.h. Shielded-only, hybrid shield (transparent->Orchard), per-input signing. No recipient shown  -- Orchard hides by design.',
+  },
+  {
+    name: 'Ripple (XRP)',
+    pages: RIPPLE_FLOW,
+    accent: '#23292F',
+    securityLevel: 'medium',
+    why: 'Verified: fsm_msg_ripple.h:99,112. Send with destination tag, transaction confirmation with fee.',
+  },
+  {
+    name: 'Cosmos (ATOM)',
+    pages: COSMOS_FLOW,
+    accent: '#2E3148',
+    securityLevel: 'medium',
+    why: 'Verified: fsm_msg_cosmos.h. Send (confirm_transaction_output), redelegate, claim rewards.',
+  },
+  {
+    name: 'Maya Protocol',
+    pages: MAYACHAIN_FLOW,
+    accent: '#3B82F6',
+    securityLevel: 'medium',
+    why: 'Verified: fsm_msg_mayachain.h:245. Sign TX with denom + chain_id.',
+  },
+  {
+    name: 'Binance Chain',
+    pages: BINANCE_FLOW,
+    accent: '#F3BA2F',
+    securityLevel: 'medium',
+    why: 'Verified: fsm_msg_binance.h:176. Sign with chain_id confirmation.',
+  },
+  {
+    name: 'BIP-85',
+    pages: BIP85_FLOW,
     accent: '#8B5CF6',
-    securityLevel: 'high',
-    why: 'Wrong passphrase silently opens a different empty wallet. Device confirmation prevents accidental fund isolation.',
+    securityLevel: 'medium',
+    why: 'Verified: fsm_msg_bip85.h:28. Display-only child seed derivation.',
   },
-  {
-    name: 'Device Management',
-    pages: MGMT_FLOW,
-    accent: '#EF4444',
-    securityLevel: 'critical',
-    why: 'Device wipe is irreversible. Clear on-screen warnings prevent accidental key deletion.',
-  },
-]
+  // TODO: Setup, PIN, Recovery, Passphrase, Wipe -- needs emulator
+  // TODO: Osmosis LP/swap ops (fsm_msg_osmosis.h)
+  // TODO: EOS, Nano
+] as FlowMeta[]).filter(f => f.pages.length > 0)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Render zoo pages to PNG buffers
@@ -362,7 +382,7 @@ async function composePdf(
   const policies = [
     {
       title: 'Address Display Policy',
-      text: 'All cryptocurrency addresses MUST be displayed in full on the device screen. Middle-truncation (XXXX...XXXX) is a known spoofing vector — attackers can craft keys with matching prefix and suffix. This applies to: BTC (bech32), ETH (hex), Solana (base58), Cosmos (bech32), and all other chains.',
+      text: 'All cryptocurrency addresses MUST be displayed in full on the device screen. Middle-truncation (XXXX...XXXX) is a known spoofing vector  -- attackers can craft keys with matching prefix and suffix. This applies to: BTC (bech32), ETH (hex), Solana (base58), Cosmos (bech32), and all other chains.',
       level: 'critical' as const,
     },
     {
@@ -377,7 +397,7 @@ async function composePdf(
     },
     {
       title: 'Chain & Network Identification',
-      text: 'Chain ID must be prominently displayed to prevent wrong-network sends. EVM chains share the same address format — only the chain ID distinguishes Ethereum from Polygon/Arbitrum/etc.',
+      text: 'Chain ID must be prominently displayed to prevent wrong-network sends. EVM chains share the same address format  -- only the chain ID distinguishes Ethereum from Polygon/Arbitrum/etc.',
       level: 'high' as const,
     },
     {
@@ -443,7 +463,7 @@ function hexToRgb(hex: string) {
 async function main() {
   const opts = parseArgs()
 
-  console.log('\nKeepKey Zoo Report — Generating screen review PDF...\n')
+  console.log('\nKeepKey Zoo Report  -- Generating screen review PDF...\n')
 
   // Step 1: Render all zoo pages to PNG
   console.log('  Rendering OLED mockups...')
