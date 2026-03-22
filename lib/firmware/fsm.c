@@ -25,6 +25,7 @@
 #include "keepkey/board/check_bootloader.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/memory.h"
