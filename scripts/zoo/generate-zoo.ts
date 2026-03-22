@@ -11,6 +11,7 @@ import { mkdirSync, existsSync, readdirSync, statSync } from 'fs'
 import { join, relative } from 'path'
 import { $ } from 'bun'
 import sharp from 'sharp'
+import QRCode from 'qrcode'
 
 const ZOO = join(import.meta.dir, '..', '..', 'zoo-output')
 const RAW = join(ZOO, 'raw')
@@ -179,6 +180,23 @@ function bezelSvg(w: number, h: number): Buffer {
   </svg>`)
 }
 
+// QR code generator: returns a PNG buffer of a QR code with label
+async function qrBlockPng(data: string, label: string, size: number, accent: string): Promise<Buffer> {
+  const qrSvgStr = await QRCode.toString(data, {
+    type: 'svg', margin: 1, width: size - 20,
+    color: { dark: '#ffffff', light: '#00000000' },
+  })
+  // Wrap in a labeled container SVG
+  const labelH = 28
+  const totalH = size + labelH
+  const svg = `<svg width="${size}" height="${totalH}" xmlns="http://www.w3.org/2000/svg">
+    <rect x="0" y="0" width="${size}" height="${totalH}" rx="8" fill="rgba(255,255,255,0.04)" stroke="${accent}" stroke-width="1" stroke-opacity="0.3"/>
+    <text x="${size / 2}" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="${accent}" text-anchor="middle" letter-spacing="1">${escSvg(label)}</text>
+    <g transform="translate(10,${labelH})">${qrSvgStr.replace(/<\?xml[^?]*\?>/, '').replace(/<svg[^>]*>/, '').replace(/<\/svg>/, '')}</g>
+  </svg>`
+  return sharp(Buffer.from(svg)).png().toBuffer()
+}
+
 export async function buildPage(
   filename: string,
   flow: string,
@@ -189,6 +207,7 @@ export async function buildPage(
   deviceDraw: (o: OLED) => void,
   appContext: string,
   insight: string[],
+  qrData?: { data: string; label: string },
 ): Promise<void> {
   const oled = new OLED()
   oled.clear()
@@ -213,6 +232,12 @@ export async function buildPage(
   const appCtx = await sharp(appContextSvg(appContext, 360)).png().toBuffer()
   const insightBlock = await sharp(insightSvg(insight, 380)).png().toBuffer()
 
+  // Build optional QR code
+  let qrPng: Buffer | null = null
+  if (qrData) {
+    qrPng = await qrBlockPng(qrData.data, qrData.label, 160, accent)
+  }
+
   // Get insight block dimensions
   const insightMeta = await sharp(insightBlock).metadata()
   const appCtxMeta = await sharp(appCtx).metadata()
@@ -225,23 +250,34 @@ export async function buildPage(
   const rightCol = DEVICE_W + 60
   const pageH = Math.max(PAGE_H, bezelY + DEVICE_H + 40 + 20 + (appCtxMeta.height || 80) + 30)
 
+  // Build composite layers
+  const layers: sharp.OverlayOptions[] = [
+    { input: header, top: 0, left: 0 },
+    // Device bezel + screen
+    { input: bezel, top: bezelY, left: bezelX },
+    { input: deviceScaled, top: deviceY, left: deviceX },
+    { input: deviceLabel, top: deviceY - 18, left: deviceX },
+    // App context (below device)
+    { input: appLabel, top: bezelY + DEVICE_H + 48, left: deviceX },
+    { input: appCtx, top: bezelY + DEVICE_H + 64, left: deviceX },
+    // Insight (right column)
+    { input: verifyLabel, top: 75, left: rightCol },
+    { input: insightBlock, top: 92, left: rightCol },
+  ]
+
+  // QR code positioned below insight block on right column
+  if (qrPng) {
+    const insightH = insightMeta.height || 100
+    layers.push({ input: qrPng, top: 92 + insightH + 16, left: rightCol + 110 })
+    const scanLabel = await sharp(labelSvg('SCAN TO VERIFY', 0, 0, 200, 9, accent)).png().toBuffer()
+    layers.push({ input: scanLabel, top: 92 + insightH + 4, left: rightCol + 110 })
+  }
+
   // Compose
   await sharp({
     create: { width: PAGE_W, height: pageH, channels: 4, background: BG }
   })
-    .composite([
-      { input: header, top: 0, left: 0 },
-      // Device bezel + screen
-      { input: bezel, top: bezelY, left: bezelX },
-      { input: deviceScaled, top: deviceY, left: deviceX },
-      { input: deviceLabel, top: deviceY - 18, left: deviceX },
-      // App context (below device)
-      { input: appLabel, top: bezelY + DEVICE_H + 48, left: deviceX },
-      { input: appCtx, top: bezelY + DEVICE_H + 64, left: deviceX },
-      // Insight (right column)
-      { input: verifyLabel, top: 75, left: rightCol },
-      { input: insightBlock, top: 92, left: rightCol },
-    ])
+    .composite(layers)
     .png()
     .toFile(join(PAGES_DIR, filename))
 }
@@ -258,6 +294,7 @@ export interface PageDef {
   device: (o: OLED) => void
   appContext: string
   insight: string[]
+  qr?: { data: string; label: string }
 }
 
 export const SETUP_FLOW: PageDef[] = [
@@ -402,6 +439,7 @@ export const BTC_FLOW: PageDef[] = [
       '!The DEVICE screen shows the REAL destination',
       'This is the #1 attack vector for hardware wallets',
     ],
+    qr: { data: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', label: 'DESTINATION' },
   },
   {
     file: '13-btc-send-amount.png', flow: 'Bitcoin Send', step: 'Verify Amount & Fee', accent: '#F7931A',
@@ -441,60 +479,236 @@ export const BTC_FLOW: PageDef[] = [
 
 export const ETH_FLOW: PageDef[] = [
   {
-    file: '16-eth-send-address.png', flow: 'Ethereum Send', step: 'Verify ETH Address', accent: '#627EEA',
-    device(o) { o.text(4, 4, 'Send ETH to:', 1); o.hline(4, 14, 248); o.text(4, 20, '0x742d35Cc6634C053', 1); o.text(4, 30, '2950a20547b231011', 1); o.text(4, 40, 'e30c8e7aec2b8Fe8', 1); o.centerText(54, '[Hold to confirm]', 1) },
-    appContext: 'App: "Confirming on KeepKey..."\nETH address: 42 chars (0x + 40 hex)\nSame clipboard hijacking risk as BTC',
+    file: '16-eth-send-address.png', flow: 'Ethereum Send', step: 'Verify Destination Address', accent: '#627EEA',
+    device(o) {
+      o.text(4, 4, 'Send ETH to:', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, '0x742d35Cc6634C0532', 1)
+      o.text(4, 28, '950a20547b231011e30', 1)
+      o.text(4, 38, 'c8e7aec2b8Fe8', 1)
+      o.hline(4, 50, 248)
+      o.centerText(54, '[Hold to confirm]', 1)
+    },
+    appContext: 'App: "Confirming on KeepKey..."\nETH address: 42 chars (0x + 40 hex)\nPulsing device outline, no action buttons\nSame clipboard hijacking risk as BTC',
     insight: [
-      'Full 42-character address displayed',
+      'Full 42-character 0x address on device',
       'ETH addresses lack built-in checksums',
       '!!One wrong character = lost funds FOREVER',
-      '!Same clipboard attack risk as Bitcoin',
-      'Verify the 0x address character by character',
+      '!Clipboard malware replaces addresses silently',
+      '!Device screen is the ONLY trusted source',
+      'Compare first 6 + last 6 chars minimum',
+    ],
+    qr: { data: '0x742d35Cc6634C0532950a20547b231011e30c8e7aec2b8Fe8', label: 'DESTINATION' },
+  },
+  {
+    file: '17-eth-amount-fee.png', flow: 'Ethereum Send', step: 'Verify Amount & Fee', accent: '#627EEA',
+    device(o) {
+      o.text(4, 4, 'Amount: 1.5 ETH', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, 'Gas limit:  21000', 1)
+      o.text(4, 28, 'Gas price:  20 Gwei', 1)
+      o.text(4, 38, 'Max fee:    0.000420 ETH', 1)
+      o.hline(4, 50, 248)
+      o.centerText(54, '[Hold to confirm]', 1)
+    },
+    appContext: 'Device shows amount + gas in one screen\nSimple send: gas limit = 21000\nContract call: gas limit varies\nMax fee = gas limit x gas price',
+    insight: [
+      'Verify amount matches what you entered',
+      '!Watch decimals: 1.5 vs 15.0 vs 0.15',
+      'Gas limit 21000 = simple ETH transfer',
+      '!Higher gas limit = contract interaction',
+      '!Unusually high gas = overpaying',
+      '!!Compromised app could inflate the amount',
     ],
   },
   {
-    file: '17-eth-gas-chainid.png', flow: 'Ethereum Send', step: 'Gas Fee & Chain ID', accent: '#627EEA',
-    device(o) { o.text(4, 4, 'Gas limit: 21000', 1); o.text(4, 16, 'Gas price: 20 Gwei', 1); o.hline(4, 28, 248); o.text(4, 34, 'Max fee:', 1); o.text(4, 46, '0.000420 ETH', 2) },
-    appContext: 'Device shows gas parameters\nSimple sends: gas limit = 21000\nContract calls: gas limit varies\nChain ID shown on next screen',
+    file: '17b-eth-chain-id.png', flow: 'Ethereum Send', step: 'Verify Chain ID', accent: '#627EEA',
+    device(o) {
+      o.text(4, 4, 'Network:', 1)
+      o.centerText(20, 'Ethereum', 2)
+      o.hline(4, 40, 248)
+      o.text(4, 46, 'Chain ID: 1', 1)
+      o.centerText(56, '[Hold to confirm]', 1)
+    },
+    appContext: 'Chain ID identifies the target network\n1 = Ethereum mainnet\n137 = Polygon, 42161 = Arbitrum\n10 = Optimism, 56 = BSC, 8453 = Base',
     insight: [
-      'Gas limit 21000 = simple ETH transfer',
-      'Higher gas limit = contract interaction',
-      '!Unusually high gas = overpaying',
-      '!Low gas = may fail but still costs fee',
-      'Chain ID 1=ETH, 137=Polygon, 42161=Arbitrum',
+      'Chain ID 1 = Ethereum mainnet',
       '!!Wrong chain = funds on wrong network',
+      '!!EVM chains share the SAME address format',
+      '!Only chain ID distinguishes ETH from Polygon',
+      'Always confirm chain matches your intent',
+    ],
+  },
+  {
+    file: '17c-eth-message-sign.png', flow: 'Ethereum Send', step: 'Sign Message (personal_sign)', accent: '#627EEA',
+    device(o) {
+      o.text(4, 4, 'Sign message:', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, 'Login to OpenSea', 1)
+      o.text(4, 28, 'Nonce: 8a3f2b1c', 1)
+      o.hline(4, 40, 248)
+      o.text(4, 46, 'This will NOT', 1)
+      o.text(4, 56, 'move any funds.', 1)
+    },
+    appContext: 'personal_sign — proves wallet ownership\nUsed by dApps for authentication\nDoes NOT authorize any transaction\nDevice shows plaintext message content',
+    insight: [
+      'Message signing proves identity, not funds',
+      'Read the message text carefully',
+      '!Phishing: message may disguise a permit',
+      '!Legitimate logins show readable text + nonce',
+      'If message is hex gibberish: REJECT',
     ],
   },
 ]
 
 export const TOKEN_FLOW: PageDef[] = [
   {
-    file: '18-token-contract.png', flow: 'ERC-20 Token Transfer', step: 'Verify Token Contract', accent: '#8B5CF6',
-    device(o) { o.text(4, 4, 'Token transfer:', 1); o.text(4, 16, 'USDC (USD Coin)', 1); o.hline(4, 26, 248); o.text(4, 30, '0xA0b86991c6218b36', 1); o.text(4, 40, 'c1d19D4a2e9Eb0cE36', 1); o.centerText(54, '[Hold to confirm]', 1) },
-    appContext: 'App: Signing approval overlay\nBadge: "ERC-20 Transfer"\nShows token name + contract address',
+    file: '18-token-contract.png', flow: 'ERC-20 Token Transfer', step: 'Verify Token & Contract', accent: '#8B5CF6',
+    device(o) {
+      o.text(4, 4, 'Token: USDC (USD Coin)', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, 'Contract:', 1)
+      o.text(4, 28, '0xA0b86991c6218b36c', 1)
+      o.text(4, 38, '1d19D4a2e9Eb0cE3606', 1)
+      o.text(4, 48, 'eB48', 1)
+      o.centerText(58, '[Hold to confirm]', 1)
+    },
+    appContext: 'Clear signing: token metadata from host\nFull contract address on device\nCross-reference with Etherscan before accepting\nApp shows: "ERC-20 Transfer" badge',
     insight: [
       'CONTRACT ADDRESS is the only reliable token ID',
-      'Fake tokens with same name exist!',
-      '!Cross-reference contract address with Etherscan',
       '!!Token spoofing: fake USDC at different address',
+      '!Scan QR to verify contract on Etherscan',
+      'Full address shown — no truncation',
       'Device shows the ACTUAL contract being called',
     ],
+    qr: { data: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', label: 'USDC CONTRACT' },
+  },
+  {
+    file: '18b-token-amount.png', flow: 'ERC-20 Token Transfer', step: 'Verify Token Amount & Recipient', accent: '#8B5CF6',
+    device(o) {
+      o.text(4, 4, 'Send 1,000.00 USDC to:', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, '0x892CFa57d18c7d08D', 1)
+      o.text(4, 28, 'c79e7295e3cFd68b10', 1)
+      o.text(4, 38, '7d07b0Ac', 1)
+      o.hline(4, 50, 248)
+      o.centerText(54, '[Hold to confirm]', 1)
+    },
+    appContext: 'Device shows decoded transfer() call\nAmount uses token decimals (USDC = 6)\nRecipient is the actual destination\nNOT the contract address',
+    insight: [
+      'Amount shows human-readable token value',
+      '!Verify recipient is NOT the contract address',
+      '!Recipient is where your tokens go',
+      '!!Decimals matter: 1000 vs 1000.00 vs 0.001',
+      'Full recipient address — no truncation',
+    ],
+    qr: { data: '0x892CFa57d18c7d08Dc79e7295e3cFd68b107d07b0Ac', label: 'RECIPIENT' },
   },
 ]
 
 export const EIP712_FLOW: PageDef[] = [
   {
-    file: '19-eip712-permit.png', flow: 'EIP-712 Typed Data', step: 'Token Permit Signature', accent: '#EF4444',
-    device(o) { o.text(4, 4, 'Permit:', 1); o.text(4, 16, 'Token:   USDC', 1); o.text(4, 26, 'Spender: 0x0000...2D4', 1); o.text(4, 36, 'Amount:  1000.00', 1); o.text(4, 46, 'Deadline: 2025-12-31', 1); o.centerText(58, '[Hold to sign]', 1) },
-    appContext: 'App: Signing approval overlay\nBadge: "EIP-712 Typed Data"\nDomain: Uniswap\nShows decoded permit fields',
+    file: '19-eip712-permit.png', flow: 'EIP-712 Typed Data', step: 'Token Permit — Verify All Fields', accent: '#EF4444',
+    device(o) {
+      o.text(4, 2, 'Permit:', 1)
+      o.text(4, 12, 'Token:  USDC', 1)
+      o.text(4, 22, 'Amount: 1000.00', 1)
+      o.text(4, 32, 'Deadline: 2025-12-31', 1)
+      o.text(4, 42, 'Spender:', 1)
+      o.text(4, 52, '0x68b3465833fb72A7', 1)
+    },
+    appContext: 'App: Signing approval overlay\nBadge: "EIP-712 Typed Data"\nDomain: Uniswap V3 Router\nDecoded permit fields shown below domain',
     insight: [
       'Permit = off-chain token spending approval',
-      'Verify: token, amount, spender, deadline',
+      'Verify ALL fields: token, amount, spender, deadline',
       '!!MAX_UINT256 amount = UNLIMITED spending!',
       '!!Far-future deadline = never expires',
       '!!Permit phishing: sign once, attacker drains later',
-      'Only sign permits for protocols you trust',
+      '!Spender address scrolls — verify the full address',
     ],
+    qr: { data: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45', label: 'SPENDER' },
+  },
+  {
+    file: '19b-eip712-unlimited.png', flow: 'EIP-712 Typed Data', step: 'Unlimited Approval — DANGER', accent: '#EF4444',
+    device(o) {
+      o.text(4, 2, 'Permit:', 1)
+      o.text(4, 12, 'Token:  USDC', 1)
+      o.text(4, 22, 'Amount: UNLIMITED', 2)
+      o.text(4, 42, 'Deadline: 2099-12-31', 1)
+      o.centerText(56, '[Hold to sign]', 1)
+    },
+    appContext: 'DANGER: unlimited approval detected\nApp should show red warning banner\nAmount = MAX_UINT256 (infinite)\nDeadline = effectively forever',
+    insight: [
+      '!!UNLIMITED = attacker can drain ALL your USDC',
+      '!!Deadline 2099 = approval never expires',
+      '!!This is the #1 DeFi phishing vector',
+      '!Only sign if you FULLY trust the protocol',
+      '!Prefer limited approvals with near deadlines',
+      'Revoke at revoke.cash if compromised',
+    ],
+  },
+]
+
+export const EVM_MULTICHAIN_FLOW: PageDef[] = [
+  {
+    file: '19c-polygon-send.png', flow: 'Multi-Chain EVM', step: 'Polygon — Same Address, Different Chain', accent: '#8247E5',
+    device(o) {
+      o.text(4, 4, 'Send MATIC on Polygon:', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, '0x742d35Cc6634C0532', 1)
+      o.text(4, 28, '950a20547b231011e30', 1)
+      o.text(4, 38, 'c8e7aec2b8Fe8', 1)
+      o.text(4, 50, 'Chain ID: 137', 1)
+    },
+    appContext: 'SAME address as Ethereum example!\nChain ID 137 = Polygon PoS\nNative token: MATIC (not ETH)\nDevice must show chain to prevent cross-chain errors',
+    insight: [
+      '!!SAME address, DIFFERENT network',
+      'Chain ID 137 = Polygon, NOT Ethereum',
+      '!Sending ETH to Polygon address = lost funds',
+      '!Always verify chain ID matches your intent',
+      'Device shows chain ID to prevent this mistake',
+    ],
+  },
+  {
+    file: '19d-arbitrum-send.png', flow: 'Multi-Chain EVM', step: 'Arbitrum — Chain ID Verification', accent: '#28A0F0',
+    device(o) {
+      o.text(4, 4, 'Send ETH on Arbitrum:', 1)
+      o.hline(4, 14, 248)
+      o.text(4, 18, 'Amount: 0.5 ETH', 1)
+      o.text(4, 28, 'Max fee: 0.000084 ETH', 1)
+      o.hline(4, 40, 248)
+      o.text(4, 46, 'Chain ID: 42161', 1)
+      o.centerText(56, '[Hold to confirm]', 1)
+    },
+    appContext: 'Arbitrum One (L2)\nChain ID: 42161\nUses ETH for gas but on L2\nLower fees than mainnet, same security model',
+    insight: [
+      'Chain ID 42161 = Arbitrum One (L2)',
+      'Uses ETH as gas token (not a separate token)',
+      '!L2 fees are typically much lower than L1',
+      '!Verify chain ID matches the intended L2',
+      'Bridging back to L1 requires a separate transaction',
+    ],
+  },
+  {
+    file: '19e-unknown-contract.png', flow: 'Multi-Chain EVM', step: 'Unknown Contract Interaction', accent: '#F59E0B',
+    device(o) {
+      o.text(4, 2, 'Contract call:', 1)
+      o.text(4, 12, '0x68b3465833fb72A7', 1)
+      o.text(4, 22, '0ecDF485E0e4C7bD86', 1)
+      o.text(4, 32, '65Fc45', 1)
+      o.text(4, 44, 'Data: 0x5ae401dc...', 1)
+      o.centerText(56, '[Hold to confirm]', 1)
+    },
+    appContext: 'Blind signing: contract not in known list\nDevice shows full contract address\nCalldata truncated (too long for display)\nApp should show decoded ABI if available',
+    insight: [
+      '!Unknown contract — blind signing territory',
+      '!!Cannot verify what this contract will DO',
+      '!Scan QR to look up contract on Etherscan',
+      'If contract is unverified: DO NOT SIGN',
+      '!Calldata "0x5ae401dc" = multicall (common in DeFi)',
+      'Only proceed if you initiated this transaction',
+    ],
+    qr: { data: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45', label: 'CONTRACT' },
   },
 ]
 
@@ -536,6 +750,7 @@ export const SOLANA_FLOW: PageDef[] = [
       '!Address wraps to 2 lines on 256px OLED — expected',
       'Spoofing attack now requires matching ALL 44 chars',
     ],
+    qr: { data: 'CD9R61PMZFafFQ9QsPZATm74hFyEvYaNtEtwGvvHmRYH', label: 'DESTINATION' },
   },
   {
     file: '26-sol-spl-transfer.png', flow: 'Solana SPL Token', step: 'SPL Transfer — Full Address', accent: '#14F195',
@@ -650,6 +865,7 @@ async function main() {
     { name: 'ETH', pages: ETH_FLOW },
     { name: 'Token', pages: TOKEN_FLOW },
     { name: 'EIP-712', pages: EIP712_FLOW },
+    { name: 'EVM Multi-Chain', pages: EVM_MULTICHAIN_FLOW },
     { name: 'Solana', pages: SOLANA_FLOW },
     { name: 'THORChain', pages: THORCHAIN_FLOW },
     { name: 'Recovery', pages: RECOVERY_FLOW },
@@ -666,7 +882,7 @@ async function main() {
     const stepIdx = flow.pages.indexOf(p)
     const totalSteps = flow.pages.length
 
-    await buildPage(p.file, p.flow, p.step, stepIdx, totalSteps, p.accent, p.device, p.appContext, p.insight)
+    await buildPage(p.file, p.flow, p.step, stepIdx, totalSteps, p.accent, p.device, p.appContext, p.insight, p.qr)
     process.stdout.write(`  ${p.file}\n`)
   }
 

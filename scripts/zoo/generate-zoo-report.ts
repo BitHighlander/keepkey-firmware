@@ -21,6 +21,7 @@ import sharp from 'sharp'
 import {
   OLED, encodePNG, buildPage,
   SETUP_FLOW, PIN_FLOW, BTC_FLOW, ETH_FLOW, TOKEN_FLOW, EIP712_FLOW,
+  EVM_MULTICHAIN_FLOW,
   SOLANA_FLOW, THORCHAIN_FLOW, RECOVERY_FLOW, PASSPHRASE_FLOW, MGMT_FLOW,
   type PageDef,
 } from './generate-zoo'
@@ -100,6 +101,13 @@ const ALL_FLOWS: FlowMeta[] = [
     why: 'EIP-712 permits are the #1 phishing vector in DeFi. Unlimited approvals and far-future deadlines must be clearly flagged on the device screen.',
   },
   {
+    name: 'Multi-Chain EVM',
+    pages: EVM_MULTICHAIN_FLOW,
+    accent: '#8247E5',
+    securityLevel: 'critical',
+    why: 'EVM chains share identical address formats. Without chain ID verification, users can send funds to the correct address on the wrong network — permanently losing access. Polygon, Arbitrum, and other L2s are especially dangerous because addresses look identical to Ethereum.',
+  },
+  {
     name: 'Solana',
     pages: SOLANA_FLOW,
     accent: '#14F195',
@@ -154,7 +162,7 @@ async function renderAllPages(): Promise<Map<string, Buffer>> {
 
     await buildPage(
       p.file, p.flow, p.step, stepIdx, flow.pages.length,
-      p.accent, p.device, p.appContext, p.insight,
+      p.accent, p.device, p.appContext, p.insight, p.qr,
     )
 
     // Read the generated PNG back
