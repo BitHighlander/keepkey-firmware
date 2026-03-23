@@ -16,10 +16,19 @@ OLED_W = 256
 OLED_H = 64
 LAYOUT_SIZE = OLED_W * OLED_H // 8  # 2048 bytes
 
+# Default upscale factor for readability (256x64 is tiny on modern screens)
+DEFAULT_SCALE = 2
 
-def decode_layout(layout_bytes):
-    """Decode 2048-byte bitfield into a 256x64 PIL Image."""
-    im = Image.new("RGB", (OLED_W, OLED_H), (0, 0, 0))
+
+def decode_layout(layout_bytes, scale=1):
+    """Decode 2048-byte bitfield into a PIL Image.
+
+    Args:
+        layout_bytes: 2048-byte 1bpp bitfield from DebugLinkGetState.layout
+        scale: Integer upscale factor (1=native 256x64, 2=512x128, etc.)
+    """
+    w, h = OLED_W * scale, OLED_H * scale
+    im = Image.new("RGB", (w, h), (0, 0, 0))
     pix = im.load()
 
     for x in range(OLED_W):
@@ -27,17 +36,24 @@ def decode_layout(layout_bytes):
             byte_idx = x + (y // 8) * OLED_W
             if byte_idx < len(layout_bytes):
                 if (layout_bytes[byte_idx] >> (y % 8)) & 1:
-                    pix[x, y] = (255, 255, 255)
+                    # Fill scale x scale block
+                    for sx in range(scale):
+                        for sy in range(scale):
+                            pix[x * scale + sx, y * scale + sy] = (255, 255, 255)
 
     return im
 
 
-def capture_screenshot(debug_client, filename):
+def capture_screenshot(debug_client, filename, scale=DEFAULT_SCALE):
     """Capture current OLED state via DebugLink and save as PNG.
 
     Args:
         debug_client: DebugLink instance (has read_state() or _call())
         filename: Output PNG path
+        scale: Integer upscale factor (default 2 for 512x128 output)
+
+    Returns:
+        True if screenshot captured, False if layout unavailable.
     """
     from keepkeylib import messages_pb2 as proto
 
@@ -47,8 +63,13 @@ def capture_screenshot(debug_client, filename):
         print(f"  WARNING: layout field empty or too small ({len(state.layout) if state.HasField('layout') else 0} bytes)")
         return False
 
-    im = decode_layout(state.layout)
+    im = decode_layout(state.layout, scale=scale)
 
     os.makedirs(os.path.dirname(filename) or '.', exist_ok=True)
     im.save(filename)
     return True
+
+
+def decode_layout_raw(layout_bytes):
+    """Decode layout to native 256x64 without scaling (for programmatic use)."""
+    return decode_layout(layout_bytes, scale=1)
