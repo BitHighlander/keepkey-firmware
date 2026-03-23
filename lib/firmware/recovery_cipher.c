@@ -23,6 +23,7 @@
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/messages.h"
+#include "keepkey/board/timer.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
@@ -381,6 +382,41 @@ void next_character(void) {
   memzero(formatted_word, sizeof(formatted_word));
 }
 
+/* Strip the current (incomplete) word from the mnemonic buffer so the user
+ * can re-enter it.  Keeps everything up to and including the last space
+ * separator, or clears the buffer entirely if this is the first word. */
+static void strip_current_word(void) {
+  char *last_space = strrchr(mnemonic, ' ');
+  if (last_space) {
+    *(last_space + 1) = '\0';
+  } else {
+    mnemonic[0] = '\0';
+  }
+}
+
+/* Extract the word at `word_index` (0-based) from a space-separated mnemonic
+ * string.  Returns true if the word was found and fits in `out`. */
+static bool get_mnemonic_word(const char *src, uint32_t word_index,
+                              char *out, size_t out_size) {
+  uint32_t current = 0;
+  const char *start = src;
+
+  while (current < word_index) {
+    const char *space = strchr(start, ' ');
+    if (!space) return false;
+    start = space + 1;
+    current++;
+  }
+
+  const char *end = strchr(start, ' ');
+  size_t len = end ? (size_t)(end - start) : strlen(start);
+  if (len == 0 || len >= out_size) return false;
+
+  memcpy(out, start, len);
+  out[len] = '\0';
+  return true;
+}
+
 /*
  * recovery_character() - Decodes character received from host
  *
@@ -462,22 +498,51 @@ void recovery_character(const char *character) {
       }
     }
   } else {
-    /* Per-word BIP39 validation: reject immediately if the decoded word
-     * doesn't match any entry in the wordlist. */
+    bool retry = false;
+
+    /* Per-word BIP39 validation: instead of aborting the entire session
+     * (which forces PIN re-entry and restart from word 1), we clear the
+     * current word and let the user retry from the same word position. */
     if (enforce_wordlist && strlen(decoded_word) > 0) {
       static CONFIDENTIAL char check_word[CURRENT_WORD_BUF];
       strlcpy(check_word, decoded_word, sizeof(check_word));
       bool valid = attempt_auto_complete(check_word);
-      memzero(check_word, sizeof(check_word));
+
       if (!valid) {
-        memzero(coded_word, sizeof(coded_word));
-        memzero(decoded_word, sizeof(decoded_word));
-        recovery_cipher_abort();
-        fsm_sendFailure(FailureType_Failure_SyntaxError,
-                        "Word not found in BIP39 wordlist");
-        layoutHome();
-        return;
+        retry = true;
+      } else if (dry_run && storage_isInitialized()) {
+        /* During dry-run verification, also check that the entered word
+         * matches the expected word at this position in the stored seed.
+         * This catches wrong-but-valid BIP39 words immediately instead
+         * of waiting until the very end of recovery. */
+        const char *stored = storage_getShadowMnemonic();
+        if (stored) {
+          static CONFIDENTIAL char expected[CURRENT_WORD_BUF];
+          uint32_t word_pos = get_current_word_pos();
+          if (get_mnemonic_word(stored, word_pos, expected,
+                                sizeof(expected))) {
+            size_t ck_len = strlen(check_word);
+            size_t ex_len = strlen(expected);
+            size_t cmp_len = (ck_len > ex_len ? ck_len : ex_len) + 1;
+            if (!exact_str_match(check_word, expected, (uint32_t)cmp_len)) {
+              retry = true;
+            }
+          }
+          memzero(expected, sizeof(expected));
+        }
       }
+
+      memzero(check_word, sizeof(check_word));
+    }
+
+    if (retry) {
+      memzero(coded_word, sizeof(coded_word));
+      memzero(decoded_word, sizeof(decoded_word));
+      strip_current_word();
+      layout_warning("Wrong word");
+      delay_ms(1500);
+      next_character();
+      return;
     }
 
     memzero(coded_word, sizeof(coded_word));
