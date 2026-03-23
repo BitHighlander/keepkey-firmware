@@ -704,29 +704,29 @@ void layout_cipher(const char *current_word, const char *cipher,
   call_leaving_handler();
   layout_clear();
 
-  /* Draw previous word info (small, top-left — must be x < 76 to avoid
-   * being wiped by cipher animation which clears x >= CIPHER_START_X) */
-  if (prev_word_info && prev_word_info[0]) {
-    sp.y = 2;
-    sp.x = 4;
-    sp.color = CIPHER_FONT_COLOR;  /* gray — less prominent than current word */
-    draw_string(canvas, title_font, prev_word_info, &sp, 68,
-                font_height(title_font));
-  }
-
   /* Draw prompt */
-  sp.y = 11;
+  sp.y = 4;
   sp.x = 4;
   sp.color = BODY_COLOR;
-  draw_string(canvas, title_font, "Recovery Cipher:", &sp, 58,
+  draw_string(canvas, title_font, "Recovery Cipher:", &sp, 68,
               font_height(title_font) + 3);
 
   /* Draw current word */
-  sp.y = 46;
+  sp.y = 30;
   sp.x = 4;
   sp.color = BODY_COLOR;
-  draw_string(canvas, title_font, current_word, &sp, 68,
+  draw_string(canvas, title_font, current_word, &sp, 72,
               font_height(title_font));
+
+  /* Draw previous word below current */
+  if (prev_word_info && prev_word_info[0]) {
+    sp.y = 50;
+    sp.x = 4;
+    sp.color = BODY_COLOR;
+    draw_string(canvas, title_font, prev_word_info, &sp, CIPHER_START_X - 4,
+                font_height(title_font));
+  }
+
   display_refresh();
 
   /* Animate cipher */

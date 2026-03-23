@@ -53,6 +53,7 @@ static CONFIDENTIAL char mnemonic[MNEMONIC_BUF];
 static char english_alphabet[ENGLISH_ALPHABET_BUF] =
     "abcdefghijklmnopqrstuvwxyz";
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
+static CONFIDENTIAL char prev_completed_word[CURRENT_WORD_BUF];
 
 #if DEBUG_LINK
 static char auto_completed_word[CURRENT_WORD_BUF];
@@ -74,6 +75,7 @@ void recovery_cipher_abort(void) {
   word_count = 0;
   memzero(mnemonic, sizeof(mnemonic));
   memzero(cipher, sizeof(cipher));
+  memzero(prev_completed_word, sizeof(prev_completed_word));
 }
 
 /// Formats the passed word to show position in mnemonic as well as characters
@@ -371,17 +373,23 @@ void next_character(void) {
   }
 #endif
 
+  /* Save the completed word for the prev-word display on next screen.
+   * current_word has the full auto-completed word at this point. */
+  if (auto_completed) {
+    strlcpy(prev_completed_word, current_word, CURRENT_WORD_BUF);
+  }
+
   /* Format current word and display it along with cipher */
   static char CONFIDENTIAL formatted_word[CURRENT_WORD_BUF + 10];
   format_current_word(word_pos, current_word, auto_completed, &formatted_word);
   memzero(current_word, sizeof(current_word));
 
-  /* Format previous word indicator (e.g. "prev:3" when entering word 4) */
-  static char prev_info[16];
-  if (word_pos > 0) {
-    snprintf(prev_info, sizeof(prev_info), "prev:%" PRIu32, word_pos);
-  } else {
-    prev_info[0] = '\0';
+  /* Format previous word line using saved prev_completed_word */
+  static char CONFIDENTIAL prev_info[24];
+  prev_info[0] = '\0';
+  if (word_pos > 0 && prev_completed_word[0]) {
+    snprintf(prev_info, sizeof(prev_info),
+             "%" PRIu32 ": %s", word_pos, prev_completed_word);
   }
 
   /* Show cipher and partial word */
