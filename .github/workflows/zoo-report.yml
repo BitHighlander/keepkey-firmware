@@ -2,12 +2,10 @@ name: Zoo Report
 
 on:
   pull_request:
-    branches: [develop]
-    types: [opened, synchronize]
     branches: [develop, master]
     types: [opened, synchronize]
   push:
-    branches: ['release/**']
+    branches: [develop, 'release/**']
 
 jobs:
   zoo-report:
