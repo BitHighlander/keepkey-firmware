@@ -319,11 +319,6 @@ export interface PageDef {
 // BLIND SIGN POLICY: AdvancedMode blocked screen
 // ═══════════════════════════════════════════════════════════════════════
 
-export const SETUP_FLOW: PageDef[] = []   // TODO: emulator capture
-export const PIN_FLOW: PageDef[] = []     // TODO: emulator capture
-export const RECOVERY_FLOW: PageDef[] = [] // TODO: emulator capture
-export const PASSPHRASE_FLOW: PageDef[] = [] // TODO: emulator capture
-export const MGMT_FLOW: PageDef[] = []    // TODO: emulator capture
 // ═══════════════════════════════════════════════════════════════════════
 // BOOT & LIFECYCLE
 // ═══════════════════════════════════════════════════════════════════════
