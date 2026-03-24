@@ -130,6 +130,10 @@ void fsm_msgFlashHash(FlashHash *msg);
 void fsm_msgSoftReset(SoftReset *msg);
 
 
+void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg);
+void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg);
+void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK *msg);
+void fsm_msgZcashTransparentInput(const ZcashTransparentInput *msg);
 void fsm_msgTonGetAddress(const TonGetAddress *msg);
 void fsm_msgTonSignTx(TonSignTx *msg);
 void fsm_msgTronGetAddress(const TronGetAddress *msg);
