@@ -319,11 +319,93 @@ export interface PageDef {
 // BLIND SIGN POLICY: AdvancedMode blocked screen
 // ═══════════════════════════════════════════════════════════════════════
 
-export const SETUP_FLOW: PageDef[] = []   // TODO: emulator capture
-export const PIN_FLOW: PageDef[] = []     // TODO: emulator capture
-export const RECOVERY_FLOW: PageDef[] = [] // TODO: emulator capture
-export const PASSPHRASE_FLOW: PageDef[] = [] // TODO: emulator capture
-export const MGMT_FLOW: PageDef[] = []    // TODO: emulator capture
+export const SETUP_FLOW: PageDef[] = [
+  {
+    file: '00a-setup-create.png', flow: 'Device Setup', step: 'Create/Recover Choice', accent: '#6366F1',
+    device(o) {
+      o.text(4, 4, 'KeepKey', 2)
+      o.text(4, 28, 'Create new wallet or', 1)
+      o.text(4, 42, 'recover existing seed?', 1)
+    },
+    appContext: 'Source: reset.c\nInitial device setup choice\nUser selects create (new seed) or recover (existing seed)',
+    insight: ['First screen on uninitialized device', 'Requires physical button to proceed'],
+  },
+  {
+    file: '00b-setup-seed-display.png', flow: 'Device Setup', step: 'Seed Word Display', accent: '#6366F1',
+    device(o) {
+      o.text(4, 4, 'Recovery Sentence', 2)
+      o.text(4, 28, '1. abandon  2. abandon', 1)
+      o.text(4, 40, '3. abandon  4. abandon', 1)
+      o.text(4, 52, '(page 1 of 3)', 1)
+    },
+    appContext: 'Source: reset.c:168-224\nSeed words shown in 2-column batched layout\n4 words per page, 3 pages for 12-word seed\n!Actual words depend on generated entropy',
+    insight: ['2-column layout, 4 words per page', '!Words are EXAMPLE — real seed varies', 'User must write down all words'],
+  },
+]
+
+export const PIN_FLOW: PageDef[] = [
+  {
+    file: '00c-pin-entry.png', flow: 'PIN Entry', step: 'PIN Matrix', accent: '#6366F1',
+    device(o) {
+      // app_layout.c:52-180 — layout_animate_pin()
+      o.text(4, 4, 'Enter PIN', 2)
+      // 3x3 grid with randomized digit positions
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+        const x = 160 + c * 28, y = 4 + r * 20
+        o.rect(x, y, 24, 16)
+      }
+    },
+    appContext: 'Source: app_layout.c:52-180\nlayout_animate_pin()\nAnimated 3x3 grid — digits randomized each time\nHost sees only grid position, not actual digit',
+    insight: ['3x3 grid with randomized positions', 'Host never sees the actual PIN', '!Grid positions change every prompt'],
+  },
+]
+
+export const RECOVERY_FLOW: PageDef[] = [
+  {
+    file: '00d-recovery-cipher.png', flow: 'Recovery', step: 'Cipher Grid', accent: '#6366F1',
+    device(o) {
+      // app_layout.c:192-301 — layout_cipher()
+      o.text(4, 4, 'Recovery Cipher:', 1)
+      o.text(4, 30, '1/12: a__', 1)
+      o.text(4, 50, '1: zoo', 1)
+      // Cipher grid on right side
+      const chars = 'qwertyuiopasdfghjklzxcvbnm'
+      for (let i = 0; i < 26; i++) {
+        const col = i % 6, row = Math.floor(i / 6)
+        o.text(140 + col * 18, 4 + row * 12, chars[i], 1)
+      }
+    },
+    appContext: 'Source: app_layout.c:192-301\nlayout_cipher(current_word, cipher, prev_info)\nScrambled alphabet grid — user enters ciphered characters\nPrevious word shown at y=50 (7.14.0 addition)',
+    insight: ['Cipher grid: scrambled alphabet', 'Previous completed word shown below (new in 7.14.0)', 'Host sees only ciphered characters'],
+  },
+]
+
+export const PASSPHRASE_FLOW: PageDef[] = [
+  {
+    file: '00e-passphrase.png', flow: 'Passphrase', step: 'Enter on Computer', accent: '#6366F1',
+    device(o) {
+      o.text(4, 4, 'Passphrase', 2)
+      o.text(4, 28, 'Enter passphrase on', 1)
+      o.text(4, 42, 'your computer.', 1)
+    },
+    appContext: 'Source: fsm_msg_common.h\nPassphrase entry happens on host\nDevice shows prompt, host sends passphrase over USB\nEmpty passphrase is valid (BIP-39 default)',
+    insight: ['Passphrase entered on host, not device', 'Empty passphrase is valid', 'Extends seed derivation (BIP-39)'],
+  },
+]
+
+export const MGMT_FLOW: PageDef[] = [
+  {
+    file: '00f-wipe.png', flow: 'Device Management', step: 'Wipe Confirmation', accent: '#EF4444',
+    device(o) {
+      o.text(4, 4, 'Wipe Device', 2)
+      o.text(4, 28, 'Do you really want to', 1)
+      o.text(4, 40, 'wipe the device?', 1)
+      o.text(4, 52, 'All data will be lost.', 1)
+    },
+    appContext: 'Source: fsm_msg_common.h\nWipeDevice handler\nRequires physical button confirmation\nIrreversible — all keys destroyed',
+    insight: ['!!Irreversible operation', 'All keys and settings destroyed', 'Requires physical button press'],
+  },
+]
 // EIP712_FLOW, TOKEN_FLOW, EVM_MULTICHAIN_FLOW defined below with verified content
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -601,8 +683,67 @@ export const SOLANA_FLOW: PageDef[] = [
       '!Wrapping approximate — need emulator',
     ],
   },
-  // TODO: SOL SPL token transfer — confirm("Send %s to %s?") or confirm("Send %s %s to %s?")
-  // TODO: SOL stake/vote/nonce operations
+  {
+    file: '06b-sol-spl-token.png', flow: 'Solana SPL Token', step: 'Token Transfer', accent: '#14F195',
+    device(o) {
+      // fsm_msg_solana.h — Token program transfer with token_info metadata
+      o.text(4, 4, 'Instr 1/1', 1)
+      o.hline(4, 16, 248)
+      o.text(4, 22, 'Send 100.000000 USDC to', 1)
+      o.text(4, 34, 'CD9R61PMZFafFQ9QsPZATm74', 1)
+      o.text(4, 46, 'hFyEvYaNtEtwGvvHmRYH?', 1)
+    },
+    appContext: 'Source: fsm_msg_solana.h\nToken program transfer with SolanaTokenInfo\nSymbol + decimals from host-provided metadata\nFallback: "Transfer unknown token at [mint]"',
+    insight: [
+      'Token metadata provided by host via SolanaTokenInfo',
+      'Symbol "USDC" + decimals from token_info field',
+      '!If no metadata: shows "Transfer unknown token at [mint]"',
+    ],
+  },
+  {
+    file: '06c-sol-blind-sign.png', flow: 'Solana', step: 'Blind Sign Warning', accent: '#EF4444',
+    device(o) {
+      // fsm_msg_solana.h — SOL_TX_REVIEW_OPAQUE path
+      o.text(4, 4, 'Blind Sign', 2)
+      o.text(4, 26, 'Sign unverified Solana', 1)
+      o.text(4, 38, 'transaction? The device', 1)
+      o.text(4, 50, 'cannot fully verify.', 1)
+    },
+    appContext: 'Source: fsm_msg_solana.h\nSOL_TX_REVIEW_OPAQUE classification\nRequires SolBlindSign policy enabled\nTriggered when instructions cannot be parsed',
+    insight: [
+      '!!Blind-sign — cannot verify transaction contents',
+      'Requires AdvancedMode policy enabled',
+      'Triggered for unparseable instructions or unknown programs',
+    ],
+  },
+  {
+    file: '06d-sol-message.png', flow: 'Solana', step: 'Sign Message', accent: '#14F195',
+    device(o) {
+      // fsm_msg_solana.h — SolanaSignMessage handler
+      o.text(4, 4, 'Sign Message', 2)
+      o.text(4, 26, 'Sign this message with', 1)
+      o.text(4, 38, 'your Solana key?', 1)
+    },
+    appContext: 'Source: fsm_msg_solana.h\nSolanaSignMessage handler\nEd25519 signature over arbitrary message bytes',
+    insight: [
+      'Ed25519 signature over arbitrary bytes',
+      'User confirms before signing',
+    ],
+  },
+  {
+    file: '06e-sol-final.png', flow: 'Solana', step: 'Final Confirmation', accent: '#14F195',
+    device(o) {
+      // fsm_msg_solana.h — final sign confirmation
+      o.text(4, 4, 'Sign Transaction', 2)
+      o.text(4, 26, 'Sign this Solana', 1)
+      o.text(4, 38, 'transaction?', 1)
+    },
+    appContext: 'Source: fsm_msg_solana.h\nFinal confirmation after all instructions reviewed\nconfirm(SignTx, "Sign this Solana transaction?")',
+    insight: [
+      'Final gate before signing',
+      'Only shown after all instructions confirmed individually',
+    ],
+  },
 ]
 
 // THORChain: fsm_msg_thorchain.h:189 — confirm("Memo", "%s", memo)
@@ -861,6 +1002,38 @@ export const ZCASH_FLOW: PageDef[] = [
       '!Multiple inputs = multiple confirmations',
     ],
   },
+  {
+    file: '23b-zcash-progress.png', flow: 'Zcash', step: 'Signing Progress', accent: '#F4B728',
+    device(o) {
+      // fsm_msg_zcash.h — layoutProgress during action streaming
+      o.text(4, 4, 'Signing Zcash', 1)
+      o.rect(4, 30, 248, 8)  // progress bar outline
+      o.fillRect(4, 30, 180, 8)  // ~72% filled
+      o.text(4, 50, 'Action 5 of 7...', 1)
+    },
+    appContext: 'Source: fsm_msg_zcash.h\nlayoutProgress("Signing Zcash", percentage)\nShown during Orchard action streaming phase\nUpdates per-action as device signs',
+    insight: [
+      'Progress bar during multi-action signing',
+      'Visible during Phase 2 action streaming',
+      '!Max 16 actions per session',
+    ],
+  },
+  {
+    file: '23c-zcash-fvk.png', flow: 'Zcash', step: 'Orchard FVK', accent: '#F4B728',
+    device(o) {
+      // ZcashGetOrchardFVK — returns ak, nk, rivk (safe to export)
+      o.text(4, 4, 'Orchard FVK', 2)
+      o.text(4, 26, 'Export Full Viewing Key', 1)
+      o.text(4, 38, 'for account 0?', 1)
+      o.text(4, 50, 'Cannot spend funds.', 1)
+    },
+    appContext: 'Source: fsm_msg_zcash.h\nZcashGetOrchardFVK handler\nFVK is safe to export — viewing only\nak, nk, rivk returned to host',
+    insight: [
+      'FVK cannot spend — only view transactions',
+      'Used for unified address construction',
+      'ZIP-32 derivation from raw BIP-39 seed',
+    ],
+  },
 ]
 
 // Ripple: fsm_msg_ripple.h
@@ -1025,6 +1198,23 @@ export const BIP85_FLOW: PageDef[] = [
       '!Derived seed shown on device only',
     ],
   },
+  {
+    file: '31b-bip85-mnemonic.png', flow: 'BIP-85', step: 'Mnemonic Display', accent: '#8B5CF6',
+    device(o) {
+      // fsm_msg_bip85.h — mnemonic words displayed on OLED
+      o.text(4, 4, 'Child Mnemonic', 2)
+      o.text(4, 26, '1.abandon 2.ability', 1)
+      o.text(4, 38, '3.able    4.about', 1)
+      o.text(4, 50, '(press to continue)', 1)
+    },
+    appContext: 'Source: fsm_msg_bip85.h\nDerived mnemonic displayed on OLED in pages\nNEVER sent over USB — firmware returns Success only\n!Words shown are EXAMPLE — real output varies',
+    insight: [
+      '!!Mnemonic ONLY on device screen — never over USB',
+      'Words are EXAMPLE — varies by seed + index',
+      'User must write down before dismissing',
+      'Firmware returns Success, not the mnemonic',
+    ],
+  },
 ]
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1049,7 +1239,13 @@ async function main() {
     { name: 'Maya', pages: MAYACHAIN_FLOW },
     { name: 'Binance', pages: BINANCE_FLOW },
     { name: 'BIP-85', pages: BIP85_FLOW },
-    // Awaiting emulator screenshots (custom layout functions):
+    // Device management flows
+    { name: 'Setup', pages: SETUP_FLOW },
+    { name: 'PIN', pages: PIN_FLOW },
+    { name: 'Recovery', pages: RECOVERY_FLOW },
+    { name: 'Passphrase', pages: PASSPHRASE_FLOW },
+    { name: 'Management', pages: MGMT_FLOW },
+    // Awaiting full emulator screenshots:
     { name: 'Setup', pages: SETUP_FLOW },
     { name: 'PIN', pages: PIN_FLOW },
     { name: 'EVM Multi-Chain', pages: EVM_MULTICHAIN_FLOW },
