@@ -401,11 +401,31 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Check for firmware changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            firmware:
+              - 'lib/**'
+              - 'include/**'
+              - 'deps/**'
+              - 'CMakeLists.txt'
+              - 'tools/**'
+              - 'unittests/**'
+
+      - name: Skip integration tests (no firmware changes)
+        if: steps.changes.outputs.firmware == 'false' && github.event_name == 'pull_request'
+        run: echo "::notice::No firmware code changes detected — skipping integration tests"
 
       - name: Sync submodule URLs from .gitmodules
+        if: steps.changes.outputs.firmware == 'true' || github.event_name == 'push'
         run: git submodule sync --recursive
 
       - name: Init submodules
+        if: steps.changes.outputs.firmware == 'true' || github.event_name == 'push'
         run: |
           git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
@@ -413,10 +433,9 @@ jobs:
           git submodule update --init deps/googletest
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
-          echo "=== device-protocol contents ==="
-          ls deps/device-protocol/messages-zcash.proto 2>/dev/null && echo "zcash proto: FOUND" || echo "zcash proto: MISSING"
 
       - name: Build and run tests (docker compose)
+        if: steps.changes.outputs.firmware == 'true' || github.event_name == 'push'
         working-directory: scripts/emulator
         run: |
           set +e
@@ -434,14 +453,14 @@ jobs:
 
       - name: Upload Python test results
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && (steps.changes.outputs.firmware == 'true' || github.event_name == 'push')
         with:
           name: python-test-results
           path: test-reports/python-keepkey/
           retention-days: 30
 
       - name: Tear down
-        if: always()
+        if: always() && (steps.changes.outputs.firmware == 'true' || github.event_name == 'push')
         working-directory: scripts/emulator
         run: docker compose down -v || true
 
