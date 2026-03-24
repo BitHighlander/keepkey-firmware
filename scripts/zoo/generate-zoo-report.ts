@@ -300,11 +300,6 @@ async function composePdf(
   y -= 20
 
   const totalPages = ALL_FLOWS.reduce((n, f) => n + f.pages.length, 0)
-  const stats = [
-    `Flows covered: ${ALL_FLOWS.length}`,
-    `Total screen mockups: ${totalPages}`,
-    `Critical security screens: ${ALL_FLOWS.filter(f => f.securityLevel === 'critical').length}`,
-    `High priority screens: ${ALL_FLOWS.filter(f => f.securityLevel === 'high').length}`,
   const criticalFlows = ALL_FLOWS.filter(f => f.securityLevel === 'critical')
   const highFlows = ALL_FLOWS.filter(f => f.securityLevel === 'high')
   const pdfPageCount = totalPages + 3 // +cover +coverage accounting +overflow
