@@ -1007,8 +1007,7 @@ export const ZCASH_FLOW: PageDef[] = [
     device(o) {
       // fsm_msg_zcash.h — layoutProgress during action streaming
       o.text(4, 4, 'Signing Zcash', 1)
-      o.rect(4, 30, 248, 8)  // progress bar outline
-      o.fillRect(4, 30, 180, 8)  // ~72% filled
+      o.progressBar(4, 30, 248, 10, 0.72)  // ~72% filled
       o.text(4, 50, 'Action 5 of 7...', 1)
     },
     appContext: 'Source: fsm_msg_zcash.h\nlayoutProgress("Signing Zcash", percentage)\nShown during Orchard action streaming phase\nUpdates per-action as device signs',
