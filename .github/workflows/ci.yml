@@ -465,6 +465,84 @@ jobs:
         run: docker compose down -v || true
 
   # ═══════════════════════════════════════════════════════════
+  # ZOO REPORT — runs in parallel with tests, no dependencies
+  # ═══════════════════════════════════════════════════════════
+
+  zoo-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Check zoo scripts exist
+        id: zoo-check
+        run: |
+          if [ -f scripts/zoo/package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::scripts/zoo/ not on this branch — skipping zoo report"
+          fi
+
+      - name: Setup Bun
+        if: steps.zoo-check.outputs.exists == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.5'
+
+      - name: Install report dependencies
+        if: steps.zoo-check.outputs.exists == 'true'
+        working-directory: scripts/zoo
+        run: bun install
+
+      - name: Generate zoo report PDF
+        if: steps.zoo-check.outputs.exists == 'true'
+        run: |
+          bun scripts/zoo/generate-zoo-report.ts \
+            --firmware-dir=${{ github.workspace }} \
+            --pr-number=${{ github.event.pull_request.number || '0' }} \
+            --pr-title="${{ github.event.pull_request.title || github.ref_name }}" \
+            --output=${{ github.workspace }}/zoo-report.pdf
+
+      - name: Upload zoo report PDF
+        if: steps.zoo-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoo-report-${{ github.event.pull_request.number || github.ref_name }}
+          path: zoo-report.pdf
+          retention-days: 90
+
+      - name: Upload zoo page PNGs
+        if: steps.zoo-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoo-pages-${{ github.event.pull_request.number || github.ref_name }}
+          path: zoo-output/pages/
+          retention-days: 90
+
+      - name: Upload per-feature reports
+        if: steps.zoo-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoo-feature-reports-${{ github.event.pull_request.number || github.ref_name }}
+          path: docs/zoo/reports/*.md
+          retention-days: 90
+
+      - name: Upload testing guides
+        if: steps.zoo-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zoo-testing-guides-${{ github.event.pull_request.number || github.ref_name }}
+          path: docs/testing/*.md
+          retention-days: 90
+
+  # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
   # ═══════════════════════════════════════════════════════════
 
