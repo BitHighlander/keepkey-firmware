@@ -73,7 +73,7 @@ After each merge to `develop`:
 | 0 | Fixes | CI green, existing tests pass, zoo skips gracefully |
 | 1-2 | Features | Feature-specific smoke test + zoo artifacts |
 | 3-6 | Chain additions | Per-chain address/sign + zoo artifacts with chain pages |
-| 7 | Release | Full emulator sweep + real device + final zoo report |
+| 7 | Release | **Bump CMakeLists.txt VERSION** + full emulator sweep + real device + final zoo report |
 
 ---
 
@@ -102,6 +102,7 @@ Release branch (`release/**`) also triggers artifact generation on push.
 
 Before upstreaming to `keepkey/keepkey-firmware`:
 
+- [ ] **CMakeLists.txt VERSION bumped** (e.g., 7.10.0 → 7.14.0) — firmware binary and getFeatures() must report correct version
 - [ ] Fork `develop` is CI-green end-to-end
 - [ ] Final device testing completed on the merged state
 - [ ] Security sign-off recorded for sensitive PRs
