@@ -21,12 +21,17 @@ export KEEPKEY_SCREENSHOT=1
 export SCREENSHOT_DIR=/kkemu/test-reports/python-keepkey/screenshots
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-  pytest -v -s -k "test_wipe or test_show or test_one_one_fee or test_ethereum_signtx_nodata or test_apply_settings or test_ping or test_entropy or test_encrypt or test_decrypt or test_ripple_sign or test_cosmos_sign_tx or test_thorchain_sign_tx" \
+  pytest -v -s -k "test_wipe or test_show or test_one_one_fee or test_ethereum_signtx_nodata or test_apply_settings or test_ping or test_entropy or test_encrypt or test_decrypt or test_ripple_sign or test_cosmos_sign_tx or test_thorchain_sign_tx or test_bip85_12word" \
   2>&1 || true
+
+# Extract firmware version from CMakeLists.txt (second VERSION line, after project())
+FW_VERSION=$(awk '/^project/,/)/' /kkemu/CMakeLists.txt | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')
+echo "Firmware version: ${FW_VERSION}"
 
 # Generate report PDF
 cd /kkemu/deps/python-keepkey
 python3 scripts/generate-test-report.py \
+  --fw-version="${FW_VERSION}" \
   --junit=/kkemu/test-reports/python-keepkey/junit.xml \
   --screenshots=/kkemu/test-reports/python-keepkey/screenshots \
   --output=/kkemu/test-reports/python-keepkey/test-report.pdf \
