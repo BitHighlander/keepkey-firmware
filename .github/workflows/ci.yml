@@ -496,18 +496,18 @@ jobs:
           mkdir -p ${{ github.workspace }}/test-reports
           docker cp "$(docker compose ps -a -q firmware-unit)":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ 2>/dev/null || true
           docker cp "$(docker compose ps -a -q python-keepkey)":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ 2>/dev/null || true
-          # Screenshots are in the Docker named volume (not container layer).
-          # docker cp can't see volume contents, so use a helper container.
+          # Screenshots go to Docker named volume. docker cp sees container layer, not volume.
+          # Copy from volume via helper container AFTER tests have populated it.
           VOLUME_NAME="$(docker volume ls -q | grep test-reports || true)"
           if [ -n "$VOLUME_NAME" ]; then
-            echo "Volume contents:"
-            docker run --rm -v "${VOLUME_NAME}":/src busybox find /src -type f -name "*.png" | head -20
-            docker run --rm -v "${VOLUME_NAME}":/src busybox ls -la /src/screenshots/ 2>/dev/null || echo "no /src/screenshots dir"
-            docker run --rm -v "${VOLUME_NAME}":/src busybox ls -la /src/ 2>/dev/null
-            docker run --rm -v "${VOLUME_NAME}":/src -v ${{ github.workspace }}/test-reports:/dst busybox sh -c "cp -r /src/screenshots /dst/ 2>/dev/null; echo copied from ${VOLUME_NAME}"
+            docker run --rm \
+              -v "${VOLUME_NAME}":/src \
+              -v ${{ github.workspace }}/test-reports:/dst \
+              busybox sh -c "cp -r /src/screenshots /dst/ 2>/dev/null || true"
           fi
-          echo "=== Screenshot check ==="
-          find ${{ github.workspace }}/test-reports/screenshots -type f 2>/dev/null | wc -l | xargs -I{} echo "{} screenshot files on host"
+          # Reliable file count — no broken pipe chain
+          PNG_COUNT=$(find ${{ github.workspace }}/test-reports/screenshots -type f -name '*.png' 2>/dev/null | wc -l || echo 0)
+          echo "Screenshot PNGs on host: $PNG_COUNT"
           UNIT_STATUS=$(cat ${{ github.workspace }}/test-reports/firmware-unit/status 2>/dev/null || echo "1")
           PY_STATUS=$(cat ${{ github.workspace }}/test-reports/python-keepkey/status 2>/dev/null || echo "1")
           echo "Unit tests exit status: $UNIT_STATUS"
