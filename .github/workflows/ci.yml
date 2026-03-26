@@ -500,6 +500,10 @@ jobs:
           # docker cp can't see volume contents, so use a helper container.
           VOLUME_NAME="$(docker volume ls -q | grep test-reports || true)"
           if [ -n "$VOLUME_NAME" ]; then
+            echo "Volume contents:"
+            docker run --rm -v "${VOLUME_NAME}":/src busybox find /src -type f -name "*.png" | head -20
+            docker run --rm -v "${VOLUME_NAME}":/src busybox ls -la /src/screenshots/ 2>/dev/null || echo "no /src/screenshots dir"
+            docker run --rm -v "${VOLUME_NAME}":/src busybox ls -la /src/ 2>/dev/null
             docker run --rm -v "${VOLUME_NAME}":/src -v ${{ github.workspace }}/test-reports:/dst busybox sh -c "cp -r /src/screenshots /dst/ 2>/dev/null; echo copied from ${VOLUME_NAME}"
           fi
           echo "=== Screenshot check ==="
