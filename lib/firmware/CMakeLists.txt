@@ -41,6 +41,7 @@ set(sources
     thorchain.c
     ton.c
     tron.c
+    zcash.c
     tiny-json.c
     transaction.c
     txin_check.c
