@@ -1,0 +1,41 @@
+file(REMOVE_RECURSE
+  "../../include/messages-binance.pb.h"
+  "../../include/messages-cosmos.pb.h"
+  "../../include/messages-eos.pb.h"
+  "../../include/messages-ethereum.pb.h"
+  "../../include/messages-mayachain.pb.h"
+  "../../include/messages-nano.pb.h"
+  "../../include/messages-osmosis.pb.h"
+  "../../include/messages-ripple.pb.h"
+  "../../include/messages-solana.pb.h"
+  "../../include/messages-tendermint.pb.h"
+  "../../include/messages-thorchain.pb.h"
+  "../../include/messages-ton.pb.h"
+  "../../include/messages-tron.pb.h"
+  "../../include/messages-zcash.pb.h"
+  "../../include/messages.pb.h"
+  "../../include/types.pb.h"
+  "CMakeFiles/kktransport.pb"
+  "kktransport.pb.stamp"
+  "messages-binance.pb.c"
+  "messages-cosmos.pb.c"
+  "messages-eos.pb.c"
+  "messages-ethereum.pb.c"
+  "messages-mayachain.pb.c"
+  "messages-nano.pb.c"
+  "messages-osmosis.pb.c"
+  "messages-ripple.pb.c"
+  "messages-solana.pb.c"
+  "messages-tendermint.pb.c"
+  "messages-thorchain.pb.c"
+  "messages-ton.pb.c"
+  "messages-tron.pb.c"
+  "messages-zcash.pb.c"
+  "messages.pb.c"
+  "types.pb.c"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang )
+  include(CMakeFiles/kktransport.pb.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

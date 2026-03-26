@@ -287,3 +287,4 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
 #include "fsm_msg_bip85.h"
+#include "fsm_msg_solana.h"

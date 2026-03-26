@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkvariant.salt.a CMakeFiles/kkvariant.salt.dir/salt/salt.c.o CMakeFiles/kkvariant.salt.dir/salt/logo.c.o
+/usr/bin/ranlib ../libkkvariant.salt.a

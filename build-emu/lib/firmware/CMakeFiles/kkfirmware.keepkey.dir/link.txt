@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkfirmware.keepkey.a CMakeFiles/kkfirmware.keepkey.dir/variant/keepkey/resources.c.o
+/usr/bin/ranlib ../libkkfirmware.keepkey.a

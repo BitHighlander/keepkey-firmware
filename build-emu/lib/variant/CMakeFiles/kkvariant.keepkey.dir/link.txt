@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkvariant.keepkey.a CMakeFiles/kkvariant.keepkey.dir/keepkey/keepkey.c.o CMakeFiles/kkvariant.keepkey.dir/keepkey/logo.c.o
+/usr/bin/ranlib ../libkkvariant.keepkey.a

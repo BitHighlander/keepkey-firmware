@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkemulator.a CMakeFiles/kkemulator.dir/oled.c.o CMakeFiles/kkemulator.dir/udp.c.o CMakeFiles/kkemulator.dir/setup.c.o
+/usr/bin/ranlib ../libkkemulator.a

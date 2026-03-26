@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkrand.a CMakeFiles/kkrand.dir/rng.c.o
+/usr/bin/ranlib ../libkkrand.a

@@ -1,0 +1,33 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/board/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/emulator/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/firmware/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/rand/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/transport/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/lib/variant/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/blupdater/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/bootloader/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/bootstrap/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/display_test/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/emulator/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/firmware/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/rle-dump/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/tools/variant/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/deps/crypto/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/deps/qrenc/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/deps/sca-hardening/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/deps/googletest/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/deps/googletest/googlemock/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/deps/googletest/googlemock/gtest/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/unittests/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/unittests/board/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/unittests/crypto/cmake_install.cmake",
+		"/Users/highlander/WebstormProjects/keepkey-stack/projects/keepkey-firmware/build-emu/unittests/firmware/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

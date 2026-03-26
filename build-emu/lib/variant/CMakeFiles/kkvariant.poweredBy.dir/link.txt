@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkvariant.poweredBy.a CMakeFiles/kkvariant.poweredBy.dir/poweredBy/poweredBy.c.o CMakeFiles/kkvariant.poweredBy.dir/poweredBy/logo.c.o
+/usr/bin/ranlib ../libkkvariant.poweredBy.a

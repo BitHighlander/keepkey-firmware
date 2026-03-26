@@ -1,0 +1,2 @@
+/usr/bin/ar qc ../libkkboard.keepkey.a CMakeFiles/kkboard.keepkey.dir/variant/keepkey/resources.c.o
+/usr/bin/ranlib ../libkkboard.keepkey.a

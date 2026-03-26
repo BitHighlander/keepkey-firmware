@@ -1,0 +1,5 @@
+# Hashes of file build rules.
+5dca9972d30a8e21d7a939721e223cd4 CMakeFiles/xunit
+d1d88c4167d1e51f5836d3b990da6b9f lib/firmware/CMakeFiles/ethereum_tokens.def
+9872d6e1e7b6cd221140d3d997c8d3e3 lib/transport/CMakeFiles/kktransport.pb
+3059f85252a7e8a9342b5ea2c1895935 lib/transport/kktransport.pb.stamp
