@@ -430,6 +430,49 @@ jobs:
         working-directory: scripts/emulator
         run: docker compose down -v || true
 
+  # Parallel: generate test report with OLED screenshots (does not gate PR)
+  python-test-report:
+    needs: [check-submodules, secret-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Init submodules
+        run: |
+          git submodule update --init deps/crypto/trezor-firmware
+          git submodule update --init deps/device-protocol
+          git submodule update --init --recursive deps/python-keepkey
+          git submodule update --init deps/googletest
+          git submodule update --init deps/qrenc/QR-Code-generator
+          git submodule update --init deps/sca-hardening/SecAESSTM32
+
+      - name: Build emulator and run tests with screenshots
+        working-directory: scripts/emulator
+        run: |
+          set +e
+          docker compose up --build python-keepkey-report
+          set -e
+          mkdir -p ${{ github.workspace }}/test-reports
+          docker cp "$(docker compose ps -a -q python-keepkey-report)":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ 2>/dev/null || true
+
+      - name: Upload firmware test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firmware-test-report
+          path: test-reports/python-keepkey/test-report.pdf
+          retention-days: 90
+
+      - name: Tear down
+        if: always()
+        working-directory: scripts/emulator
+        run: docker compose down -v || true
+
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
   # ═══════════════════════════════════════════════════════════
