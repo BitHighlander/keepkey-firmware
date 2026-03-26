@@ -393,7 +393,7 @@ void next_character(void) {
   }
 
   /* Show cipher and partial word */
-  layout_cipher(formatted_word, cipher);
+  layout_cipher(formatted_word, cipher, prev_info);
   memzero(formatted_word, sizeof(formatted_word));
 }
 

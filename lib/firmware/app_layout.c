@@ -695,7 +695,8 @@ void layout_pin(const char *str, char pin[]) {
  * OUTPUT
  *     none
  */
-void layout_cipher(const char *current_word, const char *cipher) {
+void layout_cipher(const char *current_word, const char *cipher,
+                    const char *prev_word_info) {
   DrawableParams sp;
   const Font *title_font = get_body_font();
   Canvas *canvas = layout_get_canvas();
