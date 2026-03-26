@@ -23,6 +23,21 @@
 #include "keepkey/transport/interface.h"
 #include "keepkey/board/messages.h"
 
+/* Proto-generated types used in function declarations below */
+#include "messages.pb.h"
+#include "messages-ethereum.pb.h"
+#include "messages-binance.pb.h"
+#include "messages-cosmos.pb.h"
+#include "messages-osmosis.pb.h"
+#include "messages-eos.pb.h"
+#include "messages-nano.pb.h"
+#include "messages-ripple.pb.h"
+#include "messages-thorchain.pb.h"
+#include "messages-mayachain.pb.h"
+#include "messages-solana.pb.h"
+#include "messages-tron.pb.h"
+#include "messages-ton.pb.h"
+
 #define RESP_INIT(TYPE)                                                    \
   TYPE *resp = (TYPE *)msg_resp;                                           \
   _Static_assert(sizeof(msg_resp) >= sizeof(TYPE), #TYPE " is too large"); \
@@ -77,6 +92,7 @@ void fsm_msgWordAck(WordAck *msg);
 void fsm_msgCharacterAck(CharacterAck *msg);
 void fsm_msgApplyPolicies(ApplyPolicies *msg);
 
+#ifndef BITCOIN_ONLY
 // ethereum
 void fsm_msgEthereumGetAddress(EthereumGetAddress *msg);
 void fsm_msgEthereumSignTx(EthereumSignTx *msg);
@@ -117,6 +133,16 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck *msg);
 void fsm_msgMayachainGetAddress(const MayachainGetAddress *msg);
 void fsm_msgMayachainSignTx(const MayachainSignTx *msg);
 void fsm_msgMayachainMsgAck(const MayachainMsgAck *msg);
+
+void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg);
+void fsm_msgSolanaSignTx(const SolanaSignTx *msg);
+void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg);
+void fsm_msgTronGetAddress(const TronGetAddress *msg);
+void fsm_msgTronSignTx(TronSignTx *msg);
+void fsm_msgTonGetAddress(const TonGetAddress *msg);
+void fsm_msgTonSignTx(TonSignTx *msg);
+void fsm_msgEthereumTxMetadata(const EthereumTxMetadata *msg);
+#endif // BITCOIN_ONLY
 
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);
