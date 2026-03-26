@@ -306,6 +306,11 @@ bool confirm(ButtonRequestType type, const char *request_title, const char *requ
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
 
+    /* Render the confirmation screen BEFORE sending ButtonRequest.
+     * DebugLink clients read the OLED layout when they receive
+     * ButtonRequest — the display must be populated first. */
+    layout_standard_notification(request_title, strbuf, NOTIFICATION_REQUEST);
+
     /* Send button request */
     ButtonRequest resp;
     memset(&resp, 0, sizeof(ButtonRequest));
@@ -327,6 +332,9 @@ bool confirm_constant_power(ButtonRequestType type, const char *request_title, c
     va_start(vl, request_body);
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
+
+    /* Render before ButtonRequest — see confirm() comment */
+    layout_constant_power_notification(request_title, strbuf, NOTIFICATION_REQUEST);
 
     /* Send button request */
     ButtonRequest resp;
@@ -353,6 +361,8 @@ bool confirm_with_custom_button_request(ButtonRequest *button_request,
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
 
+    layout_standard_notification(request_title, strbuf, NOTIFICATION_REQUEST);
+
     /* Send button request */
     msg_write(MessageType_MessageType_ButtonRequest, button_request);
 
@@ -371,6 +381,8 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
     va_start(vl, request_body);
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
+
+    layout_notification_func(request_title, strbuf, NOTIFICATION_REQUEST);
 
     /* Send button request */
     ButtonRequest resp;
@@ -409,6 +421,8 @@ bool review(ButtonRequestType type, const char *request_title, const char *reque
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
 
+    layout_standard_notification(request_title, strbuf, NOTIFICATION_REQUEST);
+
     /* Send button request */
     ButtonRequest resp;
     memset(&resp, 0, sizeof(ButtonRequest));
@@ -446,6 +460,8 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum, const char *requ
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
 
+    layout_standard_notification(request_title, strbuf, NOTIFICATION_REQUEST);
+
     /* Send button request */
     ButtonRequest resp;
     memset(&resp, 0, sizeof(ButtonRequest));
@@ -467,6 +483,8 @@ bool review_immediate(ButtonRequestType type, const char *request_title, const c
     va_start(vl, request_body);
     vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
     va_end(vl);
+
+    layout_standard_notification(request_title, strbuf, NOTIFICATION_REQUEST);
 
     /* Send button request */
     ButtonRequest resp;
