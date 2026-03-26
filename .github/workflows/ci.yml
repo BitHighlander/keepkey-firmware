@@ -496,9 +496,10 @@ jobs:
           mkdir -p ${{ github.workspace }}/test-reports
           docker cp "$(docker compose ps -a -q firmware-unit)":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ 2>/dev/null || true
           docker cp "$(docker compose ps -a -q python-keepkey)":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ 2>/dev/null || true
+          # Screenshots go to Docker volume, not container layer — copy via volume mount
+          docker run --rm -v emulator_test-reports:/src -v ${{ github.workspace }}/test-reports:/dst busybox cp -r /src/screenshots /dst/ 2>/dev/null || true
           echo "=== Screenshot check ==="
-          find ${{ github.workspace }}/test-reports/screenshots -type f 2>/dev/null | head -10 || echo "No screenshots found on host"
-          docker run --rm --volumes-from "$(docker compose ps -a -q python-keepkey)" busybox find /kkemu/test-reports/screenshots -type f 2>/dev/null | head -10 || echo "No screenshots in container"
+          find ${{ github.workspace }}/test-reports/screenshots -type f 2>/dev/null | wc -l | xargs -I{} echo "{} screenshot files on host"
           UNIT_STATUS=$(cat ${{ github.workspace }}/test-reports/firmware-unit/status 2>/dev/null || echo "1")
           PY_STATUS=$(cat ${{ github.workspace }}/test-reports/python-keepkey/status 2>/dev/null || echo "1")
           echo "Unit tests exit status: $UNIT_STATUS"
