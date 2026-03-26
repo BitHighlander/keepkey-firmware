@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.7.2)
 
 project(
   KeepKeyFirmware
-  VERSION 7.10.0
+  VERSION 7.14.0
   LANGUAGES C CXX ASM)
 
 set(BOOTLOADER_MAJOR_VERSION 2)
@@ -108,6 +108,10 @@ if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
   add_definitions(-DDEBUG_LINK=0)
+endif()
+
+if("${COIN_SUPPORT}" STREQUAL "BTC")
+  add_definitions(-DBITCOIN_ONLY)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")

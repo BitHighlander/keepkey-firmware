@@ -53,11 +53,15 @@
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/ripple.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
+#include "keepkey/firmware/ton.h"
+#include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/transaction.h"
 #include "keepkey/firmware/txin_check.h"
 #include "keepkey/firmware/u2f.h"
@@ -84,6 +88,9 @@
 #include "messages-ripple.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
+#include "messages-solana.pb.h"
+#include "messages-tron.pb.h"
+#include "messages-ton.pb.h"
 
 #include <stdio.h>
 
@@ -284,3 +291,7 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_tendermint.h"
 #include "fsm_msg_thorchain.h"
 #include "fsm_msg_mayachain.h"
+#include "fsm_msg_solana.h"
+#include "fsm_msg_tron.h"
+#include "fsm_msg_ton.h"
+#include "fsm_msg_bip85.h"
