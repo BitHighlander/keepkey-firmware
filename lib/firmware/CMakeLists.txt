@@ -3,6 +3,7 @@ set(sources
     app_layout.c
     authenticator.c
     bip85.c
+    signed_metadata.c
     binance.c
     coins.c
     crypto.c
@@ -34,9 +35,12 @@ set(sources
     ripple_base58.c
     signing.c
     signtx_tendermint.c
+    solana.c
     storage.c
     tendermint.c
     thorchain.c
+    ton.c
+    tron.c
     tiny-json.c
     transaction.c
     txin_check.c
