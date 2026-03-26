@@ -3,6 +3,30 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState *msg) {
   (void)msg;
   RESP_INIT(DebugLinkState);
 
+  /* Populate OLED layout for DebugLink screenshot capture.
+   * Canvas is 8bpp (256x64 = 16384 bytes). Convert to SSD1306
+   * column-major 1bpp format (256 columns x 8 pages = 2048 bytes).
+   * Each byte encodes 8 vertical pixels in one column. */
+  {
+    Canvas *c = layout_get_canvas();
+    if (c && c->buffer) {
+      resp->has_layout = true;
+      resp->layout.size = 2048;
+      for (int col = 0; col < 256; col++) {
+        for (int page = 0; page < 8; page++) {
+          uint8_t byte = 0;
+          for (int bit = 0; bit < 8; bit++) {
+            int y = page * 8 + bit;
+            if (c->buffer[y * 256 + col] > 0) {
+              byte |= (1 << bit);
+            }
+          }
+          resp->layout.bytes[col + page * 256] = byte;
+        }
+      }
+    }
+  }
+
   if (storage_hasPin()) {
     resp->has_pin = true;
     strlcpy(resp->pin, storage_getPin(), sizeof(resp->pin));
