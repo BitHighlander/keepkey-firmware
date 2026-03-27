@@ -176,6 +176,43 @@ The `requires_firmware()` and `requires_message()` decorators handle the skippin
 
 ---
 
+## Removed Files (stray / dangerous)
+
+The following files were removed from `tests/` on `release/7.14.0` (commit `04ef8e7`):
+
+| File | Lines | Why Removed |
+|------|-------|-------------|
+| `test_zcash_complete_nownodes.py` | 416 | Hardcoded RPC credentials (`78787ba8...`), internal IP (`100.117.181.111`), NOWNodes API key, interactive `input()` prompt for MAINNET broadcast |
+| `test_zcash_v5_complete.py` | 313 | External RPC calls + mainnet broadcast |
+| `test_zcash_nu6.py` | 184 | Mainnet broadcast tool disguised as test |
+| `test_nu6_final.py` | 150 | "Sign and automatically broadcast NU6 transaction" |
+
+These are manual integration tools, not unit tests. pytest collected them and they failed with timeouts, polluting CI results. Zcash signing is properly tested by `test_msg_zcash_orchard.py` and `test_msg_zcash_sign_pczt.py` (emulator-only, zero external dependencies).
+
+**Rule**: No test file in `tests/` should import `requests`, hit external APIs, contain hardcoded credentials, or prompt for user input.
+
+---
+
+## Local Verification Results (2026-03-27)
+
+Verified against emulator (alpha branch, firmware 7.14.0, port 12044):
+
+**Phase 1 (screenshots)**: 6 tests passed, 15 OLED PNGs captured
+- BIP-85 seed derivation: 3 pages of mnemonic words (embedded in PDF)
+- Solana address: full 44-char base58 with QR code
+- TRON address: full 34-char Base58Check with QR code
+- TON address: full 48-char base64url with QR code
+- Wipe device: confirmation screen
+
+**Phase 2 (full suite)**: 372 passed, 0 failed, 6 skipped
+
+**Report generation**: 134 tests in PDF, 133 passed, 1 pending (N5 TON comment test)
+- New Feature sections at top with `[NEW]` tags
+- Version-gated: only shown because `fw_version=7.14.0`
+- Inline OLED screenshots for BIP-85 (Solana/TRON/TON screenshots need path alignment for inline embedding)
+
+---
+
 ## CI Pipeline Integration
 
 ### Current Flow (firmware repo)
