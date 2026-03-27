@@ -132,7 +132,7 @@ void fsm_msgTonSignTx(TonSignTx *msg);
 void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg);
 void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg);
 void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK *msg);
-void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress *msg);
+// void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress *msg);  // TODO: needs ZcashDisplayAddress proto
 #endif // BITCOIN_ONLY
 
 #if DEBUG_LINK
@@ -151,7 +151,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg);
 void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg);
 void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK *msg);
 void fsm_msgZcashTransparentInput(const ZcashTransparentInput *msg);
-void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress *msg);
+// void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress *msg);  // TODO: needs ZcashDisplayAddress proto
 void fsm_msgTonGetAddress(const TonGetAddress *msg);
 void fsm_msgTonSignTx(TonSignTx *msg);
 void fsm_msgTronGetAddress(const TronGetAddress *msg);
