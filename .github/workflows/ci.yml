@@ -586,6 +586,8 @@ jobs:
         run: |
           python3 scripts/generate-test-report.py \
             --fw-version="${{ steps.version.outputs.fw_version }}" \
+            --branch="${{ github.head_ref || github.ref_name }}" \
+            --commit="${{ github.event.pull_request.head.sha || github.sha }}" \
             --junit=test-reports/python-keepkey/junit.xml \
             --screenshots=test-reports/screenshots \
             --output=test-report.pdf

@@ -936,7 +936,7 @@ SECTIONS = [
 # ---------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------
-def render(output_path, fw_version, results, screenshot_dir=None):
+def render(output_path, fw_version, results, screenshot_dir=None, branch=None, commit=None):
     pdf = PDF(); pb = PB(pdf)
     ts = datetime.now().strftime('%Y-%m-%d %H:%M')
     active = [(l,t,mf,bg,fl,tests) for l,t,mf,bg,fl,tests in SECTIONS if ver_ge(fw_version, mf)]
@@ -957,6 +957,12 @@ def render(output_path, fw_version, results, screenshot_dir=None):
         pb.text(11, f'Firmware {fw_version}  |  {ts}  |  {failed} FAILED of {total} tests', bold=True, color=RED)
     else:
         pb.text(10, f'Firmware {fw_version}  |  {ts}  |  {total} tests: {passed} passed, {skipped} pending')
+    # Branch + commit for audit trail
+    if branch or commit:
+        meta = []
+        if branch: meta.append(f'Branch: {branch}')
+        if commit: meta.append(f'Commit: {commit}')
+        pb.text(8, '  |  '.join(meta), color=GRAY)
     pb.gap(6)
     pb.text(12, 'Sections', bold=True)
     for letter, title, mf, _, _, tests in test_sections:
@@ -1034,6 +1040,8 @@ def main():
     p.add_argument('--fw-version', default=None)
     p.add_argument('--junit', default=None, help='JUnit XML for pass/fail results')
     p.add_argument('--screenshots', default=None, help='Directory with per-test OLED screenshots')
+    p.add_argument('--branch', default=None, help='Git branch name for report header')
+    p.add_argument('--commit', default=None, help='Git commit SHA for report header')
     args = p.parse_args()
 
     fw = args.fw_version
@@ -1044,7 +1052,7 @@ def main():
         else: print('No emulator, defaulting to 7.10.0'); fw = '7.10.0'
 
     results = parse_junit(args.junit) if args.junit else {}
-    render(args.output, fw, results, args.screenshots)
+    render(args.output, fw, results, args.screenshots, branch=args.branch, commit=args.commit)
 
 if __name__ == '__main__':
     main()
