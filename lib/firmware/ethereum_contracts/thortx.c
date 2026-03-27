@@ -63,7 +63,8 @@ static bool thor_confirm_deposit_tx(uint32_t data_total, const EthereumSignTx *m
                                     const char *router_label) {
     (void)data_total;
 
-    char confStr[41], *conf;
+    char confStr[41];
+    const char *conf;
     const TokenType *assetToken;
     uint8_t *thorchainData, *vaultAddress, *assetAddress, *contractAssetAddress;
     uint32_t ctr;
