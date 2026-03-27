@@ -425,6 +425,14 @@ jobs:
           path: test-reports/python-keepkey/
           retention-days: 30
 
+      - name: Upload OLED screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oled-screenshots
+          path: test-reports/screenshots/
+          retention-days: 30
+
       - name: Tear down
         if: always()
         working-directory: scripts/emulator
@@ -456,6 +464,13 @@ jobs:
           path: test-reports/python-keepkey/
         continue-on-error: true
 
+      - name: Download OLED screenshots
+        uses: actions/download-artifact@v4
+        with:
+          name: oled-screenshots
+          path: test-reports/screenshots/
+        continue-on-error: true
+
       - name: Extract firmware version
         id: version
         run: |
@@ -467,6 +482,7 @@ jobs:
           python3 scripts/generate-test-report.py \
             --fw-version=${{ steps.version.outputs.fw_version }} \
             --junit=test-reports/python-keepkey/junit.xml \
+            --screenshots=test-reports/screenshots \
             --output=test-report.pdf
 
       - name: Upload test report
