@@ -517,6 +517,7 @@ jobs:
           name: oled-screenshots
           path: test-reports/screenshots/
           retention-days: 90
+          if-no-files-found: warn
 
       - name: Tear down
         if: always()
