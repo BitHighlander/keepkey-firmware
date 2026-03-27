@@ -23,7 +23,7 @@ name: CI
 
 on:
   push:
-    branches: [master, develop, 'feature/**', 'fix/**', 'release/**', 'hotfix/**']
+    branches: [master, develop, 'feature/**', 'feat/**', 'fix/**', 'release/**', 'hotfix/**']
   pull_request:
     branches: [master, develop]
   workflow_dispatch:
@@ -425,10 +425,72 @@ jobs:
           path: test-reports/python-keepkey/
           retention-days: 30
 
+      - name: Upload OLED screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: oled-screenshots
+          path: test-reports/screenshots/
+          retention-days: 90
+
       - name: Tear down
         if: always()
         working-directory: scripts/emulator
         run: docker compose down -v || true
+
+  # ═══════════════════════════════════════════════════════════
+  # STAGE 3b: TEST REPORT — generate PDF from test artifacts
+  # ═══════════════════════════════════════════════════════════
+
+  generate-test-report:
+    needs: [unit-tests, python-integration-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: recursive
+
+      - name: Download python test results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: python-test-results
+          path: test-reports/python-keepkey/
+
+      - name: Download OLED screenshots
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: oled-screenshots
+          path: test-reports/screenshots/
+
+      - name: Extract firmware version
+        id: version
+        run: |
+          FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+' || echo "unknown")
+          echo "fw_version=${FW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate test report PDF
+        run: |
+          python3 scripts/generate-test-report.py \
+            --fw-version="${{ steps.version.outputs.fw_version }}" \
+            --branch="${{ github.head_ref || github.ref_name }}" \
+            --commit="${{ github.event.pull_request.head.sha || github.sha }}" \
+            --junit=test-reports/python-keepkey/junit.xml \
+            --screenshots=test-reports/screenshots \
+            --output=test-report.pdf
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: test-report.pdf
+          retention-days: 90
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
