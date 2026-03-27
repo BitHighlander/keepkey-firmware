@@ -24,7 +24,9 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#ifndef KEEPKEY_UDP_PORT
 #define KEEPKEY_UDP_PORT 11044
+#endif
 
 struct usb_socket {
   int fd;
@@ -95,9 +97,17 @@ static size_t socket_read(struct usb_socket *sock, void *buffer, size_t size) {
 }
 
 void emulatorSocketInit(void) {
-  usb_main.fd = socket_setup(KEEPKEY_UDP_PORT);
+  int port = KEEPKEY_UDP_PORT;
+  const char *env_port = getenv("KEEPKEY_UDP_PORT");
+  if (env_port) {
+    int p = atoi(env_port);
+    if (p > 0 && p < 65535) port = p;
+  }
+  fprintf(stderr, "Emulator listening on UDP ports %d (main) and %d (debug)\n",
+          port, port + 1);
+  usb_main.fd = socket_setup(port);
   usb_main.fromlen = 0;
-  usb_debug.fd = socket_setup(KEEPKEY_UDP_PORT + 1);
+  usb_debug.fd = socket_setup(port + 1);
   usb_debug.fromlen = 0;
 }
 
