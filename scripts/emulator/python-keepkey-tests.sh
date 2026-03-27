@@ -11,7 +11,7 @@ KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v -k "test_show or test_show_address or test_wipe_device or test_bip85 or test_apply_settings or test_ping" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  --timeout=120 2>&1 || true
+  2>&1 || true
 
 echo "Screenshot PNGs: $(find /kkemu/test-reports/screenshots -type f -name '*.png' 2>/dev/null | wc -l)"
 
