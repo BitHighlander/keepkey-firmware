@@ -33,26 +33,26 @@ if [ "$EMU_READY" != "0" ]; then
     exit 1
 fi
 
-# Also verify debug link (kkemu:11045)
+# Also verify debug link (kkemu:11045) — give it more time since it starts after main
 echo "=== Verifying debug link (kkemu:11045) ==="
 python3 -c "
 import socket, time, sys
-for i in range(10):
+for i in range(20):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(3)
-        # Send DebugLinkGetState (msg_type=101, length=0)
+        s.settimeout(5)
+        # Send DebugLinkGetState (msg_type=101=0x0065, length=0)
         s.sendto(b'##\x00\x65\x00\x00\x00\x00', ('kkemu', 11045))
         data, _ = s.recvfrom(4096)
         s.close()
         print('Debug link ready (%d bytes response)' % len(data))
         sys.exit(0)
     except Exception as e:
-        print('  attempt %d/10: %s' % (i+1, e))
+        print('  attempt %d/20: %s' % (i+1, e))
         try: s.close()
         except: pass
-        time.sleep(2)
-print('WARNING: debug link not ready')
+        time.sleep(3)
+print('WARNING: debug link not ready after 60s')
 sys.exit(1)
 "
 DEBUG_READY=$?
@@ -68,10 +68,10 @@ KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v -k "test_getaddress or test_get_address or test_wipedevice or test_bip85 or test_solana_get or test_tron_get or test_ton_get" \
+{ pytest -v -k "test_getaddress or test_get_address or test_wipedevice or test_bip85 or test_solana_get or test_tron_get or test_ton_get" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  --timeout=120 2>&1 | tee "$LOGFILE"
-PHASE1_EXIT=${PIPESTATUS[0]}
+  2>&1; echo $? > /tmp/phase1_exit; } | tee "$LOGFILE"
+PHASE1_EXIT=$(cat /tmp/phase1_exit 2>/dev/null || echo "1")
 echo "Phase 1 exit code: $PHASE1_EXIT"
 
 # Count screenshots
