@@ -23,7 +23,7 @@ name: CI
 
 on:
   push:
-    branches: [master, develop, 'feature/**', 'fix/**', 'release/**', 'hotfix/**']
+    branches: [master, develop, 'feat/**', 'feature/**', 'fix/**', 'release/**', 'hotfix/**']
   pull_request:
     branches: [master, develop]
   workflow_dispatch:
@@ -429,6 +429,53 @@ jobs:
         if: always()
         working-directory: scripts/emulator
         run: docker compose down -v || true
+
+  # ═══════════════════════════════════════════════════════════
+  # STAGE 3b: REPORT — generate test-report.pdf from results
+  # ═══════════════════════════════════════════════════════════
+
+  generate-test-report:
+    needs: [python-integration-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: false
+
+      - name: Init python-keepkey submodule
+        run: git submodule update --init --recursive deps/python-keepkey
+
+      - name: Download Python test results
+        uses: actions/download-artifact@v4
+        with:
+          name: python-test-results
+          path: test-reports/python-keepkey/
+        continue-on-error: true
+
+      - name: Extract firmware version
+        id: version
+        run: |
+          FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+')
+          echo "fw_version=${FW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate test-report.pdf
+        run: |
+          python3 scripts/generate-test-report.py \
+            --fw-version=${{ steps.version.outputs.fw_version }} \
+            --junit=test-reports/python-keepkey/junit.xml \
+            --output=test-report.pdf
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: test-report.pdf
+          retention-days: 90
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
