@@ -109,6 +109,71 @@ screenshots/
 └── ...
 ```
 
+### Known Screenshot Limitations (verified 2026-03-27)
+
+1. **`show_display=True` screenshots capture wrong screen**: `_capture_oled()` in `callback_ButtonRequest` reads the OLED buffer via DebugLink BEFORE the firmware renders the address. The captured frame shows the previous screen (recovery sentence, home screen), not the address display. This is a timing race between the DebugLink read and the firmware OLED render.
+
+2. **Screenshot capture corrupts address responses**: When `KEEPKEY_SCREENSHOT=1`, the DebugLink round-trip in `callback_ButtonRequest` can cause the `show_display=True` response to return an empty address. Tests that assert on address content will fail in screenshot mode.
+
+3. **TON `raw_address` proto bug**: The `TonAddress.raw_address` field is defined as proto `string` but the firmware populates it with binary data (non-UTF-8). Causes `UnicodeDecodeError` when `show_display=True`. Needs proto fix: change to `bytes` type.
+
+4. **Screenshot file naming**: `conftest.py` uses `scr*` prefix but report generator expects `btn*` prefix. Need to align.
+
+### Implication for Phase 1/Phase 2
+
+Show-display tests (`test_*_show_address`) go in Phase 1 with relaxed assertions (no address content checks). Address correctness is validated by non-show tests in Phase 2. The show tests exist ONLY to trigger the OLED display flow for screenshot capture.
+
+---
+
+## Feature Gating (per-branch test control)
+
+### Problem
+
+During development, firmware branches are at different feature states:
+- `develop` (7.10.0): no new chains
+- After PR #1-6 merge: still 7.10.0, no new chains
+- After PR #7 (mega): jumps to 7.14.0, gets Solana/TRON/TON/EVM/BIP-85
+- After PR #8 (zcash): gets Zcash Orchard
+
+The `requires_firmware("7.14.0")` check gates on version number, but two branches at "7.14.0" may have different features (mega without zcash vs mega with zcash).
+
+### Solution: Feature-based gating
+
+Like Trezor's test system, tests should declare which MESSAGE TYPES they need:
+
+```python
+# Existing (works for version gating)
+self.requires_firmware("7.14.0")
+
+# Existing (works for message-level feature gating)
+self.requires_message("SolanaGetAddress")    # skips if proto not available
+self.requires_message("TronGetAddress")
+self.requires_message("ZcashSignPCZT")       # skips if Zcash not in this build
+self.requires_message("EthereumTxMetadata")  # skips if EVM clear-signing not available
+```
+
+The `requires_message()` method (already on `release/7.14.0`) checks if the protobuf message type exists in the current build's pb2 modules. This handles:
+- 7.10.0 branches: all new chain tests skip (no Solana/TRON/TON protos)
+- Mega branch: Solana/TRON/TON/EVM/BIP-85 tests run, Zcash skips
+- Zcash branch: all tests run
+
+### Report Generator Integration
+
+The report generator's `SECTIONS` array already gates by `min_firmware_version`. Tests that skip via `requires_message()` show as `--` (pending/grey) in the report, which is correct — the feature isn't in this build.
+
+### Phase 1 Filter: Version-Aware
+
+Instead of hardcoding chain names:
+```bash
+# WRONG: hardcoded, breaks on 7.10.0 branches
+pytest -k "test_solana_get or test_tron_get or test_ton_get"
+
+# RIGHT: run all show tests, let requires_firmware/requires_message skip
+pytest -k "test_show or test_show_address or test_wipe_device or test_bip85"
+```
+
+The `requires_firmware()` and `requires_message()` decorators handle the skipping. No need to maintain a separate filter list per version.
+
 ---
 
 ## CI Pipeline Integration
