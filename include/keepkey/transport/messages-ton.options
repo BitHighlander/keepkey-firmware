@@ -10,3 +10,5 @@ TonSignTx.raw_tx max_size:1024
 TonSignTx.to_address max_size:50
 
 TonSignedTx.signature max_size:64
+
+TonSignTx.memo max_size:121
