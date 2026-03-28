@@ -81,7 +81,7 @@
     MSG_IN(MessageType_MessageType_SolanaSignMessage,              SolanaSignMessage,           fsm_msgSolanaSignMessage)
     MSG_OUT(MessageType_MessageType_SolanaAddress,                  SolanaAddress,               NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_SolanaSignedTx,                 SolanaSignedTx,              NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_SolanaSignedMessage,            SolanaSignedMessage,         NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_SolanaMessageSignature,         SolanaMessageSignature,         NO_PROCESS_FUNC)
 
 
 
