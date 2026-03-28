@@ -126,7 +126,6 @@ void fsm_msgTronGetAddress(const TronGetAddress *msg);
 void fsm_msgTronSignTx(TronSignTx *msg);
 void fsm_msgTonGetAddress(const TonGetAddress *msg);
 void fsm_msgTonSignTx(TonSignTx *msg);
-void fsm_msgEthereumTxMetadata(const EthereumTxMetadata *msg);
 #endif // BITCOIN_ONLY
 
 #if DEBUG_LINK

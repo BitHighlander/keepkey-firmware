@@ -54,7 +54,6 @@
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/ripple.h"
-#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/solana.h"

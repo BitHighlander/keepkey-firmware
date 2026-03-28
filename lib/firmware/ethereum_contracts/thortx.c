@@ -27,40 +27,17 @@
 #include "keepkey/firmware/thorchain.h"
 #include "trezor/crypto/address.h"
 
-/* Helper: format msg->to as lowercase hex string (40 chars + NUL) */
-static void thor_format_to_addr(const EthereumSignTx *msg, char out[41]) {
-  for (uint32_t i = 0; i < 20; i++) {
-    snprintf(&out[i * 2], 3, "%02x", msg->to.bytes[i]);
-  }
-  out[40] = '\0';
-}
-
-/* depositWithExpiry() selector = 0x1fece7b4 */
-static bool thor_has_deposit_selector(const EthereumSignTx *msg) {
-  return msg->has_to && msg->to.size == 20 &&
-         msg->data_initial_chunk.size >= 16 &&
-         memcmp(msg->data_initial_chunk.bytes,
-                "\x1f\xec\xe7\xb4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-                16) == 0;
-}
-
-bool thor_isMayachainTx(const EthereumSignTx *msg) {
-  if (!thor_has_deposit_selector(msg)) return false;
-  char toStr[41];
-  thor_format_to_addr(msg, toStr);
-  return strncmp(toStr, MAYA_ROUTER, 40) == 0;
-}
-
 bool thor_isThorchainTx(const EthereumSignTx *msg) {
-  /* Matches any depositWithExpiry() call — Maya transactions are
-   * a subset; call thor_isMayachainTx() first to distinguish them. */
-  return thor_has_deposit_selector(msg);
+  if (msg->has_to && msg->to.size == 20 &&
+      memcmp(msg->data_initial_chunk.bytes,
+             "\x1f\xec\xe7\xb4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", 
+             16) == 0) {
+    return true;
+  }
+  return false;
 }
 
-/* Internal helper used by both thor_confirmThorTx and thor_confirmMayaTx */
-static bool thor_confirm_deposit_tx(uint32_t data_total, const EthereumSignTx *msg,
-                                    const char *protocol_label,
-                                    const char *router_label) {
+bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {  
     (void)data_total;
 
     char confStr[41], *conf;
@@ -74,55 +51,61 @@ static bool thor_confirm_deposit_tx(uint32_t data_total, const EthereumSignTx *m
     bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2*32, 32, &Amount);
     thorchainData = (uint8_t *)(msg->data_initial_chunk.bytes + 4 + 5*32);
 
-    /* Show routing router */
-    thor_format_to_addr(msg, confStr);
-    if (strncmp(confStr, THOR_ROUTER, 40) == 0) {
+    // Start confirmations    
+    for (ctr=0; ctr<20; ctr++) {
+        snprintf(&confStr[ctr*2], 3, "%02x", msg->to.bytes[ctr]);
+    }
+    if (strncmp(confStr, THOR_ROUTER, sizeof(THOR_ROUTER)) == 0) {
         conf = "Thorchain router";
-    } else if (strncmp(confStr, MAYA_ROUTER, 40) == 0) {
-        conf = router_label;
     } else {
         conf = confStr;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-             protocol_label, "Routing through %s", conf)) {
+             "Thorchain data", "Routing through %s", conf)) {
         return false;
     }
 
-    /* Show Asgard vault address */
+    // just display token address and amount as string
     for (ctr=0; ctr<20; ctr++) {
         snprintf(&confStr[ctr*2], 3, "%02x", vaultAddress[ctr]);
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-             protocol_label, "Using Asgard vault %s", confStr)) {
+             "Thorchain data", "Using Asgard vault %s", confStr)) {
         return false;
     }
 
     if (memcmp(contractAssetAddress, ETH_ADDRESS, sizeof(ETH_ADDRESS)) == 0) {
-        assetAddress = (uint8_t *)ETH_NATIVE;
+        assetAddress = (uint8_t *)ETH_NATIVE;      // get eth native parameters if asset is not a token
     } else {
         assetAddress = contractAssetAddress;
     }
-
+    
     assetToken = tokenByChainAddress(msg->chain_id, assetAddress);
 
     if (strncmp(assetToken->ticker, " UNKN", 5) == 0) {
+ 
+        // just display token address and amount as string
         for (ctr=0; ctr<20; ctr++) {
             snprintf(&confStr[ctr*2], 3, "%02x", assetAddress[ctr]);
         }
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 protocol_label, "from asset %s", confStr)) {
+                 "Thorchain data", "from asset %s", confStr)) {
             return false;
         }
+        // We don't know what the exponent should be so just confirm raw unformatted number
         bn_format(&Amount, NULL, " unformatted", 0, 0, false, confStr, sizeof(confStr));
+
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 protocol_label, "amount %s", confStr)) {
+                 "Thorchain data", "amount %s", confStr)) {
             return false;
         }
+
     } else {
         ethereumFormatAmount(&Amount, assetToken, msg->chain_id, confStr,
                            sizeof(confStr));
+    
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                     protocol_label, "Confirm sending %s", confStr)) {
+                     "Thorchain data", "Confirm sending %s", confStr)) {
             return false;
         }
     }
@@ -131,14 +114,6 @@ static bool thor_confirm_deposit_tx(uint32_t data_total, const EthereumSignTx *m
         return false;
 
     return true;
-}
-
-bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
-    return thor_confirm_deposit_tx(data_total, msg, "Thorchain data", "Thorchain router");
-}
-
-bool thor_confirmMayaTx(uint32_t data_total, const EthereumSignTx *msg) {
-    return thor_confirm_deposit_tx(data_total, msg, "Maya data", "Maya router");
 }
 
 

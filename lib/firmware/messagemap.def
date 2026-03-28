@@ -93,8 +93,6 @@
     MSG_OUT(MessageType_MessageType_TonAddress,                     TonAddress,                  NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_TonSignedTx,                    TonSignedTx,                 NO_PROCESS_FUNC)
 
-    MSG_IN(MessageType_MessageType_EthereumTxMetadata,             EthereumTxMetadata,          fsm_msgEthereumTxMetadata)
-    MSG_OUT(MessageType_MessageType_EthereumMetadataAck,           EthereumMetadataAck,         NO_PROCESS_FUNC)
 
     /* Normal Out Messages */
     MSG_OUT(MessageType_MessageType_Success,                        Success,                     NO_PROCESS_FUNC)
