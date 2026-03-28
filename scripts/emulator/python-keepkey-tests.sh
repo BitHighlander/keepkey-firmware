@@ -35,13 +35,13 @@ print('_capture_oled first 200 chars:', repr(src[:200]))
 " 2>&1
 echo "=== End diagnostic ==="
 
-# Smoke test: ONE test with screenshots to prove the pipeline works
-echo "=== Screenshot smoke test (test_wipe_device) ==="
+# Screenshot tests: wipe_device (baseline) + feature-specific OLED captures
+echo "=== Screenshot tests ==="
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v -x -k "test_wipe_device" \
+pytest -v -x -k "test_wipe_device or test_invalid_bip39_word_rejected" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 
