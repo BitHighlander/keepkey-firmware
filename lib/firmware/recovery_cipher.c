@@ -470,12 +470,12 @@ void recovery_character(const char *character) {
       bool valid = attempt_auto_complete(check_word);
       memzero(check_word, sizeof(check_word));
       if (!valid) {
-        memzero(coded_word, sizeof(coded_word));
-        memzero(decoded_word, sizeof(decoded_word));
-        recovery_cipher_abort();
         confirm(ButtonRequestType_ButtonRequest_Other,
                 "Invalid Word",
                 "Word not found in BIP39 wordlist.");
+        memzero(coded_word, sizeof(coded_word));
+        memzero(decoded_word, sizeof(decoded_word));
+        recovery_cipher_abort();
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         "Word not found in BIP39 wordlist");
         layoutHome();
