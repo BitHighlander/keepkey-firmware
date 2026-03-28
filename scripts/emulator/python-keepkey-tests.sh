@@ -50,7 +50,7 @@ SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
-  -k "(test_wipe_device and wipedevice) or (test_one_one_fee and msg_signtx and not raw and not grs) or (test_ethereum_signtx_nodata and not eip) or (test_sign_btc_eth_swap and thorchain) or (test_reset_device and resetdevice and not pin) or test_invalid_bip39_word_rejected or test_bip85_12word_flow or test_solana_sign_system_transfer or test_solana_sign_token_transfer or test_solana_sign_stake_delegate or test_solana_sign_memo or test_solana_sign_compute_budget_unit_price" \
+  -k "(test_wipe_device and wipedevice) or (test_one_one_fee and msg_signtx and not raw and not grs) or (test_ethereum_signtx_nodata and not eip) or (test_sign_btc_eth_swap and thorchain) or (test_reset_device and resetdevice and not pin) or test_invalid_bip39_word_rejected or test_bip85_12word_flow or test_solana_sign_system_transfer or test_solana_sign_token_transfer or test_solana_sign_stake_delegate or test_solana_sign_memo or test_solana_sign_compute_budget_unit_price or test_tron_sign_transfer_structured or test_tron_sign_trc20_transfer" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 

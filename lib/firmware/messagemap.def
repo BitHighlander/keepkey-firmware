@@ -83,6 +83,11 @@
     MSG_OUT(MessageType_MessageType_SolanaSignedTx,                 SolanaSignedTx,              NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_SolanaMessageSignature,         SolanaMessageSignature,         NO_PROCESS_FUNC)
 
+    MSG_IN(MessageType_MessageType_TronGetAddress,                  TronGetAddress,              fsm_msgTronGetAddress)
+    MSG_IN(MessageType_MessageType_TronSignTx,                     TronSignTx,                  fsm_msgTronSignTx)
+    MSG_OUT(MessageType_MessageType_TronAddress,                    TronAddress,                 NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_TronSignedTx,                   TronSignedTx,                NO_PROCESS_FUNC)
+
 
 
 

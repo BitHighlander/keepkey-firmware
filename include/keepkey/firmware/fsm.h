@@ -125,6 +125,10 @@ typedef struct _SolanaSignMessage SolanaSignMessage;
 void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg);
 void fsm_msgSolanaSignTx(const SolanaSignTx *msg);
 void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg);
+typedef struct _TronGetAddress TronGetAddress;
+typedef struct _TronSignTx TronSignTx;
+void fsm_msgTronGetAddress(const TronGetAddress *msg);
+void fsm_msgTronSignTx(TronSignTx *msg);
 #endif // BITCOIN_ONLY
 
 #if DEBUG_LINK
