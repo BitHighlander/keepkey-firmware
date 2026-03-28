@@ -470,6 +470,9 @@ void recovery_character(const char *character) {
       bool valid = attempt_auto_complete(check_word);
       memzero(check_word, sizeof(check_word));
       if (!valid) {
+        /* Pre-render warning to OLED buffer so DebugLink can capture it
+         * before confirm_helper's animated layout overwrites it. */
+        layout_warning_static("Word not found in BIP39 wordlist");
         confirm(ButtonRequestType_ButtonRequest_Other,
                 "Invalid Word",
                 "Word not found in BIP39 wordlist.");
