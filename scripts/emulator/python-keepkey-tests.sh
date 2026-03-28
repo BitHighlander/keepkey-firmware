@@ -35,19 +35,20 @@ print('_capture_oled first 200 chars:', repr(src[:200]))
 " 2>&1
 echo "=== End diagnostic ==="
 
-# Phase 1: 5 targeted screenshots — security-critical OLED content only
+# Phase 1: 6 targeted screenshots — security-critical OLED content only
 # 1. Wipe confirm — "erase your private keys?" (security gate)
 # 2. BTC sign — output address + amount + fee (anti-tampering proof)
 # 3. ETH sign — recipient + gas (different chain flow)
 # 4. THORChain swap — memo with routing (most complex confirmation)
 # 5. Reset device — seed words on OLED (proves words never leave device)
-echo "=== Phase 1: Targeted screenshot capture (5 tests) ==="
+# 6. BIP-39 rejection — "Word not in wordlist" (invalid word error screen)
+echo "=== Phase 1: Targeted screenshot capture (6 tests) ==="
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
-  -k "(test_wipe_device and wipedevice) or (test_one_one_fee and msg_signtx and not raw and not grs) or (test_ethereum_signtx_nodata and not eip) or (test_sign_btc_eth_swap and thorchain) or (test_reset_device and resetdevice and not pin)" \
+  -k "(test_wipe_device and wipedevice) or (test_one_one_fee and msg_signtx and not raw and not grs) or (test_ethereum_signtx_nodata and not eip) or (test_sign_btc_eth_swap and thorchain) or (test_reset_device and resetdevice and not pin) or test_invalid_bip39_word_rejected" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 
