@@ -35,19 +35,25 @@ print('_capture_oled first 200 chars:', repr(src[:200]))
 " 2>&1
 echo "=== End diagnostic ==="
 
-# Phase 1: 5 targeted screenshot captures — security-critical OLED content only
-# 1. Wipe confirm (security gate)
-# 2. BTC sign (output addr + amount + fee — anti-tampering)
-# 3. ETH sign (different chain, different display flow)
-# 4. THORChain swap (memo with routing — most complex confirmation)
-# 5. Reset device (seed words on OLED — proves words never leave device)
-echo "=== Phase 1: Targeted screenshot capture (5 tests) ==="
+# Phase 1: Screenshot captures driven by report SECTIONS (single source of truth)
+#
+# generate-test-report.py --screenshot-filter reads SECTIONS and emits a pytest -k
+# expression for every test with non-empty screenshot expectations. Adding screenshots
+# to a test in SECTIONS automatically includes it here — no manual filter maintenance.
+echo "=== Phase 1: Report-driven screenshot capture ==="
+# Auto-detect firmware version from emulator, fall back to env or 7.14.0
+SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter ${FW_VERSION:+--fw-version=$FW_VERSION} 2>/dev/null)
+if [ -z "$SCREENSHOT_FILTER" ]; then
+    echo "WARNING: --screenshot-filter returned empty, falling back to full suite"
+    SCREENSHOT_FILTER="test_"
+fi
+echo "Filter: $SCREENSHOT_FILTER"
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
-  -k "(test_wipe_device and wipedevice) or (test_one_one_fee and msg_signtx and not raw and not grs) or (test_ethereum_signtx_nodata and not eip) or (test_sign_btc_eth_swap and thorchain) or (test_reset_device and resetdevice and not pin)" \
+  -k "$SCREENSHOT_FILTER" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 
