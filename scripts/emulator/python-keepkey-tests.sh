@@ -17,6 +17,24 @@ done
 
 cd deps/python-keepkey/tests
 
+# Diagnostic: verify SCREENSHOT flag reaches Python
+echo "=== Pre-flight diagnostic ==="
+KEEPKEY_SCREENSHOT=1 python3 -c "
+import os, sys
+sys.path.insert(0, '..')
+print('KEEPKEY_SCREENSHOT env:', os.environ.get('KEEPKEY_SCREENSHOT', 'NOT SET'))
+from keepkeylib.client import SCREENSHOT
+print('SCREENSHOT global:', SCREENSHOT)
+# Check if _capture_oled has debug logging
+import inspect
+from keepkeylib.client import DebugLinkMixin
+src = inspect.getsource(DebugLinkMixin._capture_oled)
+has_debug = '[SCREENSHOT]' in src
+print('_capture_oled has debug logging:', has_debug)
+print('_capture_oled first 200 chars:', repr(src[:200]))
+" 2>&1
+echo "=== End diagnostic ==="
+
 # Smoke test: ONE test with screenshots to prove the pipeline works
 echo "=== Screenshot smoke test (test_wipe_device) ==="
 KEEPKEY_SCREENSHOT=1 \
@@ -25,13 +43,16 @@ KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v -x -k "test_wipe_device" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  2>&1
+  -s 2>&1
 
 # Report what we got
 echo "=== Screenshot results ==="
 find /kkemu/test-reports/screenshots -name '*.png' -ls 2>/dev/null || echo "NO SCREENSHOTS"
 SCREENSHOT_COUNT=$(find /kkemu/test-reports/screenshots -name '*.png' 2>/dev/null | wc -l)
 echo "Total PNGs: $SCREENSHOT_COUNT"
+# Check if any [SCREENSHOT] lines were written anywhere
+echo "=== Searching for SCREENSHOT output ==="
+find /kkemu/test-reports -name '*.log' -exec grep -l SCREENSHOT {} \; 2>/dev/null || echo "No SCREENSHOT log files found"
 
 # Full suite (no screenshots)
 echo "=== Full test suite ==="
