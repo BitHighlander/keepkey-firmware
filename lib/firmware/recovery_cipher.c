@@ -475,6 +475,7 @@ void recovery_character(const char *character) {
          * render) instead of confirm() which overwrites the canvas
          * with an animated layout before DebugLink can read it. */
         layout_warning_static("Word not found in BIP39 wordlist");
+        layout_clear_animations();
         {
           ButtonRequest br;
           memset(&br, 0, sizeof(br));
