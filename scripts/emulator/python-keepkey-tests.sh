@@ -35,13 +35,19 @@ print('_capture_oled first 200 chars:', repr(src[:200]))
 " 2>&1
 echo "=== End diagnostic ==="
 
-# Smoke test: ONE test with screenshots to prove the pipeline works
-echo "=== Screenshot smoke test (test_wipe_device) ==="
+# Phase 1: Screenshot capture tests — one per chain section + core lifecycle
+# All use confirm() dialogs which render through confirm_helper() —
+# DebugLink captures the OLED during the ButtonRequest wait.
+echo "=== Phase 1: Screenshot capture ==="
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v -x -k "test_wipe_device" \
+# Screenshot tests — representative tests per chain, all use confirm() dialogs.
+# ~20 tests covering Core, BTC, ETH, Cosmos, THORChain, Maya, Groestlcoin.
+# More screenshots = more proof of correct OLED rendering.
+pytest -v --tb=short \
+  -k "test_wipe_device or test_show or test_one_one_fee or test_ethereum_signtx_nodata or test_sign_btc_eth_swap or test_standard" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 
