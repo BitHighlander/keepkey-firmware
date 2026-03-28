@@ -45,14 +45,16 @@ pytest -v -x -k "test_wipe_device" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 
-# Report what we got
+# Gate: fail fast if screenshots broken
 echo "=== Screenshot results ==="
 find /kkemu/test-reports/screenshots -name '*.png' -ls 2>/dev/null || echo "NO SCREENSHOTS"
 SCREENSHOT_COUNT=$(find /kkemu/test-reports/screenshots -name '*.png' 2>/dev/null | wc -l)
 echo "Total PNGs: $SCREENSHOT_COUNT"
-# Check if any [SCREENSHOT] lines were written anywhere
-echo "=== Searching for SCREENSHOT output ==="
-find /kkemu/test-reports -name '*.log' -exec grep -l SCREENSHOT {} \; 2>/dev/null || echo "No SCREENSHOT log files found"
+if [ "$SCREENSHOT_COUNT" -eq 0 ]; then
+    echo "FATAL: KEEPKEY_SCREENSHOT=1 but 0 PNGs captured. Screenshot pipeline is broken."
+    echo "1" > /kkemu/test-reports/python-keepkey/status
+    exit 1
+fi
 
 # Full suite (no screenshots)
 echo "=== Full test suite ==="
