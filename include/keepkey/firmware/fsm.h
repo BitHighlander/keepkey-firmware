@@ -119,6 +119,9 @@ void fsm_msgMayachainGetAddress(const MayachainGetAddress *msg);
 void fsm_msgMayachainSignTx(const MayachainSignTx *msg);
 void fsm_msgMayachainMsgAck(const MayachainMsgAck *msg);
 
+typedef struct _SolanaGetAddress SolanaGetAddress;
+typedef struct _SolanaSignTx SolanaSignTx;
+typedef struct _SolanaSignMessage SolanaSignMessage;
 void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg);
 void fsm_msgSolanaSignTx(const SolanaSignTx *msg);
 void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg);
