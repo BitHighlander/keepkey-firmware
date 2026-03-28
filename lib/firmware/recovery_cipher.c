@@ -474,7 +474,7 @@ void recovery_character(const char *character) {
          * can capture the screen. Use layout_warning_static (immediate
          * render) instead of confirm() which overwrites the canvas
          * with an animated layout before DebugLink can read it. */
-        layout_warning_static("Word not found in BIP39 wordlist");
+        layout_warning_static("Invalid BIP39 word");
         layout_clear_animations();
         {
           ButtonRequest br;
