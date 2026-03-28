@@ -2,8 +2,6 @@ name: Zoo Report
 
 on:
   pull_request:
-    branches: [develop]
-    types: [opened, synchronize]
     branches: [develop, master]
     types: [opened, synchronize]
   push:
@@ -18,10 +16,6 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout firmware (PR head)
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
       - name: Checkout firmware
         uses: actions/checkout@v4
         with:
