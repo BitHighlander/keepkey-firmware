@@ -15,3 +15,7 @@ SolanaSignMessage.message max_size:1024
 
 SolanaMessageSignature.public_key max_size:32
 SolanaMessageSignature.signature max_size:64
+
+SolanaTokenInfo.mint max_size:32
+SolanaTokenInfo.symbol max_size:13
+SolanaSignTx.token_info max_count:4
