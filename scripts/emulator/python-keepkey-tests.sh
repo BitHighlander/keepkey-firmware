@@ -35,19 +35,19 @@ print('_capture_oled first 200 chars:', repr(src[:200]))
 " 2>&1
 echo "=== End diagnostic ==="
 
-# Phase 1: Screenshot capture tests — one per chain section + core lifecycle
-# All use confirm() dialogs which render through confirm_helper() —
-# DebugLink captures the OLED during the ButtonRequest wait.
-echo "=== Phase 1: Screenshot capture ==="
+# Phase 1: 5 targeted screenshots — security-critical OLED content only
+# 1. Wipe confirm — "erase your private keys?" (security gate)
+# 2. BTC sign — output address + amount + fee (anti-tampering proof)
+# 3. ETH sign — recipient + gas (different chain flow)
+# 4. THORChain swap — memo with routing (most complex confirmation)
+# 5. Reset device — seed words on OLED (proves words never leave device)
+echo "=== Phase 1: Targeted screenshot capture (5 tests) ==="
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-# Screenshot tests — representative tests per chain, all use confirm() dialogs.
-# ~20 tests covering Core, BTC, ETH, Cosmos, THORChain, Maya, Groestlcoin.
-# More screenshots = more proof of correct OLED rendering.
 pytest -v --tb=short \
-  -k "test_wipe_device or test_show or test_one_one_fee or test_ethereum_signtx_nodata or test_sign_btc_eth_swap or test_standard" \
+  -k "(test_wipe_device and wipedevice) or (test_one_one_fee and msg_signtx and not raw and not grs) or (test_ethereum_signtx_nodata and not eip) or (test_sign_btc_eth_swap and thorchain) or (test_reset_device and resetdevice and not pin)" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1
 
