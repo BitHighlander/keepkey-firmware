@@ -46,12 +46,14 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState *msg) {
   resp->storage_hash.size =
       memory_storage_hash(resp->storage_hash.bytes, storage_getLocation());
 
-  /* Force pending animations to render before reading the canvas.
-   * Without this, animated elements (cipher grid, PIN matrix) won't
-   * appear in DebugLink screenshots — only static text is captured.
-   * force_animation_start() sets animate_flag so animate() will run. */
-  force_animation_start();
-  animate();
+  /* Render pending animations ONLY if the animation queue is active.
+   * Static layouts (warning screens, address displays) write directly
+   * to the canvas — calling animate() unconditionally overwrites them
+   * with stale animation frames. Only run animations when queued. */
+  if (is_animating()) {
+    force_animation_start();
+    animate();
+  }
   display_refresh();
 
   /* Pack 256x64 grayscale canvas into 1bpp layout for screenshot capture.
