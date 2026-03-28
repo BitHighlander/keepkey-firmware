@@ -470,12 +470,34 @@ void recovery_character(const char *character) {
       bool valid = attempt_auto_complete(check_word);
       memzero(check_word, sizeof(check_word));
       if (!valid) {
-        /* Pre-render warning to OLED buffer so DebugLink can capture it
-         * before confirm_helper's animated layout overwrites it. */
+        /* Render warning to OLED and send ButtonRequest so DebugLink
+         * can capture the screen. Use layout_warning_static (immediate
+         * render) instead of confirm() which overwrites the canvas
+         * with an animated layout before DebugLink can read it. */
         layout_warning_static("Word not found in BIP39 wordlist");
-        confirm(ButtonRequestType_ButtonRequest_Other,
-                "Invalid Word",
-                "Word not found in BIP39 wordlist.");
+        {
+          ButtonRequest br;
+          memset(&br, 0, sizeof(br));
+          br.has_code = true;
+          br.code = ButtonRequestType_ButtonRequest_Other;
+          msg_write(MessageType_MessageType_ButtonRequest, &br);
+        }
+        /* Wait for ButtonAck (or DebugLinkDecision in debug builds).
+         * Canvas stays untouched so DebugLinkGetState captures the warning. */
+        {
+          static uint8_t tiny_buf[MSG_TINY_BFR_SZ];
+          MessageType tiny_msg;
+          for (;;) {
+            tiny_msg = check_for_tiny_msg(tiny_buf);
+            if (tiny_msg == MessageType_MessageType_ButtonAck) break;
+#if DEBUG_LINK
+            if (tiny_msg == MessageType_MessageType_DebugLinkDecision) break;
+            if (tiny_msg == MessageType_MessageType_DebugLinkGetState) {
+              call_msg_debug_link_get_state_handler((DebugLinkGetState *)tiny_buf);
+            }
+#endif
+          }
+        }
         memzero(coded_word, sizeof(coded_word));
         memzero(decoded_word, sizeof(decoded_word));
         recovery_cipher_abort();
