@@ -33,7 +33,9 @@
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
+#ifndef BITCOIN_ONLY
 #include "keepkey/firmware/ethereum_tokens.h"
+#endif
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tiny-json.h"
