@@ -42,7 +42,9 @@ echo "=== End diagnostic ==="
 # to a test in SECTIONS automatically includes it here — no manual filter maintenance.
 echo "=== Phase 1: Report-driven screenshot capture ==="
 # Auto-detect firmware version from emulator, fall back to env or 7.14.0
-SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter ${FW_VERSION:+--fw-version=$FW_VERSION} 2>/dev/null)
+# NOTE: KK_TRANSPORT_MAIN must be set so detect_fw() reaches the Docker emulator
+# (default 127.0.0.1:11044 doesn't resolve inside Docker — need kkemu:11044)
+SCREENSHOT_FILTER=$(KK_TRANSPORT_MAIN=kkemu:11044 python3 ../scripts/generate-test-report.py --screenshot-filter ${FW_VERSION:+--fw-version=$FW_VERSION} 2>/dev/null)
 if [ -z "$SCREENSHOT_FILTER" ]; then
     echo "WARNING: --screenshot-filter returned empty, falling back to full suite"
     SCREENSHOT_FILTER="test_"
