@@ -33,6 +33,7 @@ set(sources
     ripple.c
     ripple_base58.c
     signing.c
+    solana.c
     signtx_tendermint.c
     storage.c
     tendermint.c
