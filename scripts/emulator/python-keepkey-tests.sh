@@ -41,7 +41,11 @@ echo "=== End diagnostic ==="
 # expression for every test with non-empty screenshot expectations. Adding screenshots
 # to a test in SECTIONS automatically includes it here — no manual filter maintenance.
 echo "=== Phase 1: Report-driven screenshot capture ==="
-# Auto-detect firmware version from emulator, fall back to env or 7.14.0
+# Extract firmware version from CMakeLists.txt (reliable, no emulator connection needed)
+if [ -z "$FW_VERSION" ]; then
+    FW_VERSION=$(sed -n 's/.*VERSION \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' /kkemu/CMakeLists.txt | grep -v "^3\." | head -1)
+fi
+echo "Firmware version for filter: ${FW_VERSION:-unknown}"
 SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter ${FW_VERSION:+--fw-version=$FW_VERSION} 2>/dev/null)
 if [ -z "$SCREENSHOT_FILTER" ]; then
     echo "WARNING: --screenshot-filter returned empty, falling back to full suite"
