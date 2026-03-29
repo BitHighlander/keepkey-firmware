@@ -36,6 +36,7 @@
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/bip85.h"
+#include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
 #include "keepkey/firmware/binance.h"
