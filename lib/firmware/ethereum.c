@@ -33,9 +33,7 @@
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
-#ifndef BITCOIN_ONLY
 #include "keepkey/firmware/ethereum_tokens.h"
-#endif
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tiny-json.h"
@@ -736,22 +734,16 @@ void ethereum_signing_init(EthereumSignTx *msg, const HDNode *node,
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
   if (token == NULL && data_total > 0 && data_needs_confirm) {
-    // AdvancedMode policy: hard gate for blind-signing arbitrary contract data.
-    // When OFF (default), the device REFUSES to sign unknown contract calls.
-    // When ON, it shows a prominent "BLIND SIGNATURE" warning before proceeding.
+    // KeepKey custom: warn the user that they're trying to do something
+    // that is potentially dangerous. People (generally) aren't great at
+    // parsing raw transaction data, and we can't effectively show them
+    // what they're about to do in the general case.
     if (!storage_isPolicyEnabled("AdvancedMode")) {
-      (void)review(ButtonRequestType_ButtonRequest_Other, "BLOCKED",
-                   "Blind signing is disabled. "
-                   "Enable AdvancedMode policy to allow.");
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      "Blind signing disabled by policy");
-      ethereum_signing_abort();
-      return;
+      (void)review(
+          ButtonRequestType_ButtonRequest_Other, "Warning",
+          "Signing of arbitrary ETH contract data is recommended only for "
+          "experienced users. Enable 'AdvancedMode' policy to dismiss.");
     }
-    // AdvancedMode is ON — warn prominently but allow
-    (void)review(ButtonRequestType_ButtonRequest_Other, "BLIND SIGNATURE",
-                 "You are signing raw contract data. "
-                 "The device cannot verify the contents.");
 
     layoutEthereumData(msg->data_initial_chunk.bytes,
                        msg->data_initial_chunk.size, data_total,
