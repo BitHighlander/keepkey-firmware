@@ -469,6 +469,22 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg) {
         return;
     }
 
+    /* AdvancedMode gate: Solana message signing has no domain separation.
+     * A signed message is indistinguishable from a signed transaction on
+     * the Solana network (both are raw Ed25519 over arbitrary bytes).
+     * A malicious dApp could craft a message that is also a valid tx.
+     * See: https://github.com/trezor/trezor-firmware/issues/4371
+     * Require AdvancedMode to proceed — same gate as ETH blind-signing. */
+    if (!storage_isPolicyEnabled("AdvancedMode")) {
+        (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                     "Solana message signing is experimental. "
+                     "Enable AdvancedMode in device settings.");
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        _("Message signing disabled by policy"));
+        layoutHome();
+        return;
+    }
+
     /* Path validation: warn on non-standard derivation */
     if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
         if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
