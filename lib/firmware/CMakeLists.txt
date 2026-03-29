@@ -38,6 +38,7 @@ set(sources
     storage.c
     tendermint.c
     thorchain.c
+    tron.c
     tiny-json.c
     transaction.c
     txin_check.c
