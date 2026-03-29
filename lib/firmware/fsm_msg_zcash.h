@@ -106,8 +106,8 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg) {
   }
 
   /* Confirm with user */
-  char amount_str[32];
-  char fee_str[32];
+  char amount_str[48];
+  char fee_str[48];
   uint64_t total = msg->has_total_amount ? msg->total_amount : 0;
   uint64_t fee = msg->has_fee ? msg->fee : 0;
 
