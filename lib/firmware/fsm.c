@@ -290,3 +290,5 @@ void fsm_msgClearSession(ClearSession *msg) {
 #include "fsm_msg_solana.h"
 #include "keepkey/firmware/tron.h"
 #include "fsm_msg_tron.h"
+#include "keepkey/firmware/ton.h"
+#include "fsm_msg_ton.h"

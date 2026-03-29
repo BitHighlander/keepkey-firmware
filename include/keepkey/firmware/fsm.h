@@ -138,4 +138,7 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg);
 void fsm_msgTronGetAddress(const TronGetAddress *msg);
 void fsm_msgTronSignTx(TronSignTx *msg);
 
+void fsm_msgTonGetAddress(const TonGetAddress *msg);
+void fsm_msgTonSignTx(TonSignTx *msg);
+
 #endif
