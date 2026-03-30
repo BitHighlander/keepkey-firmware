@@ -96,6 +96,28 @@ static size_t socket_read(struct usb_socket *sock, void *buffer, size_t size) {
   return n;
 }
 
+#ifdef KKEMU_DYLIB
+/*
+ * Dylib mode: I/O goes through ring buffers managed by libkkemu.c.
+ * These are thin trampolines to the libkkemu_socket* functions.
+ */
+extern void   libkkemu_socketInit(void);
+extern size_t libkkemu_socketRead(int *iface, void *buffer, size_t size);
+extern size_t libkkemu_socketWrite(int iface, const void *buffer, size_t size);
+
+void emulatorSocketInit(void) { libkkemu_socketInit(); }
+
+size_t emulatorSocketRead(int *iface, void *buffer, size_t size) {
+	return libkkemu_socketRead(iface, buffer, size);
+}
+
+size_t emulatorSocketWrite(int iface, const void *buffer, size_t size) {
+	return libkkemu_socketWrite(iface, buffer, size);
+}
+
+#else
+/* Standard mode: UDP sockets (standalone kkemu binary) */
+
 void emulatorSocketInit(void) {
   int port = KEEPKEY_UDP_PORT;
   const char *env_port = getenv("KEEPKEY_UDP_PORT");
@@ -136,3 +158,4 @@ size_t emulatorSocketWrite(int iface, const void *buffer, size_t size) {
   }
   return 0;
 }
+#endif

@@ -10,6 +10,7 @@ set(BOOTLOADER_MINOR_VERSION 1)
 set(BOOTLOADER_PATCH_VERSION 5)
 
 option(KK_EMULATOR "Build the emulator" OFF)
+option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 set(LIBOPENCM3_PATH
