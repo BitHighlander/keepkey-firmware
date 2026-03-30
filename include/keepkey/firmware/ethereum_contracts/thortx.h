@@ -28,6 +28,18 @@
 
 #define THOR_ROUTER "42a5ed456650a09dc10ebc6361a7480fdd61f27b"
 
+/*
+ * Function selectors for THORChain router contracts.
+ *
+ * deposit(address,address,uint256,string)            = 0x1fece7b4
+ *   Legacy — older router versions, no expiry parameter.
+ *
+ * depositWithExpiry(address,address,uint256,string,uint256) = 0x44bc937b
+ *   Current — all modern THORChain routers on every EVM chain.
+ */
+#define THOR_SELECTOR_DEPOSIT             "\x1f\xec\xe7\xb4"
+#define THOR_SELECTOR_DEPOSIT_WITH_EXPIRY "\x44\xbc\x93\x7b"
+
 typedef struct _EthereumSignTx EthereumSignTx;
 
 bool thor_isThorchainTx(const EthereumSignTx *msg);

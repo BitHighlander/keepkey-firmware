@@ -27,17 +27,47 @@
 #include "keepkey/firmware/thorchain.h"
 #include "trezor/crypto/address.h"
 
+/*
+ * Minimum data_initial_chunk sizes for safe field access.
+ * The confirm path reads vault, asset, amount AND 64 bytes of memo data.
+ *
+ *   deposit():            memo at 4+5*32, +64 bytes -> min 228
+ *   depositWithExpiry():  memo at 4+6*32, +64 bytes -> min 260
+ *
+ * If the initial chunk is shorter, we decline to handle the tx and let
+ * the normal signing path (signed-metadata or blind-signing) take over.
+ */
+#define THOR_MIN_CHUNK_DEPOSIT          228  /* 4 + 5*32 + 64 */
+#define THOR_MIN_CHUNK_DEPOSIT_EXPIRY   260  /* 4 + 6*32 + 64 */
+
+/* Returns true when the calldata uses the modern depositWithExpiry selector */
+static bool thor_is_expiry_variant(const EthereumSignTx *msg) {
+  return memcmp(msg->data_initial_chunk.bytes,
+                THOR_SELECTOR_DEPOSIT_WITH_EXPIRY, 4) == 0;
+}
+
 bool thor_isThorchainTx(const EthereumSignTx *msg) {
-  if (msg->has_to && msg->to.size == 20 &&
-      memcmp(msg->data_initial_chunk.bytes,
-             "\x1f\xec\xe7\xb4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", 
-             16) == 0) {
-    return true;
-  }
+  if (!msg->has_to || msg->to.size != 20 ||
+      msg->data_initial_chunk.size < 16)
+    return false;
+
+  const uint8_t *d = msg->data_initial_chunk.bytes;
+
+  /* Check 12 zero-bytes of address padding (bytes 4-15) */
+  static const uint8_t addr_pad[12] = {0};
+  if (memcmp(d + 4, addr_pad, 12) != 0)
+    return false;
+
+  /* Match selector AND enforce minimum chunk for safe field access */
+  if (memcmp(d, THOR_SELECTOR_DEPOSIT, 4) == 0)
+    return msg->data_initial_chunk.size >= THOR_MIN_CHUNK_DEPOSIT;
+  if (memcmp(d, THOR_SELECTOR_DEPOSIT_WITH_EXPIRY, 4) == 0)
+    return msg->data_initial_chunk.size >= THOR_MIN_CHUNK_DEPOSIT_EXPIRY;
+
   return false;
 }
 
-bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {  
+bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
     (void)data_total;
 
     char confStr[41], *conf;
@@ -49,9 +79,16 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
     vaultAddress = (uint8_t *)(msg->data_initial_chunk.bytes + 4 + 12);
     contractAssetAddress = (uint8_t *)(msg->data_initial_chunk.bytes + 4 + 32 + 12);
     bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2*32, 32, &Amount);
-    thorchainData = (uint8_t *)(msg->data_initial_chunk.bytes + 4 + 5*32);
 
-    // Start confirmations    
+    /* Memo location depends on which selector was used:
+     *   deposit()            -> 4 params -> memo at 4 + 5*32
+     *   depositWithExpiry()  -> 5 params -> memo at 4 + 6*32   */
+    uint32_t memo_offset = thor_is_expiry_variant(msg)
+        ? (4 + 6*32)
+        : (4 + 5*32);
+    thorchainData = (uint8_t *)(msg->data_initial_chunk.bytes + memo_offset);
+
+    // Start confirmations
     for (ctr=0; ctr<20; ctr++) {
         snprintf(&confStr[ctr*2], 3, "%02x", msg->to.bytes[ctr]);
     }
@@ -79,11 +116,11 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
     } else {
         assetAddress = contractAssetAddress;
     }
-    
+
     assetToken = tokenByChainAddress(msg->chain_id, assetAddress);
 
     if (strncmp(assetToken->ticker, " UNKN", 5) == 0) {
- 
+
         // just display token address and amount as string
         for (ctr=0; ctr<20; ctr++) {
             snprintf(&confStr[ctr*2], 3, "%02x", assetAddress[ctr]);
@@ -103,7 +140,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
     } else {
         ethereumFormatAmount(&Amount, assetToken, msg->chain_id, confStr,
                            sizeof(confStr));
-    
+
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                      "Thorchain data", "Confirm sending %s", confStr)) {
             return false;
@@ -115,5 +152,3 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
 
     return true;
 }
-
-
