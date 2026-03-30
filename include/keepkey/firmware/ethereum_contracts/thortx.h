@@ -32,6 +32,20 @@
 /* Maya Protocol ETH router (mainnet) */
 #define MAYA_ROUTER "d89dce570de35a6f42d3bca7dba50a6d89bfc2a2"
 
+/*
+ * Function selectors for THORChain/Maya router contracts.
+ *
+ * deposit(address,address,uint256,string)            = 0x1fece7b4
+ *   Legacy — older router versions, no expiry parameter.
+ *   Memo data at ABI offset 4 + 5*32 = 164.
+ *
+ * depositWithExpiry(address,address,uint256,string,uint256) = 0x44bc937b
+ *   Current — all modern THORChain/Maya routers on every EVM chain.
+ *   Extra uint256 expiry shifts memo data to ABI offset 4 + 6*32 = 196.
+ */
+#define THOR_SELECTOR_DEPOSIT             "\x1f\xec\xe7\xb4"
+#define THOR_SELECTOR_DEPOSIT_WITH_EXPIRY "\x44\xbc\x93\x7b"
+
 typedef struct _EthereumSignTx EthereumSignTx;
 
 bool thor_isThorchainTx(const EthereumSignTx *msg);
