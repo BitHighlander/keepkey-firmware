@@ -28,7 +28,7 @@
 #include "trezor/crypto/address.h"
 
 /* Helper: format msg->to as lowercase hex string (40 chars + NUL) */
-static void thor_format_to_addr(const EthereumSignTx *msg, char out[41]) {
+static void thor_format_to_addr(const EthereumSignTx* msg, char out[41]) {
   for (uint32_t i = 0; i < 20; i++) {
     snprintf(&out[i * 2], 3, "%02x", msg->to.bytes[i]);
   }
@@ -55,12 +55,12 @@ static void thor_format_to_addr(const EthereumSignTx *msg, char out[41]) {
 #define THOR_MIN_CHUNK_DEPOSIT          228  /* 4 + 5*32 + 64 */
 #define THOR_MIN_CHUNK_DEPOSIT_EXPIRY   260  /* 4 + 6*32 + 64 */
 
-static bool thor_has_deposit_selector(const EthereumSignTx *msg) {
+static bool thor_has_deposit_selector(const EthereumSignTx* msg) {
   if (!msg->has_to || msg->to.size != 20 ||
       msg->data_initial_chunk.size < 16)
     return false;
 
-  const uint8_t *d = msg->data_initial_chunk.bytes;
+  const uint8_t* d = msg->data_initial_chunk.bytes;
 
   /* Check 12 zero-bytes of address padding (bytes 4-15) */
   static const uint8_t addr_pad[12] = {0};
@@ -77,19 +77,19 @@ static bool thor_has_deposit_selector(const EthereumSignTx *msg) {
 }
 
 /* Returns true when the calldata uses the modern depositWithExpiry selector */
-static bool thor_is_expiry_variant(const EthereumSignTx *msg) {
+static bool thor_is_expiry_variant(const EthereumSignTx* msg) {
   return memcmp(msg->data_initial_chunk.bytes,
                 THOR_SELECTOR_DEPOSIT_WITH_EXPIRY, 4) == 0;
 }
 
-bool thor_isMayachainTx(const EthereumSignTx *msg) {
+bool thor_isMayachainTx(const EthereumSignTx* msg) {
   if (!thor_has_deposit_selector(msg)) return false;
   char toStr[41];
   thor_format_to_addr(msg, toStr);
   return strncmp(toStr, MAYA_ROUTER, 40) == 0;
 }
 
-bool thor_isThorchainTx(const EthereumSignTx *msg) {
+bool thor_isThorchainTx(const EthereumSignTx* msg) {
   /* Matches any deposit() or depositWithExpiry() call — Maya transactions are
    * a subset; call thor_isMayachainTx() first to distinguish them. */
   return thor_has_deposit_selector(msg);
@@ -108,9 +108,10 @@ bool thor_isThorchainTx(const EthereumSignTx *msg) {
  *     vault  @ 4+12    asset @ 4+32+12   amount @ 4+2*32
  *     memo data        @ 4 + 6*32  (expiry pushes string data one word later)
  */
-static bool thor_confirm_deposit_tx(uint32_t data_total, const EthereumSignTx *msg,
-                                    const char *protocol_label,
-                                    const char *router_label) {
+static bool thor_confirm_deposit_tx(uint32_t data_total,
+                                    const EthereumSignTx* msg,
+                                    const char* protocol_label,
+                                    const char* router_label) {
     (void)data_total;
 
     char confStr[41];
@@ -185,16 +186,15 @@ static bool thor_confirm_deposit_tx(uint32_t data_total, const EthereumSignTx *m
         }
     }
 
-    if (!thorchain_parseConfirmMemo((const char *)thorchainData, 64))
-        return false;
+    if (!thorchain_parseConfirmMemo((const char*)thorchainData, 64)) return false;
 
     return true;
 }
 
-bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx *msg) {
+bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     return thor_confirm_deposit_tx(data_total, msg, "Thorchain data", "Thorchain router");
 }
 
-bool thor_confirmMayaTx(uint32_t data_total, const EthereumSignTx *msg) {
+bool thor_confirmMayaTx(uint32_t data_total, const EthereumSignTx* msg) {
     return thor_confirm_deposit_tx(data_total, msg, "Maya data", "Maya router");
 }

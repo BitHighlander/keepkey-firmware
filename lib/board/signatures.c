@@ -33,12 +33,12 @@ volatile const uint8_t valid_pubkey[PUBKEYS] = {
 };
 
 int signatures_ok(void) {
-  uint32_t codelen = *((uint32_t *)FLASH_META_CODELEN);
+  uint32_t codelen = *((uint32_t*)FLASH_META_CODELEN);
   uint8_t sigindex1, sigindex2, sigindex3, firmware_fingerprint[32];
 
-  sigindex1 = *((uint8_t *)FLASH_META_SIGINDEX1);
-  sigindex2 = *((uint8_t *)FLASH_META_SIGINDEX2);
-  sigindex3 = *((uint8_t *)FLASH_META_SIGINDEX3);
+  sigindex1 = *((uint8_t*)FLASH_META_SIGINDEX1);
+  sigindex2 = *((uint8_t*)FLASH_META_SIGINDEX2);
+  sigindex3 = *((uint8_t*)FLASH_META_SIGINDEX3);
 
   if (sigindex1 < 1 || sigindex1 > PUBKEYS) {
     return SIG_FAIL;
@@ -72,9 +72,9 @@ int signatures_ok(void) {
 
   /* F3 hardening: double-compute SHA-256, compare in constant time */
   uint8_t firmware_fingerprint2[32];
-  sha256_Raw((uint8_t *)FLASH_APP_START, codelen, firmware_fingerprint);
+  sha256_Raw((uint8_t*)FLASH_APP_START, codelen, firmware_fingerprint);
   asm volatile("" ::: "memory");
-  sha256_Raw((uint8_t *)FLASH_APP_START, codelen, firmware_fingerprint2);
+  sha256_Raw((uint8_t*)FLASH_APP_START, codelen, firmware_fingerprint2);
 
   if (memcmp_s(firmware_fingerprint, firmware_fingerprint2, 32) != 0) {
     memzero(firmware_fingerprint, sizeof(firmware_fingerprint));
@@ -90,19 +90,19 @@ int signatures_ok(void) {
   volatile int verify_sentinel = 0;
 
   verify_acc |= ecdsa_verify_digest(&secp256k1, pubkey[sigindex1 - 1],
-                                    (uint8_t *)FLASH_META_SIG1,
+                                    (uint8_t*)FLASH_META_SIG1,
                                     firmware_fingerprint);
   verify_sentinel++;
   asm volatile("" ::: "memory");
 
   verify_acc |= ecdsa_verify_digest(&secp256k1, pubkey[sigindex2 - 1],
-                                    (uint8_t *)FLASH_META_SIG2,
+                                    (uint8_t*)FLASH_META_SIG2,
                                     firmware_fingerprint);
   verify_sentinel++;
   asm volatile("" ::: "memory");
 
   verify_acc |= ecdsa_verify_digest(&secp256k1, pubkey[sigindex3 - 1],
-                                    (uint8_t *)FLASH_META_SIG3,
+                                    (uint8_t*)FLASH_META_SIG3,
                                     firmware_fingerprint);
   verify_sentinel++;
   asm volatile("" ::: "memory");

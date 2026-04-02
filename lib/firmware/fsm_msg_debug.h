@@ -1,5 +1,5 @@
 #if DEBUG_LINK
-void fsm_msgDebugLinkGetState(DebugLinkGetState *msg) {
+void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   (void)msg;
   RESP_INIT(DebugLinkState);
 
@@ -58,7 +58,7 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState *msg) {
    * Each byte in layout holds 8 vertical pixels (LSB = top).
    * Total: 256 columns x (64/8) rows = 2048 bytes. */
   {
-    Canvas *c = display_canvas();
+    const Canvas* c = display_canvas();
     if (c && c->buffer) {
       resp->has_layout = true;
       resp->layout.size = 2048;
@@ -76,12 +76,12 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState *msg) {
   msg_debug_write(MessageType_MessageType_DebugLinkState, resp);
 }
 
-void fsm_msgDebugLinkStop(DebugLinkStop *msg) { (void)msg; }
+void fsm_msgDebugLinkStop(DebugLinkStop* msg) { (void)msg; }
 
-void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump *msg) {
+void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump* msg) {
 #ifndef EMULATOR
   if (!msg->has_length ||
-      msg->length > sizeof(((DebugLinkFlashDumpResponse *)0)->data.bytes)) {
+      msg->length > sizeof(((DebugLinkFlashDumpResponse*)0)->data.bytes)) {
 #endif
     fsm_sendFailure(FailureType_Failure_Other, "Invalid FlashDump parameters");
     layoutHome();
@@ -91,7 +91,7 @@ void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump *msg) {
 
   RESP_INIT(DebugLinkFlashDumpResponse);
 
-  memcpy(resp->data.bytes, (void *)msg->address, msg->length);
+  memcpy(resp->data.bytes, (void*)msg->address, msg->length);
 
   resp->has_data = true;
   resp->data.size = msg->length;

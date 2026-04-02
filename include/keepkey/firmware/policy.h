@@ -36,7 +36,7 @@ static const PolicyType policies[] = {
     {true, "EthBlindSign", true, false},    // unused — AdvancedMode gates all blind-sign
 };
 
-int run_policy_compile_output(const CoinType *coin, const HDNode *root,
-                              void *vin, void *vout, bool needs_confirm);
+int run_policy_compile_output(const CoinType* coin, const HDNode* root,
+                              void* vin, void* vout, bool needs_confirm);
 
 #endif

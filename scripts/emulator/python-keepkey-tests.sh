@@ -42,9 +42,7 @@ echo "=== End diagnostic ==="
 # to a test in SECTIONS automatically includes it here — no manual filter maintenance.
 echo "=== Phase 1: Report-driven screenshot capture ==="
 # Auto-detect firmware version from emulator, fall back to env or 7.14.0
-# NOTE: KK_TRANSPORT_MAIN must be set so detect_fw() reaches the Docker emulator
-# (default 127.0.0.1:11044 doesn't resolve inside Docker — need kkemu:11044)
-SCREENSHOT_FILTER=$(KK_TRANSPORT_MAIN=kkemu:11044 python3 ../scripts/generate-test-report.py --screenshot-filter ${FW_VERSION:+--fw-version=$FW_VERSION} 2>/dev/null)
+SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter ${FW_VERSION:+--fw-version=$FW_VERSION} 2>/dev/null)
 if [ -z "$SCREENSHOT_FILTER" ]; then
     echo "WARNING: --screenshot-filter returned empty, falling back to full suite"
     SCREENSHOT_FILTER="test_"
@@ -57,7 +55,10 @@ KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
   -k "$SCREENSHOT_FILTER" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  -s 2>&1
+  -s 2>&1 || true
+# pytest exit code is NOT the gate — screenshot count below is.
+# Tests for features not yet merged (gated by requires_firmware/requires_message)
+# may fail or skip here; the real check is: did screenshots get captured?
 
 # Gate: fail fast if screenshots broken
 echo "=== Screenshot results ==="
@@ -70,12 +71,24 @@ if [ "$SCREENSHOT_COUNT" -eq 0 ]; then
     exit 1
 fi
 
-# Phase 2: Full suite (no screenshots) — non-blocking for JUnit collection.
-# Tests for features not yet merged will fail here; the generate-test-report
-# step uses JUnit XML to mark them FAILED/PENDING in the PDF.
-# Phase 1 (screenshot filter) is the hard gate; Phase 2 is informational.
+# Phase 2: Full test suite — SECTIONS is the source of truth.
+# pytest may exit non-zero (some tests fail before gating kicks in),
+# so we capture the JUnit XML regardless, then validate against SECTIONS.
+# Tests that skip via requires_message/requires_firmware are OK.
+# Tests that fail or are missing from JUnit = CI failure.
 echo "=== Phase 2: Full test suite ==="
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml || true
-echo "0" > /kkemu/test-reports/python-keepkey/status
+pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
+PYTEST_RC=$?
+
+echo "=== Phase 2: Generate test report ==="
+python3 ../scripts/generate-test-report.py \
+  --junit=/kkemu/test-reports/python-keepkey/junit.xml \
+  ${FW_VERSION:+--fw-version=$FW_VERSION} || true
+
+echo "$PYTEST_RC" > /kkemu/test-reports/python-keepkey/status
+if [ "$PYTEST_RC" -ne 0 ]; then
+    echo "pytest failed with exit code $PYTEST_RC"
+    exit "$PYTEST_RC"
+fi
