@@ -57,7 +57,6 @@
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/solana.h"
-#include "keepkey/firmware/solana_tx.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/transaction.h"
