@@ -703,7 +703,7 @@ void layout_address_notification(const char* desc, const char* address,
  * OUTPUT
  *     none
  */
-void layout_pin(const char* str, char pin[]) {
+void layout_pin(const char* prompt, char pin[]) {
   DrawableParams sp;
   Canvas* canvas = layout_get_canvas();
 
