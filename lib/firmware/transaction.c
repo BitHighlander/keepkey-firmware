@@ -251,7 +251,6 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
         }
 #endif
       }
-
     }
     uint32_t r = 0;
     out->script_pubkey.bytes[0] = 0x6A;

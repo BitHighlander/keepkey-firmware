@@ -82,8 +82,8 @@ static bool read_be_u32(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_bytes(const uint8_t **cursor, const uint8_t *end,
-                       uint8_t *out, size_t size) {
+static bool read_bytes(const uint8_t **cursor, const uint8_t *end, uint8_t *out,
+                       size_t size) {
   if ((size_t)(end - *cursor) < size) {
     return false;
   }
@@ -196,8 +196,8 @@ void signed_metadata_clear(void) {
 }
 
 MetadataClassification signed_metadata_process(const uint8_t *payload,
-                                              size_t payload_len,
-                                              uint8_t key_id) {
+                                               size_t payload_len,
+                                               uint8_t key_id) {
   uint8_t digest[32];
   size_t signed_len;
 
@@ -256,9 +256,8 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg,
   /* tx_hash binding — optional in phase 1 (NULL = skip check).
    * Full tx_hash verification requires pre-computing keccak before
    * confirmation screens, which is a phase 2 change. */
-  if (tx_hash != NULL &&
-      memcmp(stored_metadata.tx_hash, tx_hash,
-             sizeof(stored_metadata.tx_hash)) != 0) {
+  if (tx_hash != NULL && memcmp(stored_metadata.tx_hash, tx_hash,
+                                sizeof(stored_metadata.tx_hash)) != 0) {
     return false;
   }
 
@@ -283,7 +282,8 @@ bool signed_metadata_confirm(void) {
   }
 
   /* Screen 2: Contract address — ALWAYS show full address, never truncate.
-   * Truncation is a spoofing vector (attacker crafts matching prefix+suffix). */
+   * Truncation is a spoofing vector (attacker crafts matching prefix+suffix).
+   */
   char contract_addr[43] = "0x";
   ethereum_address_checksum(stored_metadata.contract_address, contract_addr + 2,
                             false, stored_metadata.chain_id);
@@ -317,7 +317,10 @@ bool signed_metadata_confirm(void) {
         /* Check for MAX_UINT256 (unlimited approval) */
         bool is_max = true;
         for (uint16_t j = 0; j < arg->value_len; j++) {
-          if (arg->value[j] != 0xFF) { is_max = false; break; }
+          if (arg->value[j] != 0xFF) {
+            is_max = false;
+            break;
+          }
         }
         if (is_max && arg->value_len == 32) {
           snprintf(body, sizeof(body), "%s:\nUNLIMITED", arg->name);
@@ -332,8 +335,7 @@ bool signed_metadata_confirm(void) {
       case ARG_FORMAT_RAW:
       default: {
         char hex[(METADATA_MAX_ARG_VALUE_LEN * 2) + 1];
-        size_t display_len =
-            arg->value_len > 16 ? 16 : (size_t)arg->value_len;
+        size_t display_len = arg->value_len > 16 ? 16 : (size_t)arg->value_len;
         data2hex(arg->value, display_len, hex);
         snprintf(body, sizeof(body), "%s:\n%s%s", arg->name, hex,
                  arg->value_len > 16 ? "..." : "");

@@ -52,8 +52,8 @@ typedef struct {
 bool signed_metadata_available(void);
 void signed_metadata_clear(void);
 MetadataClassification signed_metadata_process(const uint8_t *payload,
-                                              size_t payload_len,
-                                              uint8_t key_id);
+                                               size_t payload_len,
+                                               uint8_t key_id);
 bool signed_metadata_matches_tx(const EthereumSignTx *msg,
                                 const uint8_t *tx_hash);
 bool signed_metadata_confirm(void);

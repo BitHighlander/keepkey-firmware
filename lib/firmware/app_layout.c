@@ -524,17 +524,17 @@ void layout_osmosis_address_notification(const char* desc, const char* address,
  * OUTPUT
  *      none
  */
-void layout_zcash_address_notification(const char *desc, const char *address,
+void layout_zcash_address_notification(const char* desc, const char* address,
                                        NotificationType type) {
   DrawableParams sp;
-  const Font *address_font = get_body_font();
-  Canvas *canvas = layout_get_canvas();
+  const Font* address_font = get_body_font();
+  Canvas* canvas = layout_get_canvas();
 
   call_leaving_handler();
   layout_clear();
 
   if (strcmp(desc, "") != 0) {
-    const Font *title_font = get_title_font();
+    const Font* title_font = get_title_font();
     sp.y = TOP_MARGIN_FOR_TWO_LINES;
     sp.x = LEFT_MARGIN + 65;
     sp.color = BODY_COLOR;
@@ -748,7 +748,7 @@ void layout_cipher(const char* current_word, const char* cipher,
   if (prev_word_info && prev_word_info[0]) {
     sp.y = 2;
     sp.x = 4;
-    sp.color = CIPHER_FONT_COLOR;  /* gray — less prominent than current word */
+    sp.color = CIPHER_FONT_COLOR; /* gray — less prominent than current word */
     draw_string(canvas, title_font, prev_word_info, &sp, 68,
                 font_height(title_font));
   }

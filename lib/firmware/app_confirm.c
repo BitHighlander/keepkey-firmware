@@ -299,7 +299,7 @@ bool confirm_osmosis_address(const char* desc, const char* address) {
  *     true/false of confirmation
  *
  */
-bool confirm_zcash_address(const char *desc, const char *address) {
+bool confirm_zcash_address(const char* desc, const char* address) {
   return confirm_with_custom_layout(&layout_zcash_address_notification,
                                     ButtonRequestType_ButtonRequest_Address,
                                     desc, "%s", address);

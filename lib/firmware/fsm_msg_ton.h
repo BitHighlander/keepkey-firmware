@@ -25,8 +25,7 @@ void fsm_msgTonGetAddress(const TonGetAddress *msg) {
   CHECK_PIN
 
   // Validate path: m/44'/607'/... (all hardened for TON)
-  if (msg->address_n_count < 2 ||
-      msg->address_n[0] != (0x80000000 | 44) ||
+  if (msg->address_n_count < 2 || msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 607)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Invalid TON path (expected m/44'/607'/...)"));
@@ -101,8 +100,7 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
   CHECK_PIN
 
   // Validate path: m/44'/607'/...
-  if (msg->address_n_count < 2 ||
-      msg->address_n[0] != (0x80000000 | 44) ||
+  if (msg->address_n_count < 2 || msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 607)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Invalid TON path (expected m/44'/607'/...)"));
@@ -118,8 +116,7 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
 
   if (!msg->has_raw_tx || msg->raw_tx.size == 0) {
     memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Missing transaction data"));
+    fsm_sendFailure(FailureType_Failure_Other, _("Missing transaction data"));
     layoutHome();
     return;
   }
@@ -149,20 +146,18 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
   // firmware cannot reconstruct that, so deploy always uses blind-sign.
   bool is_deploy = msg->has_is_deploy && msg->is_deploy;
   bool clear_sign = false;
-  if (!is_deploy &&
-      msg->has_to_address && msg->has_amount &&
-      msg->has_seqno && msg->has_expire_at &&
-      msg->raw_tx.size == 32) {
-    // All clear-sign fields present and raw_tx is a 32-byte hash — attempt verification
+  if (!is_deploy && msg->has_to_address && msg->has_amount && msg->has_seqno &&
+      msg->has_expire_at && msg->raw_tx.size == 32) {
+    // All clear-sign fields present and raw_tx is a 32-byte hash — attempt
+    // verification
     bool bounce = msg->has_bounce ? msg->bounce : true;
-    const char *memo = (msg->has_memo && msg->memo[0] != '\0') ? msg->memo : NULL;
+    const char *memo =
+        (msg->has_memo && msg->memo[0] != '\0') ? msg->memo : NULL;
     size_t memo_len = memo ? strlen(memo) : 0;
 
-    clear_sign = ton_verify_transfer_hash(
-        msg->to_address, msg->amount,
-        msg->seqno, msg->expire_at, bounce,
-        memo, memo_len,
-        msg->raw_tx.bytes);
+    clear_sign = ton_verify_transfer_hash(msg->to_address, msg->amount,
+                                          msg->seqno, msg->expire_at, bounce,
+                                          memo, memo_len, msg->raw_tx.bytes);
   }
 
   if (clear_sign) {
@@ -170,9 +165,8 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
     char amount_str[32];
     ton_formatAmount(amount_str, sizeof(amount_str), msg->amount);
 
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "TON Transfer", "Send %s to\n%s?",
-                 amount_str, msg->to_address)) {
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TON Transfer",
+                 "Send %s to\n%s?", amount_str, msg->to_address)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
@@ -182,8 +176,8 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
 
     // Show memo if present
     if (msg->has_memo && msg->memo[0] != '\0') {
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Memo", "%s", msg->memo)) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Memo", "%s",
+                   msg->memo)) {
         memzero(node, sizeof(*node));
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled"));
@@ -198,8 +192,8 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
       ton_formatAmount(amount_str, sizeof(amount_str), msg->amount);
 
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "TON Transfer", "Send %s to\n%s?",
-                   amount_str, msg->to_address)) {
+                   "TON Transfer", "Send %s to\n%s?", amount_str,
+                   msg->to_address)) {
         memzero(node, sizeof(*node));
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled"));
@@ -208,9 +202,11 @@ void fsm_msgTonSignTx(TonSignTx *msg) {
       }
     }
 
-    const char *blind_msg = is_deploy
-        ? "Wallet deployment TX\ncannot be verified on\ndevice. Sign only if you\ntrust the sending app."
-        : "TON TX details cannot be\nverified on device.\nSign only if you trust\nthe sending app.";
+    const char *blind_msg =
+        is_deploy ? "Wallet deployment TX\ncannot be verified on\ndevice. Sign "
+                    "only if you\ntrust the sending app."
+                  : "TON TX details cannot be\nverified on device.\nSign only "
+                    "if you trust\nthe sending app.";
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Signature",
                  "%s", blind_msg)) {
       memzero(node, sizeof(*node));

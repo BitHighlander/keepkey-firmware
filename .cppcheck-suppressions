@@ -18,3 +18,4 @@ unreadVariable:lib/firmware/tiny-json.c
 
 # Callback function signatures — changing const would break callback typedefs
 constParameterCallback
+variableScope:lib/firmware/ton.c

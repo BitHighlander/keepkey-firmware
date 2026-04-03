@@ -79,8 +79,8 @@ void tron_formatAmount(char *buf, size_t len, uint64_t amount);
  * @param symbol    Token symbol (e.g., "USDT")
  */
 void tron_formatTokenAmount(char *buf, size_t buf_len,
-                            const uint8_t amount_be[32],
-                            uint8_t decimals, const char *symbol);
+                            const uint8_t amount_be[32], uint8_t decimals,
+                            const char *symbol);
 
 /**
  * Decode TRC-20 transfer(address,uint256) ABI call data
@@ -104,14 +104,12 @@ bool tron_decodeTRC20Transfer(const uint8_t *data, size_t data_len,
  * @return true on success
  */
 bool tron_serializeRawTransaction(const TronSignTx *msg,
-                                  const uint8_t *owner_raw,
-                                  uint8_t *out, size_t *out_len,
-                                  size_t max_len);
+                                  const uint8_t *owner_raw, uint8_t *out,
+                                  size_t *out_len, size_t max_len);
 
 /**
  * Sign a TRON transaction (supports both structured and legacy modes)
  */
-bool tron_signTx(const HDNode *node, const TronSignTx *msg,
-                 TronSignedTx *resp);
+bool tron_signTx(const HDNode *node, const TronSignTx *msg, TronSignedTx *resp);
 
 #endif

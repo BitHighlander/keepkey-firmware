@@ -87,10 +87,9 @@ bool ton_signTx(const HDNode *node, const TonSignTx *msg, TonSignedTx *resp);
  * @param expected_hash  32-byte hash to verify against
  * @return true if computed hash matches expected_hash
  */
-bool ton_verify_transfer_hash(
-    const char *to_address, uint64_t amount,
-    uint32_t seqno, uint32_t expire_at, bool bounce,
-    const char *memo, size_t memo_len,
-    const uint8_t *expected_hash);
+bool ton_verify_transfer_hash(const char *to_address, uint64_t amount,
+                              uint32_t seqno, uint32_t expire_at, bool bounce,
+                              const char *memo, size_t memo_len,
+                              const uint8_t *expected_hash);
 
 #endif

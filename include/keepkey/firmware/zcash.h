@@ -25,10 +25,10 @@
 
 /* Orchard spending keys derived via ZIP-32 */
 typedef struct {
-  uint8_t sk[32];    /* Spending key (master secret at this level) */
-  uint8_t ask[32];   /* Spend authorizing key (scalar) */
-  uint8_t nk[32];    /* Nullifier deriving key */
-  uint8_t rivk[32];  /* Commitment randomness key */
+  uint8_t sk[32];   /* Spending key (master secret at this level) */
+  uint8_t ask[32];  /* Spend authorizing key (scalar) */
+  uint8_t nk[32];   /* Nullifier deriving key */
+  uint8_t rivk[32]; /* Commitment randomness key */
 } ZcashOrchardKeys;
 
 /**

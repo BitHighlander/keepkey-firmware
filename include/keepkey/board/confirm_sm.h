@@ -96,8 +96,8 @@ bool confirm(ButtonRequestType type, const char* request_title,
     __attribute__((format(printf, 3, 4)));
 
 bool confirm_with_icon(ButtonRequestType type, IconType iconNum,
-                       const char* request_title, const char* request_body,
-                       ...) __attribute__((format(printf, 4, 5)));
+                       const char* request_title, const char* request_body, ...)
+    __attribute__((format(printf, 4, 5)));
 
 bool confirm_constant_power(ButtonRequestType type, const char* request_title,
                             const char* request_body, ...)

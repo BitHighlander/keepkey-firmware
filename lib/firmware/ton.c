@@ -35,7 +35,7 @@ static const char base64_url_alphabet[] =
  * Encode data to Base64 URL-safe format (without padding)
  */
 static bool base64_url_encode(const uint8_t *data, size_t data_len, char *out,
-                               size_t out_len) {
+                              size_t out_len) {
   size_t required_len = ((data_len + 2) / 3) * 4;
   if (out_len < required_len + 1) {
     return false;
@@ -86,10 +86,9 @@ static uint16_t ton_crc16(const uint8_t *data, size_t len) {
 // Well-known v4r2 wallet contract code cell hash (constant)
 // Source: https://github.com/ton-blockchain/wallet-contract (WalletV4R2)
 static const uint8_t V4R2_CODE_HASH[32] = {
-    0xfe, 0xb5, 0xff, 0x68, 0x20, 0xe2, 0xff, 0x0d,
-    0x94, 0x83, 0xe7, 0xe0, 0xd6, 0x2c, 0x81, 0x7d,
-    0x84, 0x67, 0x89, 0xfb, 0x4a, 0xe5, 0x80, 0xc8,
-    0x78, 0x86, 0x6d, 0x95, 0x9d, 0xab, 0xd5, 0xc0};
+    0xfe, 0xb5, 0xff, 0x68, 0x20, 0xe2, 0xff, 0x0d, 0x94, 0x83, 0xe7,
+    0xe0, 0xd6, 0x2c, 0x81, 0x7d, 0x84, 0x67, 0x89, 0xfb, 0x4a, 0xe5,
+    0x80, 0xc8, 0x78, 0x86, 0x6d, 0x95, 0x9d, 0xab, 0xd5, 0xc0};
 // Code cell depth in the cell tree
 #define V4R2_CODE_DEPTH 7
 // Standard v4r2 wallet_id for mainnet workchain 0
@@ -97,9 +96,10 @@ static const uint8_t V4R2_CODE_HASH[32] = {
 
 /**
  * Compute the v4r2 data cell representation hash.
- * Data cell layout: seqno(32b=0) + wallet_id(32b) + pubkey(256b) + plugins(1b=0)
- * Total: 321 bits, d1=0x00 (no refs), d2=0x51 (floor(321/8)+ceil(321/8)=40+41=81)
- * Augmented data: 40 full bytes + 0x40 (plugin=0, completion=1, pad=000000)
+ * Data cell layout: seqno(32b=0) + wallet_id(32b) + pubkey(256b) +
+ * plugins(1b=0) Total: 321 bits, d1=0x00 (no refs), d2=0x51
+ * (floor(321/8)+ceil(321/8)=40+41=81) Augmented data: 40 full bytes + 0x40
+ * (plugin=0, completion=1, pad=000000)
  */
 static void ton_data_cell_hash(const uint8_t *public_key, uint8_t *out) {
   // repr = d1(1) + d2(1) + augmented_data(41) = 43 bytes
@@ -111,10 +111,10 @@ static void ton_data_cell_hash(const uint8_t *public_key, uint8_t *out) {
   memset(repr + 2, 0, 4);
 
   // wallet_id = 698983191 = 0x29A9A317 (4 bytes big-endian)
-  repr[6]  = (V4R2_WALLET_ID >> 24) & 0xFF;
-  repr[7]  = (V4R2_WALLET_ID >> 16) & 0xFF;
-  repr[8]  = (V4R2_WALLET_ID >> 8)  & 0xFF;
-  repr[9]  = (V4R2_WALLET_ID)       & 0xFF;
+  repr[6] = (V4R2_WALLET_ID >> 24) & 0xFF;
+  repr[7] = (V4R2_WALLET_ID >> 16) & 0xFF;
+  repr[8] = (V4R2_WALLET_ID >> 8) & 0xFF;
+  repr[9] = (V4R2_WALLET_ID) & 0xFF;
 
   // public key (32 bytes)
   memcpy(repr + 10, public_key, 32);
@@ -127,10 +127,10 @@ static void ton_data_cell_hash(const uint8_t *public_key, uint8_t *out) {
 
 /**
  * Compute the v4r2 StateInit representation hash.
- * StateInit: split_depth(0) + special(0) + code(1,ref) + data(1,ref) + library(0)
- * Total: 5 bits, d1=0x02 (2 refs), d2=0x01
- * Augmented: 00110 + 100 = 0x34
- * repr = d1 + d2 + data + depth(code) + depth(data) + hash(code) + hash(data)
+ * StateInit: split_depth(0) + special(0) + code(1,ref) + data(1,ref) +
+ * library(0) Total: 5 bits, d1=0x02 (2 refs), d2=0x01 Augmented: 00110 + 100 =
+ * 0x34 repr = d1 + d2 + data + depth(code) + depth(data) + hash(code) +
+ * hash(data)
  */
 static void ton_stateinit_hash(const uint8_t *public_key, uint8_t *out) {
   uint8_t data_hash[32];
@@ -218,8 +218,8 @@ bool ton_get_address(const ed25519_public_key public_key, bool bounceable,
  * Decode Base64 URL-safe string to bytes.
  * Returns decoded length, or -1 on error.
  */
-static int base64_url_decode(const char *in, size_t in_len,
-                             uint8_t *out, size_t out_cap) {
+static int base64_url_decode(const char *in, size_t in_len, uint8_t *out,
+                             size_t out_cap) {
   /* Build reverse lookup table */
   int8_t lut[128];
   memset(lut, -1, sizeof(lut));
@@ -285,8 +285,8 @@ void ton_formatAmount(char *buf, size_t len, uint64_t amount) {
 // ── Bit-level writer for cell construction ──────────────────────────
 
 typedef struct {
-  uint8_t buf[256]; // max 2048 bits
-  uint16_t len;     // bits written
+  uint8_t buf[256];  // max 2048 bits
+  uint16_t len;      // bits written
 } BitWriter;
 
 static void bw_init(BitWriter *w) {
@@ -310,19 +310,26 @@ static void bw_write_bytes(BitWriter *w, const uint8_t *data, size_t len) {
 }
 
 static void bw_write_coins(BitWriter *w, uint64_t amount) {
-  if (amount == 0) { bw_write_uint(w, 0, 4); return; }
+  if (amount == 0) {
+    bw_write_uint(w, 0, 4);
+    return;
+  }
   int byte_len = 0;
   uint64_t v = amount;
-  while (v > 0) { byte_len++; v >>= 8; }
+  while (v > 0) {
+    byte_len++;
+    v >>= 8;
+  }
   bw_write_uint(w, byte_len, 4);
   for (int i = byte_len - 1; i >= 0; i--) {
     bw_write_uint(w, (amount >> (i * 8)) & 0xFF, 8);
   }
 }
 
-/** Compute cell representation hash: SHA256(d1 || d2 || data [|| ref_depths || ref_hashes]) */
+/** Compute cell representation hash: SHA256(d1 || d2 || data [|| ref_depths ||
+ * ref_hashes]) */
 static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
-                       const uint16_t *ref_depths, int ref_count, uint8_t *out) {
+                      const uint16_t *ref_depths, int ref_count, uint8_t *out) {
   uint8_t d1 = (uint8_t)ref_count;
   uint8_t d2 = (uint8_t)((bits->len + 7) / 8 + bits->len / 8);
 
@@ -340,7 +347,7 @@ static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
   sha256_Update(&ctx, aug_data, aug_len);
 
   for (int i = 0; i < ref_count; i++) {
-    uint8_t depth_be[2] = { (ref_depths[i] >> 8) & 0xFF, ref_depths[i] & 0xFF };
+    const uint8_t depth_be[2] = {(ref_depths[i] >> 8) & 0xFF, ref_depths[i] & 0xFF};
     sha256_Update(&ctx, depth_be, 2);
   }
   for (int i = 0; i < ref_count; i++) {
@@ -355,7 +362,8 @@ static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
  * Parse a TON user-friendly address → workchain + 32-byte hash.
  * Uses the base64_url_decode() already defined above.
  */
-static bool ton_parse_address(const char *address, int8_t *workchain, uint8_t *hash) {
+static bool ton_parse_address(const char *address, int8_t *workchain,
+                              uint8_t *hash) {
   if (!address) return false;
   size_t addr_len = strlen(address);
   if (addr_len != 48) return false;
@@ -377,12 +385,10 @@ static bool ton_parse_address(const char *address, int8_t *workchain, uint8_t *h
  * Verify a v4r2 transfer body hash by reconstructing it from structured fields.
  * Reproduces the exact same cell tree as the host-side buildUnsignedBody().
  */
-bool ton_verify_transfer_hash(
-    const char *to_address, uint64_t amount,
-    uint32_t seqno, uint32_t expire_at, bool bounce,
-    const char *memo, size_t memo_len,
-    const uint8_t *expected_hash) {
-
+bool ton_verify_transfer_hash(const char *to_address, uint64_t amount,
+                              uint32_t seqno, uint32_t expire_at, bool bounce,
+                              const char *memo, size_t memo_len,
+                              const uint8_t *expected_hash) {
   // Parse destination address
   int8_t dest_wc;
   uint8_t dest_hash[32];
@@ -396,7 +402,7 @@ bool ton_verify_transfer_hash(
   if (has_memo) {
     BitWriter memo_bits;
     bw_init(&memo_bits);
-    bw_write_uint(&memo_bits, 0, 32); // op = 0 (text comment)
+    bw_write_uint(&memo_bits, 0, 32);  // op = 0 (text comment)
     bw_write_bytes(&memo_bits, (const uint8_t *)memo, memo_len);
     cell_hash(&memo_bits, NULL, NULL, 0, memo_cell_hash);
   }
@@ -405,11 +411,11 @@ bool ton_verify_transfer_hash(
   BitWriter im_bits;
   bw_init(&im_bits);
 
-  bw_write_bit(&im_bits, false);  // int_msg_info tag = 0
-  bw_write_bit(&im_bits, true);   // ihr_disabled
-  bw_write_bit(&im_bits, bounce); // bounce
-  bw_write_bit(&im_bits, false);  // bounced
-  bw_write_uint(&im_bits, 0, 2);  // src = addr_none
+  bw_write_bit(&im_bits, false);   // int_msg_info tag = 0
+  bw_write_bit(&im_bits, true);    // ihr_disabled
+  bw_write_bit(&im_bits, bounce);  // bounce
+  bw_write_bit(&im_bits, false);   // bounced
+  bw_write_uint(&im_bits, 0, 2);   // src = addr_none
 
   // dest = addr_std$10 + no anycast + workchain(8) + hash(256)
   bw_write_uint(&im_bits, 2, 2);  // addr_std tag
@@ -418,17 +424,17 @@ bool ton_verify_transfer_hash(
   bw_write_bytes(&im_bits, dest_hash, 32);
 
   bw_write_coins(&im_bits, amount);
-  bw_write_bit(&im_bits, false);  // no extra_currencies
-  bw_write_coins(&im_bits, 0);    // ihr_fee = 0
-  bw_write_coins(&im_bits, 0);    // fwd_fee = 0
-  bw_write_uint(&im_bits, 0, 64); // created_lt = 0
-  bw_write_uint(&im_bits, 0, 32); // created_at = 0
-  bw_write_bit(&im_bits, false);  // no StateInit
+  bw_write_bit(&im_bits, false);   // no extra_currencies
+  bw_write_coins(&im_bits, 0);     // ihr_fee = 0
+  bw_write_coins(&im_bits, 0);     // fwd_fee = 0
+  bw_write_uint(&im_bits, 0, 64);  // created_lt = 0
+  bw_write_uint(&im_bits, 0, 32);  // created_at = 0
+  bw_write_bit(&im_bits, false);   // no StateInit
 
   if (has_memo) {
-    bw_write_bit(&im_bits, true); // body is ref
+    bw_write_bit(&im_bits, true);  // body is ref
   } else {
-    bw_write_bit(&im_bits, false); // no body
+    bw_write_bit(&im_bits, false);  // no body
   }
 
   uint8_t im_hash[32];
@@ -437,7 +443,7 @@ bool ton_verify_transfer_hash(
   if (has_memo) {
     uint8_t ref_hashes[1][32];
     memcpy(ref_hashes[0], memo_cell_hash, 32);
-    uint16_t ref_depths[1] = { memo_cell_depth };
+    const uint16_t ref_depths[1] = {memo_cell_depth};
     cell_hash(&im_bits, ref_hashes, ref_depths, 1, im_hash);
     im_depth = 1 + memo_cell_depth;
   } else {
@@ -449,7 +455,7 @@ bool ton_verify_transfer_hash(
   BitWriter ub_bits;
   bw_init(&ub_bits);
 
-  bw_write_uint(&ub_bits, V4R2_WALLET_ID, 32); // wallet_id
+  bw_write_uint(&ub_bits, V4R2_WALLET_ID, 32);  // wallet_id
   bw_write_uint(&ub_bits, expire_at, 32);       // valid_until
   bw_write_uint(&ub_bits, seqno, 32);           // seqno
   bw_write_uint(&ub_bits, 0, 8);                // op = 0 (simple send)
@@ -459,7 +465,7 @@ bool ton_verify_transfer_hash(
   {
     uint8_t ref_hashes[1][32];
     memcpy(ref_hashes[0], im_hash, 32);
-    uint16_t ref_depths[1] = { im_depth };
+    const uint16_t ref_depths[1] = {im_depth};
     cell_hash(&ub_bits, ref_hashes, ref_depths, 1, ub_hash);
   }
 

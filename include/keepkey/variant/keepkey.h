@@ -24,10 +24,10 @@
 
 #ifdef BITCOIN_ONLY
 // use the bitcoin-only logo
-#define VARIANTINFO_KEEPKEY                         \
-.version = 1, .name = "KeepKeyBTC", .logo = &kkbtc_logo, \
-.logo_reversed = &kkbtc_logo_reversed,                \
-.screensaver_timeout = ONE_SEC * 60 * 10, .screensaver = &kkbtc_screensaver,
+#define VARIANTINFO_KEEPKEY                                \
+  .version = 1, .name = "KeepKeyBTC", .logo = &kkbtc_logo, \
+  .logo_reversed = &kkbtc_logo_reversed,                   \
+  .screensaver_timeout = ONE_SEC * 60 * 10, .screensaver = &kkbtc_screensaver,
 
 extern const VariantInfo variant_keepkey;
 extern const VariantAnimation kkbtc_logo;
@@ -36,16 +36,16 @@ extern const VariantAnimation kkbtc_screensaver;
 
 #else
 
-#define VARIANTINFO_KEEPKEY                         \
-.version = 1, .name = "KeepKey", .logo = &kk_logo, \
-.logo_reversed = &kk_logo_reversed,                \
-.screensaver_timeout = ONE_SEC * 60 * 10, .screensaver = &kk_screensaver,
+#define VARIANTINFO_KEEPKEY                          \
+  .version = 1, .name = "KeepKey", .logo = &kk_logo, \
+  .logo_reversed = &kk_logo_reversed,                \
+  .screensaver_timeout = ONE_SEC * 60 * 10, .screensaver = &kk_screensaver,
 
 extern const VariantInfo variant_keepkey;
 extern const VariantAnimation kk_logo;
 extern const VariantAnimation kk_logo_reversed;
 extern const VariantAnimation kk_screensaver;
 
-#endif // BITCOIN_ONLY
+#endif  // BITCOIN_ONLY
 
 #endif

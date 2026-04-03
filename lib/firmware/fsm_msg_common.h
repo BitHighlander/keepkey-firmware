@@ -2,7 +2,7 @@ void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
   recovery_cipher_abort();
   signing_abort();
-#ifndef  BITCOIN_ONLY
+#ifndef BITCOIN_ONLY
   ethereum_signing_abort();
   tendermint_signAbort();
   eos_signingAbort();
@@ -157,7 +157,7 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
       else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
         coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
       }
-#endif // BITCOIN_ONLY
+#endif  // BITCOIN_ONLY
     }
   }
 
@@ -563,7 +563,7 @@ void fsm_msgCancel(Cancel* msg) {
   ethereum_signing_abort();
   tendermint_signAbort();
   eos_signingAbort();
-#endif // BITCOIN_ONLY
+#endif  // BITCOIN_ONLY
   fsm_sendFailure(FailureType_Failure_ActionCancelled, "Aborted");
 }
 

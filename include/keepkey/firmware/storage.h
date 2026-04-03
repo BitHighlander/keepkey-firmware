@@ -76,7 +76,7 @@ bool storage_getRootNode(const char* curve, bool usePassphrase, HDNode* node);
 /// it MUST NOT be serialized to USB.
 /// \param usePassphrase[in]  Whether to use the passphrase.
 /// \returns pointer to 64-byte seed, or NULL on failure.
-const uint8_t *storage_getRawSeed(bool usePassphrase);
+const uint8_t* storage_getRawSeed(bool usePassphrase);
 
 /// \brief Fetch the node used for U2F signing.
 /// \returns true iff retrieval was successful.

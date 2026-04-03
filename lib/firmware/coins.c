@@ -132,7 +132,7 @@ const CoinType coins[COINS_COUNT] = {
       false, /* has_taproot, taproot*/                                        \
   },
 #include "keepkey/firmware/tokens.def"
-#endif // BITCOIN_ONLY
+#endif  // BITCOIN_ONLY
 };
 
 _Static_assert(sizeof(coins) / sizeof(coins[0]) == COINS_COUNT,

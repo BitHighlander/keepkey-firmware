@@ -78,7 +78,7 @@ void fsm_msgCharacterAck(CharacterAck* msg);
 void fsm_msgApplyPolicies(ApplyPolicies* msg);
 
 // BIP-85 (chain-agnostic, available in all builds)
-void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg);
+void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic* msg);
 
 #ifndef BITCOIN_ONLY
 // ethereum
@@ -122,20 +122,21 @@ void fsm_msgMayachainGetAddress(const MayachainGetAddress* msg);
 void fsm_msgMayachainSignTx(const MayachainSignTx* msg);
 void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg);
 
-void fsm_msgSolanaGetAddress(const SolanaGetAddress *msg);
-void fsm_msgSolanaSignTx(const SolanaSignTx *msg);
-void fsm_msgSolanaSignMessage(const SolanaSignMessage *msg);
-void fsm_msgTronGetAddress(const TronGetAddress *msg);
-void fsm_msgTronSignTx(TronSignTx *msg);
-void fsm_msgTonGetAddress(const TonGetAddress *msg);
-void fsm_msgTonSignTx(TonSignTx *msg);
-void fsm_msgZcashSignPCZT(const ZcashSignPCZT *msg);
-void fsm_msgZcashPCZTAction(const ZcashPCZTAction *msg);
-void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK *msg);
-void fsm_msgZcashTransparentInput(const ZcashTransparentInput *msg);
-// void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress *msg);  // TODO: needs ZcashDisplayAddress proto
-void fsm_msgEthereumTxMetadata(const EthereumTxMetadata *msg);
-#endif // BITCOIN_ONLY
+void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg);
+void fsm_msgSolanaSignTx(const SolanaSignTx* msg);
+void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg);
+void fsm_msgTronGetAddress(const TronGetAddress* msg);
+void fsm_msgTronSignTx(TronSignTx* msg);
+void fsm_msgTonGetAddress(const TonGetAddress* msg);
+void fsm_msgTonSignTx(TonSignTx* msg);
+void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg);
+void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg);
+void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg);
+void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg);
+// void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress *msg);  // TODO:
+// needs ZcashDisplayAddress proto
+void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg);
+#endif  // BITCOIN_ONLY
 
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);

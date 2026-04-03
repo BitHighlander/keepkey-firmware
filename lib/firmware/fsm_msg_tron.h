@@ -27,8 +27,7 @@ void fsm_msgTronGetAddress(const TronGetAddress *msg) {
   CHECK_PIN
 
   // Validate path: m/44'/195'/...
-  if (msg->address_n_count < 3 ||
-      msg->address_n[0] != (0x80000000 | 44) ||
+  if (msg->address_n_count < 3 || msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 195)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Invalid TRON path (expected m/44'/195'/...)"));
@@ -81,8 +80,7 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
   CHECK_PIN
 
   // Validate path: m/44'/195'/...
-  if (msg->address_n_count < 3 ||
-      msg->address_n[0] != (0x80000000 | 44) ||
+  if (msg->address_n_count < 3 || msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 195)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Invalid TRON path (expected m/44'/195'/...)"));
@@ -150,8 +148,8 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
       if (msg->data.size > 32) {
         strlcat(memo_hex, "...", sizeof(memo_hex));
       }
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Memo", "Transaction memo:\n%s", memo_hex)) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Memo",
+                   "Transaction memo:\n%s", memo_hex)) {
         memzero(node, sizeof(*node));
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled"));
@@ -174,9 +172,8 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
       char amount_str[64];
       tron_formatAmount(amount_str, sizeof(amount_str), msg->transfer.amount);
 
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Send TRX", "Send %s to\n%s?",
-                   amount_str, msg->transfer.to_address)) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Send TRX",
+                   "Send %s to\n%s?", amount_str, msg->transfer.to_address)) {
         memzero(node, sizeof(*node));
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled"));
@@ -225,8 +222,7 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
           tron_formatTokenAmount(amt_str, sizeof(amt_str), trc20_amount,
                                  token->decimals, token->symbol);
           if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                       "Send Token", "Send %s to\n%s?",
-                       amt_str, to_addr)) {
+                       "Send Token", "Send %s to\n%s?", amt_str, to_addr)) {
             memzero(node, sizeof(*node));
             fsm_sendFailure(FailureType_Failure_ActionCancelled,
                             _("Signing cancelled"));
@@ -236,8 +232,7 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
         } else {
           /* Unknown TRC-20 token */
           if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                       "Unknown Token",
-                       "Transfer unknown token at\n%s\nto %s?",
+                       "Unknown Token", "Transfer unknown token at\n%s\nto %s?",
                        msg->trigger_smart.contract_address, to_addr)) {
             memzero(node, sizeof(*node));
             fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -267,8 +262,7 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
         tron_formatAmount(call_str, sizeof(call_str),
                           msg->trigger_smart.call_value);
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                     "Call Value",
-                     "Also sending %s with call?", call_str)) {
+                     "Call Value", "Also sending %s with call?", call_str)) {
           memzero(node, sizeof(*node));
           fsm_sendFailure(FailureType_Failure_ActionCancelled,
                           _("Signing cancelled"));
@@ -282,8 +276,8 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
     if (msg->has_fee_limit && msg->fee_limit > 0) {
       char fee_str[64];
       tron_formatAmount(fee_str, sizeof(fee_str), msg->fee_limit);
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Fee Limit", "Maximum fee:\n%s?", fee_str)) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee Limit",
+                   "Maximum fee:\n%s?", fee_str)) {
         memzero(node, sizeof(*node));
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled"));
@@ -306,8 +300,7 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
   /* ---- Legacy blind-sign path ---- */
   if (!is_structured) {
     /* Blind-sign warning: user must understand this is unverified */
-    if (!confirm(ButtonRequestType_ButtonRequest_SignTx,
-                 "Blind Sign",
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
                  "Sign unverified TRON\ntransaction?\n"
                  "Data cannot be verified\non-device.")) {
       memzero(node, sizeof(*node));
@@ -321,9 +314,9 @@ void fsm_msgTronSignTx(TronSignTx *msg) {
     if (msg->has_to_address && msg->has_amount) {
       char amount_str[64];
       tron_formatAmount(amount_str, sizeof(amount_str), msg->amount);
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Unverified", "Send %s to\n%s?\n(UNVERIFIED)",
-                   amount_str, msg->to_address)) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Unverified",
+                   "Send %s to\n%s?\n(UNVERIFIED)", amount_str,
+                   msg->to_address)) {
         memzero(node, sizeof(*node));
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled"));

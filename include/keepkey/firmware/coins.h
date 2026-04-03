@@ -45,9 +45,10 @@ enum {
 #include "keepkey/firmware/coins.def"
 
 #ifdef BITCOIN_ONLY
-// For full-featured keepkey, this is defined in ethereum_tokens.h. For bitcoin only keepkey, need to
-// define it here because ethereum_tokens.h is not included in any file
-#define TOKENS_COUNT  0
+// For full-featured keepkey, this is defined in ethereum_tokens.h. For bitcoin
+// only keepkey, need to define it here because ethereum_tokens.h is not
+// included in any file
+#define TOKENS_COUNT 0
 #else
 #define X(INDEX, NAME, SYMBOL, DECIMALS, CONTRACT_ADDRESS) \
   CONCAT(CoinIndex, __COUNTER__),
@@ -56,7 +57,6 @@ enum {
   CoinIndexLast,
   CoinIndexFirst = 0
 };
-
 
 #define COINS_COUNT ((int)CoinIndexLast - (int)CoinIndexFirst)
 #define NODE_STRING_LENGTH 50

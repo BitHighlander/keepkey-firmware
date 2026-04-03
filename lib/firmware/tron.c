@@ -37,7 +37,10 @@
 /* How many bytes a varint takes. */
 static size_t pb_varint_size(uint64_t v) {
   size_t n = 1;
-  while (v >= 0x80) { v >>= 7; n++; }
+  while (v >= 0x80) {
+    v >>= 7;
+    n++;
+  }
   return n;
 }
 
@@ -57,14 +60,13 @@ static bool pb_encode_varint_safe(uint8_t *buf, size_t *pos, size_t cap,
 /* Write a protobuf tag (field_num << 3 | wire_type). */
 static bool pb_write_tag_safe(uint8_t *buf, size_t *pos, size_t cap,
                               unsigned field, unsigned wire) {
-  return pb_encode_varint_safe(buf, pos, cap,
-                               ((uint64_t)field << 3) | wire);
+  return pb_encode_varint_safe(buf, pos, cap, ((uint64_t)field << 3) | wire);
 }
 
 /* Write a length-delimited field (wire type 2). */
 static bool pb_write_bytes_safe(uint8_t *buf, size_t *pos, size_t cap,
-                                unsigned field,
-                                const uint8_t *data, size_t data_len) {
+                                unsigned field, const uint8_t *data,
+                                size_t data_len) {
   if (!pb_write_tag_safe(buf, pos, cap, field, 2)) return false;
   if (!pb_encode_varint_safe(buf, pos, cap, data_len)) return false;
   if (*pos + data_len > cap) return false;
@@ -120,9 +122,9 @@ bool tron_decodeAddress(const char *address,
   if (!address || strlen(address) < 25 || strlen(address) > 36) {
     return false;
   }
-  uint8_t decoded[25];  /* 21-byte payload + 4-byte checksum */
-  int len = base58_decode_check(address, HASHER_SHA2D, decoded,
-                                sizeof(decoded));
+  uint8_t decoded[25]; /* 21-byte payload + 4-byte checksum */
+  int len =
+      base58_decode_check(address, HASHER_SHA2D, decoded, sizeof(decoded));
   if (len != 21) return false;
   if (decoded[0] != TRON_MAINNET_PREFIX) return false;
   memcpy(raw_address, decoded, 21);
@@ -145,12 +147,15 @@ void tron_formatAmount(char *buf, size_t len, uint64_t amount) {
 }
 
 void tron_formatTokenAmount(char *buf, size_t buf_len,
-                            const uint8_t amount_be[32],
-                            uint8_t decimals, const char *symbol) {
+                            const uint8_t amount_be[32], uint8_t decimals,
+                            const char *symbol) {
   /* Check if amount fits in uint64 (first 24 bytes must be zero). */
   bool fits_u64 = true;
   for (int i = 0; i < 24; i++) {
-    if (amount_be[i] != 0) { fits_u64 = false; break; }
+    if (amount_be[i] != 0) {
+      fits_u64 = false;
+      break;
+    }
   }
 
   if (fits_u64) {
@@ -178,8 +183,8 @@ bool tron_decodeTRC20Transfer(const uint8_t *data, size_t data_len,
   if (data_len < 68) return false;
 
   /* Check 4-byte function selector: transfer(address,uint256) = 0xa9059cbb */
-  if (data[0] != 0xa9 || data[1] != 0x05 ||
-      data[2] != 0x9c || data[3] != 0xbb) {
+  if (data[0] != 0xa9 || data[1] != 0x05 || data[2] != 0x9c ||
+      data[3] != 0xbb) {
     return false;
   }
 
@@ -239,11 +244,10 @@ static bool tron_serializeTransferContract(uint8_t *buf, size_t *pos,
       "type.googleapis.com/protocol.TransferContract";
   uint8_t any[256];
   size_t ap = 0;
-  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 1,
-                           (const uint8_t *)type_url, strlen(type_url)))
+  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 1, (const uint8_t *)type_url,
+                           strlen(type_url)))
     return false;
-  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 2, inner, ip))
-    return false;
+  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 2, inner, ip)) return false;
 
   uint8_t contract[300];
   size_t cp = 0;
@@ -258,8 +262,8 @@ static bool tron_serializeTransferContract(uint8_t *buf, size_t *pos,
 
 /* Serialize a TriggerSmartContract into a contract entry. */
 static bool tron_serializeTriggerSmartContract(
-    uint8_t *buf, size_t *pos, size_t cap,
-    const TronTriggerSmartContract *tsc, const uint8_t *owner_raw) {
+    uint8_t *buf, size_t *pos, size_t cap, const TronTriggerSmartContract *tsc,
+    const uint8_t *owner_raw) {
   /* Inner TriggerSmartContract:
    *   field 1 (bytes): owner_address (21)
    *   field 2 (bytes): contract_address (21)
@@ -278,8 +282,8 @@ static bool tron_serializeTriggerSmartContract(
     return false;
 
   if (tsc->has_data && tsc->data.size > 0) {
-    if (!pb_write_bytes_safe(inner, &ip, sizeof(inner), 3,
-                             tsc->data.bytes, tsc->data.size))
+    if (!pb_write_bytes_safe(inner, &ip, sizeof(inner), 3, tsc->data.bytes,
+                             tsc->data.size))
       return false;
   }
 
@@ -294,11 +298,10 @@ static bool tron_serializeTriggerSmartContract(
       "type.googleapis.com/protocol.TriggerSmartContract";
   uint8_t any[768];
   size_t ap = 0;
-  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 1,
-                           (const uint8_t *)type_url, strlen(type_url)))
+  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 1, (const uint8_t *)type_url,
+                           strlen(type_url)))
     return false;
-  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 2, inner, ip))
-    return false;
+  if (!pb_write_bytes_safe(any, &ap, sizeof(any), 2, inner, ip)) return false;
 
   /* contract type = 31 for TriggerSmartContract */
   uint8_t contract[900];
@@ -312,23 +315,19 @@ static bool tron_serializeTriggerSmartContract(
 }
 
 bool tron_serializeRawTransaction(const TronSignTx *msg,
-                                  const uint8_t *owner_raw,
-                                  uint8_t *out, size_t *out_len,
-                                  size_t max_len) {
+                                  const uint8_t *owner_raw, uint8_t *out,
+                                  size_t *out_len, size_t max_len) {
   size_t pos = 0;
 
   /* Field 1: ref_block_bytes (2 bytes required) */
-  if (!msg->has_ref_block_bytes || msg->ref_block_bytes.size != 2)
-    return false;
-  if (!pb_write_bytes_safe(out, &pos, max_len, 1,
-                           msg->ref_block_bytes.bytes, 2))
+  if (!msg->has_ref_block_bytes || msg->ref_block_bytes.size != 2) return false;
+  if (!pb_write_bytes_safe(out, &pos, max_len, 1, msg->ref_block_bytes.bytes,
+                           2))
     return false;
 
   /* Field 4: ref_block_hash (8 bytes required) */
-  if (!msg->has_ref_block_hash || msg->ref_block_hash.size != 8)
-    return false;
-  if (!pb_write_bytes_safe(out, &pos, max_len, 4,
-                           msg->ref_block_hash.bytes, 8))
+  if (!msg->has_ref_block_hash || msg->ref_block_hash.size != 8) return false;
+  if (!pb_write_bytes_safe(out, &pos, max_len, 4, msg->ref_block_hash.bytes, 8))
     return false;
 
   /* Field 8: expiration */
@@ -339,22 +338,22 @@ bool tron_serializeRawTransaction(const TronSignTx *msg,
   /* Field 10: data/memo (optional, max 256 bytes) */
   if (msg->has_data && msg->data.size > 0) {
     if (msg->data.size > 256) return false;
-    if (!pb_write_bytes_safe(out, &pos, max_len, 10,
-                             msg->data.bytes, msg->data.size))
+    if (!pb_write_bytes_safe(out, &pos, max_len, 10, msg->data.bytes,
+                             msg->data.size))
       return false;
   }
 
   /* Field 11: contract (exactly one) */
   if (msg->has_transfer) {
-    if (!tron_serializeTransferContract(out, &pos, max_len,
-                                        &msg->transfer, owner_raw))
+    if (!tron_serializeTransferContract(out, &pos, max_len, &msg->transfer,
+                                        owner_raw))
       return false;
   } else if (msg->has_trigger_smart) {
     if (!tron_serializeTriggerSmartContract(out, &pos, max_len,
                                             &msg->trigger_smart, owner_raw))
       return false;
   } else {
-    return false;  /* Must have exactly one contract */
+    return false; /* Must have exactly one contract */
   }
 
   /* Field 14: timestamp (optional) */
@@ -429,8 +428,8 @@ bool tron_signTx(const HDNode *node, const TronSignTx *msg,
   /* Sign with secp256k1 */
   uint8_t sig[65];
   uint8_t pby;
-  if (ecdsa_sign_digest(&secp256k1, node->private_key, hash, sig, &pby,
-                        NULL) != 0) {
+  if (ecdsa_sign_digest(&secp256k1, node->private_key, hash, sig, &pby, NULL) !=
+      0) {
     memzero(hash, sizeof(hash));
     return false;
   }
