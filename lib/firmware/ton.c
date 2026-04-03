@@ -43,7 +43,7 @@ static bool base64_url_encode(const uint8_t *data, size_t data_len, char *out,
 
   size_t i = 0, j = 0;
   while (i < data_len) {
-    uint32_t octet_a = i < data_len ? data[i++] : 0;
+    uint32_t octet_a = data[i++];
     uint32_t octet_b = i < data_len ? data[i++] : 0;
     uint32_t octet_c = i < data_len ? data[i++] : 0;
 
