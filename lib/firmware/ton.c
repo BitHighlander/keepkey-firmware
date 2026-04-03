@@ -347,7 +347,8 @@ static void cell_hash(const BitWriter *bits, const uint8_t ref_hashes[][32],
   sha256_Update(&ctx, aug_data, aug_len);
 
   for (int i = 0; i < ref_count; i++) {
-    const uint8_t depth_be[2] = {(ref_depths[i] >> 8) & 0xFF, ref_depths[i] & 0xFF};
+    const uint8_t depth_be[2] = {(ref_depths[i] >> 8) & 0xFF,
+                                 ref_depths[i] & 0xFF};
     sha256_Update(&ctx, depth_be, 2);
   }
   for (int i = 0; i < ref_count; i++) {

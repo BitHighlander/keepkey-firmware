@@ -28,8 +28,10 @@
 // NOTE: when adding policies, *ONLY* add to the end. Otherwise this breaks
 // storage_upgradePolicies();
 static const PolicyType policies[] = {
-    {true, "ShapeShift", true, false},   {true, "Pin Caching", true, true},
-    {true, "Experimental", true, false}, {true, "AdvancedMode", true, false},
+    {true, "ShapeShift", true, false},
+    {true, "Pin Caching", true, true},
+    {true, "Experimental", true, false},
+    {true, "AdvancedMode", true, false},
     {true, "SolBlindSign", true, false},  // unused — AdvancedMode gates all
                                           // blind-sign
     {true, "EthBlindSign", true, false},  // unused — AdvancedMode gates all
