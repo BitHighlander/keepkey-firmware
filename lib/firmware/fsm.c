@@ -85,6 +85,7 @@
 #include "messages-ripple.pb.h"
 #include "messages-thorchain.pb.h"
 #include "messages-mayachain.pb.h"
+#include "messages-zcash.pb.h"
 
 #include <stdio.h>
 
