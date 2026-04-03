@@ -239,7 +239,7 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
       } else {
 #ifndef BITCOIN_ONLY
         // is this thorchain data?
-        if (!thorchain_parseConfirmMemo((const char *)in->op_return_data.bytes,
+        if (!thorchain_parseConfirmMemo((const char*)in->op_return_data.bytes,
                                         (size_t)in->op_return_data.size)) {
 #endif
           if (!confirm_data(ButtonRequestType_ButtonRequest_ConfirmOutput,
@@ -251,7 +251,6 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
         }
 #endif
       }
-
     }
     uint32_t r = 0;
     out->script_pubkey.bytes[0] = 0x6A;

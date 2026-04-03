@@ -25,10 +25,10 @@
 
 /* Orchard spending keys derived via ZIP-32 */
 typedef struct {
-  uint8_t sk[32];    /* Spending key (master secret at this level) */
-  uint8_t ask[32];   /* Spend authorizing key (scalar) */
-  uint8_t nk[32];    /* Nullifier deriving key */
-  uint8_t rivk[32];  /* Commitment randomness key */
+  uint8_t sk[32];   /* Spending key (master secret at this level) */
+  uint8_t ask[32];  /* Spend authorizing key (scalar) */
+  uint8_t nk[32];   /* Nullifier deriving key */
+  uint8_t rivk[32]; /* Commitment randomness key */
 } ZcashOrchardKeys;
 
 /**
@@ -43,8 +43,8 @@ typedef struct {
  * @param keys       Output: derived Orchard keys
  * @return true on success
  */
-bool zcash_derive_orchard_keys(const uint8_t *seed, uint32_t seed_len,
-                               uint32_t account, ZcashOrchardKeys *keys);
+bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
+                               uint32_t account, ZcashOrchardKeys* keys);
 
 /**
  * Compute the ZIP 244 shielded sighash for Orchard spend authorization.
