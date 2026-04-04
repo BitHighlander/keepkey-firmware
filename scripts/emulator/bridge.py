@@ -42,9 +42,5 @@ def exchange(kind):
 
     return Response('{}', status=404, mimetype='application/json')
 
-@app.route('/health')
-def health():
-    return Response('{"status":"ok"}', status=200, mimetype='application/json')
-
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
