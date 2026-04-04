@@ -717,7 +717,7 @@ void layout_pin(const char* prompt, char pin[]) {
   sp.y = 24;
   sp.x = 128 + 10;
   sp.color = BODY_COLOR;
-  draw_string(canvas, font, str, &sp, TITLE_WIDTH, font_height(font));
+  draw_string(canvas, font, prompt, &sp, TITLE_WIDTH, font_height(font));
   display_refresh();
 
   /* Animate pin scrambling */
