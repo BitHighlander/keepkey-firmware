@@ -559,6 +559,16 @@ SolanaTxReview solana_inspectTx(const uint8_t *raw, size_t raw_len,
     return SOL_TX_REVIEW_MALFORMED;
   }
 
+  /* Skip signature count prefix if present.
+   * Clients may send either the raw message (header starts at byte 0)
+   * or a full unsigned transaction (compact-u16 sig count = 0 at byte 0).
+   * A valid legacy message header has num_required_sigs >= 1 at byte 0.
+   * If byte 0 is 0, it's a signature count prefix — skip it. */
+  if (raw[0] == 0 && raw_len > 1) {
+    raw++;
+    raw_len--;
+  }
+
   /* Versioned Solana messages set the top bit in byte 0.
    * Parse them structurally so malformed v0/ALT payloads fail closed,
    * but keep the result opaque until the firmware can verify semantics. */
