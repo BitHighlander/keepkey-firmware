@@ -6,7 +6,9 @@
  */
 #include "keepkey/emulator/libkkemu.h"
 #include "keepkey/emulator/emulator.h"
+#include "keepkey/board/canvas.h"
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/usb.h"
@@ -150,15 +152,31 @@ int kkemu_poll(void) {
 }
 
 const uint8_t *kkemu_get_display(int *width, int *height) {
-    if (!libkkemu_initialized) return NULL;
+    /*
+     * Pack the firmware's 8-bpp grayscale canvas (256×64 = 16384 bytes) into
+     * the 1-bit packed layout vault expects (2048 bytes). Same format
+     * DebugLinkGetState.layout uses: byte index = x + (y/8)*256,
+     * bit within byte = y%8 (LSB = top row of the 8-pixel column).
+     */
+    static uint8_t packed[2048];
 
-    /* The canvas pointer is declared in layout.c */
-    extern Canvas *canvas;
-    if (!canvas) return NULL;
+    if (!libkkemu_initialized) { if (width) *width = 0; if (height) *height = 0; return NULL; }
 
-    if (width) *width = canvas->width;
-    if (height) *height = canvas->height;
-    return canvas->buffer;
+    Canvas *c = display_canvas();
+    if (!c || !c->buffer) { if (width) *width = 0; if (height) *height = 0; return NULL; }
+
+    memset(packed, 0, sizeof(packed));
+    for (int x = 0; x < 256; x++) {
+        for (int y = 0; y < 64; y++) {
+            if (c->buffer[y * 256 + x] > 0) {
+                packed[x + (y / 8) * 256] |= (uint8_t)(1u << (y % 8));
+            }
+        }
+    }
+
+    if (width)  *width = 256;
+    if (height) *height = 64;
+    return packed;
 }
 
 int kkemu_is_running(void) {
