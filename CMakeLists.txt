@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.7.2)
 
+# CMP0079: allow target_link_libraries() to reference targets defined in
+# a different directory. Required so tools/emulator can add firmware libs
+# to kkemulator_dylib (defined in lib/emulator).
+if(POLICY CMP0079)
+  cmake_policy(SET CMP0079 NEW)
+endif()
+
 project(
   KeepKeyFirmware
   VERSION 7.14.0

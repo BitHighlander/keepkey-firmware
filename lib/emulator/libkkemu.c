@@ -6,6 +6,7 @@
  */
 #include "keepkey/emulator/libkkemu.h"
 #include "keepkey/emulator/emulator.h"
+#include "keepkey/emulator/setup.h"
 #include "keepkey/board/canvas.h"
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/keepkey_display.h"
@@ -14,6 +15,7 @@
 #include "keepkey/board/usb.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
 #include "ringbuf.h"
