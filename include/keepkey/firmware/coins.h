@@ -44,16 +44,15 @@ enum {
   CONCAT(CoinIndex, __COUNTER__),
 #include "keepkey/firmware/coins.def"
 
-#ifdef BITCOIN_ONLY
-// For full-featured keepkey, this is defined in ethereum_tokens.h. For bitcoin
-// only keepkey, need to define it here because ethereum_tokens.h is not
-// included in any file
-#define TOKENS_COUNT 0
-#else
+#ifndef BITCOIN_ONLY
 #define X(INDEX, NAME, SYMBOL, DECIMALS, CONTRACT_ADDRESS) \
   CONCAT(CoinIndex, __COUNTER__),
 #include "keepkey/firmware/tokens.def"
 #endif
+/* TOKENS_COUNT is owned by ethereum_tokens.h. The BTC-only override that
+ * used to live here was based on a stale invariant — ethereum_tokens.h is
+ * actually pulled in transitively in BTC-only builds, so the override
+ * collided with the real define. */
   CoinIndexLast,
   CoinIndexFirst = 0
 };
