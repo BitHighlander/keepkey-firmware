@@ -267,6 +267,121 @@ jobs:
           path: /tmp/emu-image.tar
           retention-days: 1
 
+  # Native macOS Apple Silicon build of kkemu — used by vault-v11 (libkkemu)
+  # and for local dev iteration. Pinned toolchain (protoc 3.21 + nanopb 0.3.9.4
+  # + protobuf 3.20.3) — must NOT be mixed with newer protoc generations.
+  build-macos-emulator:
+    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    runs-on: macos-14   # Apple Silicon (M1)
+    timeout-minutes: 20
+    env:
+      PROTOC_VERSION: 21.12
+      NANOPB_VERSION: 0.3.9.4
+      PROTOBUF_PY_VERSION: 3.20.3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Init submodules
+        run: |
+          git submodule update --init deps/crypto/trezor-firmware
+          git submodule update --init deps/device-protocol
+          git submodule update --init --recursive deps/python-keepkey
+          git submodule update --init deps/googletest
+          git submodule update --init deps/qrenc/QR-Code-generator
+          git submodule update --init deps/sca-hardening/SecAESSTM32
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install pinned protobuf python runtime
+        run: pip install "protobuf==${PROTOBUF_PY_VERSION}"
+
+      - name: Cache pinned protoc
+        id: cache-protoc
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/protoc-${{ env.PROTOC_VERSION }}
+          key: protoc-${{ env.PROTOC_VERSION }}-osx-aarch64
+
+      - name: Download pinned protoc 3.21.12 (osx-aarch_64)
+        if: steps.cache-protoc.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "${{ runner.temp }}/protoc-${PROTOC_VERSION}"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-osx-aarch_64.zip"
+          unzip -q /tmp/protoc.zip -d "${{ runner.temp }}/protoc-${PROTOC_VERSION}"
+
+      - name: Cache pinned nanopb
+        id: cache-nanopb
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/nanopb-${{ env.NANOPB_VERSION }}
+          key: nanopb-${{ env.NANOPB_VERSION }}
+
+      - name: Download pinned nanopb 0.3.9.4
+        if: steps.cache-nanopb.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/nanopb.tar.gz \
+            "https://github.com/nanopb/nanopb/archive/refs/tags/nanopb-${NANOPB_VERSION}.tar.gz"
+          tar -xzf /tmp/nanopb.tar.gz -C "${{ runner.temp }}"
+          # archive unpacks as nanopb-nanopb-X.Y.Z
+          mv "${{ runner.temp }}/nanopb-nanopb-${NANOPB_VERSION}" \
+             "${{ runner.temp }}/nanopb-${NANOPB_VERSION}"
+
+      - name: Configure native emulator
+        env:
+          PROTOC_DIR: ${{ runner.temp }}/protoc-${{ env.PROTOC_VERSION }}
+          NANOPB_DIR_PATH: ${{ runner.temp }}/nanopb-${{ env.NANOPB_VERSION }}
+        run: |
+          export PATH="$PROTOC_DIR/bin:$PATH"
+          protoc --version
+          test -f "$NANOPB_DIR_PATH/generator/nanopb_generator.py"
+          cmake -S . -B build-emu \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DKK_EMULATOR=ON \
+            -DNANOPB_GENERATOR="$NANOPB_DIR_PATH/generator/nanopb_generator.py" \
+            -DNANOPB_DIR="$NANOPB_DIR_PATH" \
+            -DCMAKE_C_FLAGS="-DPB_NO_PACKED_STRUCTS=1 -DDEBUG_LINK=1" \
+            -DCMAKE_CXX_FLAGS="-DPB_NO_PACKED_STRUCTS=1 -DDEBUG_LINK=1"
+
+      - name: Build kkemu
+        env:
+          PROTOC_DIR: ${{ runner.temp }}/protoc-${{ env.PROTOC_VERSION }}
+        run: |
+          export PATH="$PROTOC_DIR/bin:$PATH"
+          cmake --build build-emu --target kkemu --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Verify binary
+        run: |
+          test -x build-emu/bin/kkemu
+          file build-emu/bin/kkemu
+          ls -lh build-emu/bin/kkemu
+
+      - name: Resolve artifact tag
+        id: tag
+        run: |
+          # Prefer the firmware version macros if present; fall back to short SHA.
+          VER=$(awk -F'[ ()]+' '
+            /set\(VERSION_MAJOR/   {maj=$3}
+            /set\(VERSION_MINOR/   {min=$3}
+            /set\(VERSION_PATCH/   {pat=$3}
+            END { if (maj && min && pat) printf "v%s.%s.%s", maj, min, pat }
+          ' CMakeLists.txt)
+          if [ -z "$VER" ]; then VER="$(git rev-parse --short HEAD)"; fi
+          echo "tag=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Upload macOS emulator binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: kkemu-macos-arm64-${{ steps.tag.outputs.tag }}
+          path: build-emu/bin/kkemu
+          retention-days: 14
+
   build-arm-firmware:
     needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
