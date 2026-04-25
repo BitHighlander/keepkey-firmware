@@ -164,7 +164,7 @@ const uint8_t *kkemu_get_display(int *width, int *height) {
 
     if (!libkkemu_initialized) { if (width) *width = 0; if (height) *height = 0; return NULL; }
 
-    Canvas *c = display_canvas();
+    const Canvas *c = display_canvas();
     if (!c || !c->buffer) { if (width) *width = 0; if (height) *height = 0; return NULL; }
 
     memset(packed, 0, sizeof(packed));

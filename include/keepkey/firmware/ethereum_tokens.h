@@ -34,7 +34,12 @@ enum {
   TokenIndexFirst = 0
 };
 
+/* coins.h pre-defines TOKENS_COUNT=0 in BITCOIN_ONLY builds, where this
+ * header is still pulled in transitively via ethereum.c. Guard so the two
+ * defs don't collide. */
+#ifndef TOKENS_COUNT
 #define TOKENS_COUNT ((int)TokenIndexLast - (int)TokenIndexFirst)
+#endif
 
 typedef struct _TokenType {
   const char* const address;
