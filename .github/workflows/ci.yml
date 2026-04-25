@@ -342,9 +342,12 @@ jobs:
           PROTOC_DIR: ${{ runner.temp }}/protoc-${{ env.PROTOC_VERSION }}
           NANOPB_DIR_PATH: ${{ runner.temp }}/nanopb-${{ env.NANOPB_VERSION }}
         run: |
-          export PATH="$PROTOC_DIR/bin:$PATH"
+          # nanopb's generator dir must also be on PATH so protoc can find
+          # protoc-gen-nanopb (the sidekick binary that drives nanopb_generator.py).
+          export PATH="$PROTOC_DIR/bin:$NANOPB_DIR_PATH/generator:$PATH"
           protoc --version
           test -f "$NANOPB_DIR_PATH/generator/nanopb_generator.py"
+          test -x "$NANOPB_DIR_PATH/generator/protoc-gen-nanopb"
           # CMAKE_POLICY_VERSION_MINIMUM=3.5 keeps the googletest submodule's
           # legacy cmake_minimum_required happy on macos-14 runners which
           # ship CMake 4.x (drops support for <3.5).
@@ -360,8 +363,9 @@ jobs:
       - name: Build kkemu
         env:
           PROTOC_DIR: ${{ runner.temp }}/protoc-${{ env.PROTOC_VERSION }}
+          NANOPB_DIR_PATH: ${{ runner.temp }}/nanopb-${{ env.NANOPB_VERSION }}
         run: |
-          export PATH="$PROTOC_DIR/bin:$PATH"
+          export PATH="$PROTOC_DIR/bin:$NANOPB_DIR_PATH/generator:$PATH"
           cmake --build build-emu --target kkemu --parallel "$(sysctl -n hw.ncpu)"
 
       - name: Verify binary
