@@ -106,7 +106,7 @@ void fsm_msgRemoveMetadataKey(const RemoveMetadataKey *msg) {
   uint8_t pubkey[33];
   char label[17];
   if (!storage_getMetadataKey(msg->slot, pubkey, label)) {
-    fsm_sendFailure(FailureType_Failure_DataError, "slot is empty");
+    fsm_sendFailure(FailureType_Failure_Other, "slot is empty");
     layoutHome();
     return;
   }
