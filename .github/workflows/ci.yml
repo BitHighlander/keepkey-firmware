@@ -345,9 +345,13 @@ jobs:
           export PATH="$PROTOC_DIR/bin:$PATH"
           protoc --version
           test -f "$NANOPB_DIR_PATH/generator/nanopb_generator.py"
+          # CMAKE_POLICY_VERSION_MINIMUM=3.5 keeps the googletest submodule's
+          # legacy cmake_minimum_required happy on macos-14 runners which
+          # ship CMake 4.x (drops support for <3.5).
           cmake -S . -B build-emu \
             -DCMAKE_BUILD_TYPE=Release \
             -DKK_EMULATOR=ON \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DNANOPB_GENERATOR="$NANOPB_DIR_PATH/generator/nanopb_generator.py" \
             -DNANOPB_DIR="$NANOPB_DIR_PATH" \
             -DCMAKE_C_FLAGS="-DPB_NO_PACKED_STRUCTS=1 -DDEBUG_LINK=1" \
