@@ -80,6 +80,11 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg);
 // BIP-85 (chain-agnostic, available in all builds)
 void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic* msg);
 
+// Insight metadata key management (slots 4..6 user-provisioned)
+void fsm_msgAddMetadataKey(const AddMetadataKey* msg);
+void fsm_msgRemoveMetadataKey(const RemoveMetadataKey* msg);
+void fsm_msgListMetadataKeys(const ListMetadataKeys* msg);
+
 #ifndef BITCOIN_ONLY
 // ethereum
 void fsm_msgEthereumGetAddress(EthereumGetAddress* msg);

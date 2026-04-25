@@ -70,6 +70,10 @@ typedef struct _Storage {
     bool authdata_encrypted;
     uint8_t random_salt[32];
     uint8_t authdata_fingerprint[32];
+    /* User-provisioned Insight metadata signing keys (slots 4..6).
+     * Slots 0..3 are firmware-baked in signed_metadata.c. */
+    uint32_t metadata_keys_count;
+    MetadataKeyType metadata_keys[METADATA_USER_KEY_COUNT];
   } pub;
 
   bool has_sec;

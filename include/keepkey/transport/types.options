@@ -46,3 +46,6 @@ IdentityType.port			max_size:6
 IdentityType.path			max_size:256
 
 PolicyType.policy_name    max_size:15
+
+MetadataKeyType.pubkey      max_size:33
+MetadataKeyType.label       max_size:16

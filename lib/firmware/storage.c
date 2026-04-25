@@ -1080,6 +1080,73 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
   memcpy(storage->encrypted_sec, ptr + 1501, sizeof(storage->encrypted_sec));
 }
 
+/* V18: V17 layout + user-provisioned metadata signing keys.
+ *
+ * The metadata block lives in the V17 reserved region (offsets 501..1496).
+ * Per slot encoding (51 bytes): used(1) + pubkey(33) + label(17 nul-padded).
+ * Header: count(4 LE). Total used: 4 + 3*51 = 157 bytes at ptr+501..657. */
+#define V18_META_OFFSET 501
+#define V18_META_SLOT_SIZE 51
+#define V18_META_TOTAL (4 + METADATA_USER_KEY_COUNT * V18_META_SLOT_SIZE)
+
+static void v18_write_metadata_keys(char* ptr, const Storage* storage) {
+  uint32_t cnt = storage->pub.metadata_keys_count;
+  if (cnt > METADATA_USER_KEY_COUNT) cnt = METADATA_USER_KEY_COUNT;
+  write_u32_le(ptr + V18_META_OFFSET, cnt);
+  for (unsigned i = 0; i < METADATA_USER_KEY_COUNT; ++i) {
+    char* slot_ptr = ptr + V18_META_OFFSET + 4 + i * V18_META_SLOT_SIZE;
+    const MetadataKeyType* k = &storage->pub.metadata_keys[i];
+    bool used = k->has_pubkey && k->has_label && k->pubkey.size == 33;
+    write_u8(slot_ptr, used ? 1 : 0);
+    if (used) {
+      memcpy(slot_ptr + 1, k->pubkey.bytes, 33);
+      memset(slot_ptr + 34, 0, 17);
+      strlcpy(slot_ptr + 34, k->label, 17);
+    } else {
+      memset(slot_ptr + 1, 0, 50);
+    }
+  }
+}
+
+static void v18_read_metadata_keys(Storage* storage, const char* ptr) {
+  uint32_t cnt = read_u32_le(ptr + V18_META_OFFSET);
+  if (cnt > METADATA_USER_KEY_COUNT) cnt = 0;  // corrupt: reset
+  for (unsigned i = 0; i < METADATA_USER_KEY_COUNT; ++i) {
+    const char* slot_ptr = ptr + V18_META_OFFSET + 4 + i * V18_META_SLOT_SIZE;
+    MetadataKeyType* k = &storage->pub.metadata_keys[i];
+    memzero(k, sizeof(*k));
+    if (read_u8(slot_ptr) == 1) {
+      k->has_slot = true;
+      k->slot = METADATA_USER_KEY_FIRST + i;
+      k->has_pubkey = true;
+      k->pubkey.size = 33;
+      memcpy(k->pubkey.bytes, slot_ptr + 1, 33);
+      k->has_label = true;
+      memcpy(k->label, slot_ptr + 34, 16);
+      k->label[16] = '\0';
+    }
+  }
+  /* Recompute count from used flags — count field is advisory. */
+  uint32_t used_count = 0;
+  for (unsigned i = 0; i < METADATA_USER_KEY_COUNT; ++i) {
+    if (storage->pub.metadata_keys[i].has_pubkey) used_count++;
+  }
+  storage->pub.metadata_keys_count = used_count;
+  (void)cnt;
+}
+
+void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
+  if (len < V18_META_OFFSET + V18_META_TOTAL) return;
+  storage_writeStorageV17(ptr, len, storage);
+  v18_write_metadata_keys(ptr, storage);
+}
+
+void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
+  if (len < V18_META_OFFSET + V18_META_TOTAL) return;
+  storage_readStorageV17(storage, ptr, len);
+  v18_read_metadata_keys(storage, ptr);
+}
+
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len) {
   if (len < 65 + 10) return;
   cache->root_seed_cache_status = read_u8(ptr);
@@ -1148,6 +1215,18 @@ void storage_writeV17(char* flash, size_t len, const ConfigFlash* src) {
   storage_writeStorageV17(flash + 44, 852, &src->storage);
 }
 
+void storage_readV18(ConfigFlash* dst, const char* flash, size_t len) {
+  if (len < 1024) return;
+  storage_readMeta(&dst->meta, flash, 44);
+  storage_readStorageV18(&dst->storage, flash + 44, 852);
+}
+
+void storage_writeV18(char* flash, size_t len, const ConfigFlash* src) {
+  if (len < 1024) return;
+  storage_writeMeta(flash, 44, &src->meta);
+  storage_writeStorageV18(flash + 44, 852, &src->storage);
+}
+
 StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
                                       const char* flash) {
   memzero(dst, sizeof(*dst));
@@ -1200,6 +1279,17 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
     case StorageVersion_17:
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
+      dst->storage.version = STORAGE_VERSION;
+      /* V17→V18 migration: existing devices come up with no user-provisioned
+       * metadata keys. memzero(dst) at function entry already zeroed the
+       * fields, but be explicit so refactors don't silently break the
+       * invariant that v17-on-flash → empty user-key set. */
+      dst->storage.pub.metadata_keys_count = 0;
+      memzero(dst->storage.pub.metadata_keys,
+              sizeof(dst->storage.pub.metadata_keys));
+      return dst->storage.version == version ? SUS_Valid : SUS_Updated;
+    case StorageVersion_18:
+      storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
 
@@ -1472,7 +1562,7 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV18(flash_temp, sizeof(flash_temp), &shadow_config);
 
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
 
@@ -2102,6 +2192,77 @@ bool storage_isPolicyEnabled_impl(const PolicyType ps[POLICY_COUNT],
     }
   }
   return false;
+}
+
+static bool metadata_slot_index(uint32_t slot, unsigned* idx_out) {
+  if (slot < METADATA_USER_KEY_FIRST || slot > METADATA_USER_KEY_LAST) {
+    return false;
+  }
+  *idx_out = slot - METADATA_USER_KEY_FIRST;
+  return true;
+}
+
+bool storage_setMetadataKey(uint32_t slot, const uint8_t* pubkey,
+                            const char* label) {
+  unsigned idx;
+  if (!metadata_slot_index(slot, &idx) || pubkey == NULL || label == NULL) {
+    return false;
+  }
+  /* Reject empty label — fingerprint-only display is hostile UX. */
+  if (label[0] == '\0') return false;
+  /* Reject uncompressed/invalid public-key prefix. */
+  if (pubkey[0] != 0x02 && pubkey[0] != 0x03) return false;
+
+  MetadataKeyType* k = &shadow_config.storage.pub.metadata_keys[idx];
+  bool was_empty = !k->has_pubkey;
+  memzero(k, sizeof(*k));
+  k->has_slot = true;
+  k->slot = slot;
+  k->has_pubkey = true;
+  k->pubkey.size = 33;
+  memcpy(k->pubkey.bytes, pubkey, 33);
+  k->has_label = true;
+  strlcpy(k->label, label, sizeof(k->label));
+
+  if (was_empty &&
+      shadow_config.storage.pub.metadata_keys_count < METADATA_USER_KEY_COUNT) {
+    shadow_config.storage.pub.metadata_keys_count++;
+  }
+  return true;
+}
+
+bool storage_removeMetadataKey(uint32_t slot) {
+  unsigned idx;
+  if (!metadata_slot_index(slot, &idx)) return false;
+
+  MetadataKeyType* k = &shadow_config.storage.pub.metadata_keys[idx];
+  if (!k->has_pubkey) return false;
+
+  memzero(k, sizeof(*k));
+  if (shadow_config.storage.pub.metadata_keys_count > 0) {
+    shadow_config.storage.pub.metadata_keys_count--;
+  }
+  return true;
+}
+
+bool storage_getMetadataKey(uint32_t slot, uint8_t pubkey_out[33],
+                            char label_out[17]) {
+  unsigned idx;
+  if (!metadata_slot_index(slot, &idx) || pubkey_out == NULL ||
+      label_out == NULL) {
+    return false;
+  }
+
+  const MetadataKeyType* k = &shadow_config.storage.pub.metadata_keys[idx];
+  if (!k->has_pubkey || k->pubkey.size != 33) return false;
+
+  memcpy(pubkey_out, k->pubkey.bytes, 33);
+  strlcpy(label_out, k->has_label ? k->label : "", 17);
+  return true;
+}
+
+uint32_t storage_getMetadataKeyCount(void) {
+  return shadow_config.storage.pub.metadata_keys_count;
 }
 
 bool storage_noBackup(void) { return shadow_config.storage.pub.no_backup; }

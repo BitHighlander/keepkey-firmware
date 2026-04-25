@@ -3,6 +3,7 @@
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/ecdsa.h"
@@ -17,30 +18,33 @@
 
 static bool metadata_available = false;
 static SignedMetadata stored_metadata;
+static char stored_metadata_label[17];
 
 /*
- * Metadata verification public keys.
- * Slot 0: active production key
+ * Firmware-baked metadata verification public keys (slots 0..3).
+ * User-provisioned keys live in storage at slots 4..6 (see storage.h).
+ *
+ * Slot 0: active production key — the "Insight" key managed by KeepKey
  * Slot 1: rotation target
- * Slots 2-3: reserved
+ * Slot 2: reserved
+ * Slot 3: CI test key, DEBUG_LINK only
  *
- * Keys are derived via KeepKey SignIdentity at keepkey.com/insight.
- * Only the public key is stored here — the signing mnemonic is held
- * offline and never appears in source code.
- *
- * To rotate: generate new key with pioneer-insight keygen,
- * replace the slot below, ship firmware update.
+ * Slot 0 is derived via KeepKey SignIdentity at keepkey.com/insight.
+ * Only public keys are stored here; the signing mnemonic is held offline.
+ * To rotate: generate new key with pioneer-insight keygen, replace the
+ * slot below, ship firmware update.
  */
-static const uint8_t METADATA_PUBKEYS[METADATA_MAX_KEYS][33] = {
-    /* Key 0: production */
+static const uint8_t METADATA_FIRMWARE_PUBKEYS[METADATA_MAX_KEYS][33] = {
+    /* Slot 0: production */
     {0x02, 0x18, 0x62, 0x1d, 0x9c, 0x14, 0x47, 0x34, 0x58, 0x71, 0x3b,
      0xd3, 0xe6, 0x72, 0xe5, 0x34, 0x80, 0xaa, 0x70, 0x32, 0xca, 0x9b,
      0x67, 0x35, 0x63, 0x95, 0xe8, 0x87, 0x09, 0xbb, 0x45, 0x22, 0x6a},
-    /* Key 1: rotation slot */
+    /* Slot 1: rotation */
     {0x00},
+    /* Slot 2: reserved */
     {0x00},
 #if DEBUG_LINK
-    /* Key 3: CI test key — only available in emulator/debug builds */
+    /* Slot 3: CI test key — only available in emulator/debug builds */
     {0x02, 0xe3, 0xb3, 0x01, 0x5c, 0x47, 0xdd, 0xca, 0xab, 0xe4, 0xf8,
      0xe8, 0x72, 0xf1, 0xed, 0x8f, 0x09, 0xca, 0x14, 0x5a, 0x8d, 0x81,
      0x77, 0x0d, 0x92, 0x21, 0x3d, 0x56, 0xda, 0x31, 0xab, 0x51, 0x07},
@@ -48,6 +52,33 @@ static const uint8_t METADATA_PUBKEYS[METADATA_MAX_KEYS][33] = {
     {0x00},
 #endif
 };
+
+/* Display labels for firmware-baked slots. User slots get their label from
+ * storage. Empty string means "no label" — confirm screen falls back to a
+ * generic header. */
+static const char METADATA_FIRMWARE_LABELS[METADATA_MAX_KEYS][17] = {
+    "Insight",
+    "",
+    "",
+#if DEBUG_LINK
+    "CI Test",
+#else
+    "",
+#endif
+};
+
+/* Look up a pubkey + label by slot. Slots 0..3 are firmware-baked,
+ * 4..6 come from storage. Returns false if the slot is unprovisioned. */
+static bool metadata_get_pubkey(uint8_t slot, uint8_t pubkey_out[33],
+                                char label_out[17]) {
+  if (slot < METADATA_MAX_KEYS) {
+    if (METADATA_FIRMWARE_PUBKEYS[slot][0] == 0x00) return false;
+    memcpy(pubkey_out, METADATA_FIRMWARE_PUBKEYS[slot], 33);
+    strlcpy(label_out, METADATA_FIRMWARE_LABELS[slot], 17);
+    return true;
+  }
+  return storage_getMetadataKey(slot, pubkey_out, label_out);
+}
 
 static bool read_u8(const uint8_t **cursor, const uint8_t *end, uint8_t *out) {
   if ((size_t)(end - *cursor) < 1) {
@@ -192,6 +223,7 @@ bool signed_metadata_available(void) { return metadata_available; }
 
 void signed_metadata_clear(void) {
   memzero(&stored_metadata, sizeof(stored_metadata));
+  memzero(stored_metadata_label, sizeof(stored_metadata_label));
   metadata_available = false;
 }
 
@@ -199,12 +231,14 @@ MetadataClassification signed_metadata_process(const uint8_t *payload,
                                                size_t payload_len,
                                                uint8_t key_id) {
   uint8_t digest[32];
+  uint8_t pubkey[33];
+  char label[17];
   size_t signed_len;
 
   signed_metadata_clear();
 
-  if (key_id >= METADATA_MAX_KEYS || METADATA_PUBKEYS[key_id][0] == 0x00 ||
-      !payload || payload_len < 65) {
+  if (!payload || payload_len < 65 ||
+      !metadata_get_pubkey(key_id, pubkey, label)) {
     return METADATA_MALFORMED;
   }
 
@@ -217,12 +251,13 @@ MetadataClassification signed_metadata_process(const uint8_t *payload,
   signed_len = payload_len - sizeof(stored_metadata.signature) - 1;
   sha256_Raw(payload, signed_len, digest);
 
-  if (ecdsa_verify_digest(&secp256k1, METADATA_PUBKEYS[key_id],
-                          stored_metadata.signature, digest) != 0) {
+  if (ecdsa_verify_digest(&secp256k1, pubkey, stored_metadata.signature,
+                          digest) != 0) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
 
+  strlcpy(stored_metadata_label, label, sizeof(stored_metadata_label));
   metadata_available = true;
   return stored_metadata.classification;
 }
@@ -272,12 +307,21 @@ bool signed_metadata_confirm(void) {
     return false;
   }
 
-  /* Screen 1: Verified method — use review_with_icon for trust indicator */
+  /* Screen 1: Verified method — use review_with_icon for trust indicator.
+   * Header reflects the key source: firmware slot 0 → "Insight Verified",
+   * user slots → "<label> Verified" so the user sees which entity vouched
+   * for the metadata. Empty label falls back to "Verified". */
+  char header[24];
+  if (stored_metadata_label[0] != '\0') {
+    snprintf(header, sizeof(header), "%s Verified", stored_metadata_label);
+  } else {
+    strlcpy(header, "Verified", sizeof(header));
+  }
   memset(body, 0, sizeof(body));
   snprintf(body, sizeof(body), "Verified call:\n%s",
            stored_metadata.method_name);
   if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                         VERIFIED_ICON, "Insight Verified", "%s", body)) {
+                         VERIFIED_ICON, header, "%s", body)) {
     return false;
   }
 

@@ -36,6 +36,10 @@
 
     MSG_IN(MessageType_MessageType_GetBip85Mnemonic,               GetBip85Mnemonic,            fsm_msgGetBip85Mnemonic)
 
+    MSG_IN(MessageType_MessageType_AddMetadataKey,                 AddMetadataKey,              fsm_msgAddMetadataKey)
+    MSG_IN(MessageType_MessageType_RemoveMetadataKey,              RemoveMetadataKey,           fsm_msgRemoveMetadataKey)
+    MSG_IN(MessageType_MessageType_ListMetadataKeys,               ListMetadataKeys,            fsm_msgListMetadataKeys)
+
 #ifndef BITCOIN_ONLY
     MSG_IN(MessageType_MessageType_EthereumGetAddress,              EthereumGetAddress,          fsm_msgEthereumGetAddress)
     MSG_IN(MessageType_MessageType_EthereumSignTx,                  EthereumSignTx,              fsm_msgEthereumSignTx)
@@ -118,6 +122,8 @@
     MSG_OUT(MessageType_MessageType_CharacterRequest,               CharacterRequest,            NO_PROCESS_FUNC)
 
     MSG_OUT(MessageType_MessageType_Bip85Mnemonic,                  Bip85Mnemonic,               NO_PROCESS_FUNC)
+
+    MSG_OUT(MessageType_MessageType_MetadataKeysList,               MetadataKeysList,            NO_PROCESS_FUNC)
 
 #ifndef  BITCOIN_ONLY
     MSG_OUT(MessageType_MessageType_EthereumAddress,                EthereumAddress,             NO_PROCESS_FUNC)

@@ -26,7 +26,13 @@
 #include "keepkey/firmware/authenticator.h"
 
 #define STORAGE_VERSION \
-  17 /* Must add case fallthrough in storage_fromFlash after increment*/
+  18 /* Must add case fallthrough in storage_fromFlash after increment*/
+
+/* Number of user-provisioned metadata signing key slots (slots 4..6).
+ * Firmware-baked slots 0..3 live in signed_metadata.c and don't count here. */
+#define METADATA_USER_KEY_COUNT 3
+#define METADATA_USER_KEY_FIRST 4
+#define METADATA_USER_KEY_LAST (METADATA_USER_KEY_FIRST + METADATA_USER_KEY_COUNT - 1)
 #define STORAGE_RETRIES 3
 
 #define RANDOM_SALT_LEN 32
@@ -164,6 +170,30 @@ void storage_getPolicies(PolicyType* policy_data);
 
 /// \brief Status of policy in storage
 bool storage_isPolicyEnabled(const char* policy_name);
+
+typedef struct _MetadataKeyType MetadataKeyType;
+
+/// \brief Add or replace a user-provisioned metadata signing key.
+/// \param slot Must be in [METADATA_USER_KEY_FIRST, METADATA_USER_KEY_LAST].
+/// \param pubkey 33-byte compressed secp256k1 public key.
+/// \param label Null-terminated, ≤16 chars. Displayed during verification.
+/// \returns true on success, false on invalid slot/pubkey/label.
+bool storage_setMetadataKey(uint32_t slot, const uint8_t* pubkey,
+                            const char* label);
+
+/// \brief Remove a user-provisioned metadata signing key.
+/// \returns true if a key was removed, false if slot was empty/invalid.
+bool storage_removeMetadataKey(uint32_t slot);
+
+/// \brief Look up a user-provisioned metadata signing key.
+/// \param pubkey_out Receives 33 bytes on success.
+/// \param label_out Receives null-terminated string (buffer must be ≥17 bytes).
+/// \returns true if slot is populated.
+bool storage_getMetadataKey(uint32_t slot, uint8_t pubkey_out[33],
+                            char label_out[17]);
+
+/// \brief Number of populated user-provisioned metadata key slots (0..3).
+uint32_t storage_getMetadataKeyCount(void);
 
 uint32_t storage_getAutoLockDelayMs(void);
 void storage_setAutoLockDelayMs(uint32_t auto_lock_delay_ms);
