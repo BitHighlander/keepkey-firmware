@@ -302,8 +302,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install pinned protobuf python runtime
-        run: pip install "protobuf==${PROTOBUF_PY_VERSION}"
+      - name: Install python build dependencies
+        # protobuf: required by nanopb generator
+        # requests: required by python-keepkey/keepkeylib/eth/uniswap_tokens.py,
+        #          which the firmware build invokes as a code generator step
+        run: pip install "protobuf==${PROTOBUF_PY_VERSION}" requests
 
       - name: Cache pinned protoc
         id: cache-protoc
