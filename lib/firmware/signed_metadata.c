@@ -310,8 +310,9 @@ bool signed_metadata_confirm(void) {
   /* Screen 1: Verified method — use review_with_icon for trust indicator.
    * Header reflects the key source: firmware slot 0 → "Insight Verified",
    * user slots → "<label> Verified" so the user sees which entity vouched
-   * for the metadata. Empty label falls back to "Verified". */
-  char header[24];
+   * for the metadata. Empty label falls back to "Verified".
+   * Sized for max 16-char label + " Verified" (9) + null = 26, rounded up. */
+  char header[32];
   if (stored_metadata_label[0] != '\0') {
     snprintf(header, sizeof(header), "%s Verified", stored_metadata_label);
   } else {
