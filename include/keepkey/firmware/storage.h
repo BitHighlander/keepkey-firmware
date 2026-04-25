@@ -32,7 +32,8 @@
  * Firmware-baked slots 0..3 live in signed_metadata.c and don't count here. */
 #define METADATA_USER_KEY_COUNT 3
 #define METADATA_USER_KEY_FIRST 4
-#define METADATA_USER_KEY_LAST (METADATA_USER_KEY_FIRST + METADATA_USER_KEY_COUNT - 1)
+#define METADATA_USER_KEY_LAST \
+  (METADATA_USER_KEY_FIRST + METADATA_USER_KEY_COUNT - 1)
 #define STORAGE_RETRIES 3
 
 #define RANDOM_SALT_LEN 32
