@@ -15,24 +15,25 @@
 extern "C" {
 #endif
 
-#define KKEMU_FLASH_SIZE   (1024 * 1024)  /* 1 MB */
-#define KKEMU_PACKET_SIZE  64             /* HID report size */
-#define KKEMU_IFACE_MAIN   0
-#define KKEMU_IFACE_DEBUG  1
+#define KKEMU_FLASH_SIZE (1024 * 1024) /* 1 MB */
+#define KKEMU_PACKET_SIZE 64           /* HID report size */
+#define KKEMU_IFACE_MAIN 0
+#define KKEMU_IFACE_DEBUG 1
 
 /**
  * Initialize the emulator with a host-provided flash buffer.
  *
  * @param flash_buf  Pointer to 1MB buffer (host-owned, must remain valid).
  *                   If contents are all 0xFF, treated as fresh/erased device.
- *                   If contents are from a previous session, device state is restored.
+ *                   If contents are from a previous session, device state is
+ * restored.
  * @param flash_len  Must be KKEMU_FLASH_SIZE (1048576).
  * @return 0 on success, -1 on error.
  *
  * After this call, the emulator is ready to process messages via
  * kkemu_write() + kkemu_poll() + kkemu_read().
  */
-int kkemu_init(uint8_t *flash_buf, size_t flash_len);
+int kkemu_init(uint8_t* flash_buf, size_t flash_len);
 
 /**
  * Shut down the emulator. Flushes pending storage writes to the
@@ -49,7 +50,7 @@ void kkemu_shutdown(void);
  * @param iface  KKEMU_IFACE_MAIN (0) or KKEMU_IFACE_DEBUG (1).
  * @return 0 on success, -1 if queue is full.
  */
-int kkemu_write(const uint8_t *data, size_t len, int iface);
+int kkemu_write(const uint8_t* data, size_t len, int iface);
 
 /**
  * Read a 64-byte HID report from the emulator's output queue.
@@ -61,7 +62,7 @@ int kkemu_write(const uint8_t *data, size_t len, int iface);
  * @param iface  KKEMU_IFACE_MAIN (0) or KKEMU_IFACE_DEBUG (1).
  * @return Number of bytes read (64), or 0 if queue is empty.
  */
-int kkemu_read(uint8_t *buf, size_t len, int iface);
+int kkemu_read(uint8_t* buf, size_t len, int iface);
 
 /**
  * Run one iteration of the firmware event loop.
@@ -83,7 +84,7 @@ int kkemu_poll(void);
  * @return Pointer to framebuffer (valid until next kkemu_poll).
  *         Returns NULL if emulator is not initialized.
  */
-const uint8_t *kkemu_get_display(int *width, int *height);
+const uint8_t* kkemu_get_display(int* width, int* height);
 
 /**
  * Check if the emulator has been initialized.
