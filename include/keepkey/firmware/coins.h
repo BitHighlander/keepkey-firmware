@@ -49,10 +49,10 @@ enum {
   CONCAT(CoinIndex, __COUNTER__),
 #include "keepkey/firmware/tokens.def"
 #endif
-/* TOKENS_COUNT is owned by ethereum_tokens.h. The BTC-only override that
- * used to live here was based on a stale invariant — ethereum_tokens.h is
- * actually pulled in transitively in BTC-only builds, so the override
- * collided with the real define. */
+  /* TOKENS_COUNT is owned by ethereum_tokens.h. The BTC-only override that
+   * used to live here was based on a stale invariant — ethereum_tokens.h is
+   * actually pulled in transitively in BTC-only builds, so the override
+   * collided with the real define. */
   CoinIndexLast,
   CoinIndexFirst = 0
 };
