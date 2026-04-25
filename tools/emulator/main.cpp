@@ -19,6 +19,10 @@
 
 #include "display.h"
 
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+
 extern "C" {
 #include "keepkey/board/common.h"
 #include "keepkey/board/keepkey_board.h"
