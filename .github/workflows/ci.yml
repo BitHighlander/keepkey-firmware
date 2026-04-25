@@ -270,8 +270,12 @@ jobs:
   # Native macOS Apple Silicon build of kkemu — used by vault-v11 (libkkemu)
   # and for local dev iteration. Pinned toolchain (protoc 3.21 + nanopb 0.3.9.4
   # + protobuf 3.20.3) — must NOT be mixed with newer protoc generations.
+  #
+  # Gating matches build-arm-firmware-btc-only: compile-verification jobs run
+  # independently of cosmetic lint/static-analysis so we still catch real
+  # build breaks even when those gates are red.
   build-macos-emulator:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [check-submodules, secret-scan]
     runs-on: macos-14   # Apple Silicon (M1)
     timeout-minutes: 20
     env:
