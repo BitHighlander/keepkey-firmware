@@ -325,7 +325,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/nanopb-${{ env.NANOPB_VERSION }}
-          key: nanopb-${{ env.NANOPB_VERSION }}
+          key: nanopb-${{ env.NANOPB_VERSION }}-bootstrapped-v1
 
       - name: Download pinned nanopb 0.3.9.4
         if: steps.cache-nanopb.outputs.cache-hit != 'true'
@@ -336,6 +336,11 @@ jobs:
           # archive unpacks as nanopb-nanopb-X.Y.Z
           mv "${{ runner.temp }}/nanopb-nanopb-${NANOPB_VERSION}" \
              "${{ runner.temp }}/nanopb-${NANOPB_VERSION}"
+          # nanopb 0.3.9.4's generator imports proto.nanopb_pb2 — bootstrap
+          # by running `make` in generator/proto/ to build the python module.
+          # Bundled into the cached dir so re-runs skip this.
+          export PATH="${{ runner.temp }}/protoc-${PROTOC_VERSION}/bin:$PATH"
+          make -C "${{ runner.temp }}/nanopb-${NANOPB_VERSION}/generator/proto"
 
       - name: Configure native emulator
         env:
