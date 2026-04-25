@@ -106,7 +106,7 @@ SignedIdentity.signature		max_size:65
 ApplyPolicies.policy			max_count:6
 
 AddMetadataKey.pubkey       max_size:33
-AddMetadataKey.label        max_size:16
+AddMetadataKey.label        max_size:17
 MetadataKeysList.keys       max_count:7
 
 # not used in firmware
