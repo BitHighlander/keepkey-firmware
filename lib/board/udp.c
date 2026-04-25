@@ -47,19 +47,21 @@ void usbPoll(void) {
 
   int iface = 0;
   if (0 < (len = emulatorSocketRead(&iface, buf, sizeof(buf)))) {
-    if (!tiny) {
-      if (iface == 0) {
-        user_rx_callback(&buf, len);
-      } else if (iface == 1) {
+    /* Always dispatch through the rx callback (handle_usb_rx /
+     * handle_debug_usb_rx). Those handlers inspect msg_tiny_flag and
+     * route to msg_read_tiny when the firmware is inside confirm_helper
+     * waiting for a tiny ButtonAck/DebugLinkDecision. The previous
+     * `if (!tiny)` short-circuit dropped tiny messages on the floor —
+     * confirm_helper would then busy-loop forever waiting for a BA the
+     * dylib already consumed but never delivered. */
+    if (iface == 0) {
+      user_rx_callback(&buf, len);
+    } else if (iface == 1) {
 #if DEBUG_LINK
-        user_debug_rx_callback(&buf, len);
+      user_debug_rx_callback(&buf, len);
 #else
-        user_rx_callback(&buf, len);
+      user_rx_callback(&buf, len);
 #endif
-      }
-    } else {
-      assert(false && "not yet implemented");
-      // msg_read_tiny(msg.message, sizeof(msg.message));
     }
   }
 }
