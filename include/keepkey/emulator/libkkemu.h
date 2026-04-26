@@ -87,6 +87,22 @@ int kkemu_poll(void);
 const uint8_t* kkemu_get_display(int* width, int* height);
 
 /**
+ * Pop the next captured framebuffer from the display capture ring.
+ *
+ * Every display_refresh() inside the firmware (including those that fire
+ * inside confirm_helper's busy loop within a single kkemu_poll() call)
+ * snapshots the canvas into a ring buffer. Adjacent identical frames
+ * are deduplicated. This lets the host see intermediate screen states
+ * (confirm dialogs, cipher prompts, recovery screens) that would
+ * otherwise be invisible — they exist only inside synchronous C calls.
+ *
+ * @param out_packed  Buffer of at least 2048 bytes (256x64, 1-bit packed
+ *                    SSD1306 page format — same as kkemu_get_display).
+ * @return 1 if a frame was popped, 0 if the ring is empty.
+ */
+int kkemu_pop_frame(uint8_t* out_packed);
+
+/**
  * Check if the emulator has been initialized.
  */
 int kkemu_is_running(void);

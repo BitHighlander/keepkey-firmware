@@ -35,6 +35,25 @@ static RingBuf rb_debug_out;  /* firmware → host (debug link) */
 
 static int libkkemu_initialized = 0;
 
+/* ── Display capture ring ───────────────────────────────────────────── */
+
+/*
+ * Captures every display_refresh() into a ring of 1-bit packed snapshots.
+ * The host drains via kkemu_pop_frame(). Adjacent identical frames are
+ * skipped so an idle firmware doesn't spam the ring.
+ *
+ * Sized for ~4 seconds at 16ms refresh; if the host falls behind the
+ * oldest frames are dropped (write advances past read).
+ */
+#define FRAME_PACKED_SIZE 2048
+#define FRAME_RING_SIZE 64
+
+static uint8_t frame_ring[FRAME_RING_SIZE][FRAME_PACKED_SIZE];
+static uint8_t last_packed[FRAME_PACKED_SIZE];
+static int last_packed_valid = 0;
+static uint32_t frame_write_idx = 0; /* monotonic, mod FRAME_RING_SIZE for slot */
+static uint32_t frame_read_idx = 0;  /* monotonic */
+
 /* ── Replacement I/O functions ──────────────────────────────────────── */
 
 /*
@@ -68,6 +87,41 @@ size_t libkkemu_socketWrite(int iface, const void *buffer, size_t size) {
     return size;
 }
 
+/* ── Display capture callback ───────────────────────────────────────── */
+
+/*
+ * Pack the 8-bpp grayscale canvas (256x64 = 16384 bytes) into the
+ * 1-bit SSD1306 page format the host wants. Skip if identical to the
+ * last frame we captured. Called from display_refresh() on every poll
+ * and on every iteration of confirm_helper's busy loop.
+ */
+static void libkkemu_capture_frame(const uint8_t *canvas_buf) {
+    if (!canvas_buf) return;
+
+    uint8_t *slot = frame_ring[frame_write_idx % FRAME_RING_SIZE];
+    memset(slot, 0, FRAME_PACKED_SIZE);
+    for (int x = 0; x < 256; x++) {
+        for (int y = 0; y < 64; y++) {
+            if (canvas_buf[y * 256 + x] > 0) {
+                slot[x + (y / 8) * 256] |= (uint8_t)(1u << (y % 8));
+            }
+        }
+    }
+
+    /* Dedup: skip if identical to last captured */
+    if (last_packed_valid && memcmp(slot, last_packed, FRAME_PACKED_SIZE) == 0) {
+        return;
+    }
+    memcpy(last_packed, slot, FRAME_PACKED_SIZE);
+    last_packed_valid = 1;
+
+    frame_write_idx++;
+    /* Drop oldest if host fell behind */
+    if (frame_write_idx - frame_read_idx > FRAME_RING_SIZE) {
+        frame_read_idx = frame_write_idx - FRAME_RING_SIZE;
+    }
+}
+
 /* ── Public API ─────────────────────────────────────────────────────── */
 
 int kkemu_init(uint8_t *flash_buf, size_t flash_len) {
@@ -84,11 +138,21 @@ int kkemu_init(uint8_t *flash_buf, size_t flash_len) {
     /* Initialize ring buffers (replaces UDP socket init) */
     libkkemu_socketInit();
 
+    /* Reset frame capture state */
+    frame_write_idx = 0;
+    frame_read_idx = 0;
+    last_packed_valid = 0;
+
     /* Initialize /dev/urandom for RNG */
     setup_urandom_only();
 
     /* Board init (timers, etc.) */
     kk_board_init();
+
+    /* Hook display_refresh() so every canvas update is captured into
+     * our ring buffer. Must be set before storage_init/fsm_init/
+     * layoutHomeForced so the boot screens get captured too. */
+    display_set_dump_callback(libkkemu_capture_frame);
 
     /* Load storage from flash buffer */
     storage_init();
@@ -179,6 +243,15 @@ const uint8_t *kkemu_get_display(int *width, int *height) {
     if (width)  *width = 256;
     if (height) *height = 64;
     return packed;
+}
+
+int kkemu_pop_frame(uint8_t *out_packed) {
+    if (!libkkemu_initialized || !out_packed) return 0;
+    if (frame_read_idx == frame_write_idx) return 0;
+    const uint8_t *slot = frame_ring[frame_read_idx % FRAME_RING_SIZE];
+    memcpy(out_packed, slot, FRAME_PACKED_SIZE);
+    frame_read_idx++;
+    return 1;
 }
 
 int kkemu_is_running(void) {
