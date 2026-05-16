@@ -1,0 +1,15 @@
+HiveGetPublicKey.address_n              max_count:8
+
+HivePublicKey.public_key                max_size:64
+HivePublicKey.raw_public_key            max_size:33
+
+HiveSignTx.address_n                    max_count:8
+HiveSignTx.chain_id                     max_size:32
+HiveSignTx.from                         max_size:16
+HiveSignTx.to                           max_size:16
+HiveSignTx.amount                       int_size:IS_64
+HiveSignTx.asset_symbol                 max_size:10
+HiveSignTx.memo                         max_size:2048
+
+HiveSignedTx.signature                  max_size:65
+HiveSignedTx.serialized_tx              max_size:1024
