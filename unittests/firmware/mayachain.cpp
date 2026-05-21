@@ -56,7 +56,7 @@ TEST(Mayachain, MayachainSignTx) {
   ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
 
   ASSERT_TRUE(mayachain_signTxUpdateMsgSend(
-      100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k"));
+      100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
 
   uint8_t public_key[33];
   uint8_t signature[64];
