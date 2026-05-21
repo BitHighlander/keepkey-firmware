@@ -192,6 +192,13 @@
     MSG_OUT(MessageType_MessageType_HiveSignedAccountCreate,       HiveSignedAccountCreate,     NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_HiveSignedAccountUpdate,       HiveSignedAccountUpdate,     NO_PROCESS_FUNC)
 
+    /* NEAR */
+    MSG_IN(MessageType_MessageType_NearGetAddress,                 NearGetAddress,              fsm_msgNearGetAddress)
+    MSG_IN(MessageType_MessageType_NearSignTx,                     NearSignTx,                  fsm_msgNearSignTx)
+
+    MSG_OUT(MessageType_MessageType_NearAddress,                   NearAddress,                 NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_NearSignedTx,                  NearSignedTx,                NO_PROCESS_FUNC)
+
 #if DEBUG_LINK
     /* Debug Messages */
     DEBUG_IN(MessageType_MessageType_DebugLinkDecision,             DebugLinkDecision,           NO_PROCESS_FUNC)
