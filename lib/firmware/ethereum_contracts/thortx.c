@@ -90,8 +90,8 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
       (const uint8_t*)(msg->data_initial_chunk.bytes + 4 + 32 + 12);
   bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2 * 32, 32, &Amount);
   /* deposit(): memo at 4 + 5*32; depositWithExpiry(): memo at 4 + 6*32 */
-  thorchainData =
-      (const uint8_t*)(msg->data_initial_chunk.bytes + 4 + (is_expiry ? 6 : 5) * 32);
+  thorchainData = (const uint8_t*)(msg->data_initial_chunk.bytes + 4 +
+                                   (is_expiry ? 6 : 5) * 32);
 
   thor_format_to_addr(msg, confStr);
   if (strncmp(confStr, THOR_ROUTER, 40) == 0) {
