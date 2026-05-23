@@ -7,33 +7,27 @@
  * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
+// ── HiveGetPublicKey ──────────────────────────────────────────────────────
+// Returns a single STM-prefixed public key for the given SLIP-0048 path.
+// Path format: m/48'/13'/role'/account'/0' (all 5 components hardened).
+
+void fsm_msgHiveGetPublicKey(const HiveGetPublicKey *msg) {
   RESP_INIT(HivePublicKey);
 
   CHECK_INITIALIZED
   CHECK_PIN
 
-  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+  HDNode *node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // Return raw 33-byte compressed pubkey
   resp->has_raw_public_key = true;
   resp->raw_public_key.size = 33;
   memcpy(resp->raw_public_key.bytes, node->public_key, 33);
 
-  // Return STM-encoded public key
   resp->has_public_key = true;
   if (!hive_getPublicKey(node->public_key, resp->public_key,
                          sizeof(resp->public_key))) {
@@ -45,10 +39,21 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
   }
 
   if (msg->has_show_display && msg->show_display) {
-    if (!confirm_ethereum_address("Hive Public Key", resp->public_key)) {
+    // Determine role label for display
+    const char *role_label = "Hive Public Key";
+    if (msg->has_role) {
+      switch (msg->role) {
+        case 0: role_label = "Hive Owner Key";   break;
+        case 1: role_label = "Hive Active Key";  break;
+        case 3: role_label = "Hive Memo Key";    break;
+        case 4: role_label = "Hive Posting Key"; break;
+        default: break;
+      }
+    }
+    if (!confirm_ethereum_address(role_label, resp->public_key)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Show public key cancelled"));
+                      _("Cancelled"));
       layoutHome();
       return;
     }
@@ -59,7 +64,64 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
   layoutHome();
 }
 
-void fsm_msgHiveSignTx(const HiveSignTx* msg) {
+// ── HiveGetPublicKeys ─────────────────────────────────────────────────────
+// Returns all four SLIP-0048 role keys (owner/active/memo/posting) for a
+// given account index in a single device interaction.
+
+void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys *msg) {
+  RESP_INIT(HivePublicKeys);
+
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  uint32_t account_index = msg->has_account_index ? msg->account_index : 0;
+
+  // Derive all four keys from root node via SLIP-0048
+  // fsm_getDerivedNode with an empty path gives us the root — we pass the
+  // full derivation into hive_getPublicKeys so it can derive each role cleanly.
+  HDNode *root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  if (!root) return;
+
+  resp->has_owner_key   = true;
+  resp->has_active_key  = true;
+  resp->has_memo_key    = true;
+  resp->has_posting_key = true;
+
+  if (!hive_getPublicKeys(root, account_index,
+                          resp->owner_key,   sizeof(resp->owner_key),
+                          resp->active_key,  sizeof(resp->active_key),
+                          resp->memo_key,    sizeof(resp->memo_key),
+                          resp->posting_key, sizeof(resp->posting_key))) {
+    memzero(root, sizeof(*root));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to derive Hive keys"));
+    layoutHome();
+    return;
+  }
+
+  if (msg->has_show_display && msg->show_display) {
+    // Show owner key with account context; user confirms all roles together
+    char display[80];
+    snprintf(display, sizeof(display), "Account %u\n%s", account_index,
+             resp->owner_key);
+    if (!confirm(ButtonRequestType_ButtonRequest_Other,
+                 "Hive Keys", "Export all Hive keys for account %u?",
+                 account_index)) {
+      memzero(root, sizeof(*root));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
+      layoutHome();
+      return;
+    }
+  }
+
+  memzero(root, sizeof(*root));
+  msg_write(MessageType_MessageType_HivePublicKeys, resp);
+  layoutHome();
+}
+
+// ── HiveSignTx (transfer) ─────────────────────────────────────────────────
+
+void fsm_msgHiveSignTx(const HiveSignTx *msg) {
   RESP_INIT(HiveSignedTx);
 
   CHECK_INITIALIZED
@@ -74,22 +136,16 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
     return;
   }
 
-  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+  HDNode *node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // Format amount string for confirmation
-  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
-  uint32_t decimals = msg->has_decimals ? msg->decimals : HIVE_DECIMALS;
-
+  const char *symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
   char amount_str[32];
-  uint64_t whole = msg->amount / 1000;
-  uint64_t frac = msg->amount % 1000;
-  // Simple format: decimals=3 → "X.XXX SYMBOL"
-  (void)decimals;
-  snprintf(amount_str, sizeof(amount_str), "%" PRIu64 ".%03" PRIu64 " %s",
-           whole, frac, symbol);
+  snprintf(amount_str, sizeof(amount_str),
+           "%" PRIu64 ".%03" PRIu64 " %s",
+           msg->amount / 1000, msg->amount % 1000, symbol);
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Send Hive",
                "Send %s to @%s?", amount_str, msg->to)) {
@@ -100,8 +156,8 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   }
 
   if (msg->has_memo && strlen(msg->memo) > 0) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo", "%s",
-                 msg->memo)) {
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
+                 "%s", msg->memo)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
@@ -121,12 +177,136 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   memzero(node, sizeof(*node));
 
   if (!resp->has_signature) {
-    fsm_sendFailure(FailureType_Failure_FirmwareError,
-                    _("Hive signing failed"));
+    fsm_sendFailure(FailureType_Failure_FirmwareError, _("Hive signing failed"));
     layoutHome();
     return;
   }
 
   msg_write(MessageType_MessageType_HiveSignedTx, resp);
+  layoutHome();
+}
+
+// ── HiveSignAccountCreate ─────────────────────────────────────────────────
+// Signs a Graphene account_create operation.
+// Device displays the new username. KeepKey-derived keys are the sole
+// authority from genesis — no software keys ever exist.
+
+void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate *msg) {
+  RESP_INIT(HiveSignedAccountCreate);
+
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  if (!msg->has_new_account_name || !msg->has_creator ||
+      !msg->has_owner_key || !msg->has_active_key ||
+      !msg->has_posting_key || !msg->has_memo_key ||
+      !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
+      !msg->has_expiration) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Missing required account_create fields"));
+    layoutHome();
+    return;
+  }
+
+  HDNode *node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+  hdnode_fill_public_key(node);
+
+  // Primary confirmation: show the username prominently
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               "Create Hive Account",
+               "Create @%s secured by KeepKey?\n\nAll keys from your device.",
+               msg->new_account_name)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  // Secondary confirmation: show sponsor + fee
+  char fee_str[32];
+  uint64_t fee = msg->has_fee_amount ? msg->fee_amount : 3000;
+  snprintf(fee_str, sizeof(fee_str), "%" PRIu64 ".%03" PRIu64 " HIVE",
+           fee / 1000, fee % 1000);
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Creation Fee",
+               "Fee: %s paid by @%s", fee_str, msg->creator)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  hive_signAccountCreate(node, msg, resp);
+  memzero(node, sizeof(*node));
+
+  if (!resp->has_signature) {
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Hive account_create signing failed"));
+    layoutHome();
+    return;
+  }
+
+  msg_write(MessageType_MessageType_HiveSignedAccountCreate, resp);
+  layoutHome();
+}
+
+// ── HiveSignAccountUpdate ─────────────────────────────────────────────────
+// Signs a Graphene account_update operation.
+// Replaces all existing account authorities with KeepKey-derived keys.
+// Device shows a clear warning that old keys will be replaced.
+
+void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate *msg) {
+  RESP_INIT(HiveSignedAccountUpdate);
+
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  if (!msg->has_account || !msg->has_new_owner_key || !msg->has_new_active_key ||
+      !msg->has_new_posting_key || !msg->has_new_memo_key ||
+      !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
+      !msg->has_expiration) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Missing required account_update fields"));
+    layoutHome();
+    return;
+  }
+
+  HDNode *node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+  hdnode_fill_public_key(node);
+
+  // Warning: this replaces all existing keys
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+               "Secure Hive Account",
+               "Replace ALL keys for @%s with KeepKey keys?\n\nOld keys will be retired.",
+               msg->account)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  // Second confirm: show new owner key so user can verify it's their device
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "New Owner Key",
+               "%s", msg->new_owner_key)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  hive_signAccountUpdate(node, msg, resp);
+  memzero(node, sizeof(*node));
+
+  if (!resp->has_signature) {
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Hive account_update signing failed"));
+    layoutHome();
+    return;
+  }
+
+  msg_write(MessageType_MessageType_HiveSignedAccountUpdate, resp);
   layoutHome();
 }
