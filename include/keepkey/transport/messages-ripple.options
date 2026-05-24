@@ -3,6 +3,7 @@ RippleGetAddress.address_n max_count:8
 RippleAddress.address max_size:36
 
 RippleSignTx.address_n max_count:8
+RippleSignTx.memo max_size:200
 
 RipplePayment.destination max_size:36
 
