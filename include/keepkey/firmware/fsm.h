@@ -139,7 +139,10 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg);
 void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg);
 
 void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg);
+void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg);
 void fsm_msgHiveSignTx(const HiveSignTx* msg);
+void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg);
+void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg);
 
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);
