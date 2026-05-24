@@ -106,7 +106,8 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
 
   if (msg->has_show_display && msg->show_display) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Hive Keys",
-                 "Export all Hive keys for account %u?", account_index)) {
+                 "Export all Hive keys for account %u?",
+                 (unsigned int)account_index)) {
       memzero(root, sizeof(*root));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
       layoutHome();
