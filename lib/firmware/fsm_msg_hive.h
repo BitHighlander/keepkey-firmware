@@ -219,7 +219,7 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   // Derive all four role keys from the device root.
   // Do this BEFORE fetching the signing node so the root static buffer
   // is not clobbered by the second fsm_getDerivedNode call.
-  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  const HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
   uint8_t owner_raw[33], active_raw[33], posting_raw[33], memo_raw[33];
@@ -360,7 +360,7 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
 
   // Derive all four role keys before fetching the signing node.
-  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  const HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
   uint8_t owner_raw[33], active_raw[33], posting_raw[33], memo_raw[33];
