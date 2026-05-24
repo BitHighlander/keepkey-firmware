@@ -36,10 +36,6 @@
 #define HIVE_DECIMALS 3          // HIVE and HBD both use 3 decimal places
 
 // ── Public API ────────────────────────────────────────────────────────────
-bool hive_getPublicKey(const uint8_t public_key[33], char* out, size_t out_len);
-
-void hive_signTx(const HDNode* node, const HiveSignTx* msg, HiveSignedTx* resp);
-
 /**
  * Encode a 33-byte compressed public key in Hive/Steem STM-prefix base58
  * format. Uses RIPEMD checksum (Graphene convention, not SHA256d).
