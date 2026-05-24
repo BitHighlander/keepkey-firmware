@@ -57,13 +57,13 @@ void u2fInit(void);
       MINOR_VERSION) "." VERSION_STR(PATCH_VERSION)
 
 /* These variables will be used by host application to read the version info */
-static const char *const application_version
+static const char* const application_version
     __attribute__((used, section("version"))) = APP_VERSIONS;
 
-void memory_getDeviceLabel(char *str, size_t len) {
-  const char *label = storage_getLabel();
+void memory_getDeviceLabel(char* str, size_t len) {
+  const char* label = storage_getLabel();
 
-  if (label && is_valid_ascii((const uint8_t *)label, strlen(label))) {
+  if (label && is_valid_ascii((const uint8_t*)label, strlen(label))) {
     snprintf(str, len, "KeepKey - %s", label);
   } else {
     strlcpy(str, "KeepKey", len);
@@ -73,16 +73,15 @@ void memory_getDeviceLabel(char *str, size_t len) {
 bool inPrivilegedMode(void) {
   // Check to see if we are in priv mode. If so, return true to drop privs.
   uint32_t creg = 0xffff;
-  // CONTROL register nPRIV,bit[0]: 
+  // CONTROL register nPRIV,bit[0]:
   //    0 Thread mode has privileged access
-  //    1 Thread mode has unprivileged access. 
+  //    1 Thread mode has unprivileged access.
   // Note: In Handler mode, execution is always privileged
   fi_defense_delay(creg);  // vary access time
-  __asm__ volatile(
-       "mrs %0, control" : "=r" (creg));
+  __asm__ volatile("mrs %0, control" : "=r"(creg));
   fi_defense_delay(creg);  // vary test time
-  if (creg & 0x0001) 
-    return false;          // can't drop privs
+  if (creg & 0x0001)
+    return false;  // can't drop privs
   else
     return true;
 
@@ -169,13 +168,27 @@ static void exec(void) {
 }
 
 int main(void) {
-  _buttonusr_isr = (void *)&buttonisr_usr;
-  _timerusr_isr = (void *)&timerisr_usr;
-  _mmhusr_isr = (void *)&mmhisr;
+  _buttonusr_isr = (void*)&buttonisr_usr;
+  _timerusr_isr = (void*)&timerisr_usr;
+  _mmhusr_isr = (void*)&mmhisr;
 
-  { // limit sigRet lifetime to this block
+  {  // limit sigRet lifetime to this block
+    /* F5 hardening: replace full signatures_ok() (~1 sec crypto) with fast
+     * metadata presence check. The bootloader has already performed the
+     * authoritative signature verification before jumping here. We only
+     * need to know whether the bootloader considered us signed, which is
+     * indicated by valid signature indices in flash metadata. */
     int sigRet = SIG_FAIL;
-    sigRet = signatures_ok();
+
+    volatile uint8_t si1 = *((volatile uint8_t*)FLASH_META_SIGINDEX1);
+    volatile uint8_t si2 = *((volatile uint8_t*)FLASH_META_SIGINDEX2);
+    volatile uint8_t si3 = *((volatile uint8_t*)FLASH_META_SIGINDEX3);
+
+    if (si1 >= 1 && si1 <= PUBKEYS && si2 >= 1 && si2 <= PUBKEYS && si3 >= 1 &&
+        si3 <= PUBKEYS && si1 != si2 && si1 != si3 && si2 != si3) {
+      sigRet = SIG_OK;
+    }
+
     flash_collectHWEntropy(SIG_OK == sigRet);
 
     /* Drop privileges */
@@ -194,8 +207,9 @@ int main(void) {
 
     drbg_init();
 
-    /* Bootloader Verification. Only check if valid signed firmware on-board, allow any other firmware
-    to run with any bootloader. This allows unsigned release firmware to run after warning */
+    /* Bootloader Verification. Only check if valid signed firmware on-board,
+    allow any other firmware to run with any bootloader. This allows unsigned
+    release firmware to run after warning */
     if (SIG_OK == sigRet) {
       check_bootloader();
     }

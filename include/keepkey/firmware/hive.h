@@ -5,10 +5,12 @@
 #include "messages-hive.pb.h"
 
 // ── Hive mainnet chain ID ─────────────────────────────────────────────────
+// Hive mainnet chain ID
 #define HIVE_CHAIN_ID                                \
   "\xbe\xea\xb0\xde\x00\x00\x00\x00\x00\x00\x00\x00" \
   "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" \
   "\x00\x00\x00\x00\x00\x00\x00\x00"
+
 #define HIVE_CHAIN_ID_LEN 32
 
 // ── STM public key prefix (Hive inherited from Steem / Graphene) ──────────
@@ -34,6 +36,9 @@
 #define HIVE_DECIMALS 3          // HIVE and HBD both use 3 decimal places
 
 // ── Public API ────────────────────────────────────────────────────────────
+bool hive_getPublicKey(const uint8_t public_key[33], char* out, size_t out_len);
+
+void hive_signTx(const HDNode* node, const HiveSignTx* msg, HiveSignedTx* resp);
 
 /**
  * Encode a 33-byte compressed public key in Hive/Steem STM-prefix base58
