@@ -41,6 +41,15 @@
 bool hive_getPublicKey(const uint8_t public_key[33], char *out, size_t out_len);
 
 /**
+ * Derive one SLIP-0048 role key for a given account index to raw 33 bytes.
+ * role_hardened: HIVE_ROLE_OWNER | HIVE_ROLE_ACTIVE | HIVE_ROLE_MEMO | HIVE_ROLE_POSTING
+ * account_index_hardened: account_index | 0x80000000u
+ * Returns false if derivation fails.
+ */
+bool hive_deriveRawKey(const HDNode *root, uint32_t role_hardened,
+                       uint32_t account_index_hardened, uint8_t out[33]);
+
+/**
  * Derive all four SLIP-0048 role keys for a given account index and encode
  * each as an STM-prefixed string. All output buffers must be >= 64 bytes.
  * Returns false if any derivation or encoding step fails.
@@ -53,24 +62,34 @@ bool hive_getPublicKeys(const HDNode *root, uint32_t account_index,
 
 /**
  * Sign a Hive transfer transaction (op type 2).
+ * Rejects memos longer than HIVE_MAX_MEMO_LEN (440 bytes).
  */
 void hive_signTx(const HDNode *node, const HiveSignTx *msg, HiveSignedTx *resp);
 
 /**
  * Sign a Hive account_create transaction (op type 9).
- * All four role public keys are embedded as authorities.
- * Device must display the new account name for user confirmation.
+ * owner/active/posting/memo_raw must be device-derived 33-byte compressed keys.
+ * The firmware uses these directly; host-supplied key strings in msg are ignored.
  */
-void hive_signAccountCreate(const HDNode *node,
+void hive_signAccountCreate(const HDNode *signing_node,
                             const HiveSignAccountCreate *msg,
+                            const uint8_t owner_raw[33],
+                            const uint8_t active_raw[33],
+                            const uint8_t posting_raw[33],
+                            const uint8_t memo_raw[33],
                             HiveSignedAccountCreate *resp);
 
 /**
  * Sign a Hive account_update transaction (op type 10).
- * Replaces all authorities with new KeepKey-derived keys.
+ * owner/active/posting/memo_raw must be device-derived 33-byte compressed keys.
+ * The firmware uses these directly; host-supplied new_*_key strings in msg are ignored.
  */
-void hive_signAccountUpdate(const HDNode *node,
+void hive_signAccountUpdate(const HDNode *signing_node,
                             const HiveSignAccountUpdate *msg,
+                            const uint8_t owner_raw[33],
+                            const uint8_t active_raw[33],
+                            const uint8_t posting_raw[33],
+                            const uint8_t memo_raw[33],
                             HiveSignedAccountUpdate *resp);
 
 #endif  // KEEPKEY_FIRMWARE_HIVE_H
