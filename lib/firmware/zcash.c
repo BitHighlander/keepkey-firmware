@@ -965,6 +965,70 @@ bool zcash_compute_transparent_digest(
   return true;
 }
 
+/* ZIP-244 §4.9 / §4.10b: transparent_sig_digest for Orchard spend
+ * authorization.
+ *
+ * When n_inputs > 0, the Orchard sighash uses the S.2 form:
+ *   BLAKE2b("ZTxIdTranspaHash",
+ *     hash_type(0x01) || prevouts || amounts || scripts || sequences ||
+ *     outputs || empty_txin_digest)
+ * where empty_txin_digest = BLAKE2b("Zcash___TxInHash", "").
+ *
+ * When n_inputs == 0 (deshield / private-send), falls back to T.1 form
+ * (no hash_type, amounts, scripts, or txin digest) — same as txid form.
+ *
+ * This differs from zcash_compute_transparent_sighash_digest which uses a
+ * per-input txin_sig_digest for transparent ECDSA signatures.
+ */
+bool zcash_compute_orchard_transparent_sig_digest(
+    const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
+    const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,
+    uint8_t digest_out[32]) {
+  if (!digest_out || !zcash_validate_transparent_digest_info(
+                         inputs, n_inputs, outputs, n_outputs)) {
+    return false;
+  }
+
+  /* Empty-vin case (deshield, private): T.1 form is correct per §4.10b. */
+  if (n_inputs == 0) {
+    return zcash_compute_transparent_digest(inputs, n_inputs, outputs,
+                                            n_outputs, digest_out);
+  }
+
+  /* Non-empty vin (shield): S.2 form with empty txin_sig_digest. */
+  const uint8_t sighash_type = 0x01; /* SIGHASH_ALL */
+  uint8_t prevouts_digest[32], amounts_digest[32], scripts_digest[32];
+  uint8_t sequence_digest[32], outputs_digest[32], empty_txin_digest[32];
+
+  zcash_hash_transparent_prevouts(inputs, n_inputs, prevouts_digest);
+  zcash_hash_transparent_amounts(inputs, n_inputs, amounts_digest);
+  zcash_hash_transparent_scripts(inputs, n_inputs, scripts_digest);
+  zcash_hash_transparent_sequences(inputs, n_inputs, sequence_digest);
+  zcash_hash_transparent_outputs(outputs, n_outputs, outputs_digest);
+
+  /* Empty txin_sig_digest: BLAKE2b("Zcash___TxInHash", "") */
+  zcash_blake2b_personal_256("Zcash___TxInHash", NULL, 0, empty_txin_digest);
+
+  BLAKE2B_CTX ctx;
+  blake2b_InitPersonal(&ctx, 32, "ZTxIdTranspaHash", 16);
+  blake2b_Update(&ctx, &sighash_type, 1);
+  blake2b_Update(&ctx, prevouts_digest, 32);
+  blake2b_Update(&ctx, amounts_digest, 32);
+  blake2b_Update(&ctx, scripts_digest, 32);
+  blake2b_Update(&ctx, sequence_digest, 32);
+  blake2b_Update(&ctx, outputs_digest, 32);
+  blake2b_Update(&ctx, empty_txin_digest, 32);
+  blake2b_Final(&ctx, digest_out, 32);
+
+  memzero(prevouts_digest, sizeof(prevouts_digest));
+  memzero(amounts_digest, sizeof(amounts_digest));
+  memzero(scripts_digest, sizeof(scripts_digest));
+  memzero(sequence_digest, sizeof(sequence_digest));
+  memzero(outputs_digest, sizeof(outputs_digest));
+  memzero(empty_txin_digest, sizeof(empty_txin_digest));
+  return true;
+}
+
 bool zcash_compute_transparent_sighash_digest(
     const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
     const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,
