@@ -326,7 +326,7 @@ static bool zcash_finalize_transparent_digest(void) {
   uint8_t transparent_digest[32] = {0};
 
   if (!zcash_build_transparent_digest_info(inputs, outputs) ||
-      !zcash_compute_transparent_digest(
+      !zcash_compute_orchard_transparent_sig_digest(
           inputs, zcash_signing.n_transparent_inputs, outputs,
           zcash_signing.n_transparent_outputs, transparent_digest)) {
     memzero(transparent_digest, sizeof(transparent_digest));

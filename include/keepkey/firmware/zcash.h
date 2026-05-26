@@ -158,6 +158,19 @@ bool zcash_compute_transparent_digest(
     uint8_t digest_out[32]);
 
 /**
+ * Compute ZIP-244 §4.9 transparent_sig_digest for Orchard spend authorization.
+ *
+ * Uses the S.2 form with EMPTY txin_sig_digest when n_inputs > 0 (shield txs),
+ * or falls back to T.1 when n_inputs == 0 (deshield / private-send). This is
+ * what the Zcash consensus node uses to verify Orchard spend auth sigs and the
+ * binding signature in a hybrid (transparent + Orchard) transaction.
+ */
+bool zcash_compute_orchard_transparent_sig_digest(
+    const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
+    const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,
+    uint8_t digest_out[32]);
+
+/**
  * Compute ZIP-244 S.2 per-input transparent signature digest.
  *
  * This currently accepts SIGHASH_ALL only, matching the existing transparent
