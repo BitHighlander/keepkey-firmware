@@ -24,10 +24,22 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
+#include <windows.h>
+#else
 #include <sys/mman.h>
+#endif
 
 /* Defined in firmware — we just need the declaration */
 extern void fsm_init(void);
+#ifdef _WIN32
+/* On macOS/Linux the firmware's 1ms tick is delivered by a SIGALRM/ualarm
+ * timer (lib/board/timer.c). Windows has neither signal, so we advance the
+ * timer from the host poll loop instead — see kkemu_poll(). */
+extern void timerisr_usr(void);
+#endif
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
@@ -151,12 +163,21 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
    * Production hosts of libkkemu should treat a logged failure as a
    * security warning and refuse to load secrets.
    */
+#ifdef _WIN32
+  if (!VirtualLock(flash_buf, flash_len)) {
+    fprintf(stderr,
+            "[libkkemu] VirtualLock(%zu bytes) failed (err %lu) — flash buffer "
+            "may be paged to disk; do not load production secrets\n",
+            flash_len, (unsigned long)GetLastError());
+  }
+#else
   if (mlock(flash_buf, flash_len) != 0) {
     fprintf(stderr,
             "[libkkemu] mlock(%zu bytes) failed: %s — flash buffer may be "
             "swapped to disk; do not load production secrets\n",
             flash_len, strerror(errno));
   }
+#endif
 
   /* Initialize ring buffers (replaces UDP socket init) */
   libkkemu_socketInit();
@@ -231,7 +252,11 @@ void kkemu_shutdown(void) {
    * want to inspect / persist post-mortem state. Documented contract.
    */
   if (emulator_flash_base) {
+#ifdef _WIN32
+    VirtualUnlock(emulator_flash_base, KKEMU_FLASH_SIZE);
+#else
     munlock(emulator_flash_base, KKEMU_FLASH_SIZE);
+#endif
     emulator_flash_base = NULL;
   }
 
@@ -266,6 +291,13 @@ int kkemu_poll(void) {
    * usbPoll() internally calls emulatorSocketRead() which we've
    * replaced with libkkemu_socketRead() via the ring buffers.
    */
+#ifdef _WIN32
+  /* Advance the firmware millisecond timer (SIGALRM-driven elsewhere). One
+   * tick per poll is coarse — the host polls ~every 16ms — but keeps
+   * delay_ms()/animations progressing. TODO: drive from a wall-clock delta
+   * or a Windows multimedia timer for accurate timing. */
+  timerisr_usr();
+#endif
   usbPoll();
   animate();
   display_refresh();
