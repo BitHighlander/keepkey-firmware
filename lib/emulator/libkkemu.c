@@ -34,12 +34,6 @@
 
 /* Defined in firmware — we just need the declaration */
 extern void fsm_init(void);
-#ifdef _WIN32
-/* On macOS/Linux the firmware's 1ms tick is delivered by a SIGALRM/ualarm
- * timer (lib/board/timer.c). Windows has neither signal, so we advance the
- * timer from the host poll loop instead — see kkemu_poll(). */
-extern void timerisr_usr(void);
-#endif
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
@@ -62,6 +56,11 @@ static int libkkemu_initialized = 0;
  */
 #define FRAME_PACKED_SIZE 2048
 #define FRAME_RING_SIZE 64
+
+/* Host poll cadence (the vault's setInterval is ~16ms). kkemu_poll() ticks the
+ * firmware ms-timer this many times per call so animations advance at ~real
+ * speed without relying on the (host-runtime-unreliable) SIGALRM timer. */
+#define KKEMU_POLL_INTERVAL_MS 16
 
 static uint8_t frame_ring[FRAME_RING_SIZE][FRAME_PACKED_SIZE];
 static uint8_t last_packed[FRAME_PACKED_SIZE];
@@ -291,13 +290,16 @@ int kkemu_poll(void) {
    * usbPoll() internally calls emulatorSocketRead() which we've
    * replaced with libkkemu_socketRead() via the ring buffers.
    */
-#ifdef _WIN32
-  /* Advance the firmware millisecond timer (SIGALRM-driven elsewhere). One
-   * tick per poll is coarse — the host polls ~every 16ms — but keeps
-   * delay_ms()/animations progressing. TODO: drive from a wall-clock delta
-   * or a Windows multimedia timer for accurate timing. */
-  timerisr_usr();
-#endif
+  /* Drive the firmware millisecond timer from the host poll on EVERY platform.
+   * The dylib is caller-driven; relying on the SIGALRM/ualarm timer (which the
+   * standalone kkemu binary uses) is unreliable inside the host runtime — Bun
+   * does not deliver the firmware's SIGALRM, so animate_flag never flips and
+   * every animation (boot logo, screensaver) stays frozen → a blank OLED at
+   * rest. Tick ~one poll-interval of milliseconds so the periodic animation
+   * runnable fires and animations + delay_ms() advance at roughly real speed.
+   */
+  for (int t = 0; t < KKEMU_POLL_INTERVAL_MS; t++) timerisr_usr();
+
   usbPoll();
   animate();
   display_refresh();
