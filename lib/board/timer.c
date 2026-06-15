@@ -229,11 +229,12 @@ void timer_init(void) {
   nvic_set_priority(NVIC_TIM4_IRQ, 16 * 2);
 
   timer_enable_counter(TIM4);
-#else
+#elif !defined(_WIN32)
   void tim4_sighandler(int sig);
   signal(SIGALRM, tim4_sighandler);
   ualarm(1000, 1000);
 #endif
+  /* _WIN32: no SIGALRM/ualarm — libkkemu's kkemu_poll() drives timerisr_usr(). */
 }
 
 uint32_t fi_defense_delay(volatile uint32_t value) {
@@ -348,7 +349,7 @@ void timerisr_usr(void) {
 #endif
 }
 
-#ifdef EMULATOR
+#if defined(EMULATOR) && !defined(_WIN32)
 void tim4_sighandler(int sig) { timerisr_usr(); }
 #endif
 
