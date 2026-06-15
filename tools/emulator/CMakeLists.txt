@@ -42,14 +42,16 @@ if(${KK_EMULATOR})
   if(KK_BUILD_DYLIB)
     if(WIN32)
       # kkrand and trezorcrypto cross-reference each other (random32 /
-      # random_uniform). GNU/MinGW ld resolves archives left-to-right in a
-      # single pass, so wrap FIRMWARE_LIBS in a RESCAN group. macOS ld64 does
-      # multi-pass resolution and needs no group.
+      # random_uniform). GNU/MinGW ld resolves static archives left-to-right in
+      # a single pass, so wrap FIRMWARE_LIBS in a linker group. Use the raw
+      # --start-group/--end-group flags rather than the LINK_GROUP genex: the
+      # genex needs CMake >= 3.24, but this repo's cmake_minimum_required is
+      # 3.7.2. macOS ld64 is multi-pass and needs neither.
       # Also: MinGW exports nothing from a DLL by default (unlike Mach-O/ELF),
       # so export the kkemu_* FFI entry points; and link the Windows CSPRNG
       # (bcrypt, BCryptGenRandom) used by setup.c / rng.c on _WIN32.
-      list(JOIN FIRMWARE_LIBS "," _kk_fw_group)
-      target_link_libraries(kkemulator_dylib "$<LINK_GROUP:RESCAN,${_kk_fw_group}>" bcrypt)
+      target_link_libraries(kkemulator_dylib
+          -Wl,--start-group ${FIRMWARE_LIBS} -Wl,--end-group bcrypt)
       target_link_options(kkemulator_dylib PRIVATE "-Wl,--export-all-symbols")
     else()
       target_link_libraries(kkemulator_dylib ${FIRMWARE_LIBS})

@@ -25,6 +25,10 @@
 #else
 #include <signal.h>
 #include <unistd.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN  /* exclude winsock.h — it declares shutdown(SOCKET,int) */
+#include <windows.h>         /* Sleep() */
+#endif
 #endif
 
 #include "keepkey/board/keepkey_board.h"
@@ -288,8 +292,21 @@ void delay_us(uint32_t us) {
 void delay_ms(uint32_t ms) {
   remaining_delay = ms;
 
+#ifdef _WIN32
+  /* No async SIGALRM timer on Windows, and kkemu_poll() drives timerisr_usr()
+   * only once per poll — so a plain spin here would never make progress when
+   * delay_ms() is reached from inside usbPoll() (e.g. PIN/U2F/authenticator
+   * flows). Advance the tick ourselves from wall-clock Sleep instead. Keeps
+   * timeSinceWakeup + the runnable queue moving exactly like the SIGALRM path,
+   * and stays single-threaded (no data races). */
+  while (remaining_delay > 0) {
+    Sleep(1);
+    timerisr_usr();
+  }
+#else
   while (remaining_delay > 0) {
   }
+#endif
 }
 
 /*
@@ -311,6 +328,12 @@ void delay_ms_with_callback(uint32_t ms, callback_func_t callback_func,
     if (remaining_delay % frequency_ms == 0) {
       (*callback_func)();
     }
+#ifdef _WIN32
+    /* See delay_ms(): drive the tick from wall-clock Sleep on Windows so this
+     * loop terminates when reached from inside usbPoll(). */
+    Sleep(1);
+    timerisr_usr();
+#endif
   }
 }
 
