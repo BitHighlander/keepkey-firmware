@@ -25,7 +25,8 @@
 #include <string.h>
 #include <errno.h>
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN  /* exclude winsock.h — it declares shutdown(SOCKET,int) */
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
 #include <windows.h>
 #else
 #include <sys/mman.h>

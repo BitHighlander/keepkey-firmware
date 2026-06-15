@@ -26,7 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN  /* exclude winsock.h — it declares shutdown(SOCKET,int) */
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
 #include <windows.h>
 #include <bcrypt.h>
 #else
@@ -37,11 +38,12 @@
 
 #define EMULATOR_FLASH_FILE "emulator.img"
 
-/* __stack_chk_guard is defined once in lib/board/keepkey_board.c (as uintptr_t).
- * It used to be redefined here as uint32_t, which is (a) the wrong size on
- * 64-bit hosts and (b) a duplicate strong symbol. Apple's ld silently merged
- * the two; GNU/MinGW ld rejects it ("multiple definition"), which blocked the
- * Linux .so and Windows .dll builds. Removed — the board copy is canonical. */
+/* __stack_chk_guard is defined once in lib/board/keepkey_board.c (as
+ * uintptr_t). It used to be redefined here as uint32_t, which is (a) the wrong
+ * size on 64-bit hosts and (b) a duplicate strong symbol. Apple's ld silently
+ * merged the two; GNU/MinGW ld rejects it ("multiple definition"), which
+ * blocked the Linux .so and Windows .dll builds. Removed — the board copy is
+ * canonical. */
 
 static int urandom = -1;
 
@@ -117,4 +119,5 @@ static void setup_flash(void) {
     memset(emulator_flash_base, 0xff, FLASH_TOTAL_SIZE);
   }
 }
-#endif /* !_WIN32 — setup_flash is standalone-UDP only; the dylib/DLL host owns flash */
+#endif /* !_WIN32 — setup_flash is standalone-UDP only; the dylib/DLL host \
+          owns flash */

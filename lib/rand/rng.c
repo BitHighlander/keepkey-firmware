@@ -28,7 +28,8 @@
 #endif
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN  /* exclude winsock.h — it declares shutdown(SOCKET,int) */
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
 #include <stdlib.h>
 #include <windows.h>
 #include <bcrypt.h>
@@ -88,7 +89,7 @@ uint32_t random32(void) {
   /* Windows has no POSIX random(); use the system CSPRNG (stronger than the
    * macOS/Linux emulator's random() PRNG anyway). Resolves via the bcrypt link
    * on kkemulator_dylib (tools/emulator/CMakeLists.txt). */
-  uint32_t v;
+  uint32_t v = 0;
   if (BCryptGenRandom(NULL, (PUCHAR)&v, (ULONG)sizeof(v),
                       BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
     abort();
@@ -116,14 +117,14 @@ void random_buffer(uint8_t *buf, size_t len) {
 #endif
 
 // I miss C++ templates sooo bad.
-#define RANDOM_PERMUTE(BUFF, COUNT)           \
-  do {                                        \
-    for (size_t i = (COUNT)-1; i >= 1; i--) { \
-      size_t j = random_uniform(i + 1);       \
-      typeof(*(BUFF)) t = (BUFF)[j];          \
-      (BUFF)[j] = (BUFF)[i];                  \
-      (BUFF)[i] = t;                          \
-    }                                         \
+#define RANDOM_PERMUTE(BUFF, COUNT)             \
+  do {                                          \
+    for (size_t i = (COUNT) - 1; i >= 1; i--) { \
+      size_t j = random_uniform(i + 1);         \
+      typeof(*(BUFF)) t = (BUFF)[j];            \
+      (BUFF)[j] = (BUFF)[i];                    \
+      (BUFF)[i] = t;                            \
+    }                                           \
   } while (0)
 
 void random_permute_char(char *str, size_t len) { RANDOM_PERMUTE(str, len); }

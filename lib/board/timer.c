@@ -26,8 +26,9 @@
 #include <signal.h>
 #include <unistd.h>
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN  /* exclude winsock.h — it declares shutdown(SOCKET,int) */
-#include <windows.h>         /* Sleep() */
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
+#include <windows.h>        /* Sleep() */
 #endif
 #endif
 
@@ -238,7 +239,8 @@ void timer_init(void) {
   signal(SIGALRM, tim4_sighandler);
   ualarm(1000, 1000);
 #endif
-  /* _WIN32: no SIGALRM/ualarm — libkkemu's kkemu_poll() drives timerisr_usr(). */
+  /* _WIN32: no SIGALRM/ualarm — libkkemu's kkemu_poll() drives timerisr_usr().
+   */
 }
 
 uint32_t fi_defense_delay(volatile uint32_t value) {

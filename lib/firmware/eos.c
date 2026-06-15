@@ -535,6 +535,8 @@ bool eos_signTx(EosSignedTx* tx) {
   time_t expiry = header.expiration;
   char expiry_str[26];
 #ifdef _WIN32
+  // asctime_s is the bounds-checked Windows variant; output truncated below.
+  // cppcheck-suppress asctime_sCalled
   asctime_s(expiry_str, sizeof(expiry_str), gmtime(&expiry));
 #else
   asctime_r(gmtime(&expiry), expiry_str);
