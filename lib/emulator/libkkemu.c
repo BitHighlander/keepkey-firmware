@@ -30,10 +30,43 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <pthread.h>
+#include <time.h>
 #endif
 
 /* Defined in firmware — we just need the declaration */
 extern void fsm_init(void);
+
+/* ── Poll thread (Approach B: reactive confirm) ──────────────────────────
+ *
+ * Optional: the host calls kkemu_start() to run the firmware event loop on a
+ * dedicated thread inside the dylib. This lets confirm_helper's blocking C
+ * busy-loop wait for a button decision IN C without freezing the host's event
+ * loop — so the vault can render the real OLED confirm frame, HOLD it, and
+ * deliver the DebugLinkDecision only when the user clicks (screen-first gating,
+ * like a physical device).
+ *
+ * Only the poll thread ever drives firmware execution (kkemu_poll_body). The
+ * host interacts solely through the lock-free SPSC rings (kkemu_write/read,
+ * kkemu_pop_frame). g_fw_lock serializes the poll body against host-side flash
+ * snapshots (kkemu_lock/unlock) so storage_commit can't tear a saveFlash read.
+ *
+ * When the thread is NOT started (g_poll_running == 0) the dylib stays purely
+ * single-threaded and host-driven via kkemu_poll() — exactly as the FFI test
+ * suite and python-keepkey tests use it. The lock helpers no-op in that mode.
+ */
+#ifdef _WIN32
+static CRITICAL_SECTION g_fw_lock;
+static HANDLE g_poll_thread = NULL;
+#define FW_LOCK() EnterCriticalSection(&g_fw_lock)
+#define FW_UNLOCK() LeaveCriticalSection(&g_fw_lock)
+#else
+static pthread_mutex_t g_fw_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t g_poll_thread;
+#define FW_LOCK() pthread_mutex_lock(&g_fw_lock)
+#define FW_UNLOCK() pthread_mutex_unlock(&g_fw_lock)
+#endif
+static volatile int g_poll_running = 0;
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
@@ -213,6 +246,11 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
 void kkemu_shutdown(void) {
   if (!libkkemu_initialized) return;
 
+  /* Stop + join the poll thread FIRST so nothing drives firmware execution
+   * while we commit storage and zero the rings below (idempotent if the host
+   * never started the thread). */
+  kkemu_stop();
+
   /* Flush any pending storage to the flash buffer */
   storage_commit();
 
@@ -278,33 +316,144 @@ int kkemu_read(uint8_t* buf, size_t len, int iface) {
   return ringbuf_pop(rb, buf, KKEMU_PACKET_SIZE) ? KKEMU_PACKET_SIZE : 0;
 }
 
-int kkemu_poll(void) {
-  if (!libkkemu_initialized) return -1;
-
-  /*
-   * This is the same as exec() in main.cpp:
-   *   usbPoll()       — reads input, dispatches through FSM
-   *   animate()        — updates screen animations
-   *   display_refresh() — renders framebuffer
-   *
-   * usbPoll() internally calls emulatorSocketRead() which we've
-   * replaced with libkkemu_socketRead() via the ring buffers.
-   */
-  /* Drive the firmware millisecond timer from the host poll on EVERY platform.
-   * The dylib is caller-driven; relying on the SIGALRM/ualarm timer (which the
-   * standalone kkemu binary uses) is unreliable inside the host runtime — Bun
-   * does not deliver the firmware's SIGALRM, so animate_flag never flips and
-   * every animation (boot logo, screensaver) stays frozen → a blank OLED at
-   * rest. Tick ~one poll-interval of milliseconds so the periodic animation
-   * runnable fires and animations + delay_ms() advance at roughly real speed.
-   */
+/*
+ * One iteration of the firmware event loop. Same as exec() in main.cpp:
+ *   usbPoll()        — reads input, dispatches through FSM
+ *   animate()        — updates screen animations
+ *   display_refresh() — renders framebuffer
+ *
+ * usbPoll() internally calls emulatorSocketRead() which we've replaced with
+ * libkkemu_socketRead() via the ring buffers.
+ *
+ * Drive the firmware millisecond timer from the poll on EVERY platform. The
+ * dylib is caller-driven; relying on the SIGALRM/ualarm timer (which the
+ * standalone kkemu binary uses) is unreliable inside the host runtime — Bun
+ * does not deliver the firmware's SIGALRM, so animate_flag never flips and
+ * every animation (boot logo, screensaver) stays frozen → a blank OLED at
+ * rest. Tick ~one poll-interval of milliseconds so the periodic animation
+ * runnable fires and animations + delay_ms() advance at roughly real speed.
+ */
+static void kkemu_poll_body(void) {
   for (int t = 0; t < KKEMU_POLL_INTERVAL_MS; t++) timerisr_usr();
 
   usbPoll();
   animate();
   display_refresh();
+}
 
+int kkemu_poll(void) {
+  if (!libkkemu_initialized) return -1;
+  /* When the poll thread owns execution, the host must not also poll —
+   * that would be two threads driving the single-threaded firmware core.
+   * Treat a stray host poll as a no-op rather than a data race. */
+  if (g_poll_running) return 0;
+  kkemu_poll_body();
   return 0;
+}
+
+static void kkemu_sleep_ms(int ms) {
+#ifdef _WIN32
+  Sleep((DWORD)ms);
+#else
+  struct timespec ts = {ms / 1000, (long)(ms % 1000) * 1000000L};
+  nanosleep(&ts, NULL);
+#endif
+}
+
+/* The poll thread holds g_fw_lock across each body call. While confirm_helper
+ * busy-waits for a decision the body does not return, so the lock is held for
+ * the whole confirm — that is fine: the host delivers the decision through the
+ * lock-free rings (no lock needed), and host flash snapshots only happen
+ * BETWEEN operations, never during a pending confirm. */
+static void kkemu_poll_loop(void) {
+  while (g_poll_running) {
+    FW_LOCK();
+    if (g_poll_running) kkemu_poll_body();
+    FW_UNLOCK();
+    kkemu_sleep_ms(KKEMU_POLL_INTERVAL_MS);
+  }
+}
+
+#ifdef _WIN32
+static DWORD WINAPI kkemu_poll_thread_fn(LPVOID arg) {
+  (void)arg;
+  kkemu_poll_loop();
+  return 0;
+}
+#else
+static void* kkemu_poll_thread_fn(void* arg) {
+  (void)arg;
+  kkemu_poll_loop();
+  return NULL;
+}
+#endif
+
+/* Push a Cancel (MessageType 20) into the main input ring so a confirm_helper
+ * blocked on the poll thread reads it, returns false, and lets the thread exit
+ * its loop — otherwise kkemu_stop() would join a thread parked forever waiting
+ * for a button decision that will never arrive. */
+static void kkemu_inject_cancel(void) {
+  uint8_t frame[KKEMU_PACKET_SIZE];
+  memset(frame, 0, sizeof(frame));
+  frame[0] = 0x3F; /* '?' HID report marker */
+  frame[1] = 0x23; /* '#' */
+  frame[2] = 0x23; /* '#' */
+  frame[3] = 0x00; /* MessageType_Cancel high */
+  frame[4] = 0x14; /* MessageType_Cancel low (20) */
+  /* payload length 0 (bytes 5-8 already zero) */
+  ringbuf_push(&rb_main_in, frame, sizeof(frame));
+}
+
+int kkemu_start(void) {
+  if (!libkkemu_initialized) return -1;
+  if (g_poll_running) return 0; /* idempotent */
+
+  g_poll_running = 1;
+#ifdef _WIN32
+  InitializeCriticalSection(&g_fw_lock);
+  g_poll_thread = CreateThread(NULL, 0, kkemu_poll_thread_fn, NULL, 0, NULL);
+  if (!g_poll_thread) {
+    g_poll_running = 0;
+    DeleteCriticalSection(&g_fw_lock);
+    return -1;
+  }
+#else
+  if (pthread_create(&g_poll_thread, NULL, kkemu_poll_thread_fn, NULL) != 0) {
+    g_poll_running = 0;
+    return -1;
+  }
+#endif
+  return 0;
+}
+
+void kkemu_stop(void) {
+  if (!g_poll_running) return;
+
+  g_poll_running = 0;
+  /* Unblock any confirm_helper currently parked on the thread, then join. */
+  kkemu_inject_cancel();
+#ifdef _WIN32
+  if (g_poll_thread) {
+    WaitForSingleObject(g_poll_thread, INFINITE);
+    CloseHandle(g_poll_thread);
+    g_poll_thread = NULL;
+  }
+  DeleteCriticalSection(&g_fw_lock);
+#else
+  pthread_join(g_poll_thread, NULL);
+#endif
+}
+
+/* Host-side guard for reading the shared flash buffer (saveFlash) without
+ * tearing a concurrent storage_commit on the poll thread. No-op when the
+ * thread isn't running (single-threaded test path needs no lock, and on
+ * Windows the CRITICAL_SECTION only exists between start and stop). */
+void kkemu_lock(void) {
+  if (g_poll_running) FW_LOCK();
+}
+
+void kkemu_unlock(void) {
+  if (g_poll_running) FW_UNLOCK();
 }
 
 const uint8_t* kkemu_get_display(int* width, int* height) {
