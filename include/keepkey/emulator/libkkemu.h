@@ -3,7 +3,16 @@
  *
  * The host process provides a pre-allocated 1MB flash buffer.
  * All I/O goes through ring buffers (no UDP sockets).
- * Single-threaded: call kkemu_poll() from your event loop.
+ *
+ * Two drive modes:
+ *   - Host-driven (default): call kkemu_poll() from your event loop. Purely
+ *     single-threaded — used by the FFI/python test harnesses.
+ *   - Thread-driven: call kkemu_start() once after kkemu_init() and let a
+ *     dedicated dylib thread own the event loop. Required for screen-first
+ *     confirm gating (confirm_helper can block in C without freezing the host
+ *     event loop). The host then never calls kkemu_poll(); it interacts only
+ *     through the lock-free rings (kkemu_write/read/pop_frame) and brackets
+ *     flash snapshots with kkemu_lock()/kkemu_unlock().
  */
 #ifndef LIBKKEMU_H
 #define LIBKKEMU_H
@@ -114,6 +123,33 @@ int kkemu_pop_frame(uint8_t* out_packed);
  * Check if the emulator has been initialized.
  */
 int kkemu_is_running(void);
+
+/**
+ * Start the dedicated poll thread (thread-driven mode).
+ *
+ * After this returns 0, a dylib-internal thread owns the firmware event loop
+ * and the host MUST NOT call kkemu_poll() anymore. Idempotent. Requires
+ * kkemu_init() to have succeeded.
+ *
+ * @return 0 on success (or already started), -1 on error.
+ */
+int kkemu_start(void);
+
+/**
+ * Stop + join the poll thread. Injects a Cancel first so a confirm_helper
+ * parked waiting for a button decision unblocks and the thread can exit.
+ * Idempotent; a no-op if the thread was never started. kkemu_shutdown()
+ * calls this automatically.
+ */
+void kkemu_stop(void);
+
+/**
+ * Bracket a host-side read of the flash buffer (e.g. before encrypting and
+ * persisting it) so it can't tear a concurrent storage_commit() on the poll
+ * thread. No-op in host-driven mode. Must be balanced with kkemu_unlock().
+ */
+void kkemu_lock(void);
+void kkemu_unlock(void);
 
 #ifdef __cplusplus
 }
