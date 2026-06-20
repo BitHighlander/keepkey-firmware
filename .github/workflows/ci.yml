@@ -669,6 +669,47 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
+      # Uses the MinGW-w64 toolchain (cmake/toolchains/mingw-w64-x86_64.cmake)
+      # so no Windows runner is needed. Non-blocking: a cross-build regression
+      # must not fail the macOS dylib path or the screenshot tests above. The
+      # publish-dylib job tolerates a missing Windows artifact.
+      - name: Install MinGW-w64
+        if: always()
+        continue-on-error: true
+        run: brew install mingw-w64
+
+      - name: Cross-build Windows emulator DLL
+        id: win-dll
+        if: always()
+        continue-on-error: true
+        run: |
+          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          NANOPB_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')"
+          NANOPB_PLUGIN="$(command -v protoc-gen-nanopb)"
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64-x86_64.cmake \
+            -DKK_EMULATOR=1 \
+            -DKK_BUILD_DYLIB=1 \
+            -DKK_DEBUG_LINK=ON \
+            -DNANOPB_DIR="$NANOPB_DIR" \
+            -DNANOPB_PLUGIN="$NANOPB_PLUGIN" \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -B build-emu-win .
+          cmake --build build-emu-win --target kkemulator_dylib -j$(sysctl -n hw.ncpu)
+          DLL=$(find build-emu-win -name 'libkkemu.dll' | head -1)
+          test -f "$DLL" || (echo "::warning::libkkemu.dll not produced by cross-build" && exit 1)
+          echo "WIN_DLL_PATH=$(pwd)/$DLL" >> $GITHUB_ENV
+
+      - name: Upload libkkemu.dll
+        if: always() && env.WIN_DLL_PATH != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: libkkemu-win-x64-${{ github.sha }}
+          path: ${{ env.WIN_DLL_PATH }}
+          retention-days: 30
+          if-no-files-found: error
+
   # ═══════════════════════════════════════════════════════════
   # STAGE 3b: TEST REPORT — generate PDF from test artifacts
   # ═══════════════════════════════════════════════════════════
@@ -776,3 +817,77 @@ jobs:
         run: |
           docker push kktech/kkemu:latest
           docker push kktech/kkemu:v${{ steps.version.outputs.fw_version }}
+
+  # ═══════════════════════════════════════════════════════════
+  # STAGE 4b: PUBLISH DYLIB — rolling release of the emulator
+  # native libraries (macOS arm64 .dylib + Windows x64 .dll) so
+  # downstream consumers (vault native-emulator / OLED preview)
+  # have a stable download URL instead of scraping per-run,
+  # 30-day-retention CI artifacts. Mirrors the vault electrobun
+  # x64-core pattern: a single rolling prerelease tag updated on
+  # every alpha push.
+  # ═══════════════════════════════════════════════════════════
+  publish-dylib:
+    needs: [python-dylib-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/alpha'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download macOS dylib
+        uses: actions/download-artifact@v4
+        with:
+          name: libkkemu-${{ github.sha }}
+          path: dylib-macos
+
+      - name: Download Windows DLL
+        # Tolerant: the Windows cross-build is non-blocking in
+        # python-dylib-tests, so this artifact may be absent.
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: libkkemu-win-x64-${{ github.sha }}
+          path: dylib-win
+
+      - name: Stage release assets
+        run: |
+          FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+')
+          mkdir -p release-dylib
+          # Stable asset names → stable download URLs for downstream.
+          if [ -f dylib-macos/libkkemu.dylib ]; then
+            cp dylib-macos/libkkemu.dylib release-dylib/libkkemu-macos-arm64.dylib
+          fi
+          if [ -f dylib-win/libkkemu.dll ]; then
+            cp dylib-win/libkkemu.dll release-dylib/libkkemu-win-x64.dll
+          fi
+          # Traceability — which firmware/commit these binaries correspond to.
+          {
+            echo "firmware_version=${FW_VERSION}"
+            echo "commit=${GITHUB_SHA}"
+            echo "branch=${GITHUB_REF_NAME}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > release-dylib/VERSION.txt
+          echo "=== Assets ===" && ls -lh release-dylib/
+          test -f release-dylib/libkkemu-macos-arm64.dylib || \
+            (echo "::error::macOS dylib missing — nothing to publish" && exit 1)
+
+      - name: Publish to rolling prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: emulator-dylib-latest
+          name: "Emulator dylib (latest alpha)"
+          body: |
+            Rolling build of the KeepKey emulator native libraries from `alpha`.
+
+            - `libkkemu-macos-arm64.dylib` — macOS Apple Silicon
+            - `libkkemu-win-x64.dll` — Windows x86_64 (MinGW cross-build; may be absent if the cross-build failed)
+            - `VERSION.txt` — firmware version + commit these correspond to
+
+            Updated automatically on every push to `alpha`. Not a signed firmware release.
+          prerelease: true
+          files: release-dylib/*
+          fail_on_unmatched_files: true
