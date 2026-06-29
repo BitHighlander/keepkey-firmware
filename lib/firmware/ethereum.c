@@ -280,6 +280,19 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
+
+  /* Insight clear-signing binding. If a verified metadata blob suppressed the
+   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
+   * metadata committed to. This is the first point that digest exists, so the
+   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
+   * never emit a signature the displayed decoded screen did not cover. */
+  if (!signed_metadata_enforce(hash)) {
+    fsm_sendFailure(FailureType_Failure_DataError,
+                    "Metadata does not match signed transaction");
+    ethereum_signing_abort();
+    return;
+  }
+
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
@@ -722,22 +735,26 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   // Signed metadata clear signing (backwards compatible).
   // Only fires if host sent EthereumTxMetadata before this EthereumSignTx.
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
-    if (signed_metadata_matches_tx(msg, NULL)) {
+    if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
+        // Decoded who/what/why approved; raw-data confirm is suppressed. The
+        // signature is bound to this metadata's tx hash in send_signature().
         needs_confirm = false;
         data_needs_confirm = false;
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         "Signing cancelled by user");
-        ethereum_signing_abort();
-        signed_metadata_clear();
+        ethereum_signing_abort();  // clears metadata
         return;
       }
     }
   }
-  // Always clear metadata after use — prevents stale data from persisting
-  // when contractHandled or ERC-20 paths bypass the metadata check above.
-  signed_metadata_clear();
+  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
+  // (then it must survive to bind the signature). Prevents stale reuse when the
+  // contractHandled / ERC-20 paths bypass the metadata check above.
+  if (!signed_metadata_relied()) {
+    signed_metadata_clear();
+  }
 
   // detect ERC-20 token
   if (data_total == 68 && ethereum_isStandardERC20Transfer(msg)) {
@@ -956,6 +973,7 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 void ethereum_signing_abort(void) {
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
+    signed_metadata_clear();
     layoutHome();
     ethereum_signing = false;
   }

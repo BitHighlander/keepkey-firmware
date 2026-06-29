@@ -54,9 +54,22 @@ void signed_metadata_clear(void);
 MetadataClassification signed_metadata_process(const uint8_t *payload,
                                               size_t payload_len,
                                               uint8_t key_id);
-bool signed_metadata_matches_tx(const EthereumSignTx *msg,
-                                const uint8_t *tx_hash);
+/* Display gate: does this metadata plausibly describe `msg`? Binds contract
+ * address, selector and chain id so the wrong method is never shown. The
+ * authoritative full-tx binding is enforced later by signed_metadata_enforce(). */
+bool signed_metadata_matches_tx(const EthereumSignTx *msg);
 bool signed_metadata_confirm(void);
+
+/* True once a verified confirm has suppressed the raw-data confirmation, i.e.
+ * the signature is now gated on the metadata matching the final tx hash. */
+bool signed_metadata_relied(void);
+
+/* Authoritative binding, called after the real Ethereum sighash is finalized
+ * (in send_signature, the only point it exists). Returns true if signing may
+ * proceed: either no metadata was relied upon, or the relied-upon metadata's
+ * committed tx_hash equals `hash`. Fail-closed on any mismatch. */
+bool signed_metadata_enforce(const uint8_t hash[32]);
+
 const SignedMetadata *signed_metadata_get(void);
 
 #endif

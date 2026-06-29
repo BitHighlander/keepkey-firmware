@@ -16,6 +16,7 @@
 #define _(X) (X)
 
 static bool metadata_available = false;
+static bool relied_on_metadata = false;
 static SignedMetadata stored_metadata;
 
 /*
@@ -193,6 +194,7 @@ bool signed_metadata_available(void) { return metadata_available; }
 void signed_metadata_clear(void) {
   memzero(&stored_metadata, sizeof(stored_metadata));
   metadata_available = false;
+  relied_on_metadata = false;
 }
 
 MetadataClassification signed_metadata_process(const uint8_t *payload,
@@ -227,8 +229,7 @@ MetadataClassification signed_metadata_process(const uint8_t *payload,
   return stored_metadata.classification;
 }
 
-bool signed_metadata_matches_tx(const EthereumSignTx *msg,
-                                const uint8_t *tx_hash) {
+bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
   if (!metadata_available || !msg ||
       stored_metadata.classification != METADATA_VERIFIED ||
       msg->to.size != sizeof(stored_metadata.contract_address) ||
@@ -253,15 +254,10 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg,
     return false;
   }
 
-  /* tx_hash binding — optional in phase 1 (NULL = skip check).
-   * Full tx_hash verification requires pre-computing keccak before
-   * confirmation screens, which is a phase 2 change. */
-  if (tx_hash != NULL &&
-      memcmp(stored_metadata.tx_hash, tx_hash,
-             sizeof(stored_metadata.tx_hash)) != 0) {
-    return false;
-  }
-
+  /* This only gates what we DISPLAY (so a benign-looking method screen can't
+   * be shown for the wrong call). The metadata commits to the full tx hash;
+   * that is enforced against the real signed digest in signed_metadata_enforce()
+   * because the digest does not exist until send_signature() finalizes it. */
   return true;
 }
 
@@ -347,7 +343,24 @@ bool signed_metadata_confirm(void) {
     }
   }
 
+  /* User approved the decoded who/what/why. From here the raw-data confirm is
+   * suppressed, so the signature MUST be bound to this metadata's tx hash. */
+  relied_on_metadata = true;
   return true;
+}
+
+bool signed_metadata_relied(void) { return relied_on_metadata; }
+
+bool signed_metadata_enforce(const uint8_t hash[32]) {
+  if (!relied_on_metadata) {
+    return true; /* signature was not gated by metadata */
+  }
+  /* Fail closed: relied on metadata but it's gone, not verified, or the signed
+   * digest differs from what was displayed → refuse to emit a signature. */
+  return hash != NULL && metadata_available &&
+         stored_metadata.classification == METADATA_VERIFIED &&
+         memcmp(stored_metadata.tx_hash, hash,
+                sizeof(stored_metadata.tx_hash)) == 0;
 }
 
 const SignedMetadata *signed_metadata_get(void) {
