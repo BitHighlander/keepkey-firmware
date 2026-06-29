@@ -52,11 +52,12 @@ typedef struct {
 bool signed_metadata_available(void);
 void signed_metadata_clear(void);
 MetadataClassification signed_metadata_process(const uint8_t *payload,
-                                              size_t payload_len,
-                                              uint8_t key_id);
+                                               size_t payload_len,
+                                               uint8_t key_id);
 /* Display gate: does this metadata plausibly describe `msg`? Binds contract
  * address, selector and chain id so the wrong method is never shown. The
- * authoritative full-tx binding is enforced later by signed_metadata_enforce(). */
+ * authoritative full-tx binding is enforced later by signed_metadata_enforce().
+ */
 bool signed_metadata_matches_tx(const EthereumSignTx *msg);
 bool signed_metadata_confirm(void);
 

@@ -36,8 +36,7 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
 
   switch (result) {
     case METADATA_VERIFIED:
-      strlcpy(resp->display_summary, "Verified",
-              sizeof(resp->display_summary));
+      strlcpy(resp->display_summary, "Verified", sizeof(resp->display_summary));
       break;
     case METADATA_OPAQUE:
       strlcpy(resp->display_summary, "Unverified",
@@ -45,8 +44,7 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
       break;
     case METADATA_MALFORMED:
     default:
-      strlcpy(resp->display_summary, "Invalid",
-              sizeof(resp->display_summary));
+      strlcpy(resp->display_summary, "Invalid", sizeof(resp->display_summary));
       break;
   }
 

@@ -331,8 +331,9 @@ bool confirm_with_icon(ButtonRequestType type, IconType iconNum,
   resp.code = type;
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
-  bool ret = confirm_helper(request_title, strbuf, &layout_standard_notification,
-                            false, iconNum, false);
+  bool ret =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, iconNum, false);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }

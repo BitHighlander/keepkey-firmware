@@ -83,8 +83,8 @@ static bool read_be_u32(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_bytes(const uint8_t **cursor, const uint8_t *end,
-                       uint8_t *out, size_t size) {
+static bool read_bytes(const uint8_t **cursor, const uint8_t *end, uint8_t *out,
+                       size_t size) {
   if ((size_t)(end - *cursor) < size) {
     return false;
   }
@@ -198,8 +198,8 @@ void signed_metadata_clear(void) {
 }
 
 MetadataClassification signed_metadata_process(const uint8_t *payload,
-                                              size_t payload_len,
-                                              uint8_t key_id) {
+                                               size_t payload_len,
+                                               uint8_t key_id) {
   uint8_t digest[32];
   size_t signed_len;
 
@@ -256,8 +256,9 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
 
   /* This only gates what we DISPLAY (so a benign-looking method screen can't
    * be shown for the wrong call). The metadata commits to the full tx hash;
-   * that is enforced against the real signed digest in signed_metadata_enforce()
-   * because the digest does not exist until send_signature() finalizes it. */
+   * that is enforced against the real signed digest in
+   * signed_metadata_enforce() because the digest does not exist until
+   * send_signature() finalizes it. */
   return true;
 }
 
@@ -279,7 +280,8 @@ bool signed_metadata_confirm(void) {
   }
 
   /* Screen 2: Contract address — ALWAYS show full address, never truncate.
-   * Truncation is a spoofing vector (attacker crafts matching prefix+suffix). */
+   * Truncation is a spoofing vector (attacker crafts matching prefix+suffix).
+   */
   char contract_addr[43] = "0x";
   ethereum_address_checksum(stored_metadata.contract_address, contract_addr + 2,
                             false, stored_metadata.chain_id);
@@ -308,16 +310,19 @@ bool signed_metadata_confirm(void) {
       }
       case ARG_FORMAT_AMOUNT: {
         bignum256 amount;
-        char formatted[48];
         bn_from_metadata_bytes(arg->value, arg->value_len, &amount);
         /* Check for MAX_UINT256 (unlimited approval) */
         bool is_max = true;
         for (uint16_t j = 0; j < arg->value_len; j++) {
-          if (arg->value[j] != 0xFF) { is_max = false; break; }
+          if (arg->value[j] != 0xFF) {
+            is_max = false;
+            break;
+          }
         }
         if (is_max && arg->value_len == 32) {
           snprintf(body, sizeof(body), "%s:\nUNLIMITED", arg->name);
         } else {
+          char formatted[48];
           bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
                     sizeof(formatted));
           snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
@@ -328,8 +333,7 @@ bool signed_metadata_confirm(void) {
       case ARG_FORMAT_RAW:
       default: {
         char hex[(METADATA_MAX_ARG_VALUE_LEN * 2) + 1];
-        size_t display_len =
-            arg->value_len > 16 ? 16 : (size_t)arg->value_len;
+        size_t display_len = arg->value_len > 16 ? 16 : (size_t)arg->value_len;
         data2hex(arg->value, display_len, hex);
         snprintf(body, sizeof(body), "%s:\n%s%s", arg->name, hex,
                  arg->value_len > 16 ? "..." : "");
