@@ -44,7 +44,8 @@ bool zx_isZxTransformERC20(const EthereumSignTx* msg) {
 }
 
 bool zx_confirmZxTransERC20(uint32_t data_total, const EthereumSignTx* msg) {
-  (void)data_total;
+  /* reads selector + 4 32-byte words (in/out token, in/out amount) */
+  if (data_total < 4 + 4 * 32) return false;
   const TokenType *in, *out;
   const uint8_t *inAddress, *outAddress;
   char constr1[40], constr2[40];

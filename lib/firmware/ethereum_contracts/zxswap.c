@@ -44,7 +44,10 @@ bool zx_isZxSwap(const EthereumSignTx* msg) {
 }
 
 bool zx_confirmZxSwap(uint32_t data_total, const EthereumSignTx* msg) {
-  (void)data_total;
+  /* fixed reads run through the fromAddress word at offset 4 + 5*32 + 12 .. +20
+   * (== 4 + 6*32); the toAddress word is bounds-checked below once its
+   * position is known from numOfTokens. */
+  if (data_total < 4 + 6 * 32) return false;
   const TokenType *from, *to;
   const uint8_t *fromAddress, *toAddress;
   char constr1[40], constr2[40];
@@ -70,6 +73,9 @@ bool zx_confirmZxSwap(uint32_t data_total, const EthereumSignTx* msg) {
       return false;
       break;
   }
+
+  /* toAddress word ends at offset 4 + (6 + adder + 1) * 32 */
+  if (data_total < 4 + (7 + adder) * 32) return false;
 
   fromAddress =
       (const uint8_t*)(msg->data_initial_chunk.bytes + 4 + 5 * 32 + 12);
