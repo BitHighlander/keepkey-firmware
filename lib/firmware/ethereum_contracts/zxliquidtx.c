@@ -91,23 +91,29 @@ static bool confirmFromAccountMatch(const EthereumSignTx* msg,
 
   if (!hdnode_get_ethereum_pubkeyhash(node, addressBytes)) {
     memzero(node, sizeof(*node));
+    return false;
   }
 
   fromAddress =
       (const uint8_t*)(msg->data_initial_chunk.bytes + 4 + 5 * 32 - 20);
 
-  if (memcmp(fromAddress, addressBytes, 20) == 0) {
-    fromSrc = "self";
-  } else {
-    fromSrc = "NOT this wallet";
-  }
+  bool isSelf = (memcmp(fromAddress, addressBytes, 20) == 0);
+  fromSrc = isSelf ? "this wallet" : "NOT this wallet";
 
   for (uint32_t ctr = 0; ctr < 20; ctr++) {
     snprintf(&addressStr[2 + ctr * 2], 3, "%02x", fromAddress[ctr]);
   }
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, addremStr,
-               "Confirming ETH address is %s: %s", fromSrc, addressStr)) {
+               "Liquidity recipient is %s: %s", fromSrc, addressStr)) {
+    return false;
+  }
+
+  /* Fail closed: the liquidity/LP recipient (the `to` parameter) must be the
+   * signer's own address. Previously a non-self recipient only produced a soft
+   * "NOT this wallet" warning that the user could click through, letting LP
+   * tokens / withdrawn ETH be routed to an attacker. */
+  if (!isSelf) {
     return false;
   }
   return true;
