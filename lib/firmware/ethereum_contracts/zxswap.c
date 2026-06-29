@@ -48,6 +48,18 @@ bool zx_confirmZxSwap(uint32_t data_total, const EthereumSignTx* msg) {
    * (== 4 + 6*32); the toAddress word is bounds-checked below once its
    * position is known from numOfTokens. */
   if (data_total < 4 + 6 * 32) return false;
+
+  /* The first head word is the ABI offset pointer to the dynamic `tokens[]`
+   * array. We read numOfTokens / tokens[] at FIXED offsets that are only
+   * correct when this pointer is canonical (0x80 = 4 head words). If it is
+   * not, the Solidity decoder follows it elsewhere, so what we display would
+   * differ from what executes (a drain via display/execution mismatch). Reject
+   * the non-canonical encoding -> falls through to the blind-sign path. */
+  static const uint8_t TOKENS_OFFSET_CANON[32] = {[31] = 0x80};
+  if (memcmp(msg->data_initial_chunk.bytes + 4, TOKENS_OFFSET_CANON, 32) != 0) {
+    return false;
+  }
+
   const TokenType *from, *to;
   const uint8_t *fromAddress, *toAddress;
   char constr1[40], constr2[40];
