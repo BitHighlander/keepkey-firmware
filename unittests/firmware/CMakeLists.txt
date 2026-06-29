@@ -7,6 +7,7 @@ set(sources
     nano.cpp
     recovery.cpp
     ripple.cpp
+    signed_metadata.cpp
     solana.cpp
     storage.cpp
     thorchain.cpp

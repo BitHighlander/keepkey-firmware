@@ -33,6 +33,7 @@
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
@@ -294,6 +295,19 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
+
+  /* Insight clear-signing binding. If a verified metadata blob suppressed the
+   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
+   * metadata committed to. This is the first point that digest exists, so the
+   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
+   * never emit a signature the displayed decoded screen did not cover. */
+  if (!signed_metadata_enforce(hash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "Metadata does not match signed transaction");
+    ethereum_signing_abort();
+    return;
+  }
+
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
@@ -766,6 +780,30 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  // Signed metadata clear signing (backwards compatible).
+  // Only fires if host sent EthereumTxMetadata before this EthereumSignTx.
+  if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
+    if (signed_metadata_matches_tx(msg)) {
+      if (signed_metadata_confirm()) {
+        // Decoded who/what/why approved; raw-data confirm is suppressed. The
+        // signature is bound to this metadata's tx hash in send_signature().
+        needs_confirm = false;
+        data_needs_confirm = false;
+      } else {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        "Signing cancelled by user");
+        ethereum_signing_abort();  // clears metadata
+        return;
+      }
+    }
+  }
+  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
+  // (then it must survive to bind the signature). Prevents stale reuse when the
+  // contractHandled / ERC-20 paths bypass the metadata check above.
+  if (!signed_metadata_relied()) {
+    signed_metadata_clear();
+  }
+
   // detect ERC-20 token
   if (data_total == 68 && ethereum_isStandardERC20Transfer(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
@@ -811,15 +849,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
   if (token == NULL && data_total > 0 && data_needs_confirm) {
-    // KeepKey custom: warn the user that they're trying to do something
-    // that is potentially dangerous. People (generally) aren't great at
-    // parsing raw transaction data, and we can't effectively show them
-    // what they're about to do in the general case.
+    // AdvancedMode policy: hard gate for blind-signing arbitrary contract data
     if (!storage_isPolicyEnabled("AdvancedMode")) {
-      (void)review(
-          ButtonRequestType_ButtonRequest_Other, "Warning",
-          "Signing of arbitrary ETH contract data is recommended only for "
-          "experienced users. Enable 'AdvancedMode' policy to dismiss.");
+      (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                   "Blind signing requires AdvancedMode. "
+                   "Enable in device settings.");
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Blind signing disabled by policy");
+      ethereum_signing_abort();
+      return;
     }
 
     layoutEthereumData(msg->data_initial_chunk.bytes,
@@ -990,6 +1028,7 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 void ethereum_signing_abort(void) {
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
+    signed_metadata_clear();
     layoutHome();
     ethereum_signing = false;
   }
