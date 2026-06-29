@@ -483,6 +483,85 @@ static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   }
 }
 
+/* Compute the address a CREATE (contract-deployment) tx will deploy to:
+ * keccak256(rlp([sender, nonce]))[12:32]. Depends only on sender + nonce, both
+ * known at confirm time, so it works even when the init code is streamed in
+ * later chunks. The nonce is RLP-encoded as an integer (leading zeros
+ * stripped); payload is at most 1 + 20 + 1 + 32 = 54 bytes, so the list always
+ * fits a single-byte 0xc0+len header. */
+static bool ethereum_creation_address(const HDNode* node, const uint8_t* nonce,
+                                      size_t nonce_size, uint8_t out_addr[20]) {
+  uint8_t sender[20];
+  if (!hdnode_get_ethereum_pubkeyhash(node, sender)) {
+    return false;
+  }
+
+  size_t off = 0;
+  while (off < nonce_size && nonce[off] == 0) off++;  // strip leading zeros
+
+  /* rlp([sender, nonce]): reserve rlp[0] for the list header, fill the payload
+   * from index 1, then back-fill the header from the bytes actually written
+   * (payload is at most 1 + 20 + 1 + 32 = 54, so a single-byte 0xc0+len). */
+  uint8_t rlp[1 + 1 + 20 + 1 + 32];
+  size_t p = 1;
+  rlp[p++] = 0x80 + 20; /* 0x94 address header */
+  memcpy(rlp + p, sender, 20);
+  p += 20;
+  if (off == nonce_size) {
+    rlp[p++] = 0x80; /* empty integer (nonce 0) */
+  } else if (nonce_size - off == 1 && nonce[off] <= 0x7f) {
+    rlp[p++] = nonce[off]; /* single small byte, no header */
+  } else {
+    size_t len = nonce_size - off;
+    if (len > 32) len = 32; /* a uint256 nonce never exceeds this */
+    rlp[p++] = 0x80 + (uint8_t)len;
+    memcpy(rlp + p, nonce + off, len);
+    p += len;
+  }
+  rlp[0] = 0xc0 + (uint8_t)(p - 1); /* list header = payload length */
+
+  uint8_t hash[32];
+  struct SHA3_CTX ctx;
+  sha3_256_Init(&ctx);
+  sha3_Update(&ctx, rlp, p);
+  keccak_Final(&ctx, hash);
+  memcpy(out_addr, hash + 12, 20);
+  return true;
+}
+
+/* Dedicated clear-signing screen for contract deployments (empty `to`):
+ * shows the deterministic deployment address and the init-code size instead of
+ * the generic "Send <amount> to new contract?". */
+static void layoutEthereumDeploy(const uint8_t* contract_addr,
+                                 const uint8_t* value, uint32_t value_len,
+                                 uint32_t code_len, char* out_str,
+                                 size_t out_str_len) {
+  char addr[43] = "0x";
+  ethereum_address_checksum(contract_addr, addr + 2, false, chain_id);
+
+  bignum256 val;
+  uint8_t pad_val[32];
+  memset(pad_val, 0, sizeof(pad_val));
+  memcpy(pad_val + (32 - value_len), value, value_len);
+  bn_read_be(pad_val, &val);
+
+  int cx;
+  if (bn_is_zero(&val)) {
+    cx = snprintf(out_str, out_str_len, "Deploy %lu-byte contract to %s?",
+                  (unsigned long)code_len, addr);
+  } else {
+    char amount[32];
+    ethereumFormatAmount(&val, NULL, chain_id, amount, sizeof(amount));
+    cx = snprintf(out_str, out_str_len,
+                  "Deploy %lu-byte contract (sending %s) to %s?",
+                  (unsigned long)code_len, amount, addr);
+  }
+  if (out_str_len <= (size_t)cx) {
+    /*error detected. Clear the buffer */
+    memset(out_str, 0, out_str_len);
+  }
+}
+
 static void layoutEthereumData(const uint8_t* data, uint32_t len,
                                uint32_t total_len, char* out_str,
                                size_t out_str_len) {
@@ -778,34 +857,58 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   if (needs_confirm) {
-    if (token != NULL) {
-      layoutEthereumConfirmTx(
-          msg->data_initial_chunk.bytes + 16, 20,
-          msg->data_initial_chunk.bytes + 36, 32, token, confirm_body_message,
-          sizeof(confirm_body_message), /*approve=*/is_approve);
+    if (msg->to.size == 0) {
+      /* contract deployment: dedicated clear-signing screen showing the
+       * deterministic deployment address (sender + nonce) and code size. */
+      uint8_t contract_addr[20];
+      if (!ethereum_creation_address(node, msg->nonce.bytes, msg->nonce.size,
+                                     contract_addr)) {
+        fsm_sendFailure(FailureType_Failure_Other,
+                        _("Failed to derive contract address"));
+        ethereum_signing_abort();
+        return;
+      }
+      layoutEthereumDeploy(contract_addr, msg->value.bytes, msg->value.size,
+                           data_total, confirm_body_message,
+                           sizeof(confirm_body_message));
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Deploy Contract", "%s", confirm_body_message)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        "Signing cancelled by user");
+        ethereum_signing_abort();
+        return;
+      }
     } else {
-      layoutEthereumConfirmTx(msg->to.bytes, msg->to.size, msg->value.bytes,
-                              msg->value.size, NULL, confirm_body_message,
-                              sizeof(confirm_body_message), /*approve=*/false);
-    }
-    bool is_transfer = msg->address_type == OutputAddressType_TRANSFER;
-    const char* title;
-    ButtonRequestType BRT;
-    if (is_approve) {
-      title = "Approve";
-      BRT = ButtonRequestType_ButtonRequest_ConfirmOutput;
-    } else if (is_transfer) {
-      title = "Transfer";
-      BRT = ButtonRequestType_ButtonRequest_ConfirmTransferToAccount;
-    } else {
-      title = "Send";
-      BRT = ButtonRequestType_ButtonRequest_ConfirmOutput;
-    }
-    if (!confirm(BRT, title, "%s", confirm_body_message)) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      "Signing cancelled by user");
-      ethereum_signing_abort();
-      return;
+      if (token != NULL) {
+        layoutEthereumConfirmTx(
+            msg->data_initial_chunk.bytes + 16, 20,
+            msg->data_initial_chunk.bytes + 36, 32, token, confirm_body_message,
+            sizeof(confirm_body_message), /*approve=*/is_approve);
+      } else {
+        layoutEthereumConfirmTx(msg->to.bytes, msg->to.size, msg->value.bytes,
+                                msg->value.size, NULL, confirm_body_message,
+                                sizeof(confirm_body_message),
+                                /*approve=*/false);
+      }
+      bool is_transfer = msg->address_type == OutputAddressType_TRANSFER;
+      const char* title;
+      ButtonRequestType BRT;
+      if (is_approve) {
+        title = "Approve";
+        BRT = ButtonRequestType_ButtonRequest_ConfirmOutput;
+      } else if (is_transfer) {
+        title = "Transfer";
+        BRT = ButtonRequestType_ButtonRequest_ConfirmTransferToAccount;
+      } else {
+        title = "Send";
+        BRT = ButtonRequestType_ButtonRequest_ConfirmOutput;
+      }
+      if (!confirm(BRT, title, "%s", confirm_body_message)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        "Signing cancelled by user");
+        ethereum_signing_abort();
+        return;
+      }
     }
   }
 
