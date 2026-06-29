@@ -125,7 +125,8 @@ bool zx_isZxLiquidTx(const EthereumSignTx* msg) {
 }
 
 bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg) {
-  (void)data_total;
+  /* reads through the deadline word at offset 4 + 6*32 - 8 .. 4 + 6*32 */
+  if (data_total < 4 + 6 * 32) return false;
   const TokenType* token;
   char constr1[40], constr2[40], tokbuf[32];
   const char* arStr = "";

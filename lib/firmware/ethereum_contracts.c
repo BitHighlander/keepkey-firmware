@@ -32,6 +32,21 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
                               const HDNode* node) {
   (void)node;
 
+  /* Clear-sign handlers parse their fields from data_initial_chunk and confirm
+   * them BEFORE the device receives any further streamed EthereumTxAck chunks.
+   * Only classify a tx as a known contract call when:
+   *   - the ENTIRE calldata is already in the initial chunk
+   *     (data_total == data_initial_chunk.size, so data_left == 0 and no extra,
+   *     unshown bytes get appended to the signed pre-image afterwards), and
+   *   - it is a call to a contract (to.size == 20), never a contract CREATE
+   *     (to.size == 0), which must fall through to the deploy screen.
+   * Without this a host could display a benign clear-sign summary and then
+   * stream additional signed calldata the user never saw, or match a handler
+   * selector on an empty-to payload to suppress the deploy confirmation. */
+  if (data_total != msg->data_initial_chunk.size || msg->to.size != 20) {
+    return false;
+  }
+
   if (sa_isWithdrawFromSalary(msg)) return true;
   if (zx_isZxTransformERC20(msg)) return true;
   if (zx_isZxSwap(msg)) return true;
