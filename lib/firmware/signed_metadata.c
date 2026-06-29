@@ -351,16 +351,25 @@ bool signed_metadata_confirm(void) {
 
 bool signed_metadata_relied(void) { return relied_on_metadata; }
 
-bool signed_metadata_enforce(const uint8_t hash[32]) {
-  if (!relied_on_metadata) {
+bool signed_metadata_enforce_decision(bool relied, bool available,
+                                      int classification,
+                                      const uint8_t *stored_hash,
+                                      const uint8_t *hash) {
+  if (!relied) {
     return true; /* signature was not gated by metadata */
   }
   /* Fail closed: relied on metadata but it's gone, not verified, or the signed
-   * digest differs from what was displayed → refuse to emit a signature. */
-  return hash != NULL && metadata_available &&
-         stored_metadata.classification == METADATA_VERIFIED &&
-         memcmp(stored_metadata.tx_hash, hash,
-                sizeof(stored_metadata.tx_hash)) == 0;
+   * digest differs from what was displayed → refuse to emit a signature.
+   * tx_hash is 32 bytes (see SignedMetadata). */
+  return hash != NULL && stored_hash != NULL && available &&
+         classification == METADATA_VERIFIED &&
+         memcmp(stored_hash, hash, 32) == 0;
+}
+
+bool signed_metadata_enforce(const uint8_t hash[32]) {
+  return signed_metadata_enforce_decision(
+      relied_on_metadata, metadata_available, stored_metadata.classification,
+      stored_metadata.tx_hash, hash);
 }
 
 const SignedMetadata *signed_metadata_get(void) {

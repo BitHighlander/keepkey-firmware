@@ -70,6 +70,15 @@ bool signed_metadata_relied(void);
  * committed tx_hash equals `hash`. Fail-closed on any mismatch. */
 bool signed_metadata_enforce(const uint8_t hash[32]);
 
+/* Pure enforcement decision, exported for unit testing. Given the module flags
+ * and the metadata's committed tx hash, decides whether signing may proceed for
+ * the just-finalized `hash`. signed_metadata_enforce() is a thin wrapper that
+ * feeds the module state into this function. No state, no I/O. */
+bool signed_metadata_enforce_decision(bool relied, bool available,
+                                      int classification,
+                                      const uint8_t *stored_hash,
+                                      const uint8_t *hash);
+
 const SignedMetadata *signed_metadata_get(void);
 
 #endif

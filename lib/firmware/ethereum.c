@@ -287,7 +287,7 @@ static void send_signature(void) {
    * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
    * never emit a signature the displayed decoded screen did not cover. */
   if (!signed_metadata_enforce(hash)) {
-    fsm_sendFailure(FailureType_Failure_DataError,
+    fsm_sendFailure(FailureType_Failure_Other,
                     "Metadata does not match signed transaction");
     ethereum_signing_abort();
     return;
