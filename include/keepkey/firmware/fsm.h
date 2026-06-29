@@ -155,7 +155,6 @@ void fsm_msgFlashWrite(FlashWrite* msg);
 void fsm_msgFlashHash(FlashHash* msg);
 void fsm_msgSoftReset(SoftReset* msg);
 
-
-void fsm_msgEthereumTxMetadata(const EthereumTxMetadata *msg);
+void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg);
 
 #endif

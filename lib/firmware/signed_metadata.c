@@ -50,7 +50,7 @@ static const uint8_t METADATA_PUBKEYS[METADATA_MAX_KEYS][33] = {
 #endif
 };
 
-static bool read_u8(const uint8_t **cursor, const uint8_t *end, uint8_t *out) {
+static bool read_u8(const uint8_t** cursor, const uint8_t* end, uint8_t* out) {
   if ((size_t)(end - *cursor) < 1) {
     return false;
   }
@@ -60,8 +60,8 @@ static bool read_u8(const uint8_t **cursor, const uint8_t *end, uint8_t *out) {
   return true;
 }
 
-static bool read_be_u16(const uint8_t **cursor, const uint8_t *end,
-                        uint16_t *out) {
+static bool read_be_u16(const uint8_t** cursor, const uint8_t* end,
+                        uint16_t* out) {
   if ((size_t)(end - *cursor) < 2) {
     return false;
   }
@@ -71,8 +71,8 @@ static bool read_be_u16(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_be_u32(const uint8_t **cursor, const uint8_t *end,
-                        uint32_t *out) {
+static bool read_be_u32(const uint8_t** cursor, const uint8_t* end,
+                        uint32_t* out) {
   if ((size_t)(end - *cursor) < 4) {
     return false;
   }
@@ -83,8 +83,8 @@ static bool read_be_u32(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_bytes(const uint8_t **cursor, const uint8_t *end,
-                       uint8_t *out, size_t size) {
+static bool read_bytes(const uint8_t** cursor, const uint8_t* end, uint8_t* out,
+                       size_t size) {
   if ((size_t)(end - *cursor) < size) {
     return false;
   }
@@ -94,7 +94,7 @@ static bool read_bytes(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_string(const uint8_t **cursor, const uint8_t *end, char *out,
+static bool read_string(const uint8_t** cursor, const uint8_t* end, char* out,
                         size_t max_len) {
   uint16_t value_len = 0;
   if (!read_be_u16(cursor, end, &value_len) || value_len == 0 ||
@@ -108,7 +108,7 @@ static bool read_string(const uint8_t **cursor, const uint8_t *end, char *out,
   return true;
 }
 
-static bool read_arg_name(const uint8_t **cursor, const uint8_t *end, char *out,
+static bool read_arg_name(const uint8_t** cursor, const uint8_t* end, char* out,
                           size_t max_len) {
   uint8_t value_len = 0;
   if (!read_u8(cursor, end, &value_len) || value_len == 0 ||
@@ -122,8 +122,8 @@ static bool read_arg_name(const uint8_t **cursor, const uint8_t *end, char *out,
   return true;
 }
 
-static bool parse_metadata_binary(const uint8_t *payload, size_t payload_len,
-                                  SignedMetadata *out) {
+static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
+                                  SignedMetadata* out) {
   /* Minimum: version(1) + chain_id(4) + contract(20) + selector(4) +
    * tx_hash(32) + method_len(2) + method(1) + num_args(1) +
    * classification(1) + timestamp(4) + key_id(1) + sig(64) + recovery(1)
@@ -132,8 +132,8 @@ static bool parse_metadata_binary(const uint8_t *payload, size_t payload_len,
     return false;
   }
 
-  const uint8_t *cursor = payload;
-  const uint8_t *end = payload + payload_len;
+  const uint8_t* cursor = payload;
+  const uint8_t* end = payload + payload_len;
   memset(out, 0, sizeof(*out));
 
   if (!read_u8(&cursor, end, &out->version) || out->version != 0x01 ||
@@ -151,7 +151,7 @@ static bool parse_metadata_binary(const uint8_t *payload, size_t payload_len,
   for (uint8_t i = 0; i < out->num_args; i++) {
     uint8_t format = 0;
     uint16_t value_len = 0;
-    MetadataArg *arg = &out->args[i];
+    MetadataArg* arg = &out->args[i];
 
     if (!read_arg_name(&cursor, end, arg->name, METADATA_MAX_ARG_NAME_LEN) ||
         !read_u8(&cursor, end, &format) || format > ARG_FORMAT_BYTES ||
@@ -178,8 +178,8 @@ static bool parse_metadata_binary(const uint8_t *payload, size_t payload_len,
   return true;
 }
 
-static void bn_from_metadata_bytes(const uint8_t *value, size_t value_len,
-                                   bignum256 *out) {
+static void bn_from_metadata_bytes(const uint8_t* value, size_t value_len,
+                                   bignum256* out) {
   uint8_t padded[32] = {0};
   if (value_len > sizeof(padded)) {
     value_len = sizeof(padded);
@@ -197,9 +197,9 @@ void signed_metadata_clear(void) {
   relied_on_metadata = false;
 }
 
-MetadataClassification signed_metadata_process(const uint8_t *payload,
-                                              size_t payload_len,
-                                              uint8_t key_id) {
+MetadataClassification signed_metadata_process(const uint8_t* payload,
+                                               size_t payload_len,
+                                               uint8_t key_id) {
   uint8_t digest[32];
   size_t signed_len;
 
@@ -229,7 +229,7 @@ MetadataClassification signed_metadata_process(const uint8_t *payload,
   return stored_metadata.classification;
 }
 
-bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
+bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   if (!metadata_available || !msg ||
       stored_metadata.classification != METADATA_VERIFIED ||
       msg->to.size != sizeof(stored_metadata.contract_address) ||
@@ -256,8 +256,9 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
 
   /* This only gates what we DISPLAY (so a benign-looking method screen can't
    * be shown for the wrong call). The metadata commits to the full tx hash;
-   * that is enforced against the real signed digest in signed_metadata_enforce()
-   * because the digest does not exist until send_signature() finalizes it. */
+   * that is enforced against the real signed digest in
+   * signed_metadata_enforce() because the digest does not exist until
+   * send_signature() finalizes it. */
   return true;
 }
 
@@ -279,7 +280,8 @@ bool signed_metadata_confirm(void) {
   }
 
   /* Screen 2: Contract address — ALWAYS show full address, never truncate.
-   * Truncation is a spoofing vector (attacker crafts matching prefix+suffix). */
+   * Truncation is a spoofing vector (attacker crafts matching prefix+suffix).
+   */
   char contract_addr[43] = "0x";
   ethereum_address_checksum(stored_metadata.contract_address, contract_addr + 2,
                             false, stored_metadata.chain_id);
@@ -292,7 +294,7 @@ bool signed_metadata_confirm(void) {
 
   /* Screen 3..N: Each decoded argument */
   for (uint8_t i = 0; i < stored_metadata.num_args; i++) {
-    MetadataArg *arg = &stored_metadata.args[i];
+    MetadataArg* arg = &stored_metadata.args[i];
     memset(body, 0, sizeof(body));
 
     switch (arg->format) {
@@ -308,16 +310,19 @@ bool signed_metadata_confirm(void) {
       }
       case ARG_FORMAT_AMOUNT: {
         bignum256 amount;
-        char formatted[48];
         bn_from_metadata_bytes(arg->value, arg->value_len, &amount);
         /* Check for MAX_UINT256 (unlimited approval) */
         bool is_max = true;
         for (uint16_t j = 0; j < arg->value_len; j++) {
-          if (arg->value[j] != 0xFF) { is_max = false; break; }
+          if (arg->value[j] != 0xFF) {
+            is_max = false;
+            break;
+          }
         }
         if (is_max && arg->value_len == 32) {
           snprintf(body, sizeof(body), "%s:\nUNLIMITED", arg->name);
         } else {
+          char formatted[48];
           bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
                     sizeof(formatted));
           snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
@@ -328,8 +333,7 @@ bool signed_metadata_confirm(void) {
       case ARG_FORMAT_RAW:
       default: {
         char hex[(METADATA_MAX_ARG_VALUE_LEN * 2) + 1];
-        size_t display_len =
-            arg->value_len > 16 ? 16 : (size_t)arg->value_len;
+        size_t display_len = arg->value_len > 16 ? 16 : (size_t)arg->value_len;
         data2hex(arg->value, display_len, hex);
         snprintf(body, sizeof(body), "%s:\n%s%s", arg->name, hex,
                  arg->value_len > 16 ? "..." : "");
@@ -353,8 +357,8 @@ bool signed_metadata_relied(void) { return relied_on_metadata; }
 
 bool signed_metadata_enforce_decision(bool relied, bool available,
                                       int classification,
-                                      const uint8_t *stored_hash,
-                                      const uint8_t *hash) {
+                                      const uint8_t* stored_hash,
+                                      const uint8_t* hash) {
   if (!relied) {
     return true; /* signature was not gated by metadata */
   }
@@ -372,6 +376,6 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
       stored_metadata.tx_hash, hash);
 }
 
-const SignedMetadata *signed_metadata_get(void) {
+const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
 }

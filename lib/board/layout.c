@@ -328,7 +328,8 @@ void layout_add_icon(IconType type) {
   switch (type) {
     case ETHEREUM_ICON:
     /* ponytail: reuse the ETH glyph as the "verified" mark — it's an ETH tx.
-     * Swap in a dedicated checkmark bitmap if the trust mark needs to differ. */
+     * Swap in a dedicated checkmark bitmap if the trust mark needs to differ.
+     */
     case VERIFIED_ICON:
       draw_bitmap_mono_rle(canvas, get_ethereum_icon_frame(), false);
       break;
