@@ -181,7 +181,7 @@ static void hash_rlp_list_length(uint32_t length) {
  * Push an RLP encoded length field and data to the hash buffer.
  */
 static void hash_rlp_field(const uint8_t* buf, size_t size) {
-  hash_rlp_length(size, buf[0]);
+  hash_rlp_length(size, size ? buf[0] : 0);
   hash_data(buf, size);
 }
 
@@ -540,11 +540,10 @@ static void formatEthereumFee(bignum256* fee, const uint8_t* gas_price,
   bn_read_be(pad_val, fee);
 }
 
-static void formatEthereumFeeEIP1559(
-    bignum256* fee, const uint8_t* max_fee_per_gas,
-    const uint8_t max_fee_per_gas_len, const uint8_t* max_priority_fee_per_gas,
-    const uint8_t max_priority_fee_per_gas_len) {
-  bignum256 max_fee, max_pfee;
+static void formatEthereumFeeEIP1559(bignum256* fee,
+                                     const uint8_t* max_fee_per_gas,
+                                     const uint8_t max_fee_per_gas_len) {
+  bignum256 max_fee;
   uint8_t pad_val[32];
 
   bn_zero(fee);
@@ -553,11 +552,6 @@ static void formatEthereumFeeEIP1559(
   memcpy(pad_val + (32 - max_fee_per_gas_len), max_fee_per_gas,
          max_fee_per_gas_len);
   bn_read_be(pad_val, &max_fee);
-
-  memset(pad_val, 0, sizeof(pad_val));
-  memcpy(pad_val + (32 - max_priority_fee_per_gas_len),
-         max_priority_fee_per_gas, max_priority_fee_per_gas_len);
-  bn_read_be(pad_val, &max_pfee);
 
   bn_add(fee, &max_fee);
 }
@@ -572,11 +566,9 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
   memzero(gas_value, sizeof(gas_value));
   memzero(tx_value, sizeof(tx_value));
 
-  if (msg->has_max_fee_per_gas) {
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
     formatEthereumFeeEIP1559(&val, msg->max_fee_per_gas.bytes,
-                             msg->max_fee_per_gas.size,
-                             msg->max_priority_fee_per_gas.bytes,
-                             msg->max_priority_fee_per_gas.size);
+                             msg->max_fee_per_gas.size);
   } else {
     formatEthereumFee(&val, msg->gas_price.bytes, msg->gas_price.size);
   }
@@ -728,6 +720,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   } else if (msg->has_max_fee_per_gas) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("max_fee_per_gas requires an EIP-1559 (type 2) tx"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_LEGACY && !msg->has_gas_price) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Legacy transactions require gas_price"));
     ethereum_signing_abort();
     return;
   }
@@ -891,10 +890,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   layoutProgress(_("Signing"), 0);
 
   if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
-    // This is the chain ID length for 1559 tx (only one byte for now)
     rlp_length += rlp_calculate_number_length(chain_id);
-
-    // rlp_length += 1;
   }
 
   rlp_length +=
