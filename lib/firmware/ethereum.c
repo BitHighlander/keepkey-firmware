@@ -875,10 +875,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   hash_rlp_bytes_stripped(msg->nonce.bytes, msg->nonce.size);
 
   if (msg->has_max_fee_per_gas) {
-    if (msg->has_max_priority_fee_per_gas) {
-      hash_rlp_bytes_stripped(msg->max_priority_fee_per_gas.bytes,
-                              msg->max_priority_fee_per_gas.size);
-    }
+    /* Always hash max_priority_fee_per_gas. The RLP length header
+     * (rlp_calculate_length, above) always counts this field, so guarding the
+     * body on has_max_priority_fee_per_gas would desync the declared list
+     * length from the hashed body for a truly-absent priority fee, producing a
+     * malformed pre-image that recovers to the wrong signer. An absent or zero
+     * value hashes to the canonical empty string (0x80) via
+     * hash_rlp_bytes_stripped. */
+    hash_rlp_bytes_stripped(msg->max_priority_fee_per_gas.bytes,
+                            msg->max_priority_fee_per_gas.size);
     hash_rlp_bytes_stripped(msg->max_fee_per_gas.bytes,
                             msg->max_fee_per_gas.size);
   } else {
