@@ -58,6 +58,7 @@
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -93,6 +94,7 @@
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
 #include "messages-zcash.pb.h"
+#include "messages-hive.pb.h"
 
 #include <stdio.h>
 
@@ -299,3 +301,4 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_solana.h"
 #include "fsm_msg_bip85.h"
 #include "fsm_msg_zcash.h"
+#include "fsm_msg_hive.h"
