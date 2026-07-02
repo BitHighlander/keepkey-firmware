@@ -1,11 +1,12 @@
 /*
  * Unit tests for the EVM clear-signing ("Insight") signed-metadata module.
  *
- * Requires an emulator/debug host build (KK_EMULATOR=ON, KK_DEBUG_LINK=ON):
- * verification slot 3 (the CI test key 02e3b3015c...ab5107) only exists under
- * `#if DEBUG_LINK`. All vectors are signed in-process with the matching private
- * key (f6d19e15...068a260, whose compressed pubkey IS slot 3) and embed
- * key_id=3, so a non-DEBUG build would reject them at the empty-slot guard.
+ * Phase 1 ships with NO built-in verification keys: METADATA_PUBKEYS is all
+ * zeros and every signer is loaded at runtime (signed_metadata_store_signer,
+ * reached in production through the user-confirmed LoadClearsignSigner FSM
+ * handler). The fixture loads the CI test key (02e3b3015c...ab5107) into
+ * slot 3 with alias "CI Test"; all vectors are signed in-process with the
+ * matching private key (f6d19e15...068a260) and embed key_id=3.
  *
  * No OLED/button I/O is exercised: signed_metadata_process() and
  * signed_metadata_matches_tx() never draw, and signed_metadata_confirm() is
@@ -39,7 +40,7 @@ const uint8_t TEST_PRIV[32] = {
     0x1e, 0x16, 0x14, 0xe7, 0xd9, 0xa1, 0x04, 0xd8, 0x1f, 0x73, 0x24,
     0x49, 0x87, 0x56, 0xe5, 0x71, 0x90, 0x40, 0x68, 0xa2, 0x60};
 
-/* Expected compressed pubkey for slot 3 (DEBUG_LINK CI key). */
+/* Compressed pubkey of TEST_PRIV; loaded into slot 3 by the fixture. */
 const uint8_t EXPECTED_SLOT3_PUB[33] = {
     0x02, 0xe3, 0xb3, 0x01, 0x5c, 0x47, 0xdd, 0xca, 0xab, 0xe4, 0xf8,
     0xe8, 0x72, 0xf1, 0xed, 0x8f, 0x09, 0xca, 0x14, 0x5a, 0x8d, 0x81,
@@ -209,10 +210,15 @@ void make_matching_msg(EthereumSignTx *msg) {
   make_msg(msg, CONTRACT_A, data, sizeof(data), /*has_chain=*/true, 1);
 }
 
+const char *TEST_ALIAS = "CI Test";
+
 class SignedMetadataTest : public ::testing::Test {
  protected:
-  void SetUp() override { signed_metadata_clear(); }
-  void TearDown() override { signed_metadata_clear(); }
+  void SetUp() override {
+    signed_metadata_clear_signers();
+    signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS);
+  }
+  void TearDown() override { signed_metadata_clear_signers(); }
 
   void ExpectMalformed(const std::vector<uint8_t> &blob, uint8_t key_id) {
     EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), key_id),
@@ -223,14 +229,14 @@ class SignedMetadataTest : public ::testing::Test {
 };
 
 /* ===================================================================== *
- *  signed_metadata_process — happy path + DEBUG_LINK slot 3
+ *  signed_metadata_process — happy path via a runtime-loaded signer
  * ===================================================================== */
 
 TEST_F(SignedMetadataTest, DerivedPubkeyMatchesSlot3) {
   uint8_t pub[33];
   ecdsa_get_public_key33(&secp256k1, TEST_PRIV, pub);
   EXPECT_EQ(memcmp(pub, EXPECTED_SLOT3_PUB, sizeof(pub)), 0)
-      << "TEST_PRIV must derive firmware METADATA_PUBKEYS[3]";
+      << "TEST_PRIV must derive the loaded slot-3 test pubkey";
 }
 
 TEST_F(SignedMetadataTest, ValidVerifiedSlot3) {
@@ -288,7 +294,7 @@ TEST_F(SignedMetadataTest, KeyIdOutOfRange) {
 
 TEST_F(SignedMetadataTest, EmptyRotationSlot) {
   Spec s = base_spec();
-  s.key_id = 1;  // slot 1 pubkey == {0x00}
+  s.key_id = 1;  // slot 1: no built-in key, nothing loaded
   ExpectMalformed(sign_body(build_body(s)), /*key_id=*/1);
 }
 
@@ -398,8 +404,109 @@ TEST_F(SignedMetadataTest, ArgNameTooLong) {
 
 TEST_F(SignedMetadataTest, ArgFormatOutOfRange) {
   Spec s = base_spec();
-  s.args[0].format = 4;  // > ARG_FORMAT_BYTES (3)
+  s.args[0].format = 6;  // > ARG_FORMAT_TOKEN_AMOUNT (5)
   ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
+}
+
+/* ---- ARG_FORMAT_STRING (attested printable label) ----------------------- */
+
+TEST_F(SignedMetadataTest, StringArgAccepted) {
+  Spec s = base_spec();
+  const char *label = "Uniswap V2";
+  s.args[0] = mk_arg("protocol", ARG_FORMAT_STRING, (const uint8_t *)label,
+                     strlen(label));
+  std::vector<uint8_t> blob = sign_body(build_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  const SignedMetadata *m = signed_metadata_get();
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(m->args[0].format, ARG_FORMAT_STRING);
+  EXPECT_EQ(memcmp(m->args[0].value, label, strlen(label)), 0);
+}
+
+TEST_F(SignedMetadataTest, StringArgRejectsUnprintableAndPercent) {
+  const uint8_t nl[] = {'a', '\n', 'b'};
+  Spec s = base_spec();
+  s.args[0] = mk_arg("protocol", ARG_FORMAT_STRING, nl, sizeof(nl));
+  ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
+
+  const uint8_t pct[] = {'a', '%', 's'};
+  Spec s2 = base_spec();
+  s2.args[0] = mk_arg("protocol", ARG_FORMAT_STRING, pct, sizeof(pct));
+  ExpectMalformed(sign_body(build_body(s2)), TEST_KEY_ID);
+
+  Spec s3 = base_spec();
+  s3.args[0] = mk_arg("protocol", ARG_FORMAT_STRING, pct, 0);  // empty string
+  ExpectMalformed(sign_body(build_body(s3)), TEST_KEY_ID);
+}
+
+/* ---- ARG_FORMAT_TOKEN_AMOUNT (decimals + symbol + amount) --------------- */
+
+std::vector<uint8_t> token_amount_value(uint8_t decimals,
+                                        const std::string &symbol,
+                                        const std::vector<uint8_t> &amount) {
+  std::vector<uint8_t> v;
+  v.push_back(decimals);
+  v.push_back((uint8_t)symbol.size());
+  v.insert(v.end(), symbol.begin(), symbol.end());
+  v.insert(v.end(), amount.begin(), amount.end());
+  return v;
+}
+
+TEST_F(SignedMetadataTest, TokenAmountAccepted) {
+  /* 1.00 USDC: 1000000 raw, 6 decimals */
+  std::vector<uint8_t> amt = {0x0F, 0x42, 0x40};
+  std::vector<uint8_t> val = token_amount_value(6, "USDC", amt);
+  Spec s = base_spec();
+  s.args[1] = mk_arg("amount", ARG_FORMAT_TOKEN_AMOUNT, val.data(), val.size());
+  std::vector<uint8_t> blob = sign_body(build_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  const SignedMetadata *m = signed_metadata_get();
+  ASSERT_NE(m, nullptr);
+  EXPECT_EQ(m->args[1].format, ARG_FORMAT_TOKEN_AMOUNT);
+  EXPECT_EQ(m->args[1].value_len, val.size());
+}
+
+TEST_F(SignedMetadataTest, TokenAmountUnlimited32BytesAccepted) {
+  /* UNLIMITED approve: 32 x 0xFF + symbol -> value_len 38 (> old 32 cap) */
+  std::vector<uint8_t> amt(32, 0xFF);
+  std::vector<uint8_t> val = token_amount_value(6, "USDC", amt);
+  EXPECT_EQ(val.size(), 38u);  // 1+1+4+32
+  Spec s = base_spec();
+  s.args[1] = mk_arg("amount", ARG_FORMAT_TOKEN_AMOUNT, val.data(), val.size());
+  std::vector<uint8_t> blob = sign_body(build_body(s));
+  EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+}
+
+TEST_F(SignedMetadataTest, TokenAmountRejectsBadLayout) {
+  Spec s = base_spec();
+  /* symbol chars outside [A-Za-z0-9] */
+  std::vector<uint8_t> bad_sym = token_amount_value(6, "US-C", {0x01});
+  s.args[1] = mk_arg("amount", ARG_FORMAT_TOKEN_AMOUNT, bad_sym.data(),
+                     bad_sym.size());
+  ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
+
+  /* decimals > 36 */
+  Spec s2 = base_spec();
+  std::vector<uint8_t> bad_dec = token_amount_value(37, "USDC", {0x01});
+  s2.args[1] = mk_arg("amount", ARG_FORMAT_TOKEN_AMOUNT, bad_dec.data(),
+                      bad_dec.size());
+  ExpectMalformed(sign_body(build_body(s2)), TEST_KEY_ID);
+
+  /* symbol_len runs past the value (no amount bytes left) */
+  Spec s3 = base_spec();
+  std::vector<uint8_t> no_amt = {6, 4, 'U', 'S', 'D', 'C'};
+  s3.args[1] = mk_arg("amount", ARG_FORMAT_TOKEN_AMOUNT, no_amt.data(),
+                      no_amt.size());
+  ExpectMalformed(sign_body(build_body(s3)), TEST_KEY_ID);
+
+  /* legacy formats must NOT accept the larger 44-byte cap */
+  Spec s4 = base_spec();
+  std::vector<uint8_t> big(40, 0xAB);
+  s4.args[1] = mk_arg("amount", ARG_FORMAT_AMOUNT, big.data(), big.size());
+  ExpectMalformed(sign_body(build_body(s4)), TEST_KEY_ID);
 }
 
 TEST_F(SignedMetadataTest, ArgValueTooLong) {
@@ -577,6 +684,131 @@ TEST_F(SignedMetadataTest, ClearResetsAllState) {
   EXPECT_FALSE(signed_metadata_relied());
   EXPECT_EQ(signed_metadata_get(), nullptr);
   EXPECT_TRUE(signed_metadata_enforce(TX_HASH));  // not relied
+}
+
+/* ===================================================================== *
+ *  Runtime signer loading — the phase-1 trust path
+ * ===================================================================== */
+
+TEST_F(SignedMetadataTest, NoSignerLoadedRejects) {
+  signed_metadata_clear_signers();  // undo the fixture's load
+  ExpectMalformed(base_blob(), TEST_KEY_ID);
+}
+
+TEST_F(SignedMetadataTest, FromLoadedSignerTracksMetadata) {
+  EXPECT_FALSE(signed_metadata_from_loaded_signer());  // nothing processed
+  std::vector<uint8_t> blob = base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  EXPECT_TRUE(signed_metadata_from_loaded_signer());
+  signed_metadata_clear();
+  EXPECT_FALSE(signed_metadata_from_loaded_signer());
+}
+
+TEST_F(SignedMetadataTest, ClearSignersDropsKeyAndMetadata) {
+  std::vector<uint8_t> blob = base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  signed_metadata_clear_signers();
+  EXPECT_FALSE(signed_metadata_available());
+  EXPECT_EQ(signed_metadata_get(), nullptr);
+  ExpectMalformed(blob, TEST_KEY_ID);  // the key itself is gone too
+}
+
+TEST_F(SignedMetadataTest, StoreSignerReplacementInvalidatesOldKey) {
+  std::vector<uint8_t> blob = base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  uint8_t priv2[32];
+  memcpy(priv2, TEST_PRIV, sizeof(priv2));
+  priv2[31] ^= 0x5a;  // a different valid scalar
+  uint8_t pub2[33];
+  ecdsa_get_public_key33(&secp256k1, priv2, pub2);
+  signed_metadata_store_signer(TEST_KEY_ID, pub2, "Replacement");
+
+  /* Replacing a signer drops metadata the old one verified... */
+  EXPECT_FALSE(signed_metadata_available());
+  /* ...and the old key no longer verifies anything. */
+  ExpectMalformed(blob, TEST_KEY_ID);
+}
+
+/* ---- signed_metadata_signer_valid (pure) ------------------------------ */
+
+TEST(SignedMetadataSignerValid, AcceptsValidCompressedKeyAllSlots) {
+  for (uint8_t slot = 0; slot < METADATA_MAX_KEYS; slot++) {
+    EXPECT_TRUE(
+        signed_metadata_signer_valid(slot, EXPECTED_SLOT3_PUB, 33, "CI Test"))
+        << "slot " << (int)slot;
+  }
+}
+
+TEST(SignedMetadataSignerValid, RejectsKeyIdOutOfRange) {
+  EXPECT_FALSE(signed_metadata_signer_valid(METADATA_MAX_KEYS,
+                                            EXPECTED_SLOT3_PUB, 33, "CI Test"));
+}
+
+TEST(SignedMetadataSignerValid, RejectsWrongPubkeyLength) {
+  EXPECT_FALSE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 32, "CI Test"));
+  EXPECT_FALSE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 65, "CI Test"));
+  EXPECT_FALSE(signed_metadata_signer_valid(0, nullptr, 33, "CI Test"));
+}
+
+TEST(SignedMetadataSignerValid, RejectsNonCompressedPrefix) {
+  /* 0x04 would make ecdsa_read_pubkey read 65 bytes from a 33-byte buffer —
+   * the prefix guard must reject it before the parser ever runs. */
+  uint8_t bad[33];
+  memcpy(bad, EXPECTED_SLOT3_PUB, sizeof(bad));
+  bad[0] = 0x04;
+  EXPECT_FALSE(signed_metadata_signer_valid(0, bad, 33, "CI Test"));
+  bad[0] = 0x00;  // the "empty slot" sentinel must never load as a key
+  EXPECT_FALSE(signed_metadata_signer_valid(0, bad, 33, "CI Test"));
+}
+
+TEST(SignedMetadataSignerValid, RejectsBadAlias) {
+  EXPECT_FALSE(signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, nullptr));
+  EXPECT_FALSE(signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, ""));
+  std::string too_long(METADATA_ALIAS_MAX_LEN + 1, 'a');
+  EXPECT_FALSE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, too_long.c_str()));
+  std::string max_len(METADATA_ALIAS_MAX_LEN, 'a');
+  EXPECT_TRUE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, max_len.c_str()));
+  /* Realistic aliases (letters/digits/space/-/_) are accepted. */
+  EXPECT_TRUE(signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "Pioneer"));
+  EXPECT_TRUE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "KeepKey Swap"));
+  EXPECT_TRUE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "my-signer_1"));
+  /* Rendered inside quotes on the trust screen — control chars, '%', and
+   * semantic-injection punctuation (quote breakout, "." / "(" appending a
+   * false "verified by KeepKey." claim) are all rejected. */
+  EXPECT_FALSE(signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "a\nb"));
+  EXPECT_FALSE(signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "a%sb"));
+  EXPECT_FALSE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "a\x7f" "b"));
+  EXPECT_FALSE(signed_metadata_signer_valid(
+      0, EXPECTED_SLOT3_PUB, 33, "x' verified by KeepKey. Safe ("));
+  EXPECT_FALSE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "safe.KeepKey"));
+  EXPECT_FALSE(
+      signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "trust(me)"));
+}
+
+/* ---- signed_metadata_pubkey_fingerprint -------------------------------- */
+
+TEST(SignedMetadataFingerprint, IsSha256Prefix) {
+  char fp[METADATA_FINGERPRINT_LEN];
+  signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
+
+  uint8_t digest[32];
+  sha256_Raw(EXPECTED_SLOT3_PUB, 33, digest);
+  char expected[METADATA_FINGERPRINT_LEN];
+  snprintf(expected, sizeof(expected), "%02X%02X%02X%02X", digest[0], digest[1],
+           digest[2], digest[3]);
+  EXPECT_STREQ(fp, expected);
 }
 
 /* ===================================================================== *
