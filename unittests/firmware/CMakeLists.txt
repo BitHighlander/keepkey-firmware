@@ -13,6 +13,7 @@ set(sources
     solana.cpp
     storage.cpp
     thorchain.cpp
+    tron.cpp
     usb_rx.cpp
     u2f.cpp
     zcash.cpp)
