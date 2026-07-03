@@ -3,9 +3,7 @@ set(sources
     cosmos.cpp
     eos.cpp
     ethereum.cpp
-    # mayachain.cpp  # disabled: stale since 50164a2e added denom param to
-    # mayachain_signTxUpdateMsgSend; mayachain.cpp:58 still calls it 2-arg.
-    # Needs call + expected-signature update before re-enabling.
+    mayachain.cpp
     nano.cpp
     recovery.cpp
     ripple.cpp
