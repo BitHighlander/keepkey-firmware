@@ -1876,6 +1876,7 @@ const uint8_t* storage_getSeed(const ConfigFlash* cfg, bool usePassphrase) {
  * The seed pointer never leaves this translation unit.
  */
 
+#if ZCASH_PRIVACY
 bool storage_zcashOrchardKeys(uint32_t account, bool usePassphrase,
                               ZcashOrchardKeys* keys_out) {
   if (!keys_out) return false;
@@ -1892,6 +1893,7 @@ bool storage_zcashSeedFingerprint(bool usePassphrase,
   if (!seed) return false;
   return zcash_calculate_seed_fingerprint(seed, 64, fingerprint_out);
 }
+#endif
 
 const uint8_t* storage_getRawSeed(bool usePassphrase) {
   return storage_getSeed(&shadow_config, usePassphrase);

@@ -151,8 +151,10 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
     for (size_t i = 0; i < msg->end - msg->start; i++) {
       if (msg->start + i < COINS_COUNT) {
         resp->table[i] = coins[msg->start + i];
+#if !BITCOIN_ONLY
       } else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
         coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
+#endif
       }
     }
   }
