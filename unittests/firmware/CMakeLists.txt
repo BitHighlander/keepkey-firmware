@@ -21,7 +21,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       ripple.cpp
       signed_metadata.cpp
       solana.cpp
-      thorchain.cpp)
+      thorchain.cpp
+      tron.cpp)
 endif()
 
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
