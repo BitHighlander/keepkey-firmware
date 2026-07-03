@@ -44,9 +44,16 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   /* Variant Name */
   resp->has_firmware_variant = true;
 #if BITCOIN_ONLY
-  /* Marks this build so update clients never offer multi-chain firmware. */
-  strlcpy(resp->firmware_variant, "bitcoin-only",
+  /* Bitcoin-only build. Uses the established KeepKeyBTC / EmulatorBTC names so
+     existing clients (python-keepkey requires_fullFeature, etc.) skip
+     multi-chain-only behaviour and never offer multi-chain firmware. */
+#ifdef EMULATOR
+  strlcpy(resp->firmware_variant, "EmulatorBTC",
           sizeof(resp->firmware_variant));
+#else
+  strlcpy(resp->firmware_variant, "KeepKeyBTC",
+          sizeof(resp->firmware_variant));
+#endif
 #else
   if (storage_isBitcoinOnlyLocked()) {
     /* Multi-chain firmware refusing to touch a bitcoin-only wallet; a wipe
