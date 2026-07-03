@@ -117,13 +117,13 @@ static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
     return;                                                            \
   }
 
-#define CHECK_NOT_BTC_ONLY_LOCKED                                     \
-  if (storage_isBitcoinOnlyLocked()) {                                \
-    fsm_sendFailure(FailureType_Failure_Other,                        \
-                    "Device holds a bitcoin-only wallet. Wipe the "   \
-                    "device to use multi-chain firmware.");           \
-    layoutHome();                                                     \
-    return;                                                           \
+#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
+  if (storage_isBitcoinOnlyLocked()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Device holds a bitcoin-only wallet. Wipe the " \
+                    "device to use multi-chain firmware.");         \
+    layoutHome();                                                   \
+    return;                                                         \
   }
 
 #define CHECK_PIN              \

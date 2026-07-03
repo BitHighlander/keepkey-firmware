@@ -37,7 +37,8 @@
  * already multi-chain-exposed). Multi-chain versions MUST stay below the band
  * forever (static-asserted in storage.c). */
 #define STORAGE_VERSION_BTC_ONLY_BASE 10000
-#define STORAGE_VERSION_BTC_ONLY (STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION)
+#define STORAGE_VERSION_BTC_ONLY \
+  (STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION)
 #define STORAGE_RETRIES 3
 
 #define RANDOM_SALT_LEN 32

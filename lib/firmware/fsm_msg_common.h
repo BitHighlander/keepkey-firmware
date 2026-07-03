@@ -51,8 +51,7 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   strlcpy(resp->firmware_variant, "EmulatorBTC",
           sizeof(resp->firmware_variant));
 #else
-  strlcpy(resp->firmware_variant, "KeepKeyBTC",
-          sizeof(resp->firmware_variant));
+  strlcpy(resp->firmware_variant, "KeepKeyBTC", sizeof(resp->firmware_variant));
 #endif
 #else
   if (storage_isBitcoinOnlyLocked()) {
