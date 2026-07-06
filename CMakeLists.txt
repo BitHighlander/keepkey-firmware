@@ -158,6 +158,10 @@ endif()
 
 if(${KK_ZCASH_PRIVACY})
   add_definitions(-DZCASH_PRIVACY=1)
+  # The Orchard engine leaves this variant tightest on flash; shrink the
+  # Gladman AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM,
+  # slightly slower AES). full/bitcoin-only keep the fast FOUR_TABLES.
+  add_definitions(-DAES_SMALL_TABLES)
 else()
   add_definitions(-DZCASH_PRIVACY=0)
 endif()
