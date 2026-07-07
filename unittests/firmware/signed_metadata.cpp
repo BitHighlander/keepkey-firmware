@@ -1017,6 +1017,70 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesTransferArgs) {
   EXPECT_EQ(memcmp(md->args[1].value + 6, AMOUNT32, 32), 0);
 }
 
+/* Relay solver swap: selector 0x02d5f05f(token address, amount, requestId) —
+ * three fixed single words, EXACTLY the shape pulled from real relay traffic
+ * (100-byte calldata: 4 + 3*32, zero remainder, verified across 22 live samples).
+ * Proves a v2 static schema clear-signs a relay swap: the device decodes
+ * token+amount+id from the very calldata it is about to sign — no tx_hash, no
+ * per-tx online signer, schema signed once offline. This is the "add a new
+ * service via a signed payload" path for a NON-native contract (relay is not in
+ * ethereum_contractHandled). */
+TEST_F(SignedMetadataTest, V2SchemaDecodesRelaySolverArgs) {
+  const uint8_t RELAY_SOLVER[20] = {0x4c, 0xd0, 0x0e, 0x38, 0x76, 0x22, 0xc3,
+                                    0x5b, 0xdd, 0xb9, 0xb4, 0x96, 0x2c, 0x13,
+                                    0x64, 0x62, 0x33, 0x8b, 0xc3, 0x31};
+  const uint8_t SEL_RELAY[4] = {0x02, 0xd5, 0xf0, 0x5f};
+  uint8_t REQ_ID[32] = {0};  // requestId 0x...cd7c from a real sample
+  REQ_ID[30] = 0xcd;
+  REQ_ID[31] = 0x7c;
+
+  V2Spec s = v2_base_spec();
+  s.contract.assign(RELAY_SOLVER, RELAY_SOLVER + 20);
+  s.selector.assign(SEL_RELAY, SEL_RELAY + 4);
+  s.method = "relaySwap";
+  s.args.clear();
+  s.args.push_back(v2_addr("token"));
+  s.args.push_back(v2_token("amount", 6, "USDC"));
+  s.args.push_back(V2Arg{"requestId", ARG_FORMAT_AMOUNT, 0, ""});
+
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  const SignedMetadata *md = signed_metadata_get();
+  ASSERT_NE(md, nullptr);
+  EXPECT_EQ(md->version, METADATA_VERSION_SCHEMA);
+  EXPECT_EQ(md->num_args, 3);
+
+  // Real relay calldata: selector + token(USDC=CONTRACT_A) + amount + requestId.
+  std::vector<uint8_t> data(SEL_RELAY, SEL_RELAY + 4);
+  put_addr_word(data, CONTRACT_A);
+  data.insert(data.end(), AMOUNT32, AMOUNT32 + 32);
+  data.insert(data.end(), REQ_ID, REQ_ID + 32);
+  EXPECT_EQ(data.size(), 100u);
+
+  EthereumSignTx msg;
+  make_v2_msg(&msg, RELAY_SOLVER, data, /*has_len=*/true, (uint32_t)data.size());
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+
+  // token → full 20-byte USDC address (never truncated).
+  EXPECT_EQ(md->args[0].format, ARG_FORMAT_ADDRESS);
+  EXPECT_EQ(md->args[0].value_len, 20);
+  EXPECT_EQ(memcmp(md->args[0].value, CONTRACT_A, 20), 0);
+
+  // amount → TOKEN_AMOUNT [decimals=6, "USDC", 32-byte amount].
+  EXPECT_EQ(md->args[1].format, ARG_FORMAT_TOKEN_AMOUNT);
+  EXPECT_EQ(md->args[1].value[0], 6);
+  EXPECT_EQ(md->args[1].value[1], 4);
+  EXPECT_EQ(memcmp(md->args[1].value + 2, "USDC", 4), 0);
+  EXPECT_EQ(memcmp(md->args[1].value + 6, AMOUNT32, 32), 0);
+
+  // requestId → raw 32-byte AMOUNT word.
+  EXPECT_EQ(md->args[2].format, ARG_FORMAT_AMOUNT);
+  EXPECT_EQ(md->args[2].value_len, 32);
+  EXPECT_EQ(memcmp(md->args[2].value, REQ_ID, 32), 0);
+}
+
 /* has_data_length omitted but the initial chunk IS the whole calldata: allowed. */
 TEST_F(SignedMetadataTest, V2AcceptsNoDataLengthWhenChunkComplete) {
   std::vector<uint8_t> blob = v2_base_blob();
