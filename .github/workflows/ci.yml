@@ -213,6 +213,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   build-emulator:
+    name: build-emulator${{ matrix.label }}
     needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -221,10 +222,13 @@ jobs:
       matrix:
         include:
           - variant: full
+            label: ""
             cmake_flags: ""
           - variant: bitcoin-only
+            label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
           - variant: zcash-privacy
+            label: " (zcash-privacy)"
             cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - name: Checkout
@@ -280,6 +284,7 @@ jobs:
           retention-days: 1
 
   build-arm-firmware:
+    name: build-arm-firmware${{ matrix.label }}
     needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -288,10 +293,13 @@ jobs:
       matrix:
         include:
           - variant: full
+            label: ""
             cmake_flags: ""
           - variant: bitcoin-only
+            label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
           - variant: zcash-privacy
+            label: " (zcash-privacy)"
             cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - name: Checkout
@@ -378,6 +386,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   unit-tests:
+    name: unit-tests${{ matrix.label }}
     needs: build-emulator
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -386,10 +395,13 @@ jobs:
       matrix:
         include:
           - variant: full
+            label: ""
             cmake_flags: ""
           - variant: bitcoin-only
+            label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
           - variant: zcash-privacy
+            label: " (zcash-privacy)"
             cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - name: Download emulator image
