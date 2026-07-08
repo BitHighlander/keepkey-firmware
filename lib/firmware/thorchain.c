@@ -29,7 +29,20 @@
 #include "trezor/crypto/segwit_addr.h"
 
 #include <stdbool.h>
+#include <string.h>
 #include <time.h>
+
+bool thorchain_isValidDenom(const char* denom) {
+  if (!denom || !denom[0]) return false;
+  for (size_t i = 0; denom[i]; i++) {
+    const char c = denom[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
+          c == '/' || c == '-')) {
+      return false;
+    }
+  }
+  return true;
+}
 
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
@@ -117,7 +130,7 @@ bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
 }
 
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
-                                   const char* to_address) {
+                                   const char* to_address, const char* denom) {
   if (!initialized || msgs_remaining == 0) return false;
 
   const char mainnetp[] = "thor";
@@ -148,6 +161,9 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
+  const char* coin_denom = (denom && denom[0]) ? denom : "rune";
+  if (!thorchain_isValidDenom(coin_denom)) return false;
+
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);
   }
@@ -157,10 +173,12 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
   sha256_Update(&ctx, (uint8_t*)prelude, strlen(prelude));
 
-  // 21 + ^20 + 19 = ^60
+  // Serialize the host-provided denomination exactly as reviewed.
   success &= tendermint_snprintf(
       &ctx, buffer, sizeof(buffer),
-      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"rune\"}]", amount);
+      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"", amount);
+  tendermint_sha256UpdateEscaped(&ctx, coin_denom, strlen(coin_denom));
+  sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
   // 17 + 45 + 1 = 63
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),

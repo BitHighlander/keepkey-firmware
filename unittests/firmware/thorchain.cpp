@@ -32,6 +32,18 @@ TEST(Thorchain, AmountFormattingCoversProtocolMaximumAndFailsClosed) {
       thorchain_formatAmount(1, "ETH.\"ETH", rendered, sizeof(rendered)));
 }
 
+TEST(Thorchain, DenomValidationRejectsJsonAndDisplayAmbiguity) {
+  EXPECT_TRUE(thorchain_isValidDenom("rune"));
+  EXPECT_TRUE(thorchain_isValidDenom("eth.eth"));
+  EXPECT_TRUE(thorchain_isValidDenom("btc/btc"));
+  EXPECT_TRUE(thorchain_isValidDenom("cross-chain"));
+  EXPECT_FALSE(thorchain_isValidDenom(""));
+  EXPECT_FALSE(thorchain_isValidDenom("RUNE"));
+  EXPECT_FALSE(thorchain_isValidDenom("rune\""));
+  EXPECT_FALSE(thorchain_isValidDenom("rune\\n"));
+  EXPECT_FALSE(thorchain_isValidDenom("ru ne"));
+}
+
 TEST(Thorchain, MemoWithEmbeddedNulIsNotParsed) {
   /* thorchain_parseConfirmMemo() copies an explicit byte count and then hands
      the buffer to strtok, which stops at the first NUL. A memo such as
@@ -211,7 +223,7 @@ TEST(Thorchain, ThorchainSignTx) {
      noticed, because the file was not compiled. Same 20-byte payload,
      correct thor checksum. */
   ASSERT_TRUE(thorchain_signTxUpdateMsgSend(
-      100000, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n"));
+      100000, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n", NULL));
 
   uint8_t public_key[33];
   uint8_t signature[64];
@@ -263,8 +275,8 @@ TEST(Thorchain, MultiMessageSignTxSeparatesMsgsWithComma) {
   ASSERT_TRUE(thorchain_signTxInit(&node, &msg));
 
   const char* const to = "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n";
-  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100000, to));
-  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(42, to));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100000, to, NULL));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(42, to, "rune"));
   ASSERT_TRUE(thorchain_signingIsFinished());
 
   uint8_t public_key[33];
@@ -305,7 +317,7 @@ TEST(Thorchain, ZeroOrOmittedMessagesFailInitialization) {
   EXPECT_FALSE(thorchain_signTxInit(&node, &msg));
   EXPECT_FALSE(thorchain_signingIsInited());
   EXPECT_FALSE(thorchain_signingIsFinished());
-  EXPECT_FALSE(thorchain_signTxUpdateMsgSend(1, "ignored"));
+  EXPECT_FALSE(thorchain_signTxUpdateMsgSend(1, "ignored", NULL));
 
   msg.has_msg_count = false;
   msg.msg_count = 1;

@@ -143,12 +143,20 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   const ThorchainSignTx* sign_tx = thorchain_getThorchainSignTx();
 
   if (msg->has_send) {
+    const char* coin_denom =
+        (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
+    if (!thorchain_isValidDenom(coin_denom)) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
+      layoutHome();
+      return;
+    }
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
         char amount_str[32];
-        if (!thorchain_formatAmount(msg->send.amount, "RUNE", amount_str,
-                                    sizeof(amount_str))) {
+        if (!bn_format_uint64(msg->send.amount, NULL, NULL, 8, 0, false,
+                              amount_str, sizeof(amount_str))) {
           thorchain_signAbort();
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           "Invalid THORChain send amount");
@@ -179,12 +187,19 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
           layoutHome();
           return;
         }
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
+                     "%s", coin_denom)) {
+          thorchain_signAbort();
+          fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+          layoutHome();
+          return;
+        }
 
         break;
       }
     }
-    if (!thorchain_signTxUpdateMsgSend(msg->send.amount,
-                                       msg->send.to_address)) {
+    if (!thorchain_signTxUpdateMsgSend(msg->send.amount, msg->send.to_address,
+                                       coin_denom)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Failed to include send message in transaction");
