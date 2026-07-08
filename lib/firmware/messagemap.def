@@ -171,19 +171,9 @@
     MSG_OUT(MessageType_MessageType_SolanaOffchainMessageSignature, SolanaOffchainMessageSignature, NO_PROCESS_FUNC)
 #endif  // !BITCOIN_ONLY
 
-    /* Hive */
-    MSG_IN(MessageType_MessageType_HiveGetPublicKey,               HiveGetPublicKey,            fsm_msgHiveGetPublicKey)
-    MSG_IN(MessageType_MessageType_HiveGetPublicKeys,              HiveGetPublicKeys,           fsm_msgHiveGetPublicKeys)
-    MSG_IN(MessageType_MessageType_HiveSignTx,                     HiveSignTx,                  fsm_msgHiveSignTx)
-    MSG_IN(MessageType_MessageType_HiveSignAccountCreate,          HiveSignAccountCreate,       fsm_msgHiveSignAccountCreate)
-    MSG_IN(MessageType_MessageType_HiveSignAccountUpdate,          HiveSignAccountUpdate,       fsm_msgHiveSignAccountUpdate)
-
-    MSG_OUT(MessageType_MessageType_HivePublicKey,                 HivePublicKey,               NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_HivePublicKeys,                HivePublicKeys,              NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_HiveSignedTx,                  HiveSignedTx,                NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_HiveSignedAccountCreate,       HiveSignedAccountCreate,     NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_HiveSignedAccountUpdate,       HiveSignedAccountUpdate,     NO_PROCESS_FUNC)
-    /* Zcash */
+    /* Zcash shielded/Orchard (privacy engine). Transparent t-address Zcash uses
+       the generic SignTx/GetAddress rows above and needs none of these. */
+#if ZCASH_PRIVACY
     MSG_IN(MessageType_MessageType_ZcashSignPCZT,                  ZcashSignPCZT,               fsm_msgZcashSignPCZT)
     MSG_IN(MessageType_MessageType_ZcashPCZTAction,                ZcashPCZTAction,             fsm_msgZcashPCZTAction)
     MSG_IN(MessageType_MessageType_ZcashGetOrchardFVK,             ZcashGetOrchardFVK,          fsm_msgZcashGetOrchardFVK)
@@ -197,6 +187,21 @@
     MSG_OUT(MessageType_MessageType_ZcashTransparentSigned,        ZcashTransparentSigned,      NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_ZcashTransparentAck,           ZcashTransparentAck,         NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_ZcashAddress,                  ZcashAddress,                NO_PROCESS_FUNC)
+#endif
+#if !BITCOIN_ONLY
+    /* Hive */
+    MSG_IN(MessageType_MessageType_HiveGetPublicKey,               HiveGetPublicKey,            fsm_msgHiveGetPublicKey)
+    MSG_IN(MessageType_MessageType_HiveGetPublicKeys,              HiveGetPublicKeys,           fsm_msgHiveGetPublicKeys)
+    MSG_IN(MessageType_MessageType_HiveSignTx,                     HiveSignTx,                  fsm_msgHiveSignTx)
+    MSG_IN(MessageType_MessageType_HiveSignAccountCreate,          HiveSignAccountCreate,       fsm_msgHiveSignAccountCreate)
+    MSG_IN(MessageType_MessageType_HiveSignAccountUpdate,          HiveSignAccountUpdate,       fsm_msgHiveSignAccountUpdate)
+
+    MSG_OUT(MessageType_MessageType_HivePublicKey,                 HivePublicKey,               NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_HivePublicKeys,                HivePublicKeys,              NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_HiveSignedTx,                  HiveSignedTx,                NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_HiveSignedAccountCreate,       HiveSignedAccountCreate,     NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_HiveSignedAccountUpdate,       HiveSignedAccountUpdate,     NO_PROCESS_FUNC)
+#endif  // !BITCOIN_ONLY
 
 #if DEBUG_LINK
     /* Debug Messages */
@@ -213,6 +218,8 @@
     DEBUG_OUT(MessageType_MessageType_DebugLinkFlashDumpResponse,   DebugLinkFlashDumpResponse,  NO_PROCESS_FUNC)
 #endif
 
+#if !BITCOIN_ONLY
     MSG_IN(MessageType_MessageType_EthereumTxMetadata, EthereumTxMetadata, fsm_msgEthereumTxMetadata)
     MSG_OUT(MessageType_MessageType_EthereumMetadataAck, EthereumMetadataAck, NO_PROCESS_FUNC)
     MSG_IN(MessageType_MessageType_LoadClearsignSigner, LoadClearsignSigner, fsm_msgLoadClearsignSigner)
+#endif  // !BITCOIN_ONLY

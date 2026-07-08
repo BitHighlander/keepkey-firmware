@@ -184,6 +184,15 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                                   \
   }
 
+#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
+  if (storage_isBitcoinOnlyLocked()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Device holds a bitcoin-only wallet. Wipe the " \
+                    "device to use multi-chain firmware.");         \
+    layoutHome();                                                   \
+    return;                                                         \
+  }
+
 #define CHECK_PIN              \
   if (!pin_protect_cached()) { \
     layoutHome();              \
@@ -436,6 +445,17 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #include "fsm_msg_hive.h"
+#else
+// Bitcoin-only: the coin engines above are compiled out, but the always-on
+// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
+// and factory-reset calls signed_metadata_clear_signers() (EVM clearsign).
+// With no state to reset, no-ops are correct.
+void ethereum_signing_abort(void) {}
+void tendermint_signAbort(void) {}
+void eos_signingAbort(void) {}
+void signed_metadata_clear_signers(void) {}
+#endif  // !BITCOIN_ONLY
+#if ZCASH_PRIVACY
 #include "fsm_msg_zcash.h"
 #else
 // The coin engines above are compiled out, but the always-on
