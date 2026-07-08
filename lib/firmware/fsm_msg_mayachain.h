@@ -196,7 +196,6 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-
         break;
       }
     }
