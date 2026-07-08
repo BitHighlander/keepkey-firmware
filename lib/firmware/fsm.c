@@ -36,6 +36,7 @@
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
 #include "keepkey/firmware/binance.h"
@@ -445,3 +446,4 @@ void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
 #endif  // !BITCOIN_ONLY
+#include "fsm_msg_bip85.h"
