@@ -57,6 +57,7 @@ static int uncyphered_word_count = 0;
 static bool definitely_using_cipher = false;
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
+static CONFIDENTIAL char last_completed_word[12];
 static CONFIDENTIAL char current_word_scratch[CURRENT_WORD_BUF];
 static CONFIDENTIAL char formatted_word_scratch[CURRENT_WORD_BUF + 10];
 static CONFIDENTIAL char final_mnemonic_scratch[MNEMONIC_BUF];
@@ -81,6 +82,7 @@ void recovery_cipher_reset(void) {
   definitely_using_cipher = false;
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
+  memzero(last_completed_word, sizeof(last_completed_word));
   memzero(current_word_scratch, sizeof(current_word_scratch));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
@@ -397,8 +399,16 @@ void next_character(void) {
                       &formatted_word_scratch);
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
+  /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
+  static char prev_info[32];
+  prev_info[0] = '\0';
+  if (word_pos > 0 && last_completed_word[0]) {
+    snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
+             last_completed_word);
+  }
+
   /* Show cipher and partial word */
-  layout_cipher(formatted_word_scratch, cipher);
+  layout_cipher(formatted_word_scratch, cipher, prev_info);
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
@@ -478,6 +488,26 @@ void recovery_character(const char* character) {
       }
     }
   } else {
+    /* Per-word BIP39 validation: reject immediately if the decoded word
+     * doesn't match any entry in the wordlist. */
+    if (strlen(decoded_word) > 0) {
+      static CONFIDENTIAL char check_word[CURRENT_WORD_BUF];
+      strlcpy(check_word, decoded_word, sizeof(check_word));
+      bool valid = attempt_auto_complete(check_word);
+      if (enforce_wordlist && !valid) {
+        memzero(check_word, sizeof(check_word));
+        memzero(coded_word, sizeof(coded_word));
+        memzero(decoded_word, sizeof(decoded_word));
+        recovery_cipher_abort();
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        "Word not found in BIP39 wordlist");
+        layout_warning_static("Word not in wordlist");
+        return;
+      }
+      strlcpy(last_completed_word, check_word, sizeof(last_completed_word));
+      memzero(check_word, sizeof(check_word));
+    }
+
     memzero(coded_word, sizeof(coded_word));
     memzero(decoded_word, sizeof(decoded_word));
 
@@ -609,7 +639,9 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  if (!auto_completed && !enforce_wordlist) {
+  /* Cipher recovery always decodes to BIP-39. A host choosing the import flag
+   * may change storage metadata, but must not make a non-word seed valid. */
+  if (!auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");
