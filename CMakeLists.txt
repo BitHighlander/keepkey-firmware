@@ -133,6 +133,11 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
+# NOTE: AES table size is selected per-variant below. This PR splits Zcash
+# (and its Pallas curve arithmetic) into the zcash-privacy variant, so the
+# default and bitcoin-only images regain flash headroom and keep the fast
+# FOUR_TABLES AES; only zcash-privacy opts into AES_SMALL_TABLES.
+
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
