@@ -15,6 +15,7 @@ set(sources
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
+    tron.cpp
     u2f.cpp
     zcash.cpp)
 
