@@ -15,7 +15,8 @@ set(sources
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
-    u2f.cpp)
+    u2f.cpp
+    zcash.cpp)
 
 # Suites for the coin engines the bitcoin-only image compiles out. Building
 # them against that image fails at the first reference to an absent symbol

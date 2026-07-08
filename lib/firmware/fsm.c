@@ -389,6 +389,7 @@ void fsm_abort_signing_workflows(void) {
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+  zcash_signing_abort();
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
@@ -431,6 +432,8 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+#include "fsm_msg_hive.h"
+#include "fsm_msg_zcash.h"
 #else
 // The coin engines above are compiled out, but the always-on
 // Initialize/Cancel handlers still call each engine's abort hook. With no
