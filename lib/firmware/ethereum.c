@@ -1111,6 +1111,7 @@ void ethereum_signing_abort(void) {
     memzero(privkey, sizeof(privkey));
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
+    signed_metadata_clear();
     layoutHome();
     ethereum_signing = false;
   }

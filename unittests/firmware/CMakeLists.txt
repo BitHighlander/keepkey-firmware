@@ -7,6 +7,7 @@ set(sources
     recovery.cpp
     rng_health.cpp
     setup_ceremony.cpp
+    signed_metadata.cpp
     signing.cpp
     storage.cpp
     storage_cipher_probe.c

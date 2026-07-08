@@ -12,6 +12,7 @@ set(sources
     policy.c
     recovery_cipher.c
     reset.c
+    signed_metadata.c
     signing.c
     storage.c
     tiny-json.c
