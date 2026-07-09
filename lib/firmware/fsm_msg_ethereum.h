@@ -106,8 +106,7 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_Other, _("Load Clearsigner"),
                "Trust identity '%s' (%s) to describe transactions?%s NOT "
                "verified by KeepKey.",
-               msg->alias, fingerprint,
-               persist ? " Kept until wiped." : "")) {
+               msg->alias, fingerprint, persist ? " Kept until wiped." : "")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Load clearsign signer cancelled"));
     layoutHome();

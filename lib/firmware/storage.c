@@ -200,7 +200,8 @@ static void write_u32_le(char* ptr, uint32_t val) {
 }
 
 /* Cast each byte through uint8_t first: on the emulator (signed char) a raw
- * (uint16_t)ptr[i] would sign-extend a 0x80+ low byte (icon_len reaches 384). */
+ * (uint16_t)ptr[i] would sign-extend a 0x80+ low byte (icon_len reaches 384).
+ */
 static uint16_t read_u16_le(const char* ptr) {
   return (uint16_t)((uint8_t)ptr[0]) | ((uint16_t)((uint8_t)ptr[1]) << 8);
 }
@@ -1132,7 +1133,7 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
 // One identity serializes to CLEARSIGN_IDENTITY_SERIALIZED_LEN bytes:
 //   +0 present(u8) +1 key_id(u8) +2 pubkey[33] +35 alias[32] +67 icon_w(u8)
 //   +68 icon_h(u8) +69 icon_len(u16 le) +71 icon[CLEARSIGN_ICON_MAX] = 71+384
-#define CLEARSIGN_IDENTITY_BLOCK_OFF (1501 + V17_ENCSEC_SIZE)  // 2525
+#define CLEARSIGN_IDENTITY_BLOCK_OFF (1501 + V17_ENCSEC_SIZE)        // 2525
 #define CLEARSIGN_IDENTITY_SERIALIZED_LEN (71 + CLEARSIGN_ICON_MAX)  // 455
 
 void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
@@ -1144,12 +1145,12 @@ void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
               (size_t)i * CLEARSIGN_IDENTITY_SERIALIZED_LEN;
     write_u8(p + 0, id->present ? 1 : 0);
     write_u8(p + 1, id->key_id);
-    memcpy(p + 2, id->pubkey, sizeof(id->pubkey));    // 33
-    memcpy(p + 35, id->alias, sizeof(id->alias));     // 32
+    memcpy(p + 2, id->pubkey, sizeof(id->pubkey));  // 33
+    memcpy(p + 35, id->alias, sizeof(id->alias));   // 32
     write_u8(p + 67, id->icon_w);
     write_u8(p + 68, id->icon_h);
     write_u16_le(p + 69, id->icon_len);
-    memcpy(p + 71, id->icon, sizeof(id->icon));       // CLEARSIGN_ICON_MAX
+    memcpy(p + 71, id->icon, sizeof(id->icon));  // CLEARSIGN_ICON_MAX
   }
 }
 
@@ -1164,11 +1165,13 @@ void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
     id->key_id = read_u8(p + 1);
     memcpy(id->pubkey, p + 2, sizeof(id->pubkey));
     memcpy(id->alias, p + 35, sizeof(id->alias));
-    id->alias[sizeof(id->alias) - 1] = '\0';  // never trust flash to be NUL-term
+    id->alias[sizeof(id->alias) - 1] =
+        '\0';  // never trust flash to be NUL-term
     id->icon_w = read_u8(p + 67);
     id->icon_h = read_u8(p + 68);
     id->icon_len = read_u16_le(p + 69);
-    if (id->icon_len > CLEARSIGN_ICON_MAX) id->icon_len = 0;  // corrupt => no icon
+    if (id->icon_len > CLEARSIGN_ICON_MAX)
+      id->icon_len = 0;  // corrupt => no icon
     memcpy(id->icon, p + 71, sizeof(id->icon));
   }
 }
