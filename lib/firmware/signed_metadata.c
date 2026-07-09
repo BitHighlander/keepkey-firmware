@@ -709,7 +709,10 @@ bool signed_metadata_confirm(void) {
       icon_frame.x = 0;
       icon_frame.y = (icon_h < 52) ? (uint16_t)((52 - icon_h) / 2 + 6) : 6;
       icon_frame.duration = 0;
-      icon_frame.color = 0xff;
+      /* Decoder computes pixel = data * color / 100, so color=100 makes the
+       * icon's data bytes direct 0-255 intensities (matches the built-in
+       * icons). color=0xff would overflow uint8 and corrupt every pixel. */
+      icon_frame.color = 100;
       icon_frame.image = &icon_img;
       layout_set_runtime_icon(&icon_frame);
       id_icon = RUNTIME_ICON;
