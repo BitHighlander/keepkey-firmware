@@ -554,8 +554,13 @@ static IconType stage_runtime_icon(Image *img, AnimationFrame *frame,
   img->h = icon_h;
   img->length = icon_len;
   img->data = icon;
-  frame->x = 0;
-  frame->y = (icon_h < 52) ? (uint16_t)((52 - icon_h) / 2 + 6) : 6;
+  /* Center inside the confirm's left icon column (LEFT_MARGIN_WITH_ICON=40px);
+   * text begins at x=40, so an icon wider than that would clip the title/body.
+   * Vertically center in the 64px height. */
+  frame->x = (icon_w < LEFT_MARGIN_WITH_ICON)
+                 ? (uint16_t)((LEFT_MARGIN_WITH_ICON - icon_w) / 2)
+                 : 0;
+  frame->y = (icon_h < 64) ? (uint16_t)((64 - icon_h) / 2) : 0;
   frame->duration = 0;
   /* Decoder does value*color/100; color=100 => data bytes are direct 0-255. */
   frame->color = 100;
