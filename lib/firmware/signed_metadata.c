@@ -715,13 +715,17 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
   return true;
 }
 
-bool signed_metadata_confirm(void) {
+/* Renders the clearsign screens in sequence. When a signer with an icon is
+ * loaded, its logo (the compass) is set as RUNTIME_ICON and STAYS set for the
+ * whole flow, so every screen — identity, method, contract, each arg — carries
+ * it. The caller (signed_metadata_confirm) clears the runtime icon once on
+ * return, covering every early-exit path. */
+static bool signed_metadata_confirm_screens(void) {
   char body[128];
-
-  if (!metadata_available ||
-      stored_metadata.classification != METADATA_VERIFIED) {
-    return false;
-  }
+  /* Compass shown on every screen once a signer with an icon is loaded. */
+  IconType screen_icon = NO_ICON;
+  Image icon_img;
+  AnimationFrame icon_frame;
 
   if (metadata_signer_loaded) {
     /* Lead with the loaded IDENTITY (logo, if any, + alias + fingerprint)
@@ -747,9 +751,6 @@ bool signed_metadata_confirm(void) {
     const uint8_t *icon_data;
     uint8_t icon_w, icon_h;
     uint16_t icon_len;
-    IconType id_icon = NO_ICON;
-    Image icon_img;
-    AnimationFrame icon_frame;
     if (signed_metadata_signer_icon(key_id, &icon_data, &icon_w, &icon_h,
                                     &icon_len)) {
       icon_img.w = icon_w;
@@ -765,23 +766,25 @@ bool signed_metadata_confirm(void) {
       icon_frame.color = 100;
       icon_frame.image = &icon_img;
       layout_set_runtime_icon(&icon_frame);
-      id_icon = RUNTIME_ICON;
+      screen_icon = RUNTIME_ICON;
     }
 
     memset(body, 0, sizeof(body));
     snprintf(body, sizeof(body), "%s (%s)\ndescribes this tx.", alias,
              fingerprint);
-    bool ok = confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                id_icon, "Identity", "%s", body);
-    layout_set_runtime_icon(NULL);
-    if (!ok) return false;
+    /* Runtime icon stays set from here on — every subsequent screen shows the
+     * compass. Cleared once by the caller. */
+    if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           screen_icon, "Identity", "%s", body)) {
+      return false;
+    }
 
-    /* Method screen without the "Insight Verified" branding/icon — that
-     * presentation is reserved for the built-in (phase 2) keys. */
+    /* Method screen — same identity compass, no "Insight Verified" branding
+     * (that presentation is reserved for the built-in phase-2 keys). */
     memset(body, 0, sizeof(body));
     snprintf(body, sizeof(body), "Call:\n%s", stored_metadata.method_name);
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Clearsign",
-                 "%s", body)) {
+    if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           screen_icon, "Clearsign", "%s", body)) {
       return false;
     }
   } else {
@@ -803,8 +806,8 @@ bool signed_metadata_confirm(void) {
                             false, stored_metadata.chain_id);
   memset(body, 0, sizeof(body));
   snprintf(body, sizeof(body), "Contract:\n%s", contract_addr);
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-               stored_metadata.method_name, "%s", body)) {
+  if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                         screen_icon, stored_metadata.method_name, "%s", body)) {
     return false;
   }
 
@@ -896,8 +899,9 @@ bool signed_metadata_confirm(void) {
       }
     }
 
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 stored_metadata.method_name, "%s", body)) {
+    if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           screen_icon, stored_metadata.method_name, "%s",
+                           body)) {
       return false;
     }
   }
@@ -906,6 +910,18 @@ bool signed_metadata_confirm(void) {
    * suppressed, so the signature MUST be bound to this metadata's tx hash. */
   relied_on_metadata = true;
   return true;
+}
+
+bool signed_metadata_confirm(void) {
+  if (!metadata_available ||
+      stored_metadata.classification != METADATA_VERIFIED) {
+    return false;
+  }
+  bool ok = signed_metadata_confirm_screens();
+  /* Single cleanup for every screen-flow exit — the runtime icon frame lives on
+   * the helper's stack, so it must not outlive this call. */
+  layout_set_runtime_icon(NULL);
+  return ok;
 }
 
 bool signed_metadata_relied(void) { return relied_on_metadata; }
