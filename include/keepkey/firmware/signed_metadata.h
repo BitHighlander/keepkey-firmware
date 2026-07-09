@@ -16,6 +16,10 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
+/* Identity icon cap (1bpp mono RLE). Must equal the device-protocol
+ * LoadClearsignSigner.icon max_size and storage.h CLEARSIGN_ICON_MAX
+ * (static-asserted in signed_metadata.c). */
+#define METADATA_ICON_MAX 384
 /* hex(first 4 bytes of sha256(pubkey)) + NUL */
 #define METADATA_FINGERPRINT_LEN 9
 
@@ -118,9 +122,25 @@ bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t *pubkey,
 
 /* Store a signer into a slot. Caller (the FSM handler) MUST have passed
  * signed_metadata_signer_valid() and obtained on-device user confirmation
- * first — this function is the post-consent write, nothing more. */
-void signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
-                                  const char *alias);
+ * first — this function is the post-consent write, nothing more.
+ *
+ * icon (optional, icon_len<=384, 1bpp mono RLE) is kept as the session icon for
+ * the slot; icon_len==0 => text-only identity. When persist=true the signer
+ * (incl. icon) is ALSO written to flash so it survives reboot. Returns false
+ * only when persist was requested but every persistent slot is occupied by a
+ * different identity — the RAM (session) signer is stored regardless. */
+bool signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
+                                  const char *alias, const uint8_t *icon,
+                                  uint8_t icon_w, uint8_t icon_h,
+                                  uint16_t icon_len, bool persist);
+
+/* Resolve a slot's alias / icon from the RAM session copy, else a persisted
+ * identity that survived reboot. alias returns NULL and icon returns false when
+ * the slot has no signer / no icon (text-only). Used by the per-tx confirm. */
+const char *signed_metadata_signer_alias(uint8_t key_id);
+bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
+                                 uint8_t *w_out, uint8_t *h_out,
+                                 uint16_t *len_out);
 
 /* Drop all runtime-loaded signers (and any metadata they verified). */
 void signed_metadata_clear_signers(void);

@@ -1,6 +1,9 @@
 #include "keepkey/firmware/signed_metadata.h"
 
+#include "storage.h"  // ClearsignIdentity + persistent-slot accessors
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/layout.h"   // RUNTIME_ICON + layout_set_runtime_icon
+#include "keepkey/board/variant.h"  // Image / AnimationFrame
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/ethereum.h"
 #include "trezor/crypto/address.h"
@@ -50,9 +53,29 @@ static const uint8_t METADATA_PUBKEYS[METADATA_MAX_KEYS][33] = {
     {0x00},
 };
 
-/* Runtime-loaded signers. RAM only — cleared on reboot by construction. */
+/* Runtime-loaded signers. RAM only — cleared on reboot by construction.
+ * A signer loaded with persist=true is ALSO written to flash (V18 storage) and
+ * reconsulted after reboot via storage_getClearsignIdentity(). The RAM slot is
+ * the session working copy; the flash slot is the durable trust anchor. */
 static uint8_t loaded_pubkeys[METADATA_MAX_KEYS][33];
 static char loaded_aliases[METADATA_MAX_KEYS][METADATA_ALIAS_MAX_LEN + 1];
+/* Per-slot session icon (1bpp mono RLE). icon_len==0 => text-only identity. */
+_Static_assert(CLEARSIGN_ICON_MAX == METADATA_ICON_MAX,
+               "storage icon cap must match the clearsign icon cap");
+static uint8_t loaded_icons[METADATA_MAX_KEYS][CLEARSIGN_ICON_MAX];
+static uint8_t loaded_icon_w[METADATA_MAX_KEYS];
+static uint8_t loaded_icon_h[METADATA_MAX_KEYS];
+static uint16_t loaded_icon_len[METADATA_MAX_KEYS];
+
+/* Find the persistent identity that reloads into `key_id`, or NULL. */
+static const ClearsignIdentity *persistent_identity_for(uint8_t key_id) {
+  int n = storage_clearsignIdentityCount();
+  for (int i = 0; i < n; i++) {
+    const ClearsignIdentity *id = storage_getClearsignIdentity(i);
+    if (id && id->key_id == key_id) return id;
+  }
+  return NULL;
+}
 
 static bool read_u8(const uint8_t **cursor, const uint8_t *end, uint8_t *out) {
   if ((size_t)(end - *cursor) < 1) {
@@ -393,7 +416,13 @@ void signed_metadata_clear(void) {
 void signed_metadata_clear_signers(void) {
   memzero(loaded_pubkeys, sizeof(loaded_pubkeys));
   memzero(loaded_aliases, sizeof(loaded_aliases));
-  /* Metadata verified by a now-dropped signer must not outlive it. */
+  memzero(loaded_icons, sizeof(loaded_icons));
+  memzero(loaded_icon_w, sizeof(loaded_icon_w));
+  memzero(loaded_icon_h, sizeof(loaded_icon_h));
+  memzero(loaded_icon_len, sizeof(loaded_icon_len));
+  /* Metadata verified by a now-dropped signer must not outlive it. NB: this
+   * clears only the RAM session copies; persisted identities live in flash and
+   * are cleared by WipeDevice, not here. */
   signed_metadata_clear();
 }
 
@@ -435,15 +464,81 @@ bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t *pubkey,
   return ecdsa_read_pubkey(&secp256k1, pubkey, &point) == 1;
 }
 
-void signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
-                                  const char *alias) {
+bool signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
+                                  const char *alias, const uint8_t *icon,
+                                  uint8_t icon_w, uint8_t icon_h,
+                                  uint16_t icon_len, bool persist) {
   if (key_id >= METADATA_MAX_KEYS) {
-    return;
+    return false;
   }
   memcpy(loaded_pubkeys[key_id], pubkey, sizeof(loaded_pubkeys[key_id]));
   strlcpy(loaded_aliases[key_id], alias, sizeof(loaded_aliases[key_id]));
+
+  /* Session icon into the RAM working slot (icon_len already validated <= max
+   * by the caller). A load without an icon clears any prior one for the slot. */
+  memzero(loaded_icons[key_id], sizeof(loaded_icons[key_id]));
+  if (icon && icon_len > 0 && icon_len <= CLEARSIGN_ICON_MAX) {
+    memcpy(loaded_icons[key_id], icon, icon_len);
+    loaded_icon_w[key_id] = icon_w;
+    loaded_icon_h[key_id] = icon_h;
+    loaded_icon_len[key_id] = icon_len;
+  } else {
+    loaded_icon_w[key_id] = 0;
+    loaded_icon_h[key_id] = 0;
+    loaded_icon_len[key_id] = 0;
+  }
+
+  bool persisted = true;
+  if (persist) {
+    ClearsignIdentity id;
+    memzero(&id, sizeof(id));
+    id.present = true;
+    id.key_id = key_id;
+    memcpy(id.pubkey, pubkey, sizeof(id.pubkey));
+    strlcpy(id.alias, alias, sizeof(id.alias));
+    id.icon_w = loaded_icon_w[key_id];
+    id.icon_h = loaded_icon_h[key_id];
+    id.icon_len = loaded_icon_len[key_id];
+    memcpy(id.icon, loaded_icons[key_id], sizeof(id.icon));
+    persisted = storage_upsertClearsignIdentity(&id);
+    memzero(&id, sizeof(id));
+  }
+
   /* Replacing a signer invalidates anything the old one verified. */
   signed_metadata_clear();
+  return persisted;
+}
+
+/* Resolve the alias for a slot (RAM working copy, else a persisted identity).
+ * Returns NULL if the slot has no loaded/persisted signer. */
+const char *signed_metadata_signer_alias(uint8_t key_id) {
+  if (key_id >= METADATA_MAX_KEYS) return NULL;
+  if (loaded_pubkeys[key_id][0] != 0x00) return loaded_aliases[key_id];
+  const ClearsignIdentity *pid = persistent_identity_for(key_id);
+  return pid ? pid->alias : NULL;
+}
+
+/* Resolve the icon for a slot (RAM working copy, else a persisted identity).
+ * Returns false when the slot has no icon (text-only identity). */
+bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
+                                 uint8_t *w_out, uint8_t *h_out,
+                                 uint16_t *len_out) {
+  if (key_id >= METADATA_MAX_KEYS) return false;
+  if (loaded_pubkeys[key_id][0] != 0x00) {
+    if (loaded_icon_len[key_id] == 0) return false;
+    if (icon_out) *icon_out = loaded_icons[key_id];
+    if (w_out) *w_out = loaded_icon_w[key_id];
+    if (h_out) *h_out = loaded_icon_h[key_id];
+    if (len_out) *len_out = loaded_icon_len[key_id];
+    return true;
+  }
+  const ClearsignIdentity *pid = persistent_identity_for(key_id);
+  if (!pid || pid->icon_len == 0) return false;
+  if (icon_out) *icon_out = pid->icon;
+  if (w_out) *w_out = pid->icon_w;
+  if (h_out) *h_out = pid->icon_h;
+  if (len_out) *len_out = pid->icon_len;
+  return true;
 }
 
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
@@ -471,6 +566,13 @@ static const uint8_t *metadata_pubkey_for(uint8_t key_id, bool *is_loaded) {
   if (loaded_pubkeys[key_id][0] != 0x00) {
     *is_loaded = true;
     return loaded_pubkeys[key_id];
+  }
+  /* Not in a RAM slot this session — fall back to a persisted identity that
+   * survived reboot. (A fresh load into the same slot supersedes it above.) */
+  const ClearsignIdentity *pid = persistent_identity_for(key_id);
+  if (pid) {
+    *is_loaded = true;
+    return pid->pubkey;
   }
   return NULL;
 }
@@ -571,20 +673,54 @@ bool signed_metadata_confirm(void) {
   }
 
   if (metadata_signer_loaded) {
-    /* Warning screen FIRST, before any clearsign page: the decode below is
-     * vouched for by a signer the user loaded, not by KeepKey. */
+    /* Lead with the loaded IDENTITY (logo, if any, + alias + fingerprint)
+     * BEFORE any clearsign page. The user approved this identity as their
+     * trust anchor, so showing it — not a scary "NOT verified by KeepKey"
+     * banner — is the honest framing. The fingerprint stays reachable so a
+     * swapped provider is still detectable. */
+    uint8_t key_id = stored_metadata.key_id;
+    bool is_loaded = false;
+    const uint8_t *pk = metadata_pubkey_for(key_id, &is_loaded);
+    const char *alias = signed_metadata_signer_alias(key_id);
     char fingerprint[METADATA_FINGERPRINT_LEN];
-    signed_metadata_pubkey_fingerprint(loaded_pubkeys[stored_metadata.key_id],
-                                       fingerprint);
-    memset(body, 0, sizeof(body));
-    snprintf(body, sizeof(body),
-             "Signer '%s' (%s) you loaded describes this tx. NOT verified by "
-             "KeepKey.",
-             loaded_aliases[stored_metadata.key_id], fingerprint);
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Clearsign Warning", "%s", body)) {
-      return false;
+    if (pk) {
+      signed_metadata_pubkey_fingerprint(pk, fingerprint);
+    } else {
+      strlcpy(fingerprint, "????????", sizeof(fingerprint));
     }
+    if (!alias) alias = "unknown";
+
+    /* Draw the identity logo in the confirm's left icon column if one was
+     * loaded. Image + frame are local — valid for the synchronous confirm
+     * call, then the runtime icon is cleared. (Positioning tuned on device.) */
+    const uint8_t *icon_data;
+    uint8_t icon_w, icon_h;
+    uint16_t icon_len;
+    IconType id_icon = NO_ICON;
+    Image icon_img;
+    AnimationFrame icon_frame;
+    if (signed_metadata_signer_icon(key_id, &icon_data, &icon_w, &icon_h,
+                                    &icon_len)) {
+      icon_img.w = icon_w;
+      icon_img.h = icon_h;
+      icon_img.length = icon_len;
+      icon_img.data = icon_data;
+      icon_frame.x = 0;
+      icon_frame.y = (icon_h < 52) ? (uint16_t)((52 - icon_h) / 2 + 6) : 6;
+      icon_frame.duration = 0;
+      icon_frame.color = 0xff;
+      icon_frame.image = &icon_img;
+      layout_set_runtime_icon(&icon_frame);
+      id_icon = RUNTIME_ICON;
+    }
+
+    memset(body, 0, sizeof(body));
+    snprintf(body, sizeof(body), "%s (%s)\ndescribes this tx.", alias,
+             fingerprint);
+    bool ok = confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                                id_icon, "Identity", "%s", body);
+    layout_set_runtime_icon(NULL);
+    if (!ok) return false;
 
     /* Method screen without the "Insight Verified" branding/icon — that
      * presentation is reserved for the built-in (phase 2) keys. */
