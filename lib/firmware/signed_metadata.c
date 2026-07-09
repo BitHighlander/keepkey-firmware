@@ -807,7 +807,8 @@ static bool signed_metadata_confirm_screens(void) {
   memset(body, 0, sizeof(body));
   snprintf(body, sizeof(body), "Contract:\n%s", contract_addr);
   if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                         screen_icon, stored_metadata.method_name, "%s", body)) {
+                         screen_icon, stored_metadata.method_name, "%s",
+                         body)) {
     return false;
   }
 
