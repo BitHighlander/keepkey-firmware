@@ -324,6 +324,14 @@ void layout_standard_notification(const char* str1, const char* str2,
  * OUTPUT
  *     none
  */
+/* Frame drawn for RUNTIME_ICON — a loaded clear-sign identity logo. Set by
+ * layout_set_runtime_icon() before the confirm; the caller owns the storage. */
+static const AnimationFrame* runtime_icon_frame = NULL;
+
+void layout_set_runtime_icon(const struct AnimationFrame_* frame) {
+  runtime_icon_frame = frame;
+}
+
 void layout_add_icon(IconType type) {
   switch (type) {
     case ETHEREUM_ICON:
@@ -332,6 +340,12 @@ void layout_add_icon(IconType type) {
      */
     case VERIFIED_ICON:
       draw_bitmap_mono_rle(canvas, get_ethereum_icon_frame(), false);
+      break;
+
+    case RUNTIME_ICON:
+      if (runtime_icon_frame) {
+        draw_bitmap_mono_rle(canvas, runtime_icon_frame, false);
+      }
       break;
 
     default:

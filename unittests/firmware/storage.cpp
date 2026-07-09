@@ -1018,6 +1018,7 @@ TEST(Storage, ClearsignIdentityV18RoundTrip) {
   ClearsignIdentity *a = &start.storage.pub.clearsign_identities[0];
   memset(a, 0, sizeof(*a));
   a->present = true;
+  a->key_id = 1;
   for (int i = 0; i < 33; i++) a->pubkey[i] = (uint8_t)(i + 1);
   strcpy(a->alias, "CI Test");
   a->icon_w = 48;
@@ -1029,6 +1030,7 @@ TEST(Storage, ClearsignIdentityV18RoundTrip) {
   ClearsignIdentity *b = &start.storage.pub.clearsign_identities[1];
   memset(b, 0, sizeof(*b));
   b->present = true;
+  b->key_id = 2;
   for (int i = 0; i < 33; i++) b->pubkey[i] = (uint8_t)(0x80 + i);
   strcpy(b->alias, "Pioneer Insight");
 
@@ -1043,6 +1045,7 @@ TEST(Storage, ClearsignIdentityV18RoundTrip) {
     const ClearsignIdentity *s = &start.storage.pub.clearsign_identities[k];
     const ClearsignIdentity *r = &end.storage.pub.clearsign_identities[k];
     ASSERT_EQ(s->present, r->present) << "present " << k;
+    ASSERT_EQ(s->key_id, r->key_id) << "key_id " << k;
     ASSERT_EQ(0, memcmp(s->pubkey, r->pubkey, 33)) << "pubkey " << k;
     ASSERT_STREQ(s->alias, r->alias) << "alias " << k;
     ASSERT_EQ(s->icon_w, r->icon_w) << "icon_w " << k;
@@ -1053,8 +1056,9 @@ TEST(Storage, ClearsignIdentityV18RoundTrip) {
 
   // A corrupt on-flash icon_len (> CLEARSIGN_ICON_MAX) must clamp to 0 on read
   // so downstream renderers never index past the icon buffer. Identity 0's
-  // icon_len lives at flash[44 + 2525 + 68].
-  const size_t id0_icon_len_off = 44 + 1501 + V17_ENCSEC_SIZE + 68;
+  // icon_len lives at flash[44 + 2525 + 69] (present, key_id, pubkey[33],
+  // alias[32], icon_w, icon_h => 69).
+  const size_t id0_icon_len_off = 44 + 1501 + V17_ENCSEC_SIZE + 69;
   flash[id0_icon_len_off] = 0xFF;
   flash[id0_icon_len_off + 1] = 0xFF;
   ConfigFlash corrupt;

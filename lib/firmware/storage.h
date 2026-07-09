@@ -47,6 +47,8 @@
 #define PERSISTENT_IDENTITY_COUNT 2
 typedef struct _ClearsignIdentity {
   bool present;
+  uint8_t key_id;  // the signer slot (1..METADATA_MAX_KEYS-1) this identity
+                   // reloads into; the per-tx blob's key_id selects it
   uint8_t pubkey[33];
   char alias[CLEARSIGN_IDENTITY_ALIAS_SIZE];
   uint8_t icon_w;
@@ -206,6 +208,18 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
 /// \brief Get user private seed.
 /// \returns NULL on error, otherwise \returns the private seed.
 const uint8_t* storage_getSeed(const ConfigFlash* cfg, bool usePassphrase);
+
+/// \brief Number of persistent clear-sign identity slots.
+int storage_clearsignIdentityCount(void);
+
+/// \brief The persistent clear-sign identity in `slot`, or NULL if empty/out
+///        of range. Pointer into shadow storage — valid until the next commit.
+const ClearsignIdentity* storage_getClearsignIdentity(int slot);
+
+/// \brief Persist a clear-sign identity (reuse its pubkey's slot, else the
+///        first free one) and commit. Returns false if all slots are occupied
+///        by other identities.
+bool storage_upsertClearsignIdentity(const ClearsignIdentity* id);
 
 typedef enum {
   SUS_Invalid,
