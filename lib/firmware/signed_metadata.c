@@ -475,7 +475,8 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
   strlcpy(loaded_aliases[key_id], alias, sizeof(loaded_aliases[key_id]));
 
   /* Session icon into the RAM working slot (icon_len already validated <= max
-   * by the caller). A load without an icon clears any prior one for the slot. */
+   * by the caller). A load without an icon clears any prior one for the slot.
+   */
   memzero(loaded_icons[key_id], sizeof(loaded_icons[key_id]));
   if (icon && icon_len > 0 && icon_len <= CLEARSIGN_ICON_MAX) {
     memcpy(loaded_icons[key_id], icon, icon_len);
