@@ -32,6 +32,29 @@
 #define V16_ENCSEC_SIZE 512  // for reading old encrypted sec size
 #define V17_ENCSEC_SIZE 1024
 
+/* Persistent clear-sign identities (the "KeepKey + identity" trust anchors).
+ * A loaded signer whose LoadClearsignSigner carried persist=true is written to
+ * flash here so it survives reboot; RAM-only signers (signed_metadata.c) are
+ * unaffected. WipeDevice clears these along with the rest of storage.
+ *   pubkey  : 33-byte compressed secp256k1 (matches signed_metadata slots)
+ *   alias   : METADATA_ALIAS_MAX_LEN(31)+1, printable [A-Za-z0-9 _-]
+ *   icon    : 1bpp mono row-major bitmap, <= CLEARSIGN_ICON_MAX bytes,
+ *             icon_len==0 => text-only identity (no logo)
+ * Serialized size is fixed (CLEARSIGN_IDENTITY_SERIALIZED_LEN) — appended after
+ * encrypted_sec in the V18 storage layout; never reorder existing fields. */
+#define CLEARSIGN_ICON_MAX 384
+#define CLEARSIGN_IDENTITY_ALIAS_SIZE 32 /* METADATA_ALIAS_MAX_LEN(31) + 1 */
+#define PERSISTENT_IDENTITY_COUNT 2
+typedef struct _ClearsignIdentity {
+  bool present;
+  uint8_t pubkey[33];
+  char alias[CLEARSIGN_IDENTITY_ALIAS_SIZE];
+  uint8_t icon_w;
+  uint8_t icon_h;
+  uint16_t icon_len;
+  uint8_t icon[CLEARSIGN_ICON_MAX];
+} ClearsignIdentity;
+
 typedef struct _authBlockType {
   authType authData[AUTHDATA_SIZE];                          // 450
   uint8_t reserved[512 - sizeof(authType) * AUTHDATA_SIZE];  // 62
@@ -70,6 +93,9 @@ typedef struct _Storage {
     bool authdata_encrypted;
     uint8_t random_salt[32];
     uint8_t authdata_fingerprint[32];
+    /* V18: persistent clear-sign identities. Zero-initialized (present=false)
+     * for wallets migrated up from V17 — no data loss. */
+    ClearsignIdentity clearsign_identities[PERSISTENT_IDENTITY_COUNT];
   } pub;
 
   bool has_sec;
@@ -204,8 +230,10 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len);
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
+void storage_readV18(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
+void storage_writeV18(char* flash, size_t len, const ConfigFlash* src);
 
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len);
