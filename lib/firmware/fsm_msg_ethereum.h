@@ -98,15 +98,14 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   }
   bool persist = msg->has_persist && msg->persist;
 
-  /* Mandatory on-device consent — the whole trust model hangs on this confirm.
-   * The same fingerprint reappears on every per-tx identity screen. persist
-   * makes the trust anchor durable across reboots, so it's called out. */
+  /* Mandatory on-device consent — leads with the identity's logo (if any) +
+   * alias + fingerprint. The whole trust model hangs on this confirm; the same
+   * fingerprint reappears on every per-tx identity screen. persist makes the
+   * trust anchor durable across reboots, so it's called out. */
   char fingerprint[METADATA_FINGERPRINT_LEN];
   signed_metadata_pubkey_fingerprint(msg->pubkey.bytes, fingerprint);
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, _("Load Clearsigner"),
-               "Trust identity '%s' (%s) to describe transactions?%s NOT "
-               "verified by KeepKey.",
-               msg->alias, fingerprint, persist ? " Kept until wiped." : "")) {
+  if (!signed_metadata_confirm_load(msg->alias, fingerprint, icon, icon_w,
+                                    icon_h, icon_len, persist)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Load clearsign signer cancelled"));
     layoutHome();

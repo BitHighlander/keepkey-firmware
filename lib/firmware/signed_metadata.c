@@ -542,6 +542,51 @@ bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
   return true;
 }
 
+/* Render an AnimationFrame from a stored icon into the confirm's left column.
+ * Image + frame are the CALLER's (must outlive the synchronous confirm); this
+ * only wires them up. Returns RUNTIME_ICON when an icon was set, else NO_ICON.
+ * Positioning tuned on device — icon column is ~40px, height 64px. */
+static IconType stage_runtime_icon(Image *img, AnimationFrame *frame,
+                                   const uint8_t *icon, uint8_t icon_w,
+                                   uint8_t icon_h, uint16_t icon_len) {
+  if (!icon || icon_len == 0) return NO_ICON;
+  img->w = icon_w;
+  img->h = icon_h;
+  img->length = icon_len;
+  img->data = icon;
+  frame->x = 0;
+  frame->y = (icon_h < 52) ? (uint16_t)((52 - icon_h) / 2 + 6) : 6;
+  frame->duration = 0;
+  /* Decoder does value*color/100; color=100 => data bytes are direct 0-255. */
+  frame->color = 100;
+  frame->image = img;
+  layout_set_runtime_icon(frame);
+  return RUNTIME_ICON;
+}
+
+bool signed_metadata_confirm_load(const char *alias, const char *fingerprint,
+                                  const uint8_t *icon, uint8_t icon_w,
+                                  uint8_t icon_h, uint16_t icon_len,
+                                  bool persist) {
+  Image icon_img;
+  AnimationFrame icon_frame;
+  IconType id_icon = stage_runtime_icon(&icon_img, &icon_frame, icon, icon_w,
+                                        icon_h, icon_len);
+
+  char body[160];
+  memset(body, 0, sizeof(body));
+  /* Lead with the identity (its logo + alias + fingerprint). The trust model
+   * hangs on this consent; the fingerprint reappears on every per-tx screen. */
+  snprintf(body, sizeof(body),
+           "Trust '%s' (%s) to describe transactions?%s NOT verified by "
+           "KeepKey.",
+           alias, fingerprint, persist ? " Kept until wiped." : "");
+  bool ok = confirm_with_icon(ButtonRequestType_ButtonRequest_Other, id_icon,
+                              _("Load Clearsigner"), "%s", body);
+  layout_set_runtime_icon(NULL);
+  return ok;
+}
+
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]) {
   uint8_t digest[32];
