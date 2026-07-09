@@ -142,6 +142,14 @@ bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
                                  uint8_t *w_out, uint8_t *h_out,
                                  uint16_t *len_out);
 
+/* The LoadClearsignSigner consent screen: leads with the identity's logo (if
+ * any) + alias + fingerprint. Returns true iff the user confirmed. The FSM
+ * handler calls this before storing the signer. */
+bool signed_metadata_confirm_load(const char *alias, const char *fingerprint,
+                                  const uint8_t *icon, uint8_t icon_w,
+                                  uint8_t icon_h, uint16_t icon_len,
+                                  bool persist);
+
 /* Drop all runtime-loaded signers (and any metadata they verified). */
 void signed_metadata_clear_signers(void);
 
