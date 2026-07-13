@@ -86,6 +86,13 @@ endif()
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
   add_definitions(-DCONFIDENTIAL=)
+  # macOS/BSD declare strlcpy/strlcat in <string.h>; glibc (Linux) and MinGW
+  # (Windows) do not. Force-include the prototypes so the ~20 call sites build
+  # without -Werror=implicit-function-declaration (definitions come from
+  # lib/board/strlcpy.c + strlcat.c). Apple already has them in <string.h>.
+  if(NOT APPLE)
+    add_compile_options(-include ${CMAKE_SOURCE_DIR}/include/keepkey/board/bsd_compat.h)
+  endif()
 else()
   add_definitions(-DCONFIDENTIAL=__attribute__\(\(section\("confidential"\)\)\))
 endif()
