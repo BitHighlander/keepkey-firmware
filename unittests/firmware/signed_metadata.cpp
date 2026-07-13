@@ -216,7 +216,8 @@ class SignedMetadataTest : public ::testing::Test {
  protected:
   void SetUp() override {
     signed_metadata_clear_signers();
-    signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS);
+    signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               NULL, 0, 0, 0, false);
   }
   void TearDown() override { signed_metadata_clear_signers(); }
 
@@ -725,7 +726,8 @@ TEST_F(SignedMetadataTest, StoreSignerReplacementInvalidatesOldKey) {
   priv2[31] ^= 0x5a;  // a different valid scalar
   uint8_t pub2[33];
   ecdsa_get_public_key33(&secp256k1, priv2, pub2);
-  signed_metadata_store_signer(TEST_KEY_ID, pub2, "Replacement");
+  signed_metadata_store_signer(TEST_KEY_ID, pub2, "Replacement", NULL, 0, 0, 0,
+                               false);
 
   /* Replacing a signer drops metadata the old one verified... */
   EXPECT_FALSE(signed_metadata_available());
