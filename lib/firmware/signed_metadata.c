@@ -62,10 +62,17 @@ static char loaded_aliases[METADATA_MAX_KEYS][METADATA_ALIAS_MAX_LEN + 1];
 /* Per-slot session icon (1bpp mono RLE). icon_len==0 => text-only identity. */
 _Static_assert(CLEARSIGN_ICON_MAX == METADATA_ICON_MAX,
                "storage icon cap must match the clearsign icon cap");
+#if !ZCASH_PRIVACY
+/* Session icon cache for ephemeral (RAM-only) signers. The zcash-privacy
+ * variant compiles this out to fit SRAM (the Orchard engine leaves it the
+ * tightest variant): ephemeral signers render text-only there, while
+ * PERSISTENT identity icons still render straight from the storage shadow.
+ * Hosts detect this from firmware_variant (KeepKeyZcash/EmulatorZcash). */
 static uint8_t loaded_icons[METADATA_MAX_KEYS][CLEARSIGN_ICON_MAX];
 static uint8_t loaded_icon_w[METADATA_MAX_KEYS];
 static uint8_t loaded_icon_h[METADATA_MAX_KEYS];
 static uint16_t loaded_icon_len[METADATA_MAX_KEYS];
+#endif
 
 /* Find the persistent identity that reloads into `key_id`, or NULL. */
 static const ClearsignIdentity *persistent_identity_for(uint8_t key_id) {
@@ -416,10 +423,12 @@ void signed_metadata_clear(void) {
 void signed_metadata_clear_signers(void) {
   memzero(loaded_pubkeys, sizeof(loaded_pubkeys));
   memzero(loaded_aliases, sizeof(loaded_aliases));
+#if !ZCASH_PRIVACY
   memzero(loaded_icons, sizeof(loaded_icons));
   memzero(loaded_icon_w, sizeof(loaded_icon_w));
   memzero(loaded_icon_h, sizeof(loaded_icon_h));
   memzero(loaded_icon_len, sizeof(loaded_icon_len));
+#endif
   /* Metadata verified by a now-dropped signer must not outlive it. NB: this
    * clears only the RAM session copies; persisted identities live in flash and
    * are cleared by WipeDevice, not here. */
@@ -474,11 +483,16 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
   memcpy(loaded_pubkeys[key_id], pubkey, sizeof(loaded_pubkeys[key_id]));
   strlcpy(loaded_aliases[key_id], alias, sizeof(loaded_aliases[key_id]));
 
-  /* Session icon into the RAM working slot (icon_len already validated <= max
-   * by the caller). A load without an icon clears any prior one for the slot.
-   */
+  /* A load without an icon clears any prior one for the slot (icon_len
+   * already validated <= max by the caller — belt-and-braces here). */
+  bool has_icon = icon && icon_len > 0 && icon_len <= CLEARSIGN_ICON_MAX;
+
+#if !ZCASH_PRIVACY
+  /* Session icon into the RAM working slot. The zcash-privacy variant has no
+   * session icon cache (SRAM); persist below still stores the icon bytes, so
+   * persistent identities keep their logo across variants. */
   memzero(loaded_icons[key_id], sizeof(loaded_icons[key_id]));
-  if (icon && icon_len > 0 && icon_len <= CLEARSIGN_ICON_MAX) {
+  if (has_icon) {
     memcpy(loaded_icons[key_id], icon, icon_len);
     loaded_icon_w[key_id] = icon_w;
     loaded_icon_h[key_id] = icon_h;
@@ -488,6 +502,7 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
     loaded_icon_h[key_id] = 0;
     loaded_icon_len[key_id] = 0;
   }
+#endif
 
   bool persisted = true;
   if (persist) {
@@ -497,10 +512,12 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
     id.key_id = key_id;
     memcpy(id.pubkey, pubkey, sizeof(id.pubkey));
     strlcpy(id.alias, alias, sizeof(id.alias));
-    id.icon_w = loaded_icon_w[key_id];
-    id.icon_h = loaded_icon_h[key_id];
-    id.icon_len = loaded_icon_len[key_id];
-    memcpy(id.icon, loaded_icons[key_id], sizeof(id.icon));
+    if (has_icon) {
+      id.icon_w = icon_w;
+      id.icon_h = icon_h;
+      id.icon_len = icon_len;
+      memcpy(id.icon, icon, icon_len);
+    }
     persisted = storage_upsertClearsignIdentity(&id);
     memzero(&id, sizeof(id));
   }
@@ -526,12 +543,19 @@ bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
                                  uint16_t *len_out) {
   if (key_id >= METADATA_MAX_KEYS) return false;
   if (loaded_pubkeys[key_id][0] != 0x00) {
+#if ZCASH_PRIVACY
+    /* No session icon cache in this variant — an ephemeral signer renders
+     * text-only. It must NOT fall through to the persistent slot below: that
+     * would put a different identity's logo on this signer's screens. */
+    return false;
+#else
     if (loaded_icon_len[key_id] == 0) return false;
     if (icon_out) *icon_out = loaded_icons[key_id];
     if (w_out) *w_out = loaded_icon_w[key_id];
     if (h_out) *h_out = loaded_icon_h[key_id];
     if (len_out) *len_out = loaded_icon_len[key_id];
     return true;
+#endif
   }
   const ClearsignIdentity *pid = persistent_identity_for(key_id);
   if (!pid || pid->icon_len == 0) return false;

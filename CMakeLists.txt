@@ -210,6 +210,12 @@ if(NOT ${KK_EMULATOR})
   link_directories(${LIBOPENCM3_PATH}/lib)
   include_directories(${LIBOPENCM3_PATH}/include)
 
+  # Emit per-function stack-frame sizes (.su files) on device builds. CI's
+  # SRAM budget gate (tools/check_sram_budget.py) reports the largest frames
+  # and fails when the linker-asserted stack reserve minus the largest frame
+  # leaves less than the configured margin. See tools/firmware/keepkey.ld.
+  add_compile_options(-fstack-usage)
+
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.
   file(WRITE ${CMAKE_BINARY_DIR}/ssp.c "")
