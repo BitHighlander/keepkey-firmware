@@ -724,11 +724,16 @@ static const char* _otpStr = "";
  * OTP in large font desc - text to display permil - progress in units of 1 to
  * 1000 OUTPUT none
  */
-void animating_progress_handler(const char* desc, int permil) {
+/* Render the progress bar into the framebuffer WITHOUT clearing the animation
+ * queue, so an animation callback (trickle_progress_callback) can redraw itself
+ * every frame without removing itself from the queue. */
+static void progress_render(const char* desc, int permil) {
   if (!canvas) return;
 
-  call_leaving_handler();
-  layout_clear();
+  layout_clear_static();
+#if DEBUG_LINK
+  layout_debuglink_watermark();
+#endif
 
   permil = permil >= 1000 ? 1000 : permil;
   permil = permil <= 0 ? 0 : permil;
@@ -796,6 +801,15 @@ void animating_progress_handler(const char* desc, int permil) {
   display_refresh();
 }
 
+/* One-shot progress draw: clears any queued animation (historical behaviour, so
+ * a stray animation cannot redraw over a static progress screen) then renders. */
+void animating_progress_handler(const char* desc, int permil) {
+  if (!canvas) return;
+  call_leaving_handler();
+  layout_clear_animations();
+  progress_render(desc, permil);
+}
+
 void layoutProgress(const char* desc, int permil) {
   animating_progress_handler(desc, permil);
 }
@@ -860,7 +874,9 @@ static void trickle_progress_callback(void* data, uint32_t duration,
   const uint32_t TAU = 1200; /* ms; ~half the remaining gap closed by 1.2s */
   int span = trickle.target - trickle.base;
   int add = span > 0 ? (int)(((uint64_t)span * elapsed) / (elapsed + TAU)) : 0;
-  animating_progress_handler(trickle.desc, trickle.base + add);
+  /* Draw via progress_render (not animating_progress_handler) so redrawing the
+   * frame does not clear the animation queue and remove this very callback. */
+  progress_render(trickle.desc, trickle.base + add);
 }
 
 /* (Re-)arm the trickle to ease from base_permil toward target_permil. Re-adding
@@ -872,6 +888,9 @@ void layoutProgressTrickle(const char* desc, int base_permil, int target_permil)
   trickle_active = true;
   layout_add_animation(&trickle_progress_callback, NULL, 0 /* loop forever */);
   force_animation_start();
+  /* Draw the first frame now (at base) so the bar appears immediately, before
+   * the animation timer next fires. progress_render keeps the queue intact. */
+  progress_render(desc, base_permil);
 }
 
 void layoutProgressTrickleStop(void) {

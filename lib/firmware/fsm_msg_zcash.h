@@ -745,6 +745,11 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
                        16);
   zcash_signing.verify_orchard_digest = true;
 
+  /* Draw the initial static progress BEFORE requesting the first component:
+   * for the actions-only path zcash_send_action_ack() arms the trickle, and a
+   * layoutProgress() after it would clear the animation queue and freeze it. */
+  layoutProgress(_("Signing Zcash"), 0);
+
   /* Request the first plaintext component. Transparent outputs are reviewed
    * before any transparent input or Orchard signature can be emitted. */
   if (zcash_signing.n_transparent_outputs > 0) {
@@ -754,7 +759,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   } else {
     zcash_send_action_ack(0);
   }
-  layoutProgress(_("Signing Zcash"), 0);
 }
 
 void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
@@ -1213,6 +1217,10 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
 
   zcash_signing.current_transparent_output++;
 
+  /* Static draw before the dispatch: the actions transition below arms the
+   * trickle, and a layoutProgress() after it would clear and freeze it. */
+  layoutProgress(_("Signing Zcash"), 0);
+
   if (zcash_signing.current_transparent_output <
       zcash_signing.n_transparent_outputs) {
     zcash_send_transparent_output_ack(zcash_signing.current_transparent_output);
@@ -1228,8 +1236,6 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
     }
     zcash_send_action_ack(0);
   }
-
-  layoutProgress(_("Signing Zcash"), 0);
 }
 
 /* Phase 3: Transparent plaintext streaming for hybrid shielding
@@ -1404,6 +1410,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
   /* Transparent ECDSA sigs are buffered in zcash_signing.pending_transparent.
    * They are released at the same final gate as Orchard sigs, after Orchard
    * digest verification and fee confirmation. */
-  zcash_send_action_ack(0);
+  /* Static draw before arming: zcash_send_action_ack() arms the trickle, so a
+   * layoutProgress() after it would clear the animation queue and freeze it. */
   layoutProgress(_("Signing Zcash"), 0);
+  zcash_send_action_ack(0);
 }
