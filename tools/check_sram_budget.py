@@ -84,7 +84,14 @@ def main():
     gap = syms["_stack"] - syms["_ebss"]
 
     frames = largest_frames(args.su_tar)
-    largest = frames[0][0] if frames else 0
+    if not frames:
+        # An empty .su archive means -fstack-usage generation broke (or the
+        # tar glob went stale). Treating it as "largest frame = 0" would let
+        # the margin check false-pass — fail loudly instead.
+        sys.exit("ERROR: no -fstack-usage records found in "
+                 f"{args.su_tar} — stack-usage generation is broken; "
+                 "refusing to pass the frame-margin gate without data")
+    largest = frames[0][0]
 
     print(f"SRAM budget report — variant: {args.variant}")
     print(f"  _ebss  = 0x{syms['_ebss']:08x}")
