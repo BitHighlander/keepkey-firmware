@@ -21,7 +21,17 @@ option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
-option(KK_ZCASH_PRIVACY "Build the Zcash shielded/Orchard privacy engine" OFF)
+# The emulator runs on a host with no flash/SRAM budget, so it defaults the
+# Zcash shielded/Orchard privacy engine ON -- this is what makes the published
+# libkkemu dylib and Docker image (what vault and auditors actually run)
+# include it. Device firmware keeps the OFF default and only ships the engine
+# via an explicit -DKK_ZCASH_PRIVACY=ON. Bitcoin-only can never enable it
+# (mutually exclusive, see below), so it forces the OFF default too.
+if(KK_EMULATOR AND NOT KK_BITCOIN_ONLY)
+  option(KK_ZCASH_PRIVACY "Build the Zcash shielded/Orchard privacy engine" ON)
+else()
+  option(KK_ZCASH_PRIVACY "Build the Zcash shielded/Orchard privacy engine" OFF)
+endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
