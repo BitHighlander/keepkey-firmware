@@ -836,6 +836,64 @@ void layout_add_animation(AnimateCallback callback, void* data,
   animation_queue_push(&active_queue, animation);
 }
 
+/* --- Trickle progress for long host-driven operations -----------------------
+ * Shielded Zcash signing blocks on the host generating zk-proofs, so the device
+ * would otherwise sit on a frozen progress bar and look like it has failed.
+ * This eases a "trickle" that advances quickly at first then slows,
+ * asymptotically approaching the next real milestone without ever reaching it
+ * (so it never falsely shows 100%). It is driven off the animation timer, which
+ * layout_animate_poll() pumps from usbPoll() while the device blocks on host
+ * I/O. A dedicated flag gates that pump so no other flow is affected. */
+static volatile bool trickle_active = false;
+static struct {
+  const char* desc;
+  int base;   /* permil committed by the last real milestone */
+  int target; /* permil to ease toward (the next milestone) */
+} trickle;
+
+static void trickle_progress_callback(void* data, uint32_t duration,
+                                      uint32_t elapsed) {
+  (void)data;
+  (void)duration;
+  /* add = span * elapsed / (elapsed + TAU): fast early, slowing as it nears the
+   * target, never actually reaching it. */
+  const uint32_t TAU = 1200; /* ms; ~half the remaining gap closed by 1.2s */
+  int span = trickle.target - trickle.base;
+  int add = span > 0 ? (int)(((uint64_t)span * elapsed) / (elapsed + TAU)) : 0;
+  animating_progress_handler(trickle.desc, trickle.base + add);
+}
+
+/* (Re-)arm the trickle to ease from base_permil toward target_permil. Re-adding
+ * the callback resets its elapsed to 0 so the ease restarts from base_permil. */
+void layoutProgressTrickle(const char* desc, int base_permil, int target_permil) {
+  trickle.desc = desc;
+  trickle.base = base_permil;
+  trickle.target = target_permil;
+  trickle_active = true;
+  layout_add_animation(&trickle_progress_callback, NULL, 0 /* loop forever */);
+  force_animation_start();
+}
+
+void layoutProgressTrickleStop(void) {
+  trickle_active = false;
+  Animation* animation =
+      animation_queue_get(&active_queue, &trickle_progress_callback);
+  if (animation != NULL) {
+    animation_queue_push(&free_queue, animation);
+  }
+}
+
+/* Advance a queued progress animation one step if the timer has ticked. Called
+ * from usbPoll() so the trickle keeps moving while we block on host I/O. Gated
+ * on trickle_active so it is a no-op for every other flow (confirm dialogs,
+ * PIN entry, etc. are untouched). */
+void layout_animate_poll(void) {
+  if (trickle_active && is_animating()) {
+    animate();
+    display_refresh();
+  }
+}
+
 /*
  * layout_clear_animations() - Clear all animation from queue
  *
@@ -845,6 +903,7 @@ void layout_add_animation(AnimateCallback callback, void* data,
  *     none
  */
 void layout_clear_animations(void) {
+  trickle_active = false;
   Animation* animation = animation_queue_pop(&active_queue);
 
   while (animation != NULL) {

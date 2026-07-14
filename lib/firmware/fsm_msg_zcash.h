@@ -273,6 +273,17 @@ static void zcash_send_action_ack(uint32_t next_index) {
   resp_ack->has_next_index = true;
   resp_ack->next_index = next_index;
   msg_write(MessageType_MessageType_ZcashPCZTActionAck, resp_ack);
+
+  /* The device now blocks until the host generates the (slow) Orchard proof for
+   * this action. Ease the progress bar from the milestone already reached toward
+   * the one this action will complete, so the screen keeps moving instead of
+   * looking stuck at a frozen value. Stopped again when the action arrives. */
+  uint32_t n = zcash_signing.n_actions;
+  if (n > 0) {
+    int base = (int)((next_index * 1000) / n);
+    int target = (int)(((next_index + 1) * 1000) / n);
+    layoutProgressTrickle(_("Signing Zcash"), base, target);
+  }
 }
 
 static void zcash_send_transparent_output_ack(uint32_t next_index) {
@@ -941,6 +952,11 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     layoutHome();
     return;
   }
+
+  /* An action arrived: stop the trickle so the exact per-action milestone (and
+   * the fee confirm reached at completion) draws cleanly. Re-armed by the next
+   * zcash_send_action_ack() if more actions remain. */
+  layoutProgressTrickleStop();
 
   /* Enforce transparent phase completion: if the session declared any
    * transparent data, all plaintext must be streamed and verified before

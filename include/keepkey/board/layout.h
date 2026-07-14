@@ -135,6 +135,9 @@ void animating_progress_handler(const char* desc, int permil);
 void layoutProgress(const char* desc, int permil);
 void layoutProgressForAuth(const char* otp, const char* desc, int permil);
 void layoutProgressSwipe(const char* desc, int permil);
+void layoutProgressTrickle(const char* desc, int base_permil, int target_permil);
+void layoutProgressTrickleStop(void);
+void layout_animate_poll(void);
 void layout_add_animation(AnimateCallback callback, void* data,
                           uint32_t duration);
 void layout_animate_images(void* data, uint32_t duration, uint32_t elapsed);
