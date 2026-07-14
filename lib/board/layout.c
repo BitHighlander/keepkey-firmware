@@ -802,21 +802,22 @@ static void progress_render_ex(const char* desc, int permil, int marker_phase) {
     draw_box(canvas, &bp);
   }
 
-  // Sweep marker: a small dim block cycling across the unfilled region so the
-  // bar keeps visibly moving even when the fill itself is between pixel steps.
-  if (marker_phase >= 0 && width > finished_width + 2) {
+  // Sweep marker: a small mid-gray glint cycling across the FULL inner track,
+  // independent of the fill level, so its travel never shrinks and the bar
+  // keeps visibly moving for arbitrarily slow host proofs. Mid-gray (0x99)
+  // reads as a darker notch over the 0xff fill and a brighter block over the
+  // 0x00 remainder, so it stays visible at any progress value.
+  if (marker_phase >= 0 && width > 2) {
     const uint32_t marker_w = 8;
-    uint32_t span_x = x + finished_width + 1;
-    uint32_t span_w = width - finished_width - 2;
-    if (span_w > marker_w + 2) {
-      uint32_t travel = span_w - marker_w;
-      bp.width = marker_w;
-      bp.height = height - 2;
-      bp.base.x = span_x + (travel * (uint32_t)marker_phase) / 1000;
-      bp.base.y = y + 1;
-      bp.base.color = 0x66;
-      draw_box(canvas, &bp);
-    }
+    uint32_t span_w = width - 2;
+    uint32_t w = marker_w < span_w ? marker_w : span_w;
+    uint32_t travel = span_w - w;
+    bp.width = w;
+    bp.height = height - 2;
+    bp.base.x = x + 1 + (travel * (uint32_t)marker_phase) / 1000;
+    bp.base.y = y + 1;
+    bp.base.color = 0x99;
+    draw_box(canvas, &bp);
   }
 
   display_refresh();
@@ -827,7 +828,8 @@ static void progress_render(const char* desc, int permil) {
 }
 
 /* One-shot progress draw: clears any queued animation (historical behaviour, so
- * a stray animation cannot redraw over a static progress screen) then renders. */
+ * a stray animation cannot redraw over a static progress screen) then renders.
+ */
 void animating_progress_handler(const char* desc, int permil) {
   if (!canvas) return;
   call_leaving_handler();
@@ -909,8 +911,10 @@ static void trickle_progress_callback(void* data, uint32_t duration,
 }
 
 /* (Re-)arm the trickle to ease from base_permil toward target_permil. Re-adding
- * the callback resets its elapsed to 0 so the ease restarts from base_permil. */
-void layoutProgressTrickle(const char* desc, int base_permil, int target_permil) {
+ * the callback resets its elapsed to 0 so the ease restarts from base_permil.
+ */
+void layoutProgressTrickle(const char* desc, int base_permil,
+                           int target_permil) {
   trickle.desc = desc;
   trickle.base = base_permil;
   trickle.target = target_permil;
