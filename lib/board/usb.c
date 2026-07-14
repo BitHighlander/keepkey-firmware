@@ -414,6 +414,11 @@ void usbInit(const char* origin_url) {
 void usbPoll(void) {
   // poll read buffer
   usbd_poll(usbd_dev);
+  // Keep a queued progress animation moving while we block on host I/O (e.g.
+  // Zcash proof generation on the host), so the screen never looks frozen.
+  // No-op unless a trickle animation is active, so all other flows are
+  // unaffected.
+  layout_animate_poll();
 }
 
 void usbReconnect(void) {
