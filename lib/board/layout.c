@@ -726,8 +726,12 @@ static const char* _otpStr = "";
  */
 /* Render the progress bar into the framebuffer WITHOUT clearing the animation
  * queue, so an animation callback (trickle_progress_callback) can redraw itself
- * every frame without removing itself from the queue. */
-static void progress_render(const char* desc, int permil) {
+ * every frame without removing itself from the queue.
+ *
+ * marker_phase: 0..999 sweeps a small dim block across the unfilled portion of
+ * the bar (a perpetual "working" cue that keeps the display visibly moving even
+ * after the eased fill has pixel-saturated); pass -1 for no marker. */
+static void progress_render_ex(const char* desc, int permil, int marker_phase) {
   if (!canvas) return;
 
   layout_clear_static();
@@ -798,7 +802,28 @@ static void progress_render(const char* desc, int permil) {
     draw_box(canvas, &bp);
   }
 
+  // Sweep marker: a small dim block cycling across the unfilled region so the
+  // bar keeps visibly moving even when the fill itself is between pixel steps.
+  if (marker_phase >= 0 && width > finished_width + 2) {
+    const uint32_t marker_w = 8;
+    uint32_t span_x = x + finished_width + 1;
+    uint32_t span_w = width - finished_width - 2;
+    if (span_w > marker_w + 2) {
+      uint32_t travel = span_w - marker_w;
+      bp.width = marker_w;
+      bp.height = height - 2;
+      bp.base.x = span_x + (travel * (uint32_t)marker_phase) / 1000;
+      bp.base.y = y + 1;
+      bp.base.color = 0x66;
+      draw_box(canvas, &bp);
+    }
+  }
+
   display_refresh();
+}
+
+static void progress_render(const char* desc, int permil) {
+  progress_render_ex(desc, permil, -1);
 }
 
 /* One-shot progress draw: clears any queued animation (historical behaviour, so
@@ -874,9 +899,13 @@ static void trickle_progress_callback(void* data, uint32_t duration,
   const uint32_t TAU = 1200; /* ms; ~half the remaining gap closed by 1.2s */
   int span = trickle.target - trickle.base;
   int add = span > 0 ? (int)(((uint64_t)span * elapsed) / (elapsed + TAU)) : 0;
-  /* Draw via progress_render (not animating_progress_handler) so redrawing the
-   * frame does not clear the animation queue and remove this very callback. */
-  progress_render(trickle.desc, trickle.base + add);
+  /* Sweep marker phase loops forever, so the display keeps changing even after
+   * the eased fill has stopped producing new pixels (long zk-proof waits). */
+  const uint32_t SWEEP_PERIOD = 1600; /* ms per sweep across the unfilled bar */
+  int phase = (int)(((elapsed % SWEEP_PERIOD) * 1000) / SWEEP_PERIOD);
+  /* Draw via progress_render_ex (not animating_progress_handler) so redrawing
+   * the frame does not clear the animation queue and remove this callback. */
+  progress_render_ex(trickle.desc, trickle.base + add, phase);
 }
 
 /* (Re-)arm the trickle to ease from base_permil toward target_permil. Re-adding
@@ -888,9 +917,10 @@ void layoutProgressTrickle(const char* desc, int base_permil, int target_permil)
   trickle_active = true;
   layout_add_animation(&trickle_progress_callback, NULL, 0 /* loop forever */);
   force_animation_start();
-  /* Draw the first frame now (at base) so the bar appears immediately, before
-   * the animation timer next fires. progress_render keeps the queue intact. */
-  progress_render(desc, base_permil);
+  /* Draw the first frame now (at base, marker at phase 0) so the bar appears
+   * immediately, before the animation timer next fires. progress_render_ex
+   * keeps the animation queue intact. */
+  progress_render_ex(desc, base_permil, 0);
 }
 
 void layoutProgressTrickleStop(void) {

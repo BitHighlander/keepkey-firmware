@@ -107,6 +107,10 @@ static struct {
 
 /* Public API; declared in keepkey/firmware/zcash.h. */
 void zcash_signing_abort(void) {
+  /* Centralized cleanup: stop the trickle progress animation here so every
+   * abort path (Cancel, ClearSession, failures) kills it even when the caller
+   * does not go through layoutHome()/layout_clear_animations(). */
+  layoutProgressTrickleStop();
   memzero(&zcash_signing, sizeof(zcash_signing));
 }
 
