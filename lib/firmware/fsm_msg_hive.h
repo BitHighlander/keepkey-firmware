@@ -621,8 +621,8 @@ void fsm_msgHiveSignMessage(const HiveSignMessage* msg) {
       snprintf(&preview[2 * i], 3, "%02x", msg->message.bytes[i]);
     }
     if (msg->message.size > 32) {
-      snprintf(&preview[2 * show], sizeof(preview) - 2 * show,
-               "... (%u bytes)", (unsigned)msg->message.size);
+      snprintf(&preview[2 * show], sizeof(preview) - 2 * show, "... (%u bytes)",
+               (unsigned)msg->message.size);
     }
     approved = confirm(ButtonRequestType_ButtonRequest_ProtectCall,
                        "Sign Hive Bytes", "(%s key) %s", role_label, preview);
