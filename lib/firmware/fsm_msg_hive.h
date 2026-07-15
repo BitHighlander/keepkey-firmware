@@ -514,3 +514,136 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   msg_write(MessageType_MessageType_HiveSignedAccountUpdate, resp);
   layoutHome();
 }
+
+// ── HiveSignMessage (Keychain signBuffer) ─────────────────────────────────
+// The Hive dApp login primitive: Aioha / Keychain-SDK dApps authenticate by
+// having the account sign a challenge string, then recover the pubkey and
+// check it against the account's authority on-chain. Contract (hive-js
+// Signature.signBuffer): sig over SHA256(raw message bytes) — no chain_id,
+// no prefix. Roles: posting/active/memo, Keychain's requestSignBuffer
+// surface. owner' is deliberately rejected — no consumer offers it, and the
+// cold owner key must not be normalized into dApp flows. The full path
+// shape is still enforced like the tx handlers.
+
+static bool hive_slip48_message_path_ok(const uint32_t* address_n,
+                                        uint32_t count,
+                                        const char** role_label) {
+  if (count != 5) return false;
+  if (address_n[0] != HIVE_SLIP48_PURPOSE) return false;
+  if (address_n[1] != HIVE_SLIP48_NETWORK) return false;
+  if ((address_n[3] & 0x80000000u) == 0) return false;
+  if (address_n[4] != 0x80000000u) return false;  // key index 0'
+  switch (address_n[2]) {
+    case HIVE_ROLE_ACTIVE:
+      *role_label = "active";
+      return true;
+    case HIVE_ROLE_MEMO:
+      *role_label = "memo";
+      return true;
+    case HIVE_ROLE_POSTING:
+      *role_label = "posting";
+      return true;
+    default:
+      return false;
+  }
+}
+
+void fsm_msgHiveSignMessage(const HiveSignMessage* msg) {
+  RESP_INIT(HiveSignedMessage);
+
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  if (!msg->has_message || msg->message.size == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError, _("Missing message"));
+    layoutHome();
+    return;
+  }
+
+  // Mirrors the proto max_size cap so proto and code can never disagree
+  // (the memo-length lesson from the transfer handler).
+  if (msg->message.size > HIVE_MAX_MESSAGE_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Hive message too long (max 1024 bytes)"));
+    layoutHome();
+    return;
+  }
+
+  // A Hive TRANSACTION digest is SHA256(chain_id || tx), and this message
+  // digest is SHA256(message) — so a "message" that begins with the mainnet
+  // chain-id bytes would hash to a broadcastable transaction's digest. No
+  // legitimate challenge starts with the chain id; refuse the collision.
+  const uint8_t hive_chain_id[HIVE_CHAIN_ID_LEN] = HIVE_CHAIN_ID;
+  if (msg->message.size >= HIVE_CHAIN_ID_LEN &&
+      memcmp(msg->message.bytes, hive_chain_id, HIVE_CHAIN_ID_LEN) == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Message must not start with the Hive chain ID"));
+    layoutHome();
+    return;
+  }
+
+  const char* role_label = NULL;
+  if (!hive_slip48_message_path_ok(msg->address_n, msg->address_n_count,
+                                   &role_label)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive SLIP-0048 path"));
+    layoutHome();
+    return;
+  }
+
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+  hdnode_fill_public_key(node);
+
+  // Printable ASCII within the display budget is shown verbatim; anything
+  // longer — or with non-ASCII bytes — gets the hex preview + byte count.
+  // The budget matters: confirm()'s body buffer silently truncates at
+  // BODY_CHAR_MAX, so a long "printable" message could show a benign prefix
+  // while the device signs hidden trailing content. Same 128-byte budget as
+  // SolanaSignMessage.
+  bool printable = msg->message.size <= 128;
+  for (uint32_t i = 0; printable && i < msg->message.size; i++) {
+    if (msg->message.bytes[i] < 0x20 || msg->message.bytes[i] > 0x7e) {
+      printable = false;
+    }
+  }
+
+  bool approved;
+  if (printable) {
+    approved = confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+                       "Sign Hive Message", "(%s key) %.*s", role_label,
+                       (int)msg->message.size, msg->message.bytes);
+  } else {
+    char preview[96];  // 64 hex chars + "... (1024 bytes)" + NUL
+    unsigned show = msg->message.size > 32 ? 32 : msg->message.size;
+    for (unsigned i = 0; i < show; i++) {
+      snprintf(&preview[2 * i], 3, "%02x", msg->message.bytes[i]);
+    }
+    if (msg->message.size > 32) {
+      snprintf(&preview[2 * show], sizeof(preview) - 2 * show, "... (%u bytes)",
+               (unsigned)msg->message.size);
+    }
+    approved = confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+                       "Sign Hive Bytes", "(%s key) %s", role_label, preview);
+  }
+  if (!approved) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  hive_signMessage(node, msg, resp);
+  memzero(node, sizeof(*node));
+
+  if (!resp->has_signature) {
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Hive message signing failed"));
+    layoutHome();
+    return;
+  }
+
+  msg_write(MessageType_MessageType_HiveSignedMessage, resp);
+  layoutHome();
+}

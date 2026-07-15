@@ -42,6 +42,9 @@
 // other fields. Non-memo overhead: header(12) + from(17) + to(17) + asset(16)
 // + footer(1) = ~63 bytes. 512 - 63 - 3 (varint) = 446; 440 is conservative.
 #define HIVE_MAX_MEMO_LEN 440
+// Maximum signable message length. MUST match HiveSignMessage.message
+// max_size in messages-hive.options (proto cap and code cap kept in sync).
+#define HIVE_MAX_MESSAGE_LEN 1024
 
 // ── Public API ────────────────────────────────────────────────────────────
 /**
@@ -74,6 +77,15 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
  * Rejects memos longer than HIVE_MAX_MEMO_LEN (440 bytes).
  */
 void hive_signTx(const HDNode* node, const HiveSignTx* msg, HiveSignedTx* resp);
+
+/**
+ * Sign an arbitrary message per the Hive Keychain signBuffer contract:
+ * signature over SHA256(message bytes) only — no chain_id prepend, no
+ * message prefix. Emits the 65-byte compact recoverable signature plus the
+ * signing key's 33-byte compressed public key.
+ */
+void hive_signMessage(const HDNode* node, const HiveSignMessage* msg,
+                      HiveSignedMessage* resp);
 
 /**
  * Sign a Hive account_create transaction (op type 9).
