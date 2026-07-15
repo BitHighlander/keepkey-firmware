@@ -647,3 +647,164 @@ void fsm_msgHiveSignMessage(const HiveSignMessage* msg) {
   msg_write(MessageType_MessageType_HiveSignedMessage, resp);
   layoutHome();
 }
+
+// ── HiveSignOperations (parsed generic op signing) ────────────────────────
+// The host serializes the transaction; firmware parses the Graphene bytes,
+// clear-signs the ops it recognizes (vote, comment, custom_json), and
+// refuses everything else — no blind-sign fallback. Everything shown on the
+// OLED is re-derived from the bytes being signed, so a host serializer bug
+// can only produce a node rejection, never a silent wrong-sign.
+
+// Dedicated path validator: {posting', active'} ONLY, pinned to the tx tier.
+// Do NOT fold into hive_slip48_message_path_ok — that one deliberately
+// accepts memo' (a legitimate signBuffer target), but no Graphene operation
+// uses memo authority; a memo-path vote must be refused here, not
+// discovered at the chain. owner' is likewise excluded.
+static bool hive_slip48_ops_path_ok(const uint32_t* address_n, uint32_t count,
+                                    bool needs_active) {
+  if (count != 5) return false;
+  if (address_n[0] != HIVE_SLIP48_PURPOSE) return false;
+  if (address_n[1] != HIVE_SLIP48_NETWORK) return false;
+  if ((address_n[3] & 0x80000000u) == 0) return false;
+  if (address_n[4] != 0x80000000u) return false;  // key index 0'
+  return address_n[2] == (needs_active ? HIVE_ROLE_ACTIVE : HIVE_ROLE_POSTING);
+}
+
+// Uniform display rules (PR #306 finding-1): printable-ASCII within the
+// budget is copied verbatim; a truncated slice carries an explicit
+// "(+N more)" marker; any non-ASCII byte switches the whole slice to a
+// byte-count + short hex preview (partial UTF-8 sequences garble the OLED).
+static void hive_format_slice(const uint8_t* s, uint16_t len, char* out,
+                              size_t out_len) {
+  bool ascii = true;
+  for (uint16_t i = 0; i < len; i++) {
+    if (s[i] < 0x20 || s[i] > 0x7e) {
+      ascii = false;
+      break;
+    }
+  }
+  if (ascii) {
+    uint16_t show = len > 120 ? 120 : len;
+    if ((size_t)show + 16 > out_len) show = (uint16_t)(out_len - 16);
+    memcpy(out, s, show);
+    if (show < len) {
+      snprintf(out + show, out_len - show, "(+%u more)",
+               (unsigned)(len - show));
+    } else {
+      out[show] = '\0';
+    }
+  } else {
+    unsigned show = len > 8 ? 8 : len;
+    int off = snprintf(out, out_len, "<%u bytes> ", (unsigned)len);
+    for (unsigned i = 0; i < show && off + 2 < (int)out_len; i++, off += 2) {
+      snprintf(out + off, out_len - off, "%02x", s[i]);
+    }
+  }
+}
+
+void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
+  RESP_INIT(HiveSignedOperations);
+
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  if (!msg->has_serialized_tx || msg->serialized_tx.size == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Missing serialized transaction"));
+    layoutHome();
+    return;
+  }
+
+  static HiveParsedTx parsed;  // slices borrow from the static msg buffer
+  const char* parse_err = hive_parseOperations(
+      msg->serialized_tx.bytes, msg->serialized_tx.size, &parsed);
+  if (parse_err) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError, _(parse_err));
+    layoutHome();
+    return;
+  }
+
+  if (!hive_slip48_ops_path_ok(msg->address_n, msg->address_n_count,
+                               parsed.needs_active)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    parsed.needs_active
+                        ? _("Invalid Hive SLIP-0048 path (needs active')")
+                        : _("Invalid Hive SLIP-0048 path (needs posting')"));
+    layoutHome();
+    return;
+  }
+
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+  hdnode_fill_public_key(node);
+
+  // One confirm per operation, then a final sign confirm (transfer pattern).
+  for (uint8_t i = 0; i < parsed.num_ops; i++) {
+    const HiveTxOp* op = &parsed.ops[i];
+    char name[17];  // hive account names are <= 16 chars, length-validated
+    memcpy(name, op->acct, op->acct_len);
+    name[op->acct_len] = '\0';
+    char target[140], detail[140];
+    hive_format_slice(op->target, op->target_len, target, sizeof(target));
+    hive_format_slice(op->detail, op->detail_len, detail, sizeof(detail));
+
+    bool approved = false;
+    switch (op->op_type) {
+      case HIVE_OP_VOTE: {
+        int w = op->weight < 0 ? -op->weight : op->weight;
+        approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           op->weight < 0 ? "Downvote" : "Vote",
+                           "@%s -> @%s/%s at %d.%02d%%", name, target, detail,
+                           w / 100, w % 100);
+        break;
+      }
+      case HIVE_OP_COMMENT:
+        approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           op->is_top_level ? "Post" : "Comment", "@%s: %s\n%s",
+                           name, target, detail);
+        break;
+      case HIVE_OP_CUSTOM_JSON: {
+        char extra[12] = "";
+        if (op->n_auths > 1) {
+          snprintf(extra, sizeof(extra), " +%u", (unsigned)(op->n_auths - 1));
+        }
+        approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           "Custom JSON", "id: %s\nby @%s%s\n%s", target, name,
+                           extra, detail);
+        break;
+      }
+      default:
+        break;  // unreachable — parser rejected unknown ops
+    }
+    if (!approved) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      layoutHome();
+      return;
+    }
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Transaction",
+               "Sign %u Hive operation%s with the %s key?",
+               (unsigned)parsed.num_ops, parsed.num_ops == 1 ? "" : "s",
+               parsed.needs_active ? "active" : "posting")) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  hive_signOperations(node, msg, resp);
+  memzero(node, sizeof(*node));
+
+  if (!resp->has_signature) {
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Hive operation signing failed"));
+    layoutHome();
+    return;
+  }
+
+  msg_write(MessageType_MessageType_HiveSignedOperations, resp);
+  layoutHome();
+}

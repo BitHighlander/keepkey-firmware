@@ -228,6 +228,204 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
   return ok;
 }
 
+// ── Parsed operation signing (HiveSignOperations) ─────────────────────────
+//
+// The host serializes the transaction; firmware re-derives everything it
+// displays from the bytes and refuses anything outside the phase-1 op table.
+// Digest/signature are identical to HiveSignTx: SHA256(chain_id || tx).
+
+typedef struct {
+  const uint8_t* p;
+  const uint8_t* end;
+} HiveCur;
+
+/*
+ * Bounded unsigned LEB128: at most 5 bytes, must fit uint32, overlong
+ * encodings rejected (an unbounded shift is a classic overflow hole).
+ */
+static bool cur_varint(HiveCur* c, uint32_t* out) {
+  uint32_t v = 0;
+  for (int shift = 0; shift <= 28; shift += 7) {
+    if (c->p >= c->end) return false;
+    uint8_t b = *c->p++;
+    if (shift == 28 && (b & 0xF0)) return false;  // overflow or 6th byte
+    v |= (uint32_t)(b & 0x7F) << shift;
+    if (!(b & 0x80)) {
+      *out = v;
+      return true;
+    }
+  }
+  return false;
+}
+
+/* varint length + bytes, bounds-checked against the buffer AND field caps. */
+static bool cur_string(HiveCur* c, const uint8_t** s, uint16_t* slen,
+                       uint32_t min_len, uint32_t max_len) {
+  uint32_t n;
+  if (!cur_varint(c, &n)) return false;
+  if (n < min_len || n > max_len) return false;
+  if ((size_t)(c->end - c->p) < n) return false;
+  *s = c->p;
+  *slen = (uint16_t)n;
+  c->p += n;
+  return true;
+}
+
+const char* hive_parseOperations(const uint8_t* tx, size_t len,
+                                 HiveParsedTx* out) {
+  memzero(out, sizeof(*out));
+  // 10-byte header + op_count varint + extensions varint is the structural
+  // minimum; op bodies are bounds-checked as they parse.
+  if (len < 12) return "Hive tx too short";
+  if (len > HIVE_MAX_OPS_TX_LEN) return "Hive tx too long";  // = proto cap
+
+  // Header (ref_block_num u16, ref_block_prefix u32, expiration u32) is
+  // covered by the signature but carries nothing to confirm on-device.
+  HiveCur c = {tx + 10, tx + len};
+
+  uint32_t op_count;
+  if (!cur_varint(&c, &op_count)) return "Hive tx: malformed op count";
+  if (op_count < 1 || op_count > HIVE_MAX_TX_OPS)
+    return "Hive tx: op count must be 1-4";
+  out->num_ops = (uint8_t)op_count;
+
+  bool any_posting = false, any_active = false;
+
+  for (uint32_t i = 0; i < op_count; i++) {
+    HiveTxOp* op = &out->ops[i];
+    uint32_t op_type;
+    if (!cur_varint(&c, &op_type)) return "Hive tx: malformed op type";
+    op->op_type = op_type;
+
+    switch (op_type) {
+      case HIVE_OP_VOTE: {  // posting authority
+        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
+            !cur_string(&c, &op->target, &op->target_len, 1, 16) ||
+            !cur_string(&c, &op->detail, &op->detail_len, 1, 256))
+          return "Hive vote: malformed fields";
+        if ((size_t)(c.end - c.p) < 2) return "Hive vote: missing weight";
+        int16_t w = (int16_t)((uint16_t)c.p[0] | ((uint16_t)c.p[1] << 8));
+        c.p += 2;
+        if (w < -10000 || w > 10000) return "Hive vote: weight out of range";
+        op->weight = w;
+        any_posting = true;
+        break;
+      }
+      case HIVE_OP_COMMENT: {  // posting authority
+        const uint8_t *pa, *ppl, *permlink, *jm;
+        uint16_t pa_len, ppl_len, permlink_len, jm_len;
+        if (!cur_string(&c, &pa, &pa_len, 0, 16) ||
+            !cur_string(&c, &ppl, &ppl_len, 1, 256) ||
+            !cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
+            !cur_string(&c, &permlink, &permlink_len, 1, 256) ||
+            !cur_string(&c, &op->target, &op->target_len, 0, 256) ||
+            !cur_string(&c, &op->detail, &op->detail_len, 1,
+                        HIVE_MAX_OPS_TX_LEN) ||
+            !cur_string(&c, &jm, &jm_len, 0, HIVE_MAX_OPS_TX_LEN))
+          return "Hive comment: malformed fields";
+        if (op->target_len == 0) {  // no title — show the permlink instead
+          op->target = permlink;
+          op->target_len = permlink_len;
+        }
+        op->is_top_level = (pa_len == 0);
+        any_posting = true;
+        break;
+      }
+      case HIVE_OP_CUSTOM_JSON: {  // posting OR active authority
+        uint32_t n_active, n_posting;
+        if (!cur_varint(&c, &n_active))
+          return "Hive custom_json: malformed auths";
+        for (uint32_t k = 0; k < n_active; k++) {
+          const uint8_t* s;
+          uint16_t sl;
+          if (!cur_string(&c, &s, &sl, 1, 16))
+            return "Hive custom_json: malformed auths";
+          if (!op->acct) {
+            op->acct = s;
+            op->acct_len = sl;
+          }
+        }
+        if (!cur_varint(&c, &n_posting))
+          return "Hive custom_json: malformed auths";
+        for (uint32_t k = 0; k < n_posting; k++) {
+          const uint8_t* s;
+          uint16_t sl;
+          if (!cur_string(&c, &s, &sl, 1, 16))
+            return "Hive custom_json: malformed auths";
+          if (!op->acct) {
+            op->acct = s;
+            op->acct_len = sl;
+          }
+        }
+        if (n_active + n_posting == 0)
+          return "Hive custom_json: no auth accounts";
+        // Both tiers on one op can never be satisfied by a single signature
+        // (post-HF28 hived requires the exact authority) — malformed input.
+        if (n_active > 0 && n_posting > 0)
+          return "Hive custom_json: mixed active+posting auths";
+        if (!cur_string(&c, &op->target, &op->target_len, 1, 32) ||
+            !cur_string(&c, &op->detail, &op->detail_len, 1,
+                        HIVE_MAX_OPS_TX_LEN))
+          return "Hive custom_json: malformed id/json";
+        op->n_auths = (uint8_t)(n_active + n_posting);
+        op->needs_active = (n_active > 0);
+        if (op->needs_active)
+          any_active = true;
+        else
+          any_posting = true;
+        break;
+      }
+      case HIVE_OP_TRANSFER:
+      case HIVE_OP_ACCOUNT_CREATE:
+      case HIVE_OP_ACCOUNT_UPDATE:
+        // PERMANENTLY excluded from this table: transfer keeps the stronger
+        // dedicated HiveSignTx display path; the account ops keep the
+        // device-derived-keys-only invariant (a generic raw-bytes path
+        // would let a host slip third-party authorities into an
+        // account_update). Never add these here.
+        return "Hive tx: op requires its dedicated message type";
+      default:
+        return "Hive tx: unsupported operation type";
+    }
+  }
+
+  uint32_t ext_count;
+  if (!cur_varint(&c, &ext_count)) return "Hive tx: malformed extensions";
+  if (ext_count != 0) return "Hive tx: extensions must be empty";
+  if (c.p != c.end) return "Hive tx: trailing bytes";
+
+  // One signature cannot satisfy posting- and active-tier ops at once.
+  if (any_posting && any_active) return "Hive tx: mixed posting/active ops";
+  out->needs_active = any_active;
+  return NULL;
+}
+
+void hive_signOperations(const HDNode* node, const HiveSignOperations* msg,
+                         HiveSignedOperations* resp) {
+  if (!msg->has_serialized_tx || msg->serialized_tx.size == 0 ||
+      msg->serialized_tx.size > HIVE_MAX_OPS_TX_LEN)
+    return;
+
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
+          ? msg->chain_id.bytes
+          : default_chain_id;
+
+  // Hash straight from the decoded message — no stack copy of the 2KB tx.
+  uint8_t sig[65];
+  if (!hive_sign_digest(node, chain_id, msg->serialized_tx.bytes,
+                        msg->serialized_tx.size, sig)) {
+    memzero(sig, sizeof(sig));
+    return;
+  }
+
+  resp->has_signature = true;
+  resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
+  memzero(sig, sizeof(sig));
+}
+
 // ── Message signing (Keychain signBuffer contract) ────────────────────────
 // Digest is SHA256(message bytes) ONLY: no chain_id prepend (unlike
 // transactions) and no Bitcoin/Solana-style message prefix. hive-js

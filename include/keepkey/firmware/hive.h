@@ -31,9 +31,12 @@
 #define HIVE_ROLE_POSTING (0x80000004u)  // 4'  — votes, posts, follows
 
 // ── Graphene operation type IDs ───────────────────────────────────────────
+#define HIVE_OP_VOTE 0
+#define HIVE_OP_COMMENT 1
 #define HIVE_OP_TRANSFER 2
 #define HIVE_OP_ACCOUNT_CREATE 9
 #define HIVE_OP_ACCOUNT_UPDATE 10
+#define HIVE_OP_CUSTOM_JSON 18
 
 // ── Protocol limits ───────────────────────────────────────────────────────
 #define HIVE_MAX_ACCOUNT_LEN 16  // max Hive username length
@@ -45,6 +48,11 @@
 // Maximum signable message length. MUST match HiveSignMessage.message
 // max_size in messages-hive.options (proto cap and code cap kept in sync).
 #define HIVE_MAX_MESSAGE_LEN 1024
+// Maximum host-serialized transaction length for HiveSignOperations. MUST
+// match HiveSignOperations.serialized_tx max_size in messages-hive.options.
+#define HIVE_MAX_OPS_TX_LEN 2048
+// Maximum operations per HiveSignOperations transaction.
+#define HIVE_MAX_TX_OPS 4
 
 // ── Public API ────────────────────────────────────────────────────────────
 /**
@@ -77,6 +85,45 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
  * Rejects memos longer than HIVE_MAX_MEMO_LEN (440 bytes).
  */
 void hive_signTx(const HDNode* node, const HiveSignTx* msg, HiveSignedTx* resp);
+
+// ── Parsed operations (HiveSignOperations) ────────────────────────────────
+
+typedef struct {
+  uint32_t op_type;
+  bool needs_active;  // custom_json with required_auths; false = posting tier
+  // Borrowed slices into the request's serialized_tx (NOT NUL-terminated):
+  const uint8_t* acct;  // vote: voter / comment: author / cj: first auth name
+  uint16_t acct_len;
+  const uint8_t* target;  // vote: author / comment: title-or-permlink / cj: id
+  uint16_t target_len;
+  const uint8_t* detail;  // vote: permlink / comment: body / cj: json
+  uint16_t detail_len;
+  int16_t weight;     // vote only (-10000..10000)
+  bool is_top_level;  // comment only: parent_author empty
+  uint8_t n_auths;    // custom_json only: total auth account names
+} HiveTxOp;
+
+typedef struct {
+  uint8_t num_ops;
+  bool needs_active;  // tx tier: active' path required, else posting'
+  HiveTxOp ops[HIVE_MAX_TX_OPS];
+} HiveParsedTx;
+
+/**
+ * Parse and validate a host-serialized Graphene transaction against the
+ * phase-1 op table (vote, comment, custom_json). Returns NULL on success or
+ * a static error message. Slices in `out` borrow from `tx` — keep it alive.
+ */
+const char* hive_parseOperations(const uint8_t* tx, size_t len,
+                                 HiveParsedTx* out);
+
+/**
+ * Sign a parsed HiveSignOperations transaction: digest is
+ * SHA256(chain_id || serialized_tx), identical to HiveSignTx. The caller
+ * (FSM handler) is responsible for parsing, display, and role checks.
+ */
+void hive_signOperations(const HDNode* node, const HiveSignOperations* msg,
+                         HiveSignedOperations* resp);
 
 /**
  * Sign an arbitrary message per the Hive Keychain signBuffer contract:
