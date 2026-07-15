@@ -193,7 +193,24 @@ static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
 }
 
 /*
- * Sign helper: SHA256(chain_id || serialized_tx) → secp256k1 recoverable sig.
+ * Core sign helper over an already-computed 32-byte digest → 65-byte
+ * compact recoverable sig: header (27 + recovery_id + 4 compressed-key
+ * flag), then r(32) ‖ s(32).
+ */
+static bool hive_sign_raw_digest(const HDNode* node, const uint8_t digest[32],
+                                 uint8_t sig[65]) {
+  uint8_t pby;
+  if (ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig + 1, &pby,
+                        hive_is_canonic) != 0) {
+    return false;
+  }
+  // Compact signature header: 27 + recovery_id + 4 (compressed key flag)
+  sig[0] = 27 + pby + 4;
+  return true;
+}
+
+/*
+ * Transaction sign helper: SHA256(chain_id || serialized_tx) → compact sig.
  * Writes 65 bytes into sig[]. Returns true on success.
  */
 static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
@@ -206,16 +223,44 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
   uint8_t digest[32];
   sha256_Final(&sha, digest);
 
-  uint8_t pby;
-  if (ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig + 1, &pby,
-                        hive_is_canonic) != 0) {
-    memzero(digest, sizeof(digest));
-    return false;
-  }
-  // Compact signature header: 27 + recovery_id + 4 (compressed key flag)
-  sig[0] = 27 + pby + 4;
+  bool ok = hive_sign_raw_digest(node, digest, sig);
   memzero(digest, sizeof(digest));
-  return true;
+  return ok;
+}
+
+// ── Message signing (Keychain signBuffer contract) ────────────────────────
+// Digest is SHA256(message bytes) ONLY: no chain_id prepend (unlike
+// transactions) and no Bitcoin/Solana-style message prefix. hive-js
+// Signature.signBuffer — which every Hive dApp verifies against — hashes
+// the raw bytes exactly once; any added prefix silently breaks all dApp
+// verification.
+
+void hive_signMessage(const HDNode* node, const HiveSignMessage* msg,
+                      HiveSignedMessage* resp) {
+  if (!msg->has_message || msg->message.size > HIVE_MAX_MESSAGE_LEN) return;
+
+  uint8_t digest[32];
+  sha256_Raw(msg->message.bytes, msg->message.size, digest);
+
+  uint8_t sig[65];
+  if (!hive_sign_raw_digest(node, digest, sig)) {
+    memzero(digest, sizeof(digest));
+    memzero(sig, sizeof(sig));
+    return;
+  }
+
+  resp->has_signature = true;
+  resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
+
+  // Caller must have run hdnode_fill_public_key(node). Returned so the host
+  // can build Keychain's publicKey response field without a second call.
+  resp->has_public_key = true;
+  resp->public_key.size = 33;
+  memcpy(resp->public_key.bytes, node->public_key, 33);
+
+  memzero(digest, sizeof(digest));
+  memzero(sig, sizeof(sig));
 }
 
 // ── Transfer (op type 2) ──────────────────────────────────────────────────

@@ -146,6 +146,7 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg);
 void fsm_msgHiveSignTx(const HiveSignTx* msg);
 void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg);
 void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg);
+void fsm_msgHiveSignMessage(const HiveSignMessage* msg);
 
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);
