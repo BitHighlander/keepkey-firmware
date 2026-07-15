@@ -177,9 +177,12 @@ static void append_tx_footer(uint8_t** buf, const uint8_t* end) {
 }
 
 /*
- * Graphene canonical-signature rule (identical to EOS/Steem): high bit of
- * both r and s must be clear. hived rejects non-canonical compact sigs, so
- * signing must retry until canonical — same predicate as eos_is_canonic.
+ * Graphene legacy canonical-signature rule (identical to EOS/Steem): high bit
+ * of both r and s must be clear — same predicate as eos_is_canonic. Modern
+ * hived (post-HF28) actually enforces only BIP-0062 low-S (fc is_canonical ->
+ * is_bip_0062_canonical), which trezor-crypto's low-S normalization already
+ * guarantees; keeping the stricter legacy rule costs an occasional extra
+ * RFC6979 iteration and stays compatible with every historical verifier.
  */
 static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
   (void)v;
@@ -216,11 +219,6 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
 }
 
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
-
-// Maximum memo length that fits safely in tx_buf[512] with all other fields.
-// Non-memo overhead: header(12) + from(17) + to(17) + asset(16) + footer(1) =
-// ~63 bytes. 512 - 63 - 3 (varint) = 446; use 440 as the conservative limit.
-#define HIVE_MAX_MEMO_LEN 440
 
 static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
                                       size_t buf_len) {

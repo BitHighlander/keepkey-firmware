@@ -18,8 +18,12 @@
 
 // ── SLIP-0048 derivation constants (all hardened) ─────────────────────────
 // Path: m/48'/13'/role'/account_index'/0'
+// 13' is the de-facto Hive network index shipped by Ledger (LedgerHQ/app-hive)
+// and hive-ledger-cli, NOT the slip-0048.md registry entry (0xbee = 3054',
+// which no wallet implements). Chosen deliberately for seed-level key
+// compatibility with the existing hardware-wallet ecosystem.
 #define HIVE_SLIP48_PURPOSE (0x80000030u)  // 48'
-#define HIVE_SLIP48_NETWORK (0x8000000Du)  // 13' — Hive SLIP-0048 network ID
+#define HIVE_SLIP48_NETWORK (0x8000000Du)  // 13'
 #define HIVE_ROLE_OWNER \
   (0x80000000u)  // 0'  — account recovery, authority changes
 #define HIVE_ROLE_ACTIVE (0x80000001u)   // 1'  — transfers, staking
@@ -34,6 +38,10 @@
 // ── Protocol limits ───────────────────────────────────────────────────────
 #define HIVE_MAX_ACCOUNT_LEN 16  // max Hive username length
 #define HIVE_DECIMALS 3          // HIVE and HBD both use 3 decimal places
+// Maximum memo length that fits safely in the signer's tx_buf[512] with all
+// other fields. Non-memo overhead: header(12) + from(17) + to(17) + asset(16)
+// + footer(1) = ~63 bytes. 512 - 63 - 3 (varint) = 446; 440 is conservative.
+#define HIVE_MAX_MEMO_LEN 440
 
 // ── Public API ────────────────────────────────────────────────────────────
 /**

@@ -122,6 +122,30 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
   layoutHome();
 }
 
+// ── SLIP-0048 path validation ─────────────────────────────────────────────
+// All three sign handlers enforce the full path shape before anything is
+// derived or signed: m/48'/13'/role'/account'/0' (all 5 components hardened),
+// with the role pinned to the one the operation needs on-chain:
+//   transfer       -> active' (post-HF28 hived no longer accepts higher-role
+//                    substitution, and the cold owner key must not be spent)
+//   create/update  -> owner'  (the attestation contract: the sponsor verifies
+//                    the signature recovers to the device OWNER key, and
+//                    account_update replaces the owner authority itself)
+// Rejecting arbitrary host paths means a compromised host can never make the
+// device produce a Hive signature with a key from another coin's derivation
+// tree, nor with the wrong role's key.
+
+static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count,
+                                uint32_t required_role) {
+  if (count != 5) return false;
+  if (address_n[0] != HIVE_SLIP48_PURPOSE) return false;
+  if (address_n[1] != HIVE_SLIP48_NETWORK) return false;
+  if (address_n[2] != required_role) return false;
+  if ((address_n[3] & 0x80000000u) == 0) return false;
+  if (address_n[4] != 0x80000000u) return false;  // key index 0'
+  return true;
+}
+
 // ── HiveSignTx (transfer) ─────────────────────────────────────────────────
 
 void fsm_msgHiveSignTx(const HiveSignTx* msg) {
@@ -135,6 +159,23 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
       !msg->has_expiration) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Missing required Hive transaction fields"));
+    layoutHome();
+    return;
+  }
+
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count,
+                           HIVE_ROLE_ACTIVE)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive SLIP-0048 path (transfer needs active')"));
+    layoutHome();
+    return;
+  }
+
+  // Reject over-long memos up front with a specific error; the serializer's
+  // own bounds check would otherwise surface as a generic signing failure.
+  if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Hive memo too long (max 440 bytes)"));
     layoutHome();
     return;
   }
@@ -202,24 +243,6 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   layoutHome();
 }
 
-// ── SLIP-0048 path validation ─────────────────────────────────────────────
-// Account create/update derive replacement role keys from address_n[3], so
-// the full path shape must be enforced before anything is derived or signed:
-// m/48'/13'/role'/account'/0' (all 5 components hardened).
-
-static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count) {
-  if (count != 5) return false;
-  if (address_n[0] != HIVE_SLIP48_PURPOSE) return false;
-  if (address_n[1] != HIVE_SLIP48_NETWORK) return false;
-  if (address_n[2] != HIVE_ROLE_OWNER && address_n[2] != HIVE_ROLE_ACTIVE &&
-      address_n[2] != HIVE_ROLE_MEMO && address_n[2] != HIVE_ROLE_POSTING) {
-    return false;
-  }
-  if ((address_n[3] & 0x80000000u) == 0) return false;
-  if (address_n[4] != 0x80000000u) return false;  // key index 0'
-  return true;
-}
-
 // ── HiveSignAccountCreate ─────────────────────────────────────────────────
 // Signs a Graphene account_create operation.
 // Device derives all four role keys internally; host-supplied key strings
@@ -241,9 +264,10 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count)) {
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count,
+                           HIVE_ROLE_OWNER)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive SLIP-0048 path"));
+                    _("Invalid Hive SLIP-0048 path (needs owner')"));
     layoutHome();
     return;
   }
@@ -385,9 +409,10 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count)) {
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count,
+                           HIVE_ROLE_OWNER)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive SLIP-0048 path"));
+                    _("Invalid Hive SLIP-0048 path (needs owner')"));
     layoutHome();
     return;
   }
