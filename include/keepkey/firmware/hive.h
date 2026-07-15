@@ -98,9 +98,9 @@ typedef struct {
   uint16_t target_len;
   const uint8_t* detail;  // vote: permlink / comment: body / cj: json
   uint16_t detail_len;
-  int16_t weight;      // vote only (-10000..10000)
-  bool is_top_level;   // comment only: parent_author empty
-  uint8_t n_auths;     // custom_json only: total auth account names
+  int16_t weight;     // vote only (-10000..10000)
+  bool is_top_level;  // comment only: parent_author empty
+  uint8_t n_auths;    // custom_json only: total auth account names
 } HiveTxOp;
 
 typedef struct {

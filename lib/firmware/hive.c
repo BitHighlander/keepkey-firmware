@@ -274,8 +274,9 @@ static bool cur_string(HiveCur* c, const uint8_t** s, uint16_t* slen,
 const char* hive_parseOperations(const uint8_t* tx, size_t len,
                                  HiveParsedTx* out) {
   memzero(out, sizeof(*out));
-  // 10-byte header + op_count + at least one op-type byte + extensions
-  if (len < 13) return "Hive tx too short";
+  // 10-byte header + op_count varint + extensions varint is the structural
+  // minimum; op bodies are bounds-checked as they parse.
+  if (len < 12) return "Hive tx too short";
   if (len > HIVE_MAX_OPS_TX_LEN) return "Hive tx too long";  // = proto cap
 
   // Header (ref_block_num u16, ref_block_prefix u32, expiration u32) is

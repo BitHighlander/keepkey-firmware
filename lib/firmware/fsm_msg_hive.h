@@ -761,8 +761,8 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
       }
       case HIVE_OP_COMMENT:
         approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                           op->is_top_level ? "Post" : "Comment",
-                           "@%s: %s\n%s", name, target, detail);
+                           op->is_top_level ? "Post" : "Comment", "@%s: %s\n%s",
+                           name, target, detail);
         break;
       case HIVE_OP_CUSTOM_JSON: {
         char extra[12] = "";
