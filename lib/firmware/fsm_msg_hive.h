@@ -520,8 +520,10 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
 // having the account sign a challenge string, then recover the pubkey and
 // check it against the account's authority on-chain. Contract (hive-js
 // Signature.signBuffer): sig over SHA256(raw message bytes) — no chain_id,
-// no prefix. Any of the four SLIP-0048 roles may sign (login uses posting');
-// the full path shape is still enforced like the tx handlers.
+// no prefix. Roles: posting/active/memo, Keychain's requestSignBuffer
+// surface. owner' is deliberately rejected — no consumer offers it, and the
+// cold owner key must not be normalized into dApp flows. The full path
+// shape is still enforced like the tx handlers.
 
 static bool hive_slip48_message_path_ok(const uint32_t* address_n,
                                         uint32_t count,
@@ -532,9 +534,6 @@ static bool hive_slip48_message_path_ok(const uint32_t* address_n,
   if ((address_n[3] & 0x80000000u) == 0) return false;
   if (address_n[4] != 0x80000000u) return false;  // key index 0'
   switch (address_n[2]) {
-    case HIVE_ROLE_OWNER:
-      *role_label = "owner";
-      return true;
     case HIVE_ROLE_ACTIVE:
       *role_label = "active";
       return true;
@@ -597,13 +596,16 @@ void fsm_msgHiveSignMessage(const HiveSignMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // Printable UTF-8 shown as text; anything else as a hex preview
-  // (same convention as SolanaSignMessage).
-  bool printable = true;
-  for (uint32_t i = 0; i < msg->message.size; i++) {
+  // Printable ASCII within the display budget is shown verbatim; anything
+  // longer — or with non-ASCII bytes — gets the hex preview + byte count.
+  // The budget matters: confirm()'s body buffer silently truncates at
+  // BODY_CHAR_MAX, so a long "printable" message could show a benign prefix
+  // while the device signs hidden trailing content. Same 128-byte budget as
+  // SolanaSignMessage.
+  bool printable = msg->message.size <= 128;
+  for (uint32_t i = 0; printable && i < msg->message.size; i++) {
     if (msg->message.bytes[i] < 0x20 || msg->message.bytes[i] > 0x7e) {
       printable = false;
-      break;
     }
   }
 
