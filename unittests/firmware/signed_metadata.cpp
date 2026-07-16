@@ -18,6 +18,8 @@
 
 extern "C" {
 #include "messages-ethereum.pb.h"  /* full EthereumSignTx definition */
+#include "keepkey/board/draw.h"    /* draw_bitmap_mono_rle (icon decoder) */
+#include "keepkey/board/layout.h"  /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
@@ -736,6 +738,170 @@ TEST_F(SignedMetadataTest, StoreSignerReplacementInvalidatesOldKey) {
 }
 
 /* ---- signed_metadata_signer_valid (pure) ------------------------------ */
+
+/*
+ * ── Identity-icon decoder hardening ────────────────────────────────────────
+ *
+ * The clearsign identity icon is HOST-SUPPLIED and is rendered on the trust
+ * screen, so the decoder is an attack surface reachable before the user has
+ * approved anything. Regression guards for two review findings:
+ *
+ *  (1) A 0x80 (n = -128) packet is undecodable: draw_bitmap_mono_rle's counter
+ *      is int8_t, so -(-128) wraps back to -128 and breaks its `> 0` invariant.
+ *      Under NDEBUG the assert is compiled out and decoding proceeded with a
+ *      negative counter (signed-overflow UB). Must fail closed instead.
+ *  (2) icon_width must not exceed LEFT_MARGIN_WITH_ICON: text starts at x=40
+ *      and the icon is drawn AFTER the text, so a wider icon overwrites the
+ *      alias / fingerprint / "NOT verified by KeepKey" warning.
+ */
+namespace {
+
+struct IconCanvas {
+  uint8_t buf[64 * 256];
+  Canvas canvas;
+  IconCanvas() {
+    memset(buf, 0, sizeof(buf));
+    canvas.buffer = buf;
+    canvas.width = 256;
+    canvas.height = 64;
+    canvas.dirty = false;
+  }
+};
+
+bool decode_icon(const std::vector<uint8_t> &data, uint16_t w, uint16_t h,
+                 IconCanvas *ic) {
+  Image img;
+  img.w = w;
+  img.h = h;
+  img.length = (uint32_t)data.size();
+  img.data = data.data();
+  AnimationFrame frame;
+  frame.x = 0;
+  frame.y = 0;
+  frame.duration = 0;
+  frame.color = 100;  /* value*100/100 => data bytes land verbatim */
+  frame.image = &img;
+  return draw_bitmap_mono_rle(&ic->canvas, &frame, /*erase=*/false);
+}
+
+}  // namespace
+
+TEST(SignedMetadataIcon, GoldenVectorDecodes) {
+  /* The vector published in messages-ethereum.proto: 03 FF FF 00 (w=2,h=2). */
+  IconCanvas ic;
+  ASSERT_TRUE(decode_icon({0x03, 0xFF, 0xFF, 0x00}, 2, 2, &ic));
+  EXPECT_EQ(ic.buf[0 * 256 + 0], 0xFF);
+  EXPECT_EQ(ic.buf[0 * 256 + 1], 0xFF);
+  EXPECT_EQ(ic.buf[1 * 256 + 0], 0xFF);
+  EXPECT_EQ(ic.buf[1 * 256 + 1], 0x00);
+}
+
+TEST(SignedMetadataIcon, LiteralOf128IsRejected) {
+  /* n = 0x80 = -128. Spec-valid under the old doc, undecodable in fact:
+   * previously asserted (debug) or decoded with a negative counter (NDEBUG). */
+  std::vector<uint8_t> data;
+  data.push_back(0x80);
+  for (int i = 0; i < 128; i++) data.push_back(0xAA);
+  IconCanvas ic;
+  EXPECT_FALSE(decode_icon(data, 128, 1, &ic));
+}
+
+TEST(SignedMetadataIcon, ZeroCountIsRejected) {
+  /* n == 0 leaves both counters at 0 and hits the same broken invariant. */
+  IconCanvas ic;
+  EXPECT_FALSE(decode_icon({0x00, 0xFF}, 1, 1, &ic));
+}
+
+TEST(SignedMetadataIcon, MaxLiteralOf127Decodes) {
+  /* The boundary that IS valid: n = -127 (0x81). */
+  std::vector<uint8_t> data;
+  data.push_back(0x81);
+  for (int i = 0; i < 127; i++) data.push_back((uint8_t)i);
+  IconCanvas ic;
+  ASSERT_TRUE(decode_icon(data, 127, 1, &ic));
+  EXPECT_EQ(ic.buf[0], 0x00);
+  EXPECT_EQ(ic.buf[126], 126);
+}
+
+TEST(SignedMetadataIcon, MaxRunOf127Decodes) {
+  std::vector<uint8_t> data{0x7F, 0x5A};
+  IconCanvas ic;
+  ASSERT_TRUE(decode_icon(data, 127, 1, &ic));
+  EXPECT_EQ(ic.buf[0], 0x5A);
+  EXPECT_EQ(ic.buf[126], 0x5A);
+}
+
+TEST(SignedMetadataIcon, TruncatedStreamIsRejected) {
+  IconCanvas ic;
+  EXPECT_FALSE(decode_icon({0x08, 0xFF}, 4, 4, &ic));  /* claims 8, has 2 */
+}
+
+/* ── Exact-validation guards (review round 2) ──────────────────────────────
+ * The render path is lenient by construction: it fills the canvas and stops,
+ * so it cannot reject a final run that straddles the image or trailing packets.
+ * Callers gate on the validator, so the validator must be exact. */
+
+TEST(SignedMetadataIcon, StraddlingRunIsRejected) {
+  /* 05 FF for a 2x2: a RUN of 5 into a 4-pixel image. The draw loop would fill
+   * 4 and report success; the stream is not well-formed. */
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x05\xFF", 2, 2, 2));
+  IconCanvas ic;
+  EXPECT_FALSE(decode_icon({0x05, 0xFF}, 2, 2, &ic));
+}
+
+TEST(SignedMetadataIcon, TrailingPacketsAreRejected) {
+  /* Exactly fills 2x2, then carries an unread packet. */
+  EXPECT_FALSE(
+      draw_bitmap_mono_rle_valid((const uint8_t *)"\x04\xFF\x01\xAA", 4, 2, 2));
+}
+
+TEST(SignedMetadataIcon, TruncatedLiteralBodyIsRejected) {
+  /* n = -3 promises 3 value bytes, only 2 present. */
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\xFD\x01\x02", 3, 3, 1));
+}
+
+TEST(SignedMetadataIcon, MissingRunValueByteIsRejected) {
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x04", 1, 4, 1));
+}
+
+TEST(SignedMetadataIcon, ValidatorAcceptsExactStreams) {
+  /* The golden vector, and the valid boundaries. */
+  EXPECT_TRUE(
+      draw_bitmap_mono_rle_valid((const uint8_t *)"\x03\xFF\xFF\x00", 4, 2, 2));
+  EXPECT_TRUE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x7F\x5A", 2, 127, 1));
+  std::vector<uint8_t> lit;
+  lit.push_back(0x81);
+  for (int i = 0; i < 127; i++) lit.push_back((uint8_t)i);
+  EXPECT_TRUE(draw_bitmap_mono_rle_valid(lit.data(), (uint32_t)lit.size(), 127, 1));
+}
+
+TEST(SignedMetadataIcon, ValidatorRejectsUndecodableAndZeroCounts) {
+  std::vector<uint8_t> lit128;
+  lit128.push_back(0x80);
+  for (int i = 0; i < 128; i++) lit128.push_back(0xAA);
+  EXPECT_FALSE(
+      draw_bitmap_mono_rle_valid(lit128.data(), (uint32_t)lit128.size(), 128, 1));
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x00\xFF", 2, 1, 1));
+  /* The 1x1 accept-and-persist case: 80 FF was previously stored despite never
+   * rendering, because only size+dims were checked at the trust boundary. */
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x80\xFF", 2, 1, 1));
+}
+
+TEST(SignedMetadataIcon, ValidatorRejectsDegenerateGeometry) {
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x01\xFF", 2, 0, 1));
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x01\xFF", 2, 1, 0));
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid(NULL, 0, 1, 1));
+}
+
+
+TEST(SignedMetadataIcon, IconColumnCapIsNarrowerThanTheIconHeight) {
+  /* The width cap is the 40px text column, NOT the 64px height. A 64px-wide
+   * icon at x=0 would span into the text that begins at x=40 and, because the
+   * icon is drawn after the text, erase the "NOT verified" warning. */
+  EXPECT_EQ(LEFT_MARGIN_WITH_ICON, 40);
+  EXPECT_LT(LEFT_MARGIN_WITH_ICON, 64);
+}
+
 
 TEST(SignedMetadataSignerValid, AcceptsValidCompressedKeyAllSlots) {
   for (uint8_t slot = 0; slot < METADATA_MAX_KEYS; slot++) {
