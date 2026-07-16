@@ -57,16 +57,35 @@ bool thor_isMayachainTx(const EthereumSignTx* msg) {
   return strncmp(toStr, MAYA_ROUTER, 40) == 0;
 }
 
+/* The THORChain router address for this tx's chain, or NULL if the chain has no
+ * pinned router (then the deposit is not clear-signed and falls to the
+ * blind-sign gate). chain_id defaults to 1 (Ethereum) when absent, matching
+ * ethereum.c's handling. */
+static const char* thor_router_for_chain(const EthereumSignTx* msg) {
+  uint32_t chain_id = msg->has_chain_id ? msg->chain_id : 1;
+  switch (chain_id) {
+    case 1:
+      return THOR_ROUTER; /* Ethereum */
+    case 43114:
+      return THOR_ROUTER_AVAX; /* Avalanche C-Chain */
+    default:
+      return NULL;
+  }
+}
+
 bool thor_isThorchainTx(const EthereumSignTx* msg) {
   if (!msg->has_to || msg->to.size != 20) return false;
   if (!thor_has_deposit_selector(msg)) return false;
-  /* Pin to the THORChain router. Without this, ANY contract carrying the
-   * deposit selector would get the THORChain clear-sign UX and bypass the
-   * AdvancedMode blind-sign gate, letting an attacker contract drain while the
-   * device shows a benign deposit. Mirrors thor_isMayachainTx. */
+  /* Pin to the THORChain router FOR THIS CHAIN. Without the pin, ANY contract
+   * carrying the deposit selector would get the THORChain clear-sign UX and
+   * bypass the AdvancedMode blind-sign gate, letting an attacker contract drain
+   * while the device shows a benign deposit. Without the chain scope, only
+   * mainnet deposits ever match. Mirrors thor_isMayachainTx. */
+  const char* router = thor_router_for_chain(msg);
+  if (!router) return false;
   char toStr[41];
   thor_format_to_addr(msg, toStr);
-  return strncmp(toStr, THOR_ROUTER, 40) == 0;
+  return strncmp(toStr, router, 40) == 0;
 }
 
 static bool thor_confirm_deposit_tx(uint32_t data_total,
@@ -75,12 +94,15 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
                                     const char* router_label) {
   (void)data_total;
 
-  /* Minimum calldata: selector(4) + vault(32) + asset(32) + amount(32) +
-   * memo_offset(32) + memo_length(32) = 164 bytes for deposit(),
-   * + expiry(32) = 196 bytes for depositWithExpiry(). */
+  /* Require enough calldata to safely read the fixed head words AND the memo
+   * length word: selector(4) + vault(32) + asset(32) + amount(32) +
+   * memo_offset(32) [+ expiry(32)] + memo_length(32). That is the offset where
+   * the memo BYTES begin: 4 + 5*32 = 164 for deposit(), 4 + 6*32 = 196 for
+   * depositWithExpiry(). The memo bytes themselves are bounds-checked below
+   * against the actual ABI length, not assumed to be a fixed 64. */
   const bool is_expiry = thor_is_expiry_variant(msg);
-  const size_t min_chunk = is_expiry ? 260 : 228;
-  if (msg->data_initial_chunk.size < min_chunk) return false;
+  const size_t memo_offset = 4 + (is_expiry ? 6 : 5) * 32;
+  if (msg->data_initial_chunk.size < memo_offset) return false;
 
   /* The memo is a dynamic `string`; its ABI head pointer (word 3, offset
    * 4+3*32) must be canonical (0x80 for deposit's 4 head words, 0xa0 for
@@ -110,11 +132,11 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
       (const uint8_t*)(msg->data_initial_chunk.bytes + 4 + 32 + 12);
   bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2 * 32, 32, &Amount);
   /* deposit(): memo at 4 + 5*32; depositWithExpiry(): memo at 4 + 6*32 */
-  thorchainData = (const uint8_t*)(msg->data_initial_chunk.bytes + 4 +
-                                   (is_expiry ? 6 : 5) * 32);
+  thorchainData = msg->data_initial_chunk.bytes + memo_offset;
 
   thor_format_to_addr(msg, confStr);
-  if (strncmp(confStr, THOR_ROUTER, 40) == 0) {
+  const char* thor_router = thor_router_for_chain(msg);
+  if (thor_router && strncmp(confStr, thor_router, 40) == 0) {
     conf = "Thorchain router";
   } else if (strncmp(confStr, MAYA_ROUTER, 40) == 0) {
     conf = router_label;
@@ -165,7 +187,33 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
     }
   }
 
-  if (!thorchain_parseConfirmMemo((const char*)thorchainData, 64)) return false;
+  /* Read the ABI memo length word (the uint256 immediately preceding the memo
+   * bytes, at offset memo_offset - 32) instead of assuming a fixed 64. A
+   * hardcoded length truncates a longer memo (silently dropping trailing fields
+   * such as the affiliate fee bps) and — with a crafted length word — lets the
+   * memo the router executes differ from the memo the device displayed. The
+   * memo offset is already pinned to canonical (0x80/0xa0) above, so the length
+   * word's position is fixed. */
+  const uint8_t* memo_len_word =
+      msg->data_initial_chunk.bytes + memo_offset - 32;
+  /* Canonical: the high 28 bytes must be zero. Reject a dirty/huge length
+   * rather than truncate it. */
+  for (uint32_t i = 0; i < 28; i++) {
+    if (memo_len_word[i] != 0) return false;
+  }
+  uint32_t memo_len = ((uint32_t)memo_len_word[28] << 24) |
+                      ((uint32_t)memo_len_word[29] << 16) |
+                      ((uint32_t)memo_len_word[30] << 8) |
+                      (uint32_t)memo_len_word[31];
+  /* The memo bytes, padded up to a 32-byte ABI boundary, must be wholly present
+   * in the initial chunk — otherwise we would display bytes the device never
+   * received (and that the host could stream differently before signing). */
+  const size_t memo_padded = (memo_len + 31u) & ~(size_t)31u;
+  if (memo_len == 0 || memo_len > 256) return false;
+  if (memo_offset + memo_padded > msg->data_initial_chunk.size) return false;
+
+  if (!thorchain_parseConfirmMemo((const char*)thorchainData, memo_len))
+    return false;
 
   return true;
 }
