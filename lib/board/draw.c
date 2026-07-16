@@ -315,23 +315,29 @@ bool draw_bitmap_mono_rle(Canvas* canvas, const AnimationFrame* frame,
       // sequence > 0 implies the next x pixels are the same
       // sequence < 0 implies the next -x pixels are all different
       if ((sequence == 0) && (nonsequence == 0)) {
-        /* Read the packet count as int8. INT8_MIN (0x80) is rejected: the
-         * counter below is int8_t, so -(-128) = 128 does not fit and wraps
-         * back to -128, breaking the `nonsequence > 0` invariant. Under NDEBUG
-         * the assert is compiled out and we would decode with a negative
-         * counter (signed-overflow UB). A host-supplied icon reaches here, so
-         * this must fail closed rather than rely on the encoder. n == 0 is
-         * likewise not a valid packet. */
-        if (img->data[pixel_index] == (uint8_t)0x80 ||
-            img->data[pixel_index] == 0) {
+        /* Read the packet count. 0x80 (-128) is rejected: `nonsequence` below
+         * is int8_t, so -(-128) = 128 does not fit and wraps back to -128,
+         * breaking the `nonsequence > 0` invariant. Under NDEBUG the assert is
+         * compiled out and we would decode with a negative counter
+         * (signed-overflow UB). 0 is likewise not a valid packet: it leaves
+         * both counters at zero and breaks the same invariant. A host-supplied
+         * icon reaches here, so fail closed rather than trust the encoder. */
+        const uint8_t raw = img->data[pixel_index];
+        if (raw == 0x80u || raw == 0u) {
           return false;
         }
-        sequence = img->data[pixel_index];
         pixel_index++;
 
-        if (sequence < 0) {
-          nonsequence = -sequence;
+        /* Explicit two's-complement read. Narrowing a uint8_t > 127 straight
+         * into an int8_t is implementation-defined, so spell the conversion
+         * out: 1..127 stay positive (RUN), 129..255 become -127..-1 (LITERAL).
+         */
+        if (raw > 127u) {
+          nonsequence = (int8_t)((int)raw - 256); /* -127..-1 */
+          nonsequence = (int8_t)(-nonsequence);   /* 1..127, fits int8_t */
           sequence = 0;
+        } else {
+          sequence = (int8_t)raw; /* 1..127 */
         }
       }
 
