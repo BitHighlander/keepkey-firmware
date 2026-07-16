@@ -87,8 +87,17 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   uint8_t icon_w = 0, icon_h = 0;
   if (msg->has_icon && msg->icon.size > 0) {
     CHECK_PARAM(msg->icon.size <= METADATA_ICON_MAX, _("icon too large"));
+    /* Width is capped at the confirm screen's icon column
+     * (LEFT_MARGIN_WITH_ICON = 40), NOT at the 64px height. Title/body text
+     * begins at x=40 and the icon is drawn AFTER the text, so a wider
+     * host-supplied icon would paint over the alias, fingerprint and the
+     * "NOT verified by KeepKey" warning — on the very screen that exists to
+     * carry that warning. Reject at the trust boundary; stage_runtime_icon()
+     * additionally clamps, to cover icons already persisted by older firmware.
+     */
     CHECK_PARAM(msg->has_icon_width && msg->has_icon_height &&
-                    msg->icon_width > 0 && msg->icon_width <= 64 &&
+                    msg->icon_width > 0 &&
+                    msg->icon_width <= LEFT_MARGIN_WITH_ICON &&
                     msg->icon_height > 0 && msg->icon_height <= 64,
                 _("icon dimensions out of range"));
     icon = msg->icon.bytes;

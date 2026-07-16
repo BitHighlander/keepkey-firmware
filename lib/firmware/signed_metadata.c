@@ -574,16 +574,25 @@ static IconType stage_runtime_icon(Image *img, AnimationFrame *frame,
                                    const uint8_t *icon, uint8_t icon_w,
                                    uint8_t icon_h, uint16_t icon_len) {
   if (!icon || icon_len == 0) return NO_ICON;
+  /* Fail closed on an over-wide icon rather than drawing it at x=0: text begins
+   * at x=40 and the icon is drawn AFTER the text, so a wider icon would paint
+   * over the alias, fingerprint and the "NOT verified by KeepKey" warning.
+   * fsm_msgLoadClearsignSigner already rejects width > LEFT_MARGIN_WITH_ICON,
+   * but an icon persisted to flash by older firmware re-enters here straight
+   * from storage without passing that check — so enforce it again at the point
+   * of use. Dropping the logo degrades to a text-only identity; letting it
+   * erase the warning does not. */
+  if (icon_w == 0 || icon_w > LEFT_MARGIN_WITH_ICON || icon_h == 0 ||
+      icon_h > 64) {
+    return NO_ICON;
+  }
   img->w = icon_w;
   img->h = icon_h;
   img->length = icon_len;
   img->data = icon;
-  /* Center inside the confirm's left icon column (LEFT_MARGIN_WITH_ICON=40px);
-   * text begins at x=40, so an icon wider than that would clip the title/body.
+  /* Center inside the confirm's left icon column (LEFT_MARGIN_WITH_ICON=40px).
    * Vertically center in the 64px height. */
-  frame->x = (icon_w < LEFT_MARGIN_WITH_ICON)
-                 ? (uint16_t)((LEFT_MARGIN_WITH_ICON - icon_w) / 2)
-                 : 0;
+  frame->x = (uint16_t)((LEFT_MARGIN_WITH_ICON - icon_w) / 2);
   frame->y = (icon_h < 64) ? (uint16_t)((64 - icon_h) / 2) : 0;
   frame->duration = 0;
   /* Decoder does value*color/100; color=100 => data bytes are direct 0-255. */

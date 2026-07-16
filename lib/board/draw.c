@@ -315,6 +315,17 @@ bool draw_bitmap_mono_rle(Canvas* canvas, const AnimationFrame* frame,
       // sequence > 0 implies the next x pixels are the same
       // sequence < 0 implies the next -x pixels are all different
       if ((sequence == 0) && (nonsequence == 0)) {
+        /* Read the packet count as int8. INT8_MIN (0x80) is rejected: the
+         * counter below is int8_t, so -(-128) = 128 does not fit and wraps
+         * back to -128, breaking the `nonsequence > 0` invariant. Under NDEBUG
+         * the assert is compiled out and we would decode with a negative
+         * counter (signed-overflow UB). A host-supplied icon reaches here, so
+         * this must fail closed rather than rely on the encoder. n == 0 is
+         * likewise not a valid packet. */
+        if (img->data[pixel_index] == (uint8_t)0x80 ||
+            img->data[pixel_index] == 0) {
+          return false;
+        }
         sequence = img->data[pixel_index];
         pixel_index++;
 
