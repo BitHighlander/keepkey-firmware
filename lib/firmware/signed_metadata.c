@@ -2,6 +2,7 @@
 
 #include "storage.h"  // ClearsignIdentity + persistent-slot accessors
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/draw.h"     // draw_bitmap_mono_rle_valid
 #include "keepkey/board/layout.h"   // RUNTIME_ICON + layout_set_runtime_icon
 #include "keepkey/board/variant.h"  // Image / AnimationFrame
 #include "keepkey/board/util.h"
@@ -538,6 +539,23 @@ const char *signed_metadata_signer_alias(uint8_t key_id) {
 
 /* Resolve the icon for a slot (RAM working copy, else a persisted identity).
  * Returns false when the slot has no icon (text-only identity). */
+/* An icon is renderable only if its geometry fits the confirm's icon column
+ * AND its RLE stream decodes exactly to that geometry. This is the single
+ * choke point for STORED icons: signed_metadata_signer_icon() is what both the
+ * load-confirm and the per-tx identity screen call, and the per-tx screen
+ * stages the frame itself (it never goes through stage_runtime_icon), so
+ * validating in the staging helper alone would leave that path — and every
+ * legacy flash record — unchecked. Fail closed to a text-only identity: a
+ * missing logo is cosmetic, an over-wide one erases the alias, fingerprint and
+ * the "NOT verified by KeepKey" warning. */
+static bool icon_renderable(const uint8_t *icon, uint16_t icon_len,
+                            uint8_t icon_w, uint8_t icon_h) {
+  if (!icon || icon_len == 0) return false;
+  if (icon_w == 0 || icon_w > LEFT_MARGIN_WITH_ICON) return false;
+  if (icon_h == 0 || icon_h > 64) return false;
+  return draw_bitmap_mono_rle_valid(icon, (uint32_t)icon_len, icon_w, icon_h);
+}
+
 bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
                                  uint8_t *w_out, uint8_t *h_out,
                                  uint16_t *len_out) {
@@ -550,6 +568,10 @@ bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
     return false;
 #else
     if (loaded_icon_len[key_id] == 0) return false;
+    if (!icon_renderable(loaded_icons[key_id], loaded_icon_len[key_id],
+                         loaded_icon_w[key_id], loaded_icon_h[key_id])) {
+      return false;
+    }
     if (icon_out) *icon_out = loaded_icons[key_id];
     if (w_out) *w_out = loaded_icon_w[key_id];
     if (h_out) *h_out = loaded_icon_h[key_id];
@@ -559,6 +581,12 @@ bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t **icon_out,
   }
   const ClearsignIdentity *pid = persistent_identity_for(key_id);
   if (!pid || pid->icon_len == 0) return false;
+  /* Flash records predate the geometry/encoding rules and are NOT re-validated
+   * by the load handler after a reboot, so an identity persisted by older
+   * firmware can carry a 41-64px or malformed icon. Check it here. */
+  if (!icon_renderable(pid->icon, pid->icon_len, pid->icon_w, pid->icon_h)) {
+    return false;
+  }
   if (icon_out) *icon_out = pid->icon;
   if (w_out) *w_out = pid->icon_w;
   if (h_out) *h_out = pid->icon_h;

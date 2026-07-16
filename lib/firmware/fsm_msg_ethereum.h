@@ -92,14 +92,26 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
      * begins at x=40 and the icon is drawn AFTER the text, so a wider
      * host-supplied icon would paint over the alias, fingerprint and the
      * "NOT verified by KeepKey" warning — on the very screen that exists to
-     * carry that warning. Reject at the trust boundary; stage_runtime_icon()
-     * additionally clamps, to cover icons already persisted by older firmware.
-     */
+     * carry that warning. This is the trust boundary for icons arriving on the
+     * wire; icons READ BACK from flash are re-checked independently in
+     * signed_metadata_signer_icon(), since a record persisted by older firmware
+     * never passes through here again after a reboot. */
     CHECK_PARAM(msg->has_icon_width && msg->has_icon_height &&
                     msg->icon_width > 0 &&
                     msg->icon_width <= LEFT_MARGIN_WITH_ICON &&
                     msg->icon_height > 0 && msg->icon_height <= 64,
                 _("icon dimensions out of range"));
+    /* Reject a malformed RLE stream HERE rather than discovering it at draw
+     * time. The render path returns a bool that layout_add_icon() discards, so
+     * an undecodable icon would otherwise show no logo, still return Success,
+     * and be persisted to flash — the user consents to an identity whose logo
+     * silently does not exist. Validation is exact (every packet well-formed,
+     * no run straddling the image, whole input consumed) and side-effect-free.
+     */
+    CHECK_PARAM(draw_bitmap_mono_rle_valid(
+                    msg->icon.bytes, (uint32_t)msg->icon.size,
+                    (uint16_t)msg->icon_width, (uint16_t)msg->icon_height),
+                _("invalid icon encoding"));
     icon = msg->icon.bytes;
     icon_len = (uint16_t)msg->icon.size;
     icon_w = (uint8_t)msg->icon_width;

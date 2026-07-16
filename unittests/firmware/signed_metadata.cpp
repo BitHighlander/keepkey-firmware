@@ -836,6 +836,64 @@ TEST(SignedMetadataIcon, TruncatedStreamIsRejected) {
   EXPECT_FALSE(decode_icon({0x08, 0xFF}, 4, 4, &ic));  /* claims 8, has 2 */
 }
 
+/* ── Exact-validation guards (review round 2) ──────────────────────────────
+ * The render path is lenient by construction: it fills the canvas and stops,
+ * so it cannot reject a final run that straddles the image or trailing packets.
+ * Callers gate on the validator, so the validator must be exact. */
+
+TEST(SignedMetadataIcon, StraddlingRunIsRejected) {
+  /* 05 FF for a 2x2: a RUN of 5 into a 4-pixel image. The draw loop would fill
+   * 4 and report success; the stream is not well-formed. */
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x05\xFF", 2, 2, 2));
+  IconCanvas ic;
+  EXPECT_FALSE(decode_icon({0x05, 0xFF}, 2, 2, &ic));
+}
+
+TEST(SignedMetadataIcon, TrailingPacketsAreRejected) {
+  /* Exactly fills 2x2, then carries an unread packet. */
+  EXPECT_FALSE(
+      draw_bitmap_mono_rle_valid((const uint8_t *)"\x04\xFF\x01\xAA", 4, 2, 2));
+}
+
+TEST(SignedMetadataIcon, TruncatedLiteralBodyIsRejected) {
+  /* n = -3 promises 3 value bytes, only 2 present. */
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\xFD\x01\x02", 3, 3, 1));
+}
+
+TEST(SignedMetadataIcon, MissingRunValueByteIsRejected) {
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x04", 1, 4, 1));
+}
+
+TEST(SignedMetadataIcon, ValidatorAcceptsExactStreams) {
+  /* The golden vector, and the valid boundaries. */
+  EXPECT_TRUE(
+      draw_bitmap_mono_rle_valid((const uint8_t *)"\x03\xFF\xFF\x00", 4, 2, 2));
+  EXPECT_TRUE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x7F\x5A", 2, 127, 1));
+  std::vector<uint8_t> lit;
+  lit.push_back(0x81);
+  for (int i = 0; i < 127; i++) lit.push_back((uint8_t)i);
+  EXPECT_TRUE(draw_bitmap_mono_rle_valid(lit.data(), (uint32_t)lit.size(), 127, 1));
+}
+
+TEST(SignedMetadataIcon, ValidatorRejectsUndecodableAndZeroCounts) {
+  std::vector<uint8_t> lit128;
+  lit128.push_back(0x80);
+  for (int i = 0; i < 128; i++) lit128.push_back(0xAA);
+  EXPECT_FALSE(
+      draw_bitmap_mono_rle_valid(lit128.data(), (uint32_t)lit128.size(), 128, 1));
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x00\xFF", 2, 1, 1));
+  /* The 1x1 accept-and-persist case: 80 FF was previously stored despite never
+   * rendering, because only size+dims were checked at the trust boundary. */
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x80\xFF", 2, 1, 1));
+}
+
+TEST(SignedMetadataIcon, ValidatorRejectsDegenerateGeometry) {
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x01\xFF", 2, 0, 1));
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid((const uint8_t *)"\x01\xFF", 2, 1, 0));
+  EXPECT_FALSE(draw_bitmap_mono_rle_valid(NULL, 0, 1, 1));
+}
+
+
 TEST(SignedMetadataIcon, IconColumnCapIsNarrowerThanTheIconHeight) {
   /* The width cap is the 40px text column, NOT the 64px height. A 64px-wide
    * icon at x=0 would span into the text that begins at x=40 and, because the
