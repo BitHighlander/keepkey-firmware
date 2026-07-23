@@ -1,4 +1,5 @@
 set(sources
+    app_confirm.cpp
     recovery.cpp
     storage.cpp
     usb_rx.cpp
