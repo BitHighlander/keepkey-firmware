@@ -106,7 +106,7 @@ bool is_valid_ascii(const uint8_t* data, uint32_t size) {
 int base_to_precision(uint8_t* dest, const uint8_t* value,
                       const uint8_t dest_len, const uint8_t value_len,
                       const uint8_t precision) {
-  if (!(dest && value)) {
+  if (!(dest && value) || dest_len == 0) {
     // invalid pointer
     return -1;
   }
@@ -130,6 +130,6 @@ int base_to_precision(uint8_t* dest, const uint8_t* value,
     strlcpy((char*)&dest[leading_digits + 1], (char*)&value[leading_digits],
             copy_len);
   }
-  dest[dest_len] = '\0';
+  dest[dest_len - 1] = '\0';
   return 0;
 }

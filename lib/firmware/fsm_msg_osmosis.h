@@ -150,17 +150,19 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
     char amount_str[103];
     snprintf(amount_str, sizeof(amount_str) - 1, "%.6f %s", amount, denom);
 
-    /** Confirm transaction parameters on screen */
-    if (!confirm_transaction_output(
-            ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
-            msg->send.to_address)) {
+    /** Confirm each critical field separately so long denoms cannot clip the
+     * destination off the OLED confirmation. */
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Confirm Amount", "%s", amount_str) ||
+        !confirm_osmosis_address("Confirm Recipient", msg->send.to_address)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
       return;
     }
 
-    if (!osmosis_signTxUpdateMsgSend(msg->send.amount, msg->send.to_address)) {
+    if (!osmosis_signTxUpdateMsgSend(msg->send.amount, msg->send.denom,
+                                     msg->send.to_address)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Failed to include send message in transaction");
@@ -287,8 +289,7 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
     char insoamt[33] = {0};
     uint8_t outsoamt[34] = {0};
-    strlcpy(insoamt, msg->lp_add.share_out_amount,
-            sizeof(msg->lp_add.share_out_amount));
+    strlcpy(insoamt, msg->lp_add.share_out_amount, sizeof(insoamt));
 
     if (base_to_precision(outsoamt, (uint8_t*)insoamt, sizeof(outsoamt),
                           strlen(insoamt), OSMOSIS_LP_ASSET_PRECISION) < 0) {
@@ -374,8 +375,7 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
     char insoamt[33] = {0};
     uint8_t outsoamt[34] = {0};
-    strlcpy(insoamt, msg->lp_remove.share_in_amount,
-            sizeof(msg->lp_remove.share_in_amount));
+    strlcpy(insoamt, msg->lp_remove.share_in_amount, sizeof(insoamt));
 
     if (base_to_precision(outsoamt, (uint8_t*)insoamt, sizeof(outsoamt),
                           strlen(insoamt), OSMOSIS_LP_ASSET_PRECISION) < 0) {
@@ -573,10 +573,11 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
       token_out_denom = "OSMO";
     }
 
-    /** Confirm transaction parameters on-screen */
-    if (!confirm(ButtonRequestType_ButtonRequest_Other, "Swap",
-                 "Swap %.6f %s for at least %.6f %s?", token_in_amount,
-                 token_in_denom, token_out_min_amount, token_out_denom)) {
+    /** Confirm critical values separately so neither amount can be clipped. */
+    if (!confirm(ButtonRequestType_ButtonRequest_Other, "Swap Input",
+                 "%.6f %s", token_in_amount, token_in_denom) ||
+        !confirm(ButtonRequestType_ButtonRequest_Other, "Swap Minimum Output",
+                 "%.6f %s", token_out_min_amount, token_out_denom)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();

@@ -96,7 +96,8 @@ bool osmosis_signTxInit(const HDNode* _node, const OsmosisSignTx* _msg) {
   return success;
 }
 
-bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address) {
+bool osmosis_signTxUpdateMsgSend(const char* amount, const char* denom,
+                                 const char* to_address) {
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -128,7 +129,8 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address) {
   // 21 + ^20 + 19 = ^60
   success &= tendermint_snprintf(
       &ctx, buffer, sizeof(buffer),
-      "\"amount\":[{\"amount\":\"%s\",\"denom\":\"uosmo\"}]", amount);
+      "\"amount\":[{\"amount\":\"%s\",\"denom\":\"%s\"}]", amount,
+      denom);
 
   // 17 + 45 + 1 = 63
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
