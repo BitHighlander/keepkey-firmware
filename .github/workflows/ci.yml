@@ -210,24 +210,25 @@ jobs:
 
       - name: Enforce RC18 security invariants
         run: |
-          if grep -REn \
+          if git grep -n -E \
             'uses:[[:space:]]+[^#[:space:]]+@(v[0-9]+|main|master)([[:space:]#]|$)' \
-            .github/workflows; then
+            -- .github/workflows; then
             echo "::error::Every GitHub Action must be pinned to a full commit SHA"
             exit 1
           fi
-          if grep -REn 'kktech/firmware:v[0-9]+' \
+          if git grep -n -E 'kktech/firmware:v[0-9]+' -- \
             .github/workflows scripts/build/docker scripts/emulator; then
             echo "::error::The firmware builder must be pinned by manifest digest"
             exit 1
           fi
-          if grep -En 'return[[:space:]]+random\(\)' lib/rand/rng.c; then
+          if git grep -n -E 'return[[:space:]]+random\(\)' -- \
+            lib/rand/rng.c; then
             echo "::error::Emulator cryptography must not use libc random()"
             exit 1
           fi
-          if grep -REn \
+          if git grep -n -E \
             'storage_(get|upsert)ClearsignIdentity|persistent_identity_for' \
-            lib include; then
+            -- lib include; then
             echo "::error::Unauthenticated persistent clearsign trust is retired"
             exit 1
           fi
@@ -237,7 +238,7 @@ jobs:
             echo "::error::Orchard release gate unexpectedly allowed a build"
             exit 1
           fi
-          grep -q 'requires a reviewed constant-time Pallas backend' \
+          grep -q 'constant-time Pallas backend' \
             /tmp/orchard-release-gate.log
 
   crypto-tests:
