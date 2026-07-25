@@ -266,7 +266,11 @@ jobs:
           make clean
           make CC='gcc -fsanitize=address,undefined' VALGRIND=0 \
             OPTFLAGS='-O1 -g -fno-omit-frame-pointer' tests/test_check
-          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+          # Check's default per-test timeout is too short for the two exhaustive
+          # codepoint tests under sanitizer instrumentation on shared runners.
+          # Keep the job-level timeout as the hard upper bound.
+          CK_DEFAULT_TIMEOUT=30 \
+            ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
             UBSAN_OPTIONS=halt_on_error=1 ./tests/test_check
 
   # ═══════════════════════════════════════════════════════════
