@@ -27,7 +27,8 @@ target_link_libraries(crypto-unit
 if(${KK_ZCASH_PRIVACY})
   add_executable(zcash-crypto-unit
       ../firmware/zcash.cpp
-      ${CMAKE_SOURCE_DIR}/lib/firmware/zcash.c)
+      ${CMAKE_SOURCE_DIR}/lib/firmware/zcash.c
+      ${CMAKE_SOURCE_DIR}/lib/emulator/random.c)
   target_include_directories(zcash-crypto-unit PRIVATE
       ${CMAKE_SOURCE_DIR}/include
       ${CMAKE_SOURCE_DIR}/lib/firmware
@@ -37,4 +38,7 @@ if(${KK_ZCASH_PRIVACY})
       gtest_main
       trezorcrypto
       kkrand)
+  if(WIN32)
+    target_link_libraries(zcash-crypto-unit bcrypt)
+  endif()
 endif()

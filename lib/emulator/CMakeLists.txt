@@ -3,7 +3,8 @@ if(${KK_EMULATOR})
   set(sources
       oled.c
       udp.c
-      setup.c)
+      setup.c
+      random.c)
 
 
 
@@ -19,6 +20,7 @@ if(${KK_EMULATOR})
         oled.c
         udp.c
         setup.c
+        random.c
         ringbuf.c
         libkkemu.c)
 

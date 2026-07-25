@@ -232,14 +232,12 @@ jobs:
             echo "::error::Unauthenticated persistent clearsign trust is retired"
             exit 1
           fi
-          if cmake -S . -B /tmp/orchard-release-gate \
-            -DKK_ZCASH_PRIVACY=ON > /tmp/orchard-release-gate.log 2>&1; then
-            cat /tmp/orchard-release-gate.log
-            echo "::error::Orchard release gate unexpectedly allowed a build"
+          if git grep -n -F 'option(KK_ZCASH_PRIVACY' -- CMakeLists.txt; then
+            echo "::error::Zcash privacy must not become a third release choice"
             exit 1
           fi
-          grep -q 'constant-time Pallas backend' \
-            /tmp/orchard-release-gate.log
+          grep -q 'set(KK_ZCASH_PRIVACY ON)' CMakeLists.txt
+          grep -q 'set(KK_ZCASH_PRIVACY OFF)' CMakeLists.txt
 
   crypto-tests:
     runs-on: ubuntu-latest
@@ -286,8 +284,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Regular/full is multi-chain with transparent Zcash. Orchard is
-          # release-blocked; bitcoin-only is the sole reduced build.
+          # Regular/full includes every supported chain, including Zcash
+          # shielded/Orchard. Bitcoin-only is the sole reduced build.
           - variant: full
             label: ""
             cmake_flags: ""
@@ -865,7 +863,7 @@ jobs:
       - name: Download emulator image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          # Publish the regular/full image. Orchard is release-blocked.
+          # Publish the regular/full image, including Zcash privacy support.
           name: emu-image-full
           path: /tmp
 

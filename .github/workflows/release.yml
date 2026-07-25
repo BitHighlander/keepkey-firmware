@@ -276,7 +276,7 @@ jobs:
           ## KeepKey Firmware ${{ needs.validate.outputs.tag_name }}
 
           ### Variants
-          - **full (regular)** — \`firmware.keepkey.v${VER}-full.bin\` — all supported chains; Zcash transparent only (Orchard release-blocked pending a reviewed constant-time backend)
+          - **full (regular)** — \`firmware.keepkey.v${VER}-full.bin\` — all supported chains, including Zcash shielded/Orchard
           - **bitcoin-only** — \`firmware.keepkey.v${VER}-bitcoin-only.bin\` — BTC-only, non-BTC coins stripped
 
           ### Reproducible Build Verification

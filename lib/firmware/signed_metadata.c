@@ -38,10 +38,12 @@ static SignedMetadata stored_metadata;
 static uint8_t loaded_pubkeys[METADATA_MAX_KEYS][33];
 static char loaded_aliases[METADATA_MAX_KEYS][METADATA_ALIAS_MAX_LEN + 1];
 /* Per-slot session icon (1bpp mono RLE). icon_len==0 => text-only identity. */
+#if !ZCASH_PRIVACY
 static uint8_t loaded_icons[METADATA_MAX_KEYS][METADATA_ICON_MAX];
 static uint8_t loaded_icon_w[METADATA_MAX_KEYS];
 static uint8_t loaded_icon_h[METADATA_MAX_KEYS];
 static uint16_t loaded_icon_len[METADATA_MAX_KEYS];
+#endif
 
 static bool read_u8(const uint8_t** cursor, const uint8_t* end, uint8_t* out) {
   if ((size_t)(end - *cursor) < 1) {
@@ -402,10 +404,12 @@ void signed_metadata_clear(void) {
 void signed_metadata_clear_signers(void) {
   memzero(loaded_pubkeys, sizeof(loaded_pubkeys));
   memzero(loaded_aliases, sizeof(loaded_aliases));
+#if !ZCASH_PRIVACY
   memzero(loaded_icons, sizeof(loaded_icons));
   memzero(loaded_icon_w, sizeof(loaded_icon_w));
   memzero(loaded_icon_h, sizeof(loaded_icon_h));
   memzero(loaded_icon_len, sizeof(loaded_icon_len));
+#endif
   /* Metadata verified by a now-dropped signer must not outlive it. */
   signed_metadata_clear();
 }
@@ -464,7 +468,10 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
    * already validated <= max by the caller — belt-and-braces here). */
   bool has_icon = icon && icon_len > 0 && icon_len <= METADATA_ICON_MAX;
 
-  /* Session icon into the RAM working slot. */
+  /* Session icon into the RAM working slot. The Orchard build omits this
+   * cosmetic cache to preserve its tight SRAM margin; signers remain usable
+   * and render text-only after the mandatory load confirmation. */
+#if !ZCASH_PRIVACY
   memzero(loaded_icons[key_id], sizeof(loaded_icons[key_id]));
   if (has_icon) {
     memcpy(loaded_icons[key_id], icon, icon_len);
@@ -476,6 +483,11 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
     loaded_icon_h[key_id] = 0;
     loaded_icon_len[key_id] = 0;
   }
+#else
+  (void)has_icon;
+  (void)icon_w;
+  (void)icon_h;
+#endif
 
   /* Replacing a signer invalidates anything the old one verified. */
   signed_metadata_clear();
@@ -497,6 +509,7 @@ const char* signed_metadata_signer_alias(uint8_t key_id) {
  * stages the frame itself (it never goes through stage_runtime_icon). Fail
  * closed to a text-only identity: a missing logo is cosmetic, an over-wide one
  * erases the alias, fingerprint and the "NOT verified by KeepKey" warning. */
+#if !ZCASH_PRIVACY
 static bool icon_renderable(const uint8_t* icon, uint16_t icon_len,
                             uint8_t icon_w, uint8_t icon_h) {
   if (!icon || icon_len == 0) return false;
@@ -504,12 +517,20 @@ static bool icon_renderable(const uint8_t* icon, uint16_t icon_len,
   if (icon_h == 0 || icon_h > 64) return false;
   return draw_bitmap_mono_rle_valid(icon, (uint32_t)icon_len, icon_w, icon_h);
 }
+#endif
 
 bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
                                  uint8_t* w_out, uint8_t* h_out,
                                  uint16_t* len_out) {
   if (key_id >= METADATA_MAX_KEYS) return false;
   if (loaded_pubkeys[key_id][0] != 0x00) {
+#if ZCASH_PRIVACY
+    (void)icon_out;
+    (void)w_out;
+    (void)h_out;
+    (void)len_out;
+    return false;
+#else
     if (loaded_icon_len[key_id] == 0) return false;
     if (!icon_renderable(loaded_icons[key_id], loaded_icon_len[key_id],
                          loaded_icon_w[key_id], loaded_icon_h[key_id])) {
@@ -520,6 +541,7 @@ bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
     if (h_out) *h_out = loaded_icon_h[key_id];
     if (len_out) *len_out = loaded_icon_len[key_id];
     return true;
+#endif
   }
   return false;
 }
