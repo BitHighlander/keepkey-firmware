@@ -1529,6 +1529,9 @@ void storage_resetUuid_impl(ConfigFlash* cfg) {
 void storage_reset(void) { storage_reset_impl(&session, &shadow_config); }
 
 void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
+  bip32_cache_clear();
+  bip39_cache_clear();
+
   memset(&cfg->storage, 0, sizeof(cfg->storage));
 
   storage_resetPolicies(&cfg->storage);
@@ -1586,6 +1589,9 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      calling function is required to update the flash with a storage_commit().
   */
   pintest_t ret = PIN_WRONG;
+
+  bip32_cache_clear();
+  bip39_cache_clear();
 
   ss->seedCached = false;
   memset(&ss->seed, 0, sizeof(ss->seed));

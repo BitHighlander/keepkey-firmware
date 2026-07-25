@@ -5,6 +5,7 @@
 # Stage 1: GATE (seconds, no Docker)
 #   ├─ lint-format        clang-format diff check
 #   ├─ static-analysis    cppcheck static analysis
+#   ├─ crypto-tests       vendored trezor-crypto vectors + ASan/UBSan
 #   ├─ secret-scan        gitleaks credential detection
 #   └─ check-submodules   verify all deps present
 #
@@ -122,7 +123,7 @@ jobs:
             --inline-suppr \
             --suppressions-list=.cppcheck-suppressions \
             -I include \
-            -I deps/crypto/trezor-firmware/crypto \
+            -I deps/crypto/trezor-crypto \
             -I deps/device-protocol \
             -DSTM32F2=1 \
             -DUSE_ETHEREUM=1 \
@@ -190,7 +191,6 @@ jobs:
         run: |
           echo "Checking required submodule declarations..."
           REQUIRED=(
-            "deps/crypto/trezor-firmware"
             "deps/device-protocol"
             "deps/python-keepkey"
             "deps/googletest"
@@ -208,13 +208,41 @@ jobs:
           done
           [ "$FAILED" = "0" ] || exit 1
 
+  crypto-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install crypto test dependencies
+        run: sudo apt-get update && sudo apt-get install -y check libssl-dev pkg-config
+
+      - name: Run optimized crypto suite
+        working-directory: deps/crypto/trezor-crypto
+        run: |
+          make clean
+          make VALGRIND=0 tests/test_check
+          ./tests/test_check
+
+      - name: Run crypto suite with ASan and UBSan
+        working-directory: deps/crypto/trezor-crypto
+        run: |
+          make clean
+          make CC='gcc -fsanitize=address,undefined' VALGRIND=0 \
+            OPTFLAGS='-O1 -g -fno-omit-frame-pointer' tests/test_check
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 ./tests/test_check
+
   # ═══════════════════════════════════════════════════════════
   # STAGE 2: BUILD — compile only after gate passes
   # ═══════════════════════════════════════════════════════════
 
   build-emulator:
     name: build-emulator${{ matrix.label }}
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -237,7 +265,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -284,7 +311,7 @@ jobs:
 
   build-arm-firmware:
     name: build-arm-firmware${{ matrix.label }}
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -305,7 +332,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -448,7 +474,7 @@ jobs:
           retention-days: 30
 
   python-integration-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -459,7 +485,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -553,7 +578,7 @@ jobs:
   #     fsm_msgDebugLinkGetState is excluded from the build and any
   #     read_layout() call hangs the test).
   python-dylib-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -564,7 +589,6 @@ jobs:
 
       - name: Init submodules
         run: |
-          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/qrenc/QR-Code-generator

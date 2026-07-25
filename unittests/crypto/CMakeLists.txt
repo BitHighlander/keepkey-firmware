@@ -31,8 +31,8 @@ if(${KK_ZCASH_PRIVACY})
   target_include_directories(zcash-crypto-unit PRIVATE
       ${CMAKE_SOURCE_DIR}/include
       ${CMAKE_SOURCE_DIR}/lib/firmware
-      ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto
-      ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/ed25519-donna)
+      ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto
+      ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto/ed25519-donna)
   target_link_libraries(zcash-crypto-unit
       gtest_main
       trezorcrypto
