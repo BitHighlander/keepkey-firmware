@@ -70,16 +70,31 @@ void emulatorRandom(void* buffer, size_t size) {
     exit(1);
   }
 #else
-  ssize_t n = read(urandom, buffer, size);
-  if (n < 0 || ((size_t)n) != size) {
-    perror("Failed to read /dev/urandom");
-    exit(1);
+  if (urandom < 0) {
+    setup_urandom();
+  }
+  unsigned char* out = (unsigned char*)buffer;
+  size_t remaining = size;
+  while (remaining > 0) {
+    ssize_t n = read(urandom, out, remaining);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n <= 0) {
+      perror("Failed to read /dev/urandom");
+      exit(1);
+    }
+    out += (size_t)n;
+    remaining -= (size_t)n;
   }
 #endif
 }
 
 static void setup_urandom(void) {
 #ifndef _WIN32
+  if (urandom >= 0) {
+    return;
+  }
   urandom = open("/dev/urandom", O_RDONLY);
   if (urandom < 0) {
     perror("Failed to open /dev/urandom");

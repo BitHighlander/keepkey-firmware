@@ -199,18 +199,6 @@ static void write_u32_le(char* ptr, uint32_t val) {
   ptr[3] = (val >> 24) & 0xff;
 }
 
-/* Cast each byte through uint8_t first: on the emulator (signed char) a raw
- * (uint16_t)ptr[i] would sign-extend a 0x80+ low byte (icon_len reaches 384).
- */
-static uint16_t read_u16_le(const char* ptr) {
-  return (uint16_t)((uint8_t)ptr[0]) | ((uint16_t)((uint8_t)ptr[1]) << 8);
-}
-
-static void write_u16_le(char* ptr, uint16_t val) {
-  ptr[0] = val & 0xff;
-  ptr[1] = (val >> 8) & 0xff;
-}
-
 static bool read_bool(const char* ptr) { return *ptr; }
 
 static void write_bool(char* ptr, bool val) { *ptr = val ? 1 : 0; }
@@ -1127,9 +1115,10 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
   memcpy(storage->encrypted_sec, ptr + 1501, sizeof(storage->encrypted_sec));
 }
 
-// V18 appends the persistent clear-sign identities block immediately after the
-// V17 encrypted_sec (which ends at ptr + 1501 + V17_ENCSEC_SIZE = ptr + 2525).
-// Everything before it is the byte-identical V17 layout — never reorder it.
+// V18 appended a clear-sign identity block immediately after encrypted_sec.
+// RC18 retains the byte layout for compatibility but retires those records:
+// public storage has no authenticated integrity, so they are zeroed on both
+// read and write and are never consulted as trust anchors.
 // One identity serializes to CLEARSIGN_IDENTITY_SERIALIZED_LEN bytes:
 //   +0 present(u8) +1 key_id(u8) +2 pubkey[33] +35 alias[32] +67 icon_w(u8)
 //   +68 icon_h(u8) +69 icon_len(u16 le) +71 icon[CLEARSIGN_ICON_MAX] = 71+384
@@ -1138,42 +1127,14 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
 
 void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
   storage_writeStorageV17(ptr, len, storage);
-
-  for (int i = 0; i < PERSISTENT_IDENTITY_COUNT; i++) {
-    const ClearsignIdentity* id = &storage->pub.clearsign_identities[i];
-    char* p = ptr + CLEARSIGN_IDENTITY_BLOCK_OFF +
-              (size_t)i * CLEARSIGN_IDENTITY_SERIALIZED_LEN;
-    write_u8(p + 0, id->present ? 1 : 0);
-    write_u8(p + 1, id->key_id);
-    memcpy(p + 2, id->pubkey, sizeof(id->pubkey));  // 33
-    memcpy(p + 35, id->alias, sizeof(id->alias));   // 32
-    write_u8(p + 67, id->icon_w);
-    write_u8(p + 68, id->icon_h);
-    write_u16_le(p + 69, id->icon_len);
-    memcpy(p + 71, id->icon, sizeof(id->icon));  // CLEARSIGN_ICON_MAX
-  }
+  memzero(ptr + CLEARSIGN_IDENTITY_BLOCK_OFF,
+          PERSISTENT_IDENTITY_COUNT * CLEARSIGN_IDENTITY_SERIALIZED_LEN);
 }
 
 void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
   storage_readStorageV17(storage, ptr, len);
-
-  for (int i = 0; i < PERSISTENT_IDENTITY_COUNT; i++) {
-    ClearsignIdentity* id = &storage->pub.clearsign_identities[i];
-    const char* p = ptr + CLEARSIGN_IDENTITY_BLOCK_OFF +
-                    (size_t)i * CLEARSIGN_IDENTITY_SERIALIZED_LEN;
-    id->present = read_u8(p + 0) != 0;
-    id->key_id = read_u8(p + 1);
-    memcpy(id->pubkey, p + 2, sizeof(id->pubkey));
-    memcpy(id->alias, p + 35, sizeof(id->alias));
-    id->alias[sizeof(id->alias) - 1] =
-        '\0';  // never trust flash to be NUL-term
-    id->icon_w = read_u8(p + 67);
-    id->icon_h = read_u8(p + 68);
-    id->icon_len = read_u16_le(p + 69);
-    if (id->icon_len > CLEARSIGN_ICON_MAX)
-      id->icon_len = 0;  // corrupt => no icon
-    memcpy(id->icon, p + 71, sizeof(id->icon));
-  }
+  memzero(storage->pub.clearsign_identities,
+          sizeof(storage->pub.clearsign_identities));
 }
 
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len) {
@@ -1636,7 +1597,7 @@ void storage_commit(void) {
   if (btc_only_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
-  // V18 storage layout = V17 (2525 bytes) + persistent identities block
+  // V18 storage layout = V17 (2525 bytes) + retired identity block
   // (PERSISTENT_IDENTITY_COUNT * CLEARSIGN_IDENTITY_SERIALIZED_LEN = 2*455 =
   // 910) = 3435; + meta (44) = 3479. Rounded up to a multiple of 4 (the CRC
   // below iterates uint32_t words) => 3480 (1 byte of slack).
@@ -1837,45 +1798,6 @@ const char* storage_getLabel(void) {
   }
 
   return shadow_config.storage.pub.label;
-}
-
-// ── Persistent clear-sign identities (V18) ───────────────────────────────
-
-int storage_clearsignIdentityCount(void) { return PERSISTENT_IDENTITY_COUNT; }
-
-const ClearsignIdentity* storage_getClearsignIdentity(int slot) {
-  if (slot < 0 || slot >= PERSISTENT_IDENTITY_COUNT) return NULL;
-  const ClearsignIdentity* id =
-      &shadow_config.storage.pub.clearsign_identities[slot];
-  return id->present ? id : NULL;
-}
-
-// Write an identity to a persistent slot and commit. Reuses the slot already
-// holding this pubkey (re-load with a new icon/alias), else the first free
-// slot. Returns false if all slots are taken by other identities (caller keeps
-// the RAM-only signer working — persistence just didn't happen).
-bool storage_upsertClearsignIdentity(const ClearsignIdentity* id) {
-  if (!id) return false;
-  int free_slot = -1;
-  int target = -1;
-  for (int i = 0; i < PERSISTENT_IDENTITY_COUNT; i++) {
-    const ClearsignIdentity* cur =
-        &shadow_config.storage.pub.clearsign_identities[i];
-    if (cur->present && memcmp(cur->pubkey, id->pubkey, 33) == 0) {
-      target = i;
-      break;
-    }
-    if (!cur->present && free_slot < 0) free_slot = i;
-  }
-  if (target < 0) target = free_slot;
-  if (target < 0) return false;  // no room
-
-  ClearsignIdentity* dst =
-      &shadow_config.storage.pub.clearsign_identities[target];
-  memcpy(dst, id, sizeof(*dst));
-  dst->present = true;
-  storage_commit();
-  return true;
 }
 
 void storage_setLanguage(const char* lang) {

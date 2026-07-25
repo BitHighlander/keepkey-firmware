@@ -21,15 +21,19 @@ option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
-# Zcash shielded/Orchard support is part of the regular firmware. It is an
-# internal compile selection, not a third release variant: bitcoin-only strips
-# the Zcash coin and privacy engine; every regular device/emulator build ships
-# both. Keep the value macro below so bitcoin-only can compile the sources out.
-if(KK_BITCOIN_ONLY)
-  set(KK_ZCASH_PRIVACY OFF)
-else()
-  set(KK_ZCASH_PRIVACY ON)
+# RC18 release gate: the vendored Pallas scalar-multiplication path is variable
+# time and is reached with Orchard spending secrets. Do not expose that path in
+# any firmware or emulator build until it has been replaced by an independently
+# reviewed constant-time backend. Transparent Zcash remains in the regular
+# multi-chain firmware and does not depend on this engine.
+option(KK_ZCASH_PRIVACY "Build the disabled Orchard privacy engine" OFF)
+if(KK_ZCASH_PRIVACY)
+  message(
+    FATAL_ERROR
+      "KK_ZCASH_PRIVACY is release-blocked: Orchard requires a reviewed constant-time Pallas backend"
+  )
 endif()
+set(KK_ZCASH_PRIVACY OFF)
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
@@ -148,9 +152,8 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
-# NOTE: AES table size is selected per release product below. The regular
-# image includes Zcash and its Pallas curve arithmetic, so it uses the smaller
-# AES tables to preserve flash headroom. Bitcoin-only keeps FOUR_TABLES AES.
+# NOTE: AES table size was previously selected for the Orchard image. RC18 has
+# no Orchard image, so both shipped variants use the normal FOUR_TABLES AES.
 
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
@@ -168,10 +171,6 @@ endif()
 
 if(${KK_ZCASH_PRIVACY})
   add_definitions(-DZCASH_PRIVACY=1)
-  # The Orchard engine leaves the regular image tightest on flash; shrink the
-  # Gladman AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM,
-  # slightly slower AES). Bitcoin-only keeps the fast FOUR_TABLES.
-  add_definitions(-DAES_SMALL_TABLES)
 else()
   add_definitions(-DZCASH_PRIVACY=0)
 endif()
