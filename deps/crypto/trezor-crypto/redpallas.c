@@ -36,6 +36,7 @@
 #include "ecdsa.h"
 #include "memzero.h"
 #include "pallas.h"
+#include "pallas_ct.h"
 #include "rand.h"
 
 /*
@@ -138,11 +139,6 @@ static void pallas_scalar_mult_spendauth(const bignum256 *k, curve_point *res) {
   if (!spendauth_G_initialized) {
     pallas_point_deserialize(pallas_spendauth_G_bytes, &spendauth_G_cache);
     spendauth_G_initialized = 1;
-  }
-  if (bn_is_zero(k)) {
-    bn_zero(&res->x);
-    bn_zero(&res->y);
-    return;
   }
   pallas_point_mult(k, &spendauth_G_cache, res);
 }
@@ -255,10 +251,8 @@ int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
   bn_read_le(rbuf, &r);
   pallas_mod_q(&r);
 
-  /* Ensure r is not zero */
-  if (bn_is_zero(&r)) {
-    r.val[0] = 1;
-  }
+  /* Ensure r is not zero without branching on the secret nonce. */
+  pallas_ct_scalar_replace_zero_with_one(&r);
 
   /* R = [r]G_spendauth - nonce commitment */
   pallas_scalar_mult_spendauth(&r, &R_point);

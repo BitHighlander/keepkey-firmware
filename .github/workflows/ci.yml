@@ -249,27 +249,39 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install crypto test dependencies
-        run: sudo apt-get update && sudo apt-get install -y check libssl-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y check libssl-dev pkg-config valgrind
 
       - name: Run optimized crypto suite
         working-directory: deps/crypto/trezor-crypto
         run: |
           make clean
-          make VALGRIND=0 tests/test_check
+          make VALGRIND=0 tests/test_check tests/test_pallas_ct
           ./tests/test_check
+          ./tests/test_pallas_ct
+
+      - name: Verify Pallas secret flow with Valgrind
+        working-directory: deps/crypto/trezor-crypto
+        run: |
+          make clean
+          make VALGRIND=1 OPTFLAGS='-O2 -g' tests/test_pallas_ct
+          valgrind --quiet --error-exitcode=1 --track-origins=yes \
+            ./tests/test_pallas_ct
 
       - name: Run crypto suite with ASan and UBSan
         working-directory: deps/crypto/trezor-crypto
         run: |
           make clean
           make CC='gcc -fsanitize=address,undefined' VALGRIND=0 \
-            OPTFLAGS='-O1 -g -fno-omit-frame-pointer' tests/test_check
+            OPTFLAGS='-O1 -g -fno-omit-frame-pointer' \
+            tests/test_check tests/test_pallas_ct
           # Check's default per-test timeout is too short for the two exhaustive
           # codepoint tests under sanitizer instrumentation on shared runners.
           # Keep the job-level timeout as the hard upper bound.
           CK_DEFAULT_TIMEOUT=30 \
             ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
             UBSAN_OPTIONS=halt_on_error=1 ./tests/test_check
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 ./tests/test_pallas_ct
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 2: BUILD — compile only after gate passes
@@ -410,6 +422,9 @@ jobs:
                 -DCMAKE_COLOR_MAKEFILE=ON \
                 ${{ matrix.cmake_flags }} && \
               make && \
+              python3 /root/keepkey-firmware/tools/check_pallas_ct_disassembly.py \
+                --elf bin/firmware.keepkey.elf \
+                --variant '${{ matrix.variant }}' && \
               mkdir -p /root/keepkey-firmware/bin && \
               cp bin/*.bin /root/keepkey-firmware/bin/ && \
               cp bin/*.elf /root/keepkey-firmware/bin/ && \

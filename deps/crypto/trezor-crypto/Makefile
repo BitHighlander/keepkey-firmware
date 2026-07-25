@@ -105,6 +105,12 @@ tests/test_check.o: tests/test_check_cardano.h tests/test_check_nano.h tests/tes
 tests/test_check: tests/test_check.o $(OBJS)
 	$(CC) tests/test_check.o $(OBJS) $(TESTLIBS) -o tests/test_check
 
+# Standalone Pallas secret-flow harness.  It deliberately has no dependency on
+# Check/OpenSSL so CI can run it under ASan/UBSan and Valgrind's constant-time
+# taint check without building the rest of the test suite.
+tests/test_pallas_ct: tests/test_pallas_ct.c pallas_ct.c pallas_ct.h memzero.c options.h
+	$(CC) $(CFLAGS) tests/test_pallas_ct.c pallas_ct.c memzero.c -o tests/test_pallas_ct
+
 tests/test_speed: tests/test_speed.o $(OBJS)
 	$(CC) tests/test_speed.o $(OBJS) -o tests/test_speed
 
@@ -130,7 +136,7 @@ fuzzer: fuzzer/fuzzer.o $(OBJS)
 
 clean:
 	rm -f *.o aes/*.o chacha20poly1305/*.o ed25519-donna/*.o monero/*.o
-	rm -f tests/*.o tests/test_check tests/test_speed tests/test_openssl tests/libtrezor-crypto.so tests/aestst
+	rm -f tests/*.o tests/test_check tests/test_pallas_ct tests/test_speed tests/test_openssl tests/libtrezor-crypto.so tests/aestst
 	rm -f tools/*.o tools/xpubaddrgen tools/mktable tools/bip39bruteforce
 	rm -f fuzzer/*.o fuzzer/fuzzer
 
