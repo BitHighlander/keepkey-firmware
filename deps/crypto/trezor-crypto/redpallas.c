@@ -140,7 +140,10 @@ static void pallas_scalar_mult_spendauth(const bignum256 *k, curve_point *res) {
     pallas_point_deserialize(pallas_spendauth_G_bytes, &spendauth_G_cache);
     spendauth_G_initialized = 1;
   }
-  pallas_point_mult(k, &spendauth_G_cache, res);
+  /* k is an authorization scalar or nonce on signing/derivation paths.  Keep
+   * it on the fixed-schedule projective implementation; pallas_point_mult()
+   * is the variable-time public-data API used by Sinsemilla verification. */
+  pallas_ct_point_mult(k, &spendauth_G_cache, res);
 }
 
 /*
@@ -239,7 +242,7 @@ int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
 
   /* rsk = (ask + alpha) mod order */
   bn_copy(&ask_scalar, &rsk);
-  pallas_add_mod_q(&rsk, &alpha_scalar);
+  pallas_ct_add_mod_q(&rsk, &alpha_scalar);
 
   /* rk = [rsk]G_spendauth - randomized verification key */
   pallas_scalar_mult_spendauth(&rsk, &rk_point);
@@ -249,7 +252,7 @@ int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
   uint8_t rbuf[32];
   random_buffer(rbuf, 32);
   bn_read_le(rbuf, &r);
-  pallas_mod_q(&r);
+  pallas_ct_mod_q(&r);
 
   /* Ensure r is not zero without branching on the secret nonce. */
   pallas_ct_scalar_replace_zero_with_one(&r);
@@ -262,9 +265,9 @@ int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
   redpallas_hash_challenge(R_bytes, rk_bytes, sighash, &c);
 
   /* S = r + c * rsk (mod order) */
-  pallas_mul_mod_q(&c, &rsk);     /* c = c * rsk mod order */
+  pallas_ct_mul_mod_q(&c, &rsk);  /* c = c * rsk mod order */
   bn_copy(&r, &s);
-  pallas_add_mod_q(&s, &c);      /* s = r + c*rsk mod order */
+  pallas_ct_add_mod_q(&s, &c);   /* s = r + c*rsk mod order */
 
   /* Output: R (32 bytes LE) || S (32 bytes LE) */
   memcpy(sig_out, R_bytes, 32);
@@ -275,6 +278,7 @@ int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
   memzero(&alpha_scalar, sizeof(alpha_scalar));
   memzero(&rsk, sizeof(rsk));
   memzero(&r, sizeof(r));
+  memzero(&c, sizeof(c));
   memzero(&s, sizeof(s));
   memzero(rbuf, sizeof(rbuf));
 
@@ -337,7 +341,7 @@ int redpallas_derive_rk(const uint8_t *ask, const uint8_t *alpha,
 
   /* rsk = (ask + alpha) mod order */
   bn_copy(&ask_scalar, &rsk);
-  pallas_add_mod_q(&rsk, &alpha_scalar);
+  pallas_ct_add_mod_q(&rsk, &alpha_scalar);
 
   /* rk = [rsk]G_spendauth */
   pallas_scalar_mult_spendauth(&rsk, &rk_point);

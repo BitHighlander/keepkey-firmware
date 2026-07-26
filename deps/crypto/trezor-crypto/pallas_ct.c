@@ -183,6 +183,8 @@ static uint32_t ct_half_limb(const ct_fe* value, size_t index) {
  * UINT32_MAX, so the compiler can use the fixed-latency 32-bit MUL/MLA path.
  * Both Pallas moduli have low half-limb 1, hence -m^-1 mod 2^16 = 0xffff.
  * All carry propagation loops have public, fixed bounds.
+ * Requires a < 2^256 and b < mod.  The only unreduced input is paired with a
+ * reduced Montgomery constant, so one final conditional subtraction suffices.
  */
 static void ct_fe_mul_mod(ct_fe* out, const ct_fe* a, const ct_fe* b,
                           const ct_modulus* mod) {

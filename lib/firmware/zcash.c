@@ -28,6 +28,7 @@
 #include "trezor/crypto/hasher.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/pallas.h"
+#include "trezor/crypto/pallas_ct.h"
 #include "trezor/crypto/pallas_sinsemilla.h"
 #include "trezor/crypto/pallas_swu.h"
 #include "trezor/crypto/redpallas.h"
@@ -115,19 +116,19 @@ static void to_scalar(const uint8_t input[64], uint8_t output[32]) {
   bignum256 lo, hi, t256, result;
 
   bn_read_le(input, &lo);
-  pallas_mod_q(&lo);
+  pallas_ct_mod_q(&lo);
 
   bn_read_le(input + 32, &hi);
-  pallas_mod_q(&hi);
+  pallas_ct_mod_q(&hi);
 
   bn_read_le(two_256_mod_q, &t256);
 
   /* result = hi * (2^256 mod q) mod q */
   bn_copy(&hi, &result);
-  pallas_mul_mod_q(&result, &t256);
+  pallas_ct_mul_mod_q(&result, &t256);
 
   /* result = result + lo mod q */
-  pallas_add_mod_q(&result, &lo);
+  pallas_ct_add_mod_q(&result, &lo);
 
   bn_write_le(&result, output);
 
@@ -147,20 +148,20 @@ static void to_base(const uint8_t input[64], uint8_t output[32]) {
   bignum256 lo, hi, t256, result;
 
   bn_read_le(input, &lo);
-  pallas_mod_p(&lo);
+  pallas_ct_mod_p(&lo);
 
   bn_read_le(input + 32, &hi);
-  pallas_mod_p(&hi);
+  pallas_ct_mod_p(&hi);
 
   bn_read_le(two_256_mod_p, &t256);
 
   /* result = hi * (2^256 mod p) mod p */
   bn_copy(&hi, &result);
-  pallas_mul_mod_p(&result, &t256);
+  pallas_ct_mul_mod_p(&result, &t256);
 
   /* result = result + lo mod p */
   bignum256 sum;
-  pallas_add_mod_p(&result, &lo, &sum);
+  pallas_ct_add_mod_p(&result, &lo, &sum);
   bn_copy(&sum, &result);
   memzero(&sum, sizeof(sum));
 
@@ -362,7 +363,9 @@ bool zcash_orchard_derive_transmission_key(const uint8_t ivk[32],
   }
 
   curve_point pkd;
-  pallas_point_mult(&ivk_scalar, &gd, &pkd);
+  /* ivk is private viewing-key material.  Do not use the variable-time
+   * public-data multiplier that Sinsemilla note verification relies on. */
+  pallas_ct_point_mult(&ivk_scalar, &gd, &pkd);
   if (pallas_point_is_identity(&pkd)) {
     memzero(&ivk_scalar, sizeof(ivk_scalar));
     memzero(&gd, sizeof(gd));

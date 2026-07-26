@@ -20,6 +20,7 @@
 #include "bignum.h"
 #include "memzero.h"
 #include "pallas.h"
+#include "pallas_ct.h"
 #include "pallas_swu.h"
 
 static const uint8_t COMMIT_IVK_Q_X[32] = {
@@ -214,8 +215,12 @@ int pallas_sinsemilla_commit(const curve_point *q, const curve_point *r,
     return -1;
   }
 
-  pallas_point_mult(&blind_scalar, r, &blind_point);
-  pallas_point_add(&hash_point, &blind_point, &commit);
+  /* The blind is host-supplied for transaction note verification, but is the
+   * device-secret rivk during IVK derivation.  Keep this narrow part of the
+   * commitment on the fixed-schedule path; only the repeated public
+   * Sinsemilla hash additions use the compatibility implementation. */
+  pallas_ct_point_mult(&blind_scalar, r, &blind_point);
+  pallas_ct_point_add(&hash_point, &blind_point, &commit);
   *out = commit;
 
   memzero(&blind_scalar, sizeof(blind_scalar));

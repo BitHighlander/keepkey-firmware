@@ -50,58 +50,63 @@ extern const bignum256 pallas_order;
 extern const curve_point pallas_G;
 
 /* expand_message_xmd using BLAKE2b-512, per RFC 9380 §5.3.1. */
-int pallas_expand_message_xmd_blake2b(const uint8_t* msg, size_t msg_len,
-                                      const uint8_t* dst, size_t dst_len,
-                                      uint8_t* out, size_t out_len);
+int pallas_expand_message_xmd_blake2b(const uint8_t *msg, size_t msg_len,
+                                      const uint8_t *dst, size_t dst_len,
+                                      uint8_t *out, size_t out_len);
 
-/* --- Field arithmetic mod p (fixed-width Montgomery arithmetic) --- */
+/* --- Variable-time public-data arithmetic (Barrett reduction) ---
+ *
+ * These compatibility APIs are used by public Orchard group-hash and
+ * Sinsemilla note-commitment verification.  They are not safe for private
+ * scalars or private field elements; secret-bearing callers must use the
+ * fixed-schedule pallas_ct.h API instead. */
 
 /* x = k * x mod p */
-void pallas_mul_mod_p(bignum256* x, const bignum256* k);
+void pallas_mul_mod_p(bignum256 *x, const bignum256 *k);
 
-/* x = x mod p */
-void pallas_mod_p(bignum256* x);
+/* x = x mod p (simple reduction for values < 2^261) */
+void pallas_mod_p(bignum256 *x);
 
 /* x = x^(-1) mod p (Fermat's little theorem) */
-void pallas_inv_mod_p(bignum256* x);
+void pallas_inv_mod_p(bignum256 *x);
 
 /* res = (a + b) mod p */
-void pallas_add_mod_p(const bignum256* a, const bignum256* b, bignum256* res);
+void pallas_add_mod_p(const bignum256 *a, const bignum256 *b, bignum256 *res);
 
 /* res = (a - b) mod p */
-void pallas_sub_mod_p(const bignum256* a, const bignum256* b, bignum256* res);
+void pallas_sub_mod_p(const bignum256 *a, const bignum256 *b, bignum256 *res);
 
 /* n = sqrt(n) mod p (Tonelli-Shanks). Returns 0 on success, -1 if no sqrt. */
-int pallas_sqrt_mod_p(bignum256* n);
+int pallas_sqrt_mod_p(bignum256 *n);
 
-/* --- Scalar arithmetic mod q (fixed-width Montgomery arithmetic) --- */
+/* --- Variable-time public-data scalar arithmetic mod q --- */
 
 /* x = k * x mod q */
-void pallas_mul_mod_q(bignum256* x, const bignum256* k);
+void pallas_mul_mod_q(bignum256 *x, const bignum256 *k);
 
-/* x = x mod q */
-void pallas_mod_q(bignum256* x);
+/* x = x mod q (simple reduction for values < 2^261) */
+void pallas_mod_q(bignum256 *x);
 
 /* a = (a + b) mod q */
-void pallas_add_mod_q(bignum256* a, const bignum256* b);
+void pallas_add_mod_q(bignum256 *a, const bignum256 *b);
 
-/* --- Point operations on Pallas curve --- */
+/* --- Variable-time public-data point operations on Pallas curve --- */
 
-/* res = k * G, using a fixed 255-round branchless projective path */
-void pallas_scalar_mult_G(const bignum256* k, curve_point* res);
+/* res = k * G */
+void pallas_scalar_mult_G(const bignum256 *k, curve_point *res);
 
-/* res = k * P, using a fixed 255-round branchless projective path */
-void pallas_point_mult(const bignum256* k, const curve_point* p,
-                       curve_point* res);
+/* res = k * P */
+void pallas_point_mult(const bignum256 *k, const curve_point *p,
+                       curve_point *res);
 
 /* res = P + Q */
-void pallas_point_add(const curve_point* p, const curve_point* q,
-                      curve_point* res);
+void pallas_point_add(const curve_point *p, const curve_point *q,
+                      curve_point *res);
 
 /* Returns nonzero if P is the point at infinity in this implementation. */
-int pallas_point_is_identity(const curve_point* p);
+int pallas_point_is_identity(const curve_point *p);
 
 /* Serialize Pallas point as LE x-coordinate with y parity in bit 255. */
-void pallas_point_encode(const curve_point* p, uint8_t out[32]);
+void pallas_point_encode(const curve_point *p, uint8_t out[32]);
 
 #endif

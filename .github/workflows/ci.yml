@@ -210,6 +210,7 @@ jobs:
 
       - name: Enforce RC18 security invariants
         run: |
+          python3 tools/check_pallas_api_boundary.py
           if git grep -n -E \
             'uses:[[:space:]]+[^#[:space:]]+@(v[0-9]+|main|master)([[:space:]#]|$)' \
             -- .github/workflows; then
