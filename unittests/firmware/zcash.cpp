@@ -1527,6 +1527,21 @@ static void capture_redpallas_progress(uint32_t completed, uint32_t total,
   capture->total = total;
 }
 
+TEST(Zcash, OrchardKeyDerivationReportsFixedProgress) {
+  ZcashOrchardKeys keys;
+  RedPallasProgressCapture progress;
+
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(
+      SEED_ALL, 64, 0, &keys, capture_redpallas_progress, &progress));
+  EXPECT_TRUE(progress.monotonic);
+  EXPECT_EQ(255u, progress.calls);
+  EXPECT_EQ(255u, progress.last);
+  EXPECT_EQ(255u, progress.total);
+  EXPECT_EQ(0, memcmp(keys.ak, EXPECTED_AK_ALL_0, sizeof(keys.ak)));
+
+  memzero(&keys, sizeof(keys));
+}
+
 TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));

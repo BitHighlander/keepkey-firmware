@@ -557,8 +557,10 @@ bool zcash_orchard_compute_cmx(
   return ok;
 }
 
-bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
-                               uint32_t account, ZcashOrchardKeys* keys) {
+bool zcash_derive_orchard_keys_with_progress(
+    const uint8_t* seed, uint32_t seed_len, uint32_t account,
+    ZcashOrchardKeys* keys, ZcashOrchardProgressCallback progress,
+    void* progress_context) {
   uint8_t I[64];
   uint8_t sk[32], chain_code[32];
 
@@ -624,7 +626,8 @@ bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
     bignum256 ask_test;
     bn_read_le(keys->ask, &ask_test);
     curve_point ak_test;
-    redpallas_scalar_mult_spendauth_G(&ask_test, &ak_test);
+    redpallas_scalar_mult_spendauth_G_progress(&ask_test, &ak_test, progress,
+                                               progress_context);
     bignum256 ak_x;
     bn_copy(&ak_test.x, &ak_x);
     bn_write_le(&ak_x, ak_bytes);
@@ -676,6 +679,12 @@ bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
   memzero(dk_input, sizeof(dk_input));
 
   return true;
+}
+
+bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
+                               uint32_t account, ZcashOrchardKeys* keys) {
+  return zcash_derive_orchard_keys_with_progress(seed, seed_len, account, keys,
+                                                 NULL, NULL);
 }
 
 bool zcash_compute_shielded_sighash(const uint8_t header_digest[32],

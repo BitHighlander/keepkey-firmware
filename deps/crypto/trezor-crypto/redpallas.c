@@ -164,6 +164,21 @@ void redpallas_scalar_mult_spendauth_G(const bignum256* k, curve_point* res) {
   pallas_scalar_mult_spendauth(k, res);
 }
 
+void redpallas_scalar_mult_spendauth_G_progress(
+    const bignum256* k, curve_point* res, redpallas_progress_callback progress,
+    void* progress_context) {
+  if (!spendauth_G_initialized) {
+    pallas_point_deserialize(pallas_spendauth_G_bytes, &spendauth_G_cache);
+    spendauth_G_initialized = 1;
+  }
+  if (progress) {
+    pallas_ct_point_mult_progress(k, &spendauth_G_cache, res, progress,
+                                  progress_context);
+  } else {
+    pallas_ct_point_mult(k, &spendauth_G_cache, res);
+  }
+}
+
 /*
  * Constant: 2^256 mod q (Pallas scalar field order).
  *

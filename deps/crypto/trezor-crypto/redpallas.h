@@ -120,4 +120,14 @@ int redpallas_derive_rk(const uint8_t* ask, const uint8_t* alpha,
  */
 void redpallas_scalar_mult_spendauth_G(const bignum256* k, curve_point* res);
 
+/**
+ * Progress-reporting form of redpallas_scalar_mult_spendauth_G().
+ *
+ * The callback receives only the fixed public loop counter; it is independent
+ * of scalar bits and therefore safe to use while deriving ak from secret ask.
+ */
+void redpallas_scalar_mult_spendauth_G_progress(
+    const bignum256* k, curve_point* res, redpallas_progress_callback progress,
+    void* progress_context);
+
 #endif

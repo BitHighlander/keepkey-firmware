@@ -43,6 +43,9 @@ typedef struct {
   uint8_t dk[32]; /* Diversifier key */
 } ZcashOrchardKeys;
 
+typedef void (*ZcashOrchardProgressCallback)(uint32_t completed, uint32_t total,
+                                             void* context);
+
 typedef struct {
   bool has_header_digest;
   size_t header_digest_size;
@@ -118,6 +121,16 @@ bool zcash_pczt_signing_request_is_clear(
  */
 bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
                                uint32_t account, ZcashOrchardKeys* keys);
+
+/**
+ * Progress-reporting Orchard key derivation for interactive device flows.
+ * Progress is driven by the fixed public scalar-multiplication schedule and
+ * does not depend on the derived secret key.
+ */
+bool zcash_derive_orchard_keys_with_progress(
+    const uint8_t* seed, uint32_t seed_len, uint32_t account,
+    ZcashOrchardKeys* keys, ZcashOrchardProgressCallback progress,
+    void* progress_context);
 
 /**
  * Compute the ZIP 244 shielded sighash for Orchard spend authorization.

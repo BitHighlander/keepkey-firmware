@@ -49,6 +49,7 @@ def main():
     redpallas = source("deps/crypto/trezor-crypto/redpallas.c")
     zcash = source("lib/firmware/zcash.c")
     zcash_fsm = source("lib/firmware/fsm_msg_zcash.h")
+    storage = source("lib/firmware/storage.c")
 
     # Public transaction data needs the fast compatibility implementation.
     forbid(pallas, '"pallas_ct.h"', "pallas.c public compatibility path")
@@ -85,6 +86,12 @@ def main():
     spendauth = code_only(function_body(redpallas, "pallas_scalar_mult_spendauth"))
     require(spendauth, "pallas_ct_point_mult", "RedPallas scalar multiplication")
     forbid(spendauth, "pallas_point_mult(", "RedPallas scalar multiplication")
+    spendauth_progress = code_only(function_body(
+        redpallas, "redpallas_scalar_mult_spendauth_G_progress"))
+    require(spendauth_progress, "pallas_ct_point_mult_progress",
+            "progress-reporting RedPallas scalar multiplication")
+    forbid(spendauth_progress, "pallas_point_mult(",
+           "progress-reporting RedPallas scalar multiplication")
     public_spendauth = code_only(function_body(
         redpallas, "pallas_scalar_mult_spendauth_public"))
     require(public_spendauth, "pallas_point_mult",
@@ -145,6 +152,18 @@ def main():
     for name in ("to_scalar", "to_base"):
         body = code_only(function_body(zcash, name))
         require(body, "pallas_ct_", name)
+    key_derivation = code_only(function_body(
+        zcash, "zcash_derive_orchard_keys_with_progress"))
+    require(key_derivation, "redpallas_scalar_mult_spendauth_G_progress",
+            "Orchard key derivation")
+    forbid(key_derivation, "redpallas_scalar_mult_spendauth_G(",
+           "Orchard key derivation")
+    stored_key_derivation = code_only(function_body(
+        storage, "storage_zcashOrchardKeys"))
+    require(stored_key_derivation, "zcash_derive_orchard_keys_with_progress",
+            "interactive Orchard key derivation")
+    forbid(stored_key_derivation, "zcash_derive_orchard_keys(",
+           "interactive Orchard key derivation")
     transmission = code_only(function_body(zcash, "zcash_orchard_derive_transmission_key"))
     require(transmission, "pallas_ct_point_mult", "Orchard transmission-key derivation")
     forbid(transmission, "pallas_point_mult(", "Orchard transmission-key derivation")
