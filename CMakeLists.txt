@@ -70,10 +70,10 @@ if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/googletest/CMakeLists.txt)
       "googletest missing. Need to 'git submodule update --init --recursive")
 endif()
 
-if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto/Makefile)
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/Makefile)
   message(
     FATAL_ERROR
-      " vendored trezor-crypto missing from deps/crypto/trezor-crypto"
+      "trezor-crypto fork missing. Run 'git submodule update --init deps/crypto/trezor-firmware'"
   )
 endif()
 

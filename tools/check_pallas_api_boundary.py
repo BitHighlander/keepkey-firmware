@@ -44,9 +44,9 @@ def forbid(body, token, where):
 
 
 def main():
-    pallas = source("deps/crypto/trezor-crypto/pallas.c")
-    sinsemilla = source("deps/crypto/trezor-crypto/pallas_sinsemilla.c")
-    redpallas = source("deps/crypto/trezor-crypto/redpallas.c")
+    pallas = source("deps/crypto/trezor-firmware/crypto/pallas.c")
+    sinsemilla = source("deps/crypto/trezor-firmware/crypto/pallas_sinsemilla.c")
+    redpallas = source("deps/crypto/trezor-firmware/crypto/redpallas.c")
     zcash = source("lib/firmware/zcash.c")
     zcash_fsm = source("lib/firmware/fsm_msg_zcash.h")
     storage = source("lib/firmware/storage.c")

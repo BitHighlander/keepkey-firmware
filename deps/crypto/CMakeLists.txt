@@ -1,87 +1,86 @@
 set(sources
-    trezor-crypto/bip39.c
-    trezor-crypto/bip39_english.c
-    trezor-crypto/hmac.c
-    trezor-crypto/hmac_drbg.c
-    trezor-crypto/sha2.c
-    trezor-crypto/base32.c
-    trezor-crypto/hasher.c
-    #trezor-crypto/tools/bip39bruteforce.c
-    #trezor-crypto/tools/mktable.c
-    #trezor-crypto/tools/xpubaddrgen.c
-    trezor-crypto/rand.c
-    trezor-crypto/rc4.c
-    trezor-crypto/blake256.c
-    trezor-crypto/cash_addr.c
-    trezor-crypto/curves.c
-    trezor-crypto/rfc6979.c
-    trezor-crypto/ed25519-donna/curve25519-donna-scalarmult-base.c
-    trezor-crypto/ed25519-donna/ed25519-donna-32bit-tables.c
-    trezor-crypto/ed25519-donna/ed25519.c
-    trezor-crypto/ed25519-donna/curve25519-donna-helpers.c
-    trezor-crypto/ed25519-donna/ed25519-blake2b.c
-    trezor-crypto/ed25519-donna/ed25519-keccak.c
-    trezor-crypto/ed25519-donna/ed25519-sha3.c
-    trezor-crypto/ed25519-donna/ed25519-donna-basepoint-table.c
-    trezor-crypto/ed25519-donna/modm-donna-32bit.c
-    trezor-crypto/ed25519-donna/curve25519-donna-32bit.c
-    trezor-crypto/ed25519-donna/ed25519-donna-impl-base.c
-    trezor-crypto/nem.c
-    trezor-crypto/nano.c
-    #trezor-crypto/tests/test_check.c
-    #trezor-crypto/tests/test_openssl.c
-    #trezor-crypto/tests/test_speed.c
-    trezor-crypto/secp256k1.c
-    trezor-crypto/bignum.c
-    trezor-crypto/segwit_addr.c
-    trezor-crypto/ripemd160.c
-    trezor-crypto/groestl.c
-    trezor-crypto/nist256p1.c
-    #trezor-crypto/monero/serialize.c
-    #trezor-crypto/monero/range_proof.c
-    #trezor-crypto/monero/xmr.c
-    #trezor-crypto/monero/base58.c
-    trezor-crypto/memzero.c
-    trezor-crypto/blake2b.c
-    trezor-crypto/script.c
-    trezor-crypto/bip32.c
-    trezor-crypto/address.c
-    trezor-crypto/blake2s.c
-    trezor-crypto/sha3.c
-    trezor-crypto/base58.c
-    trezor-crypto/ecdsa.c
-    trezor-crypto/pbkdf2.c
-    trezor-crypto/aes/aeskey.c
-    trezor-crypto/aes/aescrypt.c
-    trezor-crypto/aes/aes_modes.c
-    #trezor-crypto/aes/aestst.c
-    trezor-crypto/aes/aestab.c)
+    trezor-firmware/crypto/bip39.c
+    trezor-firmware/crypto/bip39_english.c
+    trezor-firmware/crypto/hmac.c
+    trezor-firmware/crypto/hmac_drbg.c
+    trezor-firmware/crypto/sha2.c
+    trezor-firmware/crypto/base32.c
+    trezor-firmware/crypto/hasher.c
+    #trezor-firmware/crypto/tools/bip39bruteforce.c
+    #trezor-firmware/crypto/tools/mktable.c
+    #trezor-firmware/crypto/tools/xpubaddrgen.c
+    trezor-firmware/crypto/rand.c
+    trezor-firmware/crypto/rc4.c
+    trezor-firmware/crypto/blake256.c
+    trezor-firmware/crypto/cash_addr.c
+    trezor-firmware/crypto/curves.c
+    trezor-firmware/crypto/rfc6979.c
+    trezor-firmware/crypto/ed25519-donna/curve25519-donna-scalarmult-base.c
+    trezor-firmware/crypto/ed25519-donna/ed25519-donna-32bit-tables.c
+    trezor-firmware/crypto/ed25519-donna/ed25519.c
+    trezor-firmware/crypto/ed25519-donna/curve25519-donna-helpers.c
+    trezor-firmware/crypto/ed25519-donna/ed25519-blake2b.c
+    trezor-firmware/crypto/ed25519-donna/ed25519-keccak.c
+    trezor-firmware/crypto/ed25519-donna/ed25519-sha3.c
+    trezor-firmware/crypto/ed25519-donna/ed25519-donna-basepoint-table.c
+    trezor-firmware/crypto/ed25519-donna/modm-donna-32bit.c
+    trezor-firmware/crypto/ed25519-donna/curve25519-donna-32bit.c
+    trezor-firmware/crypto/ed25519-donna/ed25519-donna-impl-base.c
+    trezor-firmware/crypto/nem.c
+    trezor-firmware/crypto/nano.c
+    #trezor-firmware/crypto/tests/test_check.c
+    #trezor-firmware/crypto/tests/test_openssl.c
+    #trezor-firmware/crypto/tests/test_speed.c
+    trezor-firmware/crypto/secp256k1.c
+    trezor-firmware/crypto/bignum.c
+    trezor-firmware/crypto/segwit_addr.c
+    trezor-firmware/crypto/ripemd160.c
+    trezor-firmware/crypto/groestl.c
+    trezor-firmware/crypto/nist256p1.c
+    #trezor-firmware/crypto/monero/serialize.c
+    #trezor-firmware/crypto/monero/range_proof.c
+    #trezor-firmware/crypto/monero/xmr.c
+    #trezor-firmware/crypto/monero/base58.c
+    trezor-firmware/crypto/memzero.c
+    trezor-firmware/crypto/blake2b.c
+    trezor-firmware/crypto/script.c
+    trezor-firmware/crypto/bip32.c
+    trezor-firmware/crypto/address.c
+    trezor-firmware/crypto/blake2s.c
+    trezor-firmware/crypto/sha3.c
+    trezor-firmware/crypto/base58.c
+    trezor-firmware/crypto/ecdsa.c
+    trezor-firmware/crypto/pbkdf2.c
+    trezor-firmware/crypto/aes/aeskey.c
+    trezor-firmware/crypto/aes/aescrypt.c
+    trezor-firmware/crypto/aes/aes_modes.c
+    #trezor-firmware/crypto/aes/aestst.c
+    trezor-firmware/crypto/aes/aestab.c)
 
 # Pallas/Orchard curve arithmetic (~2.4k LOC) -- only the Zcash shielded engine
 # uses it. Excluded from the default and bitcoin-only images.
 if(${KK_ZCASH_PRIVACY})
   list(APPEND sources
-      trezor-crypto/pallas.c
-      trezor-crypto/pallas_ct.c
-      trezor-crypto/pallas_sinsemilla.c
-      trezor-crypto/pallas_swu.c
-      trezor-crypto/redpallas.c
-      trezor-crypto/zcash_zip316.c)
+      trezor-firmware/crypto/pallas.c
+      trezor-firmware/crypto/pallas_ct.c
+      trezor-firmware/crypto/pallas_sinsemilla.c
+      trezor-firmware/crypto/pallas_swu.c
+      trezor-firmware/crypto/redpallas.c
+      trezor-firmware/crypto/zcash_zip316.c)
 endif()
 
     # Clang 5.0 in the docker image (kktech/firmware:v7) is missing
     # <xmmintrin.h>, which breaks these. Until they're needed, we'll just elide
     # them.
-    #trezor-crypto/chacha20poly1305/chacha_merged.c
-    #trezor-crypto/chacha20poly1305/rfc7539.c
-    #trezor-crypto/chacha20poly1305/poly1305-donna.c
-    #trezor-crypto/chacha20poly1305/chacha20poly1305.c
+    #trezor-firmware/crypto/chacha20poly1305/chacha_merged.c
+    #trezor-firmware/crypto/chacha20poly1305/rfc7539.c
+    #trezor-firmware/crypto/chacha20poly1305/poly1305-donna.c
+    #trezor-firmware/crypto/chacha20poly1305/chacha20poly1305.c
 
 
 include_directories(
-  ${CMAKE_CURRENT_SOURCE_DIR}/trezor-crypto
-  ${CMAKE_CURRENT_SOURCE_DIR}/trezor-crypto/
-  ${CMAKE_CURRENT_SOURCE_DIR}/trezor-crypto/ed25519-donna
+  ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/crypto
+  ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/crypto/ed25519-donna
   ${OPENSSL_INCLUDE_DIR})
 
 

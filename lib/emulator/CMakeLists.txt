@@ -36,7 +36,7 @@ if(${KK_EMULATOR})
     target_include_directories(kkemulator_dylib PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/include
-        ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto)
+        ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
     # libkkemu.c runs the firmware event loop on a dedicated thread (POSIX
     # pthreads; Win32 CreateThread under MinGW). Threads::Threads is a no-op on
     # the Win32 path and pulls in -lpthread on POSIX. Use the PLAIN signature —

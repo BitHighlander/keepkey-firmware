@@ -4,20 +4,20 @@ title = "KeepKey firmware Gitleaks configuration"
 useDefault = true
 
 [[allowlists]]
-description = "Published AES test vectors in vendored trezor-crypto"
+description = "Published AES test vectors in the pinned trezor-crypto fork"
 targetRules = ["generic-api-key"]
 condition = "AND"
 regexTarget = "line"
-paths = ['''^deps/crypto/trezor-crypto/aes/aestst\.c$''']
+paths = ['''^deps/crypto/trezor-firmware/crypto/aes/aestst\.c$''']
 regexes = ['''(?i)^[[:space:]]*//[[:space:]]*key[[:space:]]*=[[:space:]]*[0-9a-f]+[[:space:]]*$''']
 
 [[allowlists]]
-description = "Ed25519 C type names in vendored trezor-crypto"
+description = "Ed25519 C type names in the pinned trezor-crypto fork"
 targetRules = ["generic-api-key"]
 condition = "AND"
 regexTarget = "line"
 paths = [
-  '''^deps/crypto/trezor-crypto/ed25519-donna/ed25519-(blake2b|keccak|sha3)\.h$''',
-  '''^deps/crypto/trezor-crypto/ed25519-donna/ed25519\.[ch]$''',
+  '''^deps/crypto/trezor-firmware/crypto/ed25519-donna/ed25519-(blake2b|keccak|sha3)\.h$''',
+  '''^deps/crypto/trezor-firmware/crypto/ed25519-donna/ed25519\.[ch]$''',
 ]
 regexes = ['''ed25519.*secret_key.*signature''']

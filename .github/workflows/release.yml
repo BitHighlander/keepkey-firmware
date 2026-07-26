@@ -96,6 +96,7 @@ jobs:
 
       - name: Init required submodules
         run: |
+          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -217,6 +218,7 @@ jobs:
 
       - name: Init required submodules
         run: |
+          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest

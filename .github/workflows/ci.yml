@@ -5,7 +5,7 @@
 # Stage 1: GATE (seconds, no Docker)
 #   ├─ lint-format        clang-format diff check
 #   ├─ static-analysis    cppcheck static analysis
-#   ├─ crypto-tests       vendored trezor-crypto vectors + ASan/UBSan
+#   ├─ crypto-tests       pinned fork crypto vectors + ASan/UBSan
 #   ├─ secret-scan        gitleaks credential detection
 #   └─ check-submodules   verify all deps present
 #
@@ -109,6 +109,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           submodules: false
 
+      - name: Init crypto submodule
+        run: git submodule update --init deps/crypto/trezor-firmware
+
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
@@ -123,7 +126,7 @@ jobs:
             --inline-suppr \
             --suppressions-list=.cppcheck-suppressions \
             -I include \
-            -I deps/crypto/trezor-crypto \
+            -I deps/crypto/trezor-firmware/crypto \
             -I deps/device-protocol \
             -DSTM32F2=1 \
             -DUSE_ETHEREUM=1 \
@@ -187,10 +190,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Init crypto submodule
+        run: git submodule update --init deps/crypto/trezor-firmware
+
       - name: Verify submodules are declared
         run: |
           echo "Checking required submodule declarations..."
           REQUIRED=(
+            "deps/crypto/trezor-firmware"
             "deps/device-protocol"
             "deps/python-keepkey"
             "deps/googletest"
@@ -249,11 +256,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Init crypto submodule
+        run: git submodule update --init deps/crypto/trezor-firmware
+
       - name: Install crypto test dependencies
         run: sudo apt-get update && sudo apt-get install -y check libssl-dev pkg-config valgrind
 
       - name: Run optimized crypto suite
-        working-directory: deps/crypto/trezor-crypto
+        working-directory: deps/crypto/trezor-firmware/crypto
         run: |
           make clean
           make VALGRIND=0 tests/test_check tests/test_pallas_ct
@@ -261,7 +271,7 @@ jobs:
           ./tests/test_pallas_ct
 
       - name: Verify Pallas secret flow with Valgrind
-        working-directory: deps/crypto/trezor-crypto
+        working-directory: deps/crypto/trezor-firmware/crypto
         run: |
           make clean
           make VALGRIND=1 OPTFLAGS='-O2 -g' tests/test_pallas_ct
@@ -269,7 +279,7 @@ jobs:
             ./tests/test_pallas_ct
 
       - name: Run crypto suite with ASan and UBSan
-        working-directory: deps/crypto/trezor-crypto
+        working-directory: deps/crypto/trezor-firmware/crypto
         run: |
           make clean
           make CC='gcc -fsanitize=address,undefined' VALGRIND=0 \
@@ -313,6 +323,7 @@ jobs:
 
       - name: Init submodules
         run: |
+          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -380,6 +391,7 @@ jobs:
 
       - name: Init submodules
         run: |
+          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -536,6 +548,7 @@ jobs:
 
       - name: Init submodules
         run: |
+          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/googletest
@@ -640,6 +653,7 @@ jobs:
 
       - name: Init submodules
         run: |
+          git submodule update --init deps/crypto/trezor-firmware
           git submodule update --init deps/device-protocol
           git submodule update --init --recursive deps/python-keepkey
           git submodule update --init deps/qrenc/QR-Code-generator
