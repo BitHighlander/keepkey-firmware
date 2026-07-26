@@ -78,6 +78,21 @@ pallas_ct_counts MultiplyAndCount(const bignum256& scalar,
   return counts;
 }
 
+struct ProgressCapture {
+  uint32_t calls = 0;
+  uint32_t last_completed = 0;
+  uint32_t last_total = 0;
+  bool monotonic = true;
+};
+
+void CaptureProgress(uint32_t completed, uint32_t total, void* context) {
+  auto* capture = static_cast<ProgressCapture*>(context);
+  if (completed <= capture->last_completed) capture->monotonic = false;
+  capture->calls++;
+  capture->last_completed = completed;
+  capture->last_total = total;
+}
+
 TEST(PallasConstantTime, ScalarScheduleDoesNotDependOnSecretBits) {
   const bignum256 zero = {{0}};
   const bignum256 one = ScalarWithBit(0);
@@ -102,6 +117,22 @@ TEST(PallasConstantTime, ScalarScheduleDoesNotDependOnSecretBits) {
     const pallas_ct_counts counts = MultiplyAndCount(scalars[i], &result);
     ExpectCountsEqual(baseline, counts);
   }
+}
+
+TEST(PallasConstantTime, ProgressVariantMatchesAndReportsEveryFixedRound) {
+  const bignum256 scalar = DenseScalar();
+  curve_point expected, actual;
+  pallas_ct_point_mult(&scalar, &kPallasGenerator, &expected);
+
+  ProgressCapture progress;
+  pallas_ct_point_mult_progress(&scalar, &kPallasGenerator, &actual,
+                                CaptureProgress, &progress);
+
+  EXPECT_TRUE(PointsEqual(expected, actual));
+  EXPECT_TRUE(progress.monotonic);
+  EXPECT_EQ(255u, progress.calls);
+  EXPECT_EQ(255u, progress.last_completed);
+  EXPECT_EQ(255u, progress.last_total);
 }
 
 TEST(PallasConstantTime, ZeroAndOneScalarResultsAreCanonical) {

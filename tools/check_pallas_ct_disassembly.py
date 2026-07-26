@@ -125,6 +125,69 @@ def verify_full(disassembly):
     if outside_loop:
         raise ValueError(f"fixed-round calls moved outside scalar loop: {outside_loop}")
 
+    progress_symbol = "pallas_ct_point_mult_progress"
+    progress_instructions = symbol_instructions(disassembly, progress_symbol)
+    if progress_instructions is None:
+        raise ValueError(f"missing required ARM symbol: {progress_symbol}")
+    progress_branches = []
+    for index, instruction in enumerate(progress_instructions):
+        address, instruction_mnemonic, operands = instruction
+        if instruction_mnemonic not in CONDITIONAL_BRANCHES:
+            continue
+        next_instruction = (
+            progress_instructions[index + 1]
+            if index + 1 < len(progress_instructions)
+            else None
+        )
+        if (
+            next_instruction is not None
+            and next_instruction[1] == "bl"
+            and "<__stack_chk_fail>" in next_instruction[2]
+        ):
+            continue
+        progress_branches.append(
+            (address, instruction_mnemonic, branch_target(operands))
+        )
+    if len(progress_branches) != 1:
+        raise ValueError(
+            f"{progress_symbol} must have one fixed loop branch; found "
+            f"{progress_branches}"
+        )
+    progress_branch_address, _, progress_target = progress_branches[0]
+    if progress_target is None or progress_target >= progress_branch_address:
+        raise ValueError(
+            f"{progress_symbol} loop branch is not backward: "
+            f"{progress_branches[0]}"
+        )
+    progress_required_calls = {
+        "ct_point_double": None,
+        "ct_point_add_internal": None,
+        "ct_point_select": None,
+    }
+    for address, instruction_mnemonic, operands in progress_instructions:
+        if instruction_mnemonic != "bl":
+            continue
+        for required in progress_required_calls:
+            if f"<{required}>" in operands:
+                progress_required_calls[required] = address
+    progress_missing = [
+        name for name, address in progress_required_calls.items() if address is None
+    ]
+    if progress_missing:
+        raise ValueError(
+            f"{progress_symbol} is missing fixed-round calls: {progress_missing}"
+        )
+    progress_outside_loop = [
+        name
+        for name, address in progress_required_calls.items()
+        if not progress_target <= address < progress_branch_address
+    ]
+    if progress_outside_loop:
+        raise ValueError(
+            f"{progress_symbol} fixed-round calls moved outside scalar loop: "
+            f"{progress_outside_loop}"
+        )
+
     # Secret-dependent selects are written as masks.  On the pinned ARM build,
     # every remaining conditional branch in this module must therefore be a
     # backward, fixed-bound loop (apart from stack-canary failure branches).
@@ -190,7 +253,8 @@ def verify_full(disassembly):
 
     print(
         "Pallas ARM disassembly gate: PASS "
-        f"(one backward {mnemonic} loop; double/add/select all inside; "
+        f"(regular + progress multipliers each have one backward {mnemonic} "
+        "loop; double/add/select all inside; "
         "only fixed backward loops; no secret IT; no long multiply/divide)"
     )
 

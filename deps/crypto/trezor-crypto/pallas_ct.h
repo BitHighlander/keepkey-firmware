@@ -13,6 +13,11 @@
 #include "bignum.h"
 #include "ecdsa.h"
 
+/* Progress is reported from the fixed 255-round scalar schedule.  Both values
+ * are public loop counters; callbacks must not inspect scalar data. */
+typedef void (*pallas_ct_progress_callback)(uint32_t completed, uint32_t total,
+                                            void* context);
+
 void pallas_ct_mul_mod_p(bignum256* x, const bignum256* k);
 void pallas_ct_add_mod_p(const bignum256* a, const bignum256* b,
                          bignum256* res);
@@ -30,6 +35,10 @@ void pallas_ct_point_add(const curve_point* p, const curve_point* q,
                          curve_point* res);
 void pallas_ct_point_mult(const bignum256* k, const curve_point* p,
                           curve_point* res);
+void pallas_ct_point_mult_progress(const bignum256* k, const curve_point* p,
+                                   curve_point* res,
+                                   pallas_ct_progress_callback progress,
+                                   void* progress_context);
 
 #ifdef PALLAS_CT_TESTING
 typedef struct {

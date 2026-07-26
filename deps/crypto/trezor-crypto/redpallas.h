@@ -30,6 +30,9 @@
 #include "bignum.h"
 #include "ecdsa.h"
 
+typedef void (*redpallas_progress_callback)(uint32_t completed, uint32_t total,
+                                            void* context);
+
 /**
  * RedPallas spend authorization signature.
  *
@@ -48,8 +51,27 @@
  * @param sig_out  64-byte output: R (32 bytes) || S (32 bytes), little-endian
  * @return 0 on success, non-zero on error
  */
-int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
-                          const uint8_t *sighash, uint8_t *sig_out);
+int redpallas_sign_digest(const uint8_t* ask, const uint8_t* alpha,
+                          const uint8_t* sighash, uint8_t* sig_out);
+
+/**
+ * Sign using the cached public ak and verify the host-provided rk first.
+ *
+ * rk = ak + [alpha]G is derived entirely from public data, avoiding a second
+ * secret-scalar multiplication during each signature. The nonce commitment
+ * remains on the fixed-schedule implementation. Progress reports fixed public
+ * work units in the range 0..1000.
+ */
+int redpallas_sign_digest_with_ak(const uint8_t* ask, const uint8_t* ak,
+                                  const uint8_t* alpha,
+                                  const uint8_t* expected_rk,
+                                  const uint8_t* sighash, uint8_t* sig_out,
+                                  redpallas_progress_callback progress,
+                                  void* progress_context);
+
+/** Derive rk = ak + [alpha]G from public Orchard transaction data. */
+int redpallas_derive_rk_from_ak(const uint8_t* ak, const uint8_t* alpha,
+                                uint8_t* rk_out);
 
 /**
  * Verify a RedPallas signature.
@@ -59,8 +81,8 @@ int redpallas_sign_digest(const uint8_t *ask, const uint8_t *alpha,
  * @param sig      64-byte signature: R (32 bytes) || S (32 bytes)
  * @return 0 if signature is valid, non-zero otherwise
  */
-int redpallas_verify_digest(const uint8_t *rk, const uint8_t *sighash,
-                            const uint8_t *sig);
+int redpallas_verify_digest(const uint8_t* rk, const uint8_t* sighash,
+                            const uint8_t* sig);
 
 /**
  * Derive randomized verification key: rk = [(ask + alpha) mod order] * G
@@ -70,16 +92,17 @@ int redpallas_verify_digest(const uint8_t *rk, const uint8_t *sighash,
  * @param rk_out 32-byte output: compressed point (little-endian x-coordinate)
  * @return 0 on success
  */
-int redpallas_derive_rk(const uint8_t *ask, const uint8_t *alpha,
-                        uint8_t *rk_out);
+int redpallas_derive_rk(const uint8_t* ask, const uint8_t* alpha,
+                        uint8_t* rk_out);
 
 /**
  * Scalar multiplication by the Orchard SpendAuth basepoint.
- * Computes res = k * G_spendauth where G_spendauth = GroupHash^P("z.cash:Orchard", "G").
+ * Computes res = k * G_spendauth where G_spendauth =
+ * GroupHash^P("z.cash:Orchard", "G").
  *
  * @param k    Scalar to multiply (bignum256)
  * @param res  Output point
  */
-void redpallas_scalar_mult_spendauth_G(const bignum256 *k, curve_point *res);
+void redpallas_scalar_mult_spendauth_G(const bignum256* k, curve_point* res);
 
 #endif

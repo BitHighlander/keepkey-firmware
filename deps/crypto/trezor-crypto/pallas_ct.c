@@ -470,6 +470,43 @@ void pallas_ct_point_mult(const bignum256* k, const curve_point* p,
   memzero(&acc, sizeof(acc));
 }
 
+void pallas_ct_point_mult_progress(const bignum256* k, const curve_point* p,
+                                   curve_point* res,
+                                   pallas_ct_progress_callback progress,
+                                   void* progress_context) {
+  ct_fe scalar_mont;
+  ct_fe scalar;
+  ct_point base;
+  ct_point acc;
+  static const ct_fe raw_one = {{1, 0, 0, 0, 0, 0, 0, 0}};
+
+  /* This is deliberately the same fixed schedule as pallas_ct_point_mult().
+   * The callback runs once after every round and receives only public loop
+   * counters, so OLED refreshes cannot disclose scalar bits. */
+  ct_fe_from_bn(&scalar_mont, k, &CT_Q);
+  ct_fe_mul_mod(&scalar, &scalar_mont, &raw_one, &CT_Q);
+  ct_point_from_affine(&base, p);
+  ct_point_identity(&acc);
+
+  for (int bit = 254; bit >= 0; bit--) {
+    ct_point doubled;
+    ct_point added;
+    const uint32_t scalar_bit =
+        (scalar.v[(unsigned)bit / 32] >> ((unsigned)bit % 32)) & 1u;
+    CT_COUNT(scalar_round);
+    ct_point_double(&doubled, &acc);
+    ct_point_add_internal(&added, &doubled, &base);
+    ct_point_select(&acc, &doubled, &added, scalar_bit);
+    progress((uint32_t)(255 - bit), 255, progress_context);
+  }
+
+  ct_point_to_affine(res, &acc);
+  memzero(&scalar_mont, sizeof(scalar_mont));
+  memzero(&scalar, sizeof(scalar));
+  memzero(&base, sizeof(base));
+  memzero(&acc, sizeof(acc));
+}
+
 void pallas_ct_point_add(const curve_point* p, const curve_point* q,
                          curve_point* res) {
   ct_point lhs;

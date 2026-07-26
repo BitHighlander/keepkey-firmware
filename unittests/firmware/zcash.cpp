@@ -490,6 +490,9 @@ TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
   EXPECT_TRUE(memcmp(keys.nk, EXPECTED_NK_ALL_0, 32) == 0)
       << "nk mismatch for all-mnemonic account 0";
 
+  EXPECT_TRUE(memcmp(keys.ak, EXPECTED_AK_ALL_0, 32) == 0)
+      << "cached ak mismatch for all-mnemonic account 0";
+
   /* rivk must match reference */
   EXPECT_TRUE(memcmp(keys.rivk, EXPECTED_RIVK_ALL_0, 32) == 0)
       << "rivk mismatch for all-mnemonic account 0";
@@ -570,6 +573,7 @@ TEST(Zcash, DeriveOrchardKeys_Deterministic) {
 
   EXPECT_TRUE(memcmp(keys1.sk, keys2.sk, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.ask, keys2.ask, 32) == 0);
+  EXPECT_TRUE(memcmp(keys1.ak, keys2.ak, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.nk, keys2.nk, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.rivk, keys2.rivk, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.dk, keys2.dk, 32) == 0);
@@ -1504,6 +1508,61 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
 }
 
 /* ── RedPallas Signing Smoke Test ────────────────────────────────── */
+
+struct RedPallasProgressCapture {
+  uint32_t calls = 0;
+  uint32_t last = 0;
+  uint32_t total = 0;
+  bool monotonic = true;
+};
+
+static void capture_redpallas_progress(uint32_t completed, uint32_t total,
+                                       void* context) {
+  auto* capture = static_cast<RedPallasProgressCapture*>(context);
+  if (capture->calls > 0 && completed < capture->last) {
+    capture->monotonic = false;
+  }
+  capture->calls++;
+  capture->last = completed;
+  capture->total = total;
+}
+
+TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x01, sizeof(alpha));
+  alpha[31] = 0;
+  uint8_t sighash[32];
+  memset(sighash, 0xA5, sizeof(sighash));
+
+  uint8_t public_rk[32], secret_reference_rk[32];
+  ASSERT_EQ(redpallas_derive_rk_from_ak(keys.ak, alpha, public_rk), 0);
+  ASSERT_EQ(redpallas_derive_rk(keys.ask, alpha, secret_reference_rk), 0);
+  EXPECT_EQ(memcmp(public_rk, secret_reference_rk, sizeof(public_rk)), 0);
+
+  RedPallasProgressCapture progress;
+  uint8_t signature[64];
+  ASSERT_EQ(redpallas_sign_digest_with_ak(
+                keys.ask, keys.ak, alpha, public_rk, sighash, signature,
+                capture_redpallas_progress, &progress),
+            0);
+  EXPECT_TRUE(progress.monotonic);
+  EXPECT_EQ(257u, progress.calls);
+  EXPECT_EQ(1000u, progress.last);
+  EXPECT_EQ(1000u, progress.total);
+  EXPECT_EQ(redpallas_verify_digest(public_rk, sighash, signature), 0);
+
+  uint8_t wrong_rk[32];
+  memcpy(wrong_rk, public_rk, sizeof(wrong_rk));
+  wrong_rk[0] ^= 1;
+  EXPECT_NE(redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, wrong_rk,
+                                          sighash, signature, nullptr, nullptr),
+            0);
+
+  memzero(&keys, sizeof(keys));
+}
 
 TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   ZcashOrchardKeys keys;

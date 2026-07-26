@@ -61,27 +61,57 @@ def main():
     require(incomplete_add, "pallas_point_add", "Sinsemilla public hash add")
     forbid(incomplete_add, "pallas_ct_", "Sinsemilla public hash add")
 
-    # The commitment blind is rivk on IVK derivation paths, so its one scalar
-    # multiplication and the final add remain fixed-schedule.  This does not
-    # put the repeated transaction commitment hash additions on the slow path.
+    # Transaction note rcm is host-known; use the fast public path.  The IVK's
+    # device-secret rivk has a separate helper that remains fixed-schedule.
     commit = code_only(function_body(sinsemilla, "pallas_sinsemilla_commit"))
-    require(commit, "pallas_ct_point_mult", "Sinsemilla blinding")
-    require(commit, "pallas_ct_point_add", "Sinsemilla blinding")
-    forbid(commit, "pallas_point_mult(", "Sinsemilla blinding")
-    forbid(commit, "pallas_point_add(", "Sinsemilla blinding")
+    require(commit, "pallas_point_mult", "public Sinsemilla blinding")
+    require(commit, "pallas_point_add", "public Sinsemilla blinding")
+    forbid(commit, "pallas_ct_", "public Sinsemilla blinding")
+    secret_commit = code_only(function_body(
+        sinsemilla, "pallas_sinsemilla_commit_secret_blind"))
+    require(secret_commit, "pallas_ct_point_mult", "secret IVK blinding")
+    require(secret_commit, "pallas_ct_point_add", "secret IVK blinding")
+    forbid(secret_commit, "pallas_point_mult(", "secret IVK blinding")
+    forbid(secret_commit, "pallas_point_add(", "secret IVK blinding")
+    commit_ivk = code_only(function_body(sinsemilla,
+                                         "pallas_sinsemilla_commit_ivk"))
+    require(commit_ivk, "pallas_sinsemilla_commit_secret_blind",
+            "IVK commitment")
+    forbid(commit_ivk, "pallas_sinsemilla_short_commit", "IVK commitment")
 
     # Authorization scalars, nonces, and randomized keys must never fall back
     # to the variable-time public-data API.
     spendauth = code_only(function_body(redpallas, "pallas_scalar_mult_spendauth"))
     require(spendauth, "pallas_ct_point_mult", "RedPallas scalar multiplication")
     forbid(spendauth, "pallas_point_mult(", "RedPallas scalar multiplication")
+    public_spendauth = code_only(function_body(
+        redpallas, "pallas_scalar_mult_spendauth_public"))
+    require(public_spendauth, "pallas_point_mult",
+            "public alpha scalar multiplication")
+    forbid(public_spendauth, "pallas_ct_",
+           "public alpha scalar multiplication")
 
     sign = code_only(function_body(redpallas, "redpallas_sign_digest"))
-    for token in ("pallas_ct_add_mod_q", "pallas_ct_mod_q",
-                  "pallas_ct_mul_mod_q", "pallas_ct_scalar_replace_zero_with_one"):
-        require(sign, token, "redpallas_sign_digest")
+    require(sign, "pallas_ct_add_mod_q", "redpallas_sign_digest")
     for token in ("pallas_add_mod_q(", "pallas_mod_q(", "pallas_mul_mod_q("):
         forbid(sign, token, "redpallas_sign_digest")
+
+    sign_core = code_only(function_body(redpallas,
+                                        "redpallas_sign_with_rsk"))
+    for token in ("pallas_ct_add_mod_q", "pallas_ct_mod_q",
+                  "pallas_ct_mul_mod_q", "pallas_ct_scalar_replace_zero_with_one"):
+        require(sign_core, token, "RedPallas signing core")
+    for token in ("pallas_add_mod_q(", "pallas_mod_q(", "pallas_mul_mod_q("):
+        forbid(sign_core, token, "RedPallas signing core")
+
+    optimized_sign = code_only(function_body(
+        redpallas, "redpallas_sign_digest_with_ak"))
+    require(optimized_sign, "redpallas_derive_rk_from_ak",
+            "optimized RedPallas signing")
+    require(optimized_sign, "pallas_ct_add_mod_q",
+            "optimized RedPallas signing")
+    forbid(optimized_sign, "pallas_scalar_mult_spendauth_public",
+           "optimized RedPallas signing")
 
     derive_rk = code_only(function_body(redpallas, "redpallas_derive_rk"))
     require(derive_rk, "pallas_ct_add_mod_q", "redpallas_derive_rk")

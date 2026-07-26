@@ -641,6 +641,10 @@ bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
     memzero(&ak_test, sizeof(ak_test));
     memzero(&ak_x, sizeof(ak_x));
   }
+  /* Cache the public key produced by the normalization multiplication.  This
+   * avoids repeating the same expensive secret-scalar operation for FVK
+   * export and lets signing derive rk from public ak + public alpha. */
+  memcpy(keys->ak, ak_bytes, sizeof(keys->ak));
 
   /* nk = ToBase(PRF^expand(sk, [0x07])) */
   uint8_t t_nk = 0x07;

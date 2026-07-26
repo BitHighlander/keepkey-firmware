@@ -34,6 +34,8 @@ typedef struct {
   // cppcheck-suppress unusedStructMember
   uint8_t ask[32]; /* Spend authorizing key (scalar) */
   // cppcheck-suppress unusedStructMember
+  uint8_t ak[32]; /* Public spend validating key (compressed, even y) */
+  // cppcheck-suppress unusedStructMember
   uint8_t nk[32]; /* Nullifier deriving key */
   // cppcheck-suppress unusedStructMember
   uint8_t rivk[32]; /* Commitment randomness key */

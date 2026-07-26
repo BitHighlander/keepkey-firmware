@@ -324,6 +324,27 @@ static bool zcash_verify_and_confirm_fee(void) {
   return true;
 }
 
+typedef struct {
+  uint32_t base;
+  uint32_t span;
+  uint32_t last;
+} ZcashRedPallasProgress;
+
+static void zcash_redpallas_progress(uint32_t completed, uint32_t total,
+                                     void* context) {
+  ZcashRedPallasProgress* progress = (ZcashRedPallasProgress*)context;
+  if (!progress || total == 0) return;
+
+  /* completed/total is the fixed public scalar-loop schedule, never a value
+   * derived from ask or the nonce. Update only when the visible permil changes
+   * to avoid redundant OLED transfers while preserving a smooth bar. */
+  uint32_t permil = progress->base + (progress->span * completed) / total;
+  if (permil != progress->last) {
+    progress->last = permil;
+    layoutProgress(_("Signing Zcash"), (int)permil);
+  }
+}
+
 static void zcash_send_action_ack(uint32_t next_index) {
   ZcashPCZTActionAck* resp_ack = (ZcashPCZTActionAck*)msg_resp;
   memset(resp_ack, 0, sizeof(ZcashPCZTActionAck));
@@ -819,25 +840,10 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
     return;
   }
 
-  /* Compute ak = [ask]G_spendauth on Pallas curve (SpendAuth basepoint) */
-  bignum256 ask_scalar;
-  bn_read_le(keys.ask, &ask_scalar);
-  curve_point ak_point;
-  redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
-
-  /* Serialize ak as Pallas point (LE x-coord, sign bit in high byte) */
-  uint8_t ak_bytes[32];
-  bignum256 x_copy;
-  bn_copy(&ak_point.x, &x_copy);
-  bn_write_le(&x_copy, ak_bytes);
-  if (bn_is_odd(&ak_point.y)) {
-    ak_bytes[31] |= 0x80;
-  }
-
   /* Build response */
   resp->has_ak = true;
   resp->ak.size = 32;
-  memcpy(resp->ak.bytes, ak_bytes, 32);
+  memcpy(resp->ak.bytes, keys.ak, 32);
 
   resp->has_nk = true;
   resp->nk.size = 32;
@@ -858,7 +864,6 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
   }
 
   /* Clean up sensitive data */
-  memzero(&ask_scalar, sizeof(ask_scalar));
   memzero(&keys, sizeof(keys));
 
   msg_write(MessageType_MessageType_ZcashOrchardFVK, resp);
@@ -1048,10 +1053,21 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   const uint8_t* sighash = zcash_signing.sighash;
 
-  /* Sign this action with RedPallas:
-   * sig = RedPallas.sign(ask, alpha, sighash) */
-  if (redpallas_sign_digest(zcash_signing.keys.ask, msg->alpha.bytes, sighash,
-                            zcash_signing.signatures[msg->index]) != 0) {
+  /* Sign this action with RedPallas. Derive rk from cached public ak + public
+   * alpha and require it to match the PCZT before using it in the challenge.
+   * This removes one secret-scalar multiplication per action; the secret nonce
+   * multiplication remains fixed-schedule and reports its public loop progress
+   * directly so the OLED advances during CPU-bound signing. */
+  const uint32_t action_base =
+      (zcash_signing.current_action * 1000) / zcash_signing.n_actions;
+  const uint32_t action_target =
+      ((zcash_signing.current_action + 1) * 1000) / zcash_signing.n_actions;
+  ZcashRedPallasProgress signing_progress = {
+      action_base, action_target - action_base, action_base};
+  if (redpallas_sign_digest_with_ak(
+          zcash_signing.keys.ask, zcash_signing.keys.ak, msg->alpha.bytes,
+          msg->rk.bytes, sighash, zcash_signing.signatures[msg->index],
+          zcash_redpallas_progress, &signing_progress) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, _("RedPallas signing failed"));
     zcash_signing_abort();
     layoutHome();
