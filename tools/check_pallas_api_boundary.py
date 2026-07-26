@@ -53,11 +53,12 @@ def main():
 
     # Public transaction data needs the fast compatibility implementation.
     forbid(pallas, '"pallas_ct.h"', "pallas.c public compatibility path")
-    hash_to_point = code_only(function_body(sinsemilla,
-                                            "pallas_sinsemilla_hash_to_point"))
+    hash_to_point = code_only(function_body(
+        sinsemilla, "pallas_sinsemilla_hash_to_point_progress"))
     require(hash_to_point, "sinsemilla_incomplete_add",
             "Sinsemilla public hash path")
     forbid(hash_to_point, "pallas_ct_", "Sinsemilla public hash path")
+    require(hash_to_point, "progress(", "Sinsemilla public hash progress")
     incomplete_add = code_only(function_body(sinsemilla,
                                              "sinsemilla_incomplete_add"))
     require(incomplete_add, "pallas_point_add", "Sinsemilla public hash add")
@@ -65,10 +66,13 @@ def main():
 
     # Transaction note rcm is host-known; use the fast public path.  The IVK's
     # device-secret rivk has a separate helper that remains fixed-schedule.
-    commit = code_only(function_body(sinsemilla, "pallas_sinsemilla_commit"))
+    commit = code_only(function_body(
+        sinsemilla, "pallas_sinsemilla_commit_progress"))
     require(commit, "pallas_point_mult", "public Sinsemilla blinding")
     require(commit, "pallas_point_add", "public Sinsemilla blinding")
     forbid(commit, "pallas_ct_", "public Sinsemilla blinding")
+    require(commit, "pallas_sinsemilla_commit_prepare",
+            "public Sinsemilla progress propagation")
     secret_commit = code_only(function_body(
         sinsemilla, "pallas_sinsemilla_commit_secret_blind"))
     require(secret_commit, "pallas_ct_point_mult", "secret IVK blinding")
@@ -143,6 +147,16 @@ def main():
             "compact PCZT signature response")
     forbid(action_handler, "redpallas_sign_digest_with_ak",
            "PCZT action handler")
+    output_verification = code_only(function_body(
+        zcash_fsm, "zcash_verify_and_confirm_orchard_output"))
+    require(output_verification, "zcash_orchard_compute_cmx_with_progress",
+            "interactive Orchard note verification")
+    forbid(output_verification, "zcash_orchard_compute_cmx(",
+           "interactive Orchard note verification")
+    note_commitment = code_only(function_body(
+        zcash, "zcash_orchard_compute_cmx_with_progress"))
+    require(note_commitment, "pallas_sinsemilla_short_commit_progress",
+            "Orchard note verification progress")
 
     derive_rk = code_only(function_body(redpallas, "redpallas_derive_rk"))
     require(derive_rk, "pallas_ct_add_mod_q", "redpallas_derive_rk")

@@ -219,6 +219,15 @@ bool zcash_orchard_compute_cmx(
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
 
 /**
+ * Progress-reporting note-commitment verification for interactive PCZT flows.
+ * The callback exposes only the public Sinsemilla word index and count.
+ */
+bool zcash_orchard_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context);
+
+/**
  * Derive an Orchard diversifier from a diversifier key and 88-bit index.
  *
  * ZIP-32 defines Orchard diversifiers as:

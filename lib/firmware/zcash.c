@@ -513,9 +513,10 @@ static bool zcash_pack_orchard_note_commit_msg(const uint8_t receiver[43],
   return true;
 }
 
-bool zcash_orchard_compute_cmx(
+bool zcash_orchard_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context) {
   if (!receiver || !rho || !rseed || !cmx_out) return false;
 
   uint8_t msg[136];
@@ -541,7 +542,8 @@ bool zcash_orchard_compute_cmx(
                          (const uint8_t*)"z.cash:Orchard-NoteCommit-M",
                          strlen("z.cash:Orchard-NoteCommit-M"), &q) == 0 &&
        pallas_group_hash("z.cash:Orchard-NoteCommit-r", NULL, 0, &r) == 0 &&
-       pallas_sinsemilla_short_commit(&q, &r, msg, 1086, rcm, cmx_out) == 0;
+       pallas_sinsemilla_short_commit_progress(&q, &r, msg, 1086, rcm, cmx_out,
+                                               progress, progress_context) == 0;
 
   if (!ok) {
     memzero(cmx_out, 32);
@@ -555,6 +557,13 @@ bool zcash_orchard_compute_cmx(
   memzero(&q, sizeof(q));
   memzero(&r, sizeof(r));
   return ok;
+}
+
+bool zcash_orchard_compute_cmx(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
+  return zcash_orchard_compute_cmx_with_progress(receiver, value, rho, rseed,
+                                                 cmx_out, NULL, NULL);
 }
 
 bool zcash_derive_orchard_keys_with_progress(

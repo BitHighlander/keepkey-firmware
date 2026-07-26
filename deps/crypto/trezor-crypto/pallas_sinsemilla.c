@@ -137,8 +137,9 @@ static void pack_commit_ivk_msg(const uint8_t ak[32], const uint8_t nk[32],
   }
 }
 
-int pallas_sinsemilla_hash_to_point(const curve_point* q, const uint8_t* msg,
-                                    size_t msg_bits, curve_point* out) {
+int pallas_sinsemilla_hash_to_point_progress(
+    const curve_point* q, const uint8_t* msg, size_t msg_bits, curve_point* out,
+    PallasSinsemillaProgressCallback progress, void* progress_context) {
   if (!q || (!msg && msg_bits != 0) || !out) return -1;
   if (msg_bits > PALLAS_SINSEMILLA_MAX_BITS) return -1;
   if (pallas_point_is_identity(q)) return -1;
@@ -168,11 +169,21 @@ int pallas_sinsemilla_hash_to_point(const curve_point* q, const uint8_t* msg,
     memzero(&s, sizeof(s));
     memzero(&old_acc, sizeof(old_acc));
     memzero(&tmp, sizeof(tmp));
+
+    if (progress) {
+      progress((uint32_t)(i + 1), (uint32_t)word_count, progress_context);
+    }
   }
 
   *out = acc;
   memzero(&acc, sizeof(acc));
   return 0;
+}
+
+int pallas_sinsemilla_hash_to_point(const curve_point* q, const uint8_t* msg,
+                                    size_t msg_bits, curve_point* out) {
+  return pallas_sinsemilla_hash_to_point_progress(q, msg, msg_bits, out, NULL,
+                                                  NULL);
 }
 
 int pallas_sinsemilla_hash(const curve_point* q, const uint8_t* msg,
@@ -193,12 +204,11 @@ int pallas_sinsemilla_hash(const curve_point* q, const uint8_t* msg,
   return 0;
 }
 
-static int pallas_sinsemilla_commit_prepare(const curve_point* q,
-                                            const curve_point* r,
-                                            const uint8_t* msg, size_t msg_bits,
-                                            const uint8_t blind[32],
-                                            bignum256* blind_scalar,
-                                            curve_point* hash_point) {
+static int pallas_sinsemilla_commit_prepare(
+    const curve_point* q, const curve_point* r, const uint8_t* msg,
+    size_t msg_bits, const uint8_t blind[32], bignum256* blind_scalar,
+    curve_point* hash_point, PallasSinsemillaProgressCallback progress,
+    void* progress_context) {
   if (!r || !blind || !blind_scalar || !hash_point) return -1;
   if (pallas_point_is_identity(r)) return -1;
 
@@ -207,22 +217,27 @@ static int pallas_sinsemilla_commit_prepare(const curve_point* q,
     return -1;
   }
 
-  if (pallas_sinsemilla_hash_to_point(q, msg, msg_bits, hash_point) != 0) {
+  if (pallas_sinsemilla_hash_to_point_progress(
+          q, msg, msg_bits, hash_point, progress, progress_context) != 0) {
     memzero(blind_scalar, sizeof(*blind_scalar));
     return -1;
   }
   return 0;
 }
 
-int pallas_sinsemilla_commit(const curve_point* q, const curve_point* r,
-                             const uint8_t* msg, size_t msg_bits,
-                             const uint8_t blind[32], curve_point* out) {
+int pallas_sinsemilla_commit_progress(const curve_point* q,
+                                      const curve_point* r, const uint8_t* msg,
+                                      size_t msg_bits, const uint8_t blind[32],
+                                      curve_point* out,
+                                      PallasSinsemillaProgressCallback progress,
+                                      void* progress_context) {
   if (!out) return -1;
 
   bignum256 blind_scalar;
   curve_point hash_point, blind_point, commit;
   if (pallas_sinsemilla_commit_prepare(q, r, msg, msg_bits, blind,
-                                       &blind_scalar, &hash_point) != 0) {
+                                       &blind_scalar, &hash_point, progress,
+                                       progress_context) != 0) {
     return -1;
   }
 
@@ -239,6 +254,13 @@ int pallas_sinsemilla_commit(const curve_point* q, const curve_point* r,
   return 0;
 }
 
+int pallas_sinsemilla_commit(const curve_point* q, const curve_point* r,
+                             const uint8_t* msg, size_t msg_bits,
+                             const uint8_t blind[32], curve_point* out) {
+  return pallas_sinsemilla_commit_progress(q, r, msg, msg_bits, blind, out,
+                                           NULL, NULL);
+}
+
 static int pallas_sinsemilla_commit_secret_blind(
     const curve_point* q, const curve_point* r, const uint8_t* msg,
     size_t msg_bits, const uint8_t blind[32], curve_point* out) {
@@ -247,7 +269,8 @@ static int pallas_sinsemilla_commit_secret_blind(
   bignum256 blind_scalar;
   curve_point hash_point, blind_point, commit;
   if (pallas_sinsemilla_commit_prepare(q, r, msg, msg_bits, blind,
-                                       &blind_scalar, &hash_point) != 0) {
+                                       &blind_scalar, &hash_point, NULL,
+                                       NULL) != 0) {
     return -1;
   }
 
@@ -263,13 +286,15 @@ static int pallas_sinsemilla_commit_secret_blind(
   return 0;
 }
 
-int pallas_sinsemilla_short_commit(const curve_point* q, const curve_point* r,
-                                   const uint8_t* msg, size_t msg_bits,
-                                   const uint8_t blind[32], uint8_t out[32]) {
+int pallas_sinsemilla_short_commit_progress(
+    const curve_point* q, const curve_point* r, const uint8_t* msg,
+    size_t msg_bits, const uint8_t blind[32], uint8_t out[32],
+    PallasSinsemillaProgressCallback progress, void* progress_context) {
   if (!out) return -1;
 
   curve_point commit;
-  if (pallas_sinsemilla_commit(q, r, msg, msg_bits, blind, &commit) != 0) {
+  if (pallas_sinsemilla_commit_progress(q, r, msg, msg_bits, blind, &commit,
+                                        progress, progress_context) != 0) {
     return -1;
   }
 
@@ -280,6 +305,13 @@ int pallas_sinsemilla_short_commit(const curve_point* q, const curve_point* r,
   memzero(&commit, sizeof(commit));
   memzero(&x, sizeof(x));
   return 0;
+}
+
+int pallas_sinsemilla_short_commit(const curve_point* q, const curve_point* r,
+                                   const uint8_t* msg, size_t msg_bits,
+                                   const uint8_t blind[32], uint8_t out[32]) {
+  return pallas_sinsemilla_short_commit_progress(q, r, msg, msg_bits, blind,
+                                                 out, NULL, NULL);
 }
 
 int pallas_sinsemilla_commit_ivk(const uint8_t ak[32], const uint8_t nk[32],

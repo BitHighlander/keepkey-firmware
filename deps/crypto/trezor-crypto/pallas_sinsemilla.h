@@ -16,6 +16,10 @@
 #define PALLAS_SINSEMILLA_C 253
 #define PALLAS_SINSEMILLA_MAX_BITS (PALLAS_SINSEMILLA_K * PALLAS_SINSEMILLA_C)
 
+/* Progress depends only on the public message length and loop index. */
+typedef void (*PallasSinsemillaProgressCallback)(uint32_t completed,
+                                                 uint32_t total, void* context);
+
 /*
  * Compute SinsemillaHashToPoint(Q, msg).
  *
@@ -24,6 +28,11 @@
  */
 int pallas_sinsemilla_hash_to_point(const curve_point* q, const uint8_t* msg,
                                     size_t msg_bits, curve_point* out);
+
+/* Progress-reporting form for interactive verification of public PCZT data. */
+int pallas_sinsemilla_hash_to_point_progress(
+    const curve_point* q, const uint8_t* msg, size_t msg_bits, curve_point* out,
+    PallasSinsemillaProgressCallback progress, void* progress_context);
 
 /*
  * Compute SinsemillaHash(Q, msg), returning the little-endian Pallas base-field
@@ -42,6 +51,13 @@ int pallas_sinsemilla_commit(const curve_point* q, const curve_point* r,
                              const uint8_t* msg, size_t msg_bits,
                              const uint8_t blind[32], curve_point* out);
 
+int pallas_sinsemilla_commit_progress(const curve_point* q,
+                                      const curve_point* r, const uint8_t* msg,
+                                      size_t msg_bits, const uint8_t blind[32],
+                                      curve_point* out,
+                                      PallasSinsemillaProgressCallback progress,
+                                      void* progress_context);
+
 /*
  * Compute SinsemillaShortCommit(Q, R, msg, r), returning the little-endian
  * Pallas base-field x-coordinate extracted from SinsemillaCommit.
@@ -49,6 +65,11 @@ int pallas_sinsemilla_commit(const curve_point* q, const curve_point* r,
 int pallas_sinsemilla_short_commit(const curve_point* q, const curve_point* r,
                                    const uint8_t* msg, size_t msg_bits,
                                    const uint8_t blind[32], uint8_t out[32]);
+
+int pallas_sinsemilla_short_commit_progress(
+    const curve_point* q, const curve_point* r, const uint8_t* msg,
+    size_t msg_bits, const uint8_t blind[32], uint8_t out[32],
+    PallasSinsemillaProgressCallback progress, void* progress_context);
 
 /*
  * Compute Commit^ivk.Output = SinsemillaShortCommit(

@@ -924,7 +924,25 @@ TEST(Zcash, OrchardUnifiedAddress_RejectsInvalidInputs) {
   memzero(&keys, sizeof(keys));
 }
 
-TEST(Zcash, OrchardNoteCommitment_KnownVector) {
+struct OrchardNoteProgressCapture {
+  uint32_t calls = 0;
+  uint32_t last = 0;
+  uint32_t total = 0;
+  bool monotonic = true;
+};
+
+static void capture_orchard_note_progress(uint32_t completed, uint32_t total,
+                                          void* context) {
+  auto* capture = static_cast<OrchardNoteProgressCapture*>(context);
+  if (capture->calls > 0 && completed < capture->last) {
+    capture->monotonic = false;
+  }
+  capture->calls++;
+  capture->last = completed;
+  capture->total = total;
+}
+
+TEST(Zcash, OrchardNoteCommitment_KnownVectorAndProgress) {
   const uint8_t recipient[ZCASH_ORCHARD_RAW_RECEIVER_SIZE] = {
       0x3c, 0x15, 0x0e, 0x60, 0x98, 0xb8, 0x61, 0x71, 0x6c, 0xc7, 0xf6,
       0x28, 0x35, 0xf6, 0x9f, 0xeb, 0x30, 0x21, 0x93, 0xc9, 0x26, 0x60,
@@ -945,8 +963,15 @@ TEST(Zcash, OrchardNoteCommitment_KnownVector) {
       0xfa, 0x16, 0x21, 0xd5, 0xfb, 0x98, 0x9e, 0x1d, 0xeb, 0x36};
 
   uint8_t cmx[32];
-  ASSERT_TRUE(zcash_orchard_compute_cmx(recipient, value, rho, rseed, cmx));
+  OrchardNoteProgressCapture progress;
+  ASSERT_TRUE(zcash_orchard_compute_cmx_with_progress(
+      recipient, value, rho, rseed, cmx, capture_orchard_note_progress,
+      &progress));
   EXPECT_TRUE(memcmp(cmx, expected_cmx, sizeof(cmx)) == 0);
+  EXPECT_TRUE(progress.monotonic);
+  EXPECT_EQ(109u, progress.calls);
+  EXPECT_EQ(109u, progress.last);
+  EXPECT_EQ(109u, progress.total);
 
   uint8_t tampered[ZCASH_ORCHARD_RAW_RECEIVER_SIZE];
   memcpy(tampered, recipient, sizeof(tampered));
