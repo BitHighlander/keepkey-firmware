@@ -1564,6 +1564,41 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   memzero(&keys, sizeof(keys));
 }
 
+TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x31, sizeof(alpha));
+  alpha[31] = 0;
+  uint8_t sighash[32];
+  memset(sighash, 0x5A, sizeof(sighash));
+  uint8_t rk[32];
+  ASSERT_EQ(redpallas_derive_rk(keys.ask, alpha, rk), 0);
+
+  RedPallasProgressCapture progress;
+  uint8_t signature[64];
+  ASSERT_EQ(
+      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, signature,
+                                   capture_redpallas_progress, &progress),
+      0);
+  EXPECT_TRUE(progress.monotonic);
+  EXPECT_EQ(256u, progress.calls);
+  EXPECT_EQ(1000u, progress.last);
+  EXPECT_EQ(1000u, progress.total);
+  EXPECT_EQ(redpallas_verify_digest(rk, sighash, signature), 0);
+
+  uint8_t wrong_rk[32];
+  memcpy(wrong_rk, rk, sizeof(wrong_rk));
+  wrong_rk[0] ^= 1;
+  ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, wrong_rk, sighash,
+                                         signature, nullptr, nullptr),
+            0);
+  EXPECT_NE(redpallas_verify_digest(rk, sighash, signature), 0);
+
+  memzero(&keys, sizeof(keys));
+}
+
 TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));

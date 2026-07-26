@@ -48,6 +48,7 @@ def main():
     sinsemilla = source("deps/crypto/trezor-crypto/pallas_sinsemilla.c")
     redpallas = source("deps/crypto/trezor-crypto/redpallas.c")
     zcash = source("lib/firmware/zcash.c")
+    zcash_fsm = source("lib/firmware/fsm_msg_zcash.h")
 
     # Public transaction data needs the fast compatibility implementation.
     forbid(pallas, '"pallas_ct.h"', "pallas.c public compatibility path")
@@ -112,6 +113,29 @@ def main():
             "optimized RedPallas signing")
     forbid(optimized_sign, "pallas_scalar_mult_spendauth_public",
            "optimized RedPallas signing")
+
+    pczt_sign = code_only(function_body(
+        redpallas, "redpallas_sign_digest_for_rk"))
+    require(pczt_sign, "pallas_ct_add_mod_q", "PCZT RedPallas signing")
+    require(pczt_sign, "redpallas_sign_with_rsk", "PCZT RedPallas signing")
+    forbid(pczt_sign, "pallas_point_mult(", "PCZT RedPallas signing")
+    forbid(pczt_sign, "pallas_scalar_mult_spendauth_public",
+           "PCZT RedPallas signing")
+    action_handler = code_only(function_body(zcash_fsm,
+                                             "fsm_msgZcashPCZTAction"))
+    require(action_handler, "msg->has_is_spend", "PCZT action handler")
+    require(action_handler, "if (msg->is_spend)", "PCZT action handler")
+    require(action_handler, "redpallas_sign_digest_for_rk",
+            "PCZT action handler")
+    require(action_handler, "signatures[zcash_signing.signature_count]",
+            "compact PCZT signature collection")
+    require(action_handler, "zcash_signing.signature_count++",
+            "compact PCZT signature collection")
+    require(action_handler,
+            "resp_signed->signatures_count = zcash_signing.signature_count",
+            "compact PCZT signature response")
+    forbid(action_handler, "redpallas_sign_digest_with_ak",
+           "PCZT action handler")
 
     derive_rk = code_only(function_body(redpallas, "redpallas_derive_rk"))
     require(derive_rk, "pallas_ct_add_mod_q", "redpallas_derive_rk")

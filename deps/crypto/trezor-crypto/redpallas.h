@@ -55,6 +55,21 @@ int redpallas_sign_digest(const uint8_t* ask, const uint8_t* alpha,
                           const uint8_t* sighash, uint8_t* sig_out);
 
 /**
+ * Sign a PCZT spend using its transaction-bound randomized verification key.
+ *
+ * The caller must independently bind rk to the transaction digest. If rk does
+ * not correspond to ask + alpha, the resulting signature cannot verify. This
+ * avoids a redundant fixed-base multiplication on the constrained device and
+ * leaves only the fixed-schedule secret nonce multiplication in the hot path.
+ * Progress reports public work units in the range 0..1000.
+ */
+int redpallas_sign_digest_for_rk(const uint8_t* ask, const uint8_t* alpha,
+                                 const uint8_t* rk, const uint8_t* sighash,
+                                 uint8_t* sig_out,
+                                 redpallas_progress_callback progress,
+                                 void* progress_context);
+
+/**
  * Sign using the cached public ak and verify the host-provided rk first.
  *
  * rk = ak + [alpha]G is derived entirely from public data, avoiding a second

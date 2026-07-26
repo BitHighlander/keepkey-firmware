@@ -242,21 +242,21 @@ static void redpallas_hash_challenge(const uint8_t R_bytes[32],
 typedef struct {
   redpallas_progress_callback callback;
   void* context;
+  uint32_t base;
+  uint32_t span;
 } redpallas_progress_bridge;
 
 static void redpallas_nonce_progress(uint32_t completed, uint32_t total,
                                      void* context) {
   redpallas_progress_bridge* bridge = (redpallas_progress_bridge*)context;
-  /* Public-rk validation is the first 10%; the fixed 255-round nonce
-   * multiplication is the remaining 90%. */
-  bridge->callback(100 + (900 * completed) / total, 1000, bridge->context);
+  bridge->callback(bridge->base + (bridge->span * completed) / total, 1000,
+                   bridge->context);
 }
 
-static int redpallas_sign_with_rsk(const bignum256* rsk,
-                                   const uint8_t rk_bytes[32],
-                                   const uint8_t* sighash, uint8_t* sig_out,
-                                   redpallas_progress_callback progress,
-                                   void* progress_context) {
+static int redpallas_sign_with_rsk(
+    const bignum256* rsk, const uint8_t rk_bytes[32], const uint8_t* sighash,
+    uint8_t* sig_out, redpallas_progress_callback progress,
+    void* progress_context, uint32_t progress_base, uint32_t progress_span) {
   bignum256 r, c, s;
   curve_point R_point;
   uint8_t R_bytes[32];
@@ -272,7 +272,8 @@ static int redpallas_sign_with_rsk(const bignum256* rsk,
 
   /* R = [r]G_spendauth - nonce commitment */
   if (progress) {
-    redpallas_progress_bridge bridge = {progress, progress_context};
+    redpallas_progress_bridge bridge = {progress, progress_context,
+                                        progress_base, progress_span};
     pallas_ct_point_mult_progress(&r, &spendauth_G_cache, &R_point,
                                   redpallas_nonce_progress, &bridge);
   } else {
@@ -301,6 +302,37 @@ static int redpallas_sign_with_rsk(const bignum256* rsk,
   memzero(rbuf, sizeof(rbuf));
 
   return 0;
+}
+
+int redpallas_sign_digest_for_rk(const uint8_t* ask, const uint8_t* alpha,
+                                 const uint8_t* rk, const uint8_t* sighash,
+                                 uint8_t* sig_out,
+                                 redpallas_progress_callback progress,
+                                 void* progress_context) {
+  if (!ask || !alpha || !rk || !sighash || !sig_out) return -1;
+
+  if (!spendauth_G_initialized) {
+    if (pallas_point_deserialize(pallas_spendauth_G_bytes,
+                                 &spendauth_G_cache) != 0) {
+      return -1;
+    }
+    spendauth_G_initialized = 1;
+  }
+
+  bignum256 ask_scalar, alpha_scalar, rsk;
+  if (progress) progress(0, 1000, progress_context);
+
+  bn_read_le(ask, &ask_scalar);
+  bn_read_le(alpha, &alpha_scalar);
+  bn_copy(&ask_scalar, &rsk);
+  pallas_ct_add_mod_q(&rsk, &alpha_scalar);
+
+  const int result = redpallas_sign_with_rsk(
+      &rsk, rk, sighash, sig_out, progress, progress_context, 0, 1000);
+  memzero(&ask_scalar, sizeof(ask_scalar));
+  memzero(&alpha_scalar, sizeof(alpha_scalar));
+  memzero(&rsk, sizeof(rsk));
+  return result;
 }
 
 int redpallas_derive_rk_from_ak(const uint8_t* ak, const uint8_t* alpha,
@@ -351,7 +383,7 @@ int redpallas_sign_digest_with_ak(const uint8_t* ask, const uint8_t* ak,
   pallas_ct_add_mod_q(&rsk, &alpha_scalar);
 
   int result = redpallas_sign_with_rsk(&rsk, rk_bytes, sighash, sig_out,
-                                       progress, progress_context);
+                                       progress, progress_context, 100, 900);
   memzero(&ask_scalar, sizeof(ask_scalar));
   memzero(&alpha_scalar, sizeof(alpha_scalar));
   memzero(&rsk, sizeof(rsk));
@@ -373,8 +405,8 @@ int redpallas_sign_digest(const uint8_t* ask, const uint8_t* alpha,
   /* Compatibility API: without a cached ak, derive rk from secret rsk. */
   pallas_scalar_mult_spendauth(&rsk, &rk_point);
   pallas_point_serialize(&rk_point, rk_bytes);
-  int result =
-      redpallas_sign_with_rsk(&rsk, rk_bytes, sighash, sig_out, NULL, NULL);
+  int result = redpallas_sign_with_rsk(&rsk, rk_bytes, sighash, sig_out, NULL,
+                                       NULL, 0, 1000);
 
   memzero(&ask_scalar, sizeof(ask_scalar));
   memzero(&alpha_scalar, sizeof(alpha_scalar));
