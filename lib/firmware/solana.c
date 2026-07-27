@@ -189,9 +189,21 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
 
     SolanaParsedInstruction* pi = &tx->instructions[i];
 
+    /* Retain the raw payload and account index list for EVERY instruction: a
+     * KKSOLSC1 schema reads its args out of `data` and resolves its labelled
+     * accounts through `acct_indices`. Both point into the caller's raw
+     * message buffer and share its lifetime. (The memo path below also sets
+     * data/data_len; assigning here first is harmless and covers the rest.) */
+    pi->data = instr_data;
+    pi->data_len = data_len;
+    pi->acct_indices = acct_indices;
+    pi->num_acct_indices =
+        num_acct_indices > 255 ? 255 : (uint8_t)num_acct_indices;
+
     if (external) {
       /* Accounts resolved via lookup tables: unverifiable on-device. */
       pi->type = SOL_INSTR_UNKNOWN;
+      pi->external = true;
       *force_opaque = true;
       continue;
     }
@@ -680,6 +692,164 @@ SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
   }
 
   return solana_parseLegacyTx(msg, msg_len, tx);
+}
+
+/* ------------------------------------------------------------------ */
+/*  KKSOLSC1 reusable instruction schemas                              */
+/* ------------------------------------------------------------------ */
+
+/* Display-safe: printable ASCII, and no '%' so a label can never smuggle a
+ * conversion specifier into a format string. */
+static bool schema_text_ok(const uint8_t* v, size_t len) {
+  if (len == 0) return false;
+  for (size_t i = 0; i < len; i++) {
+    if (v[i] < 0x20 || v[i] > 0x7e || v[i] == '%') return false;
+  }
+  return true;
+}
+
+static bool schema_read_text(const uint8_t** cur, const uint8_t* end, char* out,
+                             size_t max_len) {
+  if (*cur >= end) return false;
+  uint8_t len = *(*cur)++;
+  if (len == 0 || len > max_len || (size_t)(end - *cur) < len ||
+      !schema_text_ok(*cur, len)) {
+    return false;
+  }
+  memcpy(out, *cur, len);
+  out[len] = '\0';
+  *cur += len;
+  return true;
+}
+
+/* Byte width an arg consumes in the instruction data. */
+uint16_t solana_schemaArgWidth(SolanaSchemaArgType t) {
+  switch (t) {
+    case SOL_SCHEMA_ARG_U64:
+      return 8;
+    case SOL_SCHEMA_ARG_U8:
+      return 1;
+    case SOL_SCHEMA_ARG_PUBKEY:
+    case SOL_SCHEMA_ARG_OPAQUE32:
+      return 32;
+  }
+  return 0; /* unknown type — caller rejects */
+}
+
+bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
+                             SolanaInstrSchema* out) {
+  static const uint8_t magic[8] = {'K', 'K', 'S', 'O', 'L', 'S', 'C', '1'};
+  if (!payload || !out || payload_len < sizeof(magic) + 1 + SOL_PUBKEY_SIZE + 1) {
+    return false;
+  }
+  memset(out, 0, sizeof(*out));
+  const uint8_t* cur = payload;
+  const uint8_t* end = payload + payload_len;
+
+  if (memcmp(cur, magic, sizeof(magic)) != 0) return false;
+  cur += sizeof(magic);
+  if (*cur++ != 1) return false; /* version */
+
+  if ((size_t)(end - cur) < SOL_PUBKEY_SIZE + 1) return false;
+  memcpy(out->program_id, cur, SOL_PUBKEY_SIZE);
+  cur += SOL_PUBKEY_SIZE;
+
+  out->disc_len = *cur++;
+  if (out->disc_len == 0 || out->disc_len > SOL_SCHEMA_DISC_MAX ||
+      (size_t)(end - cur) < out->disc_len) {
+    return false;
+  }
+  memcpy(out->disc, cur, out->disc_len);
+  cur += out->disc_len;
+
+  if (!schema_read_text(&cur, end, out->program_name, SOL_SCHEMA_NAME_MAX) ||
+      !schema_read_text(&cur, end, out->instruction_name, SOL_SCHEMA_NAME_MAX) ||
+      cur >= end) {
+    return false;
+  }
+
+  out->num_args = *cur++;
+  if (out->num_args > SOL_SCHEMA_MAX_ARGS) return false;
+  for (uint8_t i = 0; i < out->num_args; i++) {
+    if (cur >= end) return false;
+    uint8_t type = *cur++;
+    if (solana_schemaArgWidth((SolanaSchemaArgType)type) == 0) return false;
+    out->args[i].type = (SolanaSchemaArgType)type;
+    if (!schema_read_text(&cur, end, out->args[i].label, SOL_SCHEMA_LABEL_MAX)) {
+      return false;
+    }
+  }
+
+  if (cur >= end) return false;
+  out->num_accounts = *cur++;
+  if (out->num_accounts > SOL_SCHEMA_MAX_ACCOUNTS) return false;
+  for (uint8_t i = 0; i < out->num_accounts; i++) {
+    if (cur >= end) return false;
+    out->accounts[i].index = *cur++;
+    if (!schema_read_text(&cur, end, out->accounts[i].label,
+                          SOL_SCHEMA_LABEL_MAX)) {
+      return false;
+    }
+  }
+
+  return cur == end; /* no trailing bytes */
+}
+
+bool solana_schemaApplies(const SolanaInstrSchema* schema,
+                          const SolanaParsedTx* tx, uint8_t* out_index) {
+  if (!schema || !tx || !out_index) return false;
+
+  bool found = false;
+  uint8_t match = 0;
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    const SolanaParsedInstruction* ix = &tx->instructions[i];
+    if (ix->external) continue; /* accounts not in the signed message */
+    if (memcmp(ix->program_id, schema->program_id, SOL_PUBKEY_SIZE) != 0) {
+      continue;
+    }
+    if (!ix->data || ix->data_len < schema->disc_len ||
+        memcmp(ix->data, schema->disc, schema->disc_len) != 0) {
+      continue;
+    }
+
+    /* Structural completeness: the discriminator plus every declared arg must
+     * account for the instruction data EXACTLY. Leftover bytes could carry an
+     * effect the screens never mention. */
+    uint32_t consumed = schema->disc_len;
+    for (uint8_t a = 0; a < schema->num_args; a++) {
+      consumed += solana_schemaArgWidth(schema->args[a].type);
+    }
+    if (consumed != ix->data_len) continue;
+
+    /* Every displayed account must actually exist in this instruction. */
+    bool accounts_ok = true;
+    for (uint8_t a = 0; a < schema->num_accounts; a++) {
+      if (schema->accounts[a].index >= ix->num_acct_indices) {
+        accounts_ok = false;
+        break;
+      }
+    }
+    if (!accounts_ok) continue;
+
+    if (found) return false; /* ambiguous: two instructions match */
+    found = true;
+    match = i;
+  }
+  if (!found) return false;
+
+  /* A schema explains ONE instruction. Every other instruction must be one
+   * firmware already decodes, or the message could move funds through a path
+   * no screen described. */
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    if (i == match) continue;
+    if (tx->instructions[i].external ||
+        tx->instructions[i].type == SOL_INSTR_UNKNOWN) {
+      return false;
+    }
+  }
+
+  *out_index = match;
+  return true;
 }
 
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {

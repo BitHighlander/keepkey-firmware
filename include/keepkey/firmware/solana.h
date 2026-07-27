@@ -160,6 +160,14 @@ typedef struct {
    * buffer passed to solana_inspectTx — valid only while that buffer is. */
   const uint8_t* data;
   uint16_t data_len;
+  /* Account index list, same lifetime as `data`. Needed to resolve a
+   * KKSOLSC1 schema's labelled accounts back to real pubkeys. */
+  const uint8_t* acct_indices;
+  uint8_t num_acct_indices;
+  /* True when this instruction reaches into an address-lookup table, so its
+   * accounts are NOT present in the signed message. A schema must never be
+   * applied to one: the pubkeys it would display are unknowable on-device. */
+  bool external;
 } SolanaParsedInstruction;
 
 /* Parsed transaction header */
@@ -180,6 +188,89 @@ typedef enum {
   SOL_TX_REVIEW_OPAQUE,
   SOL_TX_REVIEW_VERIFIED,
 } SolanaTxReview;
+
+/* ── KKSOLSC1: reusable instruction schemas ───────────────────────────
+ *
+ * A schema says how to READ one program instruction — it carries no amounts
+ * and no transaction hash. A trusted clearsign signer attests it ONCE per
+ * (program, discriminator); every later transaction reuses the same blob and
+ * the device decodes the values straight out of the bytes it is signing.
+ *
+ * Safety rests on structural completeness, not on binding to a transaction:
+ *   - discriminator + the declared arg widths must equal the instruction
+ *     data length EXACTLY, so no unaccounted byte can carry a second effect;
+ *   - every account index the schema displays must exist in the instruction;
+ *   - the instruction must not reach into a lookup table (see `external`);
+ *   - and every OTHER instruction in the transaction must be one firmware
+ *     already recognises, so a schema can never green-light a message whose
+ *     real effect sits in an instruction nobody described.
+ *
+ * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
+ *   magic          8   "KKSOLSC1"
+ *   version        1   = 1
+ *   program_id    32
+ *   disc_len       1   1..8
+ *   discriminator  disc_len
+ *   program name   1 + 1..SOL_SCHEMA_NAME_MAX
+ *   instr name     1 + 1..SOL_SCHEMA_NAME_MAX
+ *   n_args         1   0..SOL_SCHEMA_MAX_ARGS
+ *     per arg:     type(1) label_len(1) label
+ *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
+ *     per account: index(1) label_len(1) label
+ * No bytes may follow. Args are laid out sequentially from the end of the
+ * discriminator, in declaration order.
+ */
+#define SOL_SCHEMA_NAME_MAX 20
+#define SOL_SCHEMA_LABEL_MAX 16
+#define SOL_SCHEMA_MAX_ARGS 4
+#define SOL_SCHEMA_MAX_ACCOUNTS 4
+#define SOL_SCHEMA_DISC_MAX 8
+
+typedef enum {
+  SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
+  SOL_SCHEMA_ARG_U8 = 2,       /* 1 byte */
+  SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
+  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown truncated hex */
+} SolanaSchemaArgType;
+
+typedef struct {
+  SolanaSchemaArgType type;
+  char label[SOL_SCHEMA_LABEL_MAX + 1];
+} SolanaSchemaArg;
+
+typedef struct {
+  uint8_t index;
+  char label[SOL_SCHEMA_LABEL_MAX + 1];
+} SolanaSchemaAccount;
+
+typedef struct {
+  uint8_t program_id[SOL_PUBKEY_SIZE];
+  uint8_t disc[SOL_SCHEMA_DISC_MAX];
+  uint8_t disc_len;
+  char program_name[SOL_SCHEMA_NAME_MAX + 1];
+  char instruction_name[SOL_SCHEMA_NAME_MAX + 1];
+  SolanaSchemaArg args[SOL_SCHEMA_MAX_ARGS];
+  uint8_t num_args;
+  SolanaSchemaAccount accounts[SOL_SCHEMA_MAX_ACCOUNTS];
+  uint8_t num_accounts;
+} SolanaInstrSchema;
+
+/* Parse a KKSOLSC1 payload. Validates every length and text field and
+ * requires the payload to be consumed exactly. */
+/* Byte width one schema arg consumes in the instruction data. 0 = unknown
+ * type, which the parser rejects. */
+uint16_t solana_schemaArgWidth(SolanaSchemaArgType t);
+
+bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
+                             SolanaInstrSchema* out);
+
+/* Find the instruction this schema describes and prove it may be trusted:
+ * program id + discriminator match, the schema accounts for the instruction
+ * data exactly, its account indices are in range, the instruction is not
+ * lookup-table backed, and every other instruction in `tx` is a program
+ * firmware already decodes. Returns the matching index via `out_index`. */
+bool solana_schemaApplies(const SolanaInstrSchema* schema,
+                          const SolanaParsedTx* tx, uint8_t* out_index);
 
 /* Inspect a raw Solana transaction and classify it for signing UX */
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,

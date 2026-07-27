@@ -585,6 +585,83 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
  * the priority-fee screen — cannot drift apart. `msg` is NULL on the
  * SignMessage path (host token symbols are unavailable there). Returns false if
  * the user rejects any screen. */
+/* Render a schema-decoded instruction: who attested the schema, then the
+ * program/instruction it describes, then every labelled arg and account with
+ * values read from the transaction being signed. */
+static bool solana_confirm_schema(const SolanaInstrSchema* schema,
+                                  const SolanaParsedTx* parsed,
+                                  uint8_t ix_index, uint8_t signer_key_id) {
+  const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
+
+  /* Aliases are host-chosen and not unique; the fingerprint identifies the
+   * key that actually vouched for this decode. */
+  const char* alias = signed_metadata_signer_alias(signer_key_id);
+  char fp[METADATA_FINGERPRINT_LEN] = {0};
+  if (!signed_metadata_signer_fingerprint(signer_key_id, fp)) return false;
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Schema Signer",
+               "%s\n%s", alias ? alias : "", fp)) {
+    return false;
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, schema->program_name,
+               "%s", schema->instruction_name)) {
+    return false;
+  }
+
+  /* Args sit sequentially after the discriminator, in declaration order. */
+  uint16_t off = schema->disc_len;
+  for (uint8_t a = 0; a < schema->num_args; a++) {
+    const SolanaSchemaArg* arg = &schema->args[a];
+    char value[64] = {0};
+    switch (arg->type) {
+      case SOL_SCHEMA_ARG_U64: {
+        uint64_t v = 0;
+        for (int b = 0; b < 8; b++) v |= ((uint64_t)ix->data[off + b]) << (8 * b);
+        snprintf(value, sizeof(value), "%" PRIu64, v);
+        break;
+      }
+      case SOL_SCHEMA_ARG_U8:
+        snprintf(value, sizeof(value), "%u", (unsigned)ix->data[off]);
+        break;
+      case SOL_SCHEMA_ARG_PUBKEY: {
+        size_t enc = sizeof(value);
+        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value, &enc)) {
+          return false;
+        }
+        break;
+      }
+      case SOL_SCHEMA_ARG_OPAQUE32:
+        /* Opaque bytes have no meaning to show — abbreviate so the screen
+         * stays readable while still binding the user to a distinct value. */
+        snprintf(value, sizeof(value), "%02x%02x%02x%02x…%02x%02x%02x%02x",
+                 ix->data[off], ix->data[off + 1], ix->data[off + 2],
+                 ix->data[off + 3], ix->data[off + 28], ix->data[off + 29],
+                 ix->data[off + 30], ix->data[off + 31]);
+        break;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label, "%s",
+                 value)) {
+      return false;
+    }
+    off += solana_schemaArgWidth(arg->type);
+  }
+
+  for (uint8_t a = 0; a < schema->num_accounts; a++) {
+    const SolanaSchemaAccount* sa = &schema->accounts[a];
+    const uint8_t* pubkey = parsed->accounts[ix->acct_indices[sa->index]];
+    char addr[64];
+    size_t enc = sizeof(addr);
+    if (!solana_base58_encode(pubkey, SOL_PUBKEY_SIZE, addr, &enc)) return false;
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, sa->label, "%s",
+                 addr)) {
+      return false;
+    }
+  }
+
+  return solana_confirm_priority_fee(
+      parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
+}
+
 static bool solana_confirm_verified_tx(const SolanaParsedTx* parsed,
                                        const SolanaSignTx* msg) {
   for (uint8_t i = 0; i < parsed->num_instructions; i++) {
@@ -695,10 +772,56 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
+  /* KKSOLSC1: a signed, REUSABLE instruction schema can rescue a transaction
+   * that is opaque only because one program is unrecognised. The schema names
+   * no amounts and no transaction — the device reads the values out of the
+   * bytes it is about to sign — so one attestation covers every future
+   * transaction to that program. Present-but-invalid schema material fails
+   * the request; it never silently degrades to blind signing. */
+  SolanaInstrSchema schema;
+  uint8_t schema_ix = 0;
+  bool schema_verified = false;
+  bool has_any_schema = msg->has_schema_payload || msg->has_schema_signature ||
+                        msg->has_schema_signer_key_id;
+  if (has_any_schema) {
+    if (!msg->has_schema_payload || !msg->has_schema_signature ||
+        !msg->has_schema_signer_key_id ||
+        msg->schema_signer_key_id >= METADATA_MAX_KEYS ||
+        !solana_parseInstrSchema(msg->schema_payload.bytes,
+                                 msg->schema_payload.size, &schema) ||
+        !signed_metadata_verify_attestation(
+            (uint8_t)msg->schema_signer_key_id, msg->schema_payload.bytes,
+            msg->schema_payload.size, msg->schema_signature.bytes,
+            msg->schema_signature.size) ||
+        !solana_schemaApplies(&schema, &parsed, &schema_ix)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid Solana instruction schema"));
+      layoutHome();
+      return;
+    }
+    schema_verified = true;
+  }
+
   if (tx_review == SOL_TX_REVIEW_VERIFIED) {
     /* Per-instruction disclosure + priority fee, shared with SignMessage. */
     if (!solana_confirm_verified_tx(&parsed, msg)) {
       memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+  } else if (schema_verified) {
+    /* Opaque only because of the schema'd program: show the attested decode
+     * instead of the blind-sign prompt. solana_schemaApplies() already proved
+     * every other instruction is one firmware decodes natively. */
+    if (!solana_confirm_schema(&schema, &parsed, schema_ix,
+                               (uint8_t)msg->schema_signer_key_id)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
       layoutHome();
