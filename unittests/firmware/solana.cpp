@@ -1159,3 +1159,58 @@ TEST(Solana, SchemaRejectsOutOfRangeAccount) {
   uint8_t idx = 0xFF;
   EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
 }
+
+/* Cross-language parity: these exact bytes are emitted by the KeepKey SDK's
+ * KKSOLSC1 serializer (keepkey-sdk tests/fixtures/solana-schema.js, catalog
+ * entries relayDepositNative / relayDepositToken). The SDK and this parser are
+ * independent implementations of the same format — if either drifts, the host
+ * ships a schema the device refuses, or worse renders differently than the
+ * signer intended. Regenerate with:
+ *   node -e "const f=require('./tests/fixtures/solana-schema');
+ *            console.log(f.serializeSchema(f.CATALOG.relayDepositNative).toString('hex'))"
+ */
+static size_t hex_to_bytes(const char* hex, uint8_t* out, size_t out_max) {
+  size_t n = strlen(hex) / 2;
+  if (n > out_max) return 0;
+  for (size_t i = 0; i < n; i++) {
+    unsigned v = 0;
+    sscanf(hex + 2 * i, "%2x", &v);
+    out[i] = (uint8_t)v;
+  }
+  return n;
+}
+
+TEST(Solana, SchemaParsesSdkSerializedPayloadNative) {
+  /* Verbatim output of the SDK serializer — do not hand-edit. */
+  const char* kSdkHex =
+      "4b4b534f4c53433101792689378ecd51d80406eb0caa3b62795beb10b6c5dc96bc2e0df03cbfee1abf"
+      "080d9e0ddf5fd51c06"
+      "0c52656c617920427269646765"
+      "0d6465706f7369744e6174697665"
+      "020106416d6f756e7404054f7264657201"
+      "03055661756c74";
+  uint8_t blob[256];
+  size_t len = hex_to_bytes(kSdkHex, blob, sizeof(blob));
+  ASSERT_EQ(len, 101u);
+
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  EXPECT_STREQ(s.program_name, "Relay Bridge");
+  EXPECT_STREQ(s.instruction_name, "depositNative");
+  EXPECT_EQ(s.disc_len, 8);
+  EXPECT_EQ(s.num_args, 2);
+  EXPECT_EQ(s.args[0].type, SOL_SCHEMA_ARG_U64);
+  EXPECT_STREQ(s.args[0].label, "Amount");
+  EXPECT_EQ(s.args[1].type, SOL_SCHEMA_ARG_OPAQUE32);
+  EXPECT_STREQ(s.args[1].label, "Order");
+  EXPECT_EQ(s.num_accounts, 1);
+  EXPECT_EQ(s.accounts[0].index, 3);
+  EXPECT_STREQ(s.accounts[0].label, "Vault");
+
+  /* Coverage must equal Relay's real 48-byte instruction data. */
+  uint32_t covered = s.disc_len;
+  for (uint8_t i = 0; i < s.num_args; i++) {
+    covered += solana_schemaArgWidth(s.args[i].type);
+  }
+  EXPECT_EQ(covered, 48u);
+}
