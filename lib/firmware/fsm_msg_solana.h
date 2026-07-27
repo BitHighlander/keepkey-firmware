@@ -603,8 +603,8 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
     return false;
   }
 
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, schema->program_name,
-               "%s", schema->instruction_name)) {
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               schema->program_name, "%s", schema->instruction_name)) {
     return false;
   }
 
@@ -616,7 +616,8 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
     switch (arg->type) {
       case SOL_SCHEMA_ARG_U64: {
         uint64_t v = 0;
-        for (int b = 0; b < 8; b++) v |= ((uint64_t)ix->data[off + b]) << (8 * b);
+        for (int b = 0; b < 8; b++)
+          v |= ((uint64_t)ix->data[off + b]) << (8 * b);
         snprintf(value, sizeof(value), "%" PRIu64, v);
         break;
       }
@@ -625,7 +626,8 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
         break;
       case SOL_SCHEMA_ARG_PUBKEY: {
         size_t enc = sizeof(value);
-        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value, &enc)) {
+        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value,
+                                  &enc)) {
           return false;
         }
         break;
@@ -639,8 +641,8 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
                  ix->data[off + 30], ix->data[off + 31]);
         break;
     }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label, "%s",
-                 value)) {
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
+                 "%s", value)) {
       return false;
     }
     off += solana_schemaArgWidth(arg->type);
@@ -651,7 +653,8 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
     const uint8_t* pubkey = parsed->accounts[ix->acct_indices[sa->index]];
     char addr[64];
     size_t enc = sizeof(addr);
-    if (!solana_base58_encode(pubkey, SOL_PUBKEY_SIZE, addr, &enc)) return false;
+    if (!solana_base58_encode(pubkey, SOL_PUBKEY_SIZE, addr, &enc))
+      return false;
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, sa->label, "%s",
                  addr)) {
       return false;

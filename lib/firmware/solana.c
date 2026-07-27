@@ -739,7 +739,8 @@ uint16_t solana_schemaArgWidth(SolanaSchemaArgType t) {
 bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
                              SolanaInstrSchema* out) {
   static const uint8_t magic[8] = {'K', 'K', 'S', 'O', 'L', 'S', 'C', '1'};
-  if (!payload || !out || payload_len < sizeof(magic) + 1 + SOL_PUBKEY_SIZE + 1) {
+  if (!payload || !out ||
+      payload_len < sizeof(magic) + 1 + SOL_PUBKEY_SIZE + 1) {
     return false;
   }
   memset(out, 0, sizeof(*out));
@@ -763,7 +764,8 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
   cur += out->disc_len;
 
   if (!schema_read_text(&cur, end, out->program_name, SOL_SCHEMA_NAME_MAX) ||
-      !schema_read_text(&cur, end, out->instruction_name, SOL_SCHEMA_NAME_MAX) ||
+      !schema_read_text(&cur, end, out->instruction_name,
+                        SOL_SCHEMA_NAME_MAX) ||
       cur >= end) {
     return false;
   }
@@ -775,7 +777,8 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
     uint8_t type = *cur++;
     if (solana_schemaArgWidth((SolanaSchemaArgType)type) == 0) return false;
     out->args[i].type = (SolanaSchemaArgType)type;
-    if (!schema_read_text(&cur, end, out->args[i].label, SOL_SCHEMA_LABEL_MAX)) {
+    if (!schema_read_text(&cur, end, out->args[i].label,
+                          SOL_SCHEMA_LABEL_MAX)) {
       return false;
     }
   }
