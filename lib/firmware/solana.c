@@ -479,7 +479,15 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
         *has_unknown = true;
       }
     } else if (memcmp(pi->program_id, SOL_ATA_PROGRAM, SOL_PUBKEY_SIZE) == 0) {
-      if (data_len == 0 || (data_len == 1 && instr_data[0] == 0)) {
+      /* 0 = Create, 1 = CreateIdempotent, and empty data is the legacy
+       * encoding of Create. Idempotent takes the SAME accounts in the same
+       * order and creates the same account — it merely succeeds instead of
+       * failing when one already exists — so it displays identically. Wallets
+       * emit it by default (a token transfer whose recipient may lack an ATA),
+       * and rejecting it forced the whole transaction opaque: an SPL transfer
+       * that is otherwise fully decodable would blind-sign. */
+      if (data_len == 0 ||
+          (data_len == 1 && (instr_data[0] == 0 || instr_data[0] == 1))) {
         pi->type = SOL_INSTR_ATA_CREATE;
         copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
         copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);

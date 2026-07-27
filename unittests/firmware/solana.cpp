@@ -1214,3 +1214,89 @@ TEST(Solana, SchemaParsesSdkSerializedPayloadNative) {
   }
   EXPECT_EQ(covered, 48u);
 }
+
+/* An SPL token transfer whose recipient may not have an associated token
+ * account: wallets prepend CreateAssociatedTokenAccountIdempotent (data [1]),
+ * then TransferChecked. This is what Pioneer builds for a USDT swap deposit,
+ * and it is the ordinary shape of a token send to a fresh address.
+ *
+ * Idempotent takes the SAME accounts as Create in the same order and creates
+ * the same account — it only declines to fail when one already exists — so it
+ * displays identically. Rejecting it made ONE unrecognised instruction force
+ * the entire transaction opaque, so a fully decodable SPL transfer
+ * blind-signed ("Enable AdvancedMode to blind-sign").
+ */
+static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
+                                         bool include_ata_byte) {
+  /* accounts: 0..3 instruction accounts, 4 = ATA program, 5 = token program */
+  const int n_accounts = 4;
+  size_t pos = 0;
+  raw[pos++] = 1; /* num_required_sigs */
+  raw[pos++] = 0;
+  raw[pos++] = 2;                        /* two readonly unsigned (programs) */
+  raw[pos++] = (uint8_t)(n_accounts + 2); /* total accounts */
+  for (int i = 0; i < n_accounts; i++) {
+    memset(raw + pos, 0x11 + i, 32);
+    pos += 32;
+  }
+  memcpy(raw + pos, SOL_ATA_PROGRAM, 32);
+  pos += 32;
+  memcpy(raw + pos, SOL_TOKEN_PROGRAM, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* recent blockhash */
+  pos += 32;
+
+  raw[pos++] = 2; /* two instructions */
+
+  /* 1) ATA create (idempotent or classic) — accounts 0..3 */
+  raw[pos++] = (uint8_t)n_accounts; /* ATA program index */
+  raw[pos++] = (uint8_t)n_accounts;
+  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  if (include_ata_byte) {
+    raw[pos++] = 1; /* data_len */
+    raw[pos++] = ata_ix_byte;
+  } else {
+    raw[pos++] = 0; /* empty data = legacy Create */
+  }
+
+  /* 2) TransferChecked: [12, amount u64 LE, decimals] over 4 accounts */
+  raw[pos++] = (uint8_t)(n_accounts + 1); /* token program index */
+  raw[pos++] = (uint8_t)n_accounts;
+  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  raw[pos++] = 10; /* data_len */
+  raw[pos++] = SOL_TOKEN_TRANSFER_CHECKED_IX;
+  for (int i = 0; i < 8; i++) raw[pos++] = (i == 0) ? 0x40 : 0x00; /* amount */
+  raw[pos++] = 6; /* decimals (USDT) */
+  return pos;
+}
+
+TEST(Solana, AtaCreateIdempotentThenTransferIsVerified) {
+  uint8_t raw[1024];
+  size_t len = build_ata_then_transfer_tx(raw, 1, true); /* 1 = CreateIdempotent */
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx.num_instructions, 2);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+  EXPECT_EQ(tx.instructions[1].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+}
+
+TEST(Solana, AtaCreateClassicStillVerified) {
+  uint8_t raw[1024];
+  size_t len = build_ata_then_transfer_tx(raw, 0, true); /* 0 = Create */
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+
+  len = build_ata_then_transfer_tx(raw, 0, false); /* legacy empty data */
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+}
+
+/* RecoverNested (2) and anything else stays unknown: different accounts and
+ * different meaning, so it must not borrow the create screens. */
+TEST(Solana, AtaUnknownInstructionStillOpaque) {
+  uint8_t raw[1024];
+  size_t len = build_ata_then_transfer_tx(raw, 2, true); /* RecoverNested */
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+}
