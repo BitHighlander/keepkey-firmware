@@ -101,6 +101,12 @@ bool signed_metadata_available(void);
  * match). The v2 enforce path requires it; exported for unit testing. */
 bool signed_metadata_schema_decoded(void);
 
+/* True when the matched schema is v2 AND the transaction moves native value.
+ * A v2 schema cannot express a value binding, so the caller MUST still show
+ * the amount/recipient screen; only the raw-calldata screen may be replaced
+ * by the decoded display. */
+bool signed_metadata_schema_moves_value(void);
+
 void signed_metadata_clear(void);
 
 /*
