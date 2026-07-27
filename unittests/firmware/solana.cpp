@@ -971,3 +971,332 @@ TEST(Solana, StakeAuthorizeCanonicalIsVerified) {
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
 }
+
+/* ── KKSOLSC1 reusable instruction schemas ────────────────────────────
+ *
+ * Vector is the real Relay bridge deposit captured from api.relay.link on
+ * 2026-07-27: program 99vQwtBwYtrqqD9YSXbdum3KBdxPAVxYTaQ3cfnJSrN2, 48 bytes
+ * of data = 8-byte discriminator + u64 amount + 32-byte order id. The amount
+ * word tracked the requested input exactly across three different quotes.
+ */
+static const uint8_t kRelayDisc[8] = {0x0d, 0x9e, 0x0d, 0xdf,
+                                      0x5f, 0xd5, 0x1c, 0x06};
+
+/* Build a KKSOLSC1 payload: one u64 arg ("Amount") and one account ("Vault"). */
+static size_t build_relay_schema(uint8_t* out, const uint8_t* program,
+                                 uint8_t n_args = 1) {
+  size_t p = 0;
+  memcpy(out + p, "KKSOLSC1", 8);
+  p += 8;
+  out[p++] = 1; /* version */
+  memcpy(out + p, program, 32);
+  p += 32;
+  out[p++] = 8; /* disc_len */
+  memcpy(out + p, kRelayDisc, 8);
+  p += 8;
+  out[p++] = 5;
+  memcpy(out + p, "Relay", 5);
+  p += 5; /* program name */
+  out[p++] = 7;
+  memcpy(out + p, "deposit", 7);
+  p += 7; /* instruction name */
+  out[p++] = n_args;
+  if (n_args >= 1) {
+    out[p++] = SOL_SCHEMA_ARG_U64;
+    out[p++] = 6;
+    memcpy(out + p, "Amount", 6);
+    p += 6;
+  }
+  if (n_args >= 2) {
+    out[p++] = SOL_SCHEMA_ARG_OPAQUE32;
+    out[p++] = 5;
+    memcpy(out + p, "Order", 5);
+    p += 5;
+  }
+  out[p++] = 1; /* one displayed account */
+  out[p++] = 0; /* index 0 */
+  out[p++] = 5;
+  memcpy(out + p, "Vault", 5);
+  p += 5;
+  return p;
+}
+
+/* Relay's instruction data: discriminator + amount + 32-byte order id. */
+static void build_relay_data(uint8_t* d, uint64_t amount) {
+  memcpy(d, kRelayDisc, 8);
+  for (int i = 0; i < 8; i++) d[8 + i] = (uint8_t)(amount >> (8 * i));
+  memset(d + 16, 0xAB, 32);
+}
+
+TEST(Solana, SchemaParsesCanonicalPayload) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  EXPECT_EQ(s.disc_len, 8);
+  EXPECT_EQ(s.num_args, 2);
+  EXPECT_EQ(s.num_accounts, 1);
+  EXPECT_STREQ(s.program_name, "Relay");
+  EXPECT_STREQ(s.instruction_name, "deposit");
+  EXPECT_STREQ(s.args[0].label, "Amount");
+}
+
+TEST(Solana, SchemaRejectsTrailingBytes) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  blob[len] = 0x00; /* one byte too many */
+  SolanaInstrSchema s;
+  EXPECT_FALSE(solana_parseInstrSchema(blob, len + 1, &s));
+}
+
+TEST(Solana, SchemaRejectsUnsafeLabel) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 1);
+  /* Corrupt the "Amount" label with a format specifier. */
+  for (size_t i = 0; i + 6 <= len; i++) {
+    if (memcmp(blob + i, "Amount", 6) == 0) {
+      blob[i] = '%';
+      break;
+    }
+  }
+  SolanaInstrSchema s;
+  EXPECT_FALSE(solana_parseInstrSchema(blob, len, &s));
+}
+
+/* The core safety property: a schema that does not account for every byte of
+ * the instruction data must NOT apply. Here the data is Relay's real 48 bytes
+ * but the schema declares only the 8-byte amount, leaving 32 bytes unexplained. */
+TEST(Solana, SchemaRejectsIncompleteCoverage) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, program, 2, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 1); /* amount only: 8+8 != 48 */
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* Full coverage (8 disc + 8 amount + 32 order = 48) applies, and the amount is
+ * readable straight out of the signed bytes. */
+TEST(Solana, SchemaAppliesWithFullCoverage) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, program, 2, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaApplies(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0);
+
+  uint64_t amount = 0;
+  const SolanaParsedInstruction* ix = &tx.instructions[idx];
+  for (int i = 0; i < 8; i++) {
+    amount |= ((uint64_t)ix->data[s.disc_len + i]) << (8 * i);
+  }
+  EXPECT_EQ(amount, 526490980ULL);
+}
+
+/* A schema for a different program must never match. */
+TEST(Solana, SchemaRejectsProgramMismatch) {
+  uint8_t program[32], other[32];
+  memset(program, 0x42, sizeof(program));
+  memset(other, 0x43, sizeof(other));
+  uint8_t d[48];
+  build_relay_data(d, 1ULL);
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, program, 2, d, sizeof(d));
+  SolanaParsedTx tx;
+  solana_inspectTx(raw, pos, &tx);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, other, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* An account index the instruction doesn't have must not be displayable. */
+TEST(Solana, SchemaRejectsOutOfRangeAccount) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 1ULL);
+  uint8_t raw[512];
+  /* Only ONE instruction account, but the schema displays index 0..; bump the
+   * schema's account index past the end. */
+  size_t pos = build_single_instr_tx(raw, program, 1, d, sizeof(d));
+  SolanaParsedTx tx;
+  solana_inspectTx(raw, pos, &tx);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  s.accounts[0].index = 9; /* beyond this instruction's account list */
+  uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* Cross-language parity: these exact bytes are emitted by the KeepKey SDK's
+ * KKSOLSC1 serializer (keepkey-sdk tests/fixtures/solana-schema.js, catalog
+ * entries relayDepositNative / relayDepositToken). The SDK and this parser are
+ * independent implementations of the same format — if either drifts, the host
+ * ships a schema the device refuses, or worse renders differently than the
+ * signer intended. Regenerate with:
+ *   node -e "const f=require('./tests/fixtures/solana-schema');
+ *            console.log(f.serializeSchema(f.CATALOG.relayDepositNative).toString('hex'))"
+ */
+static size_t hex_to_bytes(const char* hex, uint8_t* out, size_t out_max) {
+  size_t n = strlen(hex) / 2;
+  if (n > out_max) return 0;
+  for (size_t i = 0; i < n; i++) {
+    unsigned v = 0;
+    sscanf(hex + 2 * i, "%2x", &v);
+    out[i] = (uint8_t)v;
+  }
+  return n;
+}
+
+TEST(Solana, SchemaParsesSdkSerializedPayloadNative) {
+  /* Verbatim output of the SDK serializer — do not hand-edit. */
+  const char* kSdkHex =
+      "4b4b534f4c53433101792689378ecd51d80406eb0caa3b62795beb10b6c5dc96bc2e0df03cbfee1abf"
+      "080d9e0ddf5fd51c06"
+      "0c52656c617920427269646765"
+      "0d6465706f7369744e6174697665"
+      "020106416d6f756e7404054f7264657201"
+      "03055661756c74";
+  uint8_t blob[256];
+  size_t len = hex_to_bytes(kSdkHex, blob, sizeof(blob));
+  ASSERT_EQ(len, 101u);
+
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  EXPECT_STREQ(s.program_name, "Relay Bridge");
+  EXPECT_STREQ(s.instruction_name, "depositNative");
+  EXPECT_EQ(s.disc_len, 8);
+  EXPECT_EQ(s.num_args, 2);
+  EXPECT_EQ(s.args[0].type, SOL_SCHEMA_ARG_U64);
+  EXPECT_STREQ(s.args[0].label, "Amount");
+  EXPECT_EQ(s.args[1].type, SOL_SCHEMA_ARG_OPAQUE32);
+  EXPECT_STREQ(s.args[1].label, "Order");
+  EXPECT_EQ(s.num_accounts, 1);
+  EXPECT_EQ(s.accounts[0].index, 3);
+  EXPECT_STREQ(s.accounts[0].label, "Vault");
+
+  /* Coverage must equal Relay's real 48-byte instruction data. */
+  uint32_t covered = s.disc_len;
+  for (uint8_t i = 0; i < s.num_args; i++) {
+    covered += solana_schemaArgWidth(s.args[i].type);
+  }
+  EXPECT_EQ(covered, 48u);
+}
+
+/* An SPL token transfer whose recipient may not have an associated token
+ * account: wallets prepend CreateAssociatedTokenAccountIdempotent (data [1]),
+ * then TransferChecked. This is what Pioneer builds for a USDT swap deposit,
+ * and it is the ordinary shape of a token send to a fresh address.
+ *
+ * Idempotent takes the SAME accounts as Create in the same order and creates
+ * the same account — it only declines to fail when one already exists — so it
+ * displays identically. Rejecting it made ONE unrecognised instruction force
+ * the entire transaction opaque, so a fully decodable SPL transfer
+ * blind-signed ("Enable AdvancedMode to blind-sign").
+ */
+static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
+                                         bool include_ata_byte) {
+  /* accounts: 0..3 instruction accounts, 4 = ATA program, 5 = token program */
+  const int n_accounts = 4;
+  size_t pos = 0;
+  raw[pos++] = 1; /* num_required_sigs */
+  raw[pos++] = 0;
+  raw[pos++] = 2;                        /* two readonly unsigned (programs) */
+  raw[pos++] = (uint8_t)(n_accounts + 2); /* total accounts */
+  for (int i = 0; i < n_accounts; i++) {
+    memset(raw + pos, 0x11 + i, 32);
+    pos += 32;
+  }
+  memcpy(raw + pos, SOL_ATA_PROGRAM, 32);
+  pos += 32;
+  memcpy(raw + pos, SOL_TOKEN_PROGRAM, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* recent blockhash */
+  pos += 32;
+
+  raw[pos++] = 2; /* two instructions */
+
+  /* 1) ATA create (idempotent or classic) — accounts 0..3 */
+  raw[pos++] = (uint8_t)n_accounts; /* ATA program index */
+  raw[pos++] = (uint8_t)n_accounts;
+  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  if (include_ata_byte) {
+    raw[pos++] = 1; /* data_len */
+    raw[pos++] = ata_ix_byte;
+  } else {
+    raw[pos++] = 0; /* empty data = legacy Create */
+  }
+
+  /* 2) TransferChecked: [12, amount u64 LE, decimals] over 4 accounts */
+  raw[pos++] = (uint8_t)(n_accounts + 1); /* token program index */
+  raw[pos++] = (uint8_t)n_accounts;
+  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  raw[pos++] = 10; /* data_len */
+  raw[pos++] = SOL_TOKEN_TRANSFER_CHECKED_IX;
+  for (int i = 0; i < 8; i++) raw[pos++] = (i == 0) ? 0x40 : 0x00; /* amount */
+  raw[pos++] = 6; /* decimals (USDT) */
+  return pos;
+}
+
+TEST(Solana, AtaCreateIdempotentThenTransferIsVerified) {
+  uint8_t raw[1024];
+  size_t len = build_ata_then_transfer_tx(raw, 1, true); /* 1 = CreateIdempotent */
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx.num_instructions, 2);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+  EXPECT_EQ(tx.instructions[1].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+}
+
+TEST(Solana, AtaCreateClassicStillVerified) {
+  uint8_t raw[1024];
+  size_t len = build_ata_then_transfer_tx(raw, 0, true); /* 0 = Create */
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+
+  len = build_ata_then_transfer_tx(raw, 0, false); /* legacy empty data */
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
+}
+
+/* RecoverNested (2) and anything else stays unknown: different accounts and
+ * different meaning, so it must not borrow the create screens. */
+TEST(Solana, AtaUnknownInstructionStillOpaque) {
+  uint8_t raw[1024];
+  size_t len = build_ata_then_transfer_tx(raw, 2, true); /* RecoverNested */
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+}

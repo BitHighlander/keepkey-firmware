@@ -797,7 +797,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       if (signed_metadata_confirm()) {
         // Decoded who/what/why approved; raw-data confirm is suppressed. The
         // signature is bound to this metadata's tx hash in send_signature().
-        needs_confirm = false;
+        //
+        // A v2 schema describes calldata only and cannot bind msg->value, so
+        // for a payable call the amount/recipient screen MUST still run —
+        // otherwise ETH would move with the amount never displayed. The device
+        // reads that amount from the transaction it is about to sign, so the
+        // screen shows a fact, not an unattested claim.
+        needs_confirm = signed_metadata_schema_moves_value();
         data_needs_confirm = false;
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,

@@ -25,6 +25,9 @@ static bool metadata_signer_loaded = false;
  * the tx calldata. The v2 enforce path REQUIRES it — v2 has no committed
  * tx_hash, so this is the explicit proof (not an implicit call-order
  * assumption) that the displayed values came from the calldata being signed. */
+/* Set during matching: this tx carries native value, so the amount screen
+ * must NOT be suppressed even though the schema matched. */
+static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
 
@@ -249,6 +252,11 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
     switch (format) {
       case ARG_FORMAT_ADDRESS:
       case ARG_FORMAT_AMOUNT:
+      /* BYTES covers an opaque fixed word — an order/request id, say — which
+       * a router genuinely cannot render as an address or an amount. It still
+       * consumes exactly one 32-byte ABI word, so structural completeness is
+       * unaffected; only the rendering differs (hex, first 16 bytes). */
+      case ARG_FORMAT_BYTES:
         arg->value_len = 0; /* filled from the tx calldata at decode time */
         break;
       case ARG_FORMAT_TOKEN_AMOUNT: {
@@ -355,6 +363,7 @@ static bool decode_v2_args(SignedMetadata* md, const EthereumSignTx* msg) {
         arg->value_len = 20;
         break;
       case ARG_FORMAT_AMOUNT:
+      case ARG_FORMAT_BYTES:
         memcpy(arg->value, word, 32);
         arg->value_len = 32;
         break;
@@ -392,6 +401,10 @@ static void bn_from_metadata_bytes(const uint8_t* value, size_t value_len,
 bool signed_metadata_available(void) { return metadata_available; }
 
 bool signed_metadata_schema_decoded(void) { return metadata_schema_decoded; }
+
+bool signed_metadata_schema_moves_value(void) {
+  return metadata_schema_moves_value;
+}
 
 void signed_metadata_clear(void) {
   memzero(&stored_metadata, sizeof(stored_metadata));
@@ -724,15 +737,19 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   }
 
   if (stored_metadata.version == METADATA_VERSION_SCHEMA) {
-    /* v2 commits to calldata only — never to msg->value — and a v2 match
-     * suppresses the native-value confirm screen in ethereum.c. A payable
-     * method could then clear-sign an arbitrary ETH transfer whose value is
-     * never shown. The schema cannot express a value binding, so refuse to
-     * clear-sign any tx that moves native value; fall through to the blind-sign
-     * path (AdvancedMode) instead. (v1 is safe: its tx_hash covers value.) */
+    /* v2 commits to calldata only — never to msg->value. A v2 match otherwise
+     * suppresses the native-value confirm screen in ethereum.c, which would
+     * let a payable method clear-sign an ETH transfer whose amount is never
+     * shown. Rather than refuse every payable call (which forced blind-signing
+     * on exactly the routes that most need review), record that this tx moves
+     * value; ethereum.c keeps the amount/recipient screen when it does. The
+     * device reads that amount from the transaction it is signing, so nothing
+     * unattested is displayed and the schema stays transaction-independent. */
+    metadata_schema_moves_value = false;
     for (uint32_t i = 0; i < msg->value.size; i++) {
       if (msg->value.bytes[i] != 0) {
-        return false;
+        metadata_schema_moves_value = true;
+        break;
       }
     }
     /* v2 has no committed values or tx_hash: decode the args straight from the
