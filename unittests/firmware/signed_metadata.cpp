@@ -1259,6 +1259,73 @@ TEST_F(SignedMetadataTest, V2SchemaPayableFlagsRealisticValue) {
   EXPECT_TRUE(signed_metadata_schema_moves_value());
 }
 
+/* THE transaction this whole path exists for: a real Relay ETH->SOL bridge
+ * deposit, captured from api.relay.link on 2026-07-27.
+ *
+ *   to       0x4cd00e387622c35bddb9b4c962c136462338bc31
+ *   value    7980129999999999 wei (0.00798 ETH)  <-- PAYABLE
+ *   calldata 0x49290c1c + address(depositor) + bytes32(orderId)  = 68 bytes
+ *
+ * Three things had to be true for this to clear-sign, and each was a real
+ * blocker: the call is payable (was refused outright), one arg is an opaque
+ * word (BYTES was not accepted in the v2 arg parser), and 4 + 2*32 must
+ * exactly equal the calldata length (structural completeness). */
+TEST_F(SignedMetadataTest, V2SchemaDecodesRelayEthToSolanaDeposit) {
+  const uint8_t RELAY_ROUTER[20] = {0x4c, 0xd0, 0x0e, 0x38, 0x76, 0x22, 0xc3,
+                                    0x5b, 0xdd, 0xb9, 0xb4, 0x96, 0x2c, 0x13,
+                                    0x64, 0x62, 0x33, 0x8b, 0xc3, 0x31};
+  const uint8_t SEL[4] = {0x49, 0x29, 0x0c, 0x1c};
+  /* depositor 0x909Ef6B32DfDc12CA86aA710b54c991af3C5F82E */
+  const uint8_t DEPOSITOR[20] = {0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1,
+                                 0x2c, 0xa8, 0x6a, 0xa7, 0x10, 0xb5, 0x4c,
+                                 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  /* orderId 0x8a2c1211...cb1, verbatim from the quote */
+  const uint8_t ORDER_ID[32] = {
+      0x8a, 0x2c, 0x12, 0x11, 0x97, 0xef, 0xc9, 0x5c, 0x42, 0xf5, 0x31,
+      0x42, 0xab, 0x40, 0x97, 0x35, 0xee, 0x35, 0x32, 0x87, 0xf8, 0x77,
+      0xed, 0x4d, 0x35, 0x1f, 0x63, 0x09, 0x4d, 0x5b, 0xfc, 0xb1};
+
+  V2Spec s = v2_base_spec();
+  s.contract.assign(RELAY_ROUTER, RELAY_ROUTER + 20);
+  s.selector.assign(SEL, SEL + 4);
+  s.method = "bridgeDeposit";
+  s.args.clear();
+  s.args.push_back(v2_addr("depositor"));
+  s.args.push_back(V2Arg{"orderId", ARG_FORMAT_BYTES, 0, ""});
+
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  std::vector<uint8_t> data(SEL, SEL + 4);
+  put_addr_word(data, DEPOSITOR);
+  data.insert(data.end(), ORDER_ID, ORDER_ID + 32);
+  ASSERT_EQ(data.size(), 68u);  /* 4 + 2*32, exactly — no remainder */
+
+  EthereumSignTx msg;
+  make_v2_msg(&msg, RELAY_ROUTER, data, /*has_len=*/true, (uint32_t)data.size());
+  /* 0.00798 ETH — the payable part that used to force blind-signing. */
+  const uint8_t VALUE[] = {0x1c, 0x51, 0x45, 0xd9, 0xb6, 0xb3, 0xff};
+  msg.has_value = true;
+  msg.value.size = sizeof(VALUE);
+  memcpy(msg.value.bytes, VALUE, sizeof(VALUE));
+
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  /* ...and the ETH amount screen must still run, since the schema cannot
+   * bind the value. */
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+
+  const SignedMetadata* md = signed_metadata_get();
+  ASSERT_NE(md, nullptr);
+  EXPECT_EQ(md->num_args, 2);
+  EXPECT_EQ(md->args[0].format, ARG_FORMAT_ADDRESS);
+  EXPECT_EQ(md->args[0].value_len, 20);
+  EXPECT_EQ(memcmp(md->args[0].value, DEPOSITOR, 20), 0);
+  EXPECT_EQ(md->args[1].format, ARG_FORMAT_BYTES);
+  EXPECT_EQ(md->args[1].value_len, 32);
+  EXPECT_EQ(memcmp(md->args[1].value, ORDER_ID, 32), 0);
+}
+
 /* Relay solver swap: selector 0x02d5f05f(token address, amount, requestId) —
  * three fixed single words, EXACTLY the shape pulled from real relay traffic
  * (100-byte calldata: 4 + 3*32, zero remainder, verified across 22 live
@@ -1384,12 +1451,34 @@ TEST_F(SignedMetadataTest, V2RejectsSelectorMismatch) {
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));
 }
 
-/* An unsupported display format (dynamic types out of scope) -> MALFORMED. */
+/* An unsupported display format -> MALFORMED.
+ *
+ * v2 renders fixed single ABI words only: ADDRESS, AMOUNT, BYTES and
+ * TOKEN_AMOUNT. STRING is dynamic (offset + length + payload), so it cannot be
+ * read from one 32-byte word and must stay out of scope — accepting it would
+ * break the "declared widths equal the calldata length" rule that makes a
+ * schema safe without a tx_hash. An out-of-range format byte must fail too. */
 TEST_F(SignedMetadataTest, V2RejectsUnsupportedFormat) {
   V2Spec s = v2_base_spec();
-  s.args[1] = V2Arg{"data", ARG_FORMAT_BYTES, 0, ""};
+  s.args[1] = V2Arg{"data", ARG_FORMAT_STRING, 0, ""};
   std::vector<uint8_t> blob = sign_body(build_v2_body(s));
   ExpectMalformed(blob, TEST_KEY_ID);
+
+  V2Spec bogus = v2_base_spec();
+  bogus.args[1] = V2Arg{"data", (ArgFormat)0x7f, 0, ""};
+  std::vector<uint8_t> blob2 = sign_body(build_v2_body(bogus));
+  ExpectMalformed(blob2, TEST_KEY_ID);
+}
+
+/* BYTES IS supported in v2: an opaque fixed word (a router's order id) still
+ * occupies exactly one ABI word, so it neither breaks structural completeness
+ * nor needs a dynamic decoder. */
+TEST_F(SignedMetadataTest, V2AcceptsBytesArg) {
+  V2Spec s = v2_base_spec();
+  s.args[1] = V2Arg{"orderId", ARG_FORMAT_BYTES, 0, ""};
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
 }
 
 /* Tampered v2 body must fail the signature check. */

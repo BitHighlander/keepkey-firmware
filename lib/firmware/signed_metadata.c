@@ -252,6 +252,11 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
     switch (format) {
       case ARG_FORMAT_ADDRESS:
       case ARG_FORMAT_AMOUNT:
+      /* BYTES covers an opaque fixed word — an order/request id, say — which
+       * a router genuinely cannot render as an address or an amount. It still
+       * consumes exactly one 32-byte ABI word, so structural completeness is
+       * unaffected; only the rendering differs (hex, first 16 bytes). */
+      case ARG_FORMAT_BYTES:
         arg->value_len = 0; /* filled from the tx calldata at decode time */
         break;
       case ARG_FORMAT_TOKEN_AMOUNT: {
@@ -358,6 +363,7 @@ static bool decode_v2_args(SignedMetadata* md, const EthereumSignTx* msg) {
         arg->value_len = 20;
         break;
       case ARG_FORMAT_AMOUNT:
+      case ARG_FORMAT_BYTES:
         memcpy(arg->value, word, 32);
         arg->value_len = 32;
         break;
