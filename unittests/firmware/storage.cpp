@@ -1006,16 +1006,18 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(memcmp(session.storageKey, new_storage_key, 64) == 0);
 }
 
-// The V18 record layout remains reserved for compatibility, but RC18 must
-// neither write nor accept those unauthenticated public-storage trust anchors.
-TEST(Storage, ClearsignIdentityV18RecordsAreRetired) {
+// V18 records now PERSIST an approved signer across reboots, so a user is not
+// trained to re-approve a trust anchor every boot — a habit a malicious host
+// exploits by simply asking for it. Two properties still have to hold: flash we
+// cannot authenticate must never yield a usable anchor from garbage, and slot 0
+// (the firmware built-in) must never be claimable from public storage.
+TEST(Storage, ClearsignIdentityV18RecordsRoundTrip) {
   ConfigFlash start;
   memset(&start, 0, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
   start.storage.version = STORAGE_VERSION;
   start.storage.encrypted_sec_version = STORAGE_VERSION;
 
-  // Even a populated in-memory legacy record is serialized as zeros.
   ClearsignIdentity* a = &start.storage.pub.clearsign_identities[0];
   a->present = true;
   a->key_id = 1;
@@ -1029,26 +1031,129 @@ TEST(Storage, ClearsignIdentityV18RecordsAreRetired) {
 
   std::vector<uint8_t> flash(3480, 0);
   storage_writeV18((char*)&flash[0], flash.size(), &start);
-  const size_t identity_block_off = 44 + 1501 + V17_ENCSEC_SIZE;
-  const size_t identity_block_len =
-      PERSISTENT_IDENTITY_COUNT * (71 + CLEARSIGN_ICON_MAX);
-  for (size_t i = 0; i < identity_block_len; i++) {
-    ASSERT_EQ(0, flash[identity_block_off + i]) << "byte " << i;
-  }
 
-  // Simulate attacker-controlled legacy flash. Deserialization must scrub the
-  // full in-memory block rather than parse or expose any of it.
-  memset(&flash[identity_block_off], 0xA5, identity_block_len);
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
   storage_readV18(&end, (const char*)&flash[0], flash.size());
-  const uint8_t* retired =
-      reinterpret_cast<const uint8_t*>(end.storage.pub.clearsign_identities);
-  for (size_t i = 0; i < sizeof(end.storage.pub.clearsign_identities); i++) {
-    ASSERT_EQ(0, retired[i]) << "byte " << i;
-  }
+  const ClearsignIdentity* r = &end.storage.pub.clearsign_identities[0];
+  ASSERT_TRUE(r->present);
+  EXPECT_EQ(r->key_id, 1);
+  EXPECT_EQ(memcmp(r->pubkey, a->pubkey, sizeof(a->pubkey)), 0);
+  EXPECT_STREQ(r->alias, "CI Test");
+  EXPECT_EQ(r->icon_len, 2);
+  EXPECT_EQ(r->icon[1], 0xFF);
+  // An unwritten slot stays absent.
+  EXPECT_FALSE(end.storage.pub.clearsign_identities[1].present);
+}
+
+// Attacker-controlled flash must not deserialize into a trust anchor.
+TEST(Storage, ClearsignIdentityRejectsGarbageFlash) {
+  std::vector<uint8_t> flash(3480, 0);
+  const size_t off = 44 + 1501 + V17_ENCSEC_SIZE;
+  const size_t len = PERSISTENT_IDENTITY_COUNT * (71 + CLEARSIGN_ICON_MAX);
+  memset(&flash[off], 0xA5, len);
+
+  ConfigFlash end;
+  memset(&end, 0xCC, sizeof(end));
+  storage_readV18(&end, (const char*)&flash[0], flash.size());
   for (int k = 0; k < PERSISTENT_IDENTITY_COUNT; k++) {
-    const ClearsignIdentity* r = &end.storage.pub.clearsign_identities[k];
-    ASSERT_FALSE(r->present) << "present " << k;
+    ASSERT_FALSE(end.storage.pub.clearsign_identities[k].present) << "slot " << k;
   }
+}
+
+// A record claiming slot 0 (the firmware built-in) or an impossible icon length
+// is dropped, not clamped: a half-valid anchor is worse than none.
+TEST(Storage, ClearsignIdentityRejectsMaliciousRecord) {
+  std::vector<uint8_t> flash(3480, 0);
+  const size_t off = 44 + 1501 + V17_ENCSEC_SIZE;
+  const size_t rec_len = 71 + CLEARSIGN_ICON_MAX;
+
+  // Record 0: well-formed but claims the built-in slot.
+  flash[off + 0] = 1;
+  flash[off + 1] = 0;
+
+  // Record 1: valid slot, but an icon longer than the record can hold.
+  flash[off + rec_len + 0] = 1;
+  flash[off + rec_len + 1] = 2;
+  const uint16_t bogus = CLEARSIGN_ICON_MAX + 1;
+  flash[off + rec_len + 69] = (uint8_t)(bogus & 0xff);
+  flash[off + rec_len + 70] = (uint8_t)(bogus >> 8);
+
+  ConfigFlash end;
+  memset(&end, 0xCC, sizeof(end));
+  storage_readV18(&end, (const char*)&flash[0], flash.size());
+  EXPECT_FALSE(end.storage.pub.clearsign_identities[0].present);
+  EXPECT_FALSE(end.storage.pub.clearsign_identities[1].present);
+}
+
+/* ── Persisted clear-sign signers ─────────────────────────────────────
+ *
+ * A signer the user approved once, kept across reboots. The point is to avoid
+ * training users to re-approve a trust anchor every boot — a habit a malicious
+ * host exploits by simply asking. Persistence grants no authority a session
+ * signer lacks; a non-built-in signer still carries the per-transaction
+ * "NOT verified by KeepKey" warning.
+ */
+TEST(Storage, ClearsignIdentityRoundTrips) {
+  storage_reset();
+  const uint8_t pubkey[33] = {0x02, 0xaa, 0xbb, 0xcc};
+  ASSERT_TRUE(storage_setClearsignIdentity(1, pubkey, "Acme Trust", NULL, 0, 0, 0));
+
+  uint8_t out[33] = {0};
+  char alias[32] = {0};
+  uint8_t icon[8] = {0};
+  uint8_t w = 0, h = 0;
+  uint16_t len = 0;
+  ASSERT_TRUE(storage_getClearsignIdentity(1, out, alias, sizeof(alias), icon,
+                                           sizeof(icon), &w, &h, &len));
+  EXPECT_EQ(memcmp(out, pubkey, sizeof(pubkey)), 0);
+  EXPECT_STREQ(alias, "Acme Trust");
+}
+
+/* Slot 0 is the firmware built-in. Public storage must never be able to claim
+ * it, or an attacker who rewrites flash could impersonate a KeepKey-blessed
+ * signer instead of a merely user-approved one. */
+TEST(Storage, ClearsignIdentityRejectsBuiltinSlot) {
+  storage_reset();
+  const uint8_t pubkey[33] = {0x02};
+  EXPECT_FALSE(storage_setClearsignIdentity(0, pubkey, "nope", NULL, 0, 0, 0));
+  EXPECT_FALSE(storage_getClearsignIdentity(0, NULL, NULL, 0, NULL, 0, NULL,
+                                            NULL, NULL));
+  EXPECT_FALSE(storage_setClearsignIdentity(STORAGE_CLEARSIGN_PERSIST_SLOTS + 1,
+                                            pubkey, "nope", NULL, 0, 0, 0));
+}
+
+/* A wipe must take trust anchors with it — a re-sold or reset device must not
+ * silently keep trusting the previous owner's signer. */
+TEST(Storage, ClearsignIdentityClearedByReset) {
+  storage_reset();
+  const uint8_t pubkey[33] = {0x02, 0x11};
+  ASSERT_TRUE(storage_setClearsignIdentity(1, pubkey, "Acme", NULL, 0, 0, 0));
+  ASSERT_TRUE(storage_getClearsignIdentity(1, NULL, NULL, 0, NULL, 0, NULL,
+                                           NULL, NULL));
+  storage_reset();
+  EXPECT_FALSE(storage_getClearsignIdentity(1, NULL, NULL, 0, NULL, 0, NULL,
+                                            NULL, NULL));
+}
+
+/* Revocation: a user must be able to withdraw durable trust. */
+TEST(Storage, ClearsignIdentityRevocable) {
+  storage_reset();
+  const uint8_t pubkey[33] = {0x02, 0x22};
+  ASSERT_TRUE(storage_setClearsignIdentity(2, pubkey, "Beta", NULL, 0, 0, 0));
+  EXPECT_TRUE(storage_clearClearsignIdentity(2));
+  EXPECT_FALSE(storage_getClearsignIdentity(2, NULL, NULL, 0, NULL, 0, NULL,
+                                            NULL, NULL));
+  /* Clearing an empty slot reports false rather than pretending to succeed. */
+  EXPECT_FALSE(storage_clearClearsignIdentity(2));
+}
+
+/* An over-long icon must be refused outright: flash we cannot fully trust must
+ * not yield a half-valid record. */
+TEST(Storage, ClearsignIdentityRejectsOversizeIcon) {
+  storage_reset();
+  const uint8_t pubkey[33] = {0x02, 0x33};
+  std::vector<uint8_t> icon(CLEARSIGN_ICON_MAX + 1, 0xAB);
+  EXPECT_FALSE(storage_setClearsignIdentity(1, pubkey, "Big", icon.data(), 40,
+                                            64, (uint16_t)icon.size()));
 }

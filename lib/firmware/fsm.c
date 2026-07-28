@@ -247,6 +247,12 @@ void fsm_init(void) {
 
   msg_init();
 
+#if !BITCOIN_ONLY
+  /* Reload signers the user already approved, so durable trust does not decay
+   * into a per-boot prompt they learn to click through. */
+  signed_metadata_restore_persisted();
+#endif
+
   txin_dgst_initialize();
 }
 

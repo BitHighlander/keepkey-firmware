@@ -107,6 +107,13 @@ bool signed_metadata_schema_decoded(void);
  * by the decoded display. */
 bool signed_metadata_schema_moves_value(void);
 
+/* Reload persisted signers into their RAM slots. Call once at boot after
+ * storage is available. Persistence is a convenience — it spares re-approving
+ * the same signer every boot — and grants no authority a session-loaded signer
+ * lacks; the per-transaction "NOT verified by KeepKey" warning still applies.
+ */
+void signed_metadata_restore_persisted(void);
+
 void signed_metadata_clear(void);
 
 /*

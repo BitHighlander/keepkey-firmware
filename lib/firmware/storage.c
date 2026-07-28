@@ -32,6 +32,7 @@
 
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/signed_metadata.h"
 
 #include "keepkey/board/common.h"
 #include "keepkey/board/supervise.h"
@@ -1127,14 +1128,56 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
 
 void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
   storage_writeStorageV17(ptr, len, storage);
-  memzero(ptr + CLEARSIGN_IDENTITY_BLOCK_OFF,
-          PERSISTENT_IDENTITY_COUNT * CLEARSIGN_IDENTITY_SERIALIZED_LEN);
+  char* block = ptr + CLEARSIGN_IDENTITY_BLOCK_OFF;
+  memzero(block, PERSISTENT_IDENTITY_COUNT * CLEARSIGN_IDENTITY_SERIALIZED_LEN);
+  for (uint32_t i = 0; i < PERSISTENT_IDENTITY_COUNT; i++) {
+    const ClearsignIdentity* id = &storage->pub.clearsign_identities[i];
+    if (!id->present) continue;
+    char* rec = block + i * CLEARSIGN_IDENTITY_SERIALIZED_LEN;
+    rec[0] = 1;
+    rec[1] = (char)id->key_id;
+    memcpy(rec + 2, id->pubkey, sizeof(id->pubkey));
+    memcpy(rec + 35, id->alias, CLEARSIGN_IDENTITY_ALIAS_SIZE);
+    rec[67] = (char)id->icon_w;
+    rec[68] = (char)id->icon_h;
+    rec[69] = (char)(id->icon_len & 0xff);
+    rec[70] = (char)((id->icon_len >> 8) & 0xff);
+    if (id->icon_len <= CLEARSIGN_ICON_MAX) {
+      memcpy(rec + 71, id->icon, id->icon_len);
+    }
+  }
 }
 
 void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
   storage_readStorageV17(storage, ptr, len);
+  const char* block = ptr + CLEARSIGN_IDENTITY_BLOCK_OFF;
   memzero(storage->pub.clearsign_identities,
           sizeof(storage->pub.clearsign_identities));
+  for (uint32_t i = 0; i < PERSISTENT_IDENTITY_COUNT; i++) {
+    const char* rec = block + i * CLEARSIGN_IDENTITY_SERIALIZED_LEN;
+    if (rec[0] != 1) continue;
+    ClearsignIdentity* id = &storage->pub.clearsign_identities[i];
+    uint8_t key_id = (uint8_t)rec[1];
+    uint16_t icon_len = (uint16_t)((uint8_t)rec[69] | ((uint8_t)rec[70] << 8));
+    /* Slot 0 is reserved for a built-in key and must never be reloadable from
+     * public storage, and an over-long icon would read past the record. A
+     * record failing either check is dropped, not clamped: flash we cannot
+     * fully trust must not produce a half-valid trust anchor. */
+    if (key_id == 0 || key_id >= METADATA_MAX_KEYS ||
+        icon_len > CLEARSIGN_ICON_MAX) {
+      continue;
+    }
+    id->key_id = key_id;
+    memcpy(id->pubkey, rec + 2, sizeof(id->pubkey));
+    memcpy(id->alias, rec + 35, CLEARSIGN_IDENTITY_ALIAS_SIZE);
+    id->alias[CLEARSIGN_IDENTITY_ALIAS_SIZE - 1] = '\0';
+    id->icon_w = (uint8_t)rec[67];
+    id->icon_h = (uint8_t)rec[68];
+    id->icon_len = icon_len;
+    memcpy(id->icon, rec + 71, icon_len);
+    /* Only a record that survived every check counts as present. */
+    id->present = true;
+  }
 }
 
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len) {
@@ -2308,3 +2351,72 @@ const char* storage_getMnemonic(void) { return debuglink_mnemonic; }
 
 HDNode* storage_getNode(void) { return &debuglink_node; }
 #endif
+
+/* ── Persisted clear-sign identities ──────────────────────────────────
+ *
+ * A signer a user has approved once, kept across reboots so they are not
+ * trained to re-approve a trust anchor on every boot — a habit a malicious
+ * host could exploit by simply asking. The records live in the public section
+ * alongside the policies (AdvancedMode among them), are cleared by
+ * storage_reset() with the rest of that struct, and confer no authority a
+ * session-loaded signer lacks.
+ */
+_Static_assert(STORAGE_CLEARSIGN_PERSIST_SLOTS == PERSISTENT_IDENTITY_COUNT,
+               "public persistable-slot count must match the storage records");
+
+bool storage_setClearsignIdentity(uint8_t key_id, const uint8_t* pubkey,
+                                  const char* alias, const uint8_t* icon,
+                                  uint8_t icon_w, uint8_t icon_h,
+                                  uint16_t icon_len) {
+  if (key_id == 0 || key_id > PERSISTENT_IDENTITY_COUNT || !pubkey || !alias) {
+    return false;
+  }
+  if (icon_len > CLEARSIGN_ICON_MAX) return false;
+
+  ClearsignIdentity* id =
+      &shadow_config.storage.pub.clearsign_identities[key_id - 1];
+  memzero(id, sizeof(*id));
+  id->key_id = key_id;
+  memcpy(id->pubkey, pubkey, sizeof(id->pubkey));
+  strlcpy(id->alias, alias, sizeof(id->alias));
+  if (icon && icon_len > 0) {
+    memcpy(id->icon, icon, icon_len);
+    id->icon_w = icon_w;
+    id->icon_h = icon_h;
+    id->icon_len = icon_len;
+  }
+  id->present = true;
+  storage_commit();
+  return true;
+}
+
+bool storage_getClearsignIdentity(uint8_t key_id, uint8_t* pubkey, char* alias,
+                                  size_t alias_len, uint8_t* icon,
+                                  size_t icon_max, uint8_t* icon_w,
+                                  uint8_t* icon_h, uint16_t* icon_len) {
+  if (key_id == 0 || key_id > PERSISTENT_IDENTITY_COUNT) return false;
+  const ClearsignIdentity* id =
+      &shadow_config.storage.pub.clearsign_identities[key_id - 1];
+  if (!id->present) return false;
+  if (pubkey) memcpy(pubkey, id->pubkey, sizeof(id->pubkey));
+  if (alias && alias_len) strlcpy(alias, id->alias, alias_len);
+  if (icon && icon_len) {
+    *icon_len = id->icon_len <= icon_max ? id->icon_len : 0;
+    if (*icon_len) memcpy(icon, id->icon, *icon_len);
+  }
+  if (icon_w) *icon_w = id->icon_w;
+  if (icon_h) *icon_h = id->icon_h;
+  return true;
+}
+
+/* Forget a persisted signer. The RAM slot is untouched: revoking durable trust
+ * should not silently break the session the user is in the middle of. */
+bool storage_clearClearsignIdentity(uint8_t key_id) {
+  if (key_id == 0 || key_id > PERSISTENT_IDENTITY_COUNT) return false;
+  ClearsignIdentity* id =
+      &shadow_config.storage.pub.clearsign_identities[key_id - 1];
+  if (!id->present) return false;
+  memzero(id, sizeof(*id));
+  storage_commit();
+  return true;
+}

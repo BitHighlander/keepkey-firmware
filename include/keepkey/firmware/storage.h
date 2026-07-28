@@ -168,6 +168,28 @@ typedef struct _PolicyType PolicyType;
 /// \returns true iff assignment was successful.
 bool storage_setPolicy(const char* policy_name, bool enabled);
 
+/// Clear-sign signer slots that can be persisted: slots 1..N. Slot 0 is
+/// reserved for a key built into the firmware image and is never persistable.
+/// Static-asserted against the storage record count in storage.c.
+#define STORAGE_CLEARSIGN_PERSIST_SLOTS 2
+
+/// \brief Persist a clear-sign signer so a user approves it once, not once per
+/// boot. key_id is 1..PERSISTENT_IDENTITY_COUNT; slot 0 is reserved for a
+/// firmware built-in key and is never persistable.
+bool storage_setClearsignIdentity(uint8_t key_id, const uint8_t* pubkey,
+                                  const char* alias, const uint8_t* icon,
+                                  uint8_t icon_w, uint8_t icon_h,
+                                  uint16_t icon_len);
+
+/// \brief Read back a persisted signer. False when the slot is empty.
+bool storage_getClearsignIdentity(uint8_t key_id, uint8_t* pubkey, char* alias,
+                                  size_t alias_len, uint8_t* icon,
+                                  size_t icon_max, uint8_t* icon_w,
+                                  uint8_t* icon_h, uint16_t* icon_len);
+
+/// \brief Forget a persisted signer. Leaves the RAM slot alone.
+bool storage_clearClearsignIdentity(uint8_t key_id);
+
 /// \brief Copy out all the policies in storage
 /// \param policies[out]  Where to write the policies.
 void storage_getPolicies(PolicyType* policy_data);

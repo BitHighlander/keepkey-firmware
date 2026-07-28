@@ -1,4 +1,5 @@
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/storage.h"
 
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/draw.h"     // draw_bitmap_mono_rle_valid
@@ -468,10 +469,14 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
                                   const char* alias, const uint8_t* icon,
                                   uint8_t icon_w, uint8_t icon_h,
                                   uint16_t icon_len, bool persist) {
-  /* Fail before changing the RAM slot. A caller asking for persistence must
+  /* Fail before changing the RAM slot: a caller asking for persistence must
    * never receive a session-only downgrade it could mistake for durable trust.
-   * Persistence can return only after authenticated storage binding exists. */
-  if (persist || key_id >= METADATA_MAX_KEYS) {
+   *
+   * Slot 0 is reserved for a key built into the firmware image and protected by
+   * the firmware signature; nothing loaded at runtime may claim it, and nothing
+   * from public storage may be persisted into it. */
+  if (key_id >= METADATA_MAX_KEYS) return false;
+  if (persist && (key_id == 0 || key_id > STORAGE_CLEARSIGN_PERSIST_SLOTS)) {
     return false;
   }
   memcpy(loaded_pubkeys[key_id], pubkey, sizeof(loaded_pubkeys[key_id]));
@@ -502,9 +507,53 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
   (void)icon_h;
 #endif
 
+  /* Persist only after the RAM slot is set, so a storage failure cannot leave
+   * flash claiming a signer the session does not have. Slots map 1:1 onto the
+   * reserved records (slot N -> record N-1); slot 0 is never persistable. */
+  if (persist && !storage_setClearsignIdentity(key_id, pubkey, alias, icon,
+                                               icon_w, icon_h, icon_len)) {
+    /* Storage refused. Undo the RAM slot rather than leave the user believing
+     * a durable trust anchor was installed. */
+    memzero(loaded_pubkeys[key_id], sizeof(loaded_pubkeys[key_id]));
+    memzero(loaded_aliases[key_id], sizeof(loaded_aliases[key_id]));
+    return false;
+  }
+
   /* Replacing a signer invalidates anything the old one verified. */
   signed_metadata_clear();
   return true;
+}
+
+/* Reload persisted signers into their RAM slots. Called once at boot, after
+ * storage is available. A persisted identity is only ever a CONVENIENCE: it
+ * spares the user re-approving the same signer every boot. It grants no extra
+ * authority — a non-built-in signer still triggers the per-transaction
+ * "NOT verified by KeepKey" warning exactly as a session-loaded one does. */
+void signed_metadata_restore_persisted(void) {
+  for (uint8_t slot = 1; slot <= STORAGE_CLEARSIGN_PERSIST_SLOTS; slot++) {
+    uint8_t pubkey[33];
+    char alias[METADATA_ALIAS_MAX_LEN + 1];
+    uint8_t icon[METADATA_ICON_MAX];
+    uint8_t icon_w = 0, icon_h = 0;
+    uint16_t icon_len = 0;
+    if (!storage_getClearsignIdentity(slot, pubkey, alias, sizeof(alias), icon,
+                                      sizeof(icon), &icon_w, &icon_h,
+                                      &icon_len)) {
+      continue;
+    }
+    if (slot >= METADATA_MAX_KEYS) continue;
+    memcpy(loaded_pubkeys[slot], pubkey, sizeof(loaded_pubkeys[slot]));
+    strlcpy(loaded_aliases[slot], alias, sizeof(loaded_aliases[slot]));
+#if !ZCASH_PRIVACY
+    memzero(loaded_icons[slot], sizeof(loaded_icons[slot]));
+    if (icon_len > 0 && icon_len <= METADATA_ICON_MAX) {
+      memcpy(loaded_icons[slot], icon, icon_len);
+      loaded_icon_w[slot] = icon_w;
+      loaded_icon_h[slot] = icon_h;
+      loaded_icon_len[slot] = icon_len;
+    }
+#endif
+  }
 }
 
 /* Resolve the alias for a session slot. */
