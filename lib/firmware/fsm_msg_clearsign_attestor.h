@@ -17,14 +17,10 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* Clearsign attestor: turn a KeepKey (today the emulator, tomorrow a device in
- * a rack) into the signing enclave for clear-sign schemas.
- *
- * This replaces the rejected "persist signers to public flash" design: the
- * VERIFYING devices get a production key baked into signature-protected
- * firmware, and the ISSUING KeepKey holds the private key in its seed, where a
- * hardware wallet's keys already belong. No trust anchors in writable flash,
- * no per-boot signer prompts.
+/* Clearsign attestor: let a KeepKey issue clear-sign schema attestations from
+ * its seed. It ships in the regular firmware, but every operation is gated by
+ * AdvancedMode. This lets builders prove the self-service workflow before a
+ * future release pins a KeepKey production identity.
  *
  * The attestor NEVER signs arbitrary bytes. It parses the submitted payload
  * with the same validator verifying devices run (solana_parseInstrSchema for
@@ -37,11 +33,6 @@
  * ATTESTOR_PATH (a dedicated hardened path outside every coin space), so PIN
  * unlock gates its availability, seed backup is key backup, and wipe destroys
  * it.
- *
- * Build-gated: CLEARSIGN_ATTESTOR is OFF for device firmware (the 7.15 line
- * has no ROM headroom) and opt-in for emulator/rack builds. Wire IDs 1700-1703
- * are reserved regardless, so promoting the physical-device tier later is a
- * flag flip rather than a protocol change.
  *
  * ponytail: KKSOLSC1 only. EVM v2 metadata blobs are attestable in principle
  * but sign a different range (payload minus the 65-byte signature trailer, see
@@ -57,12 +48,12 @@
 static const uint32_t ATTESTOR_PATH[ATTESTOR_PATH_LEN] = {
     0x80000000 | 0x4B4B,
     0x80000000 | 0x4353,
-    0x80000000 | 0,
+    0x80000000u,
 };
 
 /* Derive the attestation node. Returns NULL and sends the failure itself. */
-static HDNode *attestor_getNode(void) {
-  HDNode *node = fsm_getDerivedNode(SECP256K1_NAME, ATTESTOR_PATH,
+static HDNode* attestor_getNode(void) {
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, ATTESTOR_PATH,
                                     ATTESTOR_PATH_LEN, NULL);
   if (!node) return NULL;
   hdnode_fill_public_key(node);
@@ -70,14 +61,16 @@ static HDNode *attestor_getNode(void) {
 }
 
 void fsm_msgClearsignAttestorGetPublicKey(
-    const ClearsignAttestorGetPublicKey *msg) {
+    const ClearsignAttestorGetPublicKey* msg) {
   (void)msg;
   RESP_INIT(ClearsignAttestorPublicKey);
 
   CHECK_INITIALIZED
   CHECK_PIN
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
+              _("AdvancedMode required for clearsign attestation"));
 
-  HDNode *node = attestor_getNode();
+  HDNode* node = attestor_getNode();
   if (!node) return;
 
   resp->has_public_key = true;
@@ -89,11 +82,13 @@ void fsm_msgClearsignAttestorGetPublicKey(
   layoutHome();
 }
 
-void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign *msg) {
+void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
   RESP_INIT(ClearsignAttestorSignature);
 
   CHECK_INITIALIZED
   CHECK_PIN
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
+              _("AdvancedMode required for clearsign attestation"));
 
   CHECK_PARAM(msg->has_payload && msg->payload.size > 0, "Missing payload");
 
@@ -136,15 +131,15 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign *msg) {
    * no pagination, so a batched list of max-length labels scrolls off. A label
    * nobody saw is a label nobody checked. */
   for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
-    confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-                        "Arg %u shows\n%s", (unsigned)(i + 1),
-                        schema.args[i].label);
+    confirmed =
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                "Arg %u shows\n%s", (unsigned)(i + 1), schema.args[i].label);
   }
   for (uint8_t i = 0; confirmed && i < schema.num_accounts; i++) {
-    confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-                        "Account #%u shows\n%s",
-                        (unsigned)schema.accounts[i].index,
-                        schema.accounts[i].label);
+    confirmed =
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                "Account #%u shows\n%s", (unsigned)schema.accounts[i].index,
+                schema.accounts[i].label);
   }
   memzero(&schema, sizeof(schema));
   if (!confirmed) {
@@ -153,7 +148,7 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign *msg) {
     return;
   }
 
-  HDNode *node = attestor_getNode();
+  HDNode* node = attestor_getNode();
   if (!node) return;
 
   /* Plain ECDSA over SHA256(payload): exactly what

@@ -4,7 +4,6 @@
   "frame_margin": 4096,
   "variants": {
     "full": {},
-    "bitcoin-only": {},
-    "attestor": {}
+    "bitcoin-only": {}
   }
 }

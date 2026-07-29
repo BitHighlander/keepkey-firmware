@@ -88,11 +88,9 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg);
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg);
 void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg);
 
-#if CLEARSIGN_ATTESTOR
 void fsm_msgClearsignAttestorGetPublicKey(
     const ClearsignAttestorGetPublicKey* msg);
 void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg);
-#endif
 
 void fsm_msgNanoGetAddress(NanoGetAddress* msg);
 void fsm_msgNanoSignTx(NanoSignTx* msg);

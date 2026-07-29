@@ -22,9 +22,12 @@ extern "C" {
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h" /* SolanaTokenInfo, solana_token_info_trusted */
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+
+void setup(void);
 }
 
 #include "gtest/gtest.h"
@@ -217,14 +220,28 @@ void make_matching_msg(EthereumSignTx* msg) {
 
 const char* TEST_ALIAS = "CI Test";
 
+void set_advanced_mode_for_test(bool enabled) {
+  static bool storage_ready = false;
+  if (!storage_ready) {
+    setup();
+    storage_init();
+    storage_ready = true;
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", enabled));
+}
+
 class SignedMetadataTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    set_advanced_mode_for_test(true);
     signed_metadata_clear_signers();
     signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                  NULL, 0, 0, 0, false);
   }
-  void TearDown() override { signed_metadata_clear_signers(); }
+  void TearDown() override {
+    signed_metadata_clear_signers();
+    set_advanced_mode_for_test(false);
+  }
 
   void ExpectMalformed(const std::vector<uint8_t>& blob, uint8_t key_id) {
     EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), key_id),
@@ -260,6 +277,23 @@ TEST_F(SignedMetadataTest, ValidVerifiedSlot3) {
   EXPECT_EQ(memcmp(m->selector, SEL_TRANSFER, 4), 0);
   EXPECT_EQ(memcmp(m->tx_hash, TX_HASH, 32), 0);
   EXPECT_EQ(m->key_id, TEST_KEY_ID);
+}
+
+TEST_F(SignedMetadataTest, RuntimeMetadataIsInertOutsideAdvancedMode) {
+  std::vector<uint8_t> blob = base_blob();
+  set_advanced_mode_for_test(false);
+  ExpectMalformed(blob, TEST_KEY_ID);
+
+  const uint8_t data[] = "advanced-mode-gate";
+  uint8_t digest[32];
+  uint8_t sig[64];
+  sha256_Raw(data, sizeof(data) - 1, digest);
+  ASSERT_EQ(ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest, sig, NULL, NULL),
+            0);
+  EXPECT_FALSE(signed_metadata_verify_attestation(
+      TEST_KEY_ID, data, sizeof(data) - 1, sig, sizeof(sig)));
+
+  set_advanced_mode_for_test(true);
 }
 
 TEST_F(SignedMetadataTest, ValidOpaqueClassification) {
@@ -1583,6 +1617,7 @@ TEST(SignedMetadataEnforceSchema, ReliedButUnavailableOrUnverifiedFails) {
 // path): a valid signature from a loaded signer verifies; tampering, an
 // unloaded key_id, or a wrong signature length are all rejected.
 TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
+  set_advanced_mode_for_test(true);
   signed_metadata_clear_signers();
   signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                nullptr, 0, 0, 0, false);
@@ -1609,12 +1644,14 @@ TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
       signed_metadata_verify_attestation(TEST_KEY_ID, data, len, sig, 63));
 
   signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
 }
 
 // End-to-end test of the production Solana token-definition path: builds the
 // exact domain-separated preimage solana_token_info_trusted() reconstructs,
 // signs it, and checks acceptance + every rejection branch.
 TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
+  set_advanced_mode_for_test(true);
   signed_metadata_clear_signers();
   signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                nullptr, 0, 0, 0, false);
@@ -1676,6 +1713,7 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   EXPECT_FALSE(solana_token_info_trusted(&ti));
 
   signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
 }
 
 /* ===================================================================== *
@@ -1690,6 +1728,7 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
  * ===================================================================== */
 
 TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
+  set_advanced_mode_for_test(true);
   /* Smallest valid KKSOLSC1 payload: no args, no accounts. What matters here
    * is the digest construction, not the schema body. */
   std::vector<uint8_t> payload;
@@ -1733,6 +1772,7 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
       TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
 
   signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
 }
 
 }  // namespace

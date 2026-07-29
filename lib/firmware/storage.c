@@ -44,6 +44,7 @@
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
@@ -1529,6 +1530,9 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+  /* Runtime ClearSign trust belongs to the unlocked device session. Any path
+   * that tears that session down must also revoke its RAM-only signer slots. */
+  signed_metadata_clear_signers();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();

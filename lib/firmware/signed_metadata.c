@@ -6,6 +6,7 @@
 #include "keepkey/board/variant.h"  // Image / AnimationFrame
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/ecdsa.h"
@@ -640,11 +641,16 @@ static const uint8_t* metadata_pubkey_for(uint8_t key_id, bool* is_loaded) {
   return NULL;
 }
 
+bool signed_metadata_signer_is_runtime(uint8_t key_id) {
+  bool is_loaded = false;
+  return metadata_pubkey_for(key_id, &is_loaded) != NULL && is_loaded;
+}
+
 bool signed_metadata_signer_fingerprint(uint8_t key_id,
                                         char out[METADATA_FINGERPRINT_LEN]) {
   bool is_loaded = false;
   const uint8_t* pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey) {
+  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode"))) {
     return false;
   }
   signed_metadata_pubkey_fingerprint(pubkey, out);
@@ -659,7 +665,7 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
   }
   bool is_loaded = false;
   const uint8_t* pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey) {
+  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode"))) {
     return false;
   }
   uint8_t digest[32];
@@ -680,7 +686,8 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   signed_metadata_clear();
 
   pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey || !payload || payload_len < 65) {
+  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode")) ||
+      !payload || payload_len < 65) {
     return METADATA_MALFORMED;
   }
 
