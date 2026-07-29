@@ -1735,4 +1735,84 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
   signed_metadata_clear_signers();
 }
 
+/* ── Built-in trust anchors ───────────────────────────────────────────────
+ *
+ * Slot 0 carries a baked key only in emulator builds configured with
+ * KK_CLEARSIGN_TEST_KEY; every other build leaves it empty and must behave
+ * exactly as before. Both halves are asserted so a slot that silently gains or
+ * loses its anchor fails here. */
+
+#if KK_CLEARSIGN_TEST_KEY
+/* Private half of the baked slot-0 key: m/0x4B4B'/0x4353'/0' of the PUBLIC
+ * "all all ... all" seed. Public by construction — that is the whole point of
+ * the test seed, and why this key is refused outside emulator builds. */
+const uint8_t BUILTIN_TEST_PRIV[32] = {
+    0x64, 0x2f, 0x52, 0x3c, 0x98, 0xdf, 0xde, 0x47, 0xcf, 0x6b, 0x1c,
+    0x01, 0xd0, 0x8f, 0xf8, 0x57, 0x9c, 0x2d, 0x15, 0xa1, 0x8b, 0x80,
+    0x19, 0xb5, 0x3b, 0x83, 0xa0, 0x83, 0xa2, 0xd2, 0x15, 0xad};
+
+TEST(BuiltinAnchor, VerifiesWithNoSignerLoaded) {
+  signed_metadata_clear_signers();
+
+  const uint8_t data[] = "KKSOLSC1-attested-by-the-builtin-anchor";
+  const size_t len = sizeof(data) - 1;
+  uint8_t digest[32];
+  sha256_Raw(data, len, digest);
+  uint8_t sig[64];
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, BUILTIN_TEST_PRIV, digest, sig,
+                                 nullptr, nullptr));
+
+  /* The point of phase 2: no LoadClearsignSigner anywhere in this test. */
+  EXPECT_TRUE(
+      signed_metadata_verify_attestation(0, data, len, sig, sizeof(sig)));
+
+  /* And it is still a signature check, not a slot-is-populated check. */
+  std::vector<uint8_t> bad(data, data + len);
+  bad[0] ^= 0x01;
+  EXPECT_FALSE(
+      signed_metadata_verify_attestation(0, bad.data(), len, sig, sizeof(sig)));
+
+  /* A different key's signature must not ride the anchor's slot. */
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest, sig, nullptr,
+                                 nullptr));
+  EXPECT_FALSE(
+      signed_metadata_verify_attestation(0, data, len, sig, sizeof(sig)));
+}
+
+TEST(BuiltinAnchor, SlotIsNotLoadable) {
+  signed_metadata_clear_signers();
+
+  /* A host may not shadow a baked anchor: it would describe transactions under
+   * an identity of its choosing on the slot users are told to trust. */
+  EXPECT_FALSE(signed_metadata_store_signer(0, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                                            nullptr, 0, 0, 0, false));
+
+  /* Rejected before the slot changed — the anchor still verifies its own key
+   * and reports no loaded alias. */
+  char fp[METADATA_FINGERPRINT_LEN];
+  EXPECT_TRUE(signed_metadata_signer_fingerprint(0, fp));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(0));
+
+  /* Free slots are unaffected by the guard. */
+  EXPECT_TRUE(signed_metadata_store_signer(
+      TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS, nullptr, 0, 0, 0, false));
+  signed_metadata_clear_signers();
+
+  /* clear_signers() wipes RAM slots; it must not disarm the anchor. */
+  EXPECT_TRUE(signed_metadata_signer_fingerprint(0, fp));
+}
+#else
+TEST(BuiltinAnchor, AbsentByDefault) {
+  signed_metadata_clear_signers();
+
+  /* No baked key: slot 0 resolves to nothing and stays loadable, which is
+   * phase-1 behaviour unchanged. */
+  char fp[METADATA_FINGERPRINT_LEN];
+  EXPECT_FALSE(signed_metadata_signer_fingerprint(0, fp));
+  EXPECT_TRUE(signed_metadata_store_signer(0, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                                           nullptr, 0, 0, 0, false));
+  signed_metadata_clear_signers();
+}
+#endif
+
 }  // namespace

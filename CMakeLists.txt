@@ -29,6 +29,9 @@ option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" O
 # signed firmware like any other. Wire IDs 1700-1703 stay reserved in every
 # build, so a blob signed by an attestor is never mistaken for something else.
 option(KK_CLEARSIGN_ATTESTOR "Build the clearsign attestor (schema issuer) tier" OFF)
+# Emulator-only: bake the public-seed attestation key in as a built-in
+# clear-sign trust anchor. Never for a shipping image -- see below.
+option(KK_CLEARSIGN_TEST_KEY "Trust the public test-seed attestation key" OFF)
 # Zcash shielded/Orchard support is part of the regular firmware. It is an
 # internal compile selection, not a third release variant: bitcoin-only strips
 # the Zcash coin and privacy engine; every regular device/emulator build ships
@@ -179,6 +182,19 @@ if(${KK_CLEARSIGN_ATTESTOR} AND NOT ${KK_BITCOIN_ONLY})
   add_definitions(-DCLEARSIGN_ATTESTOR=1)
 else()
   add_definitions(-DCLEARSIGN_ATTESTOR=0)
+endif()
+
+# Bake the attestation key of the PUBLIC "all all ... all" seed in as a
+# built-in clear-sign trust anchor, so the emulator and CI can exercise the
+# no-LoadClearsignSigner path. Refused outside emulator builds: that seed's
+# private key is public, so a device shipping this trusts anyone.
+if(${KK_CLEARSIGN_TEST_KEY})
+  if(NOT ${KK_EMULATOR})
+    message(FATAL_ERROR "KK_CLEARSIGN_TEST_KEY is emulator-only")
+  endif()
+  add_definitions(-DKK_CLEARSIGN_TEST_KEY=1)
+else()
+  add_definitions(-DKK_CLEARSIGN_TEST_KEY=0)
 endif()
 
 if(${KK_ZCASH_PRIVACY})

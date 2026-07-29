@@ -31,9 +31,34 @@ static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
 
-/* Phase 1 ships with NO built-in verification keys: every clearsign signer is
- * loaded at runtime via LoadClearsignSigner. Phase 2 restores the production
- * key. */
+/* Built-in clear-sign trust anchors (phase 2). Metadata or a KKSOLSC1 schema
+ * signed by one of these verifies with no LoadClearsignSigner and no per-boot
+ * trust prompt — it presents as "Insight Verified" rather than as a host-chosen
+ * identity. The private halves live in a KeepKey's seed and are used through
+ * the attestor tier (fsm_msg_clearsign_attestor.h), never on a build machine.
+ *
+ * The slot index IS the blob's key_id. A slot is empty when its first byte is
+ * 0x00 — no valid compressed pubkey starts with 0x00 — and an empty slot falls
+ * through to whatever the host loaded for that id, which is exactly phase-1
+ * behaviour. So a build with no keys here behaves as before.
+ *
+ * Rotation: put the new key in a free slot and ship it, then blank the old one
+ * in a later release. Never reuse a slot for a different key — blobs in the
+ * field name their key by index.
+ *
+ * KK_CLEARSIGN_TEST_KEY fills slot 0 with the attestation key of the PUBLIC
+ * "all all ... all" seed so the emulator and CI can exercise this path. It is
+ * off for every shipping image and must stay off: that seed's private key is
+ * public, so a device trusting it trusts anyone. */
+/* Unlisted slots zero-fill, which is the empty sentinel. */
+static const uint8_t builtin_pubkeys[METADATA_MAX_KEYS][33] = {
+#if KK_CLEARSIGN_TEST_KEY
+    /* slot 0: m/0x4B4B'/0x4353'/0' of the public "all all ... all" seed */
+    {0x03, 0xf2, 0xff, 0xb8, 0x48, 0x90, 0x96, 0x03, 0x5d, 0x8b, 0xc2,
+     0x52, 0x01, 0xea, 0x74, 0x39, 0x37, 0x9f, 0xa3, 0xdd, 0x55, 0xa6,
+     0xed, 0x78, 0x1b, 0xf7, 0xa9, 0x42, 0x13, 0x40, 0x8e, 0xd0, 0x15},
+#endif
+};
 
 /* Runtime-loaded signers. RAM only — cleared on reboot by construction. RC18
  * deliberately rejects persistent trust anchors: the public storage section
@@ -474,6 +499,12 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
   if (persist || key_id >= METADATA_MAX_KEYS) {
     return false;
   }
+  /* A slot with a built-in anchor is not loadable. Otherwise a host could
+   * shadow a baked key with one of its own and describe transactions under an
+   * identity of its choosing on the slot users are told to trust. */
+  if (builtin_pubkeys[key_id][0] != 0x00) {
+    return false;
+  }
   memcpy(loaded_pubkeys[key_id], pubkey, sizeof(loaded_pubkeys[key_id]));
   strlcpy(loaded_aliases[key_id], alias, sizeof(loaded_aliases[key_id]));
 
@@ -632,6 +663,12 @@ static const uint8_t* metadata_pubkey_for(uint8_t key_id, bool* is_loaded) {
   *is_loaded = false;
   if (key_id >= METADATA_MAX_KEYS) {
     return NULL;
+  }
+  /* Built-in first: signed_metadata_store_signer() refuses these slots, so the
+   * two can never both be set, but ordering it this way means a bug there
+   * cannot demote a baked anchor to a host-chosen identity. */
+  if (builtin_pubkeys[key_id][0] != 0x00) {
+    return builtin_pubkeys[key_id];
   }
   if (loaded_pubkeys[key_id][0] != 0x00) {
     *is_loaded = true;
