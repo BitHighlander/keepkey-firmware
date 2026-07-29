@@ -225,4 +225,10 @@
     MSG_IN(MessageType_MessageType_EthereumTxMetadata, EthereumTxMetadata, fsm_msgEthereumTxMetadata)
     MSG_OUT(MessageType_MessageType_EthereumMetadataAck, EthereumMetadataAck, NO_PROCESS_FUNC)
     MSG_IN(MessageType_MessageType_LoadClearsignSigner, LoadClearsignSigner, fsm_msgLoadClearsignSigner)
+#if CLEARSIGN_ATTESTOR
+    MSG_IN(MessageType_MessageType_ClearsignAttestorGetPublicKey, ClearsignAttestorGetPublicKey, fsm_msgClearsignAttestorGetPublicKey)
+    MSG_OUT(MessageType_MessageType_ClearsignAttestorPublicKey, ClearsignAttestorPublicKey, NO_PROCESS_FUNC)
+    MSG_IN(MessageType_MessageType_ClearsignAttestorSign, ClearsignAttestorSign, fsm_msgClearsignAttestorSign)
+    MSG_OUT(MessageType_MessageType_ClearsignAttestorSignature, ClearsignAttestorSignature, NO_PROCESS_FUNC)
+#endif  // CLEARSIGN_ATTESTOR
 #endif  // !BITCOIN_ONLY

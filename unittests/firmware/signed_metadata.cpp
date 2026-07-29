@@ -1280,10 +1280,10 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesRelayEthToSolanaDeposit) {
                                  0x2c, 0xa8, 0x6a, 0xa7, 0x10, 0xb5, 0x4c,
                                  0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
   /* orderId 0x8a2c1211...cb1, verbatim from the quote */
-  const uint8_t ORDER_ID[32] = {
-      0x8a, 0x2c, 0x12, 0x11, 0x97, 0xef, 0xc9, 0x5c, 0x42, 0xf5, 0x31,
-      0x42, 0xab, 0x40, 0x97, 0x35, 0xee, 0x35, 0x32, 0x87, 0xf8, 0x77,
-      0xed, 0x4d, 0x35, 0x1f, 0x63, 0x09, 0x4d, 0x5b, 0xfc, 0xb1};
+  const uint8_t ORDER_ID[32] = {0x8a, 0x2c, 0x12, 0x11, 0x97, 0xef, 0xc9, 0x5c,
+                                0x42, 0xf5, 0x31, 0x42, 0xab, 0x40, 0x97, 0x35,
+                                0xee, 0x35, 0x32, 0x87, 0xf8, 0x77, 0xed, 0x4d,
+                                0x35, 0x1f, 0x63, 0x09, 0x4d, 0x5b, 0xfc, 0xb1};
 
   V2Spec s = v2_base_spec();
   s.contract.assign(RELAY_ROUTER, RELAY_ROUTER + 20);
@@ -1300,10 +1300,11 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesRelayEthToSolanaDeposit) {
   std::vector<uint8_t> data(SEL, SEL + 4);
   put_addr_word(data, DEPOSITOR);
   data.insert(data.end(), ORDER_ID, ORDER_ID + 32);
-  ASSERT_EQ(data.size(), 68u);  /* 4 + 2*32, exactly — no remainder */
+  ASSERT_EQ(data.size(), 68u); /* 4 + 2*32, exactly — no remainder */
 
   EthereumSignTx msg;
-  make_v2_msg(&msg, RELAY_ROUTER, data, /*has_len=*/true, (uint32_t)data.size());
+  make_v2_msg(&msg, RELAY_ROUTER, data, /*has_len=*/true,
+              (uint32_t)data.size());
   /* 0.00798 ETH — the payable part that used to force blind-signing. */
   const uint8_t VALUE[] = {0x1c, 0x51, 0x45, 0xd9, 0xb6, 0xb3, 0xff};
   msg.has_value = true;
@@ -1673,6 +1674,63 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   // No attestation -> not trusted (the caller falls back to unsigned display).
   ti.has_signature = false;
   EXPECT_FALSE(solana_token_info_trusted(&ti));
+
+  signed_metadata_clear_signers();
+}
+
+/* ===================================================================== *
+ *  Clearsign attestor: the issuer/verifier digest contract
+ *
+ *  fsm_msgClearsignAttestorSign signs sha256(payload) as a 64-byte compact
+ *  ECDSA signature; verifying devices check it through
+ *  signed_metadata_verify_attestation. Those two constructions living in
+ *  different files is exactly how SignIdentity ended up unusable for this
+ *  (Bitcoin message header + double hash, 65 bytes). This pins the contract
+ *  so a change on either side fails here rather than in the field.
+ * ===================================================================== */
+
+TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
+  /* Smallest valid KKSOLSC1 payload: no args, no accounts. What matters here
+   * is the digest construction, not the schema body. */
+  std::vector<uint8_t> payload;
+  auto push = [&](const void* p, size_t n) {
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    payload.insert(payload.end(), b, b + n);
+  };
+  push("KKSOLSC1", 8);
+  payload.push_back(1); /* version */
+  payload.insert(payload.end(), 32, 0x42);
+  payload.push_back(1);    /* disc_len */
+  payload.push_back(0x0d); /* discriminator */
+  payload.push_back(5);
+  push("Relay", 5);
+  payload.push_back(7);
+  push("deposit", 7);
+  payload.push_back(0); /* no args */
+  payload.push_back(0); /* no accounts */
+
+  SolanaInstrSchema schema;
+  ASSERT_TRUE(solana_parseInstrSchema(payload.data(), payload.size(), &schema))
+      << "the attestor refuses to sign what it cannot parse";
+
+  /* Issuer side, byte for byte what the handler does. */
+  uint8_t digest[32];
+  sha256_Raw(payload.data(), payload.size(), digest);
+  uint8_t sig[64];
+  ASSERT_EQ(ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest, sig, NULL, NULL),
+            0);
+
+  /* Verifier side. */
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               NULL, 0, 0, 0, false);
+  EXPECT_TRUE(signed_metadata_verify_attestation(
+      TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
+
+  /* A schema the attestor never saw must not ride the same signature. */
+  payload[9] ^= 0x01; /* first byte of the program id */
+  EXPECT_FALSE(signed_metadata_verify_attestation(
+      TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
 
   signed_metadata_clear_signers();
 }

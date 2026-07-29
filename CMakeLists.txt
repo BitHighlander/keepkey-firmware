@@ -21,6 +21,12 @@ option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
+# The clearsign attestor tier: a KeepKey that ISSUES clear-sign schema
+# signatures instead of verifying them (emulator today, a device in a rack
+# later). OFF for every shipping device image -- the 7.15 line has no ROM
+# headroom, and no end user needs to issue attestations. Wire IDs 1700-1703
+# stay reserved either way, so promoting this later is a flag flip.
+option(KK_CLEARSIGN_ATTESTOR "Build the clearsign attestor (schema issuer) tier" OFF)
 # Zcash shielded/Orchard support is part of the regular firmware. It is an
 # internal compile selection, not a third release variant: bitcoin-only strips
 # the Zcash coin and privacy engine; every regular device/emulator build ships
@@ -165,6 +171,12 @@ if(${KK_BITCOIN_ONLY})
   add_definitions(-DBITCOIN_ONLY=1)
 else()
   add_definitions(-DBITCOIN_ONLY=0)
+endif()
+
+if(${KK_CLEARSIGN_ATTESTOR} AND NOT ${KK_BITCOIN_ONLY})
+  add_definitions(-DCLEARSIGN_ATTESTOR=1)
+else()
+  add_definitions(-DCLEARSIGN_ATTESTOR=0)
 endif()
 
 if(${KK_ZCASH_PRIVACY})
