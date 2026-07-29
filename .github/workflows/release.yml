@@ -91,6 +91,12 @@ jobs:
             cmake_flags: ""
           - variant: bitcoin-only
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
+          # The schema-issuing tier. Not a user image: it is flashed onto the
+          # device holding the attestation seed, and it is built here so that
+          # device can run SIGNED firmware like any other release —
+          # signed-to-signed updates preserve storage, so the seed survives.
+          - variant: attestor
+            cmake_flags: "-DKK_CLEARSIGN_ATTESTOR=ON"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
@@ -213,6 +219,8 @@ jobs:
             cmake_flags: ""
           - variant: bitcoin-only
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
+          - variant: attestor
+            cmake_flags: "-DKK_CLEARSIGN_ATTESTOR=ON"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 

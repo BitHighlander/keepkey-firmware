@@ -22,10 +22,12 @@ option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
 # The clearsign attestor tier: a KeepKey that ISSUES clear-sign schema
-# signatures instead of verifying them (emulator today, a device in a rack
-# later). OFF for every shipping device image -- the 7.15 line has no ROM
-# headroom, and no end user needs to issue attestations. Wire IDs 1700-1703
-# stay reserved either way, so promoting this later is a flag flip.
+# signatures instead of verifying them. OFF for the user-facing images -- the
+# 7.15 line is close to the ROM wall and no end user needs to issue
+# attestations -- but the release pipeline builds a separate signed `attestor`
+# variant for the device that holds the attestation seed, so that device runs
+# signed firmware like any other. Wire IDs 1700-1703 stay reserved in every
+# build, so a blob signed by an attestor is never mistaken for something else.
 option(KK_CLEARSIGN_ATTESTOR "Build the clearsign attestor (schema issuer) tier" OFF)
 # Zcash shielded/Orchard support is part of the regular firmware. It is an
 # internal compile selection, not a third release variant: bitcoin-only strips
