@@ -3,13 +3,13 @@
 These are pixel captures from the firmware emulator's real 256x64 framebuffer,
 read through `DebugLinkGetState`; they are not UI mockups. The boundary schema
 contains a 44-character base58 program ID, an 8-byte discriminator, every
-supported argument type, 16-character argument labels, and a 16-character
-account label.
+supported argument type, 20-character program and instruction names,
+16-character argument labels, and a 16-character account label.
 
 The sequence proves that each security-relevant declaration is independently
 reviewable before the device returns an attestation signature:
 
-1. `01-schema-identity.png` — program and instruction identity;
+1. `01-schema-identity.png` — full 20-character program and instruction names;
 2. `02-program-id-44chars.png` — complete program ID across two rows;
 3. `03-discriminator-8bytes.png` — complete 16-hex-character discriminator;
 4. `04-arg-u64-le-16char-label.png` — `u64 LE` and its full label;

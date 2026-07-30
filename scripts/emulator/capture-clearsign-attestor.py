@@ -32,6 +32,8 @@ PROGRAM_BYTES = bytes.fromhex(
     "792689378ecd51d80406eb0caa3b62795beb10b6c5dc96bc2e0df03cbfee1abf"
 )
 DISCRIMINATOR = bytes.fromhex("0d9e0ddf5fd51c06")
+PROGRAM_NAME = "Boundary Program 123"
+INSTRUCTION_NAME = "Review All Types 123"
 ARGUMENTS = (
     (1, "u64 LE", "Amount1234567890"),
     (2, "u8", "Flag123456789012"),
@@ -83,8 +85,12 @@ def boundary_schema():
     payload.extend(PROGRAM_BYTES)
     payload.append(len(DISCRIMINATOR))
     payload.extend(DISCRIMINATOR)
-    payload.extend(length_prefixed_text("Boundary Program"))
-    payload.extend(length_prefixed_text("ReviewAllTypes"))
+    if len(PROGRAM_NAME) != 20 or len(INSTRUCTION_NAME) != 20:
+        raise ValueError(
+            "boundary program and instruction names must be 20 characters"
+        )
+    payload.extend(length_prefixed_text(PROGRAM_NAME))
+    payload.extend(length_prefixed_text(INSTRUCTION_NAME))
     payload.append(len(ARGUMENTS))
     for arg_type, _display_type, label in ARGUMENTS:
         if len(label) != 16:
@@ -181,6 +187,10 @@ def main():
         manifest = {
             "firmware_commit": git_revision(ROOT),
             "device_protocol_commit": git_revision(DEVICE_PROTOCOL),
+            "program_name": PROGRAM_NAME,
+            "program_name_characters": len(PROGRAM_NAME),
+            "instruction_name": INSTRUCTION_NAME,
+            "instruction_name_characters": len(INSTRUCTION_NAME),
             "program_id": PROGRAM_ID,
             "program_id_characters": len(PROGRAM_ID),
             "discriminator_hex": DISCRIMINATOR.hex(),
