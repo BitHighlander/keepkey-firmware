@@ -153,10 +153,18 @@ def main():
             "interactive Orchard note verification")
     forbid(output_verification, "zcash_orchard_compute_cmx(",
            "interactive Orchard note verification")
+    # Orchard V2 and Ironwood V3 share the public Sinsemilla commitment path;
+    # only their rcm derivation differs. Keep the expensive implementation in
+    # one helper, and ensure both interactive wrappers route through it.
     note_commitment = code_only(function_body(
-        zcash, "zcash_orchard_compute_cmx_with_progress"))
+        zcash, "zcash_orchard_family_compute_cmx_with_progress"))
     require(note_commitment, "pallas_sinsemilla_short_commit_progress",
-            "Orchard note verification progress")
+            "Orchard-family note verification progress")
+    for name in ("zcash_orchard_compute_cmx_with_progress",
+                 "zcash_ironwood_compute_cmx_with_progress"):
+        wrapper = code_only(function_body(zcash, name))
+        require(wrapper, "zcash_orchard_family_compute_cmx_with_progress",
+                name)
 
     derive_rk = code_only(function_body(redpallas, "redpallas_derive_rk"))
     require(derive_rk, "pallas_ct_add_mod_q", "redpallas_derive_rk")
