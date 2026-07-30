@@ -314,6 +314,8 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #include "fsm_msg_hive.h"
+/* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
+#include "fsm_msg_clearsign_attestor.h"
 #else
 // Bitcoin-only: the coin engines above are compiled out, but the always-on
 // Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,

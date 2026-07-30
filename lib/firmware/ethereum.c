@@ -795,16 +795,20 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        // Decoded who/what/why approved; raw-data confirm is suppressed. The
-        // signature is bound to this metadata's tx hash in send_signature().
-        //
-        // A v2 schema describes calldata only and cannot bind msg->value, so
-        // for a payable call the amount/recipient screen MUST still run —
-        // otherwise ETH would move with the amount never displayed. The device
-        // reads that amount from the transaction it is about to sign, so the
-        // screen shows a fact, not an unattested claim.
-        needs_confirm = signed_metadata_schema_moves_value();
-        data_needs_confirm = false;
+        if (signed_metadata_from_loaded_signer()) {
+          /* A self-service signer is annotation-only. Its decoded screens are
+           * followed by the same amount and raw-calldata review an Advanced
+           * transaction would have received without metadata. A lying runtime
+           * schema therefore cannot conceal transaction bytes. */
+          needs_confirm = true;
+          data_needs_confirm = true;
+        } else {
+          /* A future firmware-pinned signer may replace the raw-data screen.
+           * Payable calls still show amount/recipient because a v2 schema
+           * describes calldata only and cannot bind msg->value. */
+          needs_confirm = signed_metadata_schema_moves_value();
+          data_needs_confirm = false;
+        }
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         "Signing cancelled by user");

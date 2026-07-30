@@ -133,3 +133,11 @@ FlashWrite.data max_size:1024
 FlashHashResponse.data max_size:32
 
 Bip85Mnemonic.mnemonic max_size:241
+
+# ClearSign attestor. The payload cap is the largest
+# KKSOLSC1 schema: magic(8)+version(1)+program(32)+disc(1+8)+2 names(2*21)+
+# args(1+4*18)+accounts(1+4*18) = 238 bytes.
+ClearsignAttestorPublicKey.public_key   max_size:33
+ClearsignAttestorSign.payload           max_size:256
+ClearsignAttestorSignature.signature    max_size:64
+ClearsignAttestorSignature.public_key   max_size:33

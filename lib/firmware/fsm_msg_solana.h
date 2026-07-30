@@ -818,11 +818,22 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       return;
     }
   } else if (schema_verified) {
-    /* Opaque only because of the schema'd program: show the attested decode
-     * instead of the blind-sign prompt. solana_schemaApplies() already proved
-     * every other instruction is one firmware decodes natively. */
+    /* Opaque only because of the schema'd program: first show the attested
+     * decode. Runtime/self-service signers are annotation-only, so the normal
+     * Advanced-mode blind-sign warning still follows the decoded screens. */
     if (!solana_confirm_schema(&schema, &parsed, schema_ix,
                                (uint8_t)msg->schema_signer_key_id)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+    if (signed_metadata_signer_is_runtime((uint8_t)msg->schema_signer_key_id) &&
+        !confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
+                 "Sign unverified Solana transaction? "
+                 "The device cannot fully verify the contents.")) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,

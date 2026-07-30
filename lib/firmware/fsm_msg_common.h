@@ -793,6 +793,17 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg) {
 
   storage_commit();
 
+  /* Runtime clearsign identities are an AdvancedMode capability. Revoking the
+   * policy also revokes every RAM-only signer immediately, so toggling the
+   * policy off cannot leave a previously approved trust anchor active. */
+  for (size_t i = 0; i < msg->policy_count; ++i) {
+    if (strcmp(msg->policy[i].policy_name, "AdvancedMode") == 0 &&
+        !msg->policy[i].enabled) {
+      signed_metadata_clear_signers();
+      break;
+    }
+  }
+
   fsm_sendSuccess("Policies applied");
   layoutHome();
 }

@@ -17,6 +17,11 @@ done
 
 cd deps/python-keepkey/tests
 
+# The tests run from this directory, while keepkeylib lives one level up.
+# Make that package root explicit so direct imports work consistently in the
+# standalone container (including tests collected before common.py is loaded).
+export PYTHONPATH="..${PYTHONPATH:+:$PYTHONPATH}"
+
 # Diagnostic: verify SCREENSHOT flag reaches Python
 echo "=== Pre-flight diagnostic ==="
 KEEPKEY_SCREENSHOT=1 python3 -c "

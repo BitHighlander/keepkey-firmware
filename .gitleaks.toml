@@ -26,3 +26,11 @@ paths = [
   '''^deps/crypto/trezor-crypto/ed25519-donna/ed25519\.[ch]$''',
 ]
 regexes = ['''ed25519.*secret_key.*signature''']
+
+[[allowlists]]
+description = "RC21 release provenance names an exact public python-keepkey git commit"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''^docs/security/7\.15\.0-rc21-clearsign-release-control\.md$''']
+regexes = ['''^[[:space:]]*-[[:space:]]*python-keepkey:[[:space:]]*`c406a1ba9120da410c356dbff7f4d4bd1e1758fa`\.[[:space:]]*$''']

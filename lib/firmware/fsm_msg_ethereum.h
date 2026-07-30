@@ -39,6 +39,9 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
+              _("AdvancedMode required for clearsign metadata"));
+
   RESP_INIT(EthereumMetadataAck);
 
   MetadataClassification result = signed_metadata_process(
@@ -68,6 +71,8 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
 void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
+              _("AdvancedMode required for clearsign signers"));
 
   CHECK_PARAM(msg->has_key_id && msg->has_pubkey && msg->has_alias,
               _("key_id, pubkey and alias required"));
