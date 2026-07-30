@@ -513,29 +513,44 @@ static bool zcash_pack_orchard_note_commit_msg(const uint8_t receiver[43],
   return true;
 }
 
-bool zcash_orchard_compute_cmx_with_progress(
+static bool zcash_orchard_family_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
-    ZcashOrchardProgressCallback progress, void* progress_context) {
+    bool ironwood, ZcashOrchardProgressCallback progress,
+    void* progress_context) {
   if (!receiver || !rho || !rseed || !cmx_out) return false;
 
   uint8_t msg[136];
-  uint8_t prf_in[33];
+  uint8_t prf_in[137];
   uint8_t prf_out[64];
   uint8_t rcm[32];
   uint8_t psi[32];
-  curve_point q, r;
+  curve_point gd, q, r;
   bool ok = false;
 
+  /* psi is unchanged between V2 (Orchard) and V3 (Ironwood) notes. */
   memcpy(prf_in + 1, rho, 32);
-
-  prf_in[0] = 0x05;
-  prf_expand(rseed, prf_in, sizeof(prf_in), prf_out);
-  to_scalar(prf_out, rcm);
-
   prf_in[0] = 0x09;
-  prf_expand(rseed, prf_in, sizeof(prf_in), prf_out);
+  prf_expand(rseed, prf_in, 33, prf_out);
   to_base(prf_out, psi);
+
+  if (ironwood) {
+    /* ZIP-2005 H_rcm binds V3 randomness to every note field. */
+    if (!orchard_diversify_point(receiver, &gd)) goto cleanup;
+    prf_in[0] = 0x0B;
+    pallas_point_encode(&gd, prf_in + 1);
+    memcpy(prf_in + 33, receiver + 11, 32);
+    for (size_t i = 0; i < 8; i++) {
+      prf_in[65 + i] = (uint8_t)((value >> (8 * i)) & 0xff);
+    }
+    memcpy(prf_in + 73, rho, 32);
+    memcpy(prf_in + 105, psi, 32);
+    prf_expand(rseed, prf_in, sizeof(prf_in), prf_out);
+  } else {
+    prf_in[0] = 0x05;
+    prf_expand(rseed, prf_in, 33, prf_out);
+  }
+  to_scalar(prf_out, rcm);
 
   ok = zcash_pack_orchard_note_commit_msg(receiver, value, rho, psi, msg) &&
        pallas_group_hash("z.cash:SinsemillaQ",
@@ -545,18 +560,25 @@ bool zcash_orchard_compute_cmx_with_progress(
        pallas_sinsemilla_short_commit_progress(&q, &r, msg, 1086, rcm, cmx_out,
                                                progress, progress_context) == 0;
 
-  if (!ok) {
-    memzero(cmx_out, 32);
-  }
-
+cleanup:
+  if (!ok) memzero(cmx_out, 32);
   memzero(msg, sizeof(msg));
   memzero(prf_in, sizeof(prf_in));
   memzero(prf_out, sizeof(prf_out));
   memzero(rcm, sizeof(rcm));
   memzero(psi, sizeof(psi));
+  memzero(&gd, sizeof(gd));
   memzero(&q, sizeof(q));
   memzero(&r, sizeof(r));
   return ok;
+}
+
+bool zcash_orchard_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context) {
+  return zcash_orchard_family_compute_cmx_with_progress(
+      receiver, value, rho, rseed, cmx_out, false, progress, progress_context);
 }
 
 bool zcash_orchard_compute_cmx(
@@ -564,6 +586,21 @@ bool zcash_orchard_compute_cmx(
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
   return zcash_orchard_compute_cmx_with_progress(receiver, value, rho, rseed,
                                                  cmx_out, NULL, NULL);
+}
+
+bool zcash_ironwood_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context) {
+  return zcash_orchard_family_compute_cmx_with_progress(
+      receiver, value, rho, rseed, cmx_out, true, progress, progress_context);
+}
+
+bool zcash_ironwood_compute_cmx(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
+  return zcash_ironwood_compute_cmx_with_progress(receiver, value, rho, rseed,
+                                                  cmx_out, NULL, NULL);
 }
 
 bool zcash_derive_orchard_keys_with_progress(
@@ -696,12 +733,15 @@ bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
                                                  NULL, NULL);
 }
 
-bool zcash_compute_shielded_sighash(const uint8_t header_digest[32],
-                                    const uint8_t transparent_digest[32],
-                                    const uint8_t sapling_digest[32],
-                                    const uint8_t orchard_digest[32],
-                                    uint32_t branch_id,
-                                    uint8_t sighash_out[32]) {
+static bool zcash_compute_shielded_sighash_inner(
+    const uint8_t header_digest[32], const uint8_t transparent_digest[32],
+    const uint8_t sapling_digest[32], const uint8_t orchard_digest[32],
+    const uint8_t* ironwood_digest, uint32_t branch_id,
+    uint8_t sighash_out[32]) {
+  if (!header_digest || !transparent_digest || !sapling_digest ||
+      !orchard_digest || !sighash_out) {
+    return false;
+  }
   Hasher h;
   uint8_t personal[16];
 
@@ -713,9 +753,34 @@ bool zcash_compute_shielded_sighash(const uint8_t header_digest[32],
   hasher_Update(&h, transparent_digest, 32);
   hasher_Update(&h, sapling_digest, 32);
   hasher_Update(&h, orchard_digest, 32);
+  if (ironwood_digest) hasher_Update(&h, ironwood_digest, 32);
   hasher_Final(&h, sighash_out);
-
+  memzero(personal, sizeof(personal));
   return true;
+}
+
+bool zcash_compute_shielded_sighash(const uint8_t header_digest[32],
+                                    const uint8_t transparent_digest[32],
+                                    const uint8_t sapling_digest[32],
+                                    const uint8_t orchard_digest[32],
+                                    uint32_t branch_id,
+                                    uint8_t sighash_out[32]) {
+  return zcash_compute_shielded_sighash_inner(header_digest, transparent_digest,
+                                              sapling_digest, orchard_digest,
+                                              NULL, branch_id, sighash_out);
+}
+
+bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
+                                       const uint8_t transparent_digest[32],
+                                       const uint8_t sapling_digest[32],
+                                       const uint8_t orchard_digest[32],
+                                       const uint8_t ironwood_digest[32],
+                                       uint32_t branch_id,
+                                       uint8_t sighash_out[32]) {
+  if (!ironwood_digest) return false;
+  return zcash_compute_shielded_sighash_inner(
+      header_digest, transparent_digest, sapling_digest, orchard_digest,
+      ironwood_digest, branch_id, sighash_out);
 }
 
 static void zcash_write_u32_le(uint32_t value, uint8_t out[4]) {
@@ -1075,6 +1140,11 @@ ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
 
   if (meta->header_digest_size != 32 || meta->orchard_digest_size != 32) {
     return ZCASH_PCZT_SIGNING_REQUEST_INVALID_DIGEST_SIZE;
+  }
+
+  if (meta->is_ironwood &&
+      (!meta->has_ironwood_digest || meta->ironwood_digest_size != 32)) {
+    return ZCASH_PCZT_SIGNING_REQUEST_MISSING_TX_DIGESTS;
   }
 
   if (meta->has_transparent_digest && meta->transparent_digest_size != 32) {

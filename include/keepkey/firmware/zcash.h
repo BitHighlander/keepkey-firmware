@@ -55,6 +55,9 @@ typedef struct {
   size_t sapling_digest_size;
   bool has_orchard_digest;
   size_t orchard_digest_size;
+  bool is_ironwood;
+  bool has_ironwood_digest;
+  size_t ironwood_digest_size;
   bool has_orchard_flags;
   uint32_t orchard_flags;
   bool has_orchard_value_balance;
@@ -153,6 +156,15 @@ bool zcash_compute_shielded_sighash(const uint8_t header_digest[32],
                                     uint32_t branch_id,
                                     uint8_t sighash_out[32]);
 
+/** Compute the five-component ZIP-229 transaction-v6 sighash. */
+bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
+                                       const uint8_t transparent_digest[32],
+                                       const uint8_t sapling_digest[32],
+                                       const uint8_t orchard_digest[32],
+                                       const uint8_t ironwood_digest[32],
+                                       uint32_t branch_id,
+                                       uint8_t sighash_out[32]);
+
 /**
  * Compute ZIP-244 T.1 header_digest from plaintext transaction header fields.
  */
@@ -217,6 +229,16 @@ bool zcash_orchard_receiver_to_unified_address(
 bool zcash_orchard_compute_cmx(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
+
+/** ZIP-2005 V3 note commitment used by the Ironwood pool. */
+bool zcash_ironwood_compute_cmx(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
+
+bool zcash_ironwood_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context);
 
 /**
  * Progress-reporting note-commitment verification for interactive PCZT flows.
