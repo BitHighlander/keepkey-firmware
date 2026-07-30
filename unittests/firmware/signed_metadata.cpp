@@ -221,11 +221,13 @@ void make_matching_msg(EthereumSignTx* msg) {
 const char* TEST_ALIAS = "CI Test";
 
 void set_advanced_mode_for_test(bool enabled) {
-  static bool storage_ready = false;
-  if (!storage_ready) {
+  /* The full xunit binary may already have initialized emulator flash in an
+   * earlier fixture (notably Authenticator). Re-running storage_init() then
+   * attempts to migrate/decrypt an already-live shadow store. The allocation
+   * is the shared source of truth, and also keeps this suite runnable alone. */
+  if (storage_getLocation() == FLASH_INVALID) {
     setup();
     storage_init();
-    storage_ready = true;
   }
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", enabled));
 }
