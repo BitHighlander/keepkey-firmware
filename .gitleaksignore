@@ -13,3 +13,6 @@ ae5c38605cc548dcce0c9d83e796eabe834956f4:bootloader/local/baremetal/bootloader_m
 
 # Test wallet data from 2014
 e257a3ad1745bc2dffb38eae0f40dc52ba7de4a6:keepkey_app/test/keepkey_wallet.dat:generic-api-key:7
+
+# RC21 release provenance — public python-keepkey git commit, not a credential
+558fa24125200383ca2f4fde94d6b2ee08ba1683:docs/security/7.15.0-rc21-clearsign-release-control.md:generic-api-key:63
