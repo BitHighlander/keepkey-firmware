@@ -60,6 +60,24 @@ static HDNode* attestor_getNode(void) {
   return node;
 }
 
+/* Human-readable ABI type names for the attestation review. The type is part
+ * of the security boundary, not decoration: U64+PUBKEY and OPAQUE32+U64 have
+ * the same total width but assign labels to different byte offsets. Never ask
+ * an operator to attest an argument label without also showing its type. */
+static const char* attestor_schemaArgTypeName(SolanaSchemaArgType type) {
+  switch (type) {
+    case SOL_SCHEMA_ARG_U64:
+      return "u64 LE";
+    case SOL_SCHEMA_ARG_U8:
+      return "u8";
+    case SOL_SCHEMA_ARG_PUBKEY:
+      return "public key";
+    case SOL_SCHEMA_ARG_OPAQUE32:
+      return "bytes32 hex";
+  }
+  return "invalid"; /* Parser rejects unknown values; defense in depth. */
+}
+
 void fsm_msgClearsignAttestorGetPublicKey(
     const ClearsignAttestorGetPublicKey* msg) {
   (void)msg;
@@ -117,13 +135,17 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
              schema.disc[i]);
   }
 
-  /* The base58 program id alone wraps to two of the three rows, so it gets no
-   * "Program" prefix — with one the discriminator renders off the screen. */
+  /* Program IDs may consume two body rows, while an 8-byte discriminator plus
+   * its label consumes another two. They therefore get separate confirmations:
+   * combining them can silently clip the discriminator, which is precisely the
+   * field the operator must compare against the contract ABI. */
   bool confirmed =
       confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema", "%s\n%s",
               schema.program_name, schema.instruction_name) &&
-      confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-              "%s\nDisc %s", program_id, disc_hex);
+      confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
+              program_id) &&
+      confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
+              disc_hex);
 
   /* One label per screen. A structurally valid schema can still lie by
    * labelling the wrong offset ("Amount" over the order id), so the operator
@@ -131,9 +153,10 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
    * no pagination, so a batched list of max-length labels scrolls off. A label
    * nobody saw is a label nobody checked. */
   for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
-    confirmed =
-        confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-                "Arg %u shows\n%s", (unsigned)(i + 1), schema.args[i].label);
+    confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                        "Arg %u: %s\n%s", (unsigned)(i + 1),
+                        attestor_schemaArgTypeName(schema.args[i].type),
+                        schema.args[i].label);
   }
   for (uint8_t i = 0; confirmed && i < schema.num_accounts; i++) {
     confirmed =
