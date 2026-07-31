@@ -33,6 +33,7 @@
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/txin_check.h"
 #include "keepkey/firmware/transaction.h"
+#include "trezor/crypto/bip340.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
@@ -82,9 +83,16 @@ static TxInputType input;
 static TxOutputBinType bin_output;
 static TxStruct to, tp, ti;
 static Hasher hasher_prevouts, hasher_sequence, hasher_outputs, hasher_check;
+/* BIP-341 commits to every input's amount and scriptPubKey, which BIP-143
+   does not, so taproot needs two accumulators segwit never required.  These
+   are SHA256_CTX rather than Hasher because BIP-341 fixes them to plain
+   SHA256: a Hasher carries a union sized by GROESTL512_CTX and would cost
+   ~1.2 KB of SRAM here for no benefit. */
+static SHA256_CTX ctx_amounts, ctx_scriptpubkeys;
 static uint8_t CONFIDENTIAL privkey[32];
 static uint8_t pubkey[33], sig[64];
 static uint8_t hash_prevouts[32], hash_sequence[32], hash_outputs[32];
+static uint8_t hash_amounts[32], hash_scriptpubkeys[32];
 static uint8_t hash_prefix[32];
 static uint8_t hash_check[32];
 static uint64_t to_spend, authorized_bip143_in, spending, change_spend;
@@ -112,6 +120,10 @@ static uint32_t tx_weight;
 /* The maximum allowed change address.  This should be large enough for normal
    use and still allow to quickly brute-force the correct bip32 path. */
 #define BIP32_MAX_LAST_ELEMENT 1000000
+
+/* BIP-341 SIGHASH_DEFAULT: commits to all outputs, and unlike SIGHASH_ALL
+   its byte is omitted from the witness entirely. */
+#define SIGHASH_ALL_TAPROOT 0
 
 /* transaction header size: 4 byte version */
 #define TXSIZE_HEADER 4
@@ -408,6 +420,8 @@ void phase1_request_next_input(void) {
     //  compute segwit hashPrevouts & hashSequence
     hasher_Final(&hasher_prevouts, hash_prevouts);
     hasher_Final(&hasher_sequence, hash_sequence);
+    sha256_Final(&ctx_amounts, hash_amounts);
+    sha256_Final(&ctx_scriptpubkeys, hash_scriptpubkeys);
     hasher_Final(&hasher_check, hash_check);
     // init hashOutputs
     hasher_Reset(&hasher_outputs);
@@ -690,6 +704,10 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
     hasher_Init(&hasher_sequence, curve->hasher_sign);
     hasher_Init(&hasher_outputs, curve->hasher_sign);
     hasher_Init(&hasher_check, curve->hasher_sign);
+    /* BIP-341 fixes these two as plain SHA256, independent of the coin's
+       signing hasher, so they are initialised separately on purpose. */
+    sha256_Init(&ctx_amounts);
+    sha256_Init(&ctx_scriptpubkeys);
   }
 
   layoutProgressSwipe(_("Signing transaction"), 0);
@@ -737,7 +755,8 @@ static bool is_change_output_script_type(const TxOutputType* txoutput) {
 
 static bool is_segwit_input_script_type(const TxInputType* txinput) {
   if (txinput->script_type == InputScriptType_SPENDP2SHWITNESS ||
-      txinput->script_type == InputScriptType_SPENDWITNESS) {
+      txinput->script_type == InputScriptType_SPENDWITNESS ||
+      txinput->script_type == InputScriptType_SPENDTAPROOT) {
     return true;
   }
   return false;
@@ -779,6 +798,13 @@ static bool signing_validate_input(const TxInputType* txinput) {
     }
   }
 
+  if (txinput->script_type == InputScriptType_SPENDTAPROOT &&
+      (!coin->has_taproot || !coin->taproot)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Taproot not enabled on this coin."));
+    signing_abort();
+    return false;
+  }
   if (is_segwit_input_script_type(txinput)) {
     if (!coin->has_segwit) {
       fsm_sendFailure(FailureType_Failure_Other,
@@ -901,6 +927,28 @@ static bool signing_check_input(TxInputType* txinput) {
   // compute segwit hashPrevouts & hashSequence
   tx_prevout_hash(&hasher_prevouts, txinput);
   tx_sequence_hash(&hasher_sequence, txinput);
+  // BIP-341 commits to the amount and scriptPubKey of EVERY input, not just
+  // the taproot ones, so these must be accumulated for all of them.  Only
+  // coins with taproot enabled pay the per-input derivation, and
+  // hdnode_private_ckd_cached keeps repeated derivations along one account
+  // path cheap.
+  if (coin->has_taproot && coin->taproot) {
+    uint8_t script_pubkey[64];
+    size_t script_pubkey_len = 0;
+    if (!fill_input_script_pubkey(coin, root, txinput, script_pubkey,
+                                  &script_pubkey_len,
+                                  sizeof(script_pubkey))) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Failed to derive input scriptPubKey"));
+      signing_abort();
+      return false;
+    }
+    sha256_Update(&ctx_amounts, (const uint8_t*)&txinput->amount, 8);
+    uint8_t lenbuf[5];
+    uint32_t lenlen = ser_length(script_pubkey_len, lenbuf);
+    sha256_Update(&ctx_scriptpubkeys, lenbuf, lenlen);
+    sha256_Update(&ctx_scriptpubkeys, script_pubkey, script_pubkey_len);
+  }
   if (coin->decred) {
     if (txinput->decred_script_version > 0) {
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1080,6 +1128,14 @@ static void phase1_request_next_output(void) {
   }
 }
 
+/* BIP-341 key-path sighash.  The assembly itself lives in bip341_sighash()
+   so the field ordering is unit-testable against the published vectors. */
+static void signing_hash_bip341(uint32_t input_index, uint8_t* hash) {
+  bip341_sighash(SIGHASH_ALL_TAPROOT, version, lock_time, hash_prevouts,
+                 hash_amounts, hash_scriptpubkeys, hash_sequence, hash_outputs,
+                 input_index, hash);
+}
+
 static void signing_hash_bip143(const TxInputType* txinput, uint8_t* hash) {
   uint32_t hash_type = signing_hash_type();
   Hasher hasher_preimage;
@@ -1253,7 +1309,53 @@ static bool signing_sign_input(void) {
 static bool signing_sign_segwit_input(TxInputType* txinput) {
   // idx1: index to sign
 
-  if (is_segwit_input_script_type(txinput)) {
+  if (txinput->script_type == InputScriptType_SPENDTAPROOT) {
+    if (txinput->amount > authorized_bip143_in) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Transaction has changed during signing"));
+      signing_abort();
+      return false;
+    }
+    authorized_bip143_in -= txinput->amount;
+
+    uint8_t hash[32];
+    signing_hash_bip341(idx1, hash);
+
+    /* Sign with the BIP-86 tweaked key, so the signature verifies against the
+       output key committed to in the scriptPubKey rather than the internal
+       key. */
+    static CONFIDENTIAL uint8_t tweaked[32];
+    if (bip340_tweak_seckey(curve->params, node.private_key,
+                            /*merkle_root=*/NULL, tweaked) != 0) {
+      memzero(tweaked, sizeof(tweaked));
+      fsm_sendFailure(FailureType_Failure_Other, _("Failed to tweak key"));
+      signing_abort();
+      return false;
+    }
+    int sign_ret = bip340_sign(curve->params, tweaked, hash, sizeof(hash),
+                               /*aux=*/NULL, sig);
+    memzero(tweaked, sizeof(tweaked));
+    if (sign_ret != 0) {
+      fsm_sendFailure(FailureType_Failure_Other, _("Signing failed"));
+      signing_abort();
+      return false;
+    }
+
+    resp.has_serialized = true;
+    resp.serialized.has_signature_index = true;
+    resp.serialized.signature_index = idx1;
+    resp.serialized.has_signature = true;
+    resp.serialized.signature.size = 64;
+    memcpy(resp.serialized.signature.bytes, sig, 64);
+
+    /* Witness is a single 64-byte element.  SIGHASH_DEFAULT omits the trailing
+       sighash byte entirely -- appending 0x00 would be a different, invalid
+       signature. */
+    uint32_t r = 0;
+    r += ser_length(1, resp.serialized.serialized_tx.bytes + r);
+    r += tx_serialize_script(64, sig, resp.serialized.serialized_tx.bytes + r);
+    resp.serialized.serialized_tx.size = r;
+  } else if (is_segwit_input_script_type(txinput)) {
     if (!compile_input_script_sig(txinput)) {
       fsm_sendFailure(FailureType_Failure_Other, _("Failed to compile input"));
       signing_abort();

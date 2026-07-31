@@ -226,7 +226,7 @@ TEST(BIP340, BIP86Vectors) {
     std::vector<uint8_t> internal = unhex(v.internal_key);
     uint8_t out[BIP340_XONLY_LENGTH] = {0};
 
-    ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, internal.data(), out))
+    ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, internal.data(), nullptr, out))
         << v.path;
 
     std::string got = hex(out, sizeof(out));
@@ -275,13 +275,110 @@ TEST(BIP340, BIP86FromMnemonic) {
     hdnode_fill_public_key(&node);
 
     uint8_t out[BIP340_XONLY_LENGTH] = {0};
-    ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, node.public_key + 1, out));
+    ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, node.public_key + 1, nullptr, out));
 
     char address[MAX_ADDR_SIZE] = {0};
     ASSERT_EQ(1, segwit_addr_encode(address, "bc", 1, out, sizeof(out)));
     ASSERT_EQ(std::string(v.address), std::string(address))
         << "change=" << v.change << " index=" << v.index;
   }
+}
+
+// Official BIP-341 key-path spending vector, input index 4, from
+// https://github.com/bitcoin/bips/blob/master/bip-0341/wallet-test-vectors.json
+//
+// This is the only published input that uses SIGHASH_DEFAULT (hashType 0), so
+// it is the one that pins our signing configuration end to end.  It carries a
+// merkle root, which is why bip340_tweak_seckey/pubkey take one -- without it
+// there is no published witness to check the sigmsg field ordering against,
+// and a transposed field yields a perfectly valid signature over the wrong
+// transaction.
+namespace bip341 {
+const char *kInternalPrivkey =
+    "f36bb07a11e469ce941d16b63b11b9b9120a84d9d87cff2c84a8d4affb438f4e";
+const char *kInternalPubkey =
+    "e0dfe2300b0dd746a3f8674dfd4525623639042569d829c7f0eed9602d263e6f";
+const char *kMerkleRoot =
+    "ccbd66c6f7e8fdab47b3a486f59d28262be857f30d4773f2d5ea47f7761ce0e2";
+const char *kTweakedPrivkey =
+    "a8e7aa924f0d58854185a490e6c41f6efb7b675c0f3331b7f14b549400b4d501";
+const char *kSigHash =
+    "4f900a0bae3f1446fd48490c2958b5a023228f01661cda3496a11da502a7f7ef";
+const char *kWitness =
+    "b4010dd48a617db09926f729e79c33ae0b4e94b79f04a1ae93ede6315eb3669d"
+    "e185a17d2b0ac9ee09fd4c64b678a0b61a0a86fa888a273c8511be83bfd6810f";
+const char *kHashPrevouts =
+    "e3b33bb4ef3a52ad1fffb555c0d82828eb22737036eaeb02a235d82b909c4c3f";
+const char *kHashAmounts =
+    "58a6964a4f5f8f0b642ded0a8a553be7622a719da71d1f5befcefcdee8e0fde6";
+const char *kHashScriptPubkeys =
+    "23ad0f61ad2bca5ba6a7693f50fce988e17c3780bf2b1e720cfbb38fbdd52e21";
+const char *kHashSequences =
+    "18959c7221ab5ce9e26c3cd67b22c24f8baa54bac281d8e6b05e400e6c3a957e";
+const char *kHashOutputs =
+    "a2e6dab7c1f0dcd297c8d61647fd17d821541ea69c3cc37dcbad7f90d4eb4bc5";
+const uint32_t kVersion = 2;
+const uint32_t kLockTime = 500000000;
+const uint32_t kInputIndex = 4;
+
+std::string lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+  return s;
+}
+}  // namespace bip341
+
+TEST(BIP341, TweakSeckey) {
+  std::vector<uint8_t> sk = unhex(bip341::kInternalPrivkey);
+  std::vector<uint8_t> root = unhex(bip341::kMerkleRoot);
+  uint8_t pk[BIP340_XONLY_LENGTH] = {0};
+  uint8_t tweaked[32] = {0};
+
+  ASSERT_EQ(0, bip340_get_xonly_pubkey(&secp256k1, sk.data(), pk));
+  ASSERT_EQ(std::string(bip341::kInternalPubkey),
+            bip341::lower(hex(pk, sizeof(pk))));
+
+  ASSERT_EQ(0, bip340_tweak_seckey(&secp256k1, sk.data(), root.data(),
+                                   tweaked));
+  ASSERT_EQ(std::string(bip341::kTweakedPrivkey),
+            bip341::lower(hex(tweaked, sizeof(tweaked))));
+
+  // The tweaked private key must correspond to the tweaked public key, or the
+  // signature verifies under a key that does not own the output.
+  uint8_t from_seckey[BIP340_XONLY_LENGTH] = {0};
+  uint8_t from_pubkey[BIP340_XONLY_LENGTH] = {0};
+  ASSERT_EQ(0, bip340_get_xonly_pubkey(&secp256k1, tweaked, from_seckey));
+  ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, pk, root.data(), from_pubkey));
+  ASSERT_EQ(0, memcmp(from_seckey, from_pubkey, BIP340_XONLY_LENGTH));
+}
+
+TEST(BIP341, Sighash) {
+  std::vector<uint8_t> prevouts = unhex(bip341::kHashPrevouts);
+  std::vector<uint8_t> amounts = unhex(bip341::kHashAmounts);
+  std::vector<uint8_t> spks = unhex(bip341::kHashScriptPubkeys);
+  std::vector<uint8_t> seqs = unhex(bip341::kHashSequences);
+  std::vector<uint8_t> outs = unhex(bip341::kHashOutputs);
+  uint8_t hash[SHA256_DIGEST_LENGTH] = {0};
+
+  bip341_sighash(/*hash_type=*/0, bip341::kVersion, bip341::kLockTime,
+                 prevouts.data(), amounts.data(), spks.data(), seqs.data(),
+                 outs.data(), bip341::kInputIndex, hash);
+
+  ASSERT_EQ(std::string(bip341::kSigHash), bip341::lower(hex(hash, sizeof(hash))));
+}
+
+TEST(BIP341, KeyPathSignatureMatchesPublishedWitness) {
+  std::vector<uint8_t> sk = unhex(bip341::kInternalPrivkey);
+  std::vector<uint8_t> root = unhex(bip341::kMerkleRoot);
+  std::vector<uint8_t> sighash = unhex(bip341::kSigHash);
+  uint8_t tweaked[32] = {0};
+  uint8_t sig[BIP340_SIG_LENGTH] = {0};
+
+  ASSERT_EQ(0, bip340_tweak_seckey(&secp256k1, sk.data(), root.data(),
+                                   tweaked));
+  // BIP-341's vectors are generated with an all-zero aux_rand.
+  ASSERT_EQ(0, bip340_sign(&secp256k1, tweaked, sighash.data(), sighash.size(),
+                           nullptr, sig));
+  ASSERT_EQ(std::string(bip341::kWitness), bip341::lower(hex(sig, sizeof(sig))));
 }
 
 TEST(BIP340, TweakRejectsInvalidInternalKey) {
@@ -293,8 +390,8 @@ TEST(BIP340, TweakRejectsInvalidInternalKey) {
       unhex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30");
   uint8_t out[BIP340_XONLY_LENGTH] = {0};
 
-  ASSERT_NE(0, bip340_tweak_pubkey(&secp256k1, bad.data(), out));
-  ASSERT_NE(0, bip340_tweak_pubkey(&secp256k1, too_big.data(), out));
+  ASSERT_NE(0, bip340_tweak_pubkey(&secp256k1, bad.data(), nullptr, out));
+  ASSERT_NE(0, bip340_tweak_pubkey(&secp256k1, too_big.data(), nullptr, out));
 }
 
 TEST(BIP340, TaggedHash) {
