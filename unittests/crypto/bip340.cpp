@@ -266,12 +266,39 @@ TEST(BIP340, SignRejectsOutOfRangeKeys) {
   const uint8_t msg[32] = {0};
   uint8_t sig[BIP340_SIG_LENGTH] = {0};
 
+  // Pre-fill, so the zero-on-failure check below cannot pass vacuously.
+  memset(sig, 0xFF, sizeof(sig));
+
   ASSERT_NE(0, bip340_sign(&secp256k1, zero, msg, sizeof(msg), nullptr, sig));
   ASSERT_NE(0, bip340_sign(&secp256k1, order, msg, sizeof(msg), nullptr, sig));
 
   // A rejected signing attempt must not leave anything in the output buffer.
   uint8_t empty[BIP340_SIG_LENGTH] = {0};
   ASSERT_EQ(0, memcmp(sig, empty, sizeof(sig)));
+}
+
+TEST(BIP340, XOnlyPubkeyZeroesOnFailure) {
+  const uint8_t zero[32] = {0};
+  uint8_t pk[BIP340_XONLY_LENGTH];
+
+  memset(pk, 0xFF, sizeof(pk));
+  ASSERT_NE(0, bip340_get_xonly_pubkey(&secp256k1, zero, pk));
+
+  uint8_t empty[BIP340_XONLY_LENGTH] = {0};
+  ASSERT_EQ(0, memcmp(pk, empty, sizeof(pk)));
+}
+
+TEST(BIP340, ZeroSTakesTheSpecPath) {
+  // s == 0 is in range per BIP-340 and carries no special guard: verification
+  // must compute R = -eP and reject on the x-coordinate comparison, not bail
+  // out early.  Pins the absence of a guard that would deviate from the spec.
+  std::vector<uint8_t> pk = unhex(kVectors[1].pubkey);
+  std::vector<uint8_t> msg = unhex(kVectors[1].msg);
+  std::vector<uint8_t> sig = unhex(kVectors[1].sig);
+  memset(sig.data() + 32, 0, 32);
+
+  ASSERT_NE(0, bip340_verify(&secp256k1, pk.data(), msg.data(), msg.size(),
+                             sig.data()));
 }
 
 TEST(BIP340, NullAuxMatchesZeroAux) {
