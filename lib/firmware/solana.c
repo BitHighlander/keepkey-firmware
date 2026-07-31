@@ -20,7 +20,9 @@
 #include "keepkey/firmware/solana.h"
 
 #include "keepkey/firmware/signed_metadata.h"
+#include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
+#include "trezor/crypto/sha2.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -73,6 +75,18 @@ const uint8_t SOL_MEMO_PROGRAM[SOL_PUBKEY_SIZE] = {
     0x05, 0x4a, 0x53, 0x5a, 0x99, 0x29, 0x21, 0x06, 0x4d, 0x24, 0xe8,
     0x71, 0x60, 0xda, 0x38, 0x7c, 0x7c, 0x35, 0xb5, 0xdd, 0xbc, 0x92,
     0xbb, 0x81, 0xe4, 0x1f, 0xa8, 0x40, 0x41, 0x05, 0x44, 0x8d};
+
+/* Circle's mainnet SPL USDC mint:
+ * EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v. */
+static const SolanaKnownToken SOL_KNOWN_TOKENS[] = {{
+    {0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
+     0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
+     0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61},
+    "USDC",
+    6,
+}};
+
+static const char SOL_PDA_MARKER[] = "ProgramDerivedAddress";
 
 /* ------------------------------------------------------------------ */
 /*  Compact-u16 decoder (Solana transaction format)                    */
@@ -290,7 +304,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
            * variant (mint signed + displayed) clear-signs. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
-                   data_len >= 10 && num_acct_indices >= 4) {
+                   data_len == 10 && num_acct_indices >= 4) {
           /* Canonical TransferChecked ONLY: opcode + amount(8) + decimals(1)
            * and all four accounts [source, mint, dest, authority]. A 9-byte
            * encoding (no decimals) or a short account list would otherwise
@@ -634,6 +648,12 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   n = read_compact_u16(raw + pos, raw_len - pos, &lookup_table_count);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
+  if (lookup_table_count != 0) {
+    /* Clear-signing is intentionally limited to self-contained v0 messages.
+     * Even if current instructions appear to use only static accounts, an ALT
+     * section requires chain state that this firmware does not resolve. */
+    force_opaque = true;
+  }
 
   for (uint16_t i = 0; i < lookup_table_count; i++) {
     uint16_t writable_count, readonly_count;
@@ -655,10 +675,9 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
 
-  /* A v0 message whose instructions only touch static accounts is exactly
-   * as verifiable as a legacy message. Lookup-table sections are allowed
-   * to exist; any instruction actually reaching into them forced opaque
-   * above (external indices). */
+  /* A zero-LUT v0 message is self-contained and can be verified like legacy.
+   * Any lookup-table section remains available only through the AdvancedMode
+   * opaque path until firmware can resolve and authenticate chain state. */
   if (tx->num_instructions == 0 || has_unknown || force_opaque) {
     return SOL_TX_REVIEW_OPAQUE;
   }
@@ -929,9 +948,6 @@ void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
   /* Format with appropriate decimal places (max 9 shown) */
   uint8_t show_dec =
       decimals > SOL_MAX_DISPLAY_DECIMALS ? SOL_MAX_DISPLAY_DECIMALS : decimals;
-  uint64_t show_div = 1;
-  for (uint8_t i = 0; i < show_dec; i++) show_div *= 10;
-  (void)show_div;
   uint64_t show_frac = frac;
   if (decimals > SOL_MAX_DISPLAY_DECIMALS) {
     for (uint8_t i = 0; i < decimals - SOL_MAX_DISPLAY_DECIMALS; i++)
@@ -944,7 +960,74 @@ void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
     show_frac /= 10;
   }
   frac_str[show_dec] = '\0';
-  snprintf(buf, len, "%llu.%s %s", (unsigned long long)whole, frac_str, symbol);
+  while (show_dec > 0 && frac_str[show_dec - 1] == '0') {
+    frac_str[--show_dec] = '\0';
+  }
+  if (show_dec == 0) {
+    snprintf(buf, len, "%llu %s", (unsigned long long)whole, symbol);
+  } else {
+    snprintf(buf, len, "%llu.%s %s", (unsigned long long)whole, frac_str,
+             symbol);
+  }
+}
+
+const SolanaKnownToken* solana_findKnownToken(
+    const uint8_t mint[SOL_PUBKEY_SIZE]) {
+  for (size_t i = 0; i < sizeof(SOL_KNOWN_TOKENS) / sizeof(SOL_KNOWN_TOKENS[0]);
+       i++) {
+    if (memcmp(SOL_KNOWN_TOKENS[i].mint, mint, SOL_PUBKEY_SIZE) == 0) {
+      return &SOL_KNOWN_TOKENS[i];
+    }
+  }
+  return NULL;
+}
+
+bool solana_deriveAssociatedTokenAddress(
+    const uint8_t owner[SOL_PUBKEY_SIZE],
+    const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]) {
+  /* Solana find_program_address searches bump seeds from 255 down. A valid PDA
+   * is SHA256(seeds..., bump, program_id, "ProgramDerivedAddress") that does
+   * NOT decompress to an Ed25519 curve point. */
+  for (int bump = 255; bump >= 0; bump--) {
+    SHA256_CTX ctx = {0};
+    uint8_t candidate[SHA256_DIGEST_LENGTH];
+    uint8_t bump_seed = (uint8_t)bump;
+    sha256_Init(&ctx);
+    sha256_Update(&ctx, owner, SOL_PUBKEY_SIZE);
+    sha256_Update(&ctx, token_program, SOL_PUBKEY_SIZE);
+    sha256_Update(&ctx, mint, SOL_PUBKEY_SIZE);
+    sha256_Update(&ctx, &bump_seed, 1);
+    sha256_Update(&ctx, SOL_ATA_PROGRAM, SOL_PUBKEY_SIZE);
+    sha256_Update(&ctx, (const uint8_t*)SOL_PDA_MARKER,
+                  sizeof(SOL_PDA_MARKER) - 1);
+    sha256_Final(&ctx, candidate);
+
+    ge25519 point;
+    if (ge25519_unpack_vartime(&point, candidate) == 0) {
+      memcpy(out, candidate, SOL_PUBKEY_SIZE);
+      return true;
+    }
+  }
+  return false;
+}
+
+bool solana_findTokenRecipientOwner(
+    const SolanaSignTx* msg, const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE],
+    const uint8_t destination[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]) {
+  if (!msg) return false;
+  for (size_t i = 0; i < msg->token_recipient_owner_count; i++) {
+    if (msg->token_recipient_owner[i].size != SOL_PUBKEY_SIZE) continue;
+    uint8_t derived[SOL_PUBKEY_SIZE];
+    if (solana_deriveAssociatedTokenAddress(msg->token_recipient_owner[i].bytes,
+                                            token_program, mint, derived) &&
+        memcmp(derived, destination, SOL_PUBKEY_SIZE) == 0) {
+      memcpy(out, msg->token_recipient_owner[i].bytes, SOL_PUBKEY_SIZE);
+      return true;
+    }
+  }
+  return false;
 }
 
 const SolanaTokenInfo* solana_findTokenInfo(
