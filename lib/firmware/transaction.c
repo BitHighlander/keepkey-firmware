@@ -32,6 +32,7 @@
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/base58.h"
+#include "trezor/crypto/bip340.h"
 #include "trezor/crypto/cash_addr.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/memzero.h"
@@ -43,6 +44,7 @@
 #define _(X) (X)
 
 #define SEGWIT_VERSION_0 0
+#define SEGWIT_VERSION_1 1
 
 #define CASHADDR_P2KH (0)
 #define CASHADDR_P2SH (8)
@@ -125,6 +127,11 @@ bool compute_address(const CoinType* coin, InputScriptType script_type,
 
   if (has_multisig) {
     size_t prelen;
+    // No taproot multisig.  Without this the request would fall through to
+    // the p2sh branch below and hand back a p2sh address for a taproot ask.
+    if (script_type == InputScriptType_SPENDTAPROOT) {
+      return 0;
+    }
     if (cryptoMultisigPubkeyIndex(coin, multisig, node->public_key) < 0) {
       return 0;
     }
@@ -186,9 +193,28 @@ bool compute_address(const CoinType* coin, InputScriptType script_type,
       return 0;
     }
   } else if (script_type == InputScriptType_SPENDTAPROOT) {
-    // we don't handle spendtaproot input types
-    return 0;
-
+    // p2tr: the witness program is the BIP-86 tweaked output key, bech32m
+    // encoded at witness version 1.
+    if ((!coin->has_segwit || !coin->segwit) || !coin->has_bech32_prefix) {
+      return 0;
+    }
+    if (!coin->has_taproot || !coin->taproot) {
+      return 0;
+    }
+    uint8_t output_key[32];
+    // node->public_key is compressed; bytes 1..33 are the x-only internal key.
+    // BIP-341 defines the internal key as x-only, so the odd-y case resolves
+    // to its even-y counterpart here and in the signer alike.
+    if (bip340_tweak_pubkey(curve->params, node->public_key + 1, output_key) !=
+        0) {
+      return 0;
+    }
+    // Exactly 32 bytes: segwit_addr_encode only length-checks the witness
+    // program for version 0, so a wrong length would encode silently.
+    if (!segwit_addr_encode(address, coin->bech32_prefix, SEGWIT_VERSION_1,
+                            output_key, sizeof(output_key))) {
+      return 0;
+    }
   } else if (script_type == InputScriptType_SPENDP2SHWITNESS) {
     // segwit p2wpkh embedded in p2sh
     if (!coin->has_segwit || !coin->segwit) {

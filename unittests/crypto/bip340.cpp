@@ -8,13 +8,18 @@
 #include <cstddef>
 
 extern "C" {
+#include "trezor/crypto/bip32.h"
 #include "trezor/crypto/bip340.h"
+#include "trezor/crypto/bip39.h"
+#include "trezor/crypto/curves.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/segwit_addr.h"
 }
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <string>
 #include <vector>
@@ -190,6 +195,107 @@ const Vector kVectors[] = {
 };
 
 }  // namespace
+
+// Official BIP-86 test vectors, from
+// https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki
+// (mnemonic "abandon abandon ... about", account m/86'/0'/0').
+// HD derivation is covered at the firmware level; what is pinned here is the
+// tweak and the bech32m encoding that turn an internal key into an address.
+TEST(BIP340, BIP86Vectors) {
+  const struct {
+    const char *path;
+    const char *internal_key;
+    const char *output_key;
+    const char *address;
+  } vectors[] = {
+      {"m/86'/0'/0'/0/0",
+       "cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115",
+       "a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c",
+       "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"},
+      {"m/86'/0'/0'/0/1",
+       "83dfe85a3151d2517290da461fe2815591ef69f2b18a2ce63f01697a8b313145",
+       "a82f29944d65b86ae6b5e5cc75e294ead6c59391a1edc5e016e3498c67fc7bbb",
+       "bc1p4qhjn9zdvkux4e44uhx8tc55attvtyu358kutcqkudyccelu0was9fqzwh"},
+      {"m/86'/0'/0'/1/0",
+       "399f1b2f4393f29a18c937859c5dd8a77350103157eb880f02e8c08214277cef",
+       "882d74e5d0572d5a816cef0041a96b6c1de832f6f9676d9605c44d5e9a97d3dc",
+       "bc1p3qkhfews2uk44qtvauqyr2ttdsw7svhkl9nkm9s9c3x4ax5h60wqwruhk7"},
+  };
+
+  for (const auto &v : vectors) {
+    std::vector<uint8_t> internal = unhex(v.internal_key);
+    uint8_t out[BIP340_XONLY_LENGTH] = {0};
+
+    ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, internal.data(), out))
+        << v.path;
+
+    std::string got = hex(out, sizeof(out));
+    std::transform(got.begin(), got.end(), got.begin(), ::tolower);
+    ASSERT_EQ(std::string(v.output_key), got) << v.path;
+
+    // Witness version 1 + 32 bytes must come out bech32m, i.e. a bc1p address.
+    char address[MAX_ADDR_SIZE] = {0};
+    ASSERT_EQ(1, segwit_addr_encode(address, "bc", 1, out, sizeof(out)))
+        << v.path;
+    ASSERT_EQ(std::string(v.address), std::string(address)) << v.path;
+  }
+}
+
+// The same BIP-86 vectors driven from the mnemonic, so HD derivation and the
+// x-only convention are covered too.  compute_address() feeds
+// node->public_key + 1 to bip340_tweak_pubkey(); this pins that the byte after
+// the compressed prefix really is the internal key BIP-86 expects, which an
+// off-by-one would otherwise turn into a valid-looking wrong address.
+TEST(BIP340, BIP86FromMnemonic) {
+  const char *mnemonic =
+      "abandon abandon abandon abandon abandon abandon abandon abandon abandon "
+      "abandon abandon about";
+  const struct {
+    uint32_t change;
+    uint32_t index;
+    const char *address;
+  } vectors[] = {
+      {0, 0, "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"},
+      {0, 1, "bc1p4qhjn9zdvkux4e44uhx8tc55attvtyu358kutcqkudyccelu0was9fqzwh"},
+      {1, 0, "bc1p3qkhfews2uk44qtvauqyr2ttdsw7svhkl9nkm9s9c3x4ax5h60wqwruhk7"},
+  };
+
+  uint8_t seed[64] = {0};
+  mnemonic_to_seed(mnemonic, "", seed, nullptr);
+
+  for (const auto &v : vectors) {
+    HDNode node = {0};
+    ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+    // m/86'/0'/0'/change/index
+    ASSERT_EQ(1, hdnode_private_ckd(&node, 0x80000000 + 86));
+    ASSERT_EQ(1, hdnode_private_ckd(&node, 0x80000000 + 0));
+    ASSERT_EQ(1, hdnode_private_ckd(&node, 0x80000000 + 0));
+    ASSERT_EQ(1, hdnode_private_ckd(&node, v.change));
+    ASSERT_EQ(1, hdnode_private_ckd(&node, v.index));
+    hdnode_fill_public_key(&node);
+
+    uint8_t out[BIP340_XONLY_LENGTH] = {0};
+    ASSERT_EQ(0, bip340_tweak_pubkey(&secp256k1, node.public_key + 1, out));
+
+    char address[MAX_ADDR_SIZE] = {0};
+    ASSERT_EQ(1, segwit_addr_encode(address, "bc", 1, out, sizeof(out)));
+    ASSERT_EQ(std::string(v.address), std::string(address))
+        << "change=" << v.change << " index=" << v.index;
+  }
+}
+
+TEST(BIP340, TweakRejectsInvalidInternalKey) {
+  // Vector 5's x coordinate, which is not on the curve.
+  std::vector<uint8_t> bad =
+      unhex("EEFDEA4CDB677750A420FEE807EACF21EB9898AE79B9768766E4FAA04A2D4A34");
+  // And an x coordinate past the field size (vector 14).
+  std::vector<uint8_t> too_big =
+      unhex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC30");
+  uint8_t out[BIP340_XONLY_LENGTH] = {0};
+
+  ASSERT_NE(0, bip340_tweak_pubkey(&secp256k1, bad.data(), out));
+  ASSERT_NE(0, bip340_tweak_pubkey(&secp256k1, too_big.data(), out));
+}
 
 TEST(BIP340, TaggedHash) {
   // tagged_hash("BIP0340/challenge", "") == SHA256(h || h) where

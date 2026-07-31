@@ -822,8 +822,11 @@ static bool signing_validate_output(const TxOutputType* txoutput) {
       return false;
     }
 
+    // has_taproot is the nanopb presence flag, not the value.  Every coin in
+    // coins.def sets it, so testing it alone let all 41 taproot=false coins
+    // through and built a p2tr output for them.
     if (txoutput->script_type == OutputScriptType_PAYTOTAPROOT &&
-        !coin->has_taproot) {
+        (!coin->has_taproot || !coin->taproot)) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Taproot not enabled on this coin."));
       signing_abort();
