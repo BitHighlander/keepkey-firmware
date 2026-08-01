@@ -1381,6 +1381,13 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
       signing_abort();
       return false;
     }
+    /* aux = NULL means an all-zero aux_rand, i.e. deterministic signing.  That
+       is spec-permitted and matches this firmware's ECDSA, which is RFC6979
+       deterministic; the nonce still depends on the private key and the
+       message, so it is never reused across different transactions.  Fresh
+       randomness would only add side-channel hardening, at the cost of making
+       signatures unreproducible and so untestable against a published
+       vector. */
     int sign_ret = bip340_sign(curve->params, tweaked, hash, sizeof(hash),
                                /*aux=*/NULL, sig);
     memzero(tweaked, sizeof(tweaked));
