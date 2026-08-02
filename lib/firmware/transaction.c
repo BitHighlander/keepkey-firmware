@@ -400,6 +400,9 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
       case OutputScriptType_PAYTOP2SHWITNESS:
         input_script_type = InputScriptType_SPENDP2SHWITNESS;
         break;
+      case OutputScriptType_PAYTOTAPROOT:
+        input_script_type = InputScriptType_SPENDTAPROOT;
+        break;
       default:
         return 0;  // failed to compile output
     }
@@ -1084,6 +1087,9 @@ uint32_t tx_input_weight(const CoinType* coin, const TxInputType* txinput) {
       weight += 4;  // empty input script
     }
     weight += input_script_size;  // discounted witness
+  } else if (txinput->script_type == InputScriptType_SPENDTAPROOT) {
+    weight += 4;  // empty scriptSig length in the non-witness serialization
+    weight += 2 + TXSIZE_SCHNORR_SIGNATURE;  // stack count, item length, sig
   }
   return weight;
 }

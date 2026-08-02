@@ -26,7 +26,6 @@
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/crypto.h"
-#include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/policy.h"
@@ -102,6 +101,7 @@ static uint8_t hash_prevouts_tr[32], hash_sequences_tr[32], hash_outputs_tr[32];
 static uint8_t hash_prefix[32];
 static uint8_t hash_check[32];
 static uint64_t to_spend, authorized_bip143_in, spending, change_spend;
+static bool has_taproot_input, missing_bip341_input_amount;
 static uint32_t version = 1;
 static uint32_t lock_time = 0;
 static uint32_t expiry = 0;
@@ -129,7 +129,7 @@ static uint32_t tx_weight;
 
 /* BIP-341 SIGHASH_DEFAULT: commits to all outputs, and unlike SIGHASH_ALL
    its byte is omitted from the witness entirely. */
-#define SIGHASH_ALL_TAPROOT 0
+#define SIGHASH_DEFAULT_TAPROOT 0
 
 /* transaction header size: 4 byte version */
 #define TXSIZE_HEADER 4
@@ -426,10 +426,18 @@ void phase1_request_next_input(void) {
     //  compute segwit hashPrevouts & hashSequence
     hasher_Final(&hasher_prevouts, hash_prevouts);
     hasher_Final(&hasher_sequence, hash_sequence);
-    sha256_Final(&ctx_amounts, hash_amounts);
-    sha256_Final(&ctx_scriptpubkeys, hash_scriptpubkeys);
-    sha256_Final(&ctx_prevouts_tr, hash_prevouts_tr);
-    sha256_Final(&ctx_sequences_tr, hash_sequences_tr);
+    if (has_taproot_input && missing_bip341_input_amount) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Taproot transaction input without amount"));
+      signing_abort();
+      return;
+    }
+    if (coin->has_taproot && coin->taproot) {
+      sha256_Final(&ctx_amounts, hash_amounts);
+      sha256_Final(&ctx_scriptpubkeys, hash_scriptpubkeys);
+      sha256_Final(&ctx_prevouts_tr, hash_prevouts_tr);
+      sha256_Final(&ctx_sequences_tr, hash_sequences_tr);
+    }
     hasher_Final(&hasher_check, hash_check);
     // init hashOutputs
     hasher_Reset(&hasher_outputs);
@@ -680,6 +688,8 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   spending = 0;
   change_spend = 0;
   authorized_bip143_in = 0;
+  has_taproot_input = false;
+  missing_bip341_input_amount = false;
   memset(&input, 0, sizeof(TxInputType));
   memset(&resp, 0, sizeof(TxRequest));
 
@@ -724,13 +734,15 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
     hasher_Init(&hasher_sequence, curve->hasher_sign);
     hasher_Init(&hasher_outputs, curve->hasher_sign);
     hasher_Init(&hasher_check, curve->hasher_sign);
-    /* BIP-341 fixes these two as plain SHA256, independent of the coin's
-       signing hasher, so they are initialised separately on purpose. */
-    sha256_Init(&ctx_amounts);
-    sha256_Init(&ctx_scriptpubkeys);
-    sha256_Init(&ctx_prevouts_tr);
-    sha256_Init(&ctx_sequences_tr);
-    sha256_Init(&ctx_outputs_tr);
+    if (coin->has_taproot && coin->taproot) {
+      /* BIP-341 fixes these as plain SHA256, independent of the coin's
+         signing hasher, so they are initialised separately on purpose. */
+      sha256_Init(&ctx_amounts);
+      sha256_Init(&ctx_scriptpubkeys);
+      sha256_Init(&ctx_prevouts_tr);
+      sha256_Init(&ctx_sequences_tr);
+      sha256_Init(&ctx_outputs_tr);
+    }
   }
 
   layoutProgressSwipe(_("Signing transaction"), 0);
@@ -750,8 +762,7 @@ static bool is_multisig_input_script_type(const TxInputType* txinput) {
 static bool is_multisig_output_script_type(const TxOutputType* txoutput) {
   if (txoutput->script_type == OutputScriptType_PAYTOMULTISIG ||
       txoutput->script_type == OutputScriptType_PAYTOP2SHWITNESS ||
-      txoutput->script_type == OutputScriptType_PAYTOWITNESS ||
-      txoutput->script_type == OutputScriptType_PAYTOTAPROOT) {
+      txoutput->script_type == OutputScriptType_PAYTOWITNESS) {
     return true;
   }
   return false;
@@ -772,7 +783,8 @@ static bool is_change_output_script_type(const TxOutputType* txoutput) {
   if (txoutput->script_type == OutputScriptType_PAYTOADDRESS ||
       txoutput->script_type == OutputScriptType_PAYTOMULTISIG ||
       txoutput->script_type == OutputScriptType_PAYTOP2SHWITNESS ||
-      txoutput->script_type == OutputScriptType_PAYTOWITNESS) {
+      txoutput->script_type == OutputScriptType_PAYTOWITNESS ||
+      txoutput->script_type == OutputScriptType_PAYTOTAPROOT) {
     return true;
   }
   return false;
@@ -864,22 +876,21 @@ static bool signing_validate_output(const TxOutputType* txoutput) {
     return false;
   }
 
+  // has_taproot is the nanopb presence flag, not the value. Every coin in
+  // coins.def sets it, so both fields must be checked.
+  if (txoutput->script_type == OutputScriptType_PAYTOTAPROOT &&
+      (!coin->has_taproot || !coin->taproot)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Taproot not enabled on this coin."));
+    signing_abort();
+    return false;
+  }
+
   if (txoutput->script_type == OutputScriptType_PAYTOOPRETURN) {
     if (txoutput->has_address || (txoutput->address_n_count > 0) ||
         txoutput->has_multisig) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("OP_RETURN output with address or multisig"));
-      signing_abort();
-      return false;
-    }
-
-    // has_taproot is the nanopb presence flag, not the value.  Every coin in
-    // coins.def sets it, so testing it alone let all 41 taproot=false coins
-    // through and built a p2tr output for them.
-    if (txoutput->script_type == OutputScriptType_PAYTOTAPROOT &&
-        (!coin->has_taproot || !coin->taproot)) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Taproot not enabled on this coin."));
       signing_abort();
       return false;
     }
@@ -958,6 +969,8 @@ static bool signing_check_input(TxInputType* txinput) {
   // hdnode_private_ckd_cached keeps repeated derivations along one account
   // path cheap.
   if (coin->has_taproot && coin->taproot) {
+    has_taproot_input |= txinput->script_type == InputScriptType_SPENDTAPROOT;
+    missing_bip341_input_amount |= !txinput->has_amount;
     uint8_t script_pubkey[64];
     size_t script_pubkey_len = 0;
     if (!fill_input_script_pubkey(coin, root, txinput, script_pubkey,
@@ -1085,8 +1098,8 @@ static bool signing_check_output(TxOutputType* txoutput) {
   //  compute segwit hashOuts
   tx_output_hash(&hasher_outputs, &bin_output, coin->decred);
   /* BIP-341's sha_outputs: single sha256 over amount || ser_script */
-  sha256_Update(&ctx_outputs_tr, (const uint8_t*)&bin_output.amount, 8);
-  {
+  if (coin->has_taproot && coin->taproot) {
+    sha256_Update(&ctx_outputs_tr, (const uint8_t*)&bin_output.amount, 8);
     uint8_t lenbuf[5];
     uint32_t lenlen = ser_length(bin_output.script_pubkey.size, lenbuf);
     sha256_Update(&ctx_outputs_tr, lenbuf, lenlen);
@@ -1152,7 +1165,9 @@ static void phase1_request_next_output(void) {
       tx_hash_final(&ti, hash_prefix, false);
     }
     hasher_Final(&hasher_outputs, hash_outputs);
-    sha256_Final(&ctx_outputs_tr, hash_outputs_tr);
+    if (coin->has_taproot && coin->taproot) {
+      sha256_Final(&ctx_outputs_tr, hash_outputs_tr);
+    }
     if (!signing_check_fee()) {
       return;
     }
@@ -1172,7 +1187,7 @@ static void phase1_request_next_output(void) {
 /* BIP-341 key-path sighash.  The assembly itself lives in bip341_sighash()
    so the field ordering is unit-testable against the published vectors. */
 static void signing_hash_bip341(uint32_t input_index, uint8_t* hash) {
-  bip341_sighash(SIGHASH_ALL_TAPROOT, version, lock_time, hash_prevouts_tr,
+  bip341_sighash(SIGHASH_DEFAULT_TAPROOT, version, lock_time, hash_prevouts_tr,
                  hash_amounts, hash_scriptpubkeys, hash_sequences_tr,
                  hash_outputs_tr, input_index, hash);
 }
@@ -1695,6 +1710,26 @@ void signing_txack(TransactionType* tx) {
               _("Decred script version does not match previous output"));
           signing_abort();
           return;
+        }
+        /* BIP-341 commits to every input's amount and scriptPubKey. For a
+           mixed legacy+Taproot transaction the host must provide the legacy
+           amount, and it must describe the actual prevout rather than an
+           invented commitment that would produce an invalid signature. */
+        if (coin->has_taproot && coin->taproot && input.has_amount) {
+          uint8_t expected_script[64];
+          size_t expected_script_len = 0;
+          if (input.amount != tx->bin_outputs[0].amount ||
+              !fill_input_script_pubkey(coin, root, &input, expected_script,
+                                        &expected_script_len,
+                                        sizeof(expected_script)) ||
+              expected_script_len != tx->bin_outputs[0].script_pubkey.size ||
+              memcmp(expected_script, tx->bin_outputs[0].script_pubkey.bytes,
+                     expected_script_len) != 0) {
+            fsm_sendFailure(FailureType_Failure_SyntaxError,
+                            _("Input amount or script does not match prevout"));
+            signing_abort();
+            return;
+          }
         }
         to_spend += tx->bin_outputs[0].amount;
       }
