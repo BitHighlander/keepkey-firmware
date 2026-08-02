@@ -532,21 +532,44 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
                   "Not in bootloader mode");
 }
 
+/* Bytes of entropy a host may collect per boot without a button press.
+ *
+ * Auditing the RNG (bias tests, birthday/collision scans) needs bulk
+ * samples, and a press per kilobyte made that impossible on real hardware
+ * -- so nobody ever checked. The returned bytes are drawn fresh and
+ * discarded; they are never reused as key material, and the STM32 RNG is a
+ * free-running noise source rather than a seeded DRBG, so observing output
+ * reveals nothing about past or future draws.
+ *
+ * What the press did still buy is a cap on bias characterization: random32()
+ * returns RNG_DR raw with no whitening, and unlimited raw output lets a
+ * hostile host measure that bias precisely. A per-boot budget keeps that
+ * cap against a remote malicious host (which cannot replug) while leaving
+ * an audit plenty of room. Once spent, the confirm comes back; replug to
+ * refresh. */
+#define ENTROPY_FREE_BUDGET (64 * 1024)
+
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
-               "Do you want to generate and return entropy using the hardware "
-               "RNG?")) {
+  static uint32_t free_budget = ENTROPY_FREE_BUDGET;
+
+  uint32_t len = msg->size;
+
+  if (len > ENTROPY_BUF) {
+    len = ENTROPY_BUF;
+  }
+
+  if (len <= free_budget) {
+    free_budget -= len;
+  } else if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy,
+                      "Generate Entropy",
+                      "Do you want to generate and return entropy using the "
+                      "hardware RNG?")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
     layoutHome();
     return;
   }
 
   RESP_INIT(Entropy);
-  uint32_t len = msg->size;
-
-  if (len > ENTROPY_BUF) {
-    len = ENTROPY_BUF;
-  }
 
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
