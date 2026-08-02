@@ -720,8 +720,8 @@ void layout_address_notification(const char* desc, const char* address,
          with the QR, which is drawn afterwards and would overwrite the start of
          the first line. */
       address_line_height = font_height(address_font);
-      const uint16_t bottom = sp.y + (lines - 1) * address_line_height +
-                              font_height(address_font);
+      const uint16_t bottom =
+          sp.y + (lines - 1) * address_line_height + font_height(address_font);
       if (bottom > KEEPKEY_DISPLAY_HEIGHT) {
         /* Still short: raise by the minimum that fits, no more. */
         const uint16_t overflow = bottom - KEEPKEY_DISPLAY_HEIGHT;
