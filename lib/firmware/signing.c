@@ -961,8 +961,7 @@ static bool signing_check_input(TxInputType* txinput) {
     uint8_t script_pubkey[64];
     size_t script_pubkey_len = 0;
     if (!fill_input_script_pubkey(coin, root, txinput, script_pubkey,
-                                  &script_pubkey_len,
-                                  sizeof(script_pubkey))) {
+                                  &script_pubkey_len, sizeof(script_pubkey))) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Failed to derive input scriptPubKey"));
       signing_abort();
