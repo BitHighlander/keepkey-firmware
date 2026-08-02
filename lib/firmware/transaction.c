@@ -295,8 +295,7 @@ bool compute_address(const CoinType* coin, InputScriptType script_type,
     // BIP-341 defines the internal key as x-only, so the odd-y case resolves
     // to its even-y counterpart here and in the signer alike.
     if (bip340_tweak_pubkey(curve->params, node->public_key + 1,
-                            /*merkle_root=*/NULL, output_key) !=
-        0) {
+                            /*merkle_root=*/NULL, output_key) != 0) {
       return 0;
     }
     // Exactly 32 bytes: segwit_addr_encode only length-checks the witness
