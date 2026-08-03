@@ -777,7 +777,7 @@ jobs:
         if: always() && env.DYLIB_PATH != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: libkkemu-${{ github.sha }}
+          name: libkkemu-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ env.DYLIB_PATH }}
           retention-days: 30
           if-no-files-found: error
