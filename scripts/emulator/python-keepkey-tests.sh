@@ -95,6 +95,7 @@ fi
 echo "=== Phase 2: Full test suite ==="
 set +e
 KK_EXPECT_PERSIST_REJECTED=1 \
+KK_EXPECT_ENTROPY_BUDGET=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml

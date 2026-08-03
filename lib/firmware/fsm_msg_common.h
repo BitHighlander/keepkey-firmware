@@ -538,21 +538,66 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
                   "Not in bootloader mode");
 }
 
+/* Bytes of entropy a host may collect per boot without a button press.
+ *
+ * Auditing the RNG (bias tests, birthday/collision scans) needs bulk
+ * samples, and a press per kilobyte made that impossible on real hardware
+ * -- so nobody ever checked. The returned bytes are drawn fresh and
+ * discarded; they are never reused as key material, and the STM32 RNG is a
+ * free-running noise source rather than a seeded DRBG, so observing output
+ * reveals nothing about past or future draws.
+ *
+ * What the press did still buy is a cap on bias characterization: random32()
+ * returns RNG_DR raw with no whitening, and unlimited raw output lets a
+ * hostile host measure that bias precisely. A per-boot budget keeps that
+ * cap against a remote malicious host (which cannot replug) while leaving
+ * an audit plenty of room. Once spent, the confirm comes back; replug to
+ * refresh. */
+#define ENTROPY_FREE_BUDGET (64 * 1024)
+
+/* Whether the budget above may be spent without a press.
+ *
+ * GetEntropy has no PIN or initialization gate -- the button press WAS the
+ * human gate. Dropping it unconditionally would let someone holding a locked
+ * device harvest raw RNG output silently, and replug to repeat, so restrict
+ * the press-free path to states where there is either nothing to protect or
+ * a user demonstrably present:
+ *
+ *   - uninitialized: no seed exists yet. This is the case that matters --
+ *     auditing the RNG *before* trusting it to generate a seed.
+ *   - no PIN configured: nothing is locked, so the press guards nothing that
+ *     physical possession does not already defeat.
+ *   - PIN already entered this session: the user is right there.
+ *
+ * An initialized, PIN-protected, locked device is the stolen / evil-maid
+ * case and falls back to the confirm exactly as before. */
+static bool entropy_press_free_allowed(void) {
+  if (!storage_isInitialized()) return true;
+  if (!storage_hasPin()) return true;
+  return session_isPinCached();
+}
+
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
-               "Do you want to generate and return entropy using the hardware "
-               "RNG?")) {
+  static uint32_t free_budget = ENTROPY_FREE_BUDGET;
+
+  uint32_t len = msg->size;
+
+  if (len > ENTROPY_BUF) {
+    len = ENTROPY_BUF;
+  }
+
+  if (len <= free_budget && entropy_press_free_allowed()) {
+    free_budget -= len;
+  } else if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy,
+                      "Generate Entropy",
+                      "Do you want to generate and return entropy using the "
+                      "hardware RNG?")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
     layoutHome();
     return;
   }
 
   RESP_INIT(Entropy);
-  uint32_t len = msg->size;
-
-  if (len > ENTROPY_BUF) {
-    len = ENTROPY_BUF;
-  }
 
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
