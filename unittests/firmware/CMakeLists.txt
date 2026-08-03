@@ -1,6 +1,7 @@
 set(sources
     app_confirm.cpp
     recovery.cpp
+    signing.cpp
     storage.cpp
     usb_rx.cpp
     u2f.cpp)

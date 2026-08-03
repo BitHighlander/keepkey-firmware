@@ -427,7 +427,7 @@ void phase2_request_next_input(void) {
 
 /// Compares two BIP32 paths, returning true iff there is something mismatched
 /// about the mixed-mode change.
-static bool isCrossAccountSegwitChangeForbidden(
+bool isCrossAccountSegwitChangeForbidden(
     const uint32_t* lhs_address_n, size_t lhs_address_n_count,
     const uint32_t* rhs_address_n, size_t rhs_address_n_count,
     OutputScriptType rhs_script_type) {
@@ -454,6 +454,10 @@ static bool isCrossAccountSegwitChangeForbidden(
 
   if (out_purpose == (0x80000000 | 84) &&
       rhs_script_type != OutputScriptType_PAYTOWITNESS)
+    return true;
+
+  if (out_purpose == (0x80000000 | 86) &&
+      rhs_script_type != OutputScriptType_PAYTOTAPROOT)
     return true;
 
   return false;
