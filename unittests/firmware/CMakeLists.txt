@@ -2,6 +2,7 @@ set(sources
     app_confirm.cpp
     recovery.cpp
     storage.cpp
+    transaction.cpp
     usb_rx.cpp
     u2f.cpp)
 
