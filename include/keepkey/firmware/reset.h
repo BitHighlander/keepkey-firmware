@@ -43,10 +43,10 @@ extern char mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 extern char mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 extern char mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
-void reset_init(bool display_random, uint32_t _strength,
-                bool passphrase_protection, bool pin_protection,
-                const char* language, const char* label, bool _no_backup,
-                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter);
+void reset_init(uint32_t _strength, bool passphrase_protection,
+                bool pin_protection, const char* language, const char* label,
+                bool _no_backup, uint32_t _auto_lock_delay_ms,
+                uint32_t _u2f_counter);
 void reset_entropy(const uint8_t* ext_entropy, uint32_t len);
 uint32_t reset_get_int_entropy(uint8_t* entropy);
 const char* reset_get_word(void);

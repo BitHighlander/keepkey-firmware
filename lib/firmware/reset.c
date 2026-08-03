@@ -50,10 +50,10 @@ char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
-void reset_init(bool display_random, uint32_t _strength,
-                bool passphrase_protection, bool pin_protection,
-                const char* language, const char* label, bool _no_backup,
-                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter) {
+void reset_init(uint32_t _strength, bool passphrase_protection,
+                bool pin_protection, const char* language, const char* label,
+                bool _no_backup, uint32_t _auto_lock_delay_ms,
+                uint32_t _u2f_counter) {
   if (_strength != 128 && _strength != 192 && _strength != 256) {
     fsm_sendFailure(
         FailureType_Failure_SyntaxError,
@@ -64,13 +64,6 @@ void reset_init(bool display_random, uint32_t _strength,
 
   strength = _strength;
   no_backup = _no_backup;
-
-  if (display_random && no_backup) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Can't show internal entropy when backup is skipped"));
-    layoutHome();
-    return;
-  }
 
   if (no_backup) {
     // Double confirm, since this is a feature for advanced users only, and
@@ -91,25 +84,6 @@ void reset_init(bool display_random, uint32_t _strength,
   }
 
   random_buffer(int_entropy, 32);
-
-  if (display_random) {
-    static char CONFIDENTIAL ent_str[4][17];
-    data2hex(int_entropy, 8, ent_str[0]);
-    data2hex(int_entropy + 8, 8, ent_str[1]);
-    data2hex(int_entropy + 16, 8, ent_str[2]);
-    data2hex(int_entropy + 24, 8, ent_str[3]);
-
-    if (!confirm(ButtonRequestType_ButtonRequest_ResetDevice,
-                 _("Internal Entropy"), "%s %s %s %s", ent_str[0], ent_str[1],
-                 ent_str[2], ent_str[3])) {
-      memzero(ent_str, sizeof(ent_str));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Reset cancelled"));
-      layoutHome();
-      return;
-    }
-    memzero(ent_str, sizeof(ent_str));
-  }
 
   if (pin_protection) {
     if (!change_pin()) {
