@@ -102,6 +102,13 @@ static uint8_t hash_prefix[32];
 static uint8_t hash_check[32];
 static uint64_t to_spend, authorized_bip143_in, spending, change_spend;
 static bool has_taproot_input, missing_bip341_input_amount;
+/*
+ * Taproot signatures must never be reachable before phase 1 has completed
+ * the physical transaction-summary confirmation. Keep this as independent
+ * state instead of inferring it from signing_stage so a malformed or
+ * corrupted stage transition fails closed at the Schnorr signing boundary.
+ */
+static bool taproot_transaction_confirmed;
 static uint32_t version = 1;
 static uint32_t lock_time = 0;
 static uint32_t expiry = 0;
@@ -690,6 +697,7 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   authorized_bip143_in = 0;
   has_taproot_input = false;
   missing_bip341_input_amount = false;
+  taproot_transaction_confirmed = false;
   memset(&input, 0, sizeof(TxInputType));
   memset(&resp, 0, sizeof(TxRequest));
 
@@ -1142,6 +1150,9 @@ static bool signing_check_fee(void) {
     signing_abort();
     return false;
   }
+  if (has_taproot_input) {
+    taproot_transaction_confirmed = true;
+  }
   return true;
 }
 
@@ -1366,6 +1377,12 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
   // idx1: index to sign
 
   if (txinput->script_type == InputScriptType_SPENDTAPROOT) {
+    if (!taproot_transaction_confirmed) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Taproot transaction was not confirmed"));
+      signing_abort();
+      return false;
+    }
     /* No scriptSig to build, but the same re-validation and derivation the
        other input types get. */
     if (!prepare_input_node(txinput)) {
@@ -2098,4 +2115,5 @@ void signing_abort(void) {
   }
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
+  taproot_transaction_confirmed = false;
 }
