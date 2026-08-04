@@ -62,38 +62,63 @@
 
 extern bool reset_msg_stack;
 
-/* Written from the button ISR, read from the UI loop under masked IRQs. */
+/* Button state shared with the ISR. Every classification decision (short vs
+ * hold) is made exactly once per press cycle and guarded by dice_committed,
+ * so a press can never produce both an advance and a commit. The UI loop
+ * reads and drains these under masked interrupts. */
+static volatile bool dice_accept;    /* host has ButtonAck'd the screen */
 static volatile bool dice_pressed;
-static volatile bool dice_hold_fired;
+static volatile bool dice_committed; /* this press cycle already classified */
 static volatile uint32_t dice_press_start;
 static volatile uint32_t dice_release_time;
+static volatile bool dice_have_release;
 static volatile uint8_t dice_short_events;
+static volatile uint8_t dice_hold_events;
 
 #ifndef EMULATOR
 static void dice_on_press(void *context) {
   (void)context;
   uint32_t now = getSysTime();
-  if (dice_pressed) {
-    return; /* duplicate edge */
+  /* Mirror confirm_sm: input is dead until the host acks the request, so a
+   * press begun before the ack cannot accrue hold time toward a commit. */
+  if (!dice_accept || dice_pressed) {
+    return;
   }
   dice_pressed = true;
-  if (now - dice_release_time >= DICE_DEBOUNCE_MS) {
-    dice_press_start = now; /* genuine new press */
-    dice_hold_fired = false;
-  } /* else: bounce continuation — keep the original press_start */
+  if (dice_have_release && now - dice_release_time < DICE_DEBOUNCE_MS) {
+    /* Release-edge bounce: the release that just queued an event was not a
+     * real one. Retract it and continue the original press cycle — the UI
+     * loop is barred from consuming events until the line has settled for
+     * DICE_DEBOUNCE_MS, so it cannot have acted on it yet. */
+    if (!dice_committed && dice_short_events > 0) {
+      dice_short_events--;
+    }
+    return;
+  }
+  dice_press_start = now;
+  dice_committed = false;
 }
 
 static void dice_on_release(void *context) {
   (void)context;
   uint32_t now = getSysTime();
-  if (!dice_pressed) {
+  if (!dice_accept || !dice_pressed) {
     return;
   }
   dice_pressed = false;
   dice_release_time = now;
+  dice_have_release = true;
+  if (dice_committed) {
+    return; /* the UI loop already committed this hold while it was held */
+  }
   uint32_t held = now - dice_press_start;
-  if (held >= DICE_DEBOUNCE_MS && held < DICE_HOLD_MS && !dice_hold_fired &&
-      dice_short_events < 8) {
+  if (held >= DICE_HOLD_MS) {
+    /* A hold completed inside the UI-loop poll gap still counts. */
+    dice_committed = true;
+    if (dice_hold_events < 8) {
+      dice_hold_events++;
+    }
+  } else if (held >= DICE_DEBOUNCE_MS && dice_short_events < 8) {
     dice_short_events++;
   }
 }
@@ -128,7 +153,10 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
   display_constant_power(true);
 
   DrawableParams p = {.color = 0xFF, .x = DICE_LEFT, .y = 0};
-  snprintf(line, sizeof(line), "ROLL %lu/%lu", (unsigned long)(count + 1),
+  /* Clamped: the final commit redraws before the loop re-tests its
+   * condition, which would otherwise render an impossible "ROLL 100/99". */
+  snprintf(line, sizeof(line), "ROLL %lu/%lu",
+           (unsigned long)(count < target ? count + 1 : target),
            (unsigned long)target);
   draw_string(canvas, get_title_font(), line, &p, 0, 10);
 
@@ -142,8 +170,11 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
                     DICE_CELL_SIZE, DICE_CELL_SIZE);
     uint8_t ink = active ? 0x00 : 0xFF;
     if (i < DICE_UNDO_POS) {
-      draw_char_simple(canvas, get_pin_font(), (char)('1' + i), ink, cx + 4,
-                       DICE_GRID_Y + 2);
+      /* pin_font '1' is 4px wide where '2'-'6' are 8px (font.c) — center
+       * each on its own metric rather than on the common case. */
+      uint16_t glyph_w = (i == 0) ? 4 : 8;
+      draw_char_simple(canvas, get_pin_font(), (char)('1' + i), ink,
+                       cx + (DICE_CELL_SIZE - glyph_w) / 2, DICE_GRID_Y + 2);
     } else {
       draw_char_simple(canvas, get_title_font(), '<', ink, cx + 5,
                        DICE_GRID_Y + 3);
@@ -191,11 +222,14 @@ bool dice_input_collect(char *rolls, uint32_t target) {
 
   reset_msg_stack = false;
 
+  dice_accept = false;
   dice_pressed = false;
-  dice_hold_fired = false;
+  dice_committed = false;
   dice_press_start = 0;
   dice_release_time = 0;
+  dice_have_release = false;
   dice_short_events = 0;
+  dice_hold_events = 0;
 
   call_leaving_handler();
 
@@ -214,16 +248,39 @@ bool dice_input_collect(char *rolls, uint32_t target) {
 
   while (count < target) {
     bool pressed;
-    uint32_t press_start;
-    uint8_t shorts;
+    uint32_t held = 0;
+    uint8_t shorts = 0;
+    uint8_t holds;
 
+    /* One critical section performs the whole read-classify-drain step, so
+     * the in-flight hold below cannot also be classified by the release ISR
+     * (and vice versa): whoever gets there first sets dice_committed. */
 #ifndef EMULATOR
     svc_disable_interrupts();
 #endif
-    pressed = dice_pressed;
-    press_start = dice_press_start;
-    shorts = dice_short_events;
-    dice_short_events = 0;
+    {
+      uint32_t now = getSysTime();
+      pressed = dice_pressed;
+      if (pressed) {
+        held = now - dice_press_start;
+        if (!dice_committed && held >= DICE_HOLD_MS) {
+          dice_committed = true;
+          if (dice_hold_events < 8) {
+            dice_hold_events++;
+          }
+        }
+      }
+      /* Queued short presses stay queued until the line has been quiet for
+       * a debounce window, giving dice_on_press the chance to retract a
+       * bounce-generated one before it is acted on. */
+      if (!pressed && dice_have_release &&
+          now - dice_release_time >= DICE_DEBOUNCE_MS) {
+        shorts = dice_short_events;
+        dice_short_events = 0;
+      }
+      holds = dice_hold_events;
+      dice_hold_events = 0;
+    }
 #ifndef EMULATOR
     svc_enable_interrupts();
 #endif
@@ -232,6 +289,7 @@ bool dice_input_collect(char *rolls, uint32_t target) {
     switch (tiny_msg) {
       case MessageType_MessageType_ButtonAck:
         acked = true;
+        dice_accept = true; /* arms the button ISRs */
         break;
 
       case MessageType_MessageType_Cancel:
@@ -270,37 +328,34 @@ bool dice_input_collect(char *rolls, uint32_t target) {
         break;
     }
 
-    if (acked && shorts > 0) {
+    if (shorts > 0) {
       position = (uint8_t)((position + shorts) % DICE_POSITIONS);
       redraw = true;
     }
 
-    uint16_t bar_permil = 0;
-    if (acked && pressed) {
-      uint32_t held = getSysTime() - press_start;
-      if (held >= DICE_HOLD_MS && !dice_hold_fired) {
-#ifndef EMULATOR
-        svc_disable_interrupts();
-#endif
-        dice_hold_fired = true;
-#ifndef EMULATOR
-        svc_enable_interrupts();
-#endif
-        if (position < DICE_UNDO_POS) {
-          rolls[count++] = (char)('1' + position);
-          snprintf(status, sizeof(status), _("Entered %c (%lu)"),
-                   (char)('1' + position), (unsigned long)count);
-        } else if (count > 0) {
-          count--;
-          snprintf(status, sizeof(status), _("Removed #%lu"),
-                   (unsigned long)(count + 1));
-        } else {
-          snprintf(status, sizeof(status), _("Nothing to undo"));
-        }
-        redraw = true;
-      } else if (held < DICE_HOLD_MS) {
-        bar_permil = (uint16_t)((held * 1000) / DICE_HOLD_MS);
+    /* Commits arrive either from the in-flight check above or from a release
+     * that completed inside the poll gap; both funnel through here, and
+     * dice_committed guarantees at most one per press. */
+    while (holds-- > 0 && count < target) {
+      if (position < DICE_UNDO_POS) {
+        rolls[count++] = (char)('1' + position);
+        snprintf(status, sizeof(status), _("Entered %c (%lu)"),
+                 (char)('1' + position), (unsigned long)count);
+      } else if (count > 0) {
+        count--;
+        snprintf(status, sizeof(status), _("Removed #%lu"),
+                 (unsigned long)(count + 1));
+      } else {
+        snprintf(status, sizeof(status), _("Nothing to undo"));
       }
+      redraw = true;
+    }
+
+    uint16_t bar_permil = 0;
+    if (pressed && held < DICE_HOLD_MS) {
+      bar_permil = (uint16_t)((held * 1000) / DICE_HOLD_MS);
+    } else if (pressed) {
+      bar_permil = 1000; /* held past the threshold: keep the bar full */
     }
 
     /* Quantize the bar so idle passes stay refresh-free. */
@@ -318,6 +373,7 @@ bool dice_input_collect(char *rolls, uint32_t target) {
   ret = true;
 
 dice_exit:
+  dice_accept = false;
 #ifndef EMULATOR
   keepkey_button_set_on_press_handler(NULL, NULL);
   keepkey_button_set_on_release_handler(NULL, NULL);
