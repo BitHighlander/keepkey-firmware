@@ -204,7 +204,6 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
 bool dice_input_collect(char *rolls, uint32_t target) {
   uint32_t count = 0;
   uint8_t position = 0;
-  bool acked = false;
   bool ret = false;
   bool redraw = true;
   uint16_t last_bar_permil = 0;
@@ -288,8 +287,7 @@ bool dice_input_collect(char *rolls, uint32_t target) {
     uint16_t tiny_msg = check_for_tiny_msg(msg_tiny_buf);
     switch (tiny_msg) {
       case MessageType_MessageType_ButtonAck:
-        acked = true;
-        dice_accept = true; /* arms the button ISRs */
+        dice_accept = true; /* arms the button ISRs and debug injection */
         break;
 
       case MessageType_MessageType_Cancel:
@@ -302,7 +300,7 @@ bool dice_input_collect(char *rolls, uint32_t target) {
 #if DEBUG_LINK
       case MessageType_MessageType_DebugLinkDecision: {
         const DebugLinkDecision *dld = (const DebugLinkDecision *)msg_tiny_buf;
-        if (acked && dld->has_input) {
+        if (dice_accept && dld->has_input) {
           for (const char *c = dld->input; *c != '\0' && count < target; c++) {
             if (*c >= '1' && *c <= '6') {
               rolls[count++] = *c;
