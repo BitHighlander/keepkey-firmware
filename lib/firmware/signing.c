@@ -1437,6 +1437,11 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
     resp.serialized.has_signature_index = true;
     resp.serialized.signature_index = idx1;
     resp.serialized.has_signature = true;
+    /* signing_txack() memsets resp, and this branch bypasses
+       signing_sign_hash(), which is where every other input type sets this.
+       Without it nanopb omits serialized_tx and the host loses the witness
+       and the tx footer. */
+    resp.serialized.has_serialized_tx = true;
     resp.serialized.signature.size = 64;
     memcpy(resp.serialized.signature.bytes, sig, 64);
 
