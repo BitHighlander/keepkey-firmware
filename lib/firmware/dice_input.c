@@ -270,11 +270,14 @@ bool dice_input_collect(char *rolls, uint32_t target) {
           }
         }
       }
-      /* Queued short presses stay queued until the line has been quiet for
-       * a debounce window, giving dice_on_press the chance to retract a
-       * bounce-generated one before it is acted on. */
-      if (!pressed && dice_have_release &&
-          now - dice_release_time >= DICE_DEBOUNCE_MS) {
+      /* Queued short presses stay queued until a debounce window has passed
+       * since the release that produced them, giving dice_on_press the
+       * chance to retract a bounce-generated one before it is acted on.
+       * Deliberately NOT conditioned on the button being up: a retraction
+       * can only happen inside that window, so once it closes the count is
+       * final. Waiting for the button to be released instead would let a
+       * tap-then-hold commit the digit the tap was meant to move off of. */
+      if (dice_have_release && now - dice_release_time >= DICE_DEBOUNCE_MS) {
         shorts = dice_short_events;
         dice_short_events = 0;
       }
