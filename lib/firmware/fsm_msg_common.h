@@ -555,6 +555,39 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
  * refresh. */
 #define ENTROPY_FREE_BUDGET (64 * 1024)
 
+/* 64 KB is NOT "plenty of room" for the audit that matters.
+ *
+ * A 64-bit birthday scan over N blocks detects an effective keyspace of
+ * ~2*log2(N)-1 bits. 64 KB gives N=8192 -> ~25 bits. The failure this whole
+ * mechanism exists to catch -- a build-config slip yielding ~40-bit seeds that
+ * passes every standard statistical test -- needs N=2^20, i.e. 8 MB, for ~39
+ * bits. At 8 MB the expected collision count under a sound RNG is ~3e-8, so a
+ * single collision is a finding rather than a judgement call.
+ *
+ * The per-boot cap was also asymmetric in the wrong direction: it never stopped
+ * a patient remote attacker (host malware simply waits for the natural replugs
+ * that happen anyway and accumulates 64 KB at a time over days), while it fully
+ * priced out the honest auditor, who needs one contiguous run and otherwise
+ * faces 128 manual replugs.
+ *
+ * So the bulk path is gated on a single explicit press instead of a byte count,
+ * and only before initialization:
+ *
+ *   - one confirm per boot unlocks unmetered draws. A remote host cannot forge
+ *     it, which is the property the byte cap was only approximating.
+ *   - uninitialized only. No seed exists, so there is no key material to
+ *     correlate against; the 32 bytes that DO become a seed are drawn later, in
+ *     reset.c, from noise that has not happened yet, and are SHA-256'd with
+ *     host-supplied entropy before use.
+ *
+ * Initialized devices are untouched: ENTROPY_FREE_BUDGET, then a press every
+ * time, exactly as before. The unlock re-locks the instant ResetDevice
+ * completes, because storage_isInitialized() is re-read on every call.
+ *
+ * A wiped device returns to uninitialized and can be audited again. That is
+ * intended -- it still holds no seed, and re-auditing before re-seeding is
+ * precisely the supported flow. */
+
 /* Whether the budget above may be spent without a press.
  *
  * GetEntropy has no PIN or initialization gate -- the button press WAS the
@@ -579,6 +612,10 @@ static bool entropy_press_free_allowed(void) {
 
 void fsm_msgGetEntropy(GetEntropy* msg) {
   static uint32_t free_budget = ENTROPY_FREE_BUDGET;
+  /* Set by one confirm on an uninitialized device; unlocks unmetered draws for
+   * the rest of the boot. Re-checked against storage_isInitialized() on every
+   * call, so completing ResetDevice re-locks it without needing a replug. */
+  static bool bulk_audit_unlocked = false;
 
   uint32_t len = msg->size;
 
@@ -586,7 +623,9 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
     len = ENTROPY_BUF;
   }
 
-  if (len <= free_budget && entropy_press_free_allowed()) {
+  if (bulk_audit_unlocked && !storage_isInitialized()) {
+    /* Already authorized for bulk audit this boot. */
+  } else if (len <= free_budget && entropy_press_free_allowed()) {
     free_budget -= len;
   } else if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy,
                       "Generate Entropy",
@@ -595,6 +634,11 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
     layoutHome();
     return;
+  } else if (!storage_isInitialized()) {
+    /* The press just paid for a bulk RNG audit on a seedless device — don't
+     * charge for it again. An initialized device deliberately falls through:
+     * it keeps confirming every draw once its budget is spent. */
+    bulk_audit_unlocked = true;
   }
 
   RESP_INIT(Entropy);
