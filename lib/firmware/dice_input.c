@@ -66,7 +66,7 @@ extern bool reset_msg_stack;
  * hold) is made exactly once per press cycle and guarded by dice_committed,
  * so a press can never produce both an advance and a commit. The UI loop
  * reads and drains these under masked interrupts. */
-static volatile bool dice_accept;    /* host has ButtonAck'd the screen */
+static volatile bool dice_accept; /* host has ButtonAck'd the screen */
 static volatile bool dice_pressed;
 static volatile bool dice_committed; /* this press cycle already classified */
 static volatile uint32_t dice_press_start;
@@ -191,7 +191,8 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
                     DICE_BAR_H);
     draw_box_simple(canvas, 0x00, DICE_BAR_X + 1, DICE_BAR_Y + 1,
                     DICE_BAR_W - 2, DICE_BAR_H - 2);
-    uint16_t fill = (uint16_t)(((uint32_t)(DICE_BAR_W - 2) * hold_permil) / 1000);
+    uint16_t fill =
+        (uint16_t)(((uint32_t)(DICE_BAR_W - 2) * hold_permil) / 1000);
     if (fill > 0) {
       draw_box_simple(canvas, 0xFF, DICE_BAR_X + 1, DICE_BAR_Y + 1, fill,
                       DICE_BAR_H - 2);
@@ -318,7 +319,8 @@ bool dice_input_collect(char *rolls, uint32_t target) {
       }
 
       case MessageType_MessageType_DebugLinkGetState:
-        call_msg_debug_link_get_state_handler((DebugLinkGetState *)msg_tiny_buf);
+        call_msg_debug_link_get_state_handler(
+            (DebugLinkGetState *)msg_tiny_buf);
         break;
 #endif
 
