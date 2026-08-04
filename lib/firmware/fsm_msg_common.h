@@ -555,14 +555,29 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
  * refresh. */
 #define ENTROPY_FREE_BUDGET (64 * 1024)
 
-/* 64 KB is NOT "plenty of room" for the audit that matters.
+/* 64 KB is NOT "plenty of room" for the health test this enables.
  *
- * A 64-bit birthday scan over N blocks detects an effective keyspace of
- * ~2*log2(N)-1 bits. 64 KB gives N=8192 -> ~25 bits. The failure this whole
- * mechanism exists to catch -- a build-config slip yielding ~40-bit seeds that
- * passes every standard statistical test -- needs N=2^20, i.e. 8 MB, for ~39
- * bits. At 8 MB the expected collision count under a sound RNG is ~3e-8, so a
- * single collision is a finding rather than a judgement call.
+ * Scope first, because it is easy to overclaim: bulk output supports RNG HEALTH
+ * testing, not entropy measurement. No amount of output analysis can bound the
+ * entropy of an RNG's internal state -- a good expander seeded with 40 bits
+ * emits a stream that passes every test below, by construction. What this
+ * catches is stuck/biased output, repeated buffers, transport caching, gross
+ * correlation, and a broken test harness. That is worth having and was
+ * previously impossible on hardware; it is not proof of unpredictability.
+ *
+ * The size is set by the POSITIVE control, not by a detection threshold. A
+ * zero-collision result proves nothing on its own -- a detector that never
+ * fires also returns zero -- so the scan must also be run at a width where
+ * collisions are EXPECTED and their count checked against theory. 32-bit
+ * collisions over N blocks expect N^2/2^33: at 64 KB that is 0.03 (the control
+ * cannot run at all), at 1 MB it is 8, at 8 MB it is 512, tight enough that a
+ * broken or no-op detector is obvious. 8 MB is the first size at which the
+ * result means anything.
+ *
+ * For reference, since it invites misreading: a 64-bit scan over N=2^20 expects
+ * one collision at a 39-bit support, but P(0 collisions) is then e^-1 = 37%.
+ * Zero collisions excludes only <=37.4 bits at 95% confidence, and says nothing
+ * whatsoever about a low-entropy state behind a strong PRNG.
  *
  * The per-boot cap was also asymmetric in the wrong direction: it never stopped
  * a patient remote attacker (host malware simply waits for the natural replugs
