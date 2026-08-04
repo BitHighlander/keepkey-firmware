@@ -5,6 +5,7 @@ set(sources
     bip85.c
     coins.c
     crypto.c
+    dice_input.c
     fsm.c
     home_sm.c
     passphrase_sm.c

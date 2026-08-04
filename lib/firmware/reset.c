@@ -21,6 +21,7 @@
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/dice_input.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/pin_sm.h"
@@ -43,6 +44,11 @@ static bool awaiting_entropy = false;
 static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 static bool no_backup;
 
+/* SHA-256 of the ASCII roll string, shown to the user and exposed over
+ * DebugLink; a digest of secret input, not the input itself. */
+static uint8_t dice_digest[32];
+static bool has_dice_digest = false;
+
 /* Shared paginated-mnemonic display scratch — see reset.h for the contract
  * (also used by the BIP-85 flow; each user zeroes at entry and exit). */
 char CONFIDENTIAL mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
@@ -53,7 +59,8 @@ char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 void reset_init(bool display_random, uint32_t _strength,
                 bool passphrase_protection, bool pin_protection,
                 const char* language, const char* label, bool _no_backup,
-                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter) {
+                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter,
+                bool dice_entropy) {
   if (_strength != 128 && _strength != 192 && _strength != 256) {
     fsm_sendFailure(
         FailureType_Failure_SyntaxError,
@@ -91,6 +98,44 @@ void reset_init(bool display_random, uint32_t _strength,
   }
 
   random_buffer(int_entropy, 32);
+
+  /* Dice must fold in BEFORE the entropy display and EntropyRequest below:
+   * the value the user (and DebugLink) sees is then the post-mix commitment,
+   * and the host contribution arrives strictly after it. */
+  has_dice_digest = false;
+  if (dice_entropy) {
+    static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
+    uint32_t rolls_needed = dice_rolls_for_strength(strength);
+
+    if (!dice_input_collect(dice_rolls, rolls_needed)) {
+      memzero(dice_rolls, sizeof(dice_rolls));
+      memzero(int_entropy, sizeof(int_entropy));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Reset cancelled"));
+      layoutHome();
+      return;
+    }
+
+    sha256_Raw((const uint8_t*)dice_rolls, rolls_needed, dice_digest);
+    has_dice_digest = true;
+
+    static char digest_hex[17];
+    data2hex(dice_digest, 8, digest_hex);
+    if (!confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Rolls"),
+                 _("%lu rolls recorded.\nDigest: %s"),
+                 (unsigned long)rolls_needed, digest_hex)) {
+      memzero(dice_rolls, sizeof(dice_rolls));
+      memzero(int_entropy, sizeof(int_entropy));
+      has_dice_digest = false;
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Reset cancelled"));
+      layoutHome();
+      return;
+    }
+
+    dice_mix(int_entropy, dice_rolls, rolls_needed);
+    memzero(dice_rolls, sizeof(dice_rolls));
+  }
 
   if (display_random) {
     static char CONFIDENTIAL ent_str[4][17];
@@ -286,4 +331,12 @@ uint32_t reset_get_int_entropy(uint8_t* entropy) {
 }
 
 const char* reset_get_word(void) { return current_words; }
+
+uint32_t reset_get_dice_digest(uint8_t* digest) {
+  if (!has_dice_digest) {
+    return 0;
+  }
+  memcpy(digest, dice_digest, 32);
+  return 32;
+}
 #endif

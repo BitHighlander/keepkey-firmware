@@ -1,5 +1,6 @@
 set(sources
     app_confirm.cpp
+    dice.cpp
     recovery.cpp
     signing.cpp
     storage.cpp
