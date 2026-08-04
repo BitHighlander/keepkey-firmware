@@ -451,11 +451,16 @@ bool thorchain_parseConfirmMemo(const char* swapStr, size_t size) {
       return false;
     }
 
-    float percent = (float)(atoi(fields[2])) / 100;
+    /* BPS rendered with integer math: snprintf is the integer-only sniprintf
+     * on the device, so no float formats. Negative BPS is a malformed memo. */
+    int bps = atoi(fields[2]);
+    if (bps < 0) {
+      return false;
+    }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain withdraw liquidity",
-                 "Confirm withdraw %3.2f%% of asset %s on chain %s", percent,
-                 asset, chain)) {
+                 "Confirm withdraw %d.%02d%% of asset %s on chain %s",
+                 bps / 100, bps % 100, asset, chain)) {
       return false;
     }
     /* Field 4 is the ASYMMETRIC-withdrawal asset selector: WD:POOL:BPS:ASSET
