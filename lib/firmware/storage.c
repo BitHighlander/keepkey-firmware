@@ -62,22 +62,26 @@
 #include <assert.h>
 
 /*
-The PIN_ITER defines below changed between storage version 15 and 16 to
-eliminate the unacceptable multi-second wait while the pin was being stretched
-for a dubious claim to better security. The defines help during upgrades from
-v15 to v16
-*/
+ * PIN wrapping-key parameters are part of the persistent storage format.
+ * Never change an existing set in place: old wallets must first unwrap with
+ * their original parameters, then rewrap after a correct PIN. V19 restores a
+ * meaningful offline-work factor after V16 reduced it to ten iterations.
+ */
 
 #if defined(EMULATOR) || defined(DEBUG_ON)
 #define PIN_ITER_COUNT_v15 1000
 #define PIN_ITER_CHUNK_v15 10
 #define PIN_ITER_COUNT_v16 10
 #define PIN_ITER_CHUNK_v16 1
+#define PIN_ITER_COUNT_v19 1000
+#define PIN_ITER_CHUNK_v19 10
 #else
 #define PIN_ITER_COUNT_v15 100000
 #define PIN_ITER_CHUNK_v15 1000
 #define PIN_ITER_COUNT_v16 10
 #define PIN_ITER_CHUNK_v16 1
+#define PIN_ITER_COUNT_v19 100000
+#define PIN_ITER_CHUNK_v19 1000
 #endif
 
 #define U2F_KEY_PATH 0x80553246
@@ -316,20 +320,27 @@ void storage_writeHDNode(char* ptr, size_t len, const HDNodeType* node) {
 }
 
 void storage_deriveWrappingKey(const char* pin, uint8_t wrapping_key[64],
-                               bool sca_hardened, bool v15_16_trans,
+                               bool sca_hardened,
+                               pin_kdf_version_t pin_kdf_version,
                                const uint8_t random_salt[RANDOM_SALT_LEN],
                                const char* message) {
   size_t pin_len = strlen(pin);
   if (sca_hardened && pin_len > 0) {
     uint8_t salt[HW_ENTROPY_LEN + RANDOM_SALT_LEN];
-    int iterCount, iterChunk;
+    int iterCount = PIN_ITER_COUNT_v19;
+    int iterChunk = PIN_ITER_CHUNK_v19;
 
-    if (v15_16_trans) {  // can use new counts
-      iterCount = PIN_ITER_COUNT_v16;
-      iterChunk = PIN_ITER_CHUNK_v16;
-    } else {  // need to use storage version 15 counts to derive wrap key
-      iterCount = PIN_ITER_COUNT_v15;
-      iterChunk = PIN_ITER_CHUNK_v15;
+    switch (pin_kdf_version) {
+      case PIN_KDF_V15:
+        iterCount = PIN_ITER_COUNT_v15;
+        iterChunk = PIN_ITER_CHUNK_v15;
+        break;
+      case PIN_KDF_V16:
+        iterCount = PIN_ITER_COUNT_v16;
+        iterChunk = PIN_ITER_CHUNK_v16;
+        break;
+      case PIN_KDF_V19:
+        break;
     }
 
     memset(salt, 0, sizeof(salt));
@@ -398,7 +409,7 @@ void storage_keyFingerprint(const uint8_t key[64], uint8_t fingerprint[32]) {
 pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
                                     const uint8_t fingerprint[32],
                                     bool* sca_hardened, bool* v15_16_trans,
-                                    uint8_t key[64],
+                                    bool* pin_kdf_v2, uint8_t key[64],
                                     uint8_t random_salt[RANDOM_SALT_LEN]) {
   /*
       This function tests whether the PIN is correct. It will return
@@ -413,7 +424,13 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
      required to update the flash with a storage_commit().
   */
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey(pin, wrapping_key, *sca_hardened, *v15_16_trans,
+  pin_kdf_version_t pin_kdf_version = PIN_KDF_V15;
+  if (*pin_kdf_v2) {
+    pin_kdf_version = PIN_KDF_V19;
+  } else if (*v15_16_trans) {
+    pin_kdf_version = PIN_KDF_V16;
+  }
+  storage_deriveWrappingKey(pin, wrapping_key, *sca_hardened, pin_kdf_version,
                             random_salt, _("Verifying PIN"));
 
   // unwrap the storage key for fingerprint test
@@ -432,16 +449,16 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
   if (memcmp_s(fp, fingerprint, 32) == 0) ret = PIN_GOOD;
 
   if (ret == PIN_GOOD) {
-    if (!*sca_hardened || !*v15_16_trans) {
+    if (!*sca_hardened || !*v15_16_trans || !*pin_kdf_v2) {
       // PIN is correct but:
       //   1. wrapping key needs to be regenerated using stretched key
       //   2. storage key needs a rewrap with new wrapping key and algorithm
       storage_deriveWrappingKey(pin, wrapping_key, true /* sca_hardened */,
-                                true /* v15_16_trans */, random_salt,
-                                _("Verifying PIN"));
+                                PIN_KDF_V19, random_salt, _("Verifying PIN"));
       storage_wrapStorageKey(wrapping_key, key, wrapped_key);
       *sca_hardened = true;
       *v15_16_trans = true;
+      *pin_kdf_v2 = true;
       ret = PIN_REWRAP;
     }
   }
@@ -458,8 +475,8 @@ pintest_t storage_isWipeCodeCorrect_impl(const char* wipe_code,
                                          uint8_t key[64],
                                          uint8_t random_salt[RANDOM_SALT_LEN]) {
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey(wipe_code, wrapping_key, true, true, random_salt,
-                            _("Verifying PIN"));
+  storage_deriveWrappingKey(wipe_code, wrapping_key, true, PIN_KDF_V16,
+                            random_salt, _("Verifying PIN"));
 
   // unwrap the storage key for fingerprint test
   storage_unwrapStorageKey(wrapping_key, wrapped_key, key);
@@ -595,8 +612,7 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
 void storage_deriveAuthdataKey(const char* passphrase,
                                uint8_t authdataKey[64]) {
   storage_deriveWrappingKey(passphrase, authdataKey,
-                            /*sca_hardened*/ true,
-                            /*v15_16_trans*/ true,
+                            /*sca_hardened*/ true, PIN_KDF_V16,
                             shadow_config.storage.pub.random_salt,
                             "deriving authdata key");
   return;
@@ -1029,6 +1045,7 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
   storage->pub.sca_hardened = flags & (1u << 15);
   storage->pub.has_wipe_code = flags & (1u << 16);
   storage->pub.v15_16_trans = flags & (1u << 17);
+  storage->pub.pin_kdf_v2 = false;
 
   storage->pub.policies_count = POLICY_COUNT;
 
@@ -1138,6 +1155,19 @@ void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
           sizeof(storage->pub.clearsign_identities));
 }
 
+void storage_writeStorageV19(char* ptr, size_t len, const Storage* storage) {
+  storage_writeStorageV18(ptr, len, storage);
+  uint32_t flags = read_u32_le(ptr + 4);
+  flags |= storage->pub.pin_kdf_v2 ? (1u << 20) : 0;
+  write_u32_le(ptr + 4, flags);
+}
+
+void storage_readStorageV19(Storage* storage, const char* ptr, size_t len) {
+  storage_readStorageV18(storage, ptr, len);
+  uint32_t flags = read_u32_le(ptr + 4);
+  storage->pub.pin_kdf_v2 = flags & (1u << 20);
+}
+
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len) {
   if (len < 65 + 10) return;
   cache->root_seed_cache_status = read_u8(ptr);
@@ -1218,6 +1248,18 @@ void storage_writeV18(char* flash, size_t len, const ConfigFlash* src) {
   storage_writeStorageV18(flash + 44, 852, &src->storage);
 }
 
+void storage_readV19(ConfigFlash* dst, const char* flash, size_t len) {
+  if (len < 1024) return;
+  storage_readMeta(&dst->meta, flash, 44);
+  storage_readStorageV19(&dst->storage, flash + 44, 852);
+}
+
+void storage_writeV19(char* flash, size_t len, const ConfigFlash* src) {
+  if (len < 1024) return;
+  storage_writeMeta(flash, 44, &src->meta);
+  storage_writeStorageV19(flash + 44, 852, &src->storage);
+}
+
 StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
                                       const char* flash) {
   memzero(dst, sizeof(*dst));
@@ -1281,6 +1323,10 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
+    case StorageVersion_19:
+      storage_readV19(dst, flash, STORAGE_SECTOR_LEN);
+      dst->storage.version = STORAGE_VERSION;
+      return dst->storage.version == version ? SUS_Valid : SUS_Updated;
 
     case StorageVersion_BTC_ONLY:
 #if BITCOIN_ONLY
@@ -1305,8 +1351,10 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV16(dst, flash, STORAGE_SECTOR_LEN);
       } else if (underlying == 17) {
         storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
-      } else {
+      } else if (underlying == 18) {
         storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
+      } else {
+        storage_readV19(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
       return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
@@ -1565,11 +1613,11 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   memset(&ss->passphrase, 0, sizeof(ss->passphrase));
 
   if (!storage_hasPin_impl(storage)) {
-    ret = storage_isPinCorrect_impl("", storage->pub.wrapped_storage_key,
-                                    storage->pub.storage_key_fingerprint,
-                                    &storage->pub.sca_hardened,
-                                    &storage->pub.v15_16_trans, ss->storageKey,
-                                    shadow_config.storage.pub.random_salt);
+    ret = storage_isPinCorrect_impl(
+        "", storage->pub.wrapped_storage_key,
+        storage->pub.storage_key_fingerprint, &storage->pub.sca_hardened,
+        &storage->pub.v15_16_trans, &storage->pub.pin_kdf_v2, ss->storageKey,
+        shadow_config.storage.pub.random_salt);
 
     if (ret == PIN_WRONG) {
       ss->pinCached = false;
@@ -1601,7 +1649,8 @@ void storage_commit(void) {
   if (btc_only_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
-  // V18 storage layout = V17 (2525 bytes) + retired identity block
+  // V19 storage layout = V18 (same byte length) with a versioned PIN-KDF flag.
+  // V18 = V17 (2525 bytes) + retired identity block
   // (PERSISTENT_IDENTITY_COUNT * CLEARSIGN_IDENTITY_SERIALIZED_LEN = 2*455 =
   // 910) = 3435; + meta (44) = 3479. Rounded up to a multiple of 4 (the CRC
   // below iterates uint32_t words) => 3480 (1 byte of slack).
@@ -1615,7 +1664,7 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  storage_writeV18(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV19(flash_temp, sizeof(flash_temp), &shadow_config);
 
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
 
@@ -1832,7 +1881,8 @@ bool storage_isPinCorrect(const char* pin) {
       pin, shadow_config.storage.pub.wrapped_storage_key,
       shadow_config.storage.pub.storage_key_fingerprint,
       &shadow_config.storage.pub.sca_hardened,
-      &shadow_config.storage.pub.v15_16_trans, session.storageKey,
+      &shadow_config.storage.pub.v15_16_trans,
+      &shadow_config.storage.pub.pin_kdf_v2, session.storageKey,
       shadow_config.storage.pub.random_salt);
 
   switch (ret) {
@@ -1878,7 +1928,7 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
   // Derive the wrapping key for the new pin
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true,
-                            /*v15_16_trans=*/true, storage->pub.random_salt,
+                            PIN_KDF_V19, storage->pub.random_salt,
                             _("Encrypting Secrets"));
 
   // Derive a new storageKey.
@@ -1889,6 +1939,7 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
                          storage->pub.wrapped_storage_key);
   storage->pub.sca_hardened = true;
   storage->pub.v15_16_trans = true;
+  storage->pub.pin_kdf_v2 = true;
 
   // Fingerprint the storageKey.
   storage_keyFingerprint(ss->storageKey, storage->pub.storage_key_fingerprint);
@@ -1938,7 +1989,7 @@ void storage_setWipeCode_impl(SessionState* ss, Storage* storage,
   // Derive the wrapping key for the new wipe code
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(wipe_code, wrapping_key, /*sca_hardened=*/true,
-                            /*v15_16_trans=*/true, storage->pub.random_salt,
+                            PIN_KDF_V16, storage->pub.random_salt,
                             _("Updating Wipe Code"));
 
   // Derive a new wipe code key .
