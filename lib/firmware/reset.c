@@ -63,17 +63,16 @@ char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
-void reset_init(bool display_random, uint32_t _strength,
-                bool passphrase_protection, bool pin_protection,
-                const char* language, const char* label, bool _no_backup,
-                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter,
-                bool dice_entropy) {
+void reset_init(uint32_t _strength, bool passphrase_protection,
+                bool pin_protection, const char* language, const char* label,
+                bool _no_backup, uint32_t _auto_lock_delay_ms,
+                uint32_t _u2f_counter, bool dice_entropy) {
   /* Disarm any half-finished reset before doing anything else. Nothing else
    * clears this flag on an abort (fsm_msgCancel has no reset abort), and
    * CHECK_NOT_INITIALIZED still admits ResetDevice while a previous one is
    * mid-flight, so a stale armed flag would let a later EntropyAck run
    * reset_entropy against whatever int_entropy this invocation leaves
-   * behind — including the zeroed buffer an aborted dice step produces,
+   * behind -- including the zeroed buffer an aborted dice step produces,
    * which would make the seed a pure function of host-supplied bytes. */
   awaiting_entropy = false;
 
@@ -87,13 +86,6 @@ void reset_init(bool display_random, uint32_t _strength,
 
   strength = _strength;
   no_backup = _no_backup;
-
-  if (display_random && no_backup) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Can't show internal entropy when backup is skipped"));
-    layoutHome();
-    return;
-  }
 
   if (no_backup) {
     // Double confirm, since this is a feature for advanced users only, and
@@ -115,9 +107,17 @@ void reset_init(bool display_random, uint32_t _strength,
 
   random_buffer(int_entropy, 32);
 
-  /* Dice must fold in BEFORE the entropy display and EntropyRequest below:
-   * the value the user (and DebugLink) sees is then the post-mix commitment,
-   * and the host contribution arrives strictly after it. */
+  /* Dice fold in before EntropyRequest, so the host contribution arrives
+   * strictly after the device has committed to its own.
+   *
+   * They are deliberately NOT displayed. An earlier version of this code
+   * showed the mixed internal entropy on the OLED and called it a
+   * verifiable commitment; that was wrong. A host that supplies
+   * ext_entropy and reads that screen once computes
+   * SHA256(shown || ext_entropy) -- the seed pre-image -- and dice change
+   * nothing about it, because the displayed value is already post-mix. The
+   * roll digest below is safe by contrast: it is a hash of the user's own
+   * input, not of seed material. */
   dice_digest_clear();
   if (dice_entropy) {
     static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
@@ -154,25 +154,6 @@ void reset_init(bool display_random, uint32_t _strength,
 
     dice_mix(int_entropy, dice_rolls, rolls_needed);
     memzero(dice_rolls, sizeof(dice_rolls));
-  }
-
-  if (display_random) {
-    static char CONFIDENTIAL ent_str[4][17];
-    data2hex(int_entropy, 8, ent_str[0]);
-    data2hex(int_entropy + 8, 8, ent_str[1]);
-    data2hex(int_entropy + 16, 8, ent_str[2]);
-    data2hex(int_entropy + 24, 8, ent_str[3]);
-
-    if (!confirm(ButtonRequestType_ButtonRequest_ResetDevice,
-                 _("Internal Entropy"), "%s %s %s %s", ent_str[0], ent_str[1],
-                 ent_str[2], ent_str[3])) {
-      memzero(ent_str, sizeof(ent_str));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Reset cancelled"));
-      layoutHome();
-      return;
-    }
-    memzero(ent_str, sizeof(ent_str));
   }
 
   if (pin_protection) {
