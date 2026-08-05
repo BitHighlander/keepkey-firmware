@@ -1,7 +1,10 @@
 set(sources
     app_confirm.cpp
+    dice.cpp
     recovery.cpp
+    signing.cpp
     storage.cpp
+    transaction.cpp
     usb_rx.cpp
     u2f.cpp)
 
