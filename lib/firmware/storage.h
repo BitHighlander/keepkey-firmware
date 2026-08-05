@@ -91,6 +91,7 @@ typedef struct _Storage {
     bool no_backup;
     bool sca_hardened;
     bool v15_16_trans;
+    bool pin_kdf_v2;
     bool authdata_initialized;
     bool authdata_encrypted;
     uint8_t random_salt[32];
@@ -139,13 +140,20 @@ typedef enum {
   PIN_REWRAP  // PIN correct but storage key rewrapped, requires storage update
 } pintest_t;
 
+typedef enum {
+  PIN_KDF_V15,
+  PIN_KDF_V16,
+  PIN_KDF_V19,
+} pin_kdf_version_t;
+
 #define MAX_MNEMONIC_LEN 240
 
 void storage_loadNode(HDNode* dst, const HDNodeType* src);
 
 /// Derive the wrapping key from the user's pin.
 void storage_deriveWrappingKey(const char* pin, uint8_t wrapping_key[64],
-                               bool sca_hardened, bool v15_16_trans,
+                               bool sca_hardened,
+                               pin_kdf_version_t pin_kdf_version,
                                const uint8_t random_salt[RANDOM_SALT_LEN],
                                const char* message);
 
@@ -172,7 +180,7 @@ void storage_keyFingerprint(const uint8_t key[64], uint8_t fingerprint[32]);
 pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
                                     const uint8_t fingerprint[32],
                                     bool* sca_hardened, bool* v15_16_trans,
-                                    uint8_t key[64],
+                                    bool* pin_kdf_v2, uint8_t key[64],
                                     uint8_t random_salt[RANDOM_SALT_LEN]);
 
 pintest_t storage_isWipeCodeCorrect_impl(const char* wipe_code,
@@ -232,9 +240,11 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV18(ConfigFlash* dst, const char* flash, size_t len);
+void storage_readV19(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV18(char* flash, size_t len, const ConfigFlash* src);
+void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len);

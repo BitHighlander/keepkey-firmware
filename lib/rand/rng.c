@@ -31,6 +31,32 @@
 #include <libopencm3/stm32/f2/rng.h>
 #endif
 
+/* random32() has two implementations selected by a build flag: the STM32
+ * hardware RNG, and -- under EMULATOR -- the host OS CSPRNG. Neither is a
+ * weak PRNG today, and the emulator branch deliberately aborts rather than
+ * degrading to libc random().
+ *
+ * This assertion guards the *selection*, not either implementation. The
+ * July 2026 COLDCARD incident was not a broken RNG: a board config left
+ * the hardware-RNG macro defined-but-zero, the supporting library tested
+ * only whether that macro was *defined* rather than enabled, and seed
+ * generation silently used the wrong source for five years (~1,367 BTC
+ * drained across 4,585 addresses). Nothing about the output looked wrong
+ * -- the substituted generator passed every statistical test, it was just
+ * seeded with ~40 bits -- so no amount of host-side entropy testing could
+ * have caught it. Only the build configuration was wrong.
+ *
+ * The lesson is that "which RNG did we actually compile in" deserves a
+ * check the build cannot silently get wrong. __arm__ comes from the
+ * compiler's own target definition rather than from any board config or
+ * CMake option, so a mistaken -DEMULATOR cannot satisfy both conditions:
+ * firmware targeting the STM32 can only ever compile the RNG_DR path.
+ * Hosted emulator builds (x86_64 / __aarch64__) are unaffected. */
+#if defined(EMULATOR) && defined(__arm__)
+#error \
+    "EMULATOR selects the host-CSPRNG random32(); ARM firmware must use the STM32 hardware RNG"
+#endif
+
 void reset_rng(void) {
 #ifndef EMULATOR
   /* disable RNG */

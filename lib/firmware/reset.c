@@ -21,6 +21,7 @@
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/dice_input.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/pin_sm.h"
@@ -43,6 +44,18 @@ static bool awaiting_entropy = false;
 static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 static bool no_backup;
 
+/* SHA-256 of the ASCII roll string, shown to the user and exposed over
+ * DebugLink. A digest of secret input is not the input, but it is a
+ * verification oracle for a 99-symbol space, so it is treated as
+ * confidential and cleared as soon as the reset that produced it ends. */
+static uint8_t CONFIDENTIAL dice_digest[32];
+static bool has_dice_digest = false;
+
+static void dice_digest_clear(void) {
+  memzero(dice_digest, sizeof(dice_digest));
+  has_dice_digest = false;
+}
+
 /* Shared paginated-mnemonic display scratch — see reset.h for the contract
  * (also used by the BIP-85 flow; each user zeroes at entry and exit). */
 char CONFIDENTIAL mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
@@ -53,7 +66,16 @@ char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 void reset_init(uint32_t _strength, bool passphrase_protection,
                 bool pin_protection, const char* language, const char* label,
                 bool _no_backup, uint32_t _auto_lock_delay_ms,
-                uint32_t _u2f_counter) {
+                uint32_t _u2f_counter, bool dice_entropy) {
+  /* Disarm any half-finished reset before doing anything else. Nothing else
+   * clears this flag on an abort (fsm_msgCancel has no reset abort), and
+   * CHECK_NOT_INITIALIZED still admits ResetDevice while a previous one is
+   * mid-flight, so a stale armed flag would let a later EntropyAck run
+   * reset_entropy against whatever int_entropy this invocation leaves
+   * behind -- including the zeroed buffer an aborted dice step produces,
+   * which would make the seed a pure function of host-supplied bytes. */
+  awaiting_entropy = false;
+
   if (_strength != 128 && _strength != 192 && _strength != 256) {
     fsm_sendFailure(
         FailureType_Failure_SyntaxError,
@@ -84,6 +106,55 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   }
 
   random_buffer(int_entropy, 32);
+
+  /* Dice fold in before EntropyRequest, so the host contribution arrives
+   * strictly after the device has committed to its own.
+   *
+   * They are deliberately NOT displayed. An earlier version of this code
+   * showed the mixed internal entropy on the OLED and called it a
+   * verifiable commitment; that was wrong. A host that supplies
+   * ext_entropy and reads that screen once computes
+   * SHA256(shown || ext_entropy) -- the seed pre-image -- and dice change
+   * nothing about it, because the displayed value is already post-mix. The
+   * roll digest below is safe by contrast: it is a hash of the user's own
+   * input, not of seed material. */
+  dice_digest_clear();
+  if (dice_entropy) {
+    static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
+    static char CONFIDENTIAL digest_hex[17];
+    uint32_t rolls_needed = dice_rolls_for_strength(strength);
+
+    if (!dice_input_collect(dice_rolls, rolls_needed)) {
+      memzero(dice_rolls, sizeof(dice_rolls));
+      memzero(int_entropy, sizeof(int_entropy));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Reset cancelled"));
+      layoutHome();
+      return;
+    }
+
+    sha256_Raw((const uint8_t*)dice_rolls, rolls_needed, dice_digest);
+    has_dice_digest = true;
+
+    data2hex(dice_digest, 8, digest_hex);
+    bool confirmed =
+        confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Rolls"),
+                _("%lu rolls recorded.\nDigest: %s"),
+                (unsigned long)rolls_needed, digest_hex);
+    memzero(digest_hex, sizeof(digest_hex));
+    if (!confirmed) {
+      memzero(dice_rolls, sizeof(dice_rolls));
+      memzero(int_entropy, sizeof(int_entropy));
+      dice_digest_clear();
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Reset cancelled"));
+      layoutHome();
+      return;
+    }
+
+    dice_mix(int_entropy, dice_rolls, rolls_needed);
+    memzero(dice_rolls, sizeof(dice_rolls));
+  }
 
   if (pin_protection) {
     if (!change_pin()) {
@@ -244,6 +315,9 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   fsm_sendSuccess(_("Device reset"));
 
 exit:
+  /* The digest only describes the reset that produced it; leaving it live
+   * would keep serving it over DebugLink for the rest of the boot. */
+  dice_digest_clear();
   memzero(&ctx, sizeof(ctx));
   memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
@@ -260,4 +334,12 @@ uint32_t reset_get_int_entropy(uint8_t* entropy) {
 }
 
 const char* reset_get_word(void) { return current_words; }
+
+uint32_t reset_get_dice_digest(uint8_t* digest) {
+  if (!has_dice_digest) {
+    return 0;
+  }
+  memcpy(digest, dice_digest, 32);
+  return 32;
+}
 #endif
