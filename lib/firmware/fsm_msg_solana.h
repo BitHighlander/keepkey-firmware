@@ -242,14 +242,24 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     }
 
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
-      char to_str[45];
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-
       /* For TransferChecked, decimals come from the signed instruction
        * bytes (pi->extra_u8) — host-supplied ti->decimals is untrusted. */
       const SolanaTokenInfo* ti = NULL;
+      const SolanaKnownToken* known = NULL;
       if (pi->has_mint && msg) {
         ti = solana_findTokenInfo(msg, pi->mint);
+      }
+      if (pi->has_mint) {
+        known = solana_findKnownToken(pi->mint);
+      }
+
+      /* A known mint has firmware-owned decimals. A signed TransferChecked
+       * that claims a different scale would turn 0.002 USDC into (for example)
+       * 20.00 USDC. Refuse it instead of rendering an attacker-chosen scale. */
+      if (known && known->decimals != pi->extra_u8) {
+        (void)confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blocked",
+                      "%s decimals mismatch. Refusing to sign.", known->symbol);
+        return false;
       }
 
       /* Decide symbol trust before drawing the mint screen so its label can say
@@ -261,7 +271,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
        *    always-authenticated mint (unchanged behavior). */
       const char* symbol = NULL;
       bool symbol_verified = false;
-      if (ti && ti->has_symbol && solana_symbol_is_safe(ti->symbol)) {
+      if (known) {
+        symbol = known->symbol;
+      } else if (ti && ti->has_symbol && solana_symbol_is_safe(ti->symbol)) {
         if (ti->has_signature) {
           /* Trust the symbol only if the attestation verifies AND the attested
            * decimals equal the signed instruction's decimals (pi->extra_u8) —
@@ -281,8 +293,37 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       if (pi->has_mint) {
         char mint_str[45];
         solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Token mint\n%s", mint_str)) {
+        const bool mint_ok =
+            known
+                ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                          "Known token %s\n%s", known->symbol, mint_str)
+                : confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                          "Token mint\n%s", mint_str);
+        if (!mint_ok) {
+          return false;
+        }
+      }
+
+      /* x402 names the merchant owner while the transaction names that
+       * owner's associated token account. Display the owner only after the
+       * device derives ATA(owner, token_program, mint) and matches the signed
+       * destination. No RPC or host assertion participates in this check. */
+      uint8_t recipient_owner[SOL_PUBKEY_SIZE];
+      const bool recipient_verified =
+          pi->has_mint &&
+          solana_findTokenRecipientOwner(msg, pi->program_id, pi->mint, pi->to,
+                                         recipient_owner);
+      if (recipient_verified) {
+        if (!solana_confirm_account(title, "Verified recipient owner",
+                                    recipient_owner)) {
+          return false;
+        }
+      } else if (msg && msg->token_recipient_owner_count > 0) {
+        /* A supplied payTo that does not own the signed ATA is suspicious.
+         * Warn, then keep the existing honest fallback: show the raw token
+         * account rather than the unverified owner claim. */
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Warning",
+                     "Recipient owner does not match signed token account.")) {
           return false;
         }
       }
@@ -307,12 +348,24 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         char amount_str[48];
         solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
                                  symbol, pi->extra_u8);
+        if (recipient_verified) {
+          return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                         "Send %s?", amount_str);
+        }
+        char to_str[45];
+        solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
         return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                        "Send %s to %s?", amount_str, to_str);
       }
-      char amount_str[32];
-      snprintf(amount_str, sizeof(amount_str), "%llu tokens",
-               (unsigned long long)pi->amount);
+      char amount_str[48];
+      solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
+                               "tokens", pi->extra_u8);
+      if (recipient_verified) {
+        return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                       "Send %s?", amount_str);
+      }
+      char to_str[45];
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Send %s to %s?", amount_str, to_str);
     }

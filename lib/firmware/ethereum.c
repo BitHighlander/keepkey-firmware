@@ -1205,6 +1205,19 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
   resp->signature.bytes[64] = 27 + v;
   resp->signature.size = 65;
+  /* Populate response-only fields after every confirmation. Emulator debug
+   * requests (including screenshot capture) share msg_resp and can clear data
+   * prepared before the confirmation callbacks complete. */
+  uint8_t pubkeyhash[20] = {0};
+  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Ethereum address derivation failed"));
+    return;
+  }
+  resp->address[0] = '0';
+  resp->address[1] = 'x';
+  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
 }
 
@@ -1380,6 +1393,18 @@ void e712_types_values(Ethereum712TypesValues* msg,
     memzero(messageHash, 32);
     have_ds = false;
   }
+
+  /* Debug-link reads during confirmation reuse msg_resp, so populate the
+   * returned address only after the final confirmation has completed. */
+  uint8_t pubkeyhash[20] = {0};
+  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Ethereum address derivation failed"));
+    return;
+  }
+  resp->address[0] = '0';
+  resp->address[1] = 'x';
+  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
 
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
 }

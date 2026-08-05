@@ -189,6 +189,15 @@ typedef enum {
   SOL_TX_REVIEW_VERIFIED,
 } SolanaTxReview;
 
+/* Firmware-owned token definitions. These are intentionally tiny and only
+ * cover identities whose mint and decimals are stable enough to be part of
+ * the device's trusted display policy. */
+typedef struct {
+  uint8_t mint[SOL_PUBKEY_SIZE];
+  const char* symbol;
+  uint8_t decimals;
+} SolanaKnownToken;
+
 /* ── KKSOLSC1: reusable instruction schemas ───────────────────────────
  *
  * A schema says how to READ one program instruction — it carries no amounts
@@ -285,6 +294,25 @@ void solana_formatAmount(char* buf, size_t len, uint64_t lamports);
 /* Format token amount with decimals */
 void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
                               const char* symbol, uint8_t decimals);
+
+/* Look up a firmware-owned token identity by its signed mint account. */
+const SolanaKnownToken* solana_findKnownToken(
+    const uint8_t mint[SOL_PUBKEY_SIZE]);
+
+/* Derive the canonical SPL associated token account for
+ * (owner, token_program, mint), using Solana's find_program_address rules. */
+bool solana_deriveAssociatedTokenAddress(
+    const uint8_t owner[SOL_PUBKEY_SIZE],
+    const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]);
+
+/* Match a host-provided candidate owner only after deriving its ATA and
+ * comparing it to the destination that is present in the signed instruction.
+ * Returns the verified owner through out, or false without modifying out. */
+bool solana_findTokenRecipientOwner(
+    const SolanaSignTx* msg, const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE],
+    const uint8_t destination[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]);
 
 /* Look up token info from the host-provided list */
 const SolanaTokenInfo* solana_findTokenInfo(
