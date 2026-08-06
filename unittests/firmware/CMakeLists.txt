@@ -15,6 +15,7 @@ set(sources
     storage.cpp
     usb_rx.cpp
     thorchain.cpp
+    tron.cpp
     u2f.cpp)
 
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
