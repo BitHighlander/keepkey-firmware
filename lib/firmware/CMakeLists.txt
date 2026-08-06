@@ -21,6 +21,7 @@ set(sources
     ethereum_contracts/zxswap.c
     ethereum_tokens.c
     fsm.c
+    hive.c
     home_sm.c
     mayachain.c
     nano.c
