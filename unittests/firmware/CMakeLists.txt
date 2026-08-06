@@ -2,18 +2,24 @@ set(sources
     authenticator.cpp
     app_confirm.cpp
     coins.cpp
+    binance.cpp
     cosmos.cpp
     dice.cpp
     eos.cpp
     eip712.cpp
     ethereum.cpp
+    hive.cpp
+    mayachain.cpp
     nano.cpp
+    osmosis.cpp
     recovery.cpp
     signed_metadata.cpp
     ripple.cpp
     solana.cpp
     storage.cpp
     usb_rx.cpp
+    thorchain.cpp
+    tron.cpp
     u2f.cpp)
 
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only

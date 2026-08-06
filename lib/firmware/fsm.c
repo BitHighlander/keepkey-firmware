@@ -59,6 +59,7 @@
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -94,6 +95,7 @@
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
 #include "messages-zcash.pb.h"
+#include "messages-hive.pb.h"
 
 #include <stdio.h>
 
@@ -299,6 +301,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+#include "fsm_msg_hive.h"
 /* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
 #include "fsm_msg_clearsign_attestor.h"
 #if ZCASH_PRIVACY
