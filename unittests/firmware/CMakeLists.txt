@@ -16,7 +16,9 @@ set(sources
     signed_metadata.cpp
     ripple.cpp
     solana.cpp
+    signing.cpp
     storage.cpp
+    transaction.cpp
     usb_rx.cpp
     thorchain.cpp
     tron.cpp
