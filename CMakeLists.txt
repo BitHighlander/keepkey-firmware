@@ -243,6 +243,10 @@ if(${KK_EMULATOR})
   add_test(test-firmware ${CMAKE_BINARY_DIR}/bin/firmware-unit)
   add_test(test-board ${CMAKE_BINARY_DIR}/bin/board-unit)
   add_test(test-crypto ${CMAKE_BINARY_DIR}/bin/crypto-unit)
+  if(${KK_ZCASH_PRIVACY})
+    add_test(test-pallas-ct ${CMAKE_BINARY_DIR}/bin/pallas-ct-unit)
+    add_test(test-zcash-crypto ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit)
+  endif()
 
   add_custom_target(
     xunit
@@ -252,5 +256,11 @@ if(${KK_EMULATOR})
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/board.xml
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
+
+  if(${KK_ZCASH_PRIVACY})
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/pallas-ct-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/pallas-ct.xml)
+  endif()
 
 endif()
