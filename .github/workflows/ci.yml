@@ -5,27 +5,29 @@
 # Stage 1: GATE (seconds, no Docker)
 #   ├─ lint-format        clang-format diff check
 #   ├─ static-analysis    cppcheck static analysis
+#   ├─ crypto-tests       pinned fork crypto vectors + ASan/UBSan
 #   ├─ secret-scan        gitleaks credential detection
 #   └─ check-submodules   verify all deps present
 #
 # Stage 2: BUILD (parallel, gated by Stage 1)
-#   ├─ build-emulator     Docker image → artifact
-#   └─ build-arm-firmware cross-compile → .bin/.elf (downloadable)
+#   ├─ build-emulator     Docker image → artifact  [matrix: full / bitcoin-only]
+#   └─ build-arm-firmware cross-compile → .bin/.elf (downloadable)  [same matrix]
 #
 # Stage 3: TEST (parallel, gated by Stage 2)
-#   ├─ unit-tests              GoogleTest (make xunit)
-#   └─ python-integration      full test suite
+#   ├─ unit-tests              GoogleTest (make xunit)  [same matrix — proves each
+#   │                          variant's coin/token gating actually compiles+passes]
+#   └─ python-integration      full test suite (full/default variant only)
 #
 # Stage 4: PUBLISH (manual trigger, all tests must pass)
-#   └─ publish-emulator   DockerHub push (workflow_dispatch only)
+#   └─ publish-emulator   DockerHub push, full/default variant only (workflow_dispatch only)
 
 name: CI
 
 on:
   push:
-    branches: [master, develop, 'feature/**', 'fix/**', 'release/**', 'hotfix/**']
+    branches: [master, develop, alpha, 'feature/**', 'fix/**', 'release/**', 'hotfix/**']
   pull_request:
-    branches: [master, develop]
+    branches: [master, develop, alpha]
   workflow_dispatch:
     inputs:
       publish_emulator:
@@ -35,7 +37,7 @@ on:
         default: false
 
 env:
-  BASE_IMAGE: kktech/firmware:v15
+  BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
 
 jobs:
@@ -48,7 +50,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -81,17 +83,21 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Install gitleaks
         run: |
-          GITLEAKS_VERSION=$(curl -sSf https://api.github.com/repos/gitleaks/gitleaks/releases/latest \
-            | grep -oP '"tag_name":\s*"v\K[^"]+')
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
+          GITLEAKS_VERSION=8.30.1
+          GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          GITLEAKS_ARCHIVE="${RUNNER_TEMP}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --retry 3 --retry-all-errors \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o "${GITLEAKS_ARCHIVE}"
+          echo "${GITLEAKS_SHA256}  ${GITLEAKS_ARCHIVE}" | sha256sum --check --strict
+          tar -xzf "${GITLEAKS_ARCHIVE}" -C /usr/local/bin gitleaks
           gitleaks version
 
       - name: Run gitleaks
@@ -99,13 +105,16 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           submodules: false
+
+      - name: Init crypto submodule
+        run: git submodule update --init deps/crypto/trezor-firmware
 
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
@@ -143,15 +152,17 @@ jobs:
           : "${ERRORS:=0}" "${WARNINGS:=0}" "${STYLE:=0}" "${PERF:=0}" "${PORT:=0}"
           TOTAL=$((ERRORS + WARNINGS + STYLE + PERF + PORT))
 
-          echo "## cppcheck summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Severity | Count |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| error | $ERRORS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| warning | $WARNINGS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| style | $STYLE |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| performance | $PERF |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| portability | $PORT |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **total** | **$TOTAL** |" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## cppcheck summary"
+            echo "| Severity | Count |"
+            echo "|----------|-------|"
+            echo "| error | $ERRORS |"
+            echo "| warning | $WARNINGS |"
+            echo "| style | $STYLE |"
+            echo "| performance | $PERF |"
+            echo "| portability | $PORT |"
+            echo "| **total** | **$TOTAL** |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Print findings as GitHub annotations
           cat cppcheck_report.txt
@@ -169,7 +180,7 @@ jobs:
           echo "cppcheck: clean — zero findings"
 
       - name: Upload cppcheck report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: cppcheck-report
@@ -181,9 +192,12 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Init crypto submodule
+        run: git submodule update --init deps/crypto/trezor-firmware
 
       - name: Verify submodules are declared
         run: |
@@ -207,17 +221,108 @@ jobs:
           done
           [ "$FAILED" = "0" ] || exit 1
 
+      - name: Enforce RC18 security invariants
+        run: |
+          if git grep -n -E \
+            'uses:[[:space:]]+[^#[:space:]]+@(v[0-9]+|main|master)([[:space:]#]|$)' \
+            -- .github/workflows; then
+            echo "::error::Every GitHub Action must be pinned to a full commit SHA"
+            exit 1
+          fi
+          if git grep -n -E 'kktech/firmware:v[0-9]+' -- \
+            .github/workflows scripts/build/docker scripts/emulator; then
+            echo "::error::The firmware builder must be pinned by manifest digest"
+            exit 1
+          fi
+          if git grep -n -E 'return[[:space:]]+random\(\)' -- \
+            lib/rand/rng.c; then
+            echo "::error::Emulator cryptography must not use libc random()"
+            exit 1
+          fi
+          if git grep -n -E \
+            'storage_(get|upsert)ClearsignIdentity|persistent_identity_for' \
+            -- lib include; then
+            echo "::error::Unauthenticated persistent clearsign trust is retired"
+            exit 1
+          fi
+          if git grep -n -F 'option(KK_ZCASH_PRIVACY' -- CMakeLists.txt; then
+            echo "::error::Zcash privacy must not become a third release choice"
+            exit 1
+          fi
+          grep -q 'set(KK_ZCASH_PRIVACY ON)' CMakeLists.txt
+          grep -q 'set(KK_ZCASH_PRIVACY OFF)' CMakeLists.txt
+
+  crypto-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Init crypto submodule
+        run: git submodule update --init deps/crypto/trezor-firmware
+
+      - name: Install crypto test dependencies
+        run: sudo apt-get update && sudo apt-get install -y check libssl-dev pkg-config valgrind
+
+      - name: Run optimized crypto suite
+        working-directory: deps/crypto/trezor-firmware/crypto
+        run: |
+          make clean
+          make VALGRIND=0 tests/test_check tests/test_pallas_ct
+          ./tests/test_check
+          ./tests/test_pallas_ct
+
+      - name: Verify Pallas secret flow with Valgrind
+        working-directory: deps/crypto/trezor-firmware/crypto
+        run: |
+          make clean
+          make VALGRIND=1 OPTFLAGS='-O2 -g' tests/test_pallas_ct
+          valgrind --quiet --error-exitcode=1 --track-origins=yes \
+            ./tests/test_pallas_ct
+
+      - name: Run crypto suite with ASan and UBSan
+        working-directory: deps/crypto/trezor-firmware/crypto
+        run: |
+          make clean
+          make CC='gcc -fsanitize=address,undefined' VALGRIND=0 \
+            OPTFLAGS='-O1 -g -fno-omit-frame-pointer' \
+            tests/test_check tests/test_pallas_ct
+          # Check's default per-test timeout is too short for the two exhaustive
+          # codepoint tests under sanitizer instrumentation on shared runners.
+          # Keep the job-level timeout as the hard upper bound.
+          CK_DEFAULT_TIMEOUT=30 \
+            ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 ./tests/test_check
+          ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+            UBSAN_OPTIONS=halt_on_error=1 ./tests/test_pallas_ct
+
   # ═══════════════════════════════════════════════════════════
   # STAGE 2: BUILD — compile only after gate passes
   # ═══════════════════════════════════════════════════════════
 
   build-emulator:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    name: build-emulator${{ matrix.label }}
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Regular/full includes every supported chain, including Zcash
+          # shielded/Orchard. Bitcoin-only is the sole reduced build.
+          - variant: full
+            label: ""
+            cmake_flags: ""
+          - variant: bitcoin-only
+            label: " (bitcoin-only)"
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -231,11 +336,11 @@ jobs:
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Cache base image
         id: cache-base
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: /tmp/base-image.tar
           key: base-image-${{ env.BASE_IMAGE }}
@@ -250,30 +355,42 @@ jobs:
         if: steps.cache-base.outputs.cache-hit == 'true'
         run: docker load -i /tmp/base-image.tar
 
-      - name: Build emulator image
+      - name: Build emulator image (${{ matrix.variant }})
         run: |
           docker build \
-            -t ${{ env.EMU_IMAGE }} \
+            -t ${{ env.EMU_IMAGE }}-${{ matrix.variant }} \
+            --build-arg coinsupport="${{ matrix.cmake_flags }}" \
             -f scripts/emulator/Dockerfile \
             .
 
       - name: Save emulator image
-        run: docker save ${{ env.EMU_IMAGE }} -o /tmp/emu-image.tar
+        run: docker save ${{ env.EMU_IMAGE }}-${{ matrix.variant }} -o /tmp/emu-image.tar
 
       - name: Upload emulator image artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: emu-image
+          name: emu-image-${{ matrix.variant }}
           path: /tmp/emu-image.tar
           retention-days: 1
 
   build-arm-firmware:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    name: build-arm-firmware${{ matrix.label }}
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            label: ""
+            cmake_flags: ""
+          - variant: bitcoin-only
+            label: " (bitcoin-only)"
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -288,7 +405,7 @@ jobs:
 
       - name: Cache base image
         id: cache-base
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: /tmp/base-image.tar
           key: base-image-${{ env.BASE_IMAGE }}
@@ -312,7 +429,7 @@ jobs:
           echo "git_short=${GIT_SHORT}" >> "$GITHUB_OUTPUT"
           echo "Firmware version: ${FW_VERSION} (${GIT_SHORT})"
 
-      - name: Cross-compile firmware for ARM
+      - name: Cross-compile firmware for ARM (${{ matrix.variant }})
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/root/keepkey-firmware:z \
@@ -320,34 +437,55 @@ jobs:
               mkdir /root/build && cd /root/build && \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
-                -DCMAKE_COLOR_MAKEFILE=ON && \
+                -DCMAKE_COLOR_MAKEFILE=ON \
+                ${{ matrix.cmake_flags }} && \
               make && \
               mkdir -p /root/keepkey-firmware/bin && \
               cp bin/*.bin /root/keepkey-firmware/bin/ && \
               cp bin/*.elf /root/keepkey-firmware/bin/ && \
+              cp bin/*.map /root/keepkey-firmware/bin/ 2>/dev/null || true && \
+              arm-none-eabi-size -A bin/firmware.keepkey.elf > /root/keepkey-firmware/bin/firmware.keepkey.size.txt 2>/dev/null || true && \
+              find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T - && \
               chmod -R a+rw /root/keepkey-firmware/bin"
+
+      # SRAM budget gate — RC7's privacy-enabled build hard-faulted on boot
+      # because static SRAM left an 11.2 KB gap while msg_write() carried a
+      # 12.4 KB stack frame. keepkey.ld now ASSERTs a 16 KiB reserve at link
+      # time; this step reports the numbers and enforces the frame margin
+      # (tools/sram-budgets.json).
+      - name: SRAM budget gate (${{ matrix.variant }})
+        run: |
+          pip install --quiet pyelftools
+          python3 tools/check_sram_budget.py \
+            --elf bin/firmware.keepkey.elf \
+            --su-tar bin/stack-usage.tgz \
+            --budgets tools/sram-budgets.json \
+            --variant "${{ matrix.variant }}"
 
       - name: Rename firmware artifacts
         run: |
           cd bin
           for f in *.bin; do
             [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${f}"
+            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}-${f}"
           done
           for f in *.elf; do
             [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${f}"
+            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}-${f}"
           done
           ls -lh
-          echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} built successfully"
+          echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} (${{ matrix.variant }}) built successfully"
 
       - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}
+          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}
           path: |
             bin/*.bin
             bin/*.elf
+            bin/*.map
+            bin/*.size.txt
+            bin/stack-usage.tgz
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════
@@ -355,47 +493,58 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   unit-tests:
+    name: unit-tests${{ matrix.label }}
     needs: build-emulator
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            label: ""
+            cmake_flags: ""
+          - variant: bitcoin-only
+            label: " (bitcoin-only)"
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - name: Download emulator image
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: emu-image
+          name: emu-image-${{ matrix.variant }}
           path: /tmp
 
       - name: Load emulator image
         run: docker load -i /tmp/emu-image.tar
 
-      - name: Run unit tests
+      - name: Run unit tests (${{ matrix.variant }})
         run: |
           # make xunit returns non-zero if any test fails — capture
           # exit code so JUnit XML still gets copied for reporting
           docker run --rm \
             -v ${{ github.workspace }}/test-reports:/kkemu/test-reports \
             --entrypoint /bin/sh \
-            ${{ env.EMU_IMAGE }} \
+            ${{ env.EMU_IMAGE }}-${{ matrix.variant }} \
             -c "mkdir -p /kkemu/test-reports/firmware-unit && \
                 make xunit; RC=\$?; \
                 cp -r unittests/*.xml /kkemu/test-reports/firmware-unit/ 2>/dev/null; \
                 exit \$RC"
 
       - name: Upload unit test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: unit-test-results
+          name: unit-test-results-${{ matrix.variant }}
           path: test-reports/firmware-unit/
           retention-days: 30
 
   python-integration-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -442,7 +591,7 @@ jobs:
           [ "$FW_RC" -eq 0 ] && [ "$PY_RC" -eq 0 ] || exit 1
 
       - name: Upload Python test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: python-test-results
@@ -450,7 +599,7 @@ jobs:
           retention-days: 30
 
       - name: Upload OLED screenshots
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: oled-screenshots
@@ -495,12 +644,12 @@ jobs:
   #     fsm_msgDebugLinkGetState is excluded from the build and any
   #     read_layout() call hangs the test).
   python-dylib-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -517,7 +666,7 @@ jobs:
           git submodule update --init deps/googletest
 
       - name: Setup Python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.10'
 
@@ -596,7 +745,8 @@ jobs:
           # it fsm_msgDebugLinkGetState is excluded from the build.
           # CMAKE_POLICY_VERSION_MINIMUM works around vendored
           # googletest's pre-3.5 policy declaration.
-          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          export PATH="$PATH:$NANOPB_GENERATOR_DIR"
           which protoc-gen-nanopb
           which nanopb_generator.py
           cmake \
@@ -608,15 +758,17 @@ jobs:
 
       - name: Build kkemulator_dylib
         run: |
-          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
-          cmake --build build-emu --target kkemulator_dylib -j$(sysctl -n hw.ncpu)
+          NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          export PATH="$PATH:$NANOPB_GENERATOR_DIR"
+          CPU_COUNT="$(sysctl -n hw.ncpu)"
+          cmake --build build-emu --target kkemulator_dylib -j"$CPU_COUNT"
           ls -la build-emu/lib/libkkemu* || ls -la build-emu/lib/emulator/libkkemu* || true
           # Surface the resolved binary path for the run step. macOS
           # produces .dylib; .so is preserved as a fallback for when this
           # job goes cross-platform.
-          DYLIB=$(find build-emu -name 'libkkemu.dylib' -o -name 'libkkemu.so' | head -1)
+          DYLIB="$(find build-emu \( -name 'libkkemu.dylib' -o -name 'libkkemu.so' \) -print -quit)"
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
-          echo "DYLIB_PATH=$(pwd)/$DYLIB" >> $GITHUB_ENV
+          echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
       - name: Upload libkkemu.dylib
         # Always upload, even on later test failure — the binary is
@@ -624,9 +776,9 @@ jobs:
         # PR. Tagged with the short commit SHA so multiple PR pushes
         # don't overwrite each other when a reviewer downloads them.
         if: always() && env.DYLIB_PATH != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: libkkemu-${{ github.sha }}
+          name: libkkemu-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ env.DYLIB_PATH }}
           retention-days: 30
           if-no-files-found: error
@@ -657,7 +809,7 @@ jobs:
             -v --tb=short --junit-xml=../../../test-reports/dylib-junit.xml
 
       - name: Upload dylib test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: python-dylib-test-results
@@ -676,26 +828,28 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Download unit test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
-          name: unit-test-results
+          # Report covers the regular/full build. Bitcoin-only is built and
+          # unit-tested in its own matrix leg but does not get a PDF.
+          name: unit-test-results-full
           path: test-reports/firmware-unit/
 
       - name: Download python test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
           name: python-test-results
           path: test-reports/python-keepkey/
 
       - name: Download OLED screenshots
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
           name: oled-screenshots
@@ -717,7 +871,7 @@ jobs:
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: test-report
@@ -737,14 +891,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Download emulator image
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: emu-image
+          # Publish the regular/full image, including Zcash privacy support.
+          name: emu-image-full
           path: /tmp
 
       - name: Load emulator image
@@ -759,11 +914,11 @@ jobs:
 
       - name: Tag images for publish
         run: |
-          docker tag ${{ env.EMU_IMAGE }} kktech/kkemu:latest
-          docker tag ${{ env.EMU_IMAGE }} kktech/kkemu:v${{ steps.version.outputs.fw_version }}
+          docker tag ${{ env.EMU_IMAGE }}-full kktech/kkemu:latest
+          docker tag ${{ env.EMU_IMAGE }}-full kktech/kkemu:v${{ steps.version.outputs.fw_version }}
 
       - name: Login to DockerHub
-        uses: docker/login-action@v4
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
         with:
           username: ${{ secrets.KK_DOCKERHUB_USER }}
           password: ${{ secrets.KK_DOCKERHUB_PASS }}
