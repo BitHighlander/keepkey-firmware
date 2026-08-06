@@ -149,6 +149,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Allocate %llu bytes?",
                      (unsigned long long)pi->extra_value);
+    }
 
     case SOL_INSTR_TOKEN_TRANSFER:
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
@@ -165,6 +166,100 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Token mint\n%s", mint_str)) {
+          return false;
+        }
+      }
+      if (pi->has_mint) {
+        known = solana_findKnownToken(pi->mint);
+      }
+
+      /* A known mint has firmware-owned decimals. A signed TransferChecked
+       * that claims a different scale would turn 0.002 USDC into (for example)
+       * 20.00 USDC. Refuse it instead of rendering an attacker-chosen scale. */
+      if (known && known->decimals != pi->extra_u8) {
+        (void)confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blocked",
+                      "%s decimals mismatch. Refusing to sign.", known->symbol);
+        return false;
+      }
+
+      /* Decide symbol trust before drawing the mint screen so its label can say
+       * whether the symbol is attested. Trust rules:
+       *  - attestation present + verifies against a loaded signer -> trusted;
+       *  - attestation present + INVALID -> reject the symbol entirely (an
+       *    attacker offered a bad signature; never fall back to the claim);
+       *  - no attestation (today's hosts) -> show the symbol next to the
+       *    always-authenticated mint (unchanged behavior). */
+      const char* symbol = NULL;
+      bool symbol_verified = false;
+      if (known) {
+        symbol = known->symbol;
+      } else if (ti && ti->has_symbol && solana_symbol_is_safe(ti->symbol)) {
+        if (ti->has_signature) {
+          /* Trust the symbol only if the attestation verifies AND the attested
+           * decimals equal the signed instruction's decimals (pi->extra_u8) —
+           * otherwise the attested (mint,decimals,symbol) tuple disagrees with
+           * the transaction being signed and must not earn "verified". */
+          if (solana_token_info_trusted(ti) && ti->decimals == pi->extra_u8) {
+            symbol = ti->symbol;
+            symbol_verified = true;
+          }
+        } else {
+          symbol = ti->symbol;
+        }
+      }
+
+      /* Mint on its own screen (see TOKEN_TRANSFER): the authenticated identity
+       * cannot be pushed off-view by a host-controlled symbol. */
+      if (pi->has_mint) {
+        char mint_str[45];
+        solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
+        const bool mint_ok =
+            known
+                ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                          "Known token %s\n%s", known->symbol, mint_str)
+                : confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                          "Token mint\n%s", mint_str);
+        if (!mint_ok) {
+          return false;
+        }
+      }
+
+      /* x402 names the merchant owner while the transaction names that
+       * owner's associated token account. Display the owner only after the
+       * device derives ATA(owner, token_program, mint) and matches the signed
+       * destination. No RPC or host assertion participates in this check. */
+      uint8_t recipient_owner[SOL_PUBKEY_SIZE];
+      const bool recipient_verified =
+          pi->has_mint &&
+          solana_findTokenRecipientOwner(msg, pi->program_id, pi->mint, pi->to,
+                                         recipient_owner);
+      if (recipient_verified) {
+        if (!solana_confirm_account(title, "Verified recipient owner",
+                                    recipient_owner)) {
+          return false;
+        }
+      } else if (msg && msg->token_recipient_owner_count > 0) {
+        /* A supplied payTo that does not own the signed ATA is suspicious.
+         * Warn, then keep the existing honest fallback: show the raw token
+         * account rather than the unverified owner claim. */
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Warning",
+                     "Recipient owner does not match signed token account.")) {
+          return false;
+        }
+      }
+
+      /* Name WHO attested the symbol, with the signer's fingerprint — aliases
+       * are host-chosen and not unique, so the fingerprint is what actually
+       * identifies the key. symbol_verified implies a signer is loaded for this
+       * key_id (solana_token_info_trusted verified against it), so both
+       * resolve; there is no "unknown" verified case. */
+      if (symbol_verified) {
+        const char* alias = signed_metadata_signer_alias(ti->signer_key_id);
+        char fp[METADATA_FINGERPRINT_LEN] = {0};
+        signed_metadata_signer_fingerprint((uint8_t)ti->signer_key_id, fp);
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Token \"%s\"\nby %s %s", symbol, alias ? alias : "",
+                     fp)) {
           return false;
         }
       }
@@ -340,6 +435,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Set vote commission to %u%%?", pi->extra_u8);
+    }
 
     case SOL_INSTR_ATA_CREATE:
       if (!solana_confirm_account(title, "Create token account", pi->to) ||
@@ -459,6 +555,104 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
   return false;
 }
 
+/* The single verified-transaction confirmation flow shared by BOTH
+ * SolanaSignTx and SolanaSignMessage (transaction-shaped messages are equally
+ * broadcastable), so their security screens — per-instruction disclosure AND
+ * the priority-fee screen — cannot drift apart. `msg` is NULL on the
+ * SignMessage path (host token symbols are unavailable there). Returns false if
+ * the user rejects any screen. */
+/* Render a schema-decoded instruction: who attested the schema, then the
+ * program/instruction it describes, then every labelled arg and account with
+ * values read from the transaction being signed. */
+static bool solana_confirm_schema(const SolanaInstrSchema* schema,
+                                  const SolanaParsedTx* parsed,
+                                  uint8_t ix_index, uint8_t signer_key_id) {
+  const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
+
+  /* Aliases are host-chosen and not unique; the fingerprint identifies the
+   * key that actually vouched for this decode. */
+  const char* alias = signed_metadata_signer_alias(signer_key_id);
+  char fp[METADATA_FINGERPRINT_LEN] = {0};
+  if (!signed_metadata_signer_fingerprint(signer_key_id, fp)) return false;
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Schema Signer",
+               "%s\n%s", alias ? alias : "", fp)) {
+    return false;
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               schema->program_name, "%s", schema->instruction_name)) {
+    return false;
+  }
+
+  /* Args sit sequentially after the discriminator, in declaration order. */
+  uint16_t off = schema->disc_len;
+  for (uint8_t a = 0; a < schema->num_args; a++) {
+    const SolanaSchemaArg* arg = &schema->args[a];
+    char value[64] = {0};
+    switch (arg->type) {
+      case SOL_SCHEMA_ARG_U64: {
+        uint64_t v = 0;
+        for (int b = 0; b < 8; b++)
+          v |= ((uint64_t)ix->data[off + b]) << (8 * b);
+        snprintf(value, sizeof(value), "%" PRIu64, v);
+        break;
+      }
+      case SOL_SCHEMA_ARG_U8:
+        snprintf(value, sizeof(value), "%u", (unsigned)ix->data[off]);
+        break;
+      case SOL_SCHEMA_ARG_PUBKEY: {
+        size_t enc = sizeof(value);
+        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value,
+                                  &enc)) {
+          return false;
+        }
+        break;
+      }
+      case SOL_SCHEMA_ARG_OPAQUE32:
+        /* Opaque bytes have no meaning to show — abbreviate so the screen
+         * stays readable while still binding the user to a distinct value. */
+        snprintf(value, sizeof(value), "%02x%02x%02x%02x…%02x%02x%02x%02x",
+                 ix->data[off], ix->data[off + 1], ix->data[off + 2],
+                 ix->data[off + 3], ix->data[off + 28], ix->data[off + 29],
+                 ix->data[off + 30], ix->data[off + 31]);
+        break;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
+                 "%s", value)) {
+      return false;
+    }
+    off += solana_schemaArgWidth(arg->type);
+  }
+
+  for (uint8_t a = 0; a < schema->num_accounts; a++) {
+    const SolanaSchemaAccount* sa = &schema->accounts[a];
+    const uint8_t* pubkey = parsed->accounts[ix->acct_indices[sa->index]];
+    char addr[64];
+    size_t enc = sizeof(addr);
+    if (!solana_base58_encode(pubkey, SOL_PUBKEY_SIZE, addr, &enc))
+      return false;
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, sa->label, "%s",
+                 addr)) {
+      return false;
+    }
+  }
+
+  return solana_confirm_priority_fee(
+      parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
+}
+
+static bool solana_confirm_verified_tx(const SolanaParsedTx* parsed,
+                                       const SolanaSignTx* msg) {
+  for (uint8_t i = 0; i < parsed->num_instructions; i++) {
+    if (!solana_confirmInstruction(&parsed->instructions[i], msg, i,
+                                   parsed->num_instructions)) {
+      return false;
+    }
+  }
+  return solana_confirm_priority_fee(
+      parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
+}
+
 void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg) {
   RESP_INIT(SolanaAddress);
 
@@ -555,6 +749,38 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       layoutHome();
       return;
     }
+  }
+
+  /* KKSOLSC1: a signed, REUSABLE instruction schema can rescue a transaction
+   * that is opaque only because one program is unrecognised. The schema names
+   * no amounts and no transaction — the device reads the values out of the
+   * bytes it is about to sign — so one attestation covers every future
+   * transaction to that program. Present-but-invalid schema material fails
+   * the request; it never silently degrades to blind signing. */
+  SolanaInstrSchema schema;
+  uint8_t schema_ix = 0;
+  bool schema_verified = false;
+  bool has_any_schema = msg->has_schema_payload || msg->has_schema_signature ||
+                        msg->has_schema_signer_key_id;
+  if (has_any_schema) {
+    if (!msg->has_schema_payload || !msg->has_schema_signature ||
+        !msg->has_schema_signer_key_id ||
+        msg->schema_signer_key_id >= METADATA_MAX_KEYS ||
+        !solana_parseInstrSchema(msg->schema_payload.bytes,
+                                 msg->schema_payload.size, &schema) ||
+        !signed_metadata_verify_attestation(
+            (uint8_t)msg->schema_signer_key_id, msg->schema_payload.bytes,
+            msg->schema_payload.size, msg->schema_signature.bytes,
+            msg->schema_signature.size) ||
+        !solana_schemaApplies(&schema, &parsed, &schema_ix)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid Solana instruction schema"));
+      layoutHome();
+      return;
+    }
+    schema_verified = true;
   }
 
   if (tx_review == SOL_TX_REVIEW_VERIFIED) {
