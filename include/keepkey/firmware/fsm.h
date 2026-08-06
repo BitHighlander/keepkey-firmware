@@ -131,6 +131,15 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg);
 void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg);
 void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg);
 
+#if ZCASH_PRIVACY
+void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg);
+void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg);
+void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg);
+void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg);
+void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg);
+void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg);
+#endif
+
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);
 void fsm_msgDebugLinkGetState(DebugLinkGetState* msg);

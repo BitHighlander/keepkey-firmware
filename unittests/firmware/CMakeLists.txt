@@ -13,6 +13,12 @@ set(sources
     usb_rx.cpp
     u2f.cpp)
 
+# zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
+# compiled into kkfirmware when the privacy flag is on.
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.cpp)
+endif()
+
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/lib/firmware
