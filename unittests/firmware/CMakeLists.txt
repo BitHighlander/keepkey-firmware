@@ -5,6 +5,7 @@ set(sources
     binance.cpp
     cosmos.cpp
     eos.cpp
+    eip712.cpp
     ethereum.cpp
     mayachain.cpp
     nano.cpp
