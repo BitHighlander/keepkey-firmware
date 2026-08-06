@@ -58,11 +58,64 @@ static bool append_type_string(char* dest, const char* value) {
   return true;
 }
 
-static bool type_array_suffix_is_valid(const char* suffix) {
+static bool parse_bounded_decimal(const char** cursor, size_t limit,
+                                  size_t* value) {
+  const char* p = *cursor;
+  if (*p < '0' || *p > '9') return false;
+
+  size_t parsed = 0;
+  while (*p >= '0' && *p <= '9') {
+    const size_t digit = (size_t)(*p - '0');
+    if (parsed > (limit - digit) / 10) return false;
+    parsed = parsed * 10 + digit;
+    p++;
+  }
+  *cursor = p;
+  *value = parsed;
+  return true;
+}
+
+static bool parse_array_suffix(const char* suffix, bool* fixed,
+                               size_t* expected) {
+  *fixed = false;
+  *expected = 0;
   if (*suffix == '\0') return true;
   if (*suffix++ != '[') return false;
-  while (*suffix >= '0' && *suffix <= '9') suffix++;
-  return suffix[0] == ']' && suffix[1] == '\0';
+  if (*suffix == ']') return suffix[1] == '\0';
+
+  size_t count = 0;
+  if (!parse_bounded_decimal(&suffix, (size_t)-1, &count) || count == 0 ||
+      suffix[0] != ']' || suffix[1] != '\0') {
+    return false;
+  }
+  *fixed = true;
+  *expected = count;
+  return true;
+}
+
+static bool type_array_suffix_is_valid(const char* suffix) {
+  bool fixed = false;
+  size_t expected = 0;
+  return parse_array_suffix(suffix, &fixed, &expected);
+}
+
+static bool fixed_array_cardinality_matches(const char* type,
+                                            const json_t* value) {
+  const char* suffix = strchr(type, '[');
+  if (!suffix) return true;
+
+  bool fixed = false;
+  size_t expected = 0;
+  if (!parse_array_suffix(suffix, &fixed, &expected)) return false;
+  if (!fixed) return true;
+  if (json_getType(value) != JSON_ARRAY) return false;
+
+  size_t actual = 0;
+  for (const json_t* element = json_getChild(value); element;
+       element = json_getSibling(element)) {
+    if (++actual > expected) return false;
+  }
+  return actual == expected;
 }
 
 static bool type_matches(const char* type, const char* base) {
@@ -75,12 +128,9 @@ static bool type_is_integer(const char* type, const char* prefix) {
   const size_t prefix_len = strlen(prefix);
   if (strncmp(type, prefix, prefix_len) != 0) return false;
   const char* p = type + prefix_len;
-  unsigned bits = 0;
-  bool has_bits = false;
-  while (*p >= '0' && *p <= '9') {
-    has_bits = true;
-    bits = bits * 10 + (unsigned)(*p++ - '0');
-  }
+  size_t bits = 0;
+  const bool has_bits = *p >= '0' && *p <= '9';
+  if (has_bits && !parse_bounded_decimal(&p, 256, &bits)) return false;
   if (has_bits && (bits < 8 || bits > 256 || (bits % 8) != 0)) return false;
   return type_array_suffix_is_valid(p);
 }
@@ -88,11 +138,9 @@ static bool type_is_integer(const char* type, const char* prefix) {
 static unsigned integer_type_width(const char* type, const char* prefix) {
   const char* p = type + strlen(prefix);
   if (*p < '0' || *p > '9') return 256;
-  unsigned bits = 0;
-  while (*p >= '0' && *p <= '9') {
-    bits = bits * 10 + (unsigned)(*p++ - '0');
-  }
-  return bits;
+  size_t bits = 0;
+  if (!parse_bounded_decimal(&p, 256, &bits)) return 256;
+  return (unsigned)bits;
 }
 
 static bool type_is_bytes(const char* type, unsigned* byte_size,
@@ -105,15 +153,11 @@ static bool type_is_bytes(const char* type, unsigned* byte_size,
     *dynamic = true;
     return true;
   }
-  unsigned size = 0;
-  bool has_size = false;
-  while (*p >= '0' && *p <= '9') {
-    has_size = true;
-    size = size * 10 + (unsigned)(*p++ - '0');
-  }
-  if (!has_size || size == 0 || size > 32 || !type_array_suffix_is_valid(p))
+  size_t size = 0;
+  if (!parse_bounded_decimal(&p, 32, &size) || size == 0 ||
+      !type_array_suffix_is_valid(p))
     return false;
-  *byte_size = size;
+  *byte_size = (unsigned)size;
   *dynamic = false;
   return true;
 }
@@ -533,6 +577,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         return JSON_TYPE_WNOVAL;
       }
       const jsonType_t value_type = json_getType(walkVals);
+      if (!fixed_array_cardinality_matches(typeType, walkVals)) {
+        return GENERAL_ERROR;
+      }
       const bool hasValue = value_type == JSON_TEXT ||
                             value_type == JSON_INTEGER ||
                             value_type == JSON_BOOLEAN;
