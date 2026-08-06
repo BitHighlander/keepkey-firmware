@@ -3,6 +3,7 @@ set(sources
     coins.cpp
     cosmos.cpp
     eos.cpp
+    eip712.cpp
     ethereum.cpp
     nano.cpp
     recovery.cpp
