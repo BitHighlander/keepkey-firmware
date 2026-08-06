@@ -58,6 +58,7 @@
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
+#include "keepkey/firmware/zcash.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -92,6 +93,7 @@
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
+#include "messages-zcash.pb.h"
 
 #include <stdio.h>
 
@@ -274,6 +276,7 @@ void fsm_sendFailure(FailureType code, const char* text) {
 
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
+  zcash_signing_abort();
   session_clear(/*clear_pin=*/true);
   fsm_sendSuccess("Session cleared");
 }
@@ -298,3 +301,11 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_solana.h"
 /* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
 #include "fsm_msg_clearsign_attestor.h"
+#if ZCASH_PRIVACY
+#include "fsm_msg_zcash.h"
+#else
+// Zcash shielded/Orchard engine compiled out. The always-on
+// Initialize/ClearSession/Cancel handlers still call zcash_signing_abort();
+// with no privacy state to reset, a no-op is correct.
+void zcash_signing_abort(void) {}
+#endif
