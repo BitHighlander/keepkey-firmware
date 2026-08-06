@@ -158,6 +158,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
 
   if (pin_protection) {
     if (!change_pin()) {
+      dice_digest_clear();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("PINs do not match"));
       layoutHome();
