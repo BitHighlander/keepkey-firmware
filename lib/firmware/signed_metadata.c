@@ -1,8 +1,12 @@
 #include "keepkey/firmware/signed_metadata.h"
 
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/draw.h"     // draw_bitmap_mono_rle_valid
+#include "keepkey/board/layout.h"   // RUNTIME_ICON + layout_set_runtime_icon
+#include "keepkey/board/variant.h"  // Image / AnimationFrame
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/ecdsa.h"
@@ -22,39 +26,30 @@ static bool metadata_signer_loaded = false;
  * the tx calldata. The v2 enforce path REQUIRES it — v2 has no committed
  * tx_hash, so this is the explicit proof (not an implicit call-order
  * assumption) that the displayed values came from the calldata being signed. */
+/* Set during matching: this tx carries native value, so the amount screen
+ * must NOT be suppressed even though the schema matched. */
+static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
 
-/*
- * Built-in metadata verification public keys.
- *
- * Phase 1 ships with NO built-in keys: every clearsign signer must be
- * loaded at runtime via LoadClearsignSigner (user-confirmed on device,
- * RAM-only, gone on reboot), and every transaction it vouches for is
- * preceded by a warning screen naming the signer's alias. There is no
- * hardcoded "KeepKey says this is safe" path in this phase.
- *
- * Phase 2 (once the offline signing infrastructure is hardened) puts the
- * KeepKey production key back in slot 0. A slot holding a built-in key can
- * never be shadowed by a loaded signer (see signed_metadata_signer_valid)
- * and is the only path that clearsigns without the warning screen.
- */
-static const uint8_t METADATA_PUBKEYS[METADATA_MAX_KEYS][33] = {
-    /* Key 0: production (returns in phase 2) */
-    {0x00},
-    /* Key 1: rotation slot */
-    {0x00},
-    {0x00},
-    /* Key 3: was the DEBUG_LINK-only CI test key; CI now loads it through
-     * LoadClearsignSigner so tests exercise the same warning flow users see. */
-    {0x00},
-};
+/* Phase 1 ships with NO built-in verification keys: every clearsign signer is
+ * loaded at runtime via LoadClearsignSigner. Phase 2 restores the production
+ * key. */
 
-/* Runtime-loaded signers. RAM only — cleared on reboot by construction. */
+/* Runtime-loaded signers. RAM only — cleared on reboot by construction. RC18
+ * deliberately rejects persistent trust anchors: the public storage section
+ * has no authenticated integrity against physical flash modification. */
 static uint8_t loaded_pubkeys[METADATA_MAX_KEYS][33];
 static char loaded_aliases[METADATA_MAX_KEYS][METADATA_ALIAS_MAX_LEN + 1];
+/* Per-slot session icon (1bpp mono RLE). icon_len==0 => text-only identity. */
+#if !ZCASH_PRIVACY
+static uint8_t loaded_icons[METADATA_MAX_KEYS][METADATA_ICON_MAX];
+static uint8_t loaded_icon_w[METADATA_MAX_KEYS];
+static uint8_t loaded_icon_h[METADATA_MAX_KEYS];
+static uint16_t loaded_icon_len[METADATA_MAX_KEYS];
+#endif
 
-static bool read_u8(const uint8_t **cursor, const uint8_t *end, uint8_t *out) {
+static bool read_u8(const uint8_t** cursor, const uint8_t* end, uint8_t* out) {
   if ((size_t)(end - *cursor) < 1) {
     return false;
   }
@@ -64,8 +59,8 @@ static bool read_u8(const uint8_t **cursor, const uint8_t *end, uint8_t *out) {
   return true;
 }
 
-static bool read_be_u16(const uint8_t **cursor, const uint8_t *end,
-                        uint16_t *out) {
+static bool read_be_u16(const uint8_t** cursor, const uint8_t* end,
+                        uint16_t* out) {
   if ((size_t)(end - *cursor) < 2) {
     return false;
   }
@@ -75,8 +70,8 @@ static bool read_be_u16(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_be_u32(const uint8_t **cursor, const uint8_t *end,
-                        uint32_t *out) {
+static bool read_be_u32(const uint8_t** cursor, const uint8_t* end,
+                        uint32_t* out) {
   if ((size_t)(end - *cursor) < 4) {
     return false;
   }
@@ -87,7 +82,7 @@ static bool read_be_u32(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool read_bytes(const uint8_t **cursor, const uint8_t *end, uint8_t *out,
+static bool read_bytes(const uint8_t** cursor, const uint8_t* end, uint8_t* out,
                        size_t size) {
   if ((size_t)(end - *cursor) < size) {
     return false;
@@ -98,11 +93,28 @@ static bool read_bytes(const uint8_t **cursor, const uint8_t *end, uint8_t *out,
   return true;
 }
 
-static bool read_string(const uint8_t **cursor, const uint8_t *end, char *out,
+/* method_name and arg names render through confirm() bodies exactly like
+ * STRING values and signer aliases do — hold them to the same allowlist
+ * (printable ASCII, '%' excluded) so no metadata-carried text can embed
+ * control bytes or format specifiers. Only a trusted signer could author
+ * such a blob, but the charset rule should not depend on who signs. */
+static bool display_text_ok(const uint8_t* text, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    if (text[i] < 0x20 || text[i] > 0x7e || text[i] == '%') {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool read_string(const uint8_t** cursor, const uint8_t* end, char* out,
                         size_t max_len) {
   uint16_t value_len = 0;
   if (!read_be_u16(cursor, end, &value_len) || value_len == 0 ||
       value_len > max_len || (size_t)(end - *cursor) < value_len) {
+    return false;
+  }
+  if (!display_text_ok(*cursor, value_len)) {
     return false;
   }
 
@@ -112,11 +124,14 @@ static bool read_string(const uint8_t **cursor, const uint8_t *end, char *out,
   return true;
 }
 
-static bool read_arg_name(const uint8_t **cursor, const uint8_t *end, char *out,
+static bool read_arg_name(const uint8_t** cursor, const uint8_t* end, char* out,
                           size_t max_len) {
   uint8_t value_len = 0;
   if (!read_u8(cursor, end, &value_len) || value_len == 0 ||
       value_len > max_len || (size_t)(end - *cursor) < value_len) {
+    return false;
+  }
+  if (!display_text_ok(*cursor, value_len)) {
     return false;
   }
 
@@ -130,7 +145,7 @@ static bool read_arg_name(const uint8_t **cursor, const uint8_t *end, char *out,
  * TOKEN_AMOUNT carry display semantics, so their byte layout is enforced
  * before anything is stored; legacy formats keep their original 32-byte cap
  * (METADATA_MAX_ARG_VALUE_LEN grew only to fit TOKEN_AMOUNT). */
-static bool arg_value_ok(uint8_t format, const uint8_t *value, uint16_t len) {
+static bool arg_value_ok(uint8_t format, const uint8_t* value, uint16_t len) {
   switch (format) {
     case ARG_FORMAT_STRING: {
       /* Attested printable label ("protocol: Uniswap V2"). Rendered through
@@ -173,8 +188,8 @@ static bool arg_value_ok(uint8_t format, const uint8_t *value, uint16_t len) {
 }
 
 /* chain_id(4) + contract(20) + selector(4) — shared by both blob versions. */
-static bool parse_common_head(const uint8_t **cursor, const uint8_t *end,
-                              SignedMetadata *out) {
+static bool parse_common_head(const uint8_t** cursor, const uint8_t* end,
+                              SignedMetadata* out) {
   return read_be_u32(cursor, end, &out->chain_id) &&
          read_bytes(cursor, end, out->contract_address,
                     sizeof(out->contract_address)) &&
@@ -183,8 +198,8 @@ static bool parse_common_head(const uint8_t **cursor, const uint8_t *end,
 
 /* classification(1) + timestamp(4) + key_id(1) + sig(64) + recovery(1), then
  * the cursor must land exactly on `end` — identical for v1 and v2. */
-static bool parse_trailer(const uint8_t **cursor, const uint8_t *end,
-                          SignedMetadata *out) {
+static bool parse_trailer(const uint8_t** cursor, const uint8_t* end,
+                          SignedMetadata* out) {
   uint8_t classification = 0;
   if (!read_u8(cursor, end, &classification) || classification > 2 ||
       !read_be_u32(cursor, end, &out->timestamp) ||
@@ -198,12 +213,12 @@ static bool parse_trailer(const uint8_t **cursor, const uint8_t *end,
 }
 
 /* v1 args: name + format + explicit (host-decoded) value. */
-static bool parse_v1_args(const uint8_t **cursor, const uint8_t *end,
-                          SignedMetadata *out) {
+static bool parse_v1_args(const uint8_t** cursor, const uint8_t* end,
+                          SignedMetadata* out) {
   for (uint8_t i = 0; i < out->num_args; i++) {
     uint8_t format = 0;
     uint16_t value_len = 0;
-    MetadataArg *arg = &out->args[i];
+    MetadataArg* arg = &out->args[i];
 
     if (!read_arg_name(cursor, end, arg->name, METADATA_MAX_ARG_NAME_LEN) ||
         !read_u8(cursor, end, &format) || format > ARG_FORMAT_TOKEN_AMOUNT ||
@@ -225,11 +240,11 @@ static bool parse_v1_args(const uint8_t **cursor, const uint8_t *end,
  * to append the 32-byte amount word. v2 supports the fixed single-word ABI
  * types ADDRESS / AMOUNT / TOKEN_AMOUNT; anything else is out of scope -> blind
  * sign. */
-static bool parse_v2_args(const uint8_t **cursor, const uint8_t *end,
-                          SignedMetadata *out) {
+static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
+                          SignedMetadata* out) {
   for (uint8_t i = 0; i < out->num_args; i++) {
     uint8_t format = 0;
-    MetadataArg *arg = &out->args[i];
+    MetadataArg* arg = &out->args[i];
 
     if (!read_arg_name(cursor, end, arg->name, METADATA_MAX_ARG_NAME_LEN) ||
         !read_u8(cursor, end, &format)) {
@@ -238,6 +253,11 @@ static bool parse_v2_args(const uint8_t **cursor, const uint8_t *end,
     switch (format) {
       case ARG_FORMAT_ADDRESS:
       case ARG_FORMAT_AMOUNT:
+      /* BYTES covers an opaque fixed word — an order/request id, say — which
+       * a router genuinely cannot render as an address or an amount. It still
+       * consumes exactly one 32-byte ABI word, so structural completeness is
+       * unaffected; only the rendering differs (hex, first 16 bytes). */
+      case ARG_FORMAT_BYTES:
         arg->value_len = 0; /* filled from the tx calldata at decode time */
         break;
       case ARG_FORMAT_TOKEN_AMOUNT: {
@@ -271,10 +291,10 @@ static bool parse_v2_args(const uint8_t **cursor, const uint8_t *end,
   return true;
 }
 
-static bool parse_metadata_binary(const uint8_t *payload, size_t payload_len,
-                                  SignedMetadata *out) {
-  const uint8_t *cursor = payload;
-  const uint8_t *end = payload + payload_len;
+static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
+                                  SignedMetadata* out) {
+  const uint8_t* cursor = payload;
+  const uint8_t* end = payload + payload_len;
   memset(out, 0, sizeof(*out));
 
   if (!read_u8(&cursor, end, &out->version)) {
@@ -319,7 +339,7 @@ static bool parse_metadata_binary(const uint8_t *payload, size_t payload_len,
  * in a later chunk or trailing the words. That structural completeness is what
  * binds the displayed decode to the signature; v2 has no tx_hash.
  */
-static bool decode_v2_args(SignedMetadata *md, const EthereumSignTx *msg) {
+static bool decode_v2_args(SignedMetadata* md, const EthereumSignTx* msg) {
   uint32_t expected = 4u + 32u * (uint32_t)md->num_args;
   uint32_t initsz = msg->data_initial_chunk.size;
   uint32_t total = msg->has_data_length ? msg->data_length : initsz;
@@ -328,8 +348,8 @@ static bool decode_v2_args(SignedMetadata *md, const EthereumSignTx *msg) {
   }
 
   for (uint8_t i = 0; i < md->num_args; i++) {
-    const uint8_t *word = msg->data_initial_chunk.bytes + 4 + 32u * i;
-    MetadataArg *arg = &md->args[i];
+    const uint8_t* word = msg->data_initial_chunk.bytes + 4 + 32u * i;
+    MetadataArg* arg = &md->args[i];
 
     switch (arg->format) {
       case ARG_FORMAT_ADDRESS:
@@ -344,6 +364,7 @@ static bool decode_v2_args(SignedMetadata *md, const EthereumSignTx *msg) {
         arg->value_len = 20;
         break;
       case ARG_FORMAT_AMOUNT:
+      case ARG_FORMAT_BYTES:
         memcpy(arg->value, word, 32);
         arg->value_len = 32;
         break;
@@ -367,8 +388,8 @@ static bool decode_v2_args(SignedMetadata *md, const EthereumSignTx *msg) {
   return true;
 }
 
-static void bn_from_metadata_bytes(const uint8_t *value, size_t value_len,
-                                   bignum256 *out) {
+static void bn_from_metadata_bytes(const uint8_t* value, size_t value_len,
+                                   bignum256* out) {
   uint8_t padded[32] = {0};
   if (value_len > sizeof(padded)) {
     value_len = sizeof(padded);
@@ -382,6 +403,10 @@ bool signed_metadata_available(void) { return metadata_available; }
 
 bool signed_metadata_schema_decoded(void) { return metadata_schema_decoded; }
 
+bool signed_metadata_schema_moves_value(void) {
+  return metadata_schema_moves_value;
+}
+
 void signed_metadata_clear(void) {
   memzero(&stored_metadata, sizeof(stored_metadata));
   metadata_available = false;
@@ -393,17 +418,22 @@ void signed_metadata_clear(void) {
 void signed_metadata_clear_signers(void) {
   memzero(loaded_pubkeys, sizeof(loaded_pubkeys));
   memzero(loaded_aliases, sizeof(loaded_aliases));
+#if !ZCASH_PRIVACY
+  memzero(loaded_icons, sizeof(loaded_icons));
+  memzero(loaded_icon_w, sizeof(loaded_icon_w));
+  memzero(loaded_icon_h, sizeof(loaded_icon_h));
+  memzero(loaded_icon_len, sizeof(loaded_icon_len));
+#endif
   /* Metadata verified by a now-dropped signer must not outlive it. */
   signed_metadata_clear();
 }
 
-bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t *pubkey,
-                                  size_t pubkey_len, const char *alias) {
+bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t* pubkey,
+                                  size_t pubkey_len, const char* alias) {
   curve_point point;
   size_t alias_len;
 
-  if (key_id >= METADATA_MAX_KEYS || METADATA_PUBKEYS[key_id][0] != 0x00 ||
-      !pubkey || pubkey_len != 33 || !alias) {
+  if (key_id >= METADATA_MAX_KEYS || !pubkey || pubkey_len != 33 || !alias) {
     return false;
   }
 
@@ -435,15 +465,155 @@ bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t *pubkey,
   return ecdsa_read_pubkey(&secp256k1, pubkey, &point) == 1;
 }
 
-void signed_metadata_store_signer(uint8_t key_id, const uint8_t *pubkey,
-                                  const char *alias) {
-  if (key_id >= METADATA_MAX_KEYS) {
-    return;
+bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
+                                  const char* alias, const uint8_t* icon,
+                                  uint8_t icon_w, uint8_t icon_h,
+                                  uint16_t icon_len, bool persist) {
+  /* Fail before changing the RAM slot. A caller asking for persistence must
+   * never receive a session-only downgrade it could mistake for durable trust.
+   * Persistence can return only after authenticated storage binding exists. */
+  if (persist || key_id >= METADATA_MAX_KEYS) {
+    return false;
   }
   memcpy(loaded_pubkeys[key_id], pubkey, sizeof(loaded_pubkeys[key_id]));
   strlcpy(loaded_aliases[key_id], alias, sizeof(loaded_aliases[key_id]));
+
+  /* A load without an icon clears any prior one for the slot (icon_len
+   * already validated <= max by the caller — belt-and-braces here). */
+  bool has_icon = icon && icon_len > 0 && icon_len <= METADATA_ICON_MAX;
+
+  /* Session icon into the RAM working slot. The Orchard build omits this
+   * cosmetic cache to preserve its tight SRAM margin; signers remain usable
+   * and render text-only after the mandatory load confirmation. */
+#if !ZCASH_PRIVACY
+  memzero(loaded_icons[key_id], sizeof(loaded_icons[key_id]));
+  if (has_icon) {
+    memcpy(loaded_icons[key_id], icon, icon_len);
+    loaded_icon_w[key_id] = icon_w;
+    loaded_icon_h[key_id] = icon_h;
+    loaded_icon_len[key_id] = icon_len;
+  } else {
+    loaded_icon_w[key_id] = 0;
+    loaded_icon_h[key_id] = 0;
+    loaded_icon_len[key_id] = 0;
+  }
+#else
+  (void)has_icon;
+  (void)icon_w;
+  (void)icon_h;
+#endif
+
   /* Replacing a signer invalidates anything the old one verified. */
   signed_metadata_clear();
+  return true;
+}
+
+/* Resolve the alias for a session slot. */
+const char* signed_metadata_signer_alias(uint8_t key_id) {
+  if (key_id >= METADATA_MAX_KEYS) return NULL;
+  if (loaded_pubkeys[key_id][0] != 0x00) return loaded_aliases[key_id];
+  return NULL;
+}
+
+/* Resolve the icon for a session slot. Returns false for a text-only slot. */
+/* An icon is renderable only if its geometry fits the confirm's icon column
+ * AND its RLE stream decodes exactly to that geometry. This is the single
+ * choke point for session icons: signed_metadata_signer_icon() is what both the
+ * load-confirm and the per-tx identity screen call, and the per-tx screen
+ * stages the frame itself (it never goes through stage_runtime_icon). Fail
+ * closed to a text-only identity: a missing logo is cosmetic, an over-wide one
+ * erases the alias, fingerprint and the "NOT verified by KeepKey" warning. */
+#if !ZCASH_PRIVACY
+static bool icon_renderable(const uint8_t* icon, uint16_t icon_len,
+                            uint8_t icon_w, uint8_t icon_h) {
+  if (!icon || icon_len == 0) return false;
+  if (icon_w == 0 || icon_w > LEFT_MARGIN_WITH_ICON) return false;
+  if (icon_h == 0 || icon_h > 64) return false;
+  return draw_bitmap_mono_rle_valid(icon, (uint32_t)icon_len, icon_w, icon_h);
+}
+#endif
+
+bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
+                                 uint8_t* w_out, uint8_t* h_out,
+                                 uint16_t* len_out) {
+  if (key_id >= METADATA_MAX_KEYS) return false;
+  if (loaded_pubkeys[key_id][0] != 0x00) {
+#if ZCASH_PRIVACY
+    (void)icon_out;
+    (void)w_out;
+    (void)h_out;
+    (void)len_out;
+    return false;
+#else
+    if (loaded_icon_len[key_id] == 0) return false;
+    if (!icon_renderable(loaded_icons[key_id], loaded_icon_len[key_id],
+                         loaded_icon_w[key_id], loaded_icon_h[key_id])) {
+      return false;
+    }
+    if (icon_out) *icon_out = loaded_icons[key_id];
+    if (w_out) *w_out = loaded_icon_w[key_id];
+    if (h_out) *h_out = loaded_icon_h[key_id];
+    if (len_out) *len_out = loaded_icon_len[key_id];
+    return true;
+#endif
+  }
+  return false;
+}
+
+/* Render an AnimationFrame from a stored icon into the confirm's left column.
+ * Image + frame are the CALLER's (must outlive the synchronous confirm); this
+ * only wires them up. Returns RUNTIME_ICON when an icon was set, else NO_ICON.
+ * Positioning tuned on device — icon column is ~40px, height 64px. */
+static IconType stage_runtime_icon(Image* img, AnimationFrame* frame,
+                                   const uint8_t* icon, uint8_t icon_w,
+                                   uint8_t icon_h, uint16_t icon_len) {
+  if (!icon || icon_len == 0) return NO_ICON;
+  /* Fail closed on an over-wide icon rather than drawing it at x=0: text begins
+   * at x=40 and the icon is drawn AFTER the text, so a wider icon would paint
+   * over the alias, fingerprint and the "NOT verified by KeepKey" warning.
+   * The load handler already checks this, but enforce it again at the point of
+   * use. Dropping the logo degrades to a text-only identity; letting it erase
+   * the warning does not. */
+  if (icon_w == 0 || icon_w > LEFT_MARGIN_WITH_ICON || icon_h == 0 ||
+      icon_h > 64) {
+    return NO_ICON;
+  }
+  img->w = icon_w;
+  img->h = icon_h;
+  img->length = icon_len;
+  img->data = icon;
+  /* Center inside the confirm's left icon column (LEFT_MARGIN_WITH_ICON=40px).
+   * Vertically center in the 64px height. */
+  frame->x = (uint16_t)((LEFT_MARGIN_WITH_ICON - icon_w) / 2);
+  frame->y = (icon_h < 64) ? (uint16_t)((64 - icon_h) / 2) : 0;
+  frame->duration = 0;
+  /* Decoder does value*color/100; color=100 => data bytes are direct 0-255. */
+  frame->color = 100;
+  frame->image = img;
+  layout_set_runtime_icon(frame);
+  return RUNTIME_ICON;
+}
+
+bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
+                                  const uint8_t* icon, uint8_t icon_w,
+                                  uint8_t icon_h, uint16_t icon_len) {
+  Image icon_img;
+  AnimationFrame icon_frame;
+  IconType id_icon = stage_runtime_icon(&icon_img, &icon_frame, icon, icon_w,
+                                        icon_h, icon_len);
+
+  char body[160];
+  memset(body, 0, sizeof(body));
+  /* Lead with the identity (its logo + alias + fingerprint). The trust model
+   * hangs on this consent; the fingerprint reappears on every per-tx screen. */
+  snprintf(body, sizeof(body),
+           "Trust '%s' (%s) for this session to describe transactions? NOT "
+           "verified by KeepKey.",
+           alias, fingerprint);
+  bool ok = confirm_with_icon(ButtonRequestType_ButtonRequest_Other, id_icon,
+                              _("Load Clearsigner"), "%s", body);
+  layout_set_runtime_icon(NULL);
+  return ok;
 }
 
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
@@ -458,15 +628,11 @@ bool signed_metadata_from_loaded_signer(void) {
   return metadata_available && metadata_signer_loaded;
 }
 
-/* Resolve the verification key for a slot. Built-in keys win; a runtime-
- * loaded signer can only occupy an empty built-in slot. */
-static const uint8_t *metadata_pubkey_for(uint8_t key_id, bool *is_loaded) {
+/* Resolve the verification key for a slot. */
+static const uint8_t* metadata_pubkey_for(uint8_t key_id, bool* is_loaded) {
   *is_loaded = false;
   if (key_id >= METADATA_MAX_KEYS) {
     return NULL;
-  }
-  if (METADATA_PUBKEYS[key_id][0] != 0x00) {
-    return METADATA_PUBKEYS[key_id];
   }
   if (loaded_pubkeys[key_id][0] != 0x00) {
     *is_loaded = true;
@@ -475,18 +641,53 @@ static const uint8_t *metadata_pubkey_for(uint8_t key_id, bool *is_loaded) {
   return NULL;
 }
 
-MetadataClassification signed_metadata_process(const uint8_t *payload,
+bool signed_metadata_signer_is_runtime(uint8_t key_id) {
+  bool is_loaded = false;
+  return metadata_pubkey_for(key_id, &is_loaded) != NULL && is_loaded;
+}
+
+bool signed_metadata_signer_fingerprint(uint8_t key_id,
+                                        char out[METADATA_FINGERPRINT_LEN]) {
+  bool is_loaded = false;
+  const uint8_t* pubkey = metadata_pubkey_for(key_id, &is_loaded);
+  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode"))) {
+    return false;
+  }
+  signed_metadata_pubkey_fingerprint(pubkey, out);
+  return true;
+}
+
+bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
+                                        size_t data_len, const uint8_t* sig,
+                                        size_t sig_len) {
+  if (!data || data_len == 0 || !sig || sig_len != 64) {
+    return false;
+  }
+  bool is_loaded = false;
+  const uint8_t* pubkey = metadata_pubkey_for(key_id, &is_loaded);
+  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode"))) {
+    return false;
+  }
+  uint8_t digest[32];
+  sha256_Raw(data, data_len, digest);
+  bool ok = ecdsa_verify_digest(&secp256k1, pubkey, sig, digest) == 0;
+  memzero(digest, sizeof(digest));
+  return ok;
+}
+
+MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                size_t payload_len,
                                                uint8_t key_id) {
   uint8_t digest[32];
   size_t signed_len;
   bool is_loaded = false;
-  const uint8_t *pubkey;
+  const uint8_t* pubkey;
 
   signed_metadata_clear();
 
   pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey || !payload || payload_len < 65) {
+  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode")) ||
+      !payload || payload_len < 65) {
     return METADATA_MALFORMED;
   }
 
@@ -510,7 +711,7 @@ MetadataClassification signed_metadata_process(const uint8_t *payload,
   return stored_metadata.classification;
 }
 
-bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
+bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   /* Reset the v2 decode proof up front: it must reflect ONLY the current call.
    * Any early return below (unavailable, wrong contract/selector/chain) leaves
    * it false, so a stale `true` from a prior successful match can never let
@@ -543,6 +744,21 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
   }
 
   if (stored_metadata.version == METADATA_VERSION_SCHEMA) {
+    /* v2 commits to calldata only — never to msg->value. A v2 match otherwise
+     * suppresses the native-value confirm screen in ethereum.c, which would
+     * let a payable method clear-sign an ETH transfer whose amount is never
+     * shown. Rather than refuse every payable call (which forced blind-signing
+     * on exactly the routes that most need review), record that this tx moves
+     * value; ethereum.c keeps the amount/recipient screen when it does. The
+     * device reads that amount from the transaction it is signing, so nothing
+     * unattested is displayed and the schema stays transaction-independent. */
+    metadata_schema_moves_value = false;
+    for (uint32_t i = 0; i < msg->value.size; i++) {
+      if (msg->value.bytes[i] != 0) {
+        metadata_schema_moves_value = true;
+        break;
+      }
+    }
     /* v2 has no committed values or tx_hash: decode the args straight from the
      * calldata this tx will sign. Success here means the schema fully accounts
      * for the calldata (decode_v2_args enforces exact length + presence), so
@@ -562,36 +778,76 @@ bool signed_metadata_matches_tx(const EthereumSignTx *msg) {
   return true;
 }
 
-bool signed_metadata_confirm(void) {
+/* Renders the clearsign screens in sequence. When a signer with an icon is
+ * loaded, its logo (the compass) is set as RUNTIME_ICON and STAYS set for the
+ * whole flow, so every screen — identity, method, contract, each arg — carries
+ * it. The caller (signed_metadata_confirm) clears the runtime icon once on
+ * return, covering every early-exit path. */
+static bool signed_metadata_confirm_screens(void) {
   char body[128];
-
-  if (!metadata_available ||
-      stored_metadata.classification != METADATA_VERIFIED) {
-    return false;
-  }
+  /* Compass shown on every screen once a signer with an icon is loaded. */
+  IconType screen_icon = NO_ICON;
+  Image icon_img;
+  AnimationFrame icon_frame;
 
   if (metadata_signer_loaded) {
-    /* Warning screen FIRST, before any clearsign page: the decode below is
-     * vouched for by a signer the user loaded, not by KeepKey. */
+    /* Lead with the loaded IDENTITY (logo, if any, + alias + fingerprint)
+     * BEFORE any clearsign page. The user approved this identity as their
+     * trust anchor, so showing it — not a scary "NOT verified by KeepKey"
+     * banner — is the honest framing. The fingerprint stays reachable so a
+     * swapped provider is still detectable. */
+    uint8_t key_id = stored_metadata.key_id;
+    bool is_loaded = false;
+    const uint8_t* pk = metadata_pubkey_for(key_id, &is_loaded);
+    const char* alias = signed_metadata_signer_alias(key_id);
     char fingerprint[METADATA_FINGERPRINT_LEN];
-    signed_metadata_pubkey_fingerprint(loaded_pubkeys[stored_metadata.key_id],
-                                       fingerprint);
+    if (pk) {
+      signed_metadata_pubkey_fingerprint(pk, fingerprint);
+    } else {
+      strlcpy(fingerprint, "????????", sizeof(fingerprint));
+    }
+    if (!alias) alias = "unknown";
+
+    /* Draw the identity logo in the confirm's left icon column if one was
+     * loaded. Image + frame are local — valid for the synchronous confirm
+     * call, then the runtime icon is cleared. (Positioning tuned on device.) */
+    const uint8_t* icon_data;
+    uint8_t icon_w, icon_h;
+    uint16_t icon_len;
+    if (signed_metadata_signer_icon(key_id, &icon_data, &icon_w, &icon_h,
+                                    &icon_len)) {
+      icon_img.w = icon_w;
+      icon_img.h = icon_h;
+      icon_img.length = icon_len;
+      icon_img.data = icon_data;
+      icon_frame.x = 0;
+      icon_frame.y = (icon_h < 52) ? (uint16_t)((52 - icon_h) / 2 + 6) : 6;
+      icon_frame.duration = 0;
+      /* Decoder computes pixel = data * color / 100, so color=100 makes the
+       * icon's data bytes direct 0-255 intensities (matches the built-in
+       * icons). color=0xff would overflow uint8 and corrupt every pixel. */
+      icon_frame.color = 100;
+      icon_frame.image = &icon_img;
+      layout_set_runtime_icon(&icon_frame);
+      screen_icon = RUNTIME_ICON;
+    }
+
     memset(body, 0, sizeof(body));
-    snprintf(body, sizeof(body),
-             "Signer '%s' (%s) you loaded describes this tx. NOT verified by "
-             "KeepKey.",
-             loaded_aliases[stored_metadata.key_id], fingerprint);
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Clearsign Warning", "%s", body)) {
+    snprintf(body, sizeof(body), "%s (%s)\ndescribes this tx.", alias,
+             fingerprint);
+    /* Runtime icon stays set from here on — every subsequent screen shows the
+     * compass. Cleared once by the caller. */
+    if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           screen_icon, "Identity", "%s", body)) {
       return false;
     }
 
-    /* Method screen without the "Insight Verified" branding/icon — that
-     * presentation is reserved for the built-in (phase 2) keys. */
+    /* Method screen — same identity compass, no "Insight Verified" branding
+     * (that presentation is reserved for the built-in phase-2 keys). */
     memset(body, 0, sizeof(body));
     snprintf(body, sizeof(body), "Call:\n%s", stored_metadata.method_name);
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Clearsign",
-                 "%s", body)) {
+    if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           screen_icon, "Clearsign", "%s", body)) {
       return false;
     }
   } else {
@@ -613,14 +869,15 @@ bool signed_metadata_confirm(void) {
                             false, stored_metadata.chain_id);
   memset(body, 0, sizeof(body));
   snprintf(body, sizeof(body), "Contract:\n%s", contract_addr);
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-               stored_metadata.method_name, "%s", body)) {
+  if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                         screen_icon, stored_metadata.method_name, "%s",
+                         body)) {
     return false;
   }
 
   /* Screen 3..N: Each decoded argument */
   for (uint8_t i = 0; i < stored_metadata.num_args; i++) {
-    MetadataArg *arg = &stored_metadata.args[i];
+    MetadataArg* arg = &stored_metadata.args[i];
     memset(body, 0, sizeof(body));
 
     switch (arg->format) {
@@ -674,7 +931,7 @@ bool signed_metadata_confirm(void) {
         memcpy(suffix + 1, arg->value + 2, symlen);
         suffix[1 + symlen] = '\0';
 
-        const uint8_t *amt = arg->value + 2 + symlen;
+        const uint8_t* amt = arg->value + 2 + symlen;
         uint16_t amt_len = arg->value_len - 2 - symlen;
         bool is_max = amt_len == 32;
         for (uint16_t j = 0; j < amt_len && is_max; j++) {
@@ -706,8 +963,9 @@ bool signed_metadata_confirm(void) {
       }
     }
 
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 stored_metadata.method_name, "%s", body)) {
+    if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           screen_icon, stored_metadata.method_name, "%s",
+                           body)) {
       return false;
     }
   }
@@ -718,12 +976,24 @@ bool signed_metadata_confirm(void) {
   return true;
 }
 
+bool signed_metadata_confirm(void) {
+  if (!metadata_available ||
+      stored_metadata.classification != METADATA_VERIFIED) {
+    return false;
+  }
+  bool ok = signed_metadata_confirm_screens();
+  /* Single cleanup for every screen-flow exit — the runtime icon frame lives on
+   * the helper's stack, so it must not outlive this call. */
+  layout_set_runtime_icon(NULL);
+  return ok;
+}
+
 bool signed_metadata_relied(void) { return relied_on_metadata; }
 
 bool signed_metadata_enforce_decision(bool relied, bool available,
                                       int classification,
-                                      const uint8_t *stored_hash,
-                                      const uint8_t *hash) {
+                                      const uint8_t* stored_hash,
+                                      const uint8_t* hash) {
   if (!relied) {
     return true; /* signature was not gated by metadata */
   }
@@ -761,6 +1031,6 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
       stored_metadata.tx_hash, hash);
 }
 
-const SignedMetadata *signed_metadata_get(void) {
+const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
 }
