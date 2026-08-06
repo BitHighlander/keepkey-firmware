@@ -45,6 +45,11 @@ set(sources
     txin_check.c
     u2f.c)
 
+# Zcash shielded/Orchard engine -- transparent Zcash needs none of this.
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.c)
+endif()
+
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/scm_revision.h" @ONLY)
 
