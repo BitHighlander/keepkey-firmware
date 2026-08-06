@@ -21,6 +21,7 @@
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/dice_input.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/pin_sm.h"
@@ -43,10 +44,38 @@ static bool awaiting_entropy = false;
 static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 static bool no_backup;
 
-void reset_init(bool display_random, uint32_t _strength,
-                bool passphrase_protection, bool pin_protection,
-                const char* language, const char* label, bool _no_backup,
-                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter) {
+/* SHA-256 of the ASCII roll string, shown to the user and exposed over
+ * DebugLink. A digest of secret input is not the input, but it is a
+ * verification oracle for a 99-symbol space, so it is treated as
+ * confidential and cleared as soon as the reset that produced it ends. */
+static uint8_t CONFIDENTIAL dice_digest[32];
+static bool has_dice_digest = false;
+
+static void dice_digest_clear(void) {
+  memzero(dice_digest, sizeof(dice_digest));
+  has_dice_digest = false;
+}
+
+/* Shared paginated-mnemonic display scratch — see reset.h for the contract
+ * (also used by the BIP-85 flow; each user zeroes at entry and exit). */
+char CONFIDENTIAL mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
+char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
+char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
+char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
+
+void reset_init(uint32_t _strength, bool passphrase_protection,
+                bool pin_protection, const char* language, const char* label,
+                bool _no_backup, uint32_t _auto_lock_delay_ms,
+                uint32_t _u2f_counter, bool dice_entropy) {
+  /* Disarm any half-finished reset before doing anything else. Nothing else
+   * clears this flag on an abort (fsm_msgCancel has no reset abort), and
+   * CHECK_NOT_INITIALIZED still admits ResetDevice while a previous one is
+   * mid-flight, so a stale armed flag would let a later EntropyAck run
+   * reset_entropy against whatever int_entropy this invocation leaves
+   * behind -- including the zeroed buffer an aborted dice step produces,
+   * which would make the seed a pure function of host-supplied bytes. */
+  awaiting_entropy = false;
+
   if (_strength != 128 && _strength != 192 && _strength != 256) {
     fsm_sendFailure(
         FailureType_Failure_SyntaxError,
@@ -57,13 +86,6 @@ void reset_init(bool display_random, uint32_t _strength,
 
   strength = _strength;
   no_backup = _no_backup;
-
-  if (display_random && no_backup) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Can't show internal entropy when backup is skipped"));
-    layoutHome();
-    return;
-  }
 
   if (no_backup) {
     // Double confirm, since this is a feature for advanced users only, and
@@ -85,27 +107,58 @@ void reset_init(bool display_random, uint32_t _strength,
 
   random_buffer(int_entropy, 32);
 
-  if (display_random) {
-    static char CONFIDENTIAL ent_str[4][17];
-    data2hex(int_entropy, 8, ent_str[0]);
-    data2hex(int_entropy + 8, 8, ent_str[1]);
-    data2hex(int_entropy + 16, 8, ent_str[2]);
-    data2hex(int_entropy + 24, 8, ent_str[3]);
+  /* Dice fold in before EntropyRequest, so the host contribution arrives
+   * strictly after the device has committed to its own.
+   *
+   * They are deliberately NOT displayed. An earlier version of this code
+   * showed the mixed internal entropy on the OLED and called it a
+   * verifiable commitment; that was wrong. A host that supplies
+   * ext_entropy and reads that screen once computes
+   * SHA256(shown || ext_entropy) -- the seed pre-image -- and dice change
+   * nothing about it, because the displayed value is already post-mix. The
+   * roll digest below is safe by contrast: it is a hash of the user's own
+   * input, not of seed material. */
+  dice_digest_clear();
+  if (dice_entropy) {
+    static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
+    static char CONFIDENTIAL digest_hex[17];
+    uint32_t rolls_needed = dice_rolls_for_strength(strength);
 
-    if (!confirm(ButtonRequestType_ButtonRequest_ResetDevice,
-                 _("Internal Entropy"), "%s %s %s %s", ent_str[0], ent_str[1],
-                 ent_str[2], ent_str[3])) {
-      memzero(ent_str, sizeof(ent_str));
+    if (!dice_input_collect(dice_rolls, rolls_needed)) {
+      memzero(dice_rolls, sizeof(dice_rolls));
+      memzero(int_entropy, sizeof(int_entropy));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
       layoutHome();
       return;
     }
-    memzero(ent_str, sizeof(ent_str));
+
+    sha256_Raw((const uint8_t*)dice_rolls, rolls_needed, dice_digest);
+    has_dice_digest = true;
+
+    data2hex(dice_digest, 8, digest_hex);
+    bool confirmed =
+        confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Rolls"),
+                _("%lu rolls recorded.\nDigest: %s"),
+                (unsigned long)rolls_needed, digest_hex);
+    memzero(digest_hex, sizeof(digest_hex));
+    if (!confirmed) {
+      memzero(dice_rolls, sizeof(dice_rolls));
+      memzero(int_entropy, sizeof(int_entropy));
+      dice_digest_clear();
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Reset cancelled"));
+      layoutHome();
+      return;
+    }
+
+    dice_mix(int_entropy, dice_rolls, rolls_needed);
+    memzero(dice_rolls, sizeof(dice_rolls));
   }
 
   if (pin_protection) {
     if (!change_pin()) {
+      dice_digest_clear();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("PINs do not match"));
       layoutHome();
@@ -167,16 +220,23 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   }
 
   /*
-   * Format mnemonic for user review
+   * Format mnemonic for user review. Display scratch is the set shared with
+   * the BIP-85 flow (see reset.h) — zero it at entry: the format loop below
+   * depends on empty page strings, and a prior user may have aborted.
    */
   uint32_t word_count = 0, page_count = 0;
-  static char CONFIDENTIAL tokened_mnemonic[TOKENED_MNEMONIC_BUF];
   static char CONFIDENTIAL
       mnemonic_by_screen[MAX_PAGES][MNEMONIC_BY_SCREEN_BUF];
-  static char CONFIDENTIAL
-      formatted_mnemonic[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
-  static char CONFIDENTIAL mnemonic_display[FORMATTED_MNEMONIC_BUF];
-  static char CONFIDENTIAL formatted_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
+  char* tokened_mnemonic = mnemonic_scratch_tokened;
+  char (*formatted_mnemonic)[FORMATTED_MNEMONIC_BUF] =
+      mnemonic_scratch_formatted;
+  char* mnemonic_display = mnemonic_scratch_display;
+  char* formatted_word = mnemonic_scratch_word;
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
 
   strlcpy(tokened_mnemonic, temp_mnemonic, TOKENED_MNEMONIC_BUF);
 
@@ -256,12 +316,15 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   fsm_sendSuccess(_("Device reset"));
 
 exit:
+  /* The digest only describes the reset that produced it; leaving it live
+   * would keep serving it over DebugLink for the rest of the boot. */
+  dice_digest_clear();
   memzero(&ctx, sizeof(ctx));
-  memzero(tokened_mnemonic, sizeof(tokened_mnemonic));
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
-  memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
-  memzero(mnemonic_display, sizeof(mnemonic_display));
-  memzero(formatted_word, sizeof(formatted_word));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   layoutHome();
 }
 
@@ -272,4 +335,12 @@ uint32_t reset_get_int_entropy(uint8_t* entropy) {
 }
 
 const char* reset_get_word(void) { return current_words; }
+
+uint32_t reset_get_dice_digest(uint8_t* digest) {
+  if (!has_dice_digest) {
+    return 0;
+  }
+  memcpy(digest, dice_digest, 32);
+  return 32;
+}
 #endif
