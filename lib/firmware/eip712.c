@@ -31,12 +31,14 @@
    strings and address should be prefixed by 0x
 */
 
+#include <errno.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "trezor/crypto/sha3.h"
@@ -86,35 +88,26 @@ static bool append_type_string(char* dest, const char* value) {
 int encodableType(const char* typeStr) {
   int ctr;
 
-  if (0 == strncmp(typeStr, "address", sizeof("address") - 1)) {
+  if (!typeStr || typeStr[0] == '\0') return NOT_ENCODABLE;
+
+  if (type_matches(typeStr, "address")) {
     return ADDRESS;
   }
-  if (0 == strncmp(typeStr, "string", sizeof("string") - 1)) {
+  if (type_matches(typeStr, "string")) {
     return STRING;
   }
-  if (0 == strncmp(typeStr, "int", sizeof("int") - 1)) {
-    // This could be 'int8', 'int16', ..., 'int256'
+  if (type_is_integer(typeStr, "int")) {
     return INT;
   }
-  if (0 == strncmp(typeStr, "uint", sizeof("uint") - 1)) {
-    // This could be 'uint8', 'uint16', ..., 'uint256'
+  if (type_is_integer(typeStr, "uint")) {
     return UINT;
   }
-  if (0 == strncmp(typeStr, "bytes", sizeof("bytes") - 1)) {
-    // This could be 'bytes', 'bytes1', ..., 'bytes32'
-    if (0 == strcmp(typeStr, "bytes")) {
-      return BYTES;
-    } else {
-      // parse out the length val
-      uint8_t byteTypeSize = (uint8_t)(strtol((typeStr + 5), NULL, 10));
-      if (byteTypeSize > 32) {
-        return NOT_ENCODABLE;
-      } else {
-        return BYTES_N;
-      }
-    }
+  unsigned byte_size = 0;
+  bool dynamic = false;
+  if (type_is_bytes(typeStr, &byte_size, &dynamic)) {
+    return dynamic ? BYTES : BYTES_N;
   }
-  if (0 == strcmp(typeStr, "bool")) {
+  if (type_matches(typeStr, "bool")) {
     return BOOL;
   }
 
@@ -126,10 +119,11 @@ int encodableType(const char* typeStr) {
     strtok(typeNoArrTok, "[");  // eliminate the array tokens if there
 
     if (udefList[ctr] != 0) {
-      if (0 == strncmp(udefList[ctr], typeNoArrTok,
-                       strlen(udefList[ctr]) - strlen(typeNoArrTok))) {
+      const size_t previous_len = strcspn(udefList[ctr], "[");
+      const size_t candidate_len = strlen(typeNoArrTok);
+      if (previous_len == candidate_len &&
+          strncmp(udefList[ctr], typeNoArrTok, candidate_len) == 0) {
         return PREV_USERDEF;
-      } else {
       }
 
     } else {
@@ -279,17 +273,15 @@ int encString(const char* string, uint8_t* encoded) {
 }
 
 int encodeBytes(const char* string, uint8_t* encoded) {
+  if (!hex_string_is_valid(string, 0, false)) return GENERAL_ERROR;
   struct SHA3_CTX byteCtx;
   const char* valStrPtr = string + 2;
-  uint8_t valByte[1];
-  char byteStrBuf[3] = {0};
 
   sha3_256_Init(&byteCtx);
   while (*valStrPtr != '\0') {
-    strncpy(byteStrBuf, valStrPtr, 2);
-    valByte[0] = (uint8_t)(strtol(byteStrBuf, NULL, 16));
-    sha3_Update(&byteCtx, (const unsigned char*)valByte,
-                (size_t)sizeof(uint8_t));
+    const uint8_t valByte =
+        (uint8_t)((hex_nibble(valStrPtr[0]) << 4) | hex_nibble(valStrPtr[1]));
+    sha3_Update(&byteCtx, &valByte, sizeof(valByte));
     valStrPtr += 2;
   }
   keccak_Final(&byteCtx, encoded);
@@ -297,27 +289,18 @@ int encodeBytes(const char* string, uint8_t* encoded) {
 }
 
 int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
-  char byteStrBuf[3] = {0};
-  unsigned ctr;
-
-  if (MAX_ENCBYTEN_SIZE < strlen(string)) {
-    return BYTESN_STRING_ERROR;
-  }
-
-  // parse out the length val
-  uint8_t byteTypeSize = (uint8_t)(strtol((typeT + 5), NULL, 10));
-  if (32 < byteTypeSize) {
+  unsigned byteTypeSize = 0;
+  bool dynamic = false;
+  if (!type_is_bytes(typeT, &byteTypeSize, &dynamic) || dynamic) {
     return BYTESN_SIZE_ERROR;
   }
-  for (ctr = 0; ctr < 32; ctr++) {
-    // zero padding
-    encoded[ctr] = 0;
+  if (!hex_string_is_valid(string, byteTypeSize, true)) {
+    return BYTESN_STRING_ERROR;
   }
-  unsigned zeroFillLen = 32 - ((strlen(string) - 2 /* skip '0x' */) / 2);
-  // bytesN are zero padded on the right
-  for (ctr = zeroFillLen; ctr < 32; ctr++) {
-    strncpy(byteStrBuf, &string[2 + 2 * (ctr - zeroFillLen)], 2);
-    encoded[ctr - zeroFillLen] = (uint8_t)(strtol(byteStrBuf, NULL, 16));
+  memset(encoded, 0, 32);
+  for (size_t i = 0; i < byteTypeSize; i++) {
+    encoded[i] = (uint8_t)((hex_nibble(string[2 + 2 * i]) << 4) |
+                           hex_nibble(string[3 + 2 * i]));
   }
   return SUCCESS;
 }
@@ -389,6 +372,11 @@ void marshallDsVals(const char* value) {
     dsverifyingContract = value;
   }
   return;
+}
+
+static int confirmTypedValue(bool ds_vals, const char* value) {
+  if (ds_vals) marshallDsVals(value);
+  return confirmValue(value);
 }
 
 int dsConfirm(void) {
@@ -517,7 +505,6 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
       walkVals = nextVal;
       while (0 != walkVals) {
         if (0 == strcmp(json_getName(walkVals), typeName)) {
-          valStr = json_getValue(walkVals);
           break;
         } else {
           // keep looking for val
@@ -532,15 +519,16 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         return errRet;
       }
 
-      if (walkVals == 0) {
-        return JSON_TYPE_WNOVAL;
-      } else {
-        if (0 == strncmp("address", typeType, strlen("address") - 1)) {
+      {
+        if (type_matches(typeType, "address")) {
           if (']' == typeType[strlen(typeType) - 1]) {
             // array of addresses
+            if (value_type != JSON_ARRAY) return GENERAL_ERROR;
             json_t const* addrVals = json_getChild(walkVals);
             sha3_256_Init(&valCtx);  // hash of concatenated encoded strings
             while (0 != addrVals) {
+              if (json_getType(addrVals) != JSON_TEXT) return GENERAL_ERROR;
+              const char* address = json_getValue(addrVals);
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
               if (ds_vals) {
@@ -552,7 +540,7 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 }
               }
 
-              errRet = encAddress(json_getValue(addrVals), encBytes);
+              errRet = encAddress(address, encBytes);
               if (SUCCESS != errRet) {
                 return errRet;
               }
@@ -575,13 +563,16 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
           }
 
-        } else if (0 == strncmp("string", typeType, strlen("string") - 1)) {
+        } else if (type_matches(typeType, "string")) {
           if (']' == typeType[strlen(typeType) - 1]) {
             // array of strings
+            if (value_type != JSON_ARRAY) return GENERAL_ERROR;
             json_t const* stringVals = json_getChild(walkVals);
             uint8_t strEncBytes[32];
             sha3_256_Init(&valCtx);  // hash of concatenated encoded strings
             while (0 != stringVals) {
+              if (json_getType(stringVals) != JSON_TEXT) return GENERAL_ERROR;
+              const char* string_value = json_getValue(stringVals);
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
               if (ds_vals) {
@@ -592,7 +583,7 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                   return errRet;
                 }
               }
-              errRet = encString(json_getValue(stringVals), strEncBytes);
+              errRet = encString(string_value, strEncBytes);
               if (SUCCESS != errRet) {
                 return errRet;
               }
@@ -615,8 +606,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
           }
 
-        } else if ((0 == strncmp("uint", typeType, strlen("uint") - 1)) ||
-                   (0 == strncmp("int", typeType, strlen("int") - 1))) {
+        } else if (type_is_integer(typeType, "uint") ||
+                   type_is_integer(typeType, "int")) {
           if (']' == typeType[strlen(typeType) - 1]) {
             return INT_ARRAY_ERROR;
           } else {
@@ -628,8 +619,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 return errRet;
               }
             }
+            const bool is_uint = type_is_integer(typeType, "uint");
             uint8_t negInt = 0;  // 0 is positive, 1 is negative
-            if (0 == strncmp("int", typeType, strlen("int") - 1)) {
+            if (!is_uint) {
               if (*valStr == '-') {
                 negInt = 1;
               }
@@ -706,92 +698,143 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
           }
 
         } else {
-          // encode user defined type
-          char encSubTypeStr[STRBUFSIZE + 1] = {0};
-          // clear out the user-defined types list
-          for (ctr = 0; ctr < MAX_USERDEF_TYPES; ctr++) {
-            udefList[ctr] = NULL;
-          }
+          unsigned byte_size = 0;
+          bool dynamic_bytes = false;
+          if (type_is_bytes(typeType, &byte_size, &dynamic_bytes)) {
+            if (']' == typeType[strlen(typeType) - 1]) {
+              return BYTESN_ARRAY_ERROR;
+            } else {
+              if (value_type != JSON_TEXT) return GENERAL_ERROR;
+              // This could be 'bytes', 'bytes1', ..., 'bytes32'
+              if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+                return errRet;
+              }
+              if (dynamic_bytes) {
+                errRet = encodeBytes(valStr, encBytes);
+                if (SUCCESS != errRet) {
+                  return errRet;
+                }
 
-          char typeNoArrTok[MAX_TYPESTRING] = {0};
-          // need to get typehash of type first
-          if (']' == typeType[strlen(typeType) - 1]) {
-            // array of structs. To parse name, remove array tokens.
-            strncpy(typeNoArrTok, typeType, sizeof(typeNoArrTok) - 1);
-            if (strlen(typeNoArrTok) < strlen(typeType)) {
-              return UDEF_ARRAY_NAME_ERR;
+              } else {
+                errRet = encodeBytesN(typeType, valStr, encBytes);
+                if (SUCCESS != errRet) {
+                  return errRet;
+                }
+              }
             }
-            strtok(typeNoArrTok, "[");
-            if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
-              return errRet;
+
+          } else if (type_matches(typeType, "bool")) {
+            if (']' == typeType[strlen(typeType) - 1]) {
+              return BOOL_ARRAY_ERROR;
+            } else {
+              if (value_type != JSON_BOOLEAN && value_type != JSON_TEXT)
+                return GENERAL_ERROR;
+              if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+                return errRet;
+              }
+              if (strcmp(valStr, "true") != 0 && strcmp(valStr, "false") != 0)
+                return GENERAL_ERROR;
+              for (ctr = 0; ctr < 32; ctr++) {
+                // leading zeros in bool
+                encBytes[ctr] = 0;
+              }
+              if (strcmp(valStr, "true") == 0) {
+                encBytes[31] = 0x01;
+              }
             }
-            if (SUCCESS != (errRet = parseType(eip712Types, typeNoArrTok,
-                                               encSubTypeStr))) {
-              return errRet;
-            }
+
           } else {
-            if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
-              return errRet;
+            // encode user defined type
+            char encSubTypeStr[STRBUFSIZE + 1] = {0};
+            // clear out the user-defined types list
+            for (ctr = 0; ctr < MAX_USERDEF_TYPES; ctr++) {
+              udefList[ctr] = NULL;
             }
-            if (SUCCESS !=
-                (errRet = parseType(eip712Types, typeType, encSubTypeStr))) {
-              return errRet;
+
+            char typeNoArrTok[MAX_TYPESTRING] = {0};
+            // need to get typehash of type first
+            if (']' == typeType[strlen(typeType) - 1]) {
+              // array of structs. To parse name, remove array tokens.
+              if (value_type != JSON_ARRAY) return GENERAL_ERROR;
+              strncpy(typeNoArrTok, typeType, sizeof(typeNoArrTok) - 1);
+              if (strlen(typeNoArrTok) < strlen(typeType)) {
+                return UDEF_ARRAY_NAME_ERR;
+              }
+              strtok(typeNoArrTok, "[");
+              if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
+                return errRet;
+              }
+              if (SUCCESS != (errRet = parseType(eip712Types, typeNoArrTok,
+                                                 encSubTypeStr))) {
+                return errRet;
+              }
+            } else {
+              if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
+                return errRet;
+              }
+              if (SUCCESS !=
+                  (errRet = parseType(eip712Types, typeType, encSubTypeStr))) {
+                return errRet;
+              }
             }
-          }
-          sha3_256_Init(&valCtx);
-          sha3_Update(&valCtx, (const unsigned char*)encSubTypeStr,
-                      (size_t)strlen(encSubTypeStr));
-          keccak_Final(&valCtx, encBytes);
+            sha3_256_Init(&valCtx);
+            sha3_Update(&valCtx, (const unsigned char*)encSubTypeStr,
+                        (size_t)strlen(encSubTypeStr));
+            keccak_Final(&valCtx, encBytes);
 
-          if (']' == typeType[strlen(typeType) - 1]) {
-            // array of udefs
-            struct SHA3_CTX eleCtx = {0};  // local hash context
-            struct SHA3_CTX arrCtx = {0};  // array elements hash context
-            uint8_t eleHashBytes[32];
+            if (']' == typeType[strlen(typeType) - 1]) {
+              // array of udefs
+              struct SHA3_CTX eleCtx = {0};  // local hash context
+              struct SHA3_CTX arrCtx = {0};  // array elements hash context
+              uint8_t eleHashBytes[32];
 
-            sha3_256_Init(&arrCtx);
+              sha3_256_Init(&arrCtx);
 
-            json_t const* udefVals = json_getChild(walkVals);
-            while (0 != udefVals) {
-              sha3_256_Init(&eleCtx);
-              sha3_Update(&eleCtx, (const unsigned char*)encBytes, 32);
+              json_t const* udefVals = json_getChild(walkVals);
+              while (0 != udefVals) {
+                if (json_getType(udefVals) != JSON_OBJ) return GENERAL_ERROR;
+                sha3_256_Init(&eleCtx);
+                sha3_Update(&eleCtx, (const unsigned char*)encBytes, 32);
+                if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
+                  return errRet;
+                }
+                if (SUCCESS !=
+                    (errRet = parseVals(
+                         eip712Types,
+                         json_getProperty(eip712Types,
+                                          strtok(typeNoArrTok, "]")),
+                         json_getChild(udefVals),  // where to get the values
+                         &eleCtx  // encode hash happens in parse, this is the
+                                  // return
+                         ))) {
+                  return errRet;
+                }
+                keccak_Final(&eleCtx, eleHashBytes);
+                sha3_Update(&arrCtx, (const unsigned char*)eleHashBytes, 32);
+                // just walk the udef values assuming, for fixed sizes, all
+                // values are there.
+                udefVals = json_getSibling(udefVals);
+              }
+              keccak_Final(&arrCtx, encBytes);
+
+            } else {
+              if (value_type != JSON_OBJ) return GENERAL_ERROR;
+              sha3_256_Init(&valCtx);
+              sha3_Update(&valCtx, (const unsigned char*)encBytes,
+                          (size_t)sizeof(encBytes));
               if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
                 return errRet;
               }
               if (SUCCESS !=
                   (errRet = parseVals(
-                       eip712Types,
-                       json_getProperty(eip712Types, strtok(typeNoArrTok, "]")),
-                       json_getChild(udefVals),  // where to get the values
-                       &eleCtx  // encode hash happens in parse, this is the
-                                // return
+                       eip712Types, json_getProperty(eip712Types, typeType),
+                       json_getChild(walkVals),  // where to get the values
+                       &valCtx  // val hash happens in parse, this is the return
                        ))) {
                 return errRet;
               }
-              keccak_Final(&eleCtx, eleHashBytes);
-              sha3_Update(&arrCtx, (const unsigned char*)eleHashBytes, 32);
-              // just walk the udef values assuming, for fixed sizes, all values
-              // are there.
-              udefVals = json_getSibling(udefVals);
+              keccak_Final(&valCtx, encBytes);
             }
-            keccak_Final(&arrCtx, encBytes);
-
-          } else {
-            sha3_256_Init(&valCtx);
-            sha3_Update(&valCtx, (const unsigned char*)encBytes,
-                        (size_t)sizeof(encBytes));
-            if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {
-              return errRet;
-            }
-            if (SUCCESS !=
-                (errRet = parseVals(
-                     eip712Types, json_getProperty(eip712Types, typeType),
-                     json_getChild(walkVals),  // where to get the values
-                     &valCtx  // val hash happens in parse, this is the return
-                     ))) {
-              return errRet;
-            }
-            keccak_Final(&valCtx, encBytes);
           }
         }
       }

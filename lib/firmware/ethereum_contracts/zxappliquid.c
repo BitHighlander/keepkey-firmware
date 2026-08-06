@@ -7,31 +7,18 @@
  * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
 
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/font.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
-#include "keepkey/firmware/app_confirm.h"
-#include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
-#include "keepkey/firmware/fsm.h"
-#include "keepkey/firmware/storage.h"
-#include "trezor/crypto/address.h"
-#include "trezor/crypto/bip32.h"
-#include "trezor/crypto/curves.h"
-#include "trezor/crypto/memzero.h"
+#include "trezor/crypto/bignum.h"
 #include "trezor/crypto/sha3.h"
 
 bool zx_confirmApproveLiquidity(uint32_t data_total,
@@ -46,31 +33,24 @@ bool zx_confirmApproveLiquidity(uint32_t data_total,
   uint32_t wethord;
   const TokenType *WETH, *ttoken;
 
-  if (!tokenByTicker(msg->chain_id, "WETH", &WETH)) return false;
-  wethord = read_be((const uint8_t *)WETH->address);
-  to = (const char *)msg->to.bytes;
-  tokctr = 0;
-  while (tokctr != -1) {
-    ttoken = tokenIter(&tokctr);
+#define UNISWAP_APPROVE_CALL_SIZE (4 + 2 * 32)
+#define UNISWAP_AMOUNT_TEXT_SIZE 96
 
-    // https://uniswap.org/docs/v2/smart-contract-integration/getting-pair-addresses/
-    uint32_t ttokenord = read_be((const uint8_t *)ttoken->address);
-    if (ttokenord < wethord) {
-      memcpy(data, ttoken->address, 20);
-      memcpy(&data[20], WETH->address, 20);
-    } else {
-      memcpy(data, WETH->address, 20);
-      memcpy(&data[20], ttoken->address, 20);
-    }
-    keccak_256(data, sizeof(data), tokdigest);
-    SHA3_CTX ctx = {0};
-    keccak_256_Init(&ctx);
-    keccak_Update(&ctx, (unsigned char *)"\xff", 1);
-    keccak_Update(&ctx, (unsigned char *)"\x5C\x69\xbE\xe7\x01\xef\x81\x4a\x2B\x6a\x3E\xDD\x4B\x16\x52\xCB\x9c\xc5\xaA\x6f", 20);
-    keccak_Update(&ctx, tokdigest, sizeof(tokdigest));
-    keccak_Update(&ctx, (unsigned char *)"\x96\xe8\xac\x42\x77\x19\x8f\xf8\xb6\xf7\x85\x47\x8a\xa9\xa3\x9f\x40\x3c\xb7\x68\xdd\x02\xcb\xee\x32\x6c\x3e\x7d\xa3\x48\x84\x5f", 32);
-    keccak_Final(&ctx, digest);
-    if (memcmp(to, &digest[12], 20) == 0) break;
+static const uint8_t UNISWAP_FACTORY_ADDRESS[20] = {
+    0x5c, 0x69, 0xbe, 0xe7, 0x01, 0xef, 0x81, 0x4a, 0x2b, 0x6a,
+    0x3e, 0xdd, 0x4b, 0x16, 0x52, 0xcb, 0x9c, 0xc5, 0xaa, 0x6f};
+static const uint8_t UNISWAP_PAIR_INIT_CODE_HASH[32] = {
+    0x96, 0xe8, 0xac, 0x42, 0x77, 0x19, 0x8f, 0xf8, 0xb6, 0xf7, 0x85,
+    0x47, 0x8a, 0xa9, 0xa3, 0x9f, 0x40, 0x3c, 0xb7, 0x68, 0xdd, 0x02,
+    0xcb, 0xee, 0x32, 0x6c, 0x3e, 0x7d, 0xa3, 0x48, 0x84, 0x5f};
+static const uint8_t WETH_MAINNET_ADDRESS[20] = {
+    0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe, 0x8d, 0x0a, 0x0e,
+    0x5c, 0x4f, 0x27, 0xea, 0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2};
+
+static bool tx_value_is_zero(const EthereumSignTx* msg) {
+  if (!msg->has_value && msg->value.size != 0) return false;
+  for (size_t i = 0; i < msg->value.size; i++) {
+    if (msg->value.bytes[i] != 0) return false;
   }
 
   if (tokctr != -1) {

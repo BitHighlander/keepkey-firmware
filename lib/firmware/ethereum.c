@@ -1272,6 +1272,19 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
   resp->signature.bytes[64] = 27 + v;
   resp->signature.size = 65;
+  /* Populate response-only fields after every confirmation. Emulator debug
+   * requests (including screenshot capture) share msg_resp and can clear data
+   * prepared before the confirmation callbacks complete. */
+  uint8_t pubkeyhash[20] = {0};
+  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Ethereum address derivation failed"));
+    return;
+  }
+  resp->address[0] = '0';
+  resp->address[1] = 'x';
+  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
 }
 
@@ -1399,14 +1412,23 @@ void e712_types_values(Ethereum712TypesValues* msg,
       failMessage(JSON_PTYPENAMEERR);
       return;
     }
-    const char* primeType;
-    if (0 == (primeType = json_getValue(obTest))) {
+    if (json_getType(obTest) != JSON_TEXT) {
       failMessage(JSON_PTYPEVALERR);
       return;
     }
-    if (0 != strncmp(primeType, "EIP712Domain",
-                     strlen(primeType))) {  // if primaryType is "EIP712Domain",
-                                            // message hash is NULL
+    const char* primeType;
+    if (0 == (primeType = json_getValue(obTest)) || primeType[0] == '\0') {
+      failMessage(JSON_PTYPEVALERR);
+      return;
+    }
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
+                       "EIP-712 Primary Type", (const uint8_t*)primeType,
+                       strlen(primeType))) {
+      failMessage(USER_CANCELLED);
+      return;
+    }
+    if (!ethereum_eip712_is_domain_primary_type(
+            primeType)) {  // domain-only signatures have no message hash
       errRet = encode(jsonT, jsonV, primeType, resp->message_hash.bytes);
       if (!(SUCCESS == errRet || NULL_MSG_HASH == errRet)) {
         failMessage(errRet);
@@ -1457,6 +1479,18 @@ void e712_types_values(Ethereum712TypesValues* msg,
     memzero(messageHash, 32);
     have_ds = false;
   }
+
+  /* Debug-link reads during confirmation reuse msg_resp, so populate the
+   * returned address only after the final confirmation has completed. */
+  uint8_t pubkeyhash[20] = {0};
+  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Ethereum address derivation failed"));
+    return;
+  }
+  resp->address[0] = '0';
+  resp->address[1] = 'x';
+  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
 
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
 }

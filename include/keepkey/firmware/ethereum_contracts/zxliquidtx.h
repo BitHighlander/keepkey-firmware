@@ -22,6 +22,7 @@
 
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #include "trezor/crypto/bip32.h"
 

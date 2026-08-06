@@ -68,6 +68,25 @@ static void thor_format_to_addr(const EthereumSignTx* msg, char out[41]) {
   }
 }
 
+/* The THORChain router address for this tx's chain, or NULL if the chain has
+ * no pinned router (then the deposit is not clear-signed and falls to the
+ * blind-sign gate). Each router address is a per-chain identity — the same
+ * address on another chain may hold unrelated attacker code — so the pin is
+ * (chain_id, address) together. A tx with NO chain_id gets no router at all:
+ * ethereum.c would default it to mainnet for hashing, but an identity pin
+ * must never be inherited from a default the host simply omitted. */
+static const char* thor_router_for_chain(const EthereumSignTx* msg) {
+  if (!msg->has_chain_id) return NULL;
+  switch (msg->chain_id) {
+    case 1:
+      return THOR_ROUTER; /* Ethereum */
+    case 43114:
+      return THOR_ROUTER_AVAX; /* Avalanche C-Chain */
+    default:
+      return NULL;
+  }
+}
+
 bool thor_isThorchainTx(const EthereumSignTx* msg) {
   if (!msg->has_to || msg->to.size != 20) return false;
   if (!thor_has_deposit_selector(msg)) return false;
@@ -159,12 +178,40 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     if (msg->data_initial_chunk.bytes[i] != 0) return false;
   }
 
+  /* The memo is a dynamic `string`: read its ABI length word instead of
+   * assuming a fixed 64 bytes. A longer memo places router-executed fields
+   * (destination, affiliate, aggregator, min-out) past byte 64 that a fixed
+   * parse never displays. Reject dirty high bytes, cap at THORChain's 256-byte
+   * memo max, require the whole calldata to be in this chunk, and require the
+   * padded memo to end exactly at the calldata end so no trailing bytes hide.
+   */
+  const uint8_t* memo_len_word =
+      msg->data_initial_chunk.bytes + 4 + (is_expiry ? 5 : 4) * 32;
+  for (int i = 0; i < 28; i++) {
+    if (memo_len_word[i] != 0) return false;
+  }
+  const uint32_t memo_len = ((uint32_t)memo_len_word[28] << 24) |
+                            ((uint32_t)memo_len_word[29] << 16) |
+                            ((uint32_t)memo_len_word[30] << 8) |
+                            (uint32_t)memo_len_word[31];
+  if (memo_len > 256) return false;
+  const size_t memo_off = (size_t)(4 + (is_expiry ? 6 : 5) * 32);
+  const size_t memo_padded = ((memo_len + 31u) / 32u) * 32u;
+  if (msg->has_data_length &&
+      msg->data_length != msg->data_initial_chunk.size) {
+    return false; /* whole calldata must be in the initial chunk to bound it */
+  }
+  if (memo_off + memo_padded != msg->data_initial_chunk.size) {
+    return false; /* trailing bytes after the memo would be executed but hidden
+                   */
+  }
+
   char confStr[41];
   const char* conf;
   const TokenType* assetToken;
   uint8_t* thorchainData;
   const uint8_t* contractAssetAddress;
-  const uint8_t *vaultAddress, *assetAddress;
+  const uint8_t* vaultAddress;
   uint32_t ctr;
   bignum256 Amount;
 
@@ -307,6 +354,45 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain data", "Confirm sending %s", amountStr)) {
       return false;
+    }
+  } else {
+    /* A token deposit must not also carry native value (the router pulls tokens
+     * via transferFrom); nonzero msg.value would be swept and never shown. */
+    if (!bn_is_zero(&Value)) {
+      return false;
+    }
+    const uint8_t* assetAddress = contractAssetAddress;
+
+    const TokenType* assetToken =
+        tokenByChainAddress(msg->chain_id, assetAddress);
+
+    if (strncmp(assetToken->ticker, " UNKN", 5) == 0) {
+      // just display token address and amount as string
+      for (ctr = 0; ctr < 20; ctr++) {
+        snprintf(&confStr[ctr * 2], 3, "%02x", assetAddress[ctr]);
+      }
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   protocol_label, "from asset %s", confStr)) {
+        return false;
+      }
+      // We don't know what the exponent should be so just confirm raw
+      // unformatted number
+      bn_format(&Amount, NULL, " unformatted", 0, 0, false, confStr,
+                sizeof(confStr));
+
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   protocol_label, "amount %s", confStr)) {
+        return false;
+      }
+
+    } else {
+      ethereumFormatAmount(&Amount, assetToken, msg->chain_id, confStr,
+                           sizeof(confStr));
+
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   protocol_label, "Confirm sending %s", confStr)) {
+        return false;
+      }
     }
   }
 

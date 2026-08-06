@@ -26,7 +26,98 @@
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "trezor/crypto/bip32.h"
 
-#include <time.h>
+#include <stdio.h>
+#include <string.h>
+
+#define UNISWAP_LIQUIDITY_CALL_SIZE (4 + 6 * 32)
+#define UNISWAP_TOKEN_WORD 0
+#define UNISWAP_PRIMARY_AMOUNT_WORD 1
+#define UNISWAP_TOKEN_MIN_WORD 2
+#define UNISWAP_NATIVE_MIN_WORD 3
+#define UNISWAP_RECIPIENT_WORD 4
+#define UNISWAP_DEADLINE_WORD 5
+#define UNISWAP_AMOUNT_TEXT_SIZE 96
+
+static const uint8_t* abi_word(const EthereumSignTx* msg, size_t word) {
+  return msg->data_initial_chunk.bytes + 4 + word * 32;
+}
+
+static bool abi_address_is_canonical(const uint8_t* word) {
+  for (size_t i = 0; i < 12; i++) {
+    if (word[i] != 0) return false;
+  }
+  return true;
+}
+
+static bool uint256_fits_u64(const uint8_t* word) {
+  for (size_t i = 0; i < 24; i++) {
+    if (word[i] != 0) return false;
+  }
+  return true;
+}
+
+static bool tx_value_is_zero(const EthereumSignTx* msg) {
+  if (!msg->has_value && msg->value.size != 0) return false;
+  for (size_t i = 0; i < msg->value.size; i++) {
+    if (msg->value.bytes[i] != 0) return false;
+  }
+  return true;
+}
+
+static bool isAddLiquidityEthCall(const EthereumSignTx* msg) {
+  return memcmp(msg->data_initial_chunk.bytes, "\xf3\x05\xd7\x19", 4) == 0;
+}
+
+static bool isRemoveLiquidityEthCall(const EthereumSignTx* msg) {
+  return memcmp(msg->data_initial_chunk.bytes, "\x02\x75\x1c\xec", 4) == 0;
+}
+
+static const TokenType* liquidity_token(const EthereumSignTx* msg) {
+  const uint8_t* token_address = abi_word(msg, UNISWAP_TOKEN_WORD) + 12;
+  const TokenType* token = tokenByChainAddress(1, token_address);
+  return token == UnknownToken ? NULL : token;
+}
+
+static bool liquidity_shape_is_clear_signable(const EthereumSignTx* msg) {
+  if (!msg->has_chain_id || msg->chain_id != 1 || !msg->has_to ||
+      msg->to.size != 20 ||
+      memcmp(msg->to.bytes, UNISWAP_ROUTER_ADDRESS, 20) != 0 ||
+      !msg->has_data_initial_chunk ||
+      msg->data_initial_chunk.size != UNISWAP_LIQUIDITY_CALL_SIZE ||
+      msg->value.size > 32 || (!msg->has_value && msg->value.size != 0))
+    return false;
+
+  if (!isAddLiquidityEthCall(msg) && !isRemoveLiquidityEthCall(msg))
+    return false;
+  if (!abi_address_is_canonical(abi_word(msg, UNISWAP_TOKEN_WORD)) ||
+      !abi_address_is_canonical(abi_word(msg, UNISWAP_RECIPIENT_WORD)) ||
+      !uint256_fits_u64(abi_word(msg, UNISWAP_DEADLINE_WORD)))
+    return false;
+  if (liquidity_token(msg) == NULL) return false;
+  if (isRemoveLiquidityEthCall(msg) && !tx_value_is_zero(msg)) return false;
+  return true;
+}
+
+static bool format_amount(const bignum256* amount, const char* suffix,
+                          unsigned int decimals, char* out, size_t out_len) {
+  if (bn_format(amount, NULL, suffix, decimals, 0, false, out, out_len) == 0)
+    return false;
+  return calc_str_line(get_body_font(), out, BODY_WIDTH) <= BODY_ROWS;
+}
+
+bool zx_formatZxLiquidityPrimaryAmount(const EthereumSignTx* msg, char* out,
+                                       size_t out_len) {
+  if (!out || out_len == 0 || !liquidity_shape_is_clear_signable(msg))
+    return false;
+
+  bignum256 amount;
+  bn_from_bytes(abi_word(msg, UNISWAP_PRIMARY_AMOUNT_WORD), 32, &amount);
+  if (isAddLiquidityEthCall(msg)) {
+    const TokenType* token = liquidity_token(msg);
+    return format_amount(&amount, token->ticker, token->decimals, out, out_len);
+  }
+  return format_amount(&amount, " LP", 18, out, out_len);
+}
 
 static bool isAddLiquidityEthCall(const EthereumSignTx* msg) {
   if (memcmp(msg->data_initial_chunk.bytes, "\xf3\x05\xd7\x19", 4) == 0)
@@ -161,11 +252,11 @@ bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg,
   uint64_t deadline;
 
   if (isAddLiquidityEthCall(msg)) {
-    arStr = "uniswap add liquidity";
-  } else if (isRemoveLiquidityEthCall(msg)) {
-    arStr = "uniswap remove liquidity";
-  } else {
-    return false;
+    bn_from_bytes(msg->value.bytes, msg->value.size, &amount);
+    if (!format_amount(&amount, " ETH", 18, amount_text, sizeof(amount_text)) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Uniswap ETH",
+                 "%s", amount_text))
+      return false;
   }
 
   /* Re-resolve rather than trust the predicate's verdict from a distance: the
@@ -211,6 +302,11 @@ bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg,
   }
   if (!confirmFromAccountMatch(msg, arStr, node)) {
     return false;
+
+  const uint8_t* deadline_word = abi_word(msg, UNISWAP_DEADLINE_WORD);
+  uint64_t deadline = 0;
+  for (size_t i = 24; i < 32; i++) {
+    deadline = (deadline << 8) | deadline_word[i];
   }
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arStr,
