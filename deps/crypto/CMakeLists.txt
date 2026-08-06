@@ -68,7 +68,6 @@ set(sources
 
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/crypto
-  ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/
   ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/crypto/ed25519-donna
   ${OPENSSL_INCLUDE_DIR})
 
