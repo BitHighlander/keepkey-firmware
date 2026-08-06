@@ -1,4 +1,5 @@
 set(sources
+    app_confirm.cpp
     coins.cpp
     cosmos.cpp
     eos.cpp

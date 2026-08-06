@@ -30,6 +30,7 @@
 #include "keepkey/board/layout.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/font.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 
@@ -322,6 +323,31 @@ bool confirm_nano_address(const char* desc, const char* address) {
 }
 
 /*
+ * confirm_zcash_address() - Show zcash address confirmation
+ *
+ * INPUT
+ *      - desc: description (title) shown on both screens
+ *      - address: zcash unified address — full text on the first screen,
+ *        QR on the second
+ * OUTPUT
+ *     true/false of confirmation
+ *
+ */
+#if ZCASH_PRIVACY
+bool confirm_zcash_address(const char* desc, const char* address) {
+  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
+                                  ButtonRequestType_ButtonRequest_Address, desc,
+                                  "%s", address)) {
+    return false;
+  }
+
+  return confirm_with_custom_layout(&layout_zcash_address_notification,
+                                    ButtonRequestType_ButtonRequest_Address,
+                                    desc, "%s", address);
+}
+#endif
+
+/*
  * confirm_address() - Show address confirmation
  *
  * INPUT
@@ -391,6 +417,142 @@ bool confirm_sign_identity(const IdentityType* identity,
                  body);
 }
 
+bool confirm_bytes_is_text(const uint8_t* data, size_t size) {
+  if (!data && size != 0) return false;
+  bool has_visible_character = false;
+  for (size_t i = 0; i < size; i++) {
+    if (data[i] == '\n') continue;
+    if (data[i] < 0x20 || data[i] > 0x7e) return false;
+    if (data[i] != ' ') has_visible_character = true;
+  }
+  return has_visible_character;
+}
+
+static size_t confirm_bytes_render_page(const uint8_t* data, size_t size,
+                                        bool text,
+                                        char rendered[BODY_CHAR_MAX]) {
+  if (size == 0) return 0;
+
+  const Font* font = get_body_font();
+  size_t consumed = 0;
+  size_t written = 0;
+  uint32_t row = 1;
+  uint16_t x = 0;
+
+  while (consumed < size) {
+    if (text && data[consumed] == '\n') {
+      // A page boundary already advances past the current third row. Consume
+      // its terminating LF without adding a blank row to the next page.
+      consumed++;
+      if (row == BODY_ROWS) break;
+      if (written + 1 >= BODY_CHAR_MAX) break;
+      rendered[written++] = '\n';
+      row++;
+      x = 0;
+      continue;
+    }
+
+    char chars[2];
+    size_t char_count;
+    if (text) {
+      chars[0] = (char)data[consumed];
+      char_count = 1;
+    } else {
+      static const char hex[] = "0123456789abcdef";
+      chars[0] = hex[data[consumed] >> 4];
+      chars[1] = hex[data[consumed] & 0x0f];
+      char_count = 2;
+    }
+
+    uint16_t width = 0;
+    for (size_t i = 0; i < char_count; i++) {
+      width += font_get_char(font, chars[i])->width;
+    }
+
+    // draw_string() wraps only at spaces and otherwise clips overlong words.
+    // Pre-insert hard line breaks so long addresses, hashes and IBC denoms are
+    // actually visible rather than merely counted as one renderer line.
+    if (text && chars[0] == ' ') {
+      uint32_t word_width = width;
+      for (size_t i = consumed + 1;
+           i < size && data[i] != ' ' && data[i] != '\n'; i++) {
+        word_width += font_get_char(font, (char)data[i])->width;
+      }
+      if (x == 0) {
+        // The renderer discards a leading separator. Consume it here only
+        // after the preceding word has been disclosed on this or the prior
+        // page; the visual line/page boundary remains the separator.
+        consumed++;
+        continue;
+      }
+      if ((uint32_t)x + word_width > BODY_WIDTH) {
+        if (row == BODY_ROWS) break;
+        if (written + 1 >= BODY_CHAR_MAX) break;
+        rendered[written++] = '\n';
+        row++;
+        x = 0;
+        consumed++;
+        continue;
+      }
+    }
+
+    if ((uint32_t)x + width > BODY_WIDTH) {
+      if (row == BODY_ROWS) break;
+      if (written + 1 >= BODY_CHAR_MAX) break;
+      rendered[written++] = '\n';
+      row++;
+      x = 0;
+    }
+    if (written + char_count >= BODY_CHAR_MAX) break;
+    memcpy(rendered + written, chars, char_count);
+    written += char_count;
+    x += width;
+    consumed++;
+  }
+
+  rendered[written] = '\0';
+  return consumed;
+}
+
+bool confirm_bytes(ButtonRequestType button_request, const char* title,
+                   const uint8_t* data, size_t size) {
+  if (!title || (!data && size != 0)) return false;
+  if (size == 0) return confirm(button_request, title, "(empty)");
+
+  const bool text = confirm_bytes_is_text(data, size);
+  size_t pages = 0;
+  size_t offset = 0;
+  while (offset < size) {
+    char rendered[BODY_CHAR_MAX];
+    const size_t take =
+        confirm_bytes_render_page(data + offset, size - offset, text, rendered);
+    if (take == 0) return false;
+    offset += take;
+    pages++;
+  }
+
+  offset = 0;
+  for (size_t page = 0; page < pages; page++) {
+    char rendered[BODY_CHAR_MAX];
+    const size_t take =
+        confirm_bytes_render_page(data + offset, size - offset, text, rendered);
+    if (take == 0) return false;
+
+    char page_title[TITLE_CHAR_MAX];
+    if (pages > 1 || !text) {
+      snprintf(page_title, sizeof(page_title),
+               text ? "%s %u/%u" : "%s Hex %u/%u", title, (unsigned)(page + 1),
+               (unsigned)pages);
+    } else {
+      strlcpy(page_title, title, sizeof(page_title));
+    }
+
+    if (!confirm(button_request, page_title, "%s", rendered)) return false;
+    offset += take;
+  }
+  return true;
+}
+
 bool confirm_omni(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
   uint32_t tx_type;
@@ -428,17 +590,5 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
 
 bool confirm_data(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  const char* str = (const char*)data;
-  char hex[50 * 2 + 1];
-  if (!is_valid_ascii(data, size)) {
-    if (size > 50) size = 50;
-    memset(hex, 0, sizeof(hex));
-    data2hex(data, size, hex);
-    if (size > 50) {
-      hex[50 * 2 - 1] = '.';
-      hex[50 * 2 - 2] = '.';
-    }
-    str = hex;
-  }
-  return confirm(button_request, title, "%s", str);
+  return confirm_bytes(button_request, title, data, size);
 }
