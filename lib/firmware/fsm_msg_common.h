@@ -489,21 +489,125 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
                   "Not in bootloader mode");
 }
 
-void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
-               "Do you want to generate and return entropy using the hardware "
-               "RNG?")) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
-    layoutHome();
-    return;
-  }
+/* Bytes of entropy a host may collect per boot without a button press.
+ *
+ * Auditing the RNG (bias tests, birthday/collision scans) needs bulk
+ * samples, and a press per kilobyte made that impossible on real hardware
+ * -- so nobody ever checked. The returned bytes are drawn fresh and
+ * discarded; they are never reused as key material, and the STM32 RNG is a
+ * free-running noise source rather than a seeded DRBG, so observing output
+ * reveals nothing about past or future draws.
+ *
+ * What the press did still buy is a cap on bias characterization: random32()
+ * returns RNG_DR raw with no whitening, and unlimited raw output lets a
+ * hostile host measure that bias precisely. A per-boot budget keeps that
+ * cap against a remote malicious host (which cannot replug) while leaving
+ * an audit plenty of room. Once spent, the confirm comes back; replug to
+ * refresh. */
+#define ENTROPY_FREE_BUDGET (64 * 1024)
 
-  RESP_INIT(Entropy);
+/* 64 KB is NOT "plenty of room" for the health test this enables.
+ *
+ * Scope first, because it is easy to overclaim: bulk output supports RNG HEALTH
+ * testing, not entropy measurement. No amount of output analysis can bound the
+ * entropy of an RNG's internal state -- a good expander seeded with 40 bits
+ * emits a stream that passes every test below, by construction. What this
+ * catches is stuck/biased output, repeated buffers, transport caching, gross
+ * correlation, and a broken test harness. That is worth having and was
+ * previously impossible on hardware; it is not proof of unpredictability.
+ *
+ * The size is set by the POSITIVE control, not by a detection threshold. A
+ * zero-collision result proves nothing on its own -- a detector that never
+ * fires also returns zero -- so the scan must also be run at a width where
+ * collisions are EXPECTED and their count checked against theory. 32-bit
+ * collisions over N blocks expect N^2/2^33: at 64 KB that is 0.03 (the control
+ * cannot run at all), at 1 MB it is 8, at 8 MB it is 512, tight enough that a
+ * broken or no-op detector is obvious. 8 MB is the first size at which the
+ * result means anything.
+ *
+ * For reference, since it invites misreading: a 64-bit scan over N=2^20 expects
+ * one collision at a 39-bit support, but P(0 collisions) is then e^-1 = 37%.
+ * Zero collisions excludes only <=37.4 bits at 95% confidence, and says nothing
+ * whatsoever about a low-entropy state behind a strong PRNG.
+ *
+ * The per-boot cap was also asymmetric in the wrong direction: it never stopped
+ * a patient remote attacker (host malware simply waits for the natural replugs
+ * that happen anyway and accumulates 64 KB at a time over days), while it fully
+ * priced out the honest auditor, who needs one contiguous run and otherwise
+ * faces 128 manual replugs.
+ *
+ * So the bulk path is gated on a single explicit press instead of a byte count,
+ * and only before initialization:
+ *
+ *   - one confirm per boot unlocks unmetered draws. A remote host cannot forge
+ *     it, which is the property the byte cap was only approximating.
+ *   - uninitialized only. No seed exists, so there is no key material to
+ *     correlate against; the 32 bytes that DO become a seed are drawn later, in
+ *     reset.c, from noise that has not happened yet, and are SHA-256'd with
+ *     host-supplied entropy before use.
+ *
+ * Initialized devices are untouched: ENTROPY_FREE_BUDGET, then a press every
+ * time, exactly as before. The unlock re-locks the instant ResetDevice
+ * completes, because storage_isInitialized() is re-read on every call.
+ *
+ * A wiped device returns to uninitialized and can be audited again. That is
+ * intended -- it still holds no seed, and re-auditing before re-seeding is
+ * precisely the supported flow. */
+
+/* Whether the budget above may be spent without a press.
+ *
+ * GetEntropy has no PIN or initialization gate -- the button press WAS the
+ * human gate. Dropping it unconditionally would let someone holding a locked
+ * device harvest raw RNG output silently, and replug to repeat, so restrict
+ * the press-free path to states where there is either nothing to protect or
+ * a user demonstrably present:
+ *
+ *   - uninitialized: no seed exists yet. This is the case that matters --
+ *     auditing the RNG *before* trusting it to generate a seed.
+ *   - no PIN configured: nothing is locked, so the press guards nothing that
+ *     physical possession does not already defeat.
+ *   - PIN already entered this session: the user is right there.
+ *
+ * An initialized, PIN-protected, locked device is the stolen / evil-maid
+ * case and falls back to the confirm exactly as before. */
+static bool entropy_press_free_allowed(void) {
+  if (!storage_isInitialized()) return true;
+  if (!storage_hasPin()) return true;
+  return session_isPinCached();
+}
+
+void fsm_msgGetEntropy(GetEntropy* msg) {
+  static uint32_t free_budget = ENTROPY_FREE_BUDGET;
+  /* Set by one confirm on an uninitialized device; unlocks unmetered draws for
+   * the rest of the boot. Re-checked against storage_isInitialized() on every
+   * call, so completing ResetDevice re-locks it without needing a replug. */
+  static bool bulk_audit_unlocked = false;
+
   uint32_t len = msg->size;
 
   if (len > ENTROPY_BUF) {
     len = ENTROPY_BUF;
   }
+
+  if (bulk_audit_unlocked && !storage_isInitialized()) {
+    /* Already authorized for bulk audit this boot. */
+  } else if (len <= free_budget && entropy_press_free_allowed()) {
+    free_budget -= len;
+  } else if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy,
+                      "Generate Entropy",
+                      "Do you want to generate and return entropy using the "
+                      "hardware RNG?")) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
+    layoutHome();
+    return;
+  } else if (!storage_isInitialized()) {
+    /* The press just paid for a bulk RNG audit on a seedless device — don't
+     * charge for it again. An initialized device deliberately falls through:
+     * it keeps confirming every draw once its budget is spent. */
+    bulk_audit_unlocked = true;
+  }
+
+  RESP_INIT(Entropy);
 
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
@@ -542,8 +646,10 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 void fsm_msgResetDevice(ResetDevice* msg) {
   CHECK_NOT_INITIALIZED
 
-  reset_init(msg->has_display_random && msg->display_random,
-             msg->has_strength ? msg->strength : 128,
+  // display_random remains in the wire schema for host compatibility, but is
+  // intentionally ignored: internal entropy is seed pre-image material and
+  // must never be rendered or returned by production firmware.
+  reset_init(msg->has_strength ? msg->strength : 128,
              msg->has_passphrase_protection && msg->passphrase_protection,
              msg->has_pin_protection && msg->pin_protection,
              msg->has_language ? msg->language : 0,
@@ -551,7 +657,8 @@ void fsm_msgResetDevice(ResetDevice* msg) {
              msg->has_no_backup ? msg->no_backup : false,
              msg->has_auto_lock_delay_ms ? msg->auto_lock_delay_ms
                                          : STORAGE_DEFAULT_SCREENSAVER_TIMEOUT,
-             msg->has_u2f_counter ? msg->u2f_counter : 0);
+             msg->has_u2f_counter ? msg->u2f_counter : 0,
+             msg->has_dice_entropy && msg->dice_entropy);
 }
 
 void fsm_msgEntropyAck(EntropyAck* msg) {

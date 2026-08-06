@@ -4,6 +4,7 @@ set(sources
     coins.cpp
     binance.cpp
     cosmos.cpp
+    dice.cpp
     eos.cpp
     eip712.cpp
     ethereum.cpp
