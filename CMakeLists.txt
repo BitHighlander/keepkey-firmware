@@ -9,7 +9,7 @@ endif()
 
 project(
   KeepKeyFirmware
-  VERSION 7.14.1
+  VERSION 7.15.0
   LANGUAGES C CXX ASM)
 
 set(BOOTLOADER_MAJOR_VERSION 2)
@@ -20,6 +20,17 @@ option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
+option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
+# Zcash shielded/Orchard support is part of the regular firmware. It is an
+# internal compile selection, not a third release variant: bitcoin-only strips
+# the Zcash coin and privacy engine; every regular device/emulator build ships
+# both. The open constant-time Pallas audit finding remains a release gate for
+# RC18, but it must not silently change the product being audited.
+if(KK_BITCOIN_ONLY)
+  set(KK_ZCASH_PRIVACY OFF)
+else()
+  set(KK_ZCASH_PRIVACY ON)
+endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
@@ -62,7 +73,7 @@ endif()
 if(NOT EXISTS ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/Makefile)
   message(
     FATAL_ERROR
-      " trezor-crypto missing. Need to 'git submodule update --init --recursive"
+      "trezor-crypto fork missing. Run 'git submodule update --init deps/crypto/trezor-firmware'"
   )
 endif()
 
@@ -84,6 +95,13 @@ endif()
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
   add_definitions(-DCONFIDENTIAL=)
+  # macOS/BSD declare strlcpy/strlcat in <string.h>; glibc (Linux) and MinGW
+  # (Windows) do not. Force-include the prototypes so the ~20 call sites build
+  # without -Werror=implicit-function-declaration (definitions come from
+  # lib/board/strlcpy.c + strlcat.c). Apple already has them in <string.h>.
+  if(NOT APPLE)
+    add_compile_options(-include ${CMAKE_SOURCE_DIR}/include/keepkey/board/bsd_compat.h)
+  endif()
 else()
   add_definitions(-DCONFIDENTIAL=__attribute__\(\(section\("confidential"\)\)\))
 endif()
@@ -97,13 +115,21 @@ add_definitions(-DED25519_FORCE_32BIT=1)
 
 add_definitions(-DUSE_PRECOMPUTED_CP=0)
 
-add_definitions(-DUSE_ETHEREUM=1)
+if(${KK_BITCOIN_ONLY})
+  # Bitcoin-only: strip the coin-specific trezor-crypto primitives whose only
+  # callers (ethereum.c / nano.c) are compiled out below. KECCAK stays on --
+  # marginal size win, and it is a generic hash we don't want to risk.
+  add_definitions(-DUSE_ETHEREUM=0)
+  add_definitions(-DUSE_NANO=0)
+else()
+  add_definitions(-DUSE_ETHEREUM=1)
+  add_definitions(-DUSE_NANO=1)
+endif()
 add_definitions(-DUSE_KECCAK=1)
 add_definitions(-DUSE_GRAPHENE=0)
 add_definitions(-DUSE_CARDANO=0)
 add_definitions(-DUSE_MONERO=0)
 add_definitions(-DUSE_NEM=0)
-add_definitions(-DUSE_NANO=1)
 
 add_definitions(-DRAND_PLATFORM_INDEPENDENT=0)
 
@@ -123,10 +149,32 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
+# NOTE: AES table size is selected per release product below. The regular
+# image includes Zcash and its Pallas curve arithmetic, so it uses the smaller
+# AES tables to preserve flash headroom. Bitcoin-only keeps FOUR_TABLES AES.
+
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
   add_definitions(-DDEBUG_LINK=0)
+endif()
+
+# Value macros (always defined 0/1) -- device builds use -Wundef -Werror, so an
+# undefined identifier in `#if` is a hard error. Guard code with `#if FLAG`.
+if(${KK_BITCOIN_ONLY})
+  add_definitions(-DBITCOIN_ONLY=1)
+else()
+  add_definitions(-DBITCOIN_ONLY=0)
+endif()
+
+if(${KK_ZCASH_PRIVACY})
+  add_definitions(-DZCASH_PRIVACY=1)
+  # The Orchard engine leaves the regular image tightest on flash; shrink the
+  # Gladman AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM,
+  # slightly slower AES). Bitcoin-only keeps the fast FOUR_TABLES.
+  add_definitions(-DAES_SMALL_TABLES)
+else()
+  add_definitions(-DZCASH_PRIVACY=0)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
@@ -160,6 +208,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 if(NOT ${KK_EMULATOR})
   link_directories(${LIBOPENCM3_PATH}/lib)
   include_directories(${LIBOPENCM3_PATH}/include)
+
+  # Emit per-function stack-frame sizes (.su files) on device builds. CI's
+  # SRAM budget gate (tools/check_sram_budget.py) reports the largest frames
+  # and fails when the linker-asserted stack reserve minus the largest frame
+  # leaves less than the configured margin. See tools/firmware/keepkey.ld.
+  add_compile_options(-fstack-usage)
 
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.
