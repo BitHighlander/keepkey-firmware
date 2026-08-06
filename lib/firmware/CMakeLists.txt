@@ -22,6 +22,7 @@ set(sources
     ethereum_tokens.c
     dice_input.c
     fsm.c
+    hive.c
     home_sm.c
     mayachain.c
     nano.c
