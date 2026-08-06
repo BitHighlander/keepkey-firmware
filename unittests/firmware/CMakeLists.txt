@@ -8,6 +8,7 @@ set(sources
     eos.cpp
     eip712.cpp
     ethereum.cpp
+    hive.cpp
     mayachain.cpp
     nano.cpp
     osmosis.cpp
