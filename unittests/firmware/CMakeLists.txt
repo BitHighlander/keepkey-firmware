@@ -1,4 +1,5 @@
 set(sources
+    authenticator.cpp
     app_confirm.cpp
     coins.cpp
     cosmos.cpp
