@@ -299,6 +299,8 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+/* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
+#include "fsm_msg_clearsign_attestor.h"
 #if ZCASH_PRIVACY
 #include "fsm_msg_zcash.h"
 #else
