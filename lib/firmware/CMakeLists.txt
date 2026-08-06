@@ -20,6 +20,7 @@ set(sources
     ethereum_contracts/zxtransERC20.c
     ethereum_contracts/zxswap.c
     ethereum_tokens.c
+    dice_input.c
     fsm.c
     home_sm.c
     mayachain.c

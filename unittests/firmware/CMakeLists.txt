@@ -3,6 +3,7 @@ set(sources
     app_confirm.cpp
     coins.cpp
     cosmos.cpp
+    dice.cpp
     eos.cpp
     eip712.cpp
     ethereum.cpp
