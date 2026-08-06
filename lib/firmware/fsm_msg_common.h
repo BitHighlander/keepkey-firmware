@@ -41,6 +41,12 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_model = true;
   strlcpy(resp->model, model(), sizeof(resp->model));
 
+  /* Taproot capability.  Reported directly so a host does not have to infer
+     P2TR support from a firmware version -- that inference breaks whenever the
+     feature is retargeted to a different release. */
+  resp->has_supports_taproot = true;
+  resp->supports_taproot = true;
+
   /* Variant Name */
   resp->has_firmware_variant = true;
   strlcpy(resp->firmware_variant, variant_getName(),
