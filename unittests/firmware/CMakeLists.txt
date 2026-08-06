@@ -6,6 +6,7 @@ set(sources
     ethereum.cpp
     nano.cpp
     recovery.cpp
+    signed_metadata.cpp
     ripple.cpp
     storage.cpp
     usb_rx.cpp
