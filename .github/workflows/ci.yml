@@ -152,15 +152,17 @@ jobs:
           : "${ERRORS:=0}" "${WARNINGS:=0}" "${STYLE:=0}" "${PERF:=0}" "${PORT:=0}"
           TOTAL=$((ERRORS + WARNINGS + STYLE + PERF + PORT))
 
-          echo "## cppcheck summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Severity | Count |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| error | $ERRORS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| warning | $WARNINGS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| style | $STYLE |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| performance | $PERF |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| portability | $PORT |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **total** | **$TOTAL** |" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## cppcheck summary"
+            echo "| Severity | Count |"
+            echo "|----------|-------|"
+            echo "| error | $ERRORS |"
+            echo "| warning | $WARNINGS |"
+            echo "| style | $STYLE |"
+            echo "| performance | $PERF |"
+            echo "| portability | $PORT |"
+            echo "| **total** | **$TOTAL** |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Print findings as GitHub annotations
           cat cppcheck_report.txt
@@ -743,7 +745,8 @@ jobs:
           # it fsm_msgDebugLinkGetState is excluded from the build.
           # CMAKE_POLICY_VERSION_MINIMUM works around vendored
           # googletest's pre-3.5 policy declaration.
-          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          export PATH="$PATH:$NANOPB_GENERATOR_DIR"
           which protoc-gen-nanopb
           which nanopb_generator.py
           cmake \
@@ -755,15 +758,17 @@ jobs:
 
       - name: Build kkemulator_dylib
         run: |
-          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
-          cmake --build build-emu --target kkemulator_dylib -j$(sysctl -n hw.ncpu)
+          NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          export PATH="$PATH:$NANOPB_GENERATOR_DIR"
+          CPU_COUNT="$(sysctl -n hw.ncpu)"
+          cmake --build build-emu --target kkemulator_dylib -j"$CPU_COUNT"
           ls -la build-emu/lib/libkkemu* || ls -la build-emu/lib/emulator/libkkemu* || true
           # Surface the resolved binary path for the run step. macOS
           # produces .dylib; .so is preserved as a fallback for when this
           # job goes cross-platform.
-          DYLIB=$(find build-emu -name 'libkkemu.dylib' -o -name 'libkkemu.so' | head -1)
+          DYLIB="$(find build-emu \( -name 'libkkemu.dylib' -o -name 'libkkemu.so' \) -print -quit)"
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
-          echo "DYLIB_PATH=$(pwd)/$DYLIB" >> $GITHUB_ENV
+          echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
       - name: Upload libkkemu.dylib
         # Always upload, even on later test failure — the binary is
