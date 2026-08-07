@@ -17,8 +17,7 @@ extern "C" {
 #include <cstring>
 #include <string>
 
-bool kkconfirm_preload(int nYes, int nNo);
-int kkconfirm_drain(void);
+#include "kkconfirm_driver.h"
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;

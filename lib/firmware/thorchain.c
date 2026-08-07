@@ -20,6 +20,7 @@
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
