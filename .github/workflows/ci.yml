@@ -244,6 +244,11 @@ jobs:
             echo "::error::Unauthenticated persistent clearsign trust is retired"
             exit 1
           fi
+          if git grep -n -E 'return[[:space:]]+random\(\)' -- \
+            lib/rand/rng.c; then
+            echo "::error::Emulator cryptography must not use libc random()"
+            exit 1
+          fi
           if git grep -n -F 'option(KK_ZCASH_PRIVACY' -- CMakeLists.txt; then
             echo "::error::Zcash privacy must not become a third release choice"
             exit 1
