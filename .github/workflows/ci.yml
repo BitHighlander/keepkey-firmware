@@ -387,11 +387,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 'label' names the job, 'suffix' names the built files, 'variant' selects
+          # the build. The default variant is empty in both so the flashable artifact
+          # matches the historical name instead of gaining a "-full" token.
           - variant: full
             label: ""
+            suffix: ""
             cmake_flags: ""
           - variant: bitcoin-only
             label: " (bitcoin-only)"
+            suffix: "-bitcoin-only"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - name: Checkout
@@ -475,11 +480,11 @@ jobs:
           cd bin
           for f in *.bin; do
             [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}-${f}"
+            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}${{ matrix.suffix }}-${f}"
           done
           for f in *.elf; do
             [ -f "$f" ] || continue
-            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}-${f}"
+            mv "$f" "firmware.keepkey.v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}${{ matrix.suffix }}-${f}"
           done
           ls -lh
           echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} (${{ matrix.variant }}) built successfully"
@@ -487,7 +492,7 @@ jobs:
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}
+          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}${{ matrix.suffix }}
           path: |
             bin/*.bin
             bin/*.elf
