@@ -57,6 +57,23 @@
     "EMULATOR selects the host-CSPRNG random32(); ARM firmware must use the STM32 hardware RNG"
 #endif
 
+/* The same lesson applied to the other RNG selection switch. trezor-crypto's
+ * crypto/rand.c carries a zero-seeded LCG random32() under #ifndef
+ * RAND_PLATFORM_INDEPENDENT, and rand.c is compiled into the trezorcrypto
+ * library (deps/crypto/CMakeLists.txt). It is excluded today only because the
+ * top-level CMakeLists defines that macro -- previously as "=0", which reads
+ * like a disable but, against an #ifndef test, is an enable.
+ *
+ * Every target that links trezorcrypto also links kkrand, so a stale build
+ * would currently hit a duplicate-symbol error on random32() rather than
+ * silently take the LCG. That is an accident of the link graph, not a
+ * guarantee: a future target linking trezorcrypto alone would build clean and
+ * deterministic. Assert the macro instead of relying on either coincidence. */
+#ifndef RAND_PLATFORM_INDEPENDENT
+#error \
+    "RAND_PLATFORM_INDEPENDENT must be defined; without it trezor-crypto compiles its insecure LCG random32()"
+#endif
+
 void reset_rng(void) {
 #ifndef EMULATOR
   /* disable RNG */
