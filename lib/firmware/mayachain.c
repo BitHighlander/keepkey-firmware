@@ -115,8 +115,8 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
   char buffer[64 + 1];
 
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
   if (!bech32_decode(hrp, decoded, &decoded_len, to_address)) {
     return false;
   }
