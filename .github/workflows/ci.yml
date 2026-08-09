@@ -469,11 +469,28 @@ jobs:
       - name: SRAM budget gate (${{ matrix.variant }})
         run: |
           pip install --quiet pyelftools
+          # Mirror the report into the run summary. The gate has always
+          # enforced correctly, but its numbers only ever existed in a job
+          # log nobody opens, so the frame-arena fix had no reviewable
+          # evidence anywhere -- an RC audit recorded it as "zero coverage".
+          # pipefail so tee cannot mask a budget breach, and capture the status
+          # instead of letting `set -e` abort here -- a FAILING gate is exactly
+          # when the numbers need to reach the summary. Re-exit with it below.
+          set -o pipefail
+          rc=0
           python3 tools/check_sram_budget.py \
             --elf bin/firmware.keepkey.elf \
             --su-tar bin/stack-usage.tgz \
             --budgets tools/sram-budgets.json \
-            --variant "${{ matrix.variant }}"
+            --variant "${{ matrix.variant }}" 2>&1 \
+            | tee "/tmp/sram-${{ matrix.variant }}.txt" || rc=$?
+          {
+            echo "### SRAM budget — ${{ matrix.variant }}"
+            echo '```'
+            cat "/tmp/sram-${{ matrix.variant }}.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
 
       - name: Rename firmware artifacts
         run: |
