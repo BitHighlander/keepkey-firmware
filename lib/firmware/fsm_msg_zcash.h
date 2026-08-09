@@ -266,38 +266,8 @@ static bool zcash_verify_and_confirm_orchard_output(
 
   char amount_str[32];
   zcash_format_amount(msg->value, amount_str, sizeof(amount_str));
-
-  /* Two screens, deliberately.
-   *
-   * A unified address is 106 characters, which is three full body rows on
-   * its own -- exactly what layout_zcash_address_text_notification is built
-   * to render, and what the display-address flow already shows. The standard
-   * notification body is three rows and draw_string simply stops emitting
-   * once a character will not fit: there is no scroll and no pagination, so
-   * surplus text is dropped without any indication.
-   *
-   * Putting the question, the address and the amount in one body therefore
-   * rendered the question plus the first 76 characters of the address and
-   * silently discarded the rest of it along with the entire amount line.
-   * That is not a cosmetic screen. total_amount on the summary prompt is
-   * taken from the host message, and the contract documented in
-   * zcash_pczt_sign() delegates verification of Orchard output values to
-   * this confirm -- so dropping the amount removed the only place the user
-   * could see the value being committed to.
-   *
-   * Amount first, on a body that cannot overflow, then the full address
-   * through the layout that fits it. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Zcash Output",
-               "Send shielded ZEC?\nAmount: %s", amount_str)) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Signing cancelled"));
-    memzero(address, sizeof(address));
-    return false;
-  }
-
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                  "Shielded recipient", "%s", address)) {
+               "Send shielded ZEC?\n%s\nAmount: %s", address, amount_str)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));
     memzero(address, sizeof(address));
@@ -1386,6 +1356,26 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
       zcash_signing.n_transparent_outputs) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Transparent outputs not yet complete"));
+    zcash_signing_abort();
+    layoutHome();
+    return;
+  }
+
+  /* Bound the index against the array before it is used to address it.
+   *
+   * Matching current_transparent_input is not sufficient on its own. Nothing
+   * stops a host sending further ZcashTransparentInput messages after the
+   * declared count has been consumed: the ack loop simply stops asking, while
+   * current_transparent_input keeps incrementing past n_transparent_inputs on
+   * every extra message. Each one then wrote a fully host-controlled
+   * ZcashTransparentInputState -- amount, 32-byte txid, script_pubkey, the
+   * whole address_n array -- past the end of an 8-element static array. */
+  if (msg->index >= zcash_signing.n_transparent_inputs ||
+      msg->index >= ZCASH_MAX_TRANSPARENT_INPUTS ||
+      zcash_signing.current_transparent_input >=
+          zcash_signing.n_transparent_inputs) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Transparent input index out of range"));
     zcash_signing_abort();
     layoutHome();
     return;
