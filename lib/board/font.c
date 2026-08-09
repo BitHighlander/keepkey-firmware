@@ -2654,7 +2654,11 @@ size_t calc_str_page(const Font* font, const char* str, size_t str_len,
                      uint16_t line_width, uint32_t max_lines) {
   size_t best = 0;
   for (size_t take = 1; take <= str_len; take++) {
-    if (calc_str_line_n(font, str, take, line_width) <= max_lines) best = take;
+    /* A longer prefix never needs fewer lines, so the first prefix that does
+     * not fit settles it. Without this the scan runs the full length of the
+     * body for every page, which a 350-character confirm feels as a pause. */
+    if (calc_str_line_n(font, str, take, line_width) > max_lines) break;
+    best = take;
   }
   return best;
 }
