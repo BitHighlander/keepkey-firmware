@@ -747,15 +747,26 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
     hasher_Init(&hasher_sequence, curve->hasher_sign);
     hasher_Init(&hasher_outputs, curve->hasher_sign);
     hasher_Init(&hasher_check, curve->hasher_sign);
-    if (coin->has_taproot && coin->taproot) {
-      /* BIP-341 fixes these as plain SHA256, independent of the coin's
-         signing hasher, so they are initialised separately on purpose. */
-      sha256_Init(&ctx_amounts);
-      sha256_Init(&ctx_scriptpubkeys);
-      sha256_Init(&ctx_prevouts_tr);
-      sha256_Init(&ctx_sequences_tr);
-      sha256_Init(&ctx_outputs_tr);
-    }
+  }
+
+  /* BIP-341 fixes these as plain SHA256, independent of the coin's signing
+     hasher, so they are initialised separately on purpose.
+
+     Initialised on the taproot condition alone, and deliberately outside the
+     overwintered branch above. Every update and finalise site for these five
+     contexts is gated only on `coin->has_taproot && coin->taproot`, but the
+     initialisation used to sit inside the non-overwintered `else`. Since
+     `overwintered` comes from the host on SignTx, setting it on a taproot
+     coin skipped the init while leaving the use sites live, so the sighash
+     was built from whatever these static contexts held -- uninitialised on
+     the first signature after boot, and carried over from the previous
+     transaction after that. */
+  if (coin->has_taproot && coin->taproot) {
+    sha256_Init(&ctx_amounts);
+    sha256_Init(&ctx_scriptpubkeys);
+    sha256_Init(&ctx_prevouts_tr);
+    sha256_Init(&ctx_sequences_tr);
+    sha256_Init(&ctx_outputs_tr);
   }
 
   layoutProgressSwipe(_("Signing transaction"), 0);

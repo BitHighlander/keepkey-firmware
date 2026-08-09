@@ -287,6 +287,15 @@ void fsm_sendFailure(FailureType code, const char* text) {
 
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
+  /* Abort every signing engine before clearing, the way fsm_msgInitialize and
+   * fsm_msgCancel already do. session_clear() reaches
+   * signed_metadata_clear_signers() -> signed_metadata_clear(), which drops
+   * the clear-sign tx<->metadata binding and relied_on_metadata. Ethereum
+   * signing was left running across that, so this unauthenticated,
+   * no-button-press message could disarm the binding mid-flight and let the
+   * remaining calldata chunks be signed with the enforcement gate seeing
+   * nothing to enforce. Only Zcash was being aborted here. */
+  ethereum_signing_abort();
   zcash_signing_abort();
   session_clear(/*clear_pin=*/true);
   fsm_sendSuccess("Session cleared");

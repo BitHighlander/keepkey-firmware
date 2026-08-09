@@ -860,6 +860,27 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     schema_verified = true;
   }
 
+  /* A transaction the parser judged malformed is never signable, whatever
+   * else is attached to it.
+   *
+   * This used to be enforced only by the final `else` of the chain below, so
+   * the `else if (schema_verified)` arm shadowed it: an attested KKSOLSC1
+   * schema matching one partially-parsed instruction was enough to reach the
+   * schema review and then the signature, on a message the parser had already
+   * rejected as malformed. A schema describes one instruction; it says
+   * nothing about the rest of a transaction that failed to parse.
+   *
+   * Stated as its own guard rather than restored to the end of the chain,
+   * because branch ordering is what concealed it the first time. */
+  if (tx_review == SOL_TX_REVIEW_MALFORMED) {
+    memzero(node, sizeof(*node));
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Malformed Solana transaction"));
+    layoutHome();
+    return;
+  }
+
   if (tx_review == SOL_TX_REVIEW_VERIFIED) {
     /* Per-instruction disclosure + priority fee, shared with SignMessage. */
     if (!solana_confirm_verified_tx(&parsed, msg)) {

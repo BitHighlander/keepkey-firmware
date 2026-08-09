@@ -157,9 +157,11 @@ static bool parseMayaMemo(const char *memo) {
   return parseMayaMemo(memo, strlen(memo) + 1);
 }
 
-// Classic full-form swap memo = 4 screens (4th is the affiliate fee screen)
+// Classic full-form swap memo = 4 screens (4th is the affiliate fee screen),
+// but the asset screen is 4 rows against a 3-row body, so it pages into
+// 1/2 + 2/2 = 5 presses. See thorchain.cpp for the same memo.
 TEST(Mayachain, MemoSwapFullFormShowsAffiliate) {
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  ASSERT_TRUE(kkconfirm_preload(5, 0));
   EXPECT_TRUE(parseMayaMemo(
       "SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:"
       "0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75"));
@@ -225,7 +227,9 @@ TEST(Mayachain, MemoExactBufferCapacityKeepsLastChar) {
                      suffix;
   ASSERT_EQ(memo.size(), 256u);
 
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  /* 6 presses, not 4: the 240-char destination needs 8 rows, so its screen
+   * pages 3 ways (1 + 3 + 1 + 1). Every byte of the memo reaches the screen. */
+  ASSERT_TRUE(kkconfirm_preload(6, 0));
   EXPECT_TRUE(parseMayaMemo(memo.c_str(), memo.size())); /* no NUL counted */
   EXPECT_EQ(0, kkconfirm_drain());
 }

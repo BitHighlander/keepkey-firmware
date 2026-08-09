@@ -148,8 +148,8 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
   char buffer[64 + 1];
 
   size_t decoded_len;
-  char hrp[45] = {0};
-  uint8_t decoded[38] = {0};
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX] = {0};
   if (!osmosis_isCanonicalUint64(amount) || !osmosis_isValidDenom(denom) ||
       !bech32_decode(hrp, decoded, &decoded_len, to_address)) {
     return false;
@@ -204,8 +204,8 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
 
   char buffer[128] = {0};
   size_t decoded_len;
-  char hrp[45] = {0};
-  uint8_t decoded[38] = {0};
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -265,8 +265,8 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
 
   char buffer[128] = {0};
   size_t decoded_len;
-  char hrp[45] = {0};
-  uint8_t decoded[38] = {0};
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -326,8 +326,8 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
 
   char buffer[128] = {0};
   size_t decoded_len;
-  char hrp[45] = {0};
-  uint8_t decoded[38] = {0};
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -485,8 +485,8 @@ bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
 
   char buffer[128] = {0};
   size_t decoded_len;
-  char hrp[45] = {0};
-  uint8_t decoded[38] = {0};
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -543,8 +543,8 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
 
   char buffer[128] = {0};
   size_t decoded_len;
-  char hrp[45] = {0};
-  uint8_t decoded[38] = {0};
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, receiver)) {
     return false;

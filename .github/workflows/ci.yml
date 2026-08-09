@@ -469,11 +469,28 @@ jobs:
       - name: SRAM budget gate (${{ matrix.variant }})
         run: |
           pip install --quiet pyelftools
+          # Mirror the report into the run summary. The gate has always
+          # enforced correctly, but its numbers only ever existed in a job
+          # log nobody opens, so the frame-arena fix had no reviewable
+          # evidence anywhere -- an RC audit recorded it as "zero coverage".
+          # pipefail so tee cannot mask a budget breach, and capture the status
+          # instead of letting `set -e` abort here -- a FAILING gate is exactly
+          # when the numbers need to reach the summary. Re-exit with it below.
+          set -o pipefail
+          rc=0
           python3 tools/check_sram_budget.py \
             --elf bin/firmware.keepkey.elf \
             --su-tar bin/stack-usage.tgz \
             --budgets tools/sram-budgets.json \
-            --variant "${{ matrix.variant }}"
+            --variant "${{ matrix.variant }}" 2>&1 \
+            | tee "/tmp/sram-${{ matrix.variant }}.txt" || rc=$?
+          {
+            echo "### SRAM budget — ${{ matrix.variant }}"
+            echo '```'
+            cat "/tmp/sram-${{ matrix.variant }}.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
 
       - name: Rename firmware artifacts
         run: |
@@ -574,8 +591,18 @@ jobs:
         working-directory: scripts/emulator
         run: |
           # Run each test container — capture exit codes, always extract reports
-          docker compose up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
-          docker compose up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+          #
+          # `|| RC=$?` rather than `; RC=$?`: this step runs under the default
+          # `bash -e`, where a bare failing command aborts immediately. With the
+          # semicolon form the abort happened BEFORE the assignment and before
+          # the extraction below, so a failing test run uploaded nothing at all
+          # — no JUnit, no report, no OLED frames — precisely when the evidence
+          # was needed. The `if: always()` on the upload steps could not help,
+          # because nothing had been copied out of the container yet.
+          FW_RC=0
+          PY_RC=0
+          docker compose up --build --exit-code-from firmware-unit firmware-unit || FW_RC=$?
+          docker compose up --build --exit-code-from python-keepkey python-keepkey || PY_RC=$?
 
           mkdir -p ${{ github.workspace }}/test-reports
 
@@ -809,7 +836,7 @@ jobs:
           # skip rationale), it's a transitive dep some tests use.
           pip install pytest pytest-timeout
 
-      - name: Run dylib screenshot tests
+      - name: Run dylib transport tests
         working-directory: deps/python-keepkey/tests
         env:
           KK_TRANSPORT: dylib
@@ -817,8 +844,22 @@ jobs:
         run: |
           # `keepkeylib/` on PYTHONPATH so the package's relative-style
           # imports inside generated *_pb2.py files resolve.
+          #
+          # test_dylib_confirm_flow contributes exactly ONE test here:
+          # test_features_round_trip, the pure Initialize -> Features path
+          # that never enters confirm_helper. It is named explicitly rather
+          # than adding the whole file, because the file's other test
+          # (test_load_device_with_auto_confirm) is @unittest.skip'd on an
+          # OPEN firmware bug -- confirm_helper busy-loops on a ButtonAck
+          # the dylib consumed but never delivered, and no pytest-timeout
+          # method can interrupt a C-level kkemu_poll() loop. Adding the
+          # file wholesale would trade a silent coverage gap for a runner
+          # that burns the job's 25-minute timeout.
+          #
+          # When that firmware fix lands, run the whole file instead.
           PYTHONPATH=../keepkeylib:.. python -m pytest \
             test_dylib_screenshot.py \
+            "test_dylib_confirm_flow.py::TestDylibConfirmFlow::test_features_round_trip" \
             -v --tb=short --junit-xml=../../../test-reports/dylib-junit.xml
 
       - name: Upload dylib test results

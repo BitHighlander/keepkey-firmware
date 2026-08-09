@@ -71,6 +71,22 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
 void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
+
+  /* Same reasoning as fsm_msgEthereumTxMetadata above, and the same fix.
+   * Storing a signer ends in signed_metadata_clear(), which drops the
+   * tx<->metadata binding along with relied_on_metadata -- so loading a
+   * signer mid-signing let a host approve a benign decode and then stream
+   * different calldata, with signed_metadata_enforce() seeing relied=false
+   * and passing. The guard was on the metadata message but not on its
+   * sibling. */
+  if (ethereum_signing_isInProgress()) {
+    ethereum_signing_abort();
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Signer load not allowed during signing"));
+    layoutHome();
+    return;
+  }
+
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
               _("AdvancedMode required for clearsign signers"));
 

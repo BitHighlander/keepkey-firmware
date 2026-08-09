@@ -181,7 +181,12 @@ jobs:
           [ -f firmware.keepkey.bin ] && mv firmware.keepkey.bin "firmware.keepkey.v${VER}${SUFFIX}.bin"
           [ -f firmware.keepkey.elf ] && mv firmware.keepkey.elf "firmware.keepkey.v${VER}${SUFFIX}.elf"
           [ -f bootloader.bin ] && mv bootloader.bin "bootloader.v${VER}${SUFFIX}.bin"
-          mv HASHES.txt "HASHES${SUFFIX}.txt"
+          # The regular variant carries an EMPTY suffix, so this rename is a
+          # no-op for it -- and `mv HASHES.txt HASHES.txt` is not a harmless
+          # no-op to GNU coreutils, it is "are the same file" and exit 1, which
+          # the step's default `bash -e` turns into a failed release. The three
+          # renames above are safe because each one also inserts the version.
+          [ -z "$SUFFIX" ] || mv HASHES.txt "HASHES${SUFFIX}.txt"
           ls -lh
 
       - name: Record build provenance

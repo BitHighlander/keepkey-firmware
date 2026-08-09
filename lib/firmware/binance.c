@@ -107,8 +107,8 @@ bool binance_serializeCoin(const BinanceCoin* coin) {
 
 bool binance_serializeInputOutput(const BinanceInputOutput* io) {
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
   if (!bech32_decode(hrp, decoded, &decoded_len, io->address)) {
     return false;
   }
