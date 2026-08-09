@@ -591,8 +591,18 @@ jobs:
         working-directory: scripts/emulator
         run: |
           # Run each test container — capture exit codes, always extract reports
-          docker compose up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
-          docker compose up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+          #
+          # `|| RC=$?` rather than `; RC=$?`: this step runs under the default
+          # `bash -e`, where a bare failing command aborts immediately. With the
+          # semicolon form the abort happened BEFORE the assignment and before
+          # the extraction below, so a failing test run uploaded nothing at all
+          # — no JUnit, no report, no OLED frames — precisely when the evidence
+          # was needed. The `if: always()` on the upload steps could not help,
+          # because nothing had been copied out of the container yet.
+          FW_RC=0
+          PY_RC=0
+          docker compose up --build --exit-code-from firmware-unit firmware-unit || FW_RC=$?
+          docker compose up --build --exit-code-from python-keepkey python-keepkey || PY_RC=$?
 
           mkdir -p ${{ github.workspace }}/test-reports
 
