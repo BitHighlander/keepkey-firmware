@@ -4,6 +4,7 @@ extern "C" {
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -67,7 +68,7 @@ TEST(RngHealth, AptCutoffIsExact) {
   auto build = [&](uint32_t extra) {
     auto v = pseudo(RNG_HEALTH_APT_WINDOW, 3);
     // Clear any incidental matches so the count is exactly what we plant.
-    for (auto &b : v)
+    for (auto& b : v)
       if (b == ref) b = ref ^ 0x01;
     v[0] = ref;  // the window reference, which is NOT itself counted
     for (uint32_t i = 0; i < extra; i++) v[8 + i * 16] = ref;
@@ -97,6 +98,40 @@ TEST(RngHealth, AptCutoffIsExact) {
 TEST(RngHealth, PassesTinySeedGeneratorByDesign) {
   auto v = pseudo(RNG_HEALTH_SAMPLE_BYTES, 0xBEEF);
   EXPECT_TRUE(rng_health_analyze(v.data(), v.size()));
+}
+
+// REGRESSION: RCT state must not reset at the APT window boundary. An earlier
+// version shared one "started" flag between both tests, so the byte after each
+// 512-sample window reset the run counter and a repeat spanning the boundary
+// went unnoticed.
+TEST(RngHealth, RctSpansAptWindowBoundary) {
+  auto v = pseudo(RNG_HEALTH_SAMPLE_BYTES, 21);
+  const size_t b = RNG_HEALTH_APT_WINDOW;  // first byte of the second window
+  // Straddle the boundary: cutoff identical bytes ending just past it.
+  for (size_t i = 0; i < RNG_HEALTH_RCT_CUTOFF; i++) v[b - 2 + i] = 0x7E;
+  v[b - 3] = 0x11;
+  v[b - 2 + RNG_HEALTH_RCT_CUTOFF] = 0x22;
+  EXPECT_FALSE(rng_health_analyze(v.data(), v.size()));
+}
+
+// Chunked feeding must be identical to one-shot feeding, including at chunk
+// sizes that do not divide the window.
+TEST(RngHealth, IrregularChunkingMatchesOneShot) {
+  auto v = pseudo(RNG_HEALTH_SAMPLE_BYTES, 33);
+  const size_t b = RNG_HEALTH_APT_WINDOW;
+  for (size_t i = 0; i < RNG_HEALTH_RCT_CUTOFF; i++) v[b - 2 + i] = 0x5C;
+  v[b - 3] = 0x11;
+  v[b - 2 + RNG_HEALTH_RCT_CUTOFF] = 0x22;
+
+  for (size_t chunk : {size_t(1), size_t(7), size_t(32), size_t(511)}) {
+    RngHealthCtx ctx;
+    rng_health_init(&ctx);
+    for (size_t off = 0; off < v.size(); off += chunk) {
+      size_t n = std::min(chunk, v.size() - off);
+      rng_health_update(&ctx, v.data() + off, n);
+    }
+    EXPECT_FALSE(rng_health_final(&ctx)) << "chunk size " << chunk;
+  }
 }
 
 }  // namespace

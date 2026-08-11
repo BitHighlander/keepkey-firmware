@@ -46,14 +46,19 @@ typedef struct {
   uint32_t apt_following;
   uint32_t apt_pos;
   uint32_t total;
-  bool started;
+  /* RCT and APT keep INDEPENDENT initialisation state. Sharing one flag let
+   * the APT window boundary reset the repetition counter, so a run straddling
+   * byte 512 went undetected. RCT is continuous over the whole stream; only
+   * APT is windowed. */
+  bool rct_started;
+  bool apt_started;
   bool ok;
 } RngHealthCtx;
 
-void rng_health_init(RngHealthCtx *ctx);
-void rng_health_update(RngHealthCtx *ctx, const uint8_t *buf, size_t len);
+void rng_health_init(RngHealthCtx* ctx);
+void rng_health_update(RngHealthCtx* ctx, const uint8_t* buf, size_t len);
 /// Wipes ctx. Returns false if any window failed or no data was seen.
-bool rng_health_final(RngHealthCtx *ctx);
+bool rng_health_final(RngHealthCtx* ctx);
 
 /// Report which random32() implementation is actually running and whether it
 /// is alive. On STM32 this reads the RNG peripheral's own control and status
@@ -70,7 +75,7 @@ bool rng_source_live(void);
 ///
 /// SCOPE: catches a stuck or grossly degenerate source. A healthy-looking
 /// generator with a tiny seed passes -- no output test detects that.
-bool rng_health_analyze(const uint8_t *buf, size_t len);
+bool rng_health_analyze(const uint8_t* buf, size_t len);
 
 /// Full seed-time gate: rng_source_live() plus rng_health_analyze() over a
 /// freshly drawn RNG_HEALTH_SAMPLE_BYTES sample. Callers must refuse to

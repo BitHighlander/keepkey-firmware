@@ -100,9 +100,16 @@ bool rng_source_live(void) {
   }
   return false;
 #else
-  /* emulatorRandom() is the host OS CSPRNG and aborts the process on failure,
-   * so reaching this line at all means it is working. */
-  return true;
+  /* Returning a bare `true` here made every caller's check a constant-folded
+   * always-false branch, which static analysis correctly flags. Draw from the
+   * same source the emulator actually uses and require it to vary:
+   * emulatorRandom() aborts on failure, so this is cheap, but it is a real
+   * check rather than an assertion, and it keeps the caller's branch meaningful
+   * in both builds. */
+  uint32_t a = 0, b = 0;
+  random_buffer((uint8_t*)&a, sizeof(a));
+  random_buffer((uint8_t*)&b, sizeof(b));
+  return a != b;
 #endif
 }
 
@@ -141,32 +148,28 @@ bool rng_source_live(void) {
  * buffers; a 1 KiB stack frame here is not worth a constant-space alternative.
  */
 
-void rng_health_init(RngHealthCtx *ctx) {
+void rng_health_init(RngHealthCtx* ctx) {
   if (ctx == NULL) return;
   memzero(ctx, sizeof(*ctx));
   ctx->ok = true;
-  ctx->started = false;
+  ctx->rct_started = false;
+  ctx->apt_started = false;
 }
 
-void rng_health_update(RngHealthCtx *ctx, const uint8_t *buf, size_t len) {
+void rng_health_update(RngHealthCtx* ctx, const uint8_t* buf, size_t len) {
   if (ctx == NULL || buf == NULL || !ctx->ok) return;
 
   for (size_t i = 0; i < len; i++) {
     const uint8_t b = buf[i];
     ctx->total++;
 
-    if (!ctx->started) {
-      ctx->started = true;
+    /* Repetition count: continuous over the whole stream, never reset by the
+     * APT window. A run straddling a window boundary must still fail. */
+    if (!ctx->rct_started) {
+      ctx->rct_started = true;
       ctx->rct_prev = b;
       ctx->rct_run = 1;
-      ctx->apt_ref = b;
-      ctx->apt_following = 0;
-      ctx->apt_pos = 1; /* the reference occupies slot 0 of the window */
-      continue;
-    }
-
-    /* Repetition count. */
-    if (b == ctx->rct_prev) {
+    } else if (b == ctx->rct_prev) {
       if (++ctx->rct_run >= RNG_HEALTH_RCT_CUTOFF) {
         ctx->ok = false;
         return;
@@ -176,30 +179,35 @@ void rng_health_update(RngHealthCtx *ctx, const uint8_t *buf, size_t len) {
       ctx->rct_run = 1;
     }
 
-    /* Adaptive proportion, counting only samples FOLLOWING the reference. */
+    /* Adaptive proportion: windowed, counting only samples FOLLOWING the
+     * window's reference sample. */
+    if (!ctx->apt_started) {
+      ctx->apt_started = true;
+      ctx->apt_ref = b;
+      ctx->apt_following = 0;
+      ctx->apt_pos = 1; /* the reference occupies slot 0 of the window */
+      continue;
+    }
+
     if (b == ctx->apt_ref && ++ctx->apt_following >= RNG_HEALTH_APT_CUTOFF) {
       ctx->ok = false;
       return;
     }
 
     if (++ctx->apt_pos >= RNG_HEALTH_APT_WINDOW) {
-      /* Next byte starts a fresh window and becomes its reference. */
-      ctx->started = false;
+      ctx->apt_started = false; /* next byte becomes a new window's reference */
     }
   }
 }
 
-bool rng_health_final(RngHealthCtx *ctx) {
+bool rng_health_final(RngHealthCtx* ctx) {
   if (ctx == NULL) return false;
-  /* `started` tracks a window in progress and goes false at an exact window
-   * boundary, so it cannot stand in for "saw data" -- a sample that is a whole
-   * multiple of the window would otherwise report failure. */
   const bool ok = ctx->ok && ctx->total > 0;
   memzero(ctx, sizeof(*ctx));
   return ok;
 }
 
-bool rng_health_analyze(const uint8_t *buf, size_t len) {
+bool rng_health_analyze(const uint8_t* buf, size_t len) {
   if (buf == NULL || len == 0) return false;
   RngHealthCtx ctx;
   rng_health_init(&ctx);
@@ -216,7 +224,8 @@ bool rng_health_check(void) {
   rng_health_init(&ctx);
 
   uint8_t chunk[32];
-  for (size_t drawn = 0; drawn < RNG_HEALTH_SAMPLE_BYTES; drawn += sizeof(chunk)) {
+  for (size_t drawn = 0; drawn < RNG_HEALTH_SAMPLE_BYTES;
+       drawn += sizeof(chunk)) {
     random_buffer(chunk, sizeof(chunk));
     rng_health_update(&ctx, chunk, sizeof(chunk));
   }
