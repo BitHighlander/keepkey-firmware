@@ -114,8 +114,11 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
    * This does NOT prove the generator is unpredictable; see the scope note at
    * the top of lib/rand/rng_health.c. It proves it is present and not stuck. */
   if (!rng_health_check()) {
+    /* FirmwareError, not SyntaxError/Other: nothing about the request is
+     * wrong. The device's own entropy source failed its self-test, which is a
+     * hardware/firmware fault the host cannot correct by retrying. */
     fsm_sendFailure(
-        FailureType_Failure_ProcessError,
+        FailureType_Failure_FirmwareError,
         _("Random number generator self-test failed; cannot create a wallet"));
     layoutHome();
     return;

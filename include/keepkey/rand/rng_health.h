@@ -32,7 +32,28 @@
  * reviewer can recompute them rather than trust a copied table. */
 #define RNG_HEALTH_RCT_CUTOFF 5
 #define RNG_HEALTH_APT_WINDOW 512
+/* Counts samples FOLLOWING the window reference, so this is NIST's inclusive
+ * cutoff minus one. Exact tail P(X >= 16) = 3.891e-10 <= 2^-30 for
+ * X ~ Binomial(511, 1/256). See the derivation in rng_health.c. */
 #define RNG_HEALTH_APT_CUTOFF 16
+
+/* Streaming health-test state. Constant size: there is deliberately no sample
+ * buffer anywhere in this module. */
+typedef struct {
+  uint8_t rct_prev;
+  uint8_t apt_ref;
+  uint32_t rct_run;
+  uint32_t apt_following;
+  uint32_t apt_pos;
+  uint32_t total;
+  bool started;
+  bool ok;
+} RngHealthCtx;
+
+void rng_health_init(RngHealthCtx *ctx);
+void rng_health_update(RngHealthCtx *ctx, const uint8_t *buf, size_t len);
+/// Wipes ctx. Returns false if any window failed or no data was seen.
+bool rng_health_final(RngHealthCtx *ctx);
 
 /// Report which random32() implementation is actually running and whether it
 /// is alive. On STM32 this reads the RNG peripheral's own control and status

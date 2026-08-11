@@ -77,11 +77,18 @@ bool rng_source_live(void) {
 
   /* Fresh data, bounded wait. random32() spins forever by design; a self-test
    * must be able to conclude "dead" rather than hang the device before the
-   * user has been told anything. */
+   * user has been told anything.
+   *
+   * SEIS/CEIS is re-read on every iteration, not just once before the loop: a
+   * seed or clock fault can latch while we are sampling, and a sample drawn
+   * after the fault must not be accepted merely because the register was clean
+   * when we started. */
   uint32_t first = 0;
   bool have_first = false;
   for (uint32_t tries = 0; tries < 100000; tries++) {
-    if (RNG_SR & RNG_SR_DRDY) {
+    const uint32_t sr = RNG_SR;
+    if (sr & (RNG_SR_SEIS | RNG_SR_CEIS)) return false;
+    if (sr & RNG_SR_DRDY) {
       uint32_t sample = RNG_DR;
       if (!have_first) {
         first = sample;
@@ -102,70 +109,117 @@ bool rng_source_live(void) {
 /* SP 800-90B 4.4.1, repetition count.
  *
  * Cutoff C = 1 + ceil(-log2(alpha) / H). With H = 8 bits per byte and
- * alpha = 2^-30: 1 + ceil(30/8) = 1 + 4 = 5. Fail on five identical
- * consecutive bytes.
+ * alpha = 2^-30: 1 + ceil(30/8) = 5. Fail on five identical consecutive bytes.
  *
- * False positives on a good source: about len * 2^-32 for a run of five,
- * i.e. ~2.4e-7 over the 1024-byte sample. This gate blocks wallet creation,
- * so alpha is deliberately at the strict end of NIST's 2^-20..2^-40 range --
- * a spurious block is a support ticket, and they should be rare enough never
- * to become one. */
-static bool rct_pass(const uint8_t *buf, size_t len) {
-  if (len == 0) return false;
+ * False positives on a good source: about len * 2^-32 for a run of five, i.e.
+ * ~2.4e-7 over a 1024-byte sample. This gate blocks wallet creation, so alpha
+ * sits at the strict end of NIST's 2^-20..2^-40 range: a spurious block is a
+ * support ticket and must stay rare enough never to become one.
+ *
+ * SP 800-90B 4.4.2, adaptive proportion.
+ *
+ * NIST's counter is initialised to 1 because it INCLUDES the window's
+ * reference sample. This implementation counts only the W-1 samples that
+ * FOLLOW the reference, so its cutoff is NIST's minus one, and the two must
+ * not be conflated -- an earlier revision of this file initialised the counter
+ * to 1 while using the following-matches cutoff, which failed a window at 15
+ * following matches instead of 16 and gave alpha = 3.227e-9, roughly 3.5x
+ * looser than the 2^-30 it claimed.
+ *
+ * Exact tail, X ~ Binomial(W-1 = 511, p = 1/256):
+ *
+ *   P(X >= 15) = 3.227e-9      P(X >= 16) = 3.891e-10
+ *   alpha = 2^-30              = 9.313e-10
+ *
+ * so 16 following matches is the smallest cutoff meeting alpha. (Do not cite a
+ * cross-check against NIST's published table without restating the counter
+ * convention: under NIST's inclusive counter the same derivation gives 17 at
+ * alpha = 2^-30 and 14 at alpha = 2^-20.)
+ *
+ * Both tests run as STREAMING state so no sample buffer exists. The device has
+ * a 16 KiB reserve gate and a history of boot faults from large automatic
+ * buffers; a 1 KiB stack frame here is not worth a constant-space alternative.
+ */
 
-  uint8_t prev = buf[0];
-  uint32_t run = 1;
-  for (size_t i = 1; i < len; i++) {
-    if (buf[i] == prev) {
-      if (++run >= RNG_HEALTH_RCT_CUTOFF) return false;
-    } else {
-      prev = buf[i];
-      run = 1;
-    }
-  }
-  return true;
+void rng_health_init(RngHealthCtx *ctx) {
+  if (ctx == NULL) return;
+  memzero(ctx, sizeof(*ctx));
+  ctx->ok = true;
+  ctx->started = false;
 }
 
-/* SP 800-90B 4.4.2, adaptive proportion.
- *
- * Count how many of the W-1 samples following a reference sample equal it.
- * Under an IID source with H = 8, that count is Binomial(511, 1/256), well
- * approximated by Poisson(lambda = 511/256 = 1.996). Tail probabilities:
- *
- *   P(X >= 15) ~ 3.9e-9      P(X >= 16) ~ 4.7e-10      alpha = 2^-30 ~ 9.3e-10
- *
- * so C = 16 is the smallest cutoff meeting alpha. (For the more familiar
- * alpha = 2^-20 the same derivation gives C = 13, which is the value in
- * NIST's published table -- a cross-check that this derivation is right.)
- *
- * Partial trailing windows are analyzed too: a shorter window can only
- * produce fewer matches, so applying the full-window cutoff to it is
- * conservative and never manufactures a failure. */
-static bool apt_pass(const uint8_t *buf, size_t len) {
-  for (size_t start = 0; start < len; start += RNG_HEALTH_APT_WINDOW) {
-    size_t end = start + RNG_HEALTH_APT_WINDOW;
-    if (end > len) end = len;
+void rng_health_update(RngHealthCtx *ctx, const uint8_t *buf, size_t len) {
+  if (ctx == NULL || buf == NULL || !ctx->ok) return;
 
-    const uint8_t ref = buf[start];
-    uint32_t matches = 1;
-    for (size_t i = start + 1; i < end; i++) {
-      if (buf[i] == ref && ++matches >= RNG_HEALTH_APT_CUTOFF) return false;
+  for (size_t i = 0; i < len; i++) {
+    const uint8_t b = buf[i];
+    ctx->total++;
+
+    if (!ctx->started) {
+      ctx->started = true;
+      ctx->rct_prev = b;
+      ctx->rct_run = 1;
+      ctx->apt_ref = b;
+      ctx->apt_following = 0;
+      ctx->apt_pos = 1; /* the reference occupies slot 0 of the window */
+      continue;
+    }
+
+    /* Repetition count. */
+    if (b == ctx->rct_prev) {
+      if (++ctx->rct_run >= RNG_HEALTH_RCT_CUTOFF) {
+        ctx->ok = false;
+        return;
+      }
+    } else {
+      ctx->rct_prev = b;
+      ctx->rct_run = 1;
+    }
+
+    /* Adaptive proportion, counting only samples FOLLOWING the reference. */
+    if (b == ctx->apt_ref && ++ctx->apt_following >= RNG_HEALTH_APT_CUTOFF) {
+      ctx->ok = false;
+      return;
+    }
+
+    if (++ctx->apt_pos >= RNG_HEALTH_APT_WINDOW) {
+      /* Next byte starts a fresh window and becomes its reference. */
+      ctx->started = false;
     }
   }
-  return true;
+}
+
+bool rng_health_final(RngHealthCtx *ctx) {
+  if (ctx == NULL) return false;
+  /* `started` tracks a window in progress and goes false at an exact window
+   * boundary, so it cannot stand in for "saw data" -- a sample that is a whole
+   * multiple of the window would otherwise report failure. */
+  const bool ok = ctx->ok && ctx->total > 0;
+  memzero(ctx, sizeof(*ctx));
+  return ok;
 }
 
 bool rng_health_analyze(const uint8_t *buf, size_t len) {
   if (buf == NULL || len == 0) return false;
-  return rct_pass(buf, len) && apt_pass(buf, len);
+  RngHealthCtx ctx;
+  rng_health_init(&ctx);
+  rng_health_update(&ctx, buf, len);
+  return rng_health_final(&ctx);
 }
 
 bool rng_health_check(void) {
   if (!rng_source_live()) return false;
 
-  uint8_t sample[RNG_HEALTH_SAMPLE_BYTES];
-  random_buffer(sample, sizeof(sample));
-  bool ok = rng_health_analyze(sample, sizeof(sample));
-  memzero(sample, sizeof(sample));
-  return ok;
+  /* Drawn in small chunks and folded immediately: no 1 KiB frame, no static
+   * buffer, O(1) state regardless of RNG_HEALTH_SAMPLE_BYTES. */
+  RngHealthCtx ctx;
+  rng_health_init(&ctx);
+
+  uint8_t chunk[32];
+  for (size_t drawn = 0; drawn < RNG_HEALTH_SAMPLE_BYTES; drawn += sizeof(chunk)) {
+    random_buffer(chunk, sizeof(chunk));
+    rng_health_update(&ctx, chunk, sizeof(chunk));
+  }
+  memzero(chunk, sizeof(chunk));
+  return rng_health_final(&ctx);
 }

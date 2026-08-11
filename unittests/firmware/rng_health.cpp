@@ -69,15 +69,17 @@ TEST(RngHealth, AptCutoffIsExact) {
     // Clear any incidental matches so the count is exactly what we plant.
     for (auto &b : v)
       if (b == ref) b = ref ^ 0x01;
-    v[0] = ref;  // the reference sample itself counts as 1
+    v[0] = ref;  // the window reference, which is NOT itself counted
     for (uint32_t i = 0; i < extra; i++) v[8 + i * 16] = ref;
     return v;
   };
 
-  auto ok = build(RNG_HEALTH_APT_CUTOFF - 2);  // total = cutoff - 1
+  // The cutoff counts samples FOLLOWING the reference, so cutoff-1 following
+  // matches must pass and exactly cutoff must fail.
+  auto ok = build(RNG_HEALTH_APT_CUTOFF - 1);
   EXPECT_TRUE(rng_health_analyze(ok.data(), ok.size()));
 
-  auto bad = build(RNG_HEALTH_APT_CUTOFF - 1);  // total = cutoff
+  auto bad = build(RNG_HEALTH_APT_CUTOFF);
   EXPECT_FALSE(rng_health_analyze(bad.data(), bad.size()));
 }
 
