@@ -122,9 +122,20 @@ Ledger OS, so the correct statement is not "Ledger has no revocation" but:
 > **the public device and app code does not demonstrate an offline
 > expiry/revocation solution we can copy.**
 
-The honest summary: Ledger validates the *certificate to scoped online signer to
-tx-bound payload* portion of this design. It does not hand us an answer to the
-offline freshness problem, and nothing can -- see section 5b.
+The precise wording to use, because it is the hardest to shoot down:
+
+> Ledger's public implementation demonstrates the same underlying PKI pattern:
+> dynamic transaction assessments are signed by runtime-loaded,
+> capability-scoped keys whose certificates are validated through Ledger's PKI,
+> rather than treating a generic online signer as unrestricted trust. The
+> public Speculos implementation exposes certificate validity fields but does
+> not demonstrate an offline revocation/freshness mechanism we can rely on as
+> precedent; Speculos models BOLOS behaviour but is not the complete
+> proprietary BOLOS implementation.
+
+So Ledger validates the *certificate -> scoped online signer -> tx-bound
+payload* portion of this design. It does not hand us an answer to the offline
+freshness problem, and nothing can -- see section 5b.
 
 ---
 
@@ -249,66 +260,164 @@ What it does **not** fix:
   checkpoints is the defensible form.
 - Require the referenced block to be buried by N blocks so reorgs are moot.
 
-### Bitcoin is an input to the epoch, not a replacement for it
+### The invariant
 
-Do not let this become a second ratchet. There is ONE monotonic security epoch,
-governing storage/KDF migration, clear-sign delegation, and future firmware
-trust changes; Bitcoin is a way to advance freshness underneath it, not a
-parallel mechanism. Trusted state is roughly:
+> **Bitcoin does not provide revocation to an offline device. It provides
+> vendor-independent positive evidence of elapsed work. The device uses that
+> evidence only to REDUCE clear-signing authority -- never to grant authority,
+> and never to trigger a destructive state transition.**
 
-    security_epoch = 47
-    btc_checkpoint = { cumulative work / checkpoint identity }
+That asymmetry is the point. It turns any parser or work-accounting mistake
+from a potential key-management failure into, at worst, a clear-sign
+availability failure.
 
-and a delegation certificate references `epoch_min`/`epoch_max` alongside its
-Bitcoin window.
+### Unify the ratchet substrate; domain-separate the authority
 
-**Constraint that falls out of unifying them:** advancing the epoch from a
-Bitcoin-derived signal must never trigger a destructive action. Clear-sign
-expiry may key off the epoch freely, because expiring is fail-safe. Anything
-that migrates or erases storage must require a *root-signed* statement and
-never a derived advance -- otherwise forged headers stop being a nuisance and
-become a way to trigger migrations. Unify the epoch **value**; keep the
-**actions** separate.
+Do NOT collapse everything into one global integer. Build **one**
+integrity-protected monotonic state facility -- one implementation, one atomic
+update path, one set of anti-rollback guarantees, one audit surface -- holding
+domain-separated counters:
+
+    SecurityRatchets {
+        firmware_epoch;
+        storage_epoch;
+        clearsign_epoch;
+        clearsign_freshness;   /* Bitcoin-derived */
+    }
+
+with different authorities permitted to advance different fields:
+
+    ROOT SIGNATURE  -> firmware_epoch, storage_epoch, clearsign_epoch
+    BITCOIN WORK    -> clearsign_freshness  (and nothing else, ever)
+
+Bitcoin-derived state can therefore never cause a KDF migration, a storage
+rewrite, a seed wipe, a firmware trust change, or a PIN behaviour change, no
+matter how far it is pushed or how wrong the validator is. This is stronger
+than "unify the epoch and separate the actions", which relies on discipline at
+every call site; here the separation is structural.
+
+### What the device actually validates
+
+The delegate certificate carries its own Bitcoin anchor, so the trusted point
+is re-established at every issuance and never goes stale between firmware
+releases:
+
+    delegate_pubkey
+    usage               = CLEARSIGN_DYNAMIC
+    chain_scope         = { 1, 8453, 42161 }
+    can_delegate        = false
+    epoch_min/epoch_max
+    btc_anchor_hash     = H
+    btc_anchor_height   = 1_050_000
+    expiry_height_delta = 4320
+    expiry_min_work     = W
+    root_signature
+
+The host then supplies 80-byte headers extending H, and the device checks only:
+
+- `prev_hash` links each header to the last;
+- `sha256d(header) <= target` encoded by that header's `nBits`;
+- the target is within sane bounds;
+- header count;
+- accumulated work, derived from each header's claimed target.
+
+**Why this is sound without consensus rules:** work is computed from the
+*claimed* target and the hash is verified to *meet* that target, so claimed
+work is always backed by demonstrated work. Cheap `nBits` yields trivial
+accumulated work and fails `W`; hard `nBits` requires genuinely finding those
+hashes. `prev_hash` linkage from a root-signed anchor prevents splicing real
+headers from elsewhere in the chain. No retarget validation, no median-time-
+past, no version bits, no chain selection: the question is not "is this
+Bitcoin's canonical chain" but "does a chain descending from my trusted anchor
+contain enough genuine SHA-256 work".
+
+Expiry requires `height_delta >= 4320` **and** `work >= W`. The AND matters:
+height alone is forgeable cheaply, so an OR would let an attacker expire
+legitimate delegates for free.
+
+Bitcoin timestamps are stochastic and consensus-latitudinal. Treat the chain as
+a decentralised monotonic freshness source, never as a wall clock.
+
+### Forged forward progress: bounded to denial of service
+
+An attacker cannot preserve a stolen delegate by forging progress -- advancing
+the tip expires their own credential. But the earlier claim that "forged
+headers only help us" was wrong:
+
+> Forged forward progress cannot extend the attacker's authorization. Its
+> security consequence is bounded to **denial of service**, provided
+> Bitcoin-derived state has no authority over destructive or key-management
+> operations.
+
+The DoS is real: fabricated far-future freshness is monotonic, so legitimate
+certificates anchored near the true network height would read as ancient for
+years -- a permanent clear-sign outage. Requiring genuine accumulated work
+makes that expensive in proportion to how far the attacker pushes, and a cap on
+advance-per-session plus sane target bounds keeps it bounded.
+
+### Downgrade-by-expiry must fail closed
+
+A consequence of "Bitcoin may only reduce authority" that needs stating,
+because reducing authority is not automatically safe: if expiring the
+clear-sign path causes the device to fall back to a flow that *looks* normal --
+raw hex the user approves out of habit -- then an attacker who can force
+expiry has downgraded the user's protection rather than denied service.
+
+Expiry must fail **closed** and **visibly**: no clear-sign rendering, and a
+screen that says the interpretation is unavailable and unverified. It must
+never resemble a successful signing flow. Phase 0's annotation-only shape, with
+the raw review always retained, is already the correct behaviour here and must
+survive into later phases.
+
+### Two complementary revocation paths
+
+| | Mechanism | Latency | Requires |
+|---|---|---|---|
+| Emergency | root signs `clearsign_epoch >= 48` | immediate on receipt | KeepKey alive to issue it |
+| Natural | Bitcoin freshness crosses the certificate's expiry threshold | up to the window | nothing but Bitcoin |
+
+Together they cover both failure modes: a compromise discovered while KeepKey
+operates is killed immediately, and a credential outlives KeepKey's existence
+only until it ages out. A hostile host can suppress both -- the unavoidable
+offline-device boundary from section 5b.
 
 ### Why Bitcoin rather than a root-signed epoch broadcast
 
-A root-signed "epoch 48" update distributed over many channels (API, GitHub,
-IPFS, CDN, npm, community mirrors, third-party wallets) is far cheaper than
-header validation, and a malicious host suppresses it exactly as easily. So
-suppression-resistance is NOT the argument.
+A root-signed "epoch 48" distributed over many channels (API, GitHub, IPFS,
+CDN, npm, community mirrors, third-party wallets) is far cheaper than header
+validation, and a malicious host suppresses it exactly as easily. So
+suppression-resistance is NOT the argument, and ceremony cost barely is --
+monthly delegate reissuance implies a monthly ceremony anyway.
 
-Nor is ceremony cost, quite: if delegates are reissued monthly, a monthly root
-ceremony happens anyway.
+The argument that survives is **vendor independence**, and the resulting
+failure mode is fail-closed:
 
-The argument that survives is **vendor independence**. In the broadcast model,
-freshness is a liveness dependency on KeepKey the company. If KeepKey is
-acquired, goes dark, or simply stops publishing, every outstanding delegate
-stays valid forever with no path to expiry. With Bitcoin, delegates expire on
-schedule whether or not KeepKey still exists. For a hardware wallet that is a
-security property, not an operational convenience, and it is the reason to pay
-the ROM.
+    KeepKey disappears
+            v
+    no new delegate certificates
+            v
+    dynamic clear-sign service eventually stops
+            v
+    existing delegates nevertheless age out
+            v
+    static/device-native signing still works
 
-### Forged headers push the ratchet the safe way
+Under a broadcast model, freshness is a liveness dependency on KeepKey
+continuing to publish: if the company is acquired or goes dark, every
+outstanding delegate stays valid forever with no path to expiry. That is the
+reason to pay the ROM.
 
-An attacker here wants the tip **low** -- freeze the device so a stolen delegate
-stays valid. Mining a forged high-work chain advances the tip and *expires their
-own delegate*. A low-difficulty private fork therefore buys the attacker nothing
-in this threat model; its worst outcome is DoS by prematurely expiring a
-legitimate delegate.
+### Implementation constraints worth pricing early
 
-That inverts the usual SPV cost/benefit, where forgery gains the attacker money
-and full validation is mandatory. It suggests full consensus validation may be
-unnecessary here: a firmware-carried **checkpoint plus a bounded window** --
-accept at most M headers extending a known-good point, refresh the checkpoint
-each firmware release -- is "verify a short extension of a known point" rather
-than "implement Bitcoin", at a fraction of the ROM and attack surface.
-
-This relaxation is valid ONLY while epoch advance is non-destructive, per the
-constraint above. If that ever stops holding, the validator requirements go back
-up to prev-block linkage, nBits validation, retarget rules, cumulative chainwork
-and most-work chain selection. Note also that Bitcoin timestamps are stochastic
-and consensus-latitudinal: treat the chain as a decentralised monotonic
-freshness source, never as a wall clock.
+- **Streaming, O(1) state.** 4320 headers is ~346 KB. It cannot be buffered on
+  this device: headers must be validated and folded incrementally, keeping only
+  the running tip and accumulated work.
+- **Anchor recency at issuance.** The root ceremony must anchor to a recent
+  block, or the validity window opens in the past.
+- **Hashrate drift.** With AND-semantics, a sustained hashrate collapse makes
+  work accumulate slowly and extends credential life. Bitcoin has never seen a
+  sustained collapse of the magnitude that would matter, but the direction of
+  the error should be recorded rather than discovered.
 
 ### Freshness must be signed by the root
 
