@@ -173,6 +173,81 @@ anti-rollback epoch design, and this work should not fork from it.
 
 ---
 
+## 5b. Revocation is not enforceable. Expiry is.
+
+Revocation needs the device to either **learn** it is revoked (a channel the
+adversary controls) or **expire on its own** (a clock it does not have). A
+withheld message is indistinguishable from no network, so any design resting on
+delivering a negative statement -- CRLs, an on-chain revocation record, a
+"this delegate is dead" broadcast -- is unenforceable against the party we
+already assume is hostile.
+
+Web PKI reached this conclusion when CRLs failed and OCSP stapling won. Adopt
+the same answer: **stop revoking, start expiring.** Credentials are short-lived
+and revocation means *stop reissuing*. The device then demands proof of
+freshness -- a positive statement it can check -- instead of proof of absence,
+which it cannot.
+
+The question becomes: where does a clockless device get freshness it cannot be
+lied to about?
+
+### Bitcoin headers as the freshness oracle
+
+Validating a header is one `sha256d` and a target comparison, and forging one
+at mainnet difficulty means outspending the network. That makes a header
+genuine evidence that work and time have passed, and it beats a KeepKey-signed
+epoch bump on the axis that matters:
+
+**the ratchet advances without KeepKey's participation.** Any host, explorer or
+full node can push the tip forward. A KeepKey-signed epoch only advances if the
+device reaches KeepKey infrastructure -- precisely the channel an attacker
+suppresses. Decentralised liveness is the entire benefit.
+
+It also yields real elapsed-time semantics rather than bare ordering: one month
+is about 4320 blocks, so `cert.height + 4320 >= accepted_tip` is an expiry
+check.
+
+What it does **not** fix:
+
+- **Freezing still works.** Withhold new headers and the device is pinned in the
+  past. Bitcoin does not remove this residual; it makes the honest path work
+  without us.
+- **Integrity-protected monotonic storage is still required** for the accepted
+  tip. If flash modification can lower it, every expired delegate returns. This
+  does not escape the anti-rollback requirement of section 5 -- it rides it.
+- **Track cumulative work, not height.** Height alone is forgeable via a
+  low-difficulty fork, and difficulty can legitimately fall 4x per retarget, so
+  a hardcoded target is soft. Monotonic cumulative work plus firmware-carried
+  checkpoints is the defensible form.
+- Require the referenced block to be buried by N blocks so reorgs are moot.
+
+### Freshness must be signed by the root
+
+If the delegate signs its own freshness proof, a stolen delegate signs one too
+and the mechanism is theatre. The proof must come from the offline root, which
+collapses the design to its simplest statement:
+
+> The root reissues the delegate monthly, each certificate naming a Bitcoin
+> block. The device accepts a certificate only if that block lies within about
+> 4320 blocks of the best tip the device has accepted. Revoking is not
+> reissuing.
+
+No revocation channel is built, because none would work.
+
+### Threat model, stated for audit
+
+| Case | Outcome |
+|---|---|
+| Signing server compromised, victim's host honest | Vault advances the tip; the stolen delegate expires within a month. **Bounded and defended.** |
+| Server compromised **and** host hostile | Attacker freezes the tip and keeps using the stale delegate indefinitely. **Not defended.** Blast radius is still one delegate's scope -- forging a *new* delegate needs the root. |
+| Device that never connects | Frozen, indefinitely trusting. Unavoidable for any offline device. |
+
+An on-chain revocation record (OP_RETURN plus an SPV merkle proof) is tempting
+and should be skipped: it is a negative statement again, so an attacker simply
+does not supply the proof. Positive freshness dominates it at lower ROM cost.
+
+---
+
 ## 6. What the device must verify (the new path)
 
 Today a signer is a bare public key in one of `METADATA_MAX_KEYS` (4) RAM
@@ -269,9 +344,12 @@ should raise its priority above what a storage-only view would suggest.
 
 ## 9. Open questions
 
-- Epoch storage: OTP, authenticated storage section, or firmware-carried
-  minimum? Decides revocation latency and whether flash modification can undo
-  a revocation.
+- Epoch/tip storage: OTP, authenticated storage section, or firmware-carried
+  minimum? Decides expiry latency and whether flash modification can undo an
+  expiry.
+- Bitcoin header validation cost in ROM (validation + retarget + checkpoints)
+  measured against the reclaimed budget, and whether the btc-only variant
+  carries it too.
 - Certificate encoding — a compact fixed layout, not X.509. ROM is scarce
   and an ASN.1 parser on a trust boundary is a liability.
 - Delegate count: one, or several with disjoint scopes (per chain, per
