@@ -106,10 +106,9 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     }
   }
 
-  /* Last check before any key material exists. The device refuses to create a
-   * wallet on a generator that is not demonstrably running and healthy --
-   * failing closed here is the whole point, since every later step is
-   * downstream of these 32 bytes.
+  /* Asked here rather than only inside the draw below so the host gets a real
+   * error message instead of a halted device: this is the one key-material path
+   * with somewhere to report a failure to.
    *
    * This does NOT prove the generator is unpredictable; see the scope note at
    * the top of lib/rand/rng_health.c. It proves it is present and not stuck. */
@@ -124,7 +123,15 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
-  random_buffer(int_entropy, 32);
+  /* The gate above and this draw are deliberately not separable: the check
+   * cannot be edited out of this function while leaving the draw behind. */
+  if (!random_buffer_checked(int_entropy, 32)) {
+    fsm_sendFailure(
+        FailureType_Failure_FirmwareError,
+        _("Random number generator self-test failed; cannot create a wallet"));
+    layoutHome();
+    return;
+  }
 
   /* Dice fold in before EntropyRequest, so the host contribution arrives
    * strictly after the device has committed to its own.

@@ -48,6 +48,7 @@
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bip32.h"
@@ -814,7 +815,9 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   _Static_assert(sizeof(storage->pub.storage_key_fingerprint) == 32,
                  "key fingerprint must be 32 bytes");
 
-  random_buffer(storage->pub.random_salt, 32);
+  /* The PIN KDF salt: unpredictability here is what stops a precomputed
+   * wrapping-key table, so it is key material and draws through the gate. */
+  random_buffer_or_die(storage->pub.random_salt, 32);
 
   storage->has_sec = true;
 
@@ -1931,8 +1934,11 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
                             PIN_KDF_V19, storage->pub.random_salt,
                             _("Encrypting Secrets"));
 
-  // Derive a new storageKey.
-  random_buffer(ss->storageKey, 64);
+  // Derive a new storageKey. Everything the wallet keeps secret is encrypted
+  // under these 64 bytes, and this runs on wallet creation, on every PIN
+  // change and on the V1 upgrade path -- none of which passed through the
+  // seed-time gate when it lived only in reset_init().
+  random_buffer_or_die(ss->storageKey, 64);
 
   // Wrap the new storageKey.
   storage_wrapStorageKey(wrapping_key, ss->storageKey,
@@ -1993,7 +1999,7 @@ void storage_setWipeCode_impl(SessionState* ss, Storage* storage,
                             _("Updating Wipe Code"));
 
   // Derive a new wipe code key .
-  random_buffer(scratch_key, 64);
+  random_buffer_or_die(scratch_key, 64);
 
   // Wrap the new wipe code key.
   storage_wrapStorageKey(wrapping_key, scratch_key,

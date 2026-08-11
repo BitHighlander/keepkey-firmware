@@ -6,6 +6,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -132,6 +133,58 @@ TEST(RngHealth, IrregularChunkingMatchesOneShot) {
     }
     EXPECT_FALSE(rng_health_final(&ctx)) << "chunk size " << chunk;
   }
+}
+
+// THE SCOPE FIX, PINNED AS TESTS.
+//
+// The gate used to live in one function -- reset_init() -- so recovery, import,
+// LoadDevice, PIN and wipe-code changes, U2F registration and the OTP block all
+// drew key material without it. random_buffer_checked() is the single place
+// that consumes the verdict; what matters is that it fails CLOSED rather than
+// handing back whatever the source produced.
+
+TEST(RngHealth, CheckedDrawFillsFromAHealthySource) {
+  rng_health_force_verdict(true);
+  uint8_t a[64] = {0};
+  uint8_t b[64] = {0};
+  ASSERT_TRUE(random_buffer_checked(a, sizeof(a)));
+  ASSERT_TRUE(random_buffer_checked(b, sizeof(b)));
+  EXPECT_NE(0, memcmp(a, b, sizeof(a))) << "two draws matched — RNG broken?";
+}
+
+// The property the whole change exists for: on a failed verdict the caller gets
+// false AND a zeroed buffer, so a caller that ignores the return value still
+// cannot walk away with key material from a source that did not pass.
+TEST(RngHealth, CheckedDrawFailsClosedAndWipes) {
+  rng_health_force_verdict(false);
+  uint8_t buf[64];
+  memset(buf, 0xAB, sizeof(buf));
+
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)));
+
+  const uint8_t zeros[64] = {0};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)))
+      << "buffer kept its contents after a refused draw";
+  EXPECT_FALSE(rng_health_check());
+
+  rng_health_force_verdict(true);
+}
+
+TEST(RngHealth, CheckedDrawRejectsNull) {
+  rng_health_force_verdict(true);
+  EXPECT_FALSE(random_buffer_checked(nullptr, 32));
+}
+
+// The paths with nowhere to report a failure -- storage_setPin_impl() drawing
+// the storage encryption key, for one -- halt instead of continuing.
+TEST(RngHealthDeathTest, OrDieHaltsOnAFailedVerdict) {
+  EXPECT_EXIT(
+      {
+        rng_health_force_verdict(false);
+        uint8_t buf[64];
+        random_buffer_or_die(buf, sizeof(buf));
+      },
+      ::testing::ExitedWithCode(1), "");
 }
 
 }  // namespace

@@ -51,6 +51,8 @@
 
 #include <string.h>
 
+#include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/layout.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/rand.h"
 
@@ -215,7 +217,7 @@ bool rng_health_analyze(const uint8_t* buf, size_t len) {
   return rng_health_final(&ctx);
 }
 
-bool rng_health_check(void) {
+static bool rng_health_gate(void) {
   if (!rng_source_live()) return false;
 
   /* Drawn in small chunks and folded immediately: no 1 KiB frame, no static
@@ -232,3 +234,81 @@ bool rng_health_check(void) {
   memzero(chunk, sizeof(chunk));
   return rng_health_final(&ctx);
 }
+
+/* THE CENTRALISED VERDICT.
+ *
+ * The first version of this gate sat in one place -- the generate-mnemonic
+ * path -- and every other producer of key material drew from random_buffer()
+ * directly: recovery and import, LoadDevice, PIN and wipe-code changes, U2F key
+ * handles, the OTP randomness block. So the check was real but its scope was
+ * one code path, and the honest claim was never "this device will not create
+ * key material on a broken generator".
+ *
+ * Widening it by adding rng_health_check() at each of those call sites would
+ * re-run a 1 KiB sample per draw and, worse, leave the next call site to
+ * remember. Instead: one latched verdict, computed once, and one draw function
+ * that consumes it. The check is inherited by construction rather than
+ * repeated.
+ *
+ * The latch is per boot and one-way. A generator that fails is not retried
+ * until it passes -- retrying until success is how a marginal source talks its
+ * way in. */
+static enum { RNG_UNTESTED = 0, RNG_PASSED, RNG_FAILED } rng_verdict;
+
+/* Continuous SP 800-90B state over every byte of key material drawn this boot.
+ * This is what the RCT and APT are actually specified for: they run on the
+ * output as it is produced, not only on a one-time sample. Constant space --
+ * the streaming context holds no buffer -- so covering every draw costs
+ * nothing over covering one. */
+static RngHealthCtx rng_continuous;
+
+bool rng_health_check(void) {
+  if (rng_verdict == RNG_UNTESTED) {
+    if (rng_health_gate()) {
+      rng_verdict = RNG_PASSED;
+      rng_health_init(&rng_continuous);
+    } else {
+      rng_verdict = RNG_FAILED;
+    }
+  }
+  return rng_verdict == RNG_PASSED && rng_continuous.ok;
+}
+
+bool random_buffer_checked(uint8_t* buf, size_t len) {
+  if (buf == NULL) return false;
+
+  if (!rng_health_check()) {
+    memzero(buf, len);
+    return false;
+  }
+
+  random_buffer(buf, len);
+  rng_health_update(&rng_continuous, buf, len);
+
+  if (!rng_continuous.ok) {
+    /* Latch before wiping, so a caller that ignores the return value still
+     * cannot obtain key material from a source that has now failed. */
+    rng_verdict = RNG_FAILED;
+    memzero(buf, len);
+    return false;
+  }
+  return true;
+}
+
+void random_buffer_or_die(uint8_t* buf, size_t len) {
+  if (random_buffer_checked(buf, len)) return;
+  layout_warning_static("RNG self-test failed. Reboot device!");
+  shutdown();
+}
+
+#ifdef EMULATOR
+void rng_health_force_verdict(bool passed) {
+  if (passed) {
+    rng_verdict = RNG_PASSED;
+    rng_health_init(&rng_continuous);
+  } else {
+    rng_verdict = RNG_FAILED;
+    memzero(&rng_continuous, sizeof(rng_continuous));
+  }
+}
+#endif
