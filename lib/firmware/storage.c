@@ -1676,7 +1676,10 @@ void storage_commit(void) {
   // encrypted secret section -- unprotected, so a corrupted last byte could
   // pass commit verification and only surface later as a secret fingerprint
   // failure, which reaches storage_wipe(). 2572 = 643 words covers all 2569.
-  static char flash_temp[2572];
+  //
+  // _Alignas because calc_crc32() casts to uint32_t*: the size assertion below
+  // says the buffer is a whole number of words, not that it starts on one.
+  static _Alignas(uint32_t) char flash_temp[2572];
   _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
                  "flash_temp must be word-sized or the CRC drops its tail");
   _Static_assert(sizeof(flash_temp) >= 2569,

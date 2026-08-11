@@ -262,10 +262,12 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len);
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
+void storage_readV17(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV18(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV19(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
+void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV18(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 

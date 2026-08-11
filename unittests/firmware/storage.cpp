@@ -1148,3 +1148,75 @@ TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
   storage_readV18(&end, (const char*)&flash[0], flash.size());
   EXPECT_FALSE(end.storage.pub.pin_kdf_v2);
 }
+
+// The wallet lockout this branch fixes lived on the serialize/reboot boundary:
+// storage_setPin_impl() produced a wrap the V17 record could not describe, and
+// nothing noticed until the next boot re-derived the wrapping key from the
+// persisted flags and every PIN failed. Every one of the tests above stays in
+// RAM, so none of them could see it.
+//
+// This is the whole round trip, in the order the device performs it: create,
+// set a PIN, serialize the V17 record exactly as storage_commit() does, reload
+// it into fresh state as a boot would, unlock, and recover the secrets.
+TEST(Storage, PinUnlocksAfterRebootUnderV17) {
+  ConfigFlash cfg;
+  SessionState ss;
+  memset(&cfg, 0, sizeof(cfg));
+  memset(&ss, 0, sizeof(ss));
+  memcpy(cfg.meta.magic, "stor", 4);
+
+  storage_reset_impl(&ss, &cfg);
+
+  // Something recognisable to recover. has_mnemonic stays false so the reload
+  // does not detour through u2froot derivation; the mnemonic still rides
+  // through the encrypted section either way.
+  cfg.storage.has_sec = true;
+  strlcpy(cfg.storage.sec.mnemonic, "all all all all all all all all all all all all",
+          sizeof(cfg.storage.sec.mnemonic));
+
+  storage_setPin_impl(&ss, &cfg.storage, "1234");
+
+  uint8_t key_before_reboot[64];
+  memcpy(key_before_reboot, ss.storageKey, sizeof(key_before_reboot));
+
+  // storage_commit()'s buffer, same size, same writer.
+  std::vector<char> flash(2572, 0);
+  storage_writeV17(&flash[0], flash.size(), &cfg);
+
+  // Reboot: nothing carries over but the flash sector.
+  ConfigFlash reloaded;
+  SessionState fresh;
+  memset(&reloaded, 0, sizeof(reloaded));
+  memset(&fresh, 0, sizeof(fresh));
+  ASSERT_EQ(SUS_Valid, storage_fromFlash(&fresh, &reloaded, &flash[0]))
+      << "V17 is the current version; reading it back must not migrate";
+
+  bool sca_hardened = reloaded.storage.pub.sca_hardened;
+  bool v15_16_trans = reloaded.storage.pub.v15_16_trans;
+  bool pin_kdf_v2 = reloaded.storage.pub.pin_kdf_v2;
+
+  EXPECT_EQ(PIN_WRONG,
+            storage_isPinCorrect_impl(
+                "9999", reloaded.storage.pub.wrapped_storage_key,
+                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
+                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
+                reloaded.storage.pub.random_salt));
+
+  ASSERT_EQ(PIN_GOOD,
+            storage_isPinCorrect_impl(
+                "1234", reloaded.storage.pub.wrapped_storage_key,
+                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
+                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
+                reloaded.storage.pub.random_salt))
+      << "the PIN set before the reboot no longer opens the wallet";
+  EXPECT_EQ(0, memcmp(fresh.storageKey, key_before_reboot,
+                      sizeof(key_before_reboot)));
+
+  // A wrap that survives unwrapping still has to decrypt the secrets: on a
+  // fingerprint mismatch storage_secMigrate() wipes and shuts down.
+  storage_secMigrate(&fresh, &reloaded.storage, /*encrypt=*/false);
+  EXPECT_STREQ("all all all all all all all all all all all all",
+               reloaded.storage.sec.mnemonic);
+
+  memzero(key_before_reboot, sizeof(key_before_reboot));
+}

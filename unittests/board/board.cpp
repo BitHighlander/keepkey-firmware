@@ -96,3 +96,39 @@ TEST(Board, ConfirmFittingBodiesAreNotPaged) {
     EXPECT_EQ(pages, 1u) << "|" << body << "| was split unnecessarily";
   }
 }
+
+// calc_crc32() is what storage_commit() uses to decide a flash write survived,
+// so the emulator has to compute what the STM32 peripheral computes. It did
+// not: it ran a reflected zlib CRC-32 over word_len *bytes*, meaning a 643-word
+// buffer was covered as 643 bytes. The storage suite could not tell a correct
+// length from a truncated one, which is precisely the bug the V17 CRC fix was
+// about.
+//
+// These vectors are CRC-32/MPEG-2 (poly 0x04C11DB7, init 0xFFFFFFFF, no
+// reflection, no final XOR) over each word's big-endian bytes — what the
+// peripheral produces for `CRC_DR = word`. Reading the buffer as uint32_t
+// rather than as bytes keeps this independent of host endianness.
+TEST(Board, Crc32MatchesTheStm32Peripheral) {
+  const uint32_t one[] = {0x12345678};  // bytes 12 34 56 78
+  EXPECT_EQ(0xDF8A8A2Bu, calc_crc32(one, 1));
+
+  const uint32_t two[] = {0x12345678, 0x9ABCDEF0};  // ... 9A BC DE F0
+  EXPECT_EQ(0x7D24A31Bu, calc_crc32(two, 2));
+}
+
+// storage_commit() marshals a 2572-byte buffer — 643 words — holding a 2569-byte
+// V17 record, so the last meaningful byte is index 2568. It reaches
+// storage_wipe() when the CRC disagrees, so a byte outside the CRC is a byte
+// whose corruption surfaces later as a decrypt failure instead.
+TEST(Board, Crc32CoversTheFinalByteOfTheV17Record) {
+  alignas(uint32_t) uint8_t buf[2572] = {};
+  const uint32_t clean643 = calc_crc32(buf, 643);
+  const uint32_t clean642 = calc_crc32(buf, 642);
+
+  buf[2568] = 0x01;
+
+  EXPECT_NE(clean643, calc_crc32(buf, 643)) << "byte 2568 is outside the CRC";
+  // The regression itself: at sizeof(flash_temp)==2570 the integer division
+  // gave 642 words = 2568 bytes, and byte 2568 changed nothing.
+  EXPECT_EQ(clean642, calc_crc32(buf, 642));
+}
