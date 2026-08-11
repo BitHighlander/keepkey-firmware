@@ -407,6 +407,44 @@ continuing to publish: if the company is acquired or goes dark, every
 outstanding delegate stays valid forever with no path to expiry. That is the
 reason to pay the ROM.
 
+### Variant scope: none of this ships in bitcoin-only
+
+Bitcoin-only firmware does not need clear-signing and must not carry any of it.
+A Bitcoin transaction is inputs, outputs, addresses and amounts, all of which
+the device already renders natively and completely. There is no opaque calldata
+to interpret, so there is nothing for a signing authority to attest to.
+
+This is already the case in the build and is not a change: `signed_metadata.c`
+sits inside `if(NOT ${KK_BITCOIN_ONLY})` in `lib/firmware/CMakeLists.txt`, and
+the attestor message handlers are behind `#if !BITCOIN_ONLY` in `fsm.c`.
+
+**The domain-separated ratchet design is what makes this exclusion possible.**
+The substrate -- the integrity-protected monotonic store -- ships in both
+variants, because `firmware_epoch` and `storage_epoch` apply to bitcoin-only
+just as much. Only `clearsign_freshness` and the header validator are
+full-variant. Under a single global epoch that Bitcoin work could advance,
+bitcoin-only would have to carry header validation just to stay coherent with
+an epoch it shares with storage anti-rollback. Domain separation means the
+variant simply has no field that Bitcoin has authority over, and therefore no
+reason to validate a header.
+
+Two things follow that are easy to get backwards:
+
+- **The Bitcoin header validator ships in the multi-chain firmware and NOT in
+  the bitcoin-only firmware.** Correct, and it reads as backwards; expect to
+  explain it more than once.
+- **The ROM cost concentrates on the tighter variant.** Excluding bitcoin-only
+  does not split the budget, it loads all of it onto full -- which is the
+  build that was down to ~572 bytes free before the 34 KB reclaim in fw #339
+  and #340. Bitcoin-only has headroom precisely because the coins are stripped,
+  and none of that headroom helps here.
+
+Revisit only if bitcoin-only ever wants a capability that needs an external
+attestation -- `TRUSTED_NAME` for Bitcoin addresses is the plausible one. That
+is not a requirement today and should not be built speculatively; this
+paragraph exists so the exclusion stays a decision rather than becoming an
+oversight.
+
 ### Implementation constraints worth pricing early
 
 - **Streaming, O(1) state.** 4320 headers is ~346 KB. It cannot be buffered on
@@ -591,9 +629,9 @@ should raise its priority above what a storage-only view would suggest.
 - Epoch/tip storage: OTP, authenticated storage section, or firmware-carried
   minimum? Decides expiry latency and whether flash modification can undo an
   expiry.
-- Bitcoin header validation cost in ROM (validation + retarget + checkpoints)
-  measured against the reclaimed budget, and whether the btc-only variant
-  carries it too.
+- Streaming header-validator cost in ROM, measured against the post-#339/#340
+  reclaimed headroom in the FULL variant. Bitcoin-only does not carry it (see
+  the variant-scope section), so the whole cost lands on the tighter build.
 - Certificate encoding — a compact fixed layout, not X.509. ROM is scarce
   and an ASN.1 parser on a trust boundary is a liability.
 - Delegate count: one, or several with disjoint scopes (per chain, per
