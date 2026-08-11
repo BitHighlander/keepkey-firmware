@@ -162,6 +162,13 @@ typedef enum {
  * wallet. The full gate list is in docs/security/pin-kdf-v19-migration.md. */
 #define STORAGE_PIN_KDF_V19 0
 
+/* Single source of truth for KDF selection, so tests cannot drift from
+ * production by reimplementing the choice. Both the unlock path and the unit
+ * tests must call these rather than naming a PIN_KDF_* constant directly. */
+pin_kdf_version_t storage_activePinKdfVersion(bool v15_16_trans,
+                                              bool pin_kdf_v2);
+pin_kdf_version_t storage_rewrapPinKdfVersion(void);
+
 #define MAX_MNEMONIC_LEN 240
 
 void storage_loadNode(HDNode* dst, const HDNodeType* src);

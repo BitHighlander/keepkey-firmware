@@ -195,12 +195,12 @@ TEST(Storage, ReadStorageV1) {
 
   // Decrypt upgraded storage.
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey("123456789", wrapping_key, dst.pub.sca_hardened,
-                            dst.pub.pin_kdf_v2
-                                ? PIN_KDF_V19
-                                : (dst.pub.v15_16_trans ? PIN_KDF_V16
-                                                       : PIN_KDF_V15),
-                            dst.pub.random_salt, "");  // strongest pin evar
+  storage_deriveWrappingKey(
+      "123456789", wrapping_key, dst.pub.sca_hardened,
+      /* The V1 upgrade path re-wraps through storage_setPin_impl, so this must
+         track whatever production wraps with -- not a fixed version. */
+      storage_activePinKdfVersion(dst.pub.v15_16_trans, dst.pub.pin_kdf_v2),
+      dst.pub.random_salt, "");  // strongest pin evar
   storage_unwrapStorageKey(wrapping_key, dst.pub.wrapped_storage_key,
                            session.storageKey);
   storage_secMigrate(&session, &dst, /*encrypt=*/false);
@@ -469,9 +469,10 @@ TEST(Storage, StorageUpgrade_Normal) {
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(
       "123456789", wrapping_key, shadow.storage.pub.sca_hardened,
-      shadow.storage.pub.pin_kdf_v2
-          ? PIN_KDF_V19
-          : (shadow.storage.pub.v15_16_trans ? PIN_KDF_V16 : PIN_KDF_V15),
+      /* The V1 upgrade path re-wraps through storage_setPin_impl, so this must
+         track whatever production wraps with -- not a fixed version. */
+      storage_activePinKdfVersion(shadow.storage.pub.v15_16_trans,
+                                  shadow.storage.pub.pin_kdf_v2),
       shadow.storage.pub.random_salt, "");  // strongest pin evar
   storage_unwrapStorageKey(wrapping_key, shadow.storage.pub.wrapped_storage_key,
                            session.storageKey);
@@ -854,8 +855,8 @@ TEST(Storage, IsPinCorrect) {
   uint8_t wrapping_key[64];
   uint8_t random_salt[32];
   memset(random_salt, 0, sizeof(random_salt));
-  storage_deriveWrappingKey("1234", wrapping_key, sca_hardened, PIN_KDF_V19,
-                            random_salt, "");
+  storage_deriveWrappingKey("1234", wrapping_key, sca_hardened,
+                            storage_rewrapPinKdfVersion(), random_salt, "");
 
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t wrapped_key[64];
@@ -872,7 +873,7 @@ TEST(Storage, IsPinCorrect) {
   EXPECT_TRUE(memcmp(key_out, storage_key, 64) == 0);
 }
 
-TEST(Storage, PinKdfV16RewrapsToV19AfterCorrectPin) {
+TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
   const char* pin = "1234";
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t random_salt[RANDOM_SALT_LEN] = {0};
@@ -901,18 +902,32 @@ TEST(Storage, PinKdfV16RewrapsToV19AfterCorrectPin) {
   EXPECT_EQ(0,
             memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 
+  // This is the gate's negative test. The key above is already v16-wrapped and
+  // sca-hardened, so with STORAGE_PIN_KDF_V19 off there is nothing left to
+  // upgrade: the correct PIN must simply succeed, leave the wrap untouched,
+  // and produce no v19 claim. Persisting a v19 wrap under a V17 record -- where
+  // the flag cannot round-trip -- would lock the wallet out on the next boot.
+#if STORAGE_PIN_KDF_V19
   EXPECT_EQ(PIN_REWRAP,
             storage_isPinCorrect_impl(
                 pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
                 &pin_kdf_v2, key_out, random_salt));
   EXPECT_TRUE(pin_kdf_v2);
-  EXPECT_EQ(0, memcmp(key_out, storage_key, sizeof(key_out)));
   EXPECT_NE(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
+#else
+  EXPECT_EQ(PIN_GOOD,
+            storage_isPinCorrect_impl(
+                pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
+                &pin_kdf_v2, key_out, random_salt));
+  EXPECT_FALSE(pin_kdf_v2);
+  EXPECT_EQ(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
+#endif
+  EXPECT_EQ(0, memcmp(key_out, storage_key, sizeof(key_out)));
 
   uint8_t v19_wrapping_key[64];
   uint8_t v19_key_out[64];
-  storage_deriveWrappingKey(pin, v19_wrapping_key, true, PIN_KDF_V19,
-                            random_salt, "");
+  storage_deriveWrappingKey(pin, v19_wrapping_key, true,
+                            storage_rewrapPinKdfVersion(), random_salt, "");
   storage_unwrapStorageKey(v19_wrapping_key, wrapped_key, v19_key_out);
   EXPECT_EQ(0, memcmp(v19_key_out, storage_key, sizeof(v19_key_out)));
 
@@ -984,8 +999,8 @@ TEST(Storage, Vuln1996) {
 
     // first obtain the storage key generated above
     storage_deriveWrappingKey(v.pin, wrapping_key,
-                              config.storage.pub.sca_hardened, PIN_KDF_V19,
-                              random_salt, "");
+                              config.storage.pub.sca_hardened,
+                              storage_rewrapPinKdfVersion(), random_salt, "");
     storage_unwrapStorageKey(
         wrapping_key, config.storage.pub.wrapped_storage_key, storage_key);
 

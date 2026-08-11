@@ -406,6 +406,24 @@ void storage_keyFingerprint(const uint8_t key[64], uint8_t fingerprint[32]) {
   sha256_Raw(key, 64, fingerprint);
 }
 
+pin_kdf_version_t storage_activePinKdfVersion(bool v15_16_trans,
+                                              bool pin_kdf_v2) {
+#if STORAGE_PIN_KDF_V19
+  if (pin_kdf_v2) return PIN_KDF_V19;
+#else
+  (void)pin_kdf_v2; /* the flag cannot round-trip in V17; see STORAGE_PIN_KDF_V19 */
+#endif
+  return v15_16_trans ? PIN_KDF_V16 : PIN_KDF_V15;
+}
+
+pin_kdf_version_t storage_rewrapPinKdfVersion(void) {
+#if STORAGE_PIN_KDF_V19
+  return PIN_KDF_V19;
+#else
+  return PIN_KDF_V16;
+#endif
+}
+
 pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
                                     const uint8_t fingerprint[32],
                                     bool* sca_hardened, bool* v15_16_trans,
@@ -424,12 +442,8 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
      required to update the flash with a storage_commit().
   */
   uint8_t wrapping_key[64];
-  pin_kdf_version_t pin_kdf_version = PIN_KDF_V15;
-  if (STORAGE_PIN_KDF_V19 && *pin_kdf_v2) {
-    pin_kdf_version = PIN_KDF_V19;
-  } else if (*v15_16_trans) {
-    pin_kdf_version = PIN_KDF_V16;
-  }
+  const pin_kdf_version_t pin_kdf_version =
+      storage_activePinKdfVersion(*v15_16_trans, *pin_kdf_v2);
   storage_deriveWrappingKey(pin, wrapping_key, *sca_hardened, pin_kdf_version,
                             random_salt, _("Verifying PIN"));
 
@@ -458,11 +472,13 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
      * one the flag will still describe after storage_commit(). */
 #if STORAGE_PIN_KDF_V19
     const bool needs_rewrap = !*sca_hardened || !*v15_16_trans || !*pin_kdf_v2;
-    const pin_kdf_version_t rewrap_to = PIN_KDF_V19;
 #else
     const bool needs_rewrap = !*sca_hardened || !*v15_16_trans;
-    const pin_kdf_version_t rewrap_to = PIN_KDF_V16;
+    /* No v19 wrap was produced, so the in-RAM flag must not claim one. Also
+     * keeps this an out-parameter in both configurations. */
+    *pin_kdf_v2 = false;
 #endif
+    const pin_kdf_version_t rewrap_to = storage_rewrapPinKdfVersion();
     if (needs_rewrap) {
       // PIN is correct but:
       //   1. wrapping key needs to be regenerated using stretched key
@@ -1651,8 +1667,20 @@ void storage_commit(void) {
   if (btc_only_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
-  // Size of v17 storage layout (2525 bytes) + size of meta (44 bytes) + 1
-  static char flash_temp[2570];
+  //
+  // V17 = meta (44) + storage layout (2525) = 2569 bytes, so the last
+  // meaningful byte is index 2568. The size MUST be a multiple of 4: the CRC
+  // below is computed as sizeof(flash_temp) / sizeof(uint32_t) WORDS, and
+  // integer division silently drops the tail. At 2570 the CRC covered
+  // 642 words = 2568 bytes and left byte 2568 -- the final byte of the
+  // encrypted secret section -- unprotected, so a corrupted last byte could
+  // pass commit verification and only surface later as a secret fingerprint
+  // failure, which reaches storage_wipe(). 2572 = 643 words covers all 2569.
+  static char flash_temp[2572];
+  _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
+                 "flash_temp must be word-sized or the CRC drops its tail");
+  _Static_assert(sizeof(flash_temp) >= 2569,
+                 "flash_temp must cover the whole V17 record");
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -1924,9 +1952,17 @@ void storage_setPin(const char* pin) {
 
 void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
   // Derive the wrapping key for the new pin
+  /* THIS is the function that creates the wrap, so it -- not just the rewrap
+   * path in storage_isPinCorrect_impl -- must honour STORAGE_PIN_KDF_V19.
+   * Hardcoding v19 here while the record is written as V17 wraps the storage
+   * key with parameters the persisted flag cannot describe, and the next boot
+   * derives v15/v16 and fails every PIN: an intact but permanently unopenable
+   * wallet. Every path that CREATES or REWRAPS a wrap must agree with
+   * storage_activePinKdfVersion(). */
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true,
-                            PIN_KDF_V19, storage->pub.random_salt,
+                            storage_rewrapPinKdfVersion(),
+                            storage->pub.random_salt,
                             _("Encrypting Secrets"));
 
   // Derive a new storageKey.
@@ -1937,7 +1973,8 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
                          storage->pub.wrapped_storage_key);
   storage->pub.sca_hardened = true;
   storage->pub.v15_16_trans = true;
-  storage->pub.pin_kdf_v2 = true;
+  /* Must describe the wrap actually produced above, not an aspiration. */
+  storage->pub.pin_kdf_v2 = (storage_rewrapPinKdfVersion() == PIN_KDF_V19);
 
   // Fingerprint the storageKey.
   storage_keyFingerprint(ss->storageKey, storage->pub.storage_key_fingerprint);
