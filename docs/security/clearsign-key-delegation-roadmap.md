@@ -14,6 +14,41 @@ The governing sentence for this work:
 
 ---
 
+## 0. Blocking decisions — read this before costing anything
+
+An earlier reading of this document concluded that the architecture was settled
+and only ROM measurement remained open. **That is false, and it is the most
+expensive misreading available here.** Eight foundations are undecided, and six
+of them change *what would be measured*: the ratchet substrate does not exist in
+the form this document assumes, the authority model names a class rather than a
+key, the updater invariant it depends on is contradicted by the shipping
+bootloader, and the certificate schema is inconsistent between §5b and §6.
+Measuring a validator against an undecided substrate produces a number with no
+referent.
+
+ROM measurement comes **last**, after the seven rows above it are settled.
+
+| # | Sev | Blocker | Where resolved | Status |
+|---|---|---|---|---|
+| 2 | High | Ratchet substrate. The four-field `SecurityRatchets` facility does not exist; the anti-rollback RFC defines a single 256-step unary OTP counter that cannot represent a block height. | §5b *Substrate* | Shape specified here; four parameters need an owner |
+| 3 | High | Authority model. "ROOT SIGNATURE" is an authority class, not a key. | §5b *Authority* | Requirement specified; key/quorum inventory needed |
+| 4 | High | Updater invariant. The bootloader erases the whole application partition before it has seen the candidate. | §8 *Updater invariant* | Three options stated; needs a decision |
+| 8 | Med | Certificate schema conflicts across the document; the acceptance rule tests an epoch range that is never defined. | §6 *Canonical certificate* | Resolved here |
+| 1 | High | Cross-variant preservation. "absent or inert" in bitcoin-only resurrects expired delegates on the round trip back to full. | §5b *Variant scope* | Resolved here |
+| 6 | High | Proof-session inputs are host-supplied. | §5b *What the device validates* | Resolved here |
+| 7 | High | Blind-sign policy is security-critical persistent state with no integrity protection. | §5b *Policy integrity* | Requirement specified; storage medium follows #2 |
+| 5 | High | Single-root custody: one compromise yields globally warning-free false interpretations until firmware replacement. | §4 *Custody* | **Owner decision. Not decidable in this document.** |
+
+Suggested order — substrate (2) → authority (3) → updater invariant (4) →
+certificate transcript (8) → cross-variant preservation (1) → proof-session
+inputs (6) → policy integrity (7) → custody (5). Each one changes the shape of
+the next.
+
+Still undecided and previously flagged: blind-sign policy stickiness (§5b,
+*Four things the policy model must get right*, item 4).
+
+---
+
 ## 1. What clear-signing is defending against
 
 A hardware wallet's only real guarantee is its own screen. Everything else —
@@ -164,10 +199,51 @@ displaying the claim is the point, not a formality.
 Consistent with the no-AWS/self-hosted-first stance: the root is hardware we
 control, in a location we control, with no cloud KMS anywhere in the trust path.
 
-**Root ceremony (to be specified before Phase 3):** air-gapped, multi-person,
-recorded; the root key generated on-device with dice entropy; the public key
-published and pinned in firmware; delegation issuance a scheduled ceremony,
-not an on-call operation.
+### Custody — BLOCKER 5. Owner decision, and it is not decidable here
+
+"Air-gapped, multi-person, recorded; the root key generated on-device with dice
+entropy" describes a *ceremony*. It does not describe **custody**, and the
+distinction is the blocker: as written, this is one dice-generated key on one
+KeepKey. A single root means a single compromise, and the consequence is worse
+than for any other key in the system, because §6 grants exactly one privilege to
+a root-verified chain — **warning-free rendering**. One stolen root produces
+globally warning-free false interpretations on every device that trusts it, and
+the only remedy is a firmware release that every user must choose to install.
+That is the failure mode §3 opens this document by rejecting for the online key,
+reappearing one level up.
+
+The requirement is **N-of-M across independent devices and locations**, so that
+no single device seizure, no single premises compromise and no single insider
+produces a signature. Four things have to be specified alongside it, and each
+one is a way for the scheme to fail quietly if left implicit:
+
+- **Rotation.** How a root is retired on schedule rather than only in crisis.
+- **Backup.** How M is reconstituted after a lost device, without the backup
+  itself becoming a 1-of-1 path around the quorum.
+- **Disaster recovery.** What happens when quorum becomes unreachable —
+  bearing in mind the fail-closed story in *Why Bitcoin rather than a root-signed
+  epoch broadcast*: delegates age out, static and device-native signing continue.
+  Losing the root must degrade to that, not to a rushed single-key restore.
+- **Overlapping-anchor transition.** Firmware pins the root, so rotating it
+  means shipping firmware that trusts old and new simultaneously for a window
+  long enough that devices which update late are never stranded. Without this,
+  rotation is indistinguishable from a compromise-forced emergency.
+
+**These parameters commit the organisation to an operational programme, so they
+are not decided in this document.** What is decided here is that Phase 2 must
+not pin a delegation root before they are, because pinning is the irreversible
+step: a root in shipped firmware cannot be un-shipped.
+
+Note the sequencing relief from §6 *Two roots, not one*: the **schema** root
+signs the offline v2 catalog and grants no per-transaction authority, so Phase 1
+can proceed on a lighter custody model while this decision is outstanding. Only
+the **delegation** root needs the full programme above.
+
+**Ceremony (still required, and downstream of the above):** air-gapped,
+multi-person, recorded; keys generated on-device with dice entropy; public keys
+published and pinned in firmware; delegation issuance a scheduled ceremony, not
+an on-call operation; the Bitcoin anchor chosen at issuance must be recent, or
+the validity window opens in the past.
 
 ---
 
@@ -283,9 +359,9 @@ That asymmetry is the point. It turns any parser or work-accounting mistake
 from a potential key-management failure into, at worst, a clear-sign
 availability failure.
 
-### Unify the ratchet substrate; domain-separate the authority
+### Substrate — BLOCKER 2. The facility this design assumes does not exist
 
-Do NOT collapse everything into one global integer. Build **one**
+Do NOT collapse everything into one global integer. The intent is **one**
 integrity-protected monotonic state facility -- one implementation, one atomic
 update path, one set of anti-rollback guarantees, one audit surface -- holding
 domain-separated counters:
@@ -297,35 +373,106 @@ domain-separated counters:
         clearsign_freshness;   /* Bitcoin-derived */
     }
 
-with different authorities permitted to advance different fields:
+**This is a requirement, not a component that exists, and the mechanism the
+anti-rollback RFC actually specifies cannot provide it.** Earlier text here
+said the options "are exactly the anti-rollback epoch design, and this work
+should not fork from it". The first half is wrong. `anti-rollback-security-
+epoch-rfc.md` reserves *one* audited OTP block as a **256-step unary counter**:
+epoch `N` is the length of the programmed prefix, and there are 256 advances in
+the device's lifetime, total. Four consequences, each of which has to be
+answered before any of this is buildable:
 
-    ROOT SIGNATURE  -> firmware_epoch, storage_epoch, clearsign_epoch
-    BITCOIN WORK    -> clearsign_freshness  (and nothing else, ever)
+- **A unary OTP counter cannot hold a block height.** `clearsign_freshness`
+  tracks a Bitcoin tip in the hundreds of thousands. It does not fit in 256
+  unary steps and never will. `firmware_epoch` and `clearsign_freshness` are
+  not the same kind of value and cannot share a representation.
+- **Authenticated flash prevents forgery, not restoration.** An attacker who
+  can rewrite flash and replay an *authenticated older snapshot* of the ratchet
+  block has rolled the ratchet back without forging anything. Monotonicity needs
+  an anti-replay binding to something the attacker cannot restore -- OTP state,
+  or a counter in a region the attacker cannot rewrite -- not merely a MAC.
+- **Committing on every `Finish` wears flash.** The protocol below advances
+  freshness once per accepted proof. At monthly reissuance that is modest; under
+  a host that submits proofs continuously it is not, and the wear budget has to
+  be a stated number rather than an assumption.
+- **A hostile host can force advances with honest chains.** It does not need to
+  forge anything: it replays genuine, ever-longer header chains from the real
+  network to drive one persistent advance per proof. Rate limiting is therefore
+  not an optimisation (see *What the device validates*, below).
 
-Bitcoin-derived state can therefore never cause a KDF migration, a storage
-rewrite, a seed wipe, a firmware trust change, or a PIN behaviour change, no
-matter how far it is pushed or how wrong the validator is. This is stronger
-than "unify the epoch and separate the actions", which relies on discipline at
-every call site; here the separation is structural.
+**Required shape:** OTP-backed coarse generation or checkpoint -- cheap,
+irreversible, few lifetime advances -- carrying an authenticated journal in
+rewritable storage for the fine-grained values, where the journal is bound to
+the current OTP generation so that restoring a journal from a previous
+generation is detectable and rejected.
+
+Four parameters must be decided with that shape, and none is a detail:
+
+1. **Rollback tolerance.** How far may fine-grained state legitimately regress
+   within one generation (power loss, torn write) before the device treats it as
+   an attack?
+2. **Checkpoint granularity.** How many block heights per OTP generation? This
+   sets both the wear budget and the worst-case rollback window.
+3. **Wear budget.** Erase cycles per year at the assumed proof rate, against the
+   part's endurance, with the rate limit that keeps it there.
+4. **Power-loss state machine.** Exactly which intermediate states are
+   reachable, and what each one means at the next boot.
+
+Until these are answered, "measure the validator's ROM" has no referent: the
+journal, the atomic update path and the generation binding are all unmeasured
+and all mandatory.
+
+### Authority — BLOCKER 3. "ROOT SIGNATURE" is a class, not a key
+
+The separation this design depends on is:
+
+    <firmware root>   -> firmware_epoch
+    <storage root>    -> storage_epoch
+    <clearsign root>  -> clearsign_epoch
+    BITCOIN WORK      -> clearsign_freshness  (and nothing else, ever)
+
+Written as "ROOT SIGNATURE -> firmware_epoch, storage_epoch, clearsign_epoch"
+this reads as one key with authority over all three, which is precisely the
+concentration §3 argues against -- and it would let a compromised clear-sign
+root revoke firmware or migrate storage. **Name which root governs which
+ratchet, and make the separation cryptographic rather than notational:**
+
+- **distinct keys or quorums per authority.** Not one key signing
+  differently-typed messages; different keys. Sharing a key makes the
+  domain tag the only thing standing between a clear-sign compromise and the
+  firmware floor.
+- **domain-tagged signed transcripts.** Every signed object commits to its
+  purpose, so a message minted for one authority cannot be reinterpreted as
+  another. The tag is inside the signed bytes, at a fixed offset, before any
+  variable-length field.
+- **binding to network, model, variant, format version and purpose**, so a
+  certificate for one deployment cannot be replayed into another.
+- **negative tests, as release gates:** cross-protocol replay (a clear-sign
+  certificate offered as a firmware epoch bump, and the reverse), type confusion
+  between certificate and proof-session messages, and a delegate certificate
+  presented where a root object is expected.
+
+The clear-sign root must never gain authority over firmware or storage epochs.
+That is the property the whole domain separation exists to deliver, and it is
+structural only once the keys differ.
+
+With that in place, Bitcoin-derived state can never cause a KDF migration, a
+storage rewrite, a seed wipe, a firmware trust change, or a PIN behaviour
+change, no matter how far it is pushed or how wrong the validator is -- which
+is stronger than "unify the epoch and separate the actions", a rule that relies
+on discipline at every call site.
 
 ### What the device actually validates
 
 The delegate certificate carries its own Bitcoin anchor, so the trusted point
 is re-established at every issuance and never goes stale between firmware
-releases:
+releases. **The certificate layout is defined once, in §6 *Canonical
+certificate*** -- the fields used here are `btc_anchor_hash`,
+`btc_anchor_height`, `expiry_height_delta` and `expiry_min_work`, all covered by
+the delegation root's signature.
 
-    delegate_pubkey
-    usage               = CLEARSIGN_DYNAMIC
-    chain_scope         = { 1, 8453, 42161 }
-    can_delegate        = false
-    epoch_min/epoch_max
-    btc_anchor_hash     = H
-    btc_anchor_height   = 1_050_000
-    expiry_height_delta = 4320
-    expiry_min_work     = W
-    root_signature
-
-The host then supplies 80-byte headers extending H, and the device checks only:
+The host then supplies 80-byte headers extending the certificate's anchor, and
+the device checks only:
 
 - `prev_hash` links each header to the last;
 - `sha256d(header) <= target` encoded by that header's `nBits`;
@@ -420,6 +567,40 @@ transaction request can name its own policy, the host simply always names
 persisted device configuration, changed only through an on-device flow, and
 never a field in a signing request. The selection channel is itself a trust
 boundary.
+
+**1b. BLOCKER 7 — and "persisted device configuration" is not yet a safe
+place.** The policy is security-critical persistent state, and no integrity
+protection has been specified for it. Today's public storage section has **no
+authenticated integrity against physical flash modification** -- that is exactly
+why RC18 retired the V18 clear-sign identity records. A policy byte stored there
+means an attacker with physical access flips one bit and enables the downgrade
+policy directly, without touching a certificate, a delegate or a proof. Every
+protection in this section then evaporates, and it evaporates *silently*,
+because the device believes the user chose it.
+
+Two acceptable models, and the choice follows the substrate decision (#2):
+
+- **Authenticated storage.** The policy lives in the integrity-protected
+  facility, so modification is detected. This is the natural home if that
+  facility exists; it is another reason #2 comes first.
+- **Session-scoped with physical confirmation.** Blind signing is never
+  persisted at all: it is enabled per session by an on-device confirmation and
+  cleared at teardown. This needs no authenticated storage, at the cost of
+  nagging -- and it interacts directly with the stickiness question in item 4
+  below, which it would answer by construction.
+
+Three behaviours must be specified either way, because each is a way for the
+protection to end up off without anyone deciding:
+
+- **after a device reset** the policy returns to the secure default, never to
+  whatever was there before;
+- **after a variant change** (full -> bitcoin-only -> full) the policy is either
+  preserved authentically or reset to the secure default; it must not be
+  inherited from uninterpreted bytes;
+- **on corrupted or unreadable policy state** the device selects the strict
+  policy, not the permissive one. Fail closed here for the same reason the
+  signing path fails closed: an attacker who can corrupt the field must not gain
+  anything by doing so.
 
 **2. The policy is per transaction class, not global.** A plain ETH transfer
 with empty calldata, or an ERC-20 `transfer` the device decodes with its own
@@ -547,11 +728,43 @@ create a second variant to fuzz and audit for no benefit.
 
     bitcoin-only retail:
         no delegation validator
-        clearsign_freshness absent or inert
+        clearsign_freshness PRESERVED OPAQUELY -- carried, never interpreted,
+        never advanced, never lowered
 
     root-attestor special firmware:
         may optionally include validator tooling
         is NOT the retail bitcoin-only image
+
+**BLOCKER 1 — "absent or inert" was wrong, and it contradicted the shared
+substrate above.** If bitcoin-only firmware drops or zeroes
+`clearsign_freshness`, the round trip
+
+    full  ->  bitcoin-only  ->  full
+
+resets freshness to nothing, and **every delegate the device had already aged
+out becomes valid again.** Reflashing is a host-initiated operation, so this is
+a downgrade an attacker performs, not an accident. It is also internally
+inconsistent: the substrate is declared shared across variants, and a shared
+substrate whose fields one variant discards is not shared.
+
+The transition rule has to be explicit, and there are exactly two defensible
+forms:
+
+1. **Opaque preservation (preferred).** Bitcoin-only carries the field as
+   authenticated bytes inside the same ratchet facility, with no code that can
+   advance or lower it. It has no validator, so it has no way to interpret the
+   value -- which is the point: it cannot be tricked into moving something it
+   cannot read. Costs the field's storage and its integrity binding, nothing
+   more; specifically it does *not* pull the header validator into the variant.
+2. **Full firmware refuses clear-signing when the preserved state is missing.**
+   If preservation is not implemented, a device returning from bitcoin-only has
+   no freshness, and full firmware must treat "no freshness state" as
+   *unexpired-cannot-be-established* -- clear-signing off until a fresh proof
+   arrives -- rather than as freshness zero, which would accept everything.
+
+What is NOT acceptable is leaving it unstated, because the default behaviour of
+a missing field is option 2's failure mode with option 1's assumption: the
+field reads as zero and every certificate looks fresh.
 
 The root-signing KeepKey does not itself need to validate a header chain: its
 ceremony establishes the recent anchor through independent tooling and human
@@ -589,11 +802,30 @@ buffers:
 - additional maximum stack frame: **<= 256 B**
 - whole-proof buffering: **0 B**
 
-Protocol is a three-message session, validated and folded incrementally:
+**BLOCKER 6 — every proof constraint comes from the certificate, never from the
+host.** An earlier draft of this protocol had `BitcoinFreshnessBegin` carry the
+anchor hash, anchor height and thresholds. Those are exactly the values that
+decide whether a proof succeeds; supplying them from the host means the host
+picks an anchor it can cheaply extend and thresholds it can trivially meet, and
+the validator then correctly verifies a proof that means nothing. The host may
+**reference** a certificate the device has already verified, and stream headers.
+Nothing else:
 
-    BitcoinFreshnessBegin   cert hash, anchor hash, anchor height, thresholds
+    BitcoinFreshnessBegin   cert_hash            (selects an ALREADY-VERIFIED cert)
     BitcoinFreshnessChunk   sequence, concatenated 80-byte headers
     BitcoinFreshnessFinish  expected total header count
+
+    anchor hash, anchor height, expiry_height_delta and expiry_min_work are
+    read from the referenced certificate's ROOT-SIGNED bytes. If no verified
+    certificate matches cert_hash, the session does not start.
+
+**Rate-limit persistent advances.** A hostile host does not have to forge
+anything to hammer the ratchet: it replays genuine header chains from the real
+network, each longer than the last, and drives one persistent advance per proof.
+Either cap advances per session and per unit of device uptime, or require a
+minimum checkpoint delta -- the advance must be large enough to be worth a write
+-- so that the number of flash commits per year is bounded by design rather than
+by host politeness. This is the wear budget from *Substrate* above, enforced.
 
     for each 80-byte header:
         require prev_hash == running_tip
@@ -742,15 +974,65 @@ The point is containment: **a compromised TOKEN_METADATA signer must never be
 able to author a dynamic transaction interpretation.** Generic "metadata
 authority" gives an attacker the whole surface from any one key.
 
-A certificate therefore carries at minimum:
+### Canonical certificate — BLOCKER 8. One layout, defined here
 
-    delegate_pubkey
-    usage        = CLEARSIGN_DYNAMIC
-    chain_scope  = { 1, 8453, 42161 }
-    can_delegate = false
-    epoch_min/epoch_max
-    bitcoin_not_before / bitcoin_not_after
-    signature    = root(...)
+This document previously described the certificate twice, with different
+fields: §5b named `btc_anchor_hash` / `btc_anchor_height` /
+`expiry_height_delta` / `expiry_min_work`, while this section named
+`bitcoin_not_before` / `bitcoin_not_after`. The acceptance rule then tested
+"`epoch` within `[epoch_min, epoch_max]`" against a scalar `epoch` field that
+appears in neither list. Three descriptions of one signed object is three
+implementations, and on a trust boundary that is a vulnerability rather than an
+inconsistency: the verifier and the issuer disagree about which bytes are
+covered.
+
+**The canonical layout — a compact fixed encoding, not X.509 (ROM is scarce and
+an ASN.1 parser on a trust boundary is a liability):**
+
+    offset  field                    notes
+    ------  -----------------------  ---------------------------------------
+      0     format_version           refuse anything not exactly known
+      2     domain_tag               "KKCLEARSIGN-DELEGATE-V1"; fixed offset,
+                                     before any variable-length field (§5b
+                                     Authority)
+      *     network_id               mainnet / testnet deployment binding
+      *     model_binding            device model class
+      *     variant_binding          full only; bitcoin-only holds no delegate
+      *     delegate_pubkey          33-byte compressed secp256k1
+      *     usage                    CLEARSIGN_DYNAMIC, TOKEN_METADATA, ...
+      *     chain_scope              EVM chain ids this delegate may assert on
+      *     can_delegate             MUST be false for every delegate issued
+      *     cert_epoch               scalar. Revocation ordering. Accepted only
+                                     if >= the device's stored clearsign_epoch
+      *     btc_anchor_hash          root-chosen, recent at issuance
+      *     btc_anchor_height        height of that anchor
+      *     expiry_height_delta      e.g. 4320 (~1 month)
+      *     expiry_min_work          W; expiry needs delta AND work
+      *     root_signature           by the DELEGATION root (see below)
+
+`bitcoin_not_before` / `bitcoin_not_after` are **removed**: they expressed the
+same constraint as anchor + delta, in a form that invites treating them as wall
+clock. `epoch_min` / `epoch_max` are **removed**: a certificate has one epoch.
+A range described nothing the device could check, which is why the acceptance
+rule tested a field that did not exist.
+
+### Two roots, not one — and this is what Phase 1 vs Phase 2 was confusing
+
+Phase 1 ships "the built-in anchor that verifies the catalog" and Phase 2 says
+"pin the root public key". Both are true because they are **different keys**,
+and saying "the anchor" for both is what made the phases look contradictory:
+
+| Root | Signs | Pinned in | May advance |
+|---|---|---|---|
+| **Schema root** | v2 static catalog entries. Offline, no hot key downstream. | Phase 1 firmware | nothing |
+| **Delegation root** | delegate certificates for the per-tx v1 service. | Phase 2 firmware | `clearsign_epoch` |
+
+They are separate keys with separate ceremonies and separate compromise stories.
+A compromised schema root can mis-describe catalogued contracts; a compromised
+delegation root can mint delegates for anything. Neither has any authority over
+`firmware_epoch` or `storage_epoch` (§5b *Authority*). Phase 1 can therefore ship
+its anchor without waiting on the custody decision for the delegation root,
+which is the sequencing benefit of splitting them.
 
 ### Transaction binding, taken from Ledger verbatim
 
@@ -772,9 +1054,14 @@ it to malicious transaction B. This is the whole reason v1 commits a `tx_hash`.
 
 Device-side acceptance requires all of:
 
-1. certificate signature verifies against the built-in anchor;
-2. `epoch` within `[epoch_min, epoch_max]` and `>=` stored minimum epoch;
-3. Bitcoin window satisfied against the accepted tip;
+1. certificate signature verifies against the built-in **delegation root**, and
+   `format_version`, `domain_tag`, `network_id`, `model_binding` and
+   `variant_binding` all match this device and this object type;
+2. `cert_epoch >=` the device's stored `clearsign_epoch` minimum;
+3. Bitcoin window satisfied against the accepted tip —
+   `clearsign_freshness_height < cert.btc_anchor_height +
+   cert.expiry_height_delta` — with freshness read as *established*, not
+   defaulted (§5b *Variant scope*, option 2);
 4. `usage` permits this assertion, and `chain_scope` covers this chain;
 5. the delegate is not the anchor, and `can_delegate == false` is honoured;
 6. payload signature verifies against the delegate key;
@@ -804,21 +1091,28 @@ every attestor confirmation (fw #331 class).
 
 ### Phase 1 — v2 static catalog, no hot key
 
-Ship the offline-signed schema catalog and the built-in anchor that verifies
-it. Covers the head of the distribution with **zero online key exposure**.
+Ship the offline-signed schema catalog and the built-in **schema root** that
+verifies it (§6 *Two roots, not one*). Covers the head of the distribution with
+**zero online key exposure**, and does not wait on the delegation-root custody
+decision, because a schema root grants no per-transaction authority.
 
 Audit targets: device-side decode correctness against adversarial calldata
 (the display is only as good as the decoder); catalog distribution integrity;
 that a v2 blob cannot assert values it did not derive; confirm-screen overflow
 per value, which is value-dependent — measure, do not read.
 
-### Phase 2 — built-in production anchor
+### Phase 2 — built-in production delegation root
 
-Pin the root public key. Warning-free rendering becomes possible for
-anchor-verified metadata.
+Pin the **delegation** root public key, distinct from Phase 1's schema root.
+Warning-free rendering becomes possible for chains terminating at it.
+
+**Gated on BLOCKER 5.** Pinning is irreversible — a root in shipped firmware
+cannot be un-shipped — so the custody programme in §4 must be decided first.
 
 Audit targets: key ceremony and custody; that phase-1 runtime signers still
-warn; that nothing can promote a runtime signer to anchor status.
+warn; that nothing can promote a runtime signer to anchor status; that the
+schema root cannot verify a delegate certificate, or the delegation root a
+catalog entry (§5b *Authority*, cross-protocol replay).
 
 ### Phase 3 — delegation and the per-tx service
 
@@ -847,6 +1141,25 @@ programme:
     replay below committed freshness    -> rejected
     Bitcoin proof touching storage_epoch-> structurally impossible
 
+One per §0 blocker, because each closes a path that produces no error today:
+
+    Begin naming its own anchor/thresholds -> rejected; constraints come only
+                                              from the verified certificate (#6)
+    honest chains replayed to force writes -> advances rate-limited (#2, #6)
+    clearsign cert offered as a firmware
+      epoch bump, and the reverse          -> rejected on domain tag AND key (#3)
+    schema root verifying a delegate cert  -> rejected (#3, #8)
+    full -> bitcoin-only -> full round trip -> expired delegates STAY expired;
+                                              freshness preserved opaquely (#1)
+    policy byte corrupted in flash         -> strict policy selected, not
+                                              permissive (#7)
+    policy after device reset              -> secure default, never the previous
+                                              value (#7)
+    ratchet journal from a previous OTP
+      generation replayed                  -> rejected (#2)
+    candidate epoch below floor            -> rejected BEFORE the erase, or the
+                                              documented recovery-only state (#4)
+
 Plus explicit mode separation: **metadata validation failure != blind-sign
 entry.** That test must assert not only a returned error but that signing state
 was cleared and no subsequent Ack can resurrect the original session.
@@ -873,23 +1186,80 @@ That is also why the storage-V19 revert matters here. The epoch is now on the
 critical path for **both** PIN-KDF hardening and delegated clear-signing, which
 should raise its priority above what a storage-only view would suggest.
 
+### Updater invariant — BLOCKER 4. The shipping bootloader contradicts it
+
+The anti-rollback RFC's update state machine requires, in order: verify the
+candidate's bounds, hash and full signature policy; decode the OTP floor;
+**reject `candidate_epoch < floor` before erasing the installed image**. Its
+security invariant is stronger still:
+
+> A power loss must leave the device able to boot either the previous accepted
+> image or the new accepted image.
+
+**Neither is achievable with the current bootloader.** `handler_erase()` in
+`tools/bootloader/usb_flash.c:425-493` erases sectors 7-11 — the entire
+application partition — on receipt of `FirmwareErase`, which arrives *before*
+any candidate bytes or metadata. At that moment the bootloader has seen no
+epoch, no hash and no signature; there is nothing to compare against the floor.
+And with one application slot, the window between erase and a completed upload
+is a state in which **neither** image is bootable. That is not a regression this
+work introduces — it is today's behaviour — but the epoch design cannot be built
+on top of it, because "reject before erase" has no erase left to precede.
+
+Three ways out, and one must be chosen before the epoch ships:
+
+1. **Staging or dual-slot.** Receive into a second region, verify fully, then
+   activate. Restores both properties directly. Costs an application-sized
+   region the part may not have spare, so this needs a flash-map answer before
+   it is costed.
+2. **Signed-digest preflight with streamed verification.** The candidate's
+   signed metadata — including its epoch and image digest — is transferred and
+   verified *first*, the floor comparison happens there, and only then does the
+   erase proceed; the body is streamed and verified against the committed digest
+   as it lands. Preserves "reject before erase" without a second slot, but does
+   **not** restore old-or-new bootability across power loss.
+3. **Rewrite the invariant** to admit recovery-only interruption states: state
+   explicitly that a power loss mid-upload leaves the device in a bootloader
+   recovery mode with no bootable application, and that this is accepted. This
+   is the honest description of today's device, and it is a legitimate choice —
+   but it must be written down, because the RFC currently promises otherwise and
+   an auditor will read the promise.
+
+Whichever is chosen, the OTP floor must still only advance after the image has
+been verified *from flash* (RFC step 6→7), so a torn write can never ratchet the
+device past an image it cannot boot.
+
 ---
 
-## 9. Open questions
+## 9. Open questions — parameters, downstream of §0
 
-- Epoch/tip storage: OTP, authenticated storage section, or firmware-carried
-  minimum? Decides expiry latency and whether flash modification can undo an
-  expiry.
-- Streaming header-validator cost in ROM, measured against the post-#339/#340
-  reclaimed headroom in the FULL variant. Bitcoin-only does not carry it (see
-  the variant-scope section), so the whole cost lands on the tighter build.
-- Certificate encoding — a compact fixed layout, not X.509. ROM is scarce
-  and an ASN.1 parser on a trust boundary is a liability.
+**These are not the blockers.** The blockers are in §0 and they are structural;
+what follows are parameters that only become answerable once §0 is settled.
+Reading this list as "what remains" is the misreading §0 exists to prevent.
+
+- **ROM cost of the streaming header validator**, measured against the
+  post-#339/#340 headroom in the FULL variant. Bitcoin-only does not carry the
+  validator (see *Variant scope*), so the whole cost lands on the tighter build.
+  **Measure last.** The substrate (#2) determines whether there is a journal and
+  an atomic update path to measure at all; the authority model (#3) determines
+  how many verification contexts exist; the updater decision (#4) may add a
+  staging path; the certificate layout (#8) sets the parser. A number produced
+  before those exist describes a design nobody has chosen.
 - Delegate count: one, or several with disjoint scopes (per chain, per
   partner)? More delegates means smaller blast radius but more chain
-  validation and more ROM.
+  validation and more ROM. Follows the custody decision (#5), which sets how
+  expensive an issuance ceremony is.
 - Does a delegated v1 render truly warning-free, or keep a subtler marker
   ("described by KeepKey, 12 Aug") — recording that a third party asserted the
   meaning, without the alarm of the self-service path?
 - Does v2's reach make v1 rare enough that the per-tx service is
   opt-in rather than default?
+- Blind-sign policy stickiness (§5b, *Four things the policy model must get
+  right*, item 4). Note that the session-scoped option under BLOCKER 7 answers
+  this by construction, so the two should be decided together rather than
+  separately.
+
+Resolved out of this list: epoch/tip storage is now BLOCKER 2, not a parameter —
+it is not a choice between three media but a facility that does not exist.
+Certificate encoding is settled in §6 *Canonical certificate*: a compact fixed
+layout, never X.509.
