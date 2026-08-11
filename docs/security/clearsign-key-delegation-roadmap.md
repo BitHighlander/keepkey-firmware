@@ -94,9 +94,37 @@ A delegated signer bounds the damage to something survivable:
   optionally chain-limited;
 - the root stays offline, on hardware, and is used a handful of times a year.
 
-This is the same conclusion Ledger reached for their per-transaction/plugin
-signing service, and for the same reason: per-tx attestation forces a hot key,
-and a hot key forces a PKI.
+### What Ledger's public implementation does and does not substantiate
+
+Ledger runs the same cryptographic shape for its live path, and the parts we can
+verify from public code are worth copying rather than reinventing:
+
+- an OS-level PKI with a root CA (`LEDGER_ROOT_V3`), certificates loaded at
+  runtime through a generic `LOAD_CERTIFICATE` APDU, verified and retained as
+  the current PKI key, with chaining via previously validated keys;
+- **capability-scoped** certificates. The key usage is part of the certificate
+  -- `TX_SIMU_SIGNER`, `CALLDATA`, `TRUSTED_NAME`, `NFT_METADATA`, `COIN_META`,
+  `PLUGIN_METADATA`, `SWAP_TEMPLATE`, `EXCHANGE_PAYLOAD`, and more. The
+  Ethereum app does not trust a bare "Ledger-approved key"; it asks the PKI
+  subsystem for a certificate whose usage is
+  `CERTIFICATE_PUBLIC_KEY_USAGE_TX_SIMU_SIGNER` and verifies the report with
+  that key;
+- **transaction binding on the device**, not merely a signature over a report.
+
+Do NOT write that Ledger "reached the same conclusion" about short-lived
+revocable delegates. That is not substantiable from public code. In the open
+Speculos implementation the certificate's `TIME_VALIDITY` field is only checked
+structurally for length -- it is not compared against a trusted clock -- and
+`VALIDITY_INDEX` is not visibly ratcheted against tamper-resistant monotonic
+state. Speculos emulates BOLOS behaviour and is not the complete proprietary
+Ledger OS, so the correct statement is not "Ledger has no revocation" but:
+
+> **the public device and app code does not demonstrate an offline
+> expiry/revocation solution we can copy.**
+
+The honest summary: Ledger validates the *certificate to scoped online signer to
+tx-bound payload* portion of this design. It does not hand us an answer to the
+offline freshness problem, and nothing can -- see section 5b.
 
 ---
 
@@ -221,6 +249,67 @@ What it does **not** fix:
   checkpoints is the defensible form.
 - Require the referenced block to be buried by N blocks so reorgs are moot.
 
+### Bitcoin is an input to the epoch, not a replacement for it
+
+Do not let this become a second ratchet. There is ONE monotonic security epoch,
+governing storage/KDF migration, clear-sign delegation, and future firmware
+trust changes; Bitcoin is a way to advance freshness underneath it, not a
+parallel mechanism. Trusted state is roughly:
+
+    security_epoch = 47
+    btc_checkpoint = { cumulative work / checkpoint identity }
+
+and a delegation certificate references `epoch_min`/`epoch_max` alongside its
+Bitcoin window.
+
+**Constraint that falls out of unifying them:** advancing the epoch from a
+Bitcoin-derived signal must never trigger a destructive action. Clear-sign
+expiry may key off the epoch freely, because expiring is fail-safe. Anything
+that migrates or erases storage must require a *root-signed* statement and
+never a derived advance -- otherwise forged headers stop being a nuisance and
+become a way to trigger migrations. Unify the epoch **value**; keep the
+**actions** separate.
+
+### Why Bitcoin rather than a root-signed epoch broadcast
+
+A root-signed "epoch 48" update distributed over many channels (API, GitHub,
+IPFS, CDN, npm, community mirrors, third-party wallets) is far cheaper than
+header validation, and a malicious host suppresses it exactly as easily. So
+suppression-resistance is NOT the argument.
+
+Nor is ceremony cost, quite: if delegates are reissued monthly, a monthly root
+ceremony happens anyway.
+
+The argument that survives is **vendor independence**. In the broadcast model,
+freshness is a liveness dependency on KeepKey the company. If KeepKey is
+acquired, goes dark, or simply stops publishing, every outstanding delegate
+stays valid forever with no path to expiry. With Bitcoin, delegates expire on
+schedule whether or not KeepKey still exists. For a hardware wallet that is a
+security property, not an operational convenience, and it is the reason to pay
+the ROM.
+
+### Forged headers push the ratchet the safe way
+
+An attacker here wants the tip **low** -- freeze the device so a stolen delegate
+stays valid. Mining a forged high-work chain advances the tip and *expires their
+own delegate*. A low-difficulty private fork therefore buys the attacker nothing
+in this threat model; its worst outcome is DoS by prematurely expiring a
+legitimate delegate.
+
+That inverts the usual SPV cost/benefit, where forgery gains the attacker money
+and full validation is mandatory. It suggests full consensus validation may be
+unnecessary here: a firmware-carried **checkpoint plus a bounded window** --
+accept at most M headers extending a known-good point, refresh the checkpoint
+each firmware release -- is "verify a short extension of a known point" rather
+than "implement Bitcoin", at a fraction of the ROM and attack surface.
+
+This relaxation is valid ONLY while epoch advance is non-destructive, per the
+constraint above. If that ever stops holding, the validator requirements go back
+up to prev-block linkage, nBits validation, retarget rules, cumulative chainwork
+and most-work chain selection. Note also that Bitcoin timestamps are stochastic
+and consensus-latitudinal: treat the chain as a decentralised monotonic
+freshness source, never as a wall clock.
+
 ### Freshness must be signed by the root
 
 If the delegate signs its own freshness proof, a stolen delegate signs one too
@@ -269,13 +358,59 @@ delegation certificate  { delegate pubkey, epoch, scope, not-after (advisory) }
 per-transaction v1 blob  { tx_hash, decoded values }
 ```
 
+### Capability scoping, taken from Ledger
+
+A certificate must not say "this key is trusted". It must say what the key is
+allowed to assert. Copy the shape of Ledger's key-usage enum:
+
+    CLEARSIGN_SCHEMA     static v2 catalog entries
+    CLEARSIGN_DYNAMIC    per-tx v1 interpretation
+    TX_RISK              risk / simulation verdict only
+    TOKEN_METADATA       symbol + decimals for an address
+    TRUSTED_NAME         address -> name resolution
+    SWAP_QUOTE / BRIDGE_QUOTE
+
+The point is containment: **a compromised TOKEN_METADATA signer must never be
+able to author a dynamic transaction interpretation.** Generic "metadata
+authority" gives an attacker the whole surface from any one key.
+
+A certificate therefore carries at minimum:
+
+    delegate_pubkey
+    usage        = CLEARSIGN_DYNAMIC
+    chain_scope  = { 1, 8453, 42161 }
+    can_delegate = false
+    epoch_min/epoch_max
+    bitcoin_not_before / bitcoin_not_after
+    signature    = root(...)
+
+### Transaction binding, taken from Ledger verbatim
+
+A signature over a report is not enough; the device must independently bind the
+report to the operation actually in progress. Ledger's Ethereum app refuses a
+Transaction Check report unless it matches, and these checks are **mandatory,
+not advisory**:
+
+- `report.tx_hash == hash of the transaction being signed`
+- `report.from == the sender the DEVICE derived` -- device-derived, never
+  host-claimed, or a report issued for another address can be replayed
+- `report.chain_id == the actual chain id`
+- for EIP-712, additionally bind the domain hash
+
+Without these, malware obtains a benign report for transaction A and attaches
+it to malicious transaction B. This is the whole reason v1 commits a `tx_hash`.
+
+### Full acceptance rule
+
 Device-side acceptance requires all of:
 
 1. certificate signature verifies against the built-in anchor;
-2. `epoch >= stored minimum epoch`;
-3. scope permits this blob version and chain;
-4. the delegate is not the anchor, and the certificate grants no re-delegation;
-5. payload signature verifies against the delegate key.
+2. `epoch` within `[epoch_min, epoch_max]` and `>=` stored minimum epoch;
+3. Bitcoin window satisfied against the accepted tip;
+4. `usage` permits this assertion, and `chain_scope` covers this chain;
+5. the delegate is not the anchor, and `can_delegate == false` is honoured;
+6. payload signature verifies against the delegate key;
+7. every binding check above matches the in-progress operation.
 
 Only a chain terminating at the built-in anchor may render warning-free. A bare
 `LoadClearsignSigner` key keeps its warning **forever** — that path is for
