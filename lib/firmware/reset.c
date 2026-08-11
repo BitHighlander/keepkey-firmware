@@ -28,6 +28,7 @@
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/memzero.h"
@@ -103,6 +104,21 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
       layoutHome();
       return;
     }
+  }
+
+  /* Last check before any key material exists. The device refuses to create a
+   * wallet on a generator that is not demonstrably running and healthy --
+   * failing closed here is the whole point, since every later step is
+   * downstream of these 32 bytes.
+   *
+   * This does NOT prove the generator is unpredictable; see the scope note at
+   * the top of lib/rand/rng_health.c. It proves it is present and not stuck. */
+  if (!rng_health_check()) {
+    fsm_sendFailure(
+        FailureType_Failure_ProcessError,
+        _("Random number generator self-test failed; cannot create a wallet"));
+    layoutHome();
+    return;
   }
 
   random_buffer(int_entropy, 32);

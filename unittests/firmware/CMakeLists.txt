@@ -2,6 +2,7 @@ set(sources
     app_confirm.cpp
     dice.cpp
     recovery.cpp
+    rng_health.cpp
     signing.cpp
     storage.cpp
     transaction.cpp
