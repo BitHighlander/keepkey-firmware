@@ -425,7 +425,7 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
   */
   uint8_t wrapping_key[64];
   pin_kdf_version_t pin_kdf_version = PIN_KDF_V15;
-  if (*pin_kdf_v2) {
+  if (STORAGE_PIN_KDF_V19 && *pin_kdf_v2) {
     pin_kdf_version = PIN_KDF_V19;
   } else if (*v15_16_trans) {
     pin_kdf_version = PIN_KDF_V16;
@@ -449,16 +449,32 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
   if (memcmp_s(fp, fingerprint, 32) == 0) ret = PIN_GOOD;
 
   if (ret == PIN_GOOD) {
-    if (!*sca_hardened || !*v15_16_trans || !*pin_kdf_v2) {
+    /* The v19 rewrap is gated because the flag that records it only survives a
+     * round trip in storage version 19, and this firmware writes version 17.
+     * Rewrapping without persisting the flag would wrap the key with v19
+     * parameters and then read it back as v15/v16 on the next boot -- a silent,
+     * permanent lockout of a wallet whose flash is otherwise intact. Whichever
+     * way STORAGE_PIN_KDF_V19 goes, the KDF version selected here must be the
+     * one the flag will still describe after storage_commit(). */
+#if STORAGE_PIN_KDF_V19
+    const bool needs_rewrap = !*sca_hardened || !*v15_16_trans || !*pin_kdf_v2;
+    const pin_kdf_version_t rewrap_to = PIN_KDF_V19;
+#else
+    const bool needs_rewrap = !*sca_hardened || !*v15_16_trans;
+    const pin_kdf_version_t rewrap_to = PIN_KDF_V16;
+#endif
+    if (needs_rewrap) {
       // PIN is correct but:
       //   1. wrapping key needs to be regenerated using stretched key
       //   2. storage key needs a rewrap with new wrapping key and algorithm
       storage_deriveWrappingKey(pin, wrapping_key, true /* sca_hardened */,
-                                PIN_KDF_V19, random_salt, _("Verifying PIN"));
+                                rewrap_to, random_salt, _("Verifying PIN"));
       storage_wrapStorageKey(wrapping_key, key, wrapped_key);
       *sca_hardened = true;
       *v15_16_trans = true;
+#if STORAGE_PIN_KDF_V19
       *pin_kdf_v2 = true;
+#endif
       ret = PIN_REWRAP;
     }
   }
@@ -1312,19 +1328,9 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       dst->storage.version = STORAGE_VERSION;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
     case StorageVersion_17:
-      // Migrate up: the V17 reader leaves clearsign_identities zeroed (the
-      // memzero(dst) at the top => present=false), so no data loss. Stamping
-      // STORAGE_VERSION (18) makes this SUS_Updated, and the re-commit writes
-      // the V18 layout (empty identities block).
+      // V17 is the current version, so this is the steady state: read, stamp
+      // the same version, report SUS_Valid, and nothing is rewritten to flash.
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
-      dst->storage.version = STORAGE_VERSION;
-      return dst->storage.version == version ? SUS_Valid : SUS_Updated;
-    case StorageVersion_18:
-      storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
-      dst->storage.version = STORAGE_VERSION;
-      return dst->storage.version == version ? SUS_Valid : SUS_Updated;
-    case StorageVersion_19:
-      storage_readV19(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
 
@@ -1349,12 +1355,8 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV11(dst, flash, STORAGE_SECTOR_LEN);
       } else if (underlying == 16) {
         storage_readV16(dst, flash, STORAGE_SECTOR_LEN);
-      } else if (underlying == 17) {
-        storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
-      } else if (underlying == 18) {
-        storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
       } else {
-        storage_readV19(dst, flash, STORAGE_SECTOR_LEN);
+        storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
       return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
@@ -1649,12 +1651,8 @@ void storage_commit(void) {
   if (btc_only_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
-  // V19 storage layout = V18 (same byte length) with a versioned PIN-KDF flag.
-  // V18 = V17 (2525 bytes) + retired identity block
-  // (PERSISTENT_IDENTITY_COUNT * CLEARSIGN_IDENTITY_SERIALIZED_LEN = 2*455 =
-  // 910) = 3435; + meta (44) = 3479. Rounded up to a multiple of 4 (the CRC
-  // below iterates uint32_t words) => 3480 (1 byte of slack).
-  static char flash_temp[3480];
+  // Size of v17 storage layout (2525 bytes) + size of meta (44 bytes) + 1
+  static char flash_temp[2570];
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -1664,7 +1662,7 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  storage_writeV19(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
 
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
 
