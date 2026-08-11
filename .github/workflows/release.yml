@@ -163,11 +163,20 @@ jobs:
           for f in *.bin; do
             [ -f "$f" ] || continue
             FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
-            echo "sha256 (full)    $f  $FULL_HASH" >> HASHES.txt
+            echo "$f" >> HASHES.txt
+            echo "  sha256 (full image)  $FULL_HASH" >> HASHES.txt
+            echo "    Compare against the firmware hash your device reports" >> HASHES.txt
+            echo "    (Features.firmware_hash, shown in KeepKey Vault)." >> HASHES.txt
+            echo "    This proves the release binary is what is installed." >> HASHES.txt
             FILE_SIZE=$(stat -c%s "$f")
             if [ "$FILE_SIZE" -gt 256 ]; then
               PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
-              echo "sha256 (payload) $f  $PAYLOAD_HASH" >> HASHES.txt
+              echo "  sha256 (payload)     $PAYLOAD_HASH" >> HASHES.txt
+              echo "    Compare against your own reproducible build, with" >> HASHES.txt
+              echo "    'tail -c +257' applied to BOTH files -- a local build" >> HASHES.txt
+              echo "    has no signatures in its 256-byte descriptor." >> HASHES.txt
+              echo "    This proves the release binary came from the source." >> HASHES.txt
+              echo "    It is NOT the hash the device reports." >> HASHES.txt
             fi
             echo "" >> HASHES.txt
           done
