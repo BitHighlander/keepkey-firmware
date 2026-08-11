@@ -6,6 +6,12 @@ attack, and by an implementer deciding what to build next.
 Companion docs: `7.15.0-rc21-clearsign-release-control.md` (what ships today),
 `anti-rollback-security-epoch-rfc.md` (the epoch mechanism this depends on).
 
+The governing sentence for this work:
+
+> **Bitcoin-derived evidence may only reduce clear-sign authority; metadata
+> failure may never silently reduce the level of review required to produce a
+> signature.**
+
 ---
 
 ## 1. What clear-signing is defending against
@@ -212,20 +218,26 @@ anti-rollback epoch design, and this work should not fork from it.
 
 ---
 
-## 5b. Revocation is not enforceable. Expiry is.
+## 5b. Revocation cannot be forced onto an offline device
 
 Revocation needs the device to either **learn** it is revoked (a channel the
 adversary controls) or **expire on its own** (a clock it does not have). A
 withheld message is indistinguishable from no network, so any design resting on
-delivering a negative statement -- CRLs, an on-chain revocation record, a
-"this delegate is dead" broadcast -- is unenforceable against the party we
-already assume is hostile.
+delivering a negative statement -- a revocation list, an on-chain revocation
+record, a "this delegate is dead" broadcast -- is unenforceable against the
+party we already assume is hostile.
 
-Web PKI reached this conclusion when CRLs failed and OCSP stapling won. Adopt
-the same answer: **stop revoking, start expiring.** Credentials are short-lived
-and revocation means *stop reissuing*. The device then demands proof of
-freshness -- a positive statement it can check -- instead of proof of absence,
-which it cannot.
+The precise claim, which is weaker than "expiry is enforceable" and is the one
+that survives audit:
+
+> **Revocation cannot be forced onto an offline device. Freshness-gated expiry
+> becomes enforceable once the device receives sufficient authenticated
+> evidence of progress.**
+
+So: credentials are short-lived, revoking means *stop reissuing*, and the
+device demands proof of freshness -- a positive statement it can check --
+rather than proof of non-revocation, which it cannot. Bitcoin improves **who
+can supply** that evidence, not **whether an adversarial host can suppress it**.
 
 The question becomes: where does a clockless device get freshness it cannot be
 lied to about?
@@ -355,6 +367,82 @@ years -- a permanent clear-sign outage. Requiring genuine accumulated work
 makes that expensive in proportion to how far the attacker pushes, and a cap on
 advance-per-session plus sane target bounds keeps it bounded.
 
+### Metadata absence is metadata failure
+
+Downgrade-by-expiry has a companion that is *easier* to exploit, and it is the
+one that blocks Phase 3 until closed. If a failed validation lands the user on
+the ordinary raw-review path, an attacker does not need to submit an expired
+certificate at all -- **they simply omit the metadata**. No certificate, no
+descriptor, no validation failure, and the device takes the normal blind path.
+
+So this cannot be expressed as "if metadata is present, validate it". It
+requires a device-enforced signing policy:
+
+    typedef enum {
+        SIGN_POLICY_DEVICE_PARSED,                    /* device renders it fully itself */
+        SIGN_POLICY_VERIFIED_INTERPRETATION_REQUIRED, /* external attestation mandatory */
+        SIGN_POLICY_EXPLICIT_BLIND_SIGNING,           /* separately enabled on device */
+    } signing_policy_t;
+
+Under `VERIFIED_INTERPRETATION_REQUIRED`, every one of these is the **same
+terminal condition** -- explicit error, no signing confirmation, no signature:
+
+    missing certificate        wrong capability
+    expired certificate        tx-binding mismatch
+    invalid certificate        malformed interpretation
+
+**The invariant:**
+
+> Raw review is additive, not a fallback. When the active device policy
+> requires verified interpretation, missing, malformed, invalid, expired,
+> wrongly scoped or transaction-mismatched metadata terminates the signing
+> session without producing a signature. A host cannot enter blind signing by
+> omitting metadata or by causing validation to fail. Blind signing is
+> reachable only through a separately enabled on-device policy and begins a
+> new, explicitly unverified signing flow.
+
+Two distinct protections, and Phase 0 establishes only the first:
+
+1. successful clear-signing cannot **suppress** the underlying raw review;
+2. failed clear-signing cannot **fall through** to an otherwise normal flow.
+
+The second must be its own testable state-machine invariant.
+
+No inline "Continue anyway" on the expiry screen. The device returns a failure.
+A user determined to blind-sign must leave the flow, enable the policy, and
+start again -- otherwise the error becomes one more click-through warning.
+
+### Four things the policy model must get right
+
+**1. The policy is device state; the host must never select it.** If the
+transaction request can name its own policy, the host simply always names
+`EXPLICIT_BLIND_SIGNING` and the entire mechanism evaporates. Policy is
+persisted device configuration, changed only through an on-device flow, and
+never a field in a signing request. The selection channel is itself a trust
+boundary.
+
+**2. The policy is per transaction class, not global.** A plain ETH transfer
+with empty calldata, or an ERC-20 `transfer` the device decodes with its own
+built-in token table, needs no external attestation -- there is nothing to
+attest. If `VERIFIED_INTERPRETATION_REQUIRED` blocks those, it blocks ordinary
+sends and users will disable it immediately. The device must first classify
+what it can render **itself**, and the policy governs only the residue it
+cannot. That classification must be derived from the transaction the device is
+signing, never from a host-supplied hint.
+
+**3. Rollout ordering: a policy users are forced to disable is worse than no
+policy.** Defaulting to `VERIFIED_INTERPRETATION_REQUIRED` before catalog
+coverage is high produces a wave of legitimate transactions that simply fail,
+and the support answer becomes "turn on blind signing" -- which users then
+leave on forever. Coverage first, default-on second. Shipping the default early
+converts a security feature into a permanent opt-out.
+
+**4. Open question: should the blind-sign policy be sticky?** Permanent
+enablement means the first support incident disables the protection for that
+user for good, which is how security settings decay. Session-scoped or
+time-limited enablement resists decay but nags. Not decided here; decide it
+before Phase 3 ships, because retrofitting stickiness changes the threat model.
+
 ### Downgrade-by-expiry must fail closed
 
 A consequence of "Bitcoin may only reduce authority" that needs stating,
@@ -373,7 +461,7 @@ survive into later phases.
 
 | | Mechanism | Latency | Requires |
 |---|---|---|---|
-| Emergency | root signs `clearsign_epoch >= 48` | immediate on receipt | KeepKey alive to issue it |
+| Emergency invalidation | root signs `clearsign_epoch >= 48` | immediate **on receipt** | KeepKey alive to issue it |
 | Natural | Bitcoin freshness crosses the certificate's expiry threshold | up to the window | nothing but Bitcoin |
 
 Together they cover both failure modes: a compromise discovered while KeepKey
@@ -439,11 +527,144 @@ Two things follow that are easy to get backwards:
   and #340. Bitcoin-only has headroom precisely because the coins are stripped,
   and none of that headroom helps here.
 
+**Memory availability is not an inclusion criterion on a trust boundary.**
+Bitcoin-only has hundreds of kilobytes free, and that is not a reason to put a
+remotely reachable header parser, a proof-session state machine, compact-target
+arithmetic, persistent ratchet update paths and extra protocol surface on a
+device that has no delegate whose authority needs expiring. It would also
+create a second variant to fuzz and audit for no benefit.
+
+    shared across variants:
+        integrity-protected ratchet substrate
+        domain-separated ratchet definitions
+        generic atomic monotonic update machinery
+
+    full / multi-chain only:
+        delegation certificates
+        dynamic clear-sign payloads
+        Bitcoin freshness validator
+        clearsign_freshness updates
+
+    bitcoin-only retail:
+        no delegation validator
+        clearsign_freshness absent or inert
+
+    root-attestor special firmware:
+        may optionally include validator tooling
+        is NOT the retail bitcoin-only image
+
+The root-signing KeepKey does not itself need to validate a header chain: its
+ceremony establishes the recent anchor through independent tooling and human
+verification. A special attestor image may carry the validator later; that is a
+different threat model from putting it on every bitcoin-only customer device.
+
 Revisit only if bitcoin-only ever wants a capability that needs an external
 attestation -- `TRUSTED_NAME` for Bitcoin addresses is the plausible one. That
 is not a requirement today and should not be built speculatively; this
 paragraph exists so the exclusion stays a decision rather than becoming an
 oversight.
+
+### Validator engineering: budget, protocol, and what gets persisted
+
+Engineering estimates, not measurements. SHA-256 and the multiprecision
+machinery are already linked, so this is not a new crypto library.
+
+| Component | Likely incremental ROM |
+|---|---|
+| Header parsing, linkage, bounds | 1-2 KB |
+| Compact-target decode + PoW compare | 1-2 KB |
+| Exact 256-bit block work + accumulation | 2-5 KB |
+| Proof-session FSM, protocol, failures | 1.5-3 KB |
+| **Total** | **5-10 KB** |
+
+Against roughly 35 KB of headroom in the current full build this is plausible,
+but it needs an exact map-diff spike against the eventual Phase 3 base before
+anyone commits.
+
+**Hard acceptance criteria, not optimisations** -- this repo has a 16 KiB
+reserve gate and a history of boot faults from large static and automatic
+buffers:
+
+- persistent/static validator state: **<= 512 B**
+- additional maximum stack frame: **<= 256 B**
+- whole-proof buffering: **0 B**
+
+Protocol is a three-message session, validated and folded incrementally:
+
+    BitcoinFreshnessBegin   cert hash, anchor hash, anchor height, thresholds
+    BitcoinFreshnessChunk   sequence, concatenated 80-byte headers
+    BitcoinFreshnessFinish  expected total header count
+
+    for each 80-byte header:
+        require prev_hash == running_tip
+        decode and validate nBits
+        require sha256d(header) <= target
+        accumulate block work
+        running_tip = header_hash; count++
+
+A chunk of 4-16 headers avoids 4320 USB round trips without materialising the
+proof; the chunk buffer is transient and belongs to the existing transport
+machinery, not to validator state. On any failure: wipe pending context, return
+Failure, **do not alter persistent freshness**. On disconnect, cancel, reboot or
+power loss: discard pending, committed freshness unchanged. Only `Finish`,
+after both thresholds pass, atomically advances the ratchet -- which also keeps
+flash wear and power-loss ambiguity out of the design.
+
+**Persist height only; work is a witness.** After a proof passes both
+thresholds, commit:
+
+    clearsign_freshness_height =
+        max(clearsign_freshness_height, cert.anchor_height + accepted_headers)
+
+and persist neither the running tip, nor per-anchor accumulated work, nor
+historical anchors. This is sound because every proof starts from a
+**root-signed** anchor: work proves the claimed height advance was expensive,
+and the resulting monotonic height alone then evaluates *any* certificate's
+expiry (`freshness_height >= cert.anchor_height + cert.expiry_height_delta`).
+It also sidesteps the incoherent comparison of "work since anchor A" against
+"work since anchor B". The integrity-protected field stays a single monotonic
+height.
+
+**Compact-target arithmetic** is the ROM and runtime wildcard:
+`floor(2^256 / (target + 1))`. Cache `last_nBits -> last_target ->
+last_block_work`; an honest window repeats nBits for long stretches, so the
+expensive path runs a handful of times. A malicious host can vary nBits every
+header and force it 4320 times -- bounded session-level compute DoS, not an
+authorization bypass.
+
+The decoder must explicitly reject: zero target, negative compact target,
+overflowed target, target above `powLimit`, non-canonical compact encoding,
+hash/target endian confusion, and work-accumulator overflow.
+
+**The endian case needs a dedicated golden test** with a real mainnet header:
+Bitcoin's serialised hash conventions make it easy to compare byte-reversed
+values and build a validator that accepts nearly everything or nearly nothing,
+and both failure modes look "working" in a happy-path test. (We already carry
+the genesis hash in our own chain identifiers, `bip122:000000000019d6689c...`,
+so at least one vector is independently checkable.)
+
+**ROM fallback if exact work is too expensive:** have the certificate sign
+`maximum_permitted_target` and `minimum_header_count`, and require per header
+`hash <= header.target <= cert.maximum_permitted_target`. N headers then prove a
+conservative minimum of work with no division and no 256-bit accumulator.
+Smaller, but it handles hashrate collapse worse: if real difficulty falls below
+the permitted floor, expiry stops entirely, whereas exact work merely slows.
+Prototype exact work first; keep the target-floor construction as the fallback.
+
+### Hashrate drift is correctly asymmetric
+
+| Condition | Effect |
+|---|---|
+| Hashrate rises | W may arrive early; H prevents premature expiry |
+| Hashrate falls | H may arrive before W; expiry delayed |
+| Fake low-difficulty chain | H may advance cheaply; W does not |
+| Short high-difficulty chain | W may advance; H does not |
+
+Both unusual network conditions and implementation conservatism can only
+*extend* credential life; neither buys early expiry. State the target lifetime
+as issuance policy, never as a guarantee: *"approximately one month under the
+work and block-production conditions assumed at issuance; severe hashrate loss
+extends the validity interval."*
 
 ### Implementation constraints worth pricing early
 
@@ -604,9 +825,39 @@ warn; that nothing can promote a runtime signer to anchor status.
 Certificate chain validation on device, epoch enforcement, the delegation
 ceremony, and the online v1 signer holding only a delegate key.
 
-Audit targets: everything in §5 and §6 — epoch rollback via flash modification;
-scope escape; re-delegation; delegate reuse across chains; and the behaviour of
-a device that has not connected in a year.
+Audit targets: everything in sections 5, 5b and 6. **Release gates, not
+suggestions** — and the first is the single most important test in the
+programme:
+
+    verified interpretation required + metadata OMITTED   -> no signature
+
+    expired cert                        -> no signature
+    invalid cert signature              -> no signature
+    wrong certificate capability        -> no signature
+    delegate attempting re-delegation   -> no signature
+    tx hash mismatch                    -> no signature
+    device-derived sender mismatch      -> no signature
+    chain id mismatch                   -> no signature
+    EIP-712 domain mismatch             -> no signature
+
+    proof height met, work short        -> no ratchet advance
+    proof work met, height short        -> no ratchet advance
+    bad prev_hash midway                -> no ratchet advance
+    power loss before Finish            -> old ratchet retained
+    replay below committed freshness    -> rejected
+    Bitcoin proof touching storage_epoch-> structurally impossible
+
+Plus explicit mode separation: **metadata validation failure != blind-sign
+entry.** That test must assert not only a returned error but that signing state
+was cleared and no subsequent Ack can resurrect the original session.
+
+Plus policy integrity: the host cannot select the policy in a signing request;
+the policy survives reboot; the device's own transaction classification cannot
+be steered by host-supplied hints.
+
+Plus epoch rollback via flash modification, scope escape, re-delegation,
+delegate reuse across chains, and the behaviour of a device that has not
+connected in a year.
 
 ---
 
