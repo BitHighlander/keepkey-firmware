@@ -405,6 +405,9 @@ cmake --build build --target firmware-unit -j8
   firmware`** to get it. That pulls micropython, tinyusb and friends and takes
   longer than the rest of the build put together. Init the four direct
   submodules non-recursively, then `--recursive` only `deps/qrenc`.
+- **Cross-compile before claiming anything about the shipping firmware.** The
+  emulator build accepts C11 the ARM toolchain rejects and hides link-ordering
+  faults. Recipe in the header; ~4 minutes per variant, no toolchain install.
 - Run the suite as
   `--gtest_filter='-Authenticator.*:Ethereum.*:Mayachain.*:Osmosis.*:Thorchain.*:Confirmation.*'`
   or it will hang — see *Known, pre-existing* above. Filtered, it takes eight
