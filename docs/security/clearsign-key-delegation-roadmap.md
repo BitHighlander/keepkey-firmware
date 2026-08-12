@@ -22,9 +22,14 @@ expensive misreading available here.** Eight foundations are undecided, and six
 of them change *what would be measured*: the ratchet substrate does not exist in
 the form this document assumes, the authority model names a class rather than a
 key, the updater invariant it depends on is contradicted by the shipping
-bootloader, and the certificate schema is inconsistent between §5b and §6.
-Measuring a validator against an undecided substrate produces a number with no
-referent.
+bootloader, and the certificate schema described one signed object three
+different ways. Measuring a validator against an undecided substrate produces a
+number with no referent.
+
+Read the Status column literally. **Resolved** means the text now decides it.
+**Specified** means the shape is fixed but a parameter, an inventory or a
+sign-off is still owed — that is not the same as done, and the distinction is
+exactly the one this section exists to stop collapsing.
 
 ROM measurement comes **last**, after the seven rows above it are settled.
 
@@ -33,16 +38,23 @@ ROM measurement comes **last**, after the seven rows above it are settled.
 | 2 | High | Ratchet substrate. The four-field `SecurityRatchets` facility does not exist; the anti-rollback RFC defines a single 256-step unary OTP counter that cannot represent a block height. | §5b *Substrate* | Shape specified here; four parameters need an owner |
 | 3 | High | Authority model. "ROOT SIGNATURE" is an authority class, not a key. | §5b *Authority* | Requirement specified; key/quorum inventory needed |
 | 4 | High | Updater invariant. The bootloader erases the whole application partition before it has seen the candidate. | §8 *Updater invariant* | Three options stated; needs a decision |
-| 8 | Med | Certificate schema conflicts across the document; the acceptance rule tests an epoch range that is never defined. | §6 *Canonical certificate* | Resolved here |
+| 8 | Med | Certificate schema conflicts across the document; the acceptance rule tests an epoch range that is never defined. | §6 *Canonical certificate* | Conflict removed; byte layout **proposed, not ratified** |
 | 1 | High | Cross-variant preservation. "absent or inert" in bitcoin-only resurrects expired delegates on the round trip back to full. | §5b *Variant scope* | Resolved here |
 | 6 | High | Proof-session inputs are host-supplied. | §5b *What the device validates* | Resolved here |
 | 7 | High | Blind-sign policy is security-critical persistent state with no integrity protection. | §5b *Policy integrity* | Requirement specified; storage medium follows #2 |
-| 5 | High | Single-root custody: one compromise yields globally warning-free false interpretations until firmware replacement. | §4 *Custody* | **Owner decision. Not decidable in this document.** |
+| 5 | High | Single-root custody: one compromise yields globally warning-free false interpretations until firmware replacement. Applies to **both** roots — the schema root has no expiry at all. | §4 *Custody* | **Owner decision. Not decidable in this document.** Gates Phase 1 and Phase 2. |
 
 Suggested order — substrate (2) → authority (3) → updater invariant (4) →
 certificate transcript (8) → cross-variant preservation (1) → proof-session
 inputs (6) → policy integrity (7) → custody (5). Each one changes the shape of
 the next.
+
+**Custody (5) is last in that order but gates the earliest ship.** It is placed
+last because the others change what a root has authority over, not because it
+can wait: Phase 1 cannot pin a schema root before it is answered, and Phase 2
+cannot pin a delegation root. If any date matters, start (5) in parallel — it is
+an operational programme, not an engineering task, and it is the one item here
+that cannot be compressed by working harder.
 
 Still undecided and previously flagged: blind-sign policy stickiness (§5b,
 *Four things the policy model must get right*, item 4).
@@ -230,14 +242,41 @@ one is a way for the scheme to fail quietly if left implicit:
   rotation is indistinguishable from a compromise-forced emergency.
 
 **These parameters commit the organisation to an operational programme, so they
-are not decided in this document.** What is decided here is that Phase 2 must
-not pin a delegation root before they are, because pinning is the irreversible
-step: a root in shipped firmware cannot be un-shipped.
+are not decided in this document.** What is decided here is that no root may be
+pinned before they are, because pinning is the irreversible step: a root in
+shipped firmware cannot be un-shipped.
 
-Note the sequencing relief from §6 *Two roots, not one*: the **schema** root
-signs the offline v2 catalog and grants no per-transaction authority, so Phase 1
-can proceed on a lighter custody model while this decision is outstanding. Only
-the **delegation** root needs the full programme above.
+### Both roots are irreversible, and the schema root is not the lighter case
+
+An earlier revision claimed the **schema** root could ship on "a lighter custody
+model" because it grants no per-transaction authority, letting Phase 1 proceed
+while this decision was open. **That was wrong, and the error is worth keeping
+visible because it is the seductive one:** it reasons about the key's *scope*
+and forgets its *remedy*.
+
+A compromised schema root signs a malicious v2 catalog entry for any contract
+the attacker chooses, and §6 grants a root-verified chain exactly one privilege
+— warning-free rendering. So the outcome is the same as for the delegation root:
+a false interpretation on the trusted display, with the warning suppressed, on
+every device that trusts the key.
+
+The schema root is in one respect **worse**. A delegate certificate carries
+`cert_epoch`, `btc_anchor_height` and `expiry_height_delta`, so a stolen
+delegate ages out on its own; that is the entire point of §5b. The v2 catalog
+has no such fields, so a compromised schema root has no expiry and no ratchet.
+Its only remedy is a firmware release every user must choose to install — the
+unbounded case, not the bounded one.
+
+**Both roots need threshold custody. Their parameters may differ; the
+requirement does not.** What legitimately differs is operational: catalog
+reissuance is infrequent and batched, delegate issuance is monthly, so N, M and
+ceremony cadence can be tuned per root. What does not differ is that a single
+device or a single person must not be able to produce either signature.
+
+Concretely: **Phase 1 is gated on the schema root's custody decision, and
+Phase 2 on the delegation root's.** Splitting the roots buys cryptographic
+separation and independent compromise stories. It does not buy a phase that
+skips custody.
 
 **Ceremony (still required, and downstream of the above):** air-gapped,
 multi-person, recorded; keys generated on-device with dice entropy; public keys
@@ -986,29 +1025,60 @@ implementations, and on a trust boundary that is a vulnerability rather than an
 inconsistency: the verifier and the issuer disagree about which bytes are
 covered.
 
-**The canonical layout — a compact fixed encoding, not X.509 (ROM is scarce and
-an ASN.1 parser on a trust boundary is a liability):**
+**A compact fixed encoding, not X.509** (ROM is scarce and an ASN.1 parser on a
+trust boundary is a liability). Widths below follow what `signed_metadata.h`
+already commits the device to — 33-byte compressed secp256k1 public keys,
+64-byte compact ECDSA signatures over `sha256(data)` — so this introduces no
+new primitive:
 
-    offset  field                    notes
-    ------  -----------------------  ---------------------------------------
-      0     format_version           refuse anything not exactly known
-      2     domain_tag               "KKCLEARSIGN-DELEGATE-V1"; fixed offset,
-                                     before any variable-length field (§5b
-                                     Authority)
-      *     network_id               mainnet / testnet deployment binding
-      *     model_binding            device model class
-      *     variant_binding          full only; bitcoin-only holds no delegate
-      *     delegate_pubkey          33-byte compressed secp256k1
-      *     usage                    CLEARSIGN_DYNAMIC, TOKEN_METADATA, ...
-      *     chain_scope              EVM chain ids this delegate may assert on
-      *     can_delegate             MUST be false for every delegate issued
-      *     cert_epoch               scalar. Revocation ordering. Accepted only
-                                     if >= the device's stored clearsign_epoch
-      *     btc_anchor_hash          root-chosen, recent at issuance
-      *     btc_anchor_height        height of that anchor
-      *     expiry_height_delta      e.g. 4320 (~1 month)
-      *     expiry_min_work          W; expiry needs delta AND work
-      *     root_signature           by the DELEGATION root (see below)
+    off  len  field                notes
+    ---  ---  -------------------  --------------------------------------------
+      0    2  format_version       u16 LE. Refuse anything not exactly known.
+      2   24  domain_tag           "KKCLEARSIGN-DELEGATE-V1", NUL-padded. Fixed
+                                   offset, ahead of every variable field.
+     26    4  network_id           u32 LE. Deployment binding (mainnet/testnet).
+     30    2  model_binding        u16 LE. Device model class.
+     32    1  variant_binding      1 = full. bitcoin-only holds no delegate.
+     33    1  usage                CLEARSIGN_DYNAMIC, TOKEN_METADATA, ...
+     34    1  can_delegate         MUST be 0 for every delegate issued.
+     35    1  chain_count          1..CHAIN_SCOPE_MAX (8). 0 is invalid.
+     36   32  chain_scope          8 x u32 LE, ASCENDING, no duplicates; entries
+                                   past chain_count MUST be zero. Fixed width so
+                                   the signed length never varies.
+     68    4  cert_epoch           u32 LE. Accepted only if >= the device's
+                                   stored clearsign_epoch.
+     72   33  delegate_pubkey      compressed secp256k1.
+    105   32  btc_anchor_hash      internal byte order, as hashed — NOT the
+                                   display-reversed form.
+    137    4  btc_anchor_height    u32 LE.
+    141    4  expiry_height_delta  u32 LE, e.g. 4320.
+    145   32  expiry_min_work      u256 BE. Compared as a big-endian magnitude.
+    ---------  signed transcript ends at 177 -----------------------------------
+    177   64  root_signature       compact ECDSA (r||s, 32+32 BE) over
+                                   sha256(bytes 0..176) by the DELEGATION root.
+    ---------  total 241 bytes ----------------------------------------------
+
+Three rules the table alone does not carry, and each is a place two
+implementations would otherwise diverge:
+
+- **The signed transcript is exactly bytes 0..176** — every field above the
+  signature, nothing else, no length prefix, no trailing padding. State it in
+  bytes rather than as "the certificate", or the issuer and the verifier will
+  eventually disagree about whether the signature covers itself.
+- **The canonical certificate hash is `sha256` over all 241 bytes**, signature
+  included. That is the value `BitcoinFreshnessBegin` sends as `cert_hash`, and
+  it must differ from the signed transcript hash so the two can never be
+  confused for one another.
+- **Reject rather than ignore.** Unknown `format_version`, unknown `usage`,
+  `chain_count` of 0 or above the maximum, non-ascending or duplicate chain ids,
+  non-zero padding past `chain_count`, `can_delegate != 0`, or a length that is
+  not exactly 241 — each is a refusal, not a field to skip.
+
+**Status: proposed, not ratified.** This closes the ambiguity that made the
+earlier revision unimplementable — the three descriptions of one signed object,
+and the acceptance rule testing a field that appeared in none of them — but the
+offsets above are a proposal awaiting sign-off, not a decided format. Do not
+implement an issuer against it until it is.
 
 `bitcoin_not_before` / `bitcoin_not_after` are **removed**: they expressed the
 same constraint as anchor + delta, in a form that invites treating them as wall
@@ -1093,11 +1163,17 @@ every attestor confirmation (fw #331 class).
 
 Ship the offline-signed schema catalog and the built-in **schema root** that
 verifies it (§6 *Two roots, not one*). Covers the head of the distribution with
-**zero online key exposure**, and does not wait on the delegation-root custody
-decision, because a schema root grants no per-transaction authority.
+**zero online key exposure** — no key is reachable at transaction time.
 
-Audit targets: device-side decode correctness against adversarial calldata
-(the display is only as good as the decoder); catalog distribution integrity;
+**Gated on BLOCKER 5 for the schema root.** Zero *online* exposure is not zero
+consequence: pinning is irreversible, and a compromised schema root renders
+warning-free with no expiry to age it out (§4 *Both roots are irreversible*).
+It does not wait on the DELEGATION root's parameters, which is the whole
+sequencing benefit of splitting them — but it does wait on its own.
+
+Audit targets: the schema root's custody and ceremony; device-side decode
+correctness against adversarial calldata (the display is only as good as the
+decoder); catalog distribution integrity;
 that a v2 blob cannot assert values it did not derive; confirm-screen overflow
 per value, which is value-dependent — measure, do not read.
 
