@@ -531,7 +531,7 @@ static const HDNode* generateKeyHandle(const uint8_t app_id[],
   // gate rather than random32(). Registration fails rather than minting a
   // credential on an untrusted generator.
   uint32_t key_path[KEY_PATH_ENTRIES];
-  if (!random_buffer_checked((uint8_t *)key_path, sizeof(key_path))) {
+  if (!random_buffer_checked((uint8_t*)key_path, sizeof(key_path))) {
     debugLog(0, "", "ERR: RNG self-test failed");
     return NULL;
   }
