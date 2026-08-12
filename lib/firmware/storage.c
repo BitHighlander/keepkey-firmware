@@ -1976,7 +1976,14 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
                          storage->pub.wrapped_storage_key);
   storage->pub.sca_hardened = true;
   storage->pub.v15_16_trans = true;
-  /* Must describe the wrap actually produced above, not an aspiration. */
+  /* Must describe the wrap actually produced above, not an aspiration.
+   *
+   * Always false while STORAGE_PIN_KDF_V19 is 0, and cppcheck is right to say
+   * so — but the comparison is the point. Writing `false` here would leave the
+   * flag agreeing with the KDF only by coincidence, and the next person to flip
+   * the gate would ship a v19 wrap described as v16: the exact lockout this
+   * branch exists to fix. Keep it derived. */
+  // cppcheck-suppress knownConditionTrueFalse
   storage->pub.pin_kdf_v2 = (storage_rewrapPinKdfVersion() == PIN_KDF_V19);
 
   // Fingerprint the storageKey.
