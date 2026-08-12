@@ -184,6 +184,24 @@ does not guarantee alignment before the cast to `uint32_t *`.
   `storage.c` (red on #368 since `280f3b6f`, unrelated to the CRC work) and a
   pointer-alignment slip in `u2f.c`.
 
+- **Static analysis — also runnable locally, and also red on #368 since
+  `280f3b6f`.** cppcheck flagged
+  `storage->pub.pin_kdf_v2 = (storage_rewrapPinKdfVersion() == PIN_KDF_V19)`
+  as `knownConditionTrueFalse`, correctly: with `STORAGE_PIN_KDF_V19` at 0 the
+  call returns `PIN_KDF_V16` unconditionally. Suppressed inline rather than
+  simplified — writing `false` would make the persisted flag agree with the KDF
+  by coincidence, so flipping the gate later would ship a v19 wrap described as
+  v16, which is the lockout this branch exists to fix.
+
+  CI's invocation is in `.github/workflows/ci.yml` under `static-analysis` and
+  runs verbatim locally (`brew install cppcheck`); the findings land in
+  `cppcheck_report.txt`, which the failing step never `cat`s because
+  `--error-exitcode=1` kills it under `bash -e`. Either read the uploaded
+  `cppcheck-report` artifact (`gh run download <run> -n cppcheck-report`) or
+  just run it yourself. **Both of #368's Stage-1 failures were pre-existing**,
+  and everything downstream was `SKIPPED` behind them — so the branch had never
+  actually been built or tested by CI.
+
 ### 2.5 Release note, mandatory
 
 **Installing RC28 on a device that ran RC27 wipes it.** RC27 wrote storage V19;
