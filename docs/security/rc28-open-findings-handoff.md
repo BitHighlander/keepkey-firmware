@@ -1,19 +1,35 @@
 # RC28 handoff — open findings, owners, and order
 
 Base: `develop` / RC27 `6ae3b964`. Written 2026-08-11 after three audit rounds,
-updated the same day after the remediation pass.
+then twice more: once after the remediation pass, and once after an external
+review of that pass reopened two of it.
 
 | PR | Head | State |
 |---|---|---|
-| #366 RNG seed-time gate | `e7335677` | RCT boundary fixed; **scope finding addressed** — centralised checked-RNG verdict |
-| #367 HASHES.txt labels | `36ae0b56` | Labels + **rename/sign/hash ordering fixed**; manifest generator now runnable by key holders |
-| #368 storage V17 revert | `cd984407` | Lockout + CRC fixed; **emulator CRC now matches the peripheral**; reboot regression committed, 24/24 |
-| #369 clear-sign roadmap | `abb3b1ed` | 8 blockers **named and ordered**; 4 resolved in text, 3 specified, 1 (custody) is an owner decision |
+| #366 RNG seed-time gate | `0eb732e2` | Scope finding closed **by inverting the default**, not by listing call sites |
+| #367 HASHES.txt labels | `45ecfa36` | Ordering fixed; **quorum gate repaired** after review found it passing unsigned images |
+| #368 storage V17 revert | `866f264b` | Substantive work approved on review; both pre-existing CI gates fixed |
+| #369 clear-sign roadmap | `1770c612` | 8 blockers named; 3 resolved, 4 specified, 1 (custody) gates Phases 1 **and** 2 |
 
-**RC28 is still not merge-ready**, but for a different reason than before: the
-code findings are closed and #369's blockers are now explicit decisions with an
-owner and an order rather than an undifferentiated list. Nothing in §3 below can
-be closed by an implementer working alone.
+**RC28 is not merge-ready**, and #369 is the reason: nothing in §3 can be closed
+by an implementer working alone.
+
+## Read this before trusting a "closed" in this document
+
+The remediation pass claimed all four code findings were closed. External review
+reopened two, and both were the **same mistake in different clothes** — a fix
+that was correct as far as it went, described as if it went further:
+
+- **#366** gated a list of call sites and the summary said "every key-material
+  draw". A list cannot cover a dependency nobody re-audits. It missed the
+  Orchard RedPallas signing nonce in the pinned crypto submodule, where a
+  repeated nonce discloses the spend authorization key.
+- **#369** removed the certificate's three-way field inconsistency and called
+  the result a "canonical layout" while every offset after 0x02 was still `*`.
+
+Neither was a coding error. Both were **scope claims outrunning the work**, and
+both were caught by someone reading the claim against the code rather than
+against the diff. Treat every "closed" below as an invitation to do the same.
 
 ## What the remediation pass changed
 
@@ -28,21 +44,44 @@ be closed by an implementer working alone.
   under that same injection — which is the point.
 - **#367** — rename now precedes hashing, and generation moved to
   `scripts/release/hash-manifest.sh` so key holders re-run the identical recipe
-  over the signed binaries. It reads signed-ness off the artifacts rather than
-  being told, so an unsigned manifest says so; `--require-signed` is the
-  publish-time gate. It derives the device-image hash from `codelen` instead of
-  assuming the file is exactly `256+codelen` bytes, and reports the two
-  separately when they differ. Verified end to end on fixtures: the payload hash
-  survives signing unchanged, the device-image hash does not.
-- **#366** — one latched per-boot verdict plus `random_buffer_checked()`, which
-  every key-material draw now goes through: storage key, PIN-KDF salt,
-  wipe-code key, U2F key-handle path, `reset_init`'s device entropy, and the
-  one-shot OTP randomness block. Each site takes the failure disposition it can
-  actually support. Non-key draws (canaries, jitter, U2F channel ids, decoys,
-  UUID) and `GetEntropy` are deliberately excluded — gating the audit interface
-  would block the measurement that finds a failing source.
+  over the signed binaries. It derives the device-image hash from `codelen`
+  instead of assuming the file is `256+codelen` bytes, and reports the two
+  separately when they differ.
+
+  **The quorum gate as first written did not work.** `od` collapses repeated
+  identical lines to `*` unless given `-v`, so a 192-byte all-zero signature
+  area rendered as zeros plus `*`, the `*` survived `tr -d '0'`, and an unsigned
+  image with its signer indices filled in passed. The self-test could not catch
+  it because it wrote one byte into the first signature — the single input shape
+  where the bug does not appear. Now: `-v` everywhere, each 64-byte signature
+  region checked independently, signer slots required in 1..5, and
+  `--require-signed` refuses a directory with no application image at all
+  (it previously exited 0 on an empty directory, announcing success over
+  nothing). The manifest says plainly that this is structural: it proves the
+  unsigned binary was not published, not that the signatures verify.
+- **#366** — **the default is inverted.** `random32()` consults the verdict and
+  halts; trezor-crypto's `random_buffer()`, `random_uniform()` and everything
+  built on them inherit it, so every cryptographic consumer inside `deps/` is
+  covered without touching `deps/` at all. Link proof from the built binary:
+  `redpallas.o`'s only undefined RNG symbol is `_random_buffer`, whose body is
+  `bl _random32`, and `rng.c` references `_rng_health_require`.
+  `random32_raw()` / `random_buffer_raw()` are the named opt-outs, each
+  justified at its call site: the health gate itself (which would otherwise
+  recurse), `GetEntropy` (the audit interface — gating it would block the
+  measurement that finds a failing source), stack canaries in firmware and
+  bootloader, timer jitter, U2F channel ids, compare decoys, and `drbg_init`'s
+  seeding. The bootloader gains no fatal RNG path and no ROM.
+  `random_buffer_or_die()` is gone — plain `random_buffer()` is now exactly
+  that. `random_buffer_checked()` survives only for paths with somewhere better
+  to go than a halt.
 - **#369** — §0 lists the eight blockers with severity, resolution location and
-  status; §9 keeps only genuine parameters and says they are downstream.
+  status, and now says what Resolved and Specified each mean. Corrected on
+  review: **both** roots need threshold custody, so Phase 1 is gated on the
+  schema root's decision and Phase 2 on the delegation root's — a compromised
+  schema root renders warning-free with no epoch and no expiry, making its only
+  remedy a firmware release. Blocker 8 now carries a real byte layout (offsets,
+  endianness, the exact signed transcript, the certificate hash) marked
+  **proposed, not ratified**.
 
 ### Known, pre-existing, and NOT caused by this work
 
@@ -63,7 +102,7 @@ involved. Excluding them, both branches are green and the whole suite takes
 about eight seconds:
 
     firmware-unit  -Authenticator.*:Ethereum.*:Mayachain.*:Osmosis.*:Thorchain.*:Confirmation.*
-      #368  327/327      #366  339/339
+      #368  327/327      #366  341/341
     board-unit
       #368  7/7 (includes the two new CRC tests)
 
@@ -119,6 +158,21 @@ checked-RNG state and make every security-key draw consume it. One place that
 knows the source passed, one place that fails closed, and every consumer routed
 through it.
 
+**Closed by inverting the default, on the second attempt.** The first attempt
+did centralise the verdict but still routed consumers by hand, and review found
+what a hand-written list always eventually misses: `redpallas.c:281` in the
+pinned crypto submodule draws the Orchard signing nonce with a bare
+`random_buffer()`, and `s = r + c*rsk` means two signatures sharing `r` give up
+the spend authorization key. ECDSA blinding and SecAESSTM32 masking were in the
+same position.
+
+`random32()` is now the checked entry and the raw draw is the one you have to
+ask for by name, so a dependency inherits the gate by linking rather than by
+being remembered. **The claim this finding was about — that the device will not
+create key material on a failed generator — is now supportable. It is still not
+an unpredictability claim** (see the scope note atop `lib/rand/rng_health.c`),
+and release notes must not upgrade it into one.
+
 ### 2.2 CLOSED (was High) — #367 left the published manifest stale and mislabeled
 
 `release.yml` computes hashes **before** renaming (`:158-199`), then the
@@ -140,6 +194,13 @@ describe application firmware only.
 quorum, then generate both hashes from the final assets, with
 artifact-type-specific instructions. #367's labels are correct and can merge;
 they simply do not close this.
+
+**Closed, after review found the quorum half of it inoperative** — `od` without
+`-v`, one concatenated blob instead of three regions, signer slots unbounded,
+and success on an empty directory. Details under *What the remediation pass
+changed*. Worth internalising: the self-test passed throughout, because it
+exercised the one input shape in which the bug is invisible. A green check on a
+gate is evidence about the test, not about the gate.
 
 ### 2.3 CLOSED (was Medium) — #368's CRC correction was unprovable by the suite
 
@@ -232,10 +293,11 @@ kept in full because they are what has to be answered:
 
 | # | Where it stands |
 |---|---|
-| 1, 6, 8 | **Resolved in the roadmap text.** Opaque cross-variant preservation; proof constraints read only from the verified certificate, with rate-limited advances; one canonical certificate layout, and the Phase 1/Phase 2 "anchor" contradiction resolved by naming a schema root and a delegation root as separate keys. |
+| 1, 6 | **Resolved in the roadmap text.** Opaque cross-variant preservation; proof constraints read only from the verified certificate, with rate-limited advances. |
+| 8 | **Conflict removed; layout proposed, not ratified.** The three-way field inconsistency is gone and the Phase 1/Phase 2 "anchor" contradiction is resolved by naming a schema root and a delegation root as separate keys. The byte layout — offsets, endianness, chain_scope ordering, the exact signed transcript, the certificate hash — is now written down but awaits sign-off. Do not build an issuer against it yet. |
 | 2, 3, 7 | **Shape specified, decisions named.** The substrate's four parameters (rollback tolerance, checkpoint granularity, wear budget, power-loss state machine) still need an owner; so does the key/quorum inventory, and the choice between authenticated storage and a session-scoped policy. |
 | 4 | **Three options written down**, one of which is to state the recovery-only interruption state honestly. Needs a decision, not more analysis. |
-| 5 | **Owner decision. Unchanged.** Phase 2 is now explicitly gated on it, because pinning a root in shipped firmware is irreversible. |
+| 5 | **Owner decision. Widened on review.** It gates Phase 1 **and** Phase 2, not just Phase 2: a compromised schema root also renders warning-free, and unlike a delegate it carries no epoch or expiry, so its only remedy is a firmware release. Both roots need threshold custody; only the parameters may differ. Start it in parallel — it is an operational programme, and it is the one item here that cannot be compressed by working harder. |
 
 | # | Sev | Finding |
 |---|---|---|
@@ -254,16 +316,19 @@ Plus the previously flagged, still-undecided: blind-sign policy stickiness.
 
 ## 4. Order — what is left
 
-1. ~~**#368** — emulator CRC + alignment + commit the reboot regression.~~ Done.
-2. ~~**#367** — rename/sign/hash ordering and per-artifact instructions.~~ Done.
-   One thing to carry forward: the checklist now tells key holders to run
-   `hash-manifest.sh --require-signed` over the signed binaries. **The first
-   real release is the test of that instruction**, and if it is skipped the
-   published manifest is wrong again in exactly the old way.
-3. ~~**#366** — centralised checked-RNG state.~~ Done. The wallet-wide claim is
-   now supportable for key material; it is still **not** an unpredictability
-   claim (see the scope note at the top of `lib/rand/rng_health.c`), and the
-   release notes must not upgrade it into one.
+1. ~~**#368** — emulator CRC + alignment + commit the reboot regression.~~ Done,
+   and approved on review; both pre-existing CI gates fixed alongside.
+2. ~~**#367** — rename/sign/hash ordering, per-artifact instructions, and a
+   quorum gate that works.~~ Done. Two things to carry forward: the checklist
+   tells key holders to run `hash-manifest.sh --require-signed` over the signed
+   binaries, and **the first real release is the test of that instruction**;
+   and the gate remains **structural**, so if you want proof the 3-of-5
+   signatures actually verify, that is a separate piece of work nobody has
+   started.
+3. ~~**#366** — centralised checked-RNG state.~~ Done, by inversion. The
+   remaining exposure is deliberate and listed: every `random32_raw()` /
+   `random_buffer_raw()` call site. **Any new one is a security review item**,
+   which is the property the naming exists to create.
 4. **#369** — decide blockers 1-8 before any implementation. Suggested order:
    substrate (2) → authority model (3) → updater invariant (4) → certificate
    transcript (8) → cross-variant preservation (1) → proof-session inputs (6) →
