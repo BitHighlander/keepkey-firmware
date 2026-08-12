@@ -161,11 +161,28 @@ does not guarantee alignment before the cast to `uint32_t *`.
   check whether the job timed out in one of the six confirm-driver suites — see
   *Known, pre-existing* above. Those hangs reproduce at `6ae3b9644`, not on
   either branch.
-- **Formatting.** `scripts/format-source-files.sh` under clang-format 22.1.1
-  rewrites 40+ untouched files including vendored `pb_*.c`. The local version
-  disagrees with CI's — **pin the version before anyone runs it repo-wide**, or
-  the formatting job becomes unfixable locally. Unchanged; still the first thing
-  that will waste someone's afternoon.
+- **Formatting — solved, and the earlier note was half wrong.** CI pins
+  **clang-format-20**; the default on PATH here is 22.1.1, which is why
+  `scripts/format-source-files.sh` rewrote 40+ untouched files including
+  vendored `pb_*.c`. But a matching binary is already installed —
+  `/opt/homebrew/opt/llvm@20/bin/clang-format` (20.1.8, brew `llvm@20`) — so the
+  job is not unfixable locally, it was being run with the wrong compiler.
+
+  Reproduce CI's check exactly, without touching anything else:
+
+      CF=/opt/homebrew/opt/llvm@20/bin/clang-format
+      for f in $(find include/keepkey lib/firmware lib/board lib/transport/src \
+                 -name '*.c' -o -name '*.h' | grep -v generated | grep -v '.pb.'); do
+        $CF --style=file --dry-run --Werror "$f" >/dev/null 2>&1 || echo "$f"
+      done
+
+  Fix a single hunk with `$CF --style=file --lines=A:B -i <file>` rather than
+  reformatting whole files. `scripts/format-source-files.sh` still has no pinned
+  version — **pin it to 20 before anyone runs it repo-wide.**
+
+  Two violations were found this way and fixed: an 82-column comment in
+  `storage.c` (red on #368 since `280f3b6f`, unrelated to the CRC work) and a
+  pointer-alignment slip in `u2f.c`.
 
 ### 2.5 Release note, mandatory
 
@@ -255,4 +272,13 @@ cmake --build build --target firmware-unit -j8
 - Without `PB_NO_PACKED_STRUCTS=1` macOS ARM64 fails to link on unaligned nanopb
   field atoms.
 - `deps/sca-hardening/SecAESSTM32` may not populate in a worktree; copy it from
-  a populated checkout and delete the stray `.git` file it brings.
+  a populated checkout and delete the stray `.git` file it brings. Same for
+  `deps/qrenc/QR-Code-generator`, without which cmake fails at configure time.
+- **Do not run `git submodule update --init --recursive deps/crypto/trezor-
+  firmware`** to get it. That pulls micropython, tinyusb and friends and takes
+  longer than the rest of the build put together. Init the four direct
+  submodules non-recursively, then `--recursive` only `deps/qrenc`.
+- Run the suite as
+  `--gtest_filter='-Authenticator.*:Ethereum.*:Mayachain.*:Osmosis.*:Thorchain.*:Confirmation.*'`
+  or it will hang — see *Known, pre-existing* above. Filtered, it takes eight
+  seconds; unfiltered it never finishes.
