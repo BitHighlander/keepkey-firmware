@@ -57,6 +57,9 @@ uint32_t random32_raw(void);
 void random_buffer_raw(uint8_t* buf, size_t len);
 
 void random_permute_char(char* str, size_t len);
+/// Shuffle with a RAW draw. Only for memcmp_s()'s decoy ordering, which is a
+/// timing-equalisation detail and runs in the bootloader.
+void random_permute_char_raw(char* str, size_t len);
 void random_permute_u16(uint16_t* buf, size_t count);
 
 #endif

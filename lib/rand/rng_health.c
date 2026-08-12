@@ -51,8 +51,8 @@
 
 #include <string.h>
 
-#include "keepkey/board/keepkey_board.h"
-#include "keepkey/board/layout.h"
+#include <stdlib.h>
+
 #include "keepkey/rand/rng.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/rand.h"
@@ -287,7 +287,7 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
   }
 
   random_buffer_raw(buf, len);
-  rng_health_update(&rng_continuous, buf, len);
+  rng_health_observe(buf, len);
 
   if (!rng_continuous.ok) {
     /* Latch before wiping, so a caller that ignores the return value still
@@ -299,10 +299,17 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
   return true;
 }
 
+void rng_health_observe(const uint8_t* buf, size_t len) {
+  if (rng_verdict != RNG_PASSED) return;
+  rng_health_update(&rng_continuous, buf, len);
+  if (!rng_continuous.ok) rng_verdict = RNG_FAILED;
+}
+
 void rng_health_require(void) {
   if (rng_health_check()) return;
-  layout_warning_static("RNG self-test failed. Reboot device!");
-  shutdown();
+  /* abort(), not a warning screen: see the note in rng_health.h. kkrand cannot
+   * reference kkboard without breaking the single-pass archive link. */
+  abort();
 }
 
 #ifdef EMULATOR

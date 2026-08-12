@@ -58,7 +58,9 @@ int memcmp_s(const void* lhs, const void* rhs, size_t len) {
 
   static uint8_t permute[DECOY_COUNT + 2];
   asc_fill((char*)permute, DECOY_COUNT + 2);
-  random_permute_char((char*)permute, DECOY_COUNT + 2);
+  /* Raw for the same reason as the fill above: the bootloader verifies
+   * signatures through memcmp_s(), and must gain no fatal RNG path. */
+  random_permute_char_raw((char*)permute, DECOY_COUNT + 2);
 
   // Compare every pair of buffers once, and count how many match. We should
   // get exactly one match from the comparison of lhs with rhs, assuming they

@@ -8,6 +8,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cstdint>
+#include <csignal>
 #include <cstring>
 #include <vector>
 
@@ -190,7 +191,7 @@ TEST(RngHealthDeathTest, PlainRandomBufferHaltsOnAFailedVerdict) {
         uint8_t buf[64];
         random_buffer(buf, sizeof(buf));
       },
-      ::testing::ExitedWithCode(1), "");
+      ::testing::KilledBySignal(SIGABRT), "");
 }
 
 TEST(RngHealthDeathTest, PlainRandom32HaltsOnAFailedVerdict) {
@@ -199,7 +200,43 @@ TEST(RngHealthDeathTest, PlainRandom32HaltsOnAFailedVerdict) {
         rng_health_force_verdict(false);
         (void)random32();
       },
-      ::testing::ExitedWithCode(1), "");
+      ::testing::KilledBySignal(SIGABRT), "");
+}
+
+// THE CONTINUOUS TEST, ON THE DEFAULT PATH. The boot gate only says the source
+// was healthy once; the RCT and APT exist to notice one that goes degenerate
+// afterwards. An earlier revision folded bytes into the continuous state only
+// inside random_buffer_checked(), so the ordinary path -- which is the one
+// RedPallas, ECDSA blinding and SecAESSTM32 take -- enforced the boot verdict
+// and nothing else.
+TEST(RngHealth, DegenerateOutputAfterTheGateLatchesFailure) {
+  rng_health_force_verdict(true);
+  ASSERT_TRUE(rng_health_check());
+
+  // A stuck run of exactly the RCT cutoff, as a dying source would emit.
+  const uint8_t stuck[RNG_HEALTH_RCT_CUTOFF] = {0x7E, 0x7E, 0x7E, 0x7E, 0x7E};
+  rng_health_observe(stuck, sizeof(stuck));
+
+  EXPECT_FALSE(rng_health_check())
+      << "a stuck run observed after the gate did not latch the verdict";
+  rng_health_force_verdict(true);
+}
+
+// ...and the latch is what the next ordinary draw trips over.
+TEST(RngHealthDeathTest, DegenerateOutputHaltsTheNextPlainDraw) {
+  EXPECT_EXIT(
+      {
+        rng_health_force_verdict(true);
+        // memset rather than a brace initialiser: the commas would be parsed
+        // as EXPECT_EXIT macro arguments.
+        uint8_t stuck[RNG_HEALTH_RCT_CUTOFF];
+        memset(stuck, 0x7E, sizeof(stuck));
+        rng_health_observe(stuck, sizeof(stuck));
+        uint8_t buf[32];
+        random_buffer(buf, sizeof(buf));
+        _exit(0);  // reached only if the latch failed to stop the draw
+      },
+      ::testing::KilledBySignal(SIGABRT), "");
 }
 
 // ...and the raw entries stay usable, because the boot paths that call them

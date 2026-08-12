@@ -92,15 +92,30 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 /// the same verdict and cannot be forgotten.
 bool rng_health_check(void);
 
-/// Consult the verdict and HALT the device if the generator has not passed, or
-/// has since failed, its self-test. This is what random32() calls, so it is the
-/// single place the whole system fails closed -- including every consumer
-/// inside deps/, which reaches it through trezor-crypto's random_buffer().
+/// Consult the verdict and HALT if the generator has not passed, or has since
+/// failed, its self-test. This is what random32() calls, so it is the single
+/// place the whole system fails closed -- including every consumer inside
+/// deps/, which reaches it through trezor-crypto's random_buffer().
 ///
-/// Halting is the same disposition storage_secMigrate() already takes when
-/// secrets fail to decrypt: there is no useful way to continue, and continuing
-/// would mean emitting key material from a source known to be bad.
+/// It halts with abort(), NOT with a warning screen, and that is a layering
+/// decision rather than an oversight: kkrand must not reference kkboard.
+/// GNU ld resolves static archives in one left-to-right pass, and kkboard is
+/// listed before kkrand in every link line here, so a UI call from this module
+/// fails to link in crypto-unit and board-unit. Firmware paths that HAVE
+/// somewhere to report -- reset_init(), U2F registration, the OTP block --
+/// call rng_health_check() first and render a proper error; this is the
+/// last-resort backstop for draws with no UI context, which is exactly the
+/// dependency draws it exists to cover.
 void rng_health_require(void);
+
+/// Fold \p len bytes of freshly drawn output into the boot-lifetime continuous
+/// SP 800-90B state, latching the verdict to failed if the RCT or APT trips.
+///
+/// random32() calls this on every checked draw. The initial 1 KiB gate only
+/// says the source was healthy at boot; the continuous test is what notices a
+/// source that degenerates afterwards, and it is worth nothing if the default
+/// path does not feed it.
+void rng_health_observe(const uint8_t* buf, size_t len);
 
 /// Draw \p len bytes and report failure instead of halting, for the paths that
 /// have somewhere better to go: a host-visible error, or a one-shot write that
