@@ -411,7 +411,8 @@ pin_kdf_version_t storage_activePinKdfVersion(bool v15_16_trans,
 #if STORAGE_PIN_KDF_V19
   if (pin_kdf_v2) return PIN_KDF_V19;
 #else
-  (void)pin_kdf_v2; /* the flag cannot round-trip in V17; see STORAGE_PIN_KDF_V19 */
+  /* the flag cannot round-trip in V17; see STORAGE_PIN_KDF_V19 */
+  (void)pin_kdf_v2;
 #endif
   return v15_16_trans ? PIN_KDF_V16 : PIN_KDF_V15;
 }
@@ -1965,8 +1966,7 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true,
                             storage_rewrapPinKdfVersion(),
-                            storage->pub.random_salt,
-                            _("Encrypting Secrets"));
+                            storage->pub.random_salt, _("Encrypting Secrets"));
 
   // Derive a new storageKey.
   random_buffer(ss->storageKey, 64);
