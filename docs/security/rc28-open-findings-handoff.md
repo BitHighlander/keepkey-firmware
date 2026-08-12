@@ -14,6 +14,41 @@ reopened findings from each.
 **RC28 is not merge-ready.** #369 is no longer the only reason it wasn't — for
 a full round, #366 and #368 did not build.
 
+## STOP — hard gate on the NEXT BOOTLOADER RELEASE
+
+**Not an RC28 item. Do not fix it in an RC28 PR. Do not build and ship a
+bootloader from this tree until it is fixed.**
+
+`tools/bootloader/main.c` draws its stack canary through `random32()`, which
+#366 made consult the RNG health verdict and `abort()`. The bootloader also
+reaches nothing else through the gate — `signatures_ok()` was cleared by the
+crypto-fork blinding patch — but that one call is enough:
+
+> A device whose RNG has failed would abort inside the bootloader. It could not
+> verify firmware, boot, or accept a replacement image. That is an
+> unrecoverable brick, in the one component that exists to recover from
+> everything else.
+
+**Why it is not being fixed now.** A firmware release does not update anyone's
+bootloader; devices keep the one they have. So this cannot reach an RC28 user,
+and the fix would mean shipping bootloader changes reviewed under a firmware
+deadline — landing in a bootloader release months later with the reasoning long
+gone. Bootloader edits were reverted for exactly that reason;
+`tools/bootloader/main.c` is byte-identical to develop.
+
+**What to do when the bootloader is next cut.** Either give the canary
+`random32_raw()` — it protects nothing an attacker can predict their way past —
+or build kkrand for the bootloader with the gate compiled out so it cannot
+return by someone adding a caller. Both were prototyped and reverted; see the
+history of this branch. Then check the built ELF, because "nothing calls it" has
+already failed twice in this module:
+
+    arm-none-eabi-objdump -d bin/bootloader.elf > /tmp/bl.asm
+    awk '/^[0-9a-f]+ </{fn=$2} /bl.*<random32>/{print fn}' /tmp/bl.asm | sort -u
+    # must print nothing
+
+---
+
 ## The pattern worth more than any single finding
 
 Three rounds, and the same failure keeps recurring in different shapes: **work
