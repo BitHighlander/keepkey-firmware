@@ -1,35 +1,49 @@
 # RC28 handoff — open findings, owners, and order
 
 Base: `develop` / RC27 `6ae3b964`. Written 2026-08-11 after three audit rounds,
-then twice more: once after the remediation pass, and once after an external
-review of that pass reopened two of it.
+then after a remediation pass, then after two external review rounds that
+reopened findings from each.
 
 | PR | Head | State |
 |---|---|---|
-| #366 RNG seed-time gate | `0eb732e2` | Scope finding closed **by inverting the default**, not by listing call sites |
-| #367 HASHES.txt labels | `45ecfa36` | Ordering fixed; **quorum gate repaired** after review found it passing unsigned images |
-| #368 storage V17 revert | `866f264b` | Substantive work approved on review; both pre-existing CI gates fixed |
-| #369 clear-sign roadmap | `1770c612` | 8 blockers named; 3 resolved, 4 specified, 1 (custody) gates Phases 1 **and** 2 |
+| #366 RNG seed-time gate | `3246b5f1` | Inverted default; **link + continuous-test + bootloader defects fixed** after round 2 |
+| #367 HASHES.txt labels | `fc092c8f` | Ordering, quorum gate, filename binding, truncation guard; wording narrowed |
+| #368 storage V17 revert | `bee5b29d` | Substance approved; **ARM build fixed**, catalog repinned |
+| #369 clear-sign roadmap | `53866b9c` | **10** blockers now: 4 resolved, 4 specified, 2 open decisions (5 custody, 10 work accounting) |
 
-**RC28 is not merge-ready**, and #369 is the reason: nothing in §3 can be closed
-by an implementer working alone.
+**RC28 is not merge-ready.** #369 is no longer the only reason it wasn't — for
+a full round, #366 and #368 did not build.
 
-## Read this before trusting a "closed" in this document
+## The pattern worth more than any single finding
 
-The remediation pass claimed all four code findings were closed. External review
-reopened two, and both were the **same mistake in different clothes** — a fix
-that was correct as far as it went, described as if it went further:
+Three rounds, and the same failure keeps recurring in different shapes: **work
+that is correct as far as it goes, reported as if it went further.**
 
-- **#366** gated a list of call sites and the summary said "every key-material
-  draw". A list cannot cover a dependency nobody re-audits. It missed the
-  Orchard RedPallas signing nonce in the pinned crypto submodule, where a
-  repeated nonce discloses the spend authorization key.
-- **#369** removed the certificate's three-way field inconsistency and called
-  the result a "canonical layout" while every offset after 0x02 was still `*`.
+| Round | Claimed | Actually |
+|---|---|---|
+| 1 | "every key-material draw" is gated | a hand-written list; missed the RedPallas nonce in a submodule |
+| 1 | certificate layout is "canonical" | every offset after 0x02 was still `*` |
+| 2 | quorum gate verified on fixtures | `od` line-collapsing meant it passed unsigned images |
+| 2 | "the bootloader gains no fatal path and no ROM" | memcmp_s's shuffle pulled the checked path in; +784 bytes |
+| 2 | branches verified locally | **the emulator build passed; ARM was never compiled, and both branches were CI-red** |
 
-Neither was a coding error. Both were **scope claims outrunning the work**, and
-both were caught by someone reading the claim against the code rather than
-against the diff. Treat every "closed" below as an invitation to do the same.
+The last one is the important one, and it has a mechanical fix rather than a
+resolution to try harder: **an emulator build proves nothing about the shipping
+firmware.** `_Alignas` compiles on clang and is rejected by the ARM toolchain.
+A missing `random_uniform` link edge appears only when archives are ordered the
+way the ARM target orders them. Neither is visible from `cmake -DKK_EMULATOR=ON`.
+
+Cross-compile before claiming a branch is verified — the recipe is in §5, it
+needs no toolchain install, and it takes about four minutes:
+
+    docker run --rm --platform linux/amd64 -v "$PWD":/root/keepkey-firmware:z \
+      kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2 \
+      /bin/sh -c "mkdir -p /root/b && cd /root/b && \
+        cmake -C /root/keepkey-firmware/cmake/caches/device.cmake \
+              /root/keepkey-firmware -DCMAKE_BUILD_TYPE=MinSizeRel && \
+        make -j4 && arm-none-eabi-size bin/*.elf"
+
+Add `-DKK_BITCOIN_ONLY=ON` for the other variant. CI builds both; so should you.
 
 ## What the remediation pass changed
 
@@ -59,8 +73,8 @@ against the diff. Treat every "closed" below as an invitation to do the same.
   (it previously exited 0 on an empty directory, announcing success over
   nothing). The manifest says plainly that this is structural: it proves the
   unsigned binary was not published, not that the signatures verify.
-- **#366** — **the default is inverted.** `random32()` consults the verdict and
-  halts; trezor-crypto's `random_buffer()`, `random_uniform()` and everything
+- **#366** — **the default is inverted, and after round 2 it also links.**
+  `random32()` consults the verdict and halts; trezor-crypto's `random_buffer()`, `random_uniform()` and everything
   built on them inherit it, so every cryptographic consumer inside `deps/` is
   covered without touching `deps/` at all. Link proof from the built binary:
   `redpallas.o`'s only undefined RNG symbol is `_random_buffer`, whose body is
@@ -74,7 +88,28 @@ against the diff. Treat every "closed" below as an invitation to do the same.
   `random_buffer_or_die()` is gone — plain `random_buffer()` is now exactly
   that. `random_buffer_checked()` survives only for paths with somewhere better
   to go than a halt.
-- **#369** — §0 lists the eight blockers with severity, resolution location and
+
+  Round 2 fixed three things the first attempt got wrong. `rng.c` no longer
+  calls trezor-crypto's `random_uniform` (kkrand must depend on nothing, or
+  single-pass archive ordering decides whether ARM links). `rng_health.c` no
+  longer reaches up into kkboard for `layout_warning_static` — it halts with
+  `abort()`, which is why `crypto-unit` links again. And `memcmp_s()` shuffles
+  its decoys with `random_permute_char_raw()`; filling them raw and then
+  shuffling them checked had pulled the fatal path back into the bootloader,
+  which verifies signatures through `memcmp_s()`.
+
+  **The continuous test now runs on the default path.** Previously only
+  `random_buffer_checked()` folded bytes into the SP 800-90B state, so ordinary
+  draws enforced the boot verdict and nothing more — and a source degenerating
+  *after* the gate is precisely what the RCT and APT exist to catch.
+  `random32()` calls `rng_health_observe()` on every checked draw.
+
+  **Measured, not asserted:** bootloader text +784 bytes, firmware text +1408.
+  The earlier "no ROM" claim was wrong. The bootloader's only edge into the
+  health module is trezor-crypto's `generate_k_random` — an ECDSA *signing*
+  nonce that `--gc-sections` keeps but the bootloader never calls, since it
+  verifies rather than signs. No reachable fatal path there; real ROM cost.
+- **#369** — §0 lists the blockers with severity, resolution location and
   status, and now says what Resolved and Specified each mean. Corrected on
   review: **both** roots need threshold custody, so Phase 1 is gated on the
   schema root's decision and Phase 2 on the delegation root's — a compromised
@@ -218,10 +253,13 @@ does not guarantee alignment before the cast to `uint32_t *`.
 
 ### 2.4 CI — STILL OPEN
 
-- **#366 / #368 red.** #366's constant-fold is fixed. Before blaming a diff,
-  check whether the job timed out in one of the six confirm-driver suites — see
-  *Known, pre-existing* above. Those hangs reproduce at `6ae3b9644`, not on
-  either branch.
+- **#366 / #368 were red for real reasons, now fixed.** #368 failed both ARM
+  builds on `_Alignas` and then failed catalog validation on a stale test name;
+  #366 failed every link on `random_uniform` and `layout_warning_static`. All
+  four are addressed and the ARM builds were reproduced locally in CI's image.
+  Separately, if a job ever times out rather than erroring, check the six
+  confirm-driver suites first — those hangs reproduce at `6ae3b9644`, not on any
+  branch.
 - **Formatting — solved, and the earlier note was half wrong.** CI pins
   **clang-format-20**; the default on PATH here is 22.1.1, which is why
   `scripts/format-source-files.sh` rewrote 40+ untouched files including
@@ -297,6 +335,8 @@ kept in full because they are what has to be answered:
 | 8 | **Conflict removed; layout proposed, not ratified.** The three-way field inconsistency is gone and the Phase 1/Phase 2 "anchor" contradiction is resolved by naming a schema root and a delegation root as separate keys. The byte layout — offsets, endianness, chain_scope ordering, the exact signed transcript, the certificate hash — is now written down but awaits sign-off. Do not build an issuer against it yet. |
 | 2, 3, 7 | **Shape specified, decisions named.** The substrate's four parameters (rollback tolerance, checkpoint granularity, wear budget, power-loss state machine) still need an owner; so does the key/quorum inventory, and the choice between authenticated storage and a session-scoped policy. |
 | 4 | **Three options written down**, one of which is to state the recovery-only interruption state honestly. Needs a decision, not more analysis. |
+| 10 | **OPEN, and it is a decision not an analysis.** Per-certificate work thresholds versus one global committed height. Three options in the roadmap; also cap the committed height at the work-qualified checkpoint rather than crediting every accepted header. |
+| 9 | **Resolved.** AUTHENTICATED vs AUTHORIZED certificates; without the split a factory-fresh device could never bootstrap freshness. |
 | 5 | **Owner decision. Widened on review.** It gates Phase 1 **and** Phase 2, not just Phase 2: a compromised schema root also renders warning-free, and unlike a delegate it carries no epoch or expiry, so its only remedy is a firmware release. Both roots need threshold custody; only the parameters may differ. Start it in parallel — it is an operational programme, and it is the one item here that cannot be compressed by working harder. |
 
 | # | Sev | Finding |
@@ -322,13 +362,17 @@ Plus the previously flagged, still-undecided: blind-sign policy stickiness.
    quorum gate that works.~~ Done. Two things to carry forward: the checklist
    tells key holders to run `hash-manifest.sh --require-signed` over the signed
    binaries, and **the first real release is the test of that instruction**;
-   and the gate remains **structural**, so if you want proof the 3-of-5
-   signatures actually verify, that is a separate piece of work nobody has
-   started.
-3. ~~**#366** — centralised checked-RNG state.~~ Done, by inversion. The
-   remaining exposure is deliberate and listed: every `random32_raw()` /
-   `random_buffer_raw()` call site. **Any new one is a security review item**,
-   which is the property the naming exists to create.
+   and the gate remains **structural** — it proves the canonical unsigned draft
+   was not published, and a signature region holding one non-zero byte passes
+   it. Real verification is a separate piece of work nobody has started, but it
+   is NOT blocked on obtaining keys: the five signing public keys are already in
+   `include/keepkey/board/pubkeys.h`. What is missing is a host-side secp256k1
+   verifier over sha256 of the image.
+3. ~~**#366** — centralised checked-RNG state.~~ Done, by inversion, and the
+   continuous test now runs on the default path. The remaining exposure is
+   deliberate and listed: every `random32_raw()` / `random_buffer_raw()` call
+   site. **Any new one is a security review item**, which is the property the
+   naming exists to create.
 4. **#369** — decide blockers 1-8 before any implementation. Suggested order:
    substrate (2) → authority model (3) → updater invariant (4) → certificate
    transcript (8) → cross-variant preservation (1) → proof-session inputs (6) →
