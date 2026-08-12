@@ -18,7 +18,7 @@ The governing sentence for this work:
 
 An earlier reading of this document concluded that the architecture was settled
 and only ROM measurement remained open. **That is false, and it is the most
-expensive misreading available here.** Eight foundations are undecided, and six
+expensive misreading available here.** Ten foundations are undecided, and most
 of them change *what would be measured*: the ratchet substrate does not exist in
 the form this document assumes, the authority model names a class rather than a
 key, the updater invariant it depends on is contradicted by the shipping
@@ -31,7 +31,7 @@ Read the Status column literally. **Resolved** means the text now decides it.
 sign-off is still owed — that is not the same as done, and the distinction is
 exactly the one this section exists to stop collapsing.
 
-ROM measurement comes **last**, after the seven rows above it are settled.
+ROM measurement comes **last**, after every row above it is settled.
 
 | # | Sev | Blocker | Where resolved | Status |
 |---|---|---|---|---|
@@ -42,12 +42,14 @@ ROM measurement comes **last**, after the seven rows above it are settled.
 | 1 | High | Cross-variant preservation. "absent or inert" in bitcoin-only resurrects expired delegates on the round trip back to full. | §5b *Variant scope* | Resolved here |
 | 6 | High | Proof-session inputs are host-supplied. | §5b *What the device validates* | Resolved here |
 | 7 | High | Blind-sign policy is security-critical persistent state with no integrity protection. | §5b *Policy integrity* | Requirement specified; storage medium follows #2 |
+| 9 | High | "Already-verified certificate" is circular: the proof session needs a verified certificate, and §6 acceptance needs freshness, which only a proof session establishes. A new device bootstraps nothing. | §5b *Blocker 9* | Resolved here — authenticated vs authorized |
+| 10 | High | A single global freshness height is committed, but each proof is checked against its own certificate's `expiry_min_work`. A weak certificate's proof expires certificates whose higher threshold was never met. | §5b *Blocker 10* | **Three options stated; not resolved** |
 | 5 | High | Single-root custody: one compromise yields globally warning-free false interpretations until firmware replacement. Applies to **both** roots — the schema root has no expiry at all. | §4 *Custody* | **Owner decision. Not decidable in this document.** Gates Phase 1 and Phase 2. |
 
 Suggested order — substrate (2) → authority (3) → updater invariant (4) →
 certificate transcript (8) → cross-variant preservation (1) → proof-session
-inputs (6) → policy integrity (7) → custody (5). Each one changes the shape of
-the next.
+inputs (6, 9) → freshness accounting (10) → policy integrity (7) → custody (5).
+Each one changes the shape of the next.
 
 **Custody (5) is last in that order but gates the earliest ship.** It is placed
 last because the others change what a root has authority over, not because it
@@ -850,13 +852,42 @@ the validator then correctly verifies a proof that means nothing. The host may
 **reference** a certificate the device has already verified, and stream headers.
 Nothing else:
 
-    BitcoinFreshnessBegin   cert_hash            (selects an ALREADY-VERIFIED cert)
+    BitcoinFreshnessBegin   cert_hash            (selects an AUTHENTICATED cert)
     BitcoinFreshnessChunk   sequence, concatenated 80-byte headers
     BitcoinFreshnessFinish  expected total header count
 
     anchor hash, anchor height, expiry_height_delta and expiry_min_work are
-    read from the referenced certificate's ROOT-SIGNED bytes. If no verified
-    certificate matches cert_hash, the session does not start.
+    read from the referenced certificate's ROOT-SIGNED bytes. If no
+    authenticated certificate matches cert_hash, the session does not start.
+
+### BLOCKER 9 — "verified" has to mean two different things
+
+Saying the host may reference "a certificate the device has already verified"
+is circular against §6's acceptance rule, which requires freshness to be
+satisfied. A device fresh from the factory, or one returning from bitcoin-only
+with no established freshness, has no certificate that passes acceptance -- so
+it can never start the proof session that would establish the freshness that
+acceptance requires. Nothing bootstraps.
+
+The deadlock dissolves once **verified** is split, because the two checks
+answer different questions:
+
+| State | Established by | Means |
+|---|---|---|
+| **authenticated** | exact encoding accepted, `root_signature` verifies against the built-in delegation root, and `format_version` / `domain_tag` / `network_id` / `model_binding` / `variant_binding` all match this device | *this object is genuinely ours and has not been tampered with* |
+| **authorized** | authenticated, **plus** `cert_epoch >=` stored minimum, freshness window satisfied, `usage` and `chain_scope` permit this assertion, `can_delegate == 0`, and every transaction binding matches | *this object may be acted on now* |
+
+- **A freshness proof may reference an AUTHENTICATED certificate.** That is
+  sound: the values the proof depends on -- anchor, height, delta, work -- are
+  covered by the root signature, so authentication alone already fixes every
+  constraint the host might otherwise choose. Requiring authorization here would
+  be requiring the answer as an input to the question.
+- **Warning-free rendering requires an AUTHORIZED certificate.** Nothing may be
+  signed, and no warning may be suppressed, on the weaker state.
+
+Note what this does *not* loosen: an authenticated-but-unauthorized certificate
+can drive the ratchet forward, and forward is the direction that only ever
+*reduces* authority (§5b *The invariant*). It can never grant any.
 
 **Rate-limit persistent advances.** A hostile host does not have to forge
 anything to hammer the ratchet: it replays genuine header chains from the real
@@ -888,8 +919,47 @@ thresholds, commit:
         max(clearsign_freshness_height, cert.anchor_height + accepted_headers)
 
 and persist neither the running tip, nor per-anchor accumulated work, nor
-historical anchors. This is sound because every proof starts from a
-**root-signed** anchor: work proves the claimed height advance was expensive,
+historical anchors.
+
+### BLOCKER 10 — a global height silently discards the work witness
+
+The paragraph below was written as if height alone carried the proof's cost,
+and it does not. Each proof is checked against **its own certificate's**
+`expiry_min_work`, but what gets committed is a single global height that then
+evaluates *every* certificate's expiry. So:
+
+> A proof presented under certificate A, whose `expiry_min_work` is low,
+> advances the global height far enough to expire certificate B -- whose higher
+> work threshold was never demonstrated by anything.
+
+Old or deliberately weak certificates therefore become downgrade inputs to the
+shared freshness oracle: whoever holds the weakest policy ever issued sets the
+real cost of advancing everyone's clock. The authorization effect stays
+fail-closed -- freshness only ever *reduces* authority -- so this is not a
+signing bypass. What it destroys is the cost bound that was supposed to make
+the permanent clear-sign DoS in *Forged forward progress* expensive.
+
+**Not resolved here. Pick one before implementing:**
+
+1. **A global work policy.** Every height checkpoint must meet one
+   floor defined by firmware, not by whichever certificate is presented.
+   Simplest, and it makes per-certificate `expiry_min_work` advisory.
+2. **Persist enough work evidence** that a later certificate's threshold can be
+   evaluated against what was actually demonstrated -- which reintroduces the
+   per-anchor state this section removed, and needs an answer to the
+   "work since A versus work since B" incoherence that removal was avoiding.
+3. **Constrain who may advance.** Only certificates at or above the current
+   policy version may move the ratchet, so a superseded weak policy stops being
+   an input.
+
+Whichever is chosen, **cap the committed height at the work-qualified
+checkpoint** rather than crediting every accepted header: headers beyond the
+point where the work threshold was met are free to produce, and crediting them
+hands back the cheap advance the threshold exists to prevent.
+
+The reasoning the original paragraph rested on, kept because it is right as far
+as it goes: every proof starts from a
+**root-signed** anchor, so work proves the claimed height advance was expensive,
 and the resulting monotonic height alone then evaluates *any* certificate's
 expiry (`freshness_height >= cert.anchor_height + cert.expiry_height_delta`).
 It also sidesteps the incoherent comparison of "work since anchor A" against
@@ -1056,6 +1126,12 @@ new primitive:
     ---------  signed transcript ends at 177 -----------------------------------
     177   64  root_signature       compact ECDSA (r||s, 32+32 BE) over
                                    sha256(bytes 0..176) by the DELEGATION root.
+                                   MUST be low-S canonical: s <= n/2, reject
+                                   otherwise. Both s and n-s verify, so without
+                                   this one certificate has two valid encodings
+                                   and therefore two different canonical
+                                   hashes -- and cert_hash covers the
+                                   signature.
     ---------  total 241 bytes ----------------------------------------------
 
 Three rules the table alone does not carry, and each is a place two
@@ -1071,8 +1147,9 @@ implementations would otherwise diverge:
   confused for one another.
 - **Reject rather than ignore.** Unknown `format_version`, unknown `usage`,
   `chain_count` of 0 or above the maximum, non-ascending or duplicate chain ids,
-  non-zero padding past `chain_count`, `can_delegate != 0`, or a length that is
-  not exactly 241 — each is a refusal, not a field to skip.
+  non-zero padding past `chain_count`, `can_delegate != 0`, a non-canonical
+  high-S signature, or a length that is not exactly 241 — each is a refusal,
+  not a field to skip.
 
 **Status: proposed, not ratified.** This closes the ambiguity that made the
 earlier revision unimplementable — the three descriptions of one signed object,
@@ -1210,6 +1287,13 @@ programme:
     chain id mismatch                   -> no signature
     EIP-712 domain mismatch             -> no signature
 
+    freshness proof on an AUTHENTICATED
+      but unauthorized cert              -> allowed; ratchet may advance (#9)
+    warning-free render on an
+      authenticated-only cert            -> refused (#9)
+    weak cert's proof advancing height
+      past a stronger cert's threshold   -> per the #10 decision, not by default
+
     proof height met, work short        -> no ratchet advance
     proof work met, height short        -> no ratchet advance
     bad prev_hash midway                -> no ratchet advance
@@ -1337,5 +1421,8 @@ Reading this list as "what remains" is the misreading §0 exists to prevent.
 
 Resolved out of this list: epoch/tip storage is now BLOCKER 2, not a parameter —
 it is not a choice between three media but a facility that does not exist.
-Certificate encoding is settled in §6 *Canonical certificate*: a compact fixed
-layout, never X.509.
+
+Certificate encoding is **not** settled, and an earlier revision of this line
+said it was, contradicting §6's own "proposed, not ratified". What is settled is
+the *shape*: a compact fixed layout, never X.509. The byte offsets in §6 await
+sign-off.
