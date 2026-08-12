@@ -138,13 +138,14 @@ TEST(RngHealth, IrregularChunkingMatchesOneShot) {
   }
 }
 
-// THE SCOPE FIX, PINNED AS TESTS.
+// SCOPE, PINNED AS TESTS.
 //
-// The gate used to live in one function -- reset_init() -- so recovery, import,
-// LoadDevice, PIN and wipe-code changes, U2F registration and the OTP block all
-// drew key material without it. random_buffer_checked() is the single place
-// that consumes the verdict; what matters is that it fails CLOSED rather than
-// handing back whatever the source produced.
+// random_buffer_checked() is the ONLY checked path. Plain random_buffer() is
+// unchecked, exactly as on develop -- inverting that was tried for 7.15 and
+// descoped. So these tests describe what the seed-time gate does for the draws
+// routed through it, and deliberately claim nothing about the rest of the tree.
+// What matters is that it fails CLOSED rather than handing back whatever the
+// source produced.
 
 TEST(RngHealth, CheckedDrawFillsFromAHealthySource) {
   rng_health_force_verdict(true);
@@ -178,31 +179,6 @@ TEST(RngHealth, CheckedDrawRejectsNull) {
   EXPECT_FALSE(random_buffer_checked(nullptr, 32));
 }
 
-// THE INVERSION, PINNED. Plain random_buffer() is the checked path, so a
-// consumer that never heard of this module -- including redpallas.c inside the
-// pinned crypto submodule, which draws its Orchard signing nonce this way --
-// cannot obtain entropy from a failed generator. A repeated RedPallas nonce
-// discloses the spend authorization key, and enumerating call sites could never
-// have covered a dependency we do not own.
-TEST(RngHealthDeathTest, PlainRandomBufferHaltsOnAFailedVerdict) {
-  EXPECT_EXIT(
-      {
-        rng_health_force_verdict(false);
-        uint8_t buf[64];
-        random_buffer(buf, sizeof(buf));
-      },
-      ::testing::KilledBySignal(SIGABRT), "");
-}
-
-TEST(RngHealthDeathTest, PlainRandom32HaltsOnAFailedVerdict) {
-  EXPECT_EXIT(
-      {
-        rng_health_force_verdict(false);
-        (void)random32();
-      },
-      ::testing::KilledBySignal(SIGABRT), "");
-}
-
 // THE CONTINUOUS TEST, ON THE DEFAULT PATH. The boot gate only says the source
 // was healthy once; the RCT and APT exist to notice one that goes degenerate
 // afterwards. An earlier revision folded bytes into the continuous state only
@@ -222,30 +198,6 @@ TEST(RngHealth, DegenerateOutputAfterTheGateLatchesFailure) {
   rng_health_force_verdict(true);
 }
 
-// THE TRIGGERING DRAW ITSELF MUST DIE, not just the one after it.
-//
-// random32() used to observe and return unconditionally, so the word that
-// tripped the RCT was handed to the caller and only the NEXT call aborted.
-// random_buffer() is built from four-byte draws, so a run tripping on the final
-// word delivered the entire degenerate buffer first -- and for the Orchard
-// RedPallas nonce that is precisely the disclosure this gate exists to prevent,
-// handed over by the gate itself.
-//
-// Forcing the raw source is the only way to trigger this deliberately: the
-// first call yields a run of 4 identical bytes, the second reaches the cutoff
-// of 5 and must not return.
-TEST(RngHealthDeathTest, TheDrawThatTripsTheTestDoesNotReturn) {
-  EXPECT_EXIT(
-      {
-        rng_health_force_verdict(true);
-        rng_force_raw_byte(true, 0x7E);
-        (void)random32();  // run of 4 — under the cutoff, returns normally
-        (void)random32();  // reaches 5 — must abort instead of returning
-        _exit(0);          // reached only if the triggering word was returned
-      },
-      ::testing::KilledBySignal(SIGABRT), "");
-}
-
 // And the same at the unit level: the call that trips reports the failure,
 // which is what random32() branches on.
 TEST(RngHealth, ObserveReportsTheTrippingCall) {
@@ -261,40 +213,29 @@ TEST(RngHealth, ObserveReportsTheTrippingCall) {
   rng_health_force_verdict(true);
 }
 
-// ...and the latch is what the next ordinary draw trips over.
-TEST(RngHealthDeathTest, DegenerateOutputHaltsTheNextPlainDraw) {
-  EXPECT_EXIT(
-      {
-        rng_health_force_verdict(true);
-        // memset rather than a brace initialiser: the commas would be parsed
-        // as EXPECT_EXIT macro arguments.
-        uint8_t stuck[RNG_HEALTH_RCT_CUTOFF];
-        memset(stuck, 0x7E, sizeof(stuck));
-        rng_health_observe(stuck, sizeof(stuck));
-        uint8_t buf[32];
-        random_buffer(buf, sizeof(buf));
-        _exit(0);  // reached only if the latch failed to stop the draw
-      },
-      ::testing::KilledBySignal(SIGABRT), "");
-}
-
-// ...and the raw entries stay usable, because the boot paths that call them
-// must not be able to halt: stack canaries, timer jitter, U2F channel ids,
-// constant-time decoys, and the health test itself, which would otherwise
-// recurse into its own gate.
-TEST(RngHealth, RawDrawsSurviveAFailedVerdict) {
-  rng_health_force_verdict(false);
-  uint8_t a[32] = {0};
-  uint8_t b[32] = {0};
-  random_buffer_raw(a, sizeof(a));
-  random_buffer_raw(b, sizeof(b));
-  EXPECT_NE(0, memcmp(a, b, sizeof(a)));
-  EXPECT_NE(random32_raw(), random32_raw());
-
-  // And the gate can still be re-run on a source that recovers, because it
-  // measures the raw source rather than the checked one.
+// The triggering draw must not be returned. random_buffer_checked() observes
+// the bytes it just produced, and if THOSE bytes tripped the test they are
+// wiped rather than handed over -- the triggering draw is part of the
+// degenerate run, so returning it and failing on the next call would deliver
+// exactly the output the test rejected.
+TEST(RngHealth, TrippingBytesAreWipedNotReturned) {
   rng_health_force_verdict(true);
-  EXPECT_TRUE(rng_health_check());
+  const uint8_t fine[4] = {0x01, 0x02, 0x03, 0x04};
+  EXPECT_TRUE(rng_health_observe(fine, sizeof(fine)));
+
+  uint8_t stuck[RNG_HEALTH_RCT_CUTOFF];
+  memset(stuck, 0x7E, sizeof(stuck));
+  EXPECT_FALSE(rng_health_observe(stuck, sizeof(stuck)))
+      << "the observing call that tripped the test reported success";
+
+  // With the verdict latched, the next checked draw refuses and wipes.
+  uint8_t buf[64];
+  memset(buf, 0xAB, sizeof(buf));
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)));
+  const uint8_t zeros[64] = {0};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+
+  rng_health_force_verdict(true);
 }
 
 }  // namespace

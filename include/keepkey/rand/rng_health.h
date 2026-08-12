@@ -81,40 +81,41 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 ///
 /// The full gate -- rng_source_live() plus rng_health_analyze() over a freshly
 /// drawn RNG_HEALTH_SAMPLE_BYTES sample -- runs ONCE, on first use, and the
-/// answer is remembered. Every draw subsequently made through
-/// random_buffer_checked() is folded into a continuous SP 800-90B test, and a
-/// failure there latches the verdict to failed for the rest of the boot.
-/// Recovery is a reboot, deliberately: a source that failed must not be retried
-/// until it passes.
+/// answer is remembered. Every draw made through random_buffer_checked() is
+/// folded into a continuous SP 800-90B test, and a failure there latches the
+/// verdict to failed for the rest of the boot. Recovery is a reboot,
+/// deliberately: a source that failed must not be retried until it passes.
 ///
-/// Use this where there is a natural error path to report on. Where key
-/// material is being drawn, use random_buffer_checked() instead -- it consults
-/// the same verdict and cannot be forgotten.
+/// SCOPE — OPT-IN, AND THIS IS THE COMPLETE LIST.
+///
+/// Covered, because each of these calls random_buffer_checked() by name:
+///   - the device half of the seed        reset_init()
+///   - the storage encryption key         storage_setPin_impl()
+///   - the wipe-code key                  storage_setWipeCode_impl()
+///   - the PIN-KDF salt                   storage_readStorageV1(), the V1
+///                                        upgrade path that mints one
+///   - the U2F key-handle derivation path generateKeyHandle()
+///   - the one-shot OTP randomness block  flash_collectHWEntropy()
+///
+/// NOT covered: everything else in the tree and in deps/, because plain
+/// random_buffer() and random32() are unchecked exactly as on develop. That
+/// notably includes the Orchard RedPallas signing nonce, where a repeated
+/// nonce would disclose the spend authorization key. Leaving it uncovered is
+/// develop's existing behaviour, not a regression introduced here.
+///
+/// Adding a new key-material draw does NOT inherit this gate. You must route
+/// it through random_buffer_checked() deliberately. Inverting the default so
+/// that coverage was automatic was built for 7.15 and descoped; the reasons
+/// and the follow-up project are in
+/// docs/security/rc28-open-findings-handoff.md.
 bool rng_health_check(void);
-
-/// Consult the verdict and HALT if the generator has not passed, or has since
-/// failed, its self-test. This is what random32() calls, so it is the single
-/// place the whole system fails closed -- including every consumer inside
-/// deps/, which reaches it through trezor-crypto's random_buffer().
-///
-/// It halts with abort(), NOT with a warning screen, and that is a layering
-/// decision rather than an oversight: kkrand must not reference kkboard.
-/// GNU ld resolves static archives in one left-to-right pass, and kkboard is
-/// listed before kkrand in every link line here, so a UI call from this module
-/// fails to link in crypto-unit and board-unit. Firmware paths that HAVE
-/// somewhere to report -- reset_init(), U2F registration, the OTP block --
-/// call rng_health_check() first and render a proper error; this is the
-/// last-resort backstop for draws with no UI context, which is exactly the
-/// dependency draws it exists to cover.
-void rng_health_require(void);
 
 /// Fold \p len bytes of freshly drawn output into the boot-lifetime continuous
 /// SP 800-90B state, latching the verdict to failed if the RCT or APT trips.
 ///
-/// random32() calls this on every checked draw. The initial 1 KiB gate only
-/// says the source was healthy at boot; the continuous test is what notices a
-/// source that degenerates afterwards, and it is worth nothing if the default
-/// path does not feed it.
+/// random_buffer_checked() calls this on every draw it makes. The initial 1 KiB
+/// gate only says the source was healthy at boot; the continuous test is what
+/// notices a source that degenerates afterwards.
 ///
 /// Returns false if these very bytes tripped the test, so the caller can refuse
 /// to return them. The triggering draw is part of the degenerate run -- handing
@@ -127,8 +128,11 @@ bool rng_health_observe(const uint8_t* buf, size_t len);
 /// should simply be skipped and retried on a later healthy boot. Returns false
 /// with \p buf zeroed.
 ///
-/// This is NOT the way to get checked entropy -- plain random_buffer() is
-/// already checked. Use this only when you need to handle the failure yourself.
+/// THIS IS THE ONLY CHECKED DRAW. Plain random_buffer() and random32() are
+/// NOT checked -- they behave exactly as on develop. A previous revision of
+/// this branch inverted that and was descoped from 7.15, and this sentence
+/// used to say the opposite; if you are reaching for entropy that must be
+/// gated, you have to call this function by name.
 bool random_buffer_checked(uint8_t* buf, size_t len);
 
 #ifdef EMULATOR

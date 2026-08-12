@@ -36,10 +36,7 @@ static HMAC_DRBG_CTX drbg_ctx;
 
 void drbg_init() {
   uint8_t entropy[48] = {0};
-  /* Raw: this also runs in the bootloader, before any display, and nothing
-   * in the tree consumes drbg_generate()/drbg_random32() today. If a consumer
-   * ever appears, this seeding must become checked with it. */
-  random_buffer_raw(entropy, sizeof(entropy));
+  random_buffer(entropy, sizeof(entropy));
   hmac_drbg_init(&drbg_ctx, entropy, sizeof(entropy), NULL, 0);
 }
 

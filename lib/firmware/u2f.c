@@ -35,7 +35,6 @@
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f/u2f.h"
 #include "keepkey/firmware/u2f/u2f_keys.h"
-#include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/bip39_english.h"
@@ -117,7 +116,7 @@ static uint32_t dialog_timeout = 0;
 uint32_t next_cid(void) {
   // extremely unlikely but hey
   do {
-    cid = random32_raw(); /* a channel id, not a secret */
+    cid = random32();
   } while (cid == 0 || cid == CID_BROADCAST);
   return cid;
 }

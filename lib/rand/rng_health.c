@@ -51,9 +51,6 @@
 
 #include <string.h>
 
-#include <stdlib.h>
-
-#include "keepkey/rand/rng.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/rand.h"
 
@@ -110,8 +107,8 @@ bool rng_source_live(void) {
    * check rather than an assertion, and it keeps the caller's branch meaningful
    * in both builds. */
   uint32_t a = 0, b = 0;
-  random_buffer_raw((uint8_t*)&a, sizeof(a));
-  random_buffer_raw((uint8_t*)&b, sizeof(b));
+  random_buffer((uint8_t*)&a, sizeof(a));
+  random_buffer((uint8_t*)&b, sizeof(b));
   return a != b;
 #endif
 }
@@ -229,10 +226,7 @@ static bool rng_health_gate(void) {
   uint8_t chunk[32];
   for (size_t drawn = 0; drawn < RNG_HEALTH_SAMPLE_BYTES;
        drawn += sizeof(chunk)) {
-    /* RAW. random_buffer() consults this verdict, so drawing checked entropy
-     * to compute the verdict would recurse forever. The gate is the thing that
-     * measures the unchecked source. */
-    random_buffer_raw(chunk, sizeof(chunk));
+    random_buffer(chunk, sizeof(chunk));
     rng_health_update(&ctx, chunk, sizeof(chunk));
   }
   memzero(chunk, sizeof(chunk));
@@ -248,18 +242,26 @@ static bool rng_health_gate(void) {
  * one code path, and the honest claim was never "this device will not create
  * key material on a broken generator".
  *
- * Widening it by adding rng_health_check() at each of those call sites would
- * re-run a 1 KiB sample per draw and, worse, leave the next call site to
- * remember. Instead: one latched verdict, computed once, and one draw function
- * that consumes it. The check is inherited by construction rather than
- * repeated.
+ * The verdict is therefore computed ONCE and latched, and every covered site
+ * consumes it through random_buffer_checked() -- which avoids re-running a
+ * 1 KiB sample per draw.
+ *
+ * COVERAGE IS OPT-IN, NOT INHERITED. Each call site opts in by name; the
+ * complete list is in rng_health.h. Making coverage automatic -- inverting
+ * random32() so that everything, including deps/, was gated by construction --
+ * was built for 7.15 and descoped, so a new key-material draw added tomorrow
+ * gets NO protection unless its author routes it here on purpose. Do not
+ * describe this module as wallet-wide; two earlier revisions did, and both
+ * claims were wrong.
  *
  * The latch is per boot and one-way. A generator that fails is not retried
  * until it passes -- retrying until success is how a marginal source talks its
  * way in. */
 static enum { RNG_UNTESTED = 0, RNG_PASSED, RNG_FAILED } rng_verdict;
 
-/* Continuous SP 800-90B state over every byte of key material drawn this boot.
+/* Continuous SP 800-90B state over every byte drawn through
+ * random_buffer_checked() this boot -- which is not every byte of key material
+ * in the device, only the opted-in sites listed in rng_health.h.
  * This is what the RCT and APT are actually specified for: they run on the
  * output as it is produced, not only on a one-time sample. Constant space --
  * the streaming context holds no buffer -- so covering every draw costs
@@ -286,13 +288,14 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
     return false;
   }
 
-  random_buffer_raw(buf, len);
-  rng_health_observe(buf, len);
+  random_buffer(buf, len);
 
-  if (!rng_continuous.ok) {
-    /* Latch before wiping, so a caller that ignores the return value still
-     * cannot obtain key material from a source that has now failed. */
-    rng_verdict = RNG_FAILED;
+  /* Observe THESE bytes and refuse them if they are what tripped the test. The
+   * triggering draw is part of the degenerate run, so returning it and failing
+   * only on the next call would hand the caller exactly the output the test
+   * just rejected. Wiping also means a caller that ignores the return value
+   * still cannot walk away with key material from a failed source. */
+  if (!rng_health_observe(buf, len)) {
     memzero(buf, len);
     return false;
   }
@@ -307,13 +310,6 @@ bool rng_health_observe(const uint8_t* buf, size_t len) {
     return false;
   }
   return true;
-}
-
-void rng_health_require(void) {
-  if (rng_health_check()) return;
-  /* abort(), not a warning screen: see the note in rng_health.h. kkrand cannot
-   * reference kkboard without breaking the single-pass archive link. */
-  abort();
 }
 
 #ifdef EMULATOR

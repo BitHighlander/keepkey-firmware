@@ -19,11 +19,6 @@
 
 #include "keepkey/rand/rng.h"
 
-#include "keepkey/rand/rng_health.h"
-
-#include <stdbool.h>
-#include <stdlib.h>
-
 #include "trezor/crypto/rand.h"
 
 #ifdef EMULATOR
@@ -97,29 +92,12 @@ void reset_rng(void) {
 
   // to be extra careful and heed the STM32F205xx Reference manual,
   // Section 20.3.1 we don't use the first random number generated after setting
-  // the RNGEN bit in setup. Raw: this runs from inside the health machinery's
-  // own recovery path, and a discarded sample is not key material.
-  random32_raw();
+  // the RNGEN bit in setup
+  random32();
 #endif
 }
 
-#ifdef EMULATOR
-/* Test-only source override, so a unit test can make the continuous test trip
- * on a KNOWN draw instead of waiting for a real generator to misbehave. There
- * is no way to prove "the triggering word never leaves random32()" without
- * being able to trigger it on purpose. Emulator builds only. */
-static bool rng_raw_forced = false;
-static uint8_t rng_raw_byte = 0;
-void rng_force_raw_byte(bool on, uint8_t value) {
-  rng_raw_forced = on;
-  rng_raw_byte = value;
-}
-#endif
-
-uint32_t random32_raw(void) {
-#ifdef EMULATOR
-  if (rng_raw_forced) return 0x01010101u * (uint32_t)rng_raw_byte;
-#endif
+uint32_t random32(void) {
 #ifndef EMULATOR
   uint32_t rng_samples = 0, rng_sr_img;
   static uint32_t last = 0, new = 0;
@@ -156,45 +134,12 @@ uint32_t random32_raw(void) {
 #endif
 }
 
-void random_buffer_raw(uint8_t* buf, size_t len) {
-  uint32_t r = 0;
-  for (size_t i = 0; i < len; i++) {
-    if (i % 4 == 0) r = random32_raw();
-    buf[i] = (r >> ((i % 4) * 8)) & 0xff;
-  }
-}
-
-/* The checked default. Everything that does not explicitly ask for a raw draw
- * arrives here, including trezor-crypto's random_buffer() and random_uniform()
- * and therefore every cryptographic consumer inside deps/. */
-uint32_t random32(void) {
-  rng_health_require();
-  const uint32_t v = random32_raw();
-  /* Feed the CONTINUOUS test. Without this the boot-time 1 KiB verdict was the
-   * only thing enforced on the default path, so a source that went degenerate
-   * after the gate -- which is what the RCT and APT exist to notice -- kept
-   * producing key material for the rest of the boot. Every checked draw now
-   * participates, including the ones inside deps/.
-   *
-   * The word that TRIPS the test must not be returned. An earlier revision
-   * observed and returned unconditionally, so only the NEXT draw aborted -- and
-   * random_buffer() is built from four-byte draws, so a run tripping on the
-   * final word handed the caller the whole degenerate buffer. For a RedPallas
-   * nonce that is the disclosure this gate exists to prevent, delivered by the
-   * gate itself. */
-  if (!rng_health_observe((const uint8_t*)&v, sizeof(v))) {
-    abort();
-  }
-  return v;
-}
-
 #if defined(EMULATOR) && !defined(__APPLE__)
 /* trezor-crypto declares random_buffer() as a weak symbol so platforms can
  * supply their own. GNU/MinGW ld will NOT extract a weak definition from a
  * static archive to satisfy a strong reference (fsm.c/reset.c/storage.c),
  * which breaks the Linux .so and Windows .dll links. Provide a strong
- * definition here — identical to trezor-crypto's, built on our random32(),
- * so it inherits the check exactly as the weak one does.
+ * definition here — identical to trezor-crypto's, built on our random32().
  * macOS ld64 resolves the weak one fine, so it's left untouched there. */
 void random_buffer(uint8_t* buf, size_t len) {
   uint32_t r = 0;
@@ -205,50 +150,21 @@ void random_buffer(uint8_t* buf, size_t len) {
 }
 #endif
 
-/* Local, deliberately. This used to call trezor-crypto's random_uniform(),
- * which made kkrand depend on trezorcrypto -- and GNU ld resolves static
- * archives left-to-right in a single pass, so whether it linked came down to
- * which archive happened to be listed first. It resolved by accident until a
- * change removed the reference that had been dragging rand.o in early, and
- * then every ARM target failed on `undefined reference to random_uniform`.
- * Four lines of rejection sampling is not worth an inter-archive edge.
- *
- * Same rejection bound as trezor-crypto's, so the distribution is unchanged. */
-static uint32_t uniform_below(uint32_t (*draw)(void), uint32_t n) {
-  uint32_t x = 0, max = 0xFFFFFFFF - (0xFFFFFFFF % n);
-  while ((x = draw()) >= max);
-  return x / (max / n);
-}
-
 // I miss C++ templates sooo bad.
-#define RANDOM_PERMUTE(BUFF, COUNT, DRAW)       \
+#define RANDOM_PERMUTE(BUFF, COUNT)             \
   do {                                          \
     for (size_t i = (COUNT) - 1; i >= 1; i--) { \
-      size_t j = uniform_below((DRAW), i + 1);  \
+      size_t j = random_uniform(i + 1);         \
       typeof(*(BUFF)) t = (BUFF)[j];            \
       (BUFF)[j] = (BUFF)[i];                    \
       (BUFF)[i] = t;                            \
     }                                           \
   } while (0)
 
-void random_permute_char(char* str, size_t len) {
-  RANDOM_PERMUTE(str, len, random32);
-}
-
-/* The raw shuffle exists for memcmp_s()'s decoy ordering, and only for that.
- *
- * memcmp_s() filled its decoys with random_buffer_raw() but then shuffled them
- * with the checked permutation, which reintroduced the fatal health path into
- * the bootloader by the back door -- bootloader signature verification calls
- * memcmp_s(). The decoy ORDER is a timing-equalisation detail exactly like the
- * decoy CONTENT: nothing is protected by its unpredictability, and halting on
- * the PIN-compare path would itself be an oracle. */
-void random_permute_char_raw(char* str, size_t len) {
-  RANDOM_PERMUTE(str, len, random32_raw);
-}
+void random_permute_char(char* str, size_t len) { RANDOM_PERMUTE(str, len); }
 
 void random_permute_u16(uint16_t* buf, size_t count) {
-  RANDOM_PERMUTE(buf, count, random32);
+  RANDOM_PERMUTE(buf, count);
 }
 
 #undef RANDOM_PERMUTE
