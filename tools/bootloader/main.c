@@ -328,9 +328,7 @@ int main(void) {
 #endif
 
   /* Initialize stack guard with random value (-fstack_protector_all) */
-  /* Raw, and deliberately so: the bootloader must stay recoverable. Nothing
-   * here produces key material, so it gains no fatal RNG path. */
-  __stack_chk_guard = fi_defense_delay(random32_raw());
+  __stack_chk_guard = fi_defense_delay(random32());
 
   led_func(SET_GREEN_LED);
   led_func(SET_RED_LED);

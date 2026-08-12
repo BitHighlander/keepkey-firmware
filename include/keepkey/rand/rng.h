@@ -20,6 +20,7 @@
 #ifndef RNG_H
 #define RNG_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -55,6 +56,12 @@ void reset_rng(void);
  * review. */
 uint32_t random32_raw(void);
 void random_buffer_raw(uint8_t* buf, size_t len);
+
+#ifdef EMULATOR
+/// Test-only: force random32_raw() to return four copies of \p value, so a test
+/// can trip the continuous health test on a draw it chose.
+void rng_force_raw_byte(bool on, uint8_t value);
+#endif
 
 void random_permute_char(char* str, size_t len);
 /// Shuffle with a RAW draw. Only for memcmp_s()'s decoy ordering, which is a

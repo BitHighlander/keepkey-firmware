@@ -115,7 +115,12 @@ void rng_health_require(void);
 /// says the source was healthy at boot; the continuous test is what notices a
 /// source that degenerates afterwards, and it is worth nothing if the default
 /// path does not feed it.
-void rng_health_observe(const uint8_t* buf, size_t len);
+///
+/// Returns false if these very bytes tripped the test, so the caller can refuse
+/// to return them. The triggering draw is part of the degenerate run -- handing
+/// it back and aborting only on the NEXT call means a run that trips on the
+/// last word of a buffer delivers that whole buffer first.
+bool rng_health_observe(const uint8_t* buf, size_t len);
 
 /// Draw \p len bytes and report failure instead of halting, for the paths that
 /// have somewhere better to go: a host-visible error, or a one-shot write that

@@ -299,10 +299,14 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
   return true;
 }
 
-void rng_health_observe(const uint8_t* buf, size_t len) {
-  if (rng_verdict != RNG_PASSED) return;
+bool rng_health_observe(const uint8_t* buf, size_t len) {
+  if (rng_verdict != RNG_PASSED) return false;
   rng_health_update(&rng_continuous, buf, len);
-  if (!rng_continuous.ok) rng_verdict = RNG_FAILED;
+  if (!rng_continuous.ok) {
+    rng_verdict = RNG_FAILED;
+    return false;
+  }
+  return true;
 }
 
 void rng_health_require(void) {

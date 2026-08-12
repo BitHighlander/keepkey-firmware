@@ -21,6 +21,9 @@
 
 #include "keepkey/rand/rng_health.h"
 
+#include <stdbool.h>
+#include <stdlib.h>
+
 #include "trezor/crypto/rand.h"
 
 #ifdef EMULATOR
@@ -100,7 +103,23 @@ void reset_rng(void) {
 #endif
 }
 
+#ifdef EMULATOR
+/* Test-only source override, so a unit test can make the continuous test trip
+ * on a KNOWN draw instead of waiting for a real generator to misbehave. There
+ * is no way to prove "the triggering word never leaves random32()" without
+ * being able to trigger it on purpose. Emulator builds only. */
+static bool rng_raw_forced = false;
+static uint8_t rng_raw_byte = 0;
+void rng_force_raw_byte(bool on, uint8_t value) {
+  rng_raw_forced = on;
+  rng_raw_byte = value;
+}
+#endif
+
 uint32_t random32_raw(void) {
+#ifdef EMULATOR
+  if (rng_raw_forced) return 0x01010101u * (uint32_t)rng_raw_byte;
+#endif
 #ifndef EMULATOR
   uint32_t rng_samples = 0, rng_sr_img;
   static uint32_t last = 0, new = 0;
@@ -155,8 +174,17 @@ uint32_t random32(void) {
    * only thing enforced on the default path, so a source that went degenerate
    * after the gate -- which is what the RCT and APT exist to notice -- kept
    * producing key material for the rest of the boot. Every checked draw now
-   * participates, including the ones inside deps/. */
-  rng_health_observe((const uint8_t*)&v, sizeof(v));
+   * participates, including the ones inside deps/.
+   *
+   * The word that TRIPS the test must not be returned. An earlier revision
+   * observed and returned unconditionally, so only the NEXT draw aborted -- and
+   * random_buffer() is built from four-byte draws, so a run tripping on the
+   * final word handed the caller the whole degenerate buffer. For a RedPallas
+   * nonce that is the disclosure this gate exists to prevent, delivered by the
+   * gate itself. */
+  if (!rng_health_observe((const uint8_t*)&v, sizeof(v))) {
+    abort();
+  }
   return v;
 }
 
@@ -188,20 +216,19 @@ void random_buffer(uint8_t* buf, size_t len) {
  * Same rejection bound as trezor-crypto's, so the distribution is unchanged. */
 static uint32_t uniform_below(uint32_t (*draw)(void), uint32_t n) {
   uint32_t x = 0, max = 0xFFFFFFFF - (0xFFFFFFFF % n);
-  while ((x = draw()) >= max)
-    ;
+  while ((x = draw()) >= max);
   return x / (max / n);
 }
 
 // I miss C++ templates sooo bad.
-#define RANDOM_PERMUTE(BUFF, COUNT, DRAW)         \
-  do {                                            \
-    for (size_t i = (COUNT) - 1; i >= 1; i--) {   \
-      size_t j = uniform_below((DRAW), i + 1);    \
-      typeof(*(BUFF)) t = (BUFF)[j];              \
-      (BUFF)[j] = (BUFF)[i];                      \
-      (BUFF)[i] = t;                              \
-    }                                             \
+#define RANDOM_PERMUTE(BUFF, COUNT, DRAW)       \
+  do {                                          \
+    for (size_t i = (COUNT) - 1; i >= 1; i--) { \
+      size_t j = uniform_below((DRAW), i + 1);  \
+      typeof(*(BUFF)) t = (BUFF)[j];            \
+      (BUFF)[j] = (BUFF)[i];                    \
+      (BUFF)[i] = t;                            \
+    }                                           \
   } while (0)
 
 void random_permute_char(char* str, size_t len) {

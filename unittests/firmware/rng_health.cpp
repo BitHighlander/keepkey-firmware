@@ -222,6 +222,45 @@ TEST(RngHealth, DegenerateOutputAfterTheGateLatchesFailure) {
   rng_health_force_verdict(true);
 }
 
+// THE TRIGGERING DRAW ITSELF MUST DIE, not just the one after it.
+//
+// random32() used to observe and return unconditionally, so the word that
+// tripped the RCT was handed to the caller and only the NEXT call aborted.
+// random_buffer() is built from four-byte draws, so a run tripping on the final
+// word delivered the entire degenerate buffer first -- and for the Orchard
+// RedPallas nonce that is precisely the disclosure this gate exists to prevent,
+// handed over by the gate itself.
+//
+// Forcing the raw source is the only way to trigger this deliberately: the
+// first call yields a run of 4 identical bytes, the second reaches the cutoff
+// of 5 and must not return.
+TEST(RngHealthDeathTest, TheDrawThatTripsTheTestDoesNotReturn) {
+  EXPECT_EXIT(
+      {
+        rng_health_force_verdict(true);
+        rng_force_raw_byte(true, 0x7E);
+        (void)random32();  // run of 4 — under the cutoff, returns normally
+        (void)random32();  // reaches 5 — must abort instead of returning
+        _exit(0);          // reached only if the triggering word was returned
+      },
+      ::testing::KilledBySignal(SIGABRT), "");
+}
+
+// And the same at the unit level: the call that trips reports the failure,
+// which is what random32() branches on.
+TEST(RngHealth, ObserveReportsTheTrippingCall) {
+  rng_health_force_verdict(true);
+  const uint8_t fine[4] = {0x01, 0x02, 0x03, 0x04};
+  EXPECT_TRUE(rng_health_observe(fine, sizeof(fine)));
+
+  uint8_t stuck[RNG_HEALTH_RCT_CUTOFF];
+  memset(stuck, 0x7E, sizeof(stuck));
+  EXPECT_FALSE(rng_health_observe(stuck, sizeof(stuck)))
+      << "the observing call that tripped the test reported success";
+
+  rng_health_force_verdict(true);
+}
+
 // ...and the latch is what the next ordinary draw trips over.
 TEST(RngHealthDeathTest, DegenerateOutputHaltsTheNextPlainDraw) {
   EXPECT_EXIT(
