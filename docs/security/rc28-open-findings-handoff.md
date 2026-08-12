@@ -14,6 +14,56 @@ reopened findings from each.
 **RC28 is not merge-ready.** #369 is no longer the only reason it wasn't — for
 a full round, #366 and #368 did not build.
 
+## Post-7.15 security project: RNG coverage, RedPallas, degraded-RNG recovery
+
+These three are one project, not three tickets, because each answer changes the
+others. All were built during RC28 and deliberately descoped.
+
+**1. Coverage is opt-in, and the list is short.** #366 ships six draws that
+call `random_buffer_checked()` by name (see `rng_health.h`). Everything else,
+including all of `deps/`, is unchecked exactly as on develop. A new key-material
+draw inherits nothing.
+
+**2. RedPallas is the reason that matters.** `redpallas.c:281` draws the Orchard
+signing nonce with a bare `random_buffer()`, and `s = r + c*rsk` means two
+signatures sharing `r` disclose the spend authorization key. Uncovered on
+develop and uncovered in 7.15 — not a regression, but the highest-value gap.
+
+**3. Inverting the default was built and rejected — read this before rebuilding
+it.** Making `random32()` checked covers every dependency by construction, and
+the attempt failed for reasons that are properties of the system, not of the
+patch:
+
+- ECDSA blinding runs on the VERIFY path. `curve_to_jacobian()` randomizes a Z
+  coordinate on every point operation, so `ecdsa_verify_digest()` would abort on
+  a failed verdict — and `keepkey_main.c:177` calls `signatures_ok()` before
+  `kk_board_init()`. The firmware would not boot, with no message.
+- Making blinding draw raw does NOT fix that. `generate_k_random()` loops
+  `while (bn_is_zero(k) || !bn_is_less(k, prime))`, so a source stuck at zero
+  hangs instead of aborting.
+- The raw-blinding patch is only safe while `USE_RFC6979=1`. Under a different
+  configuration the same switch controls the real ECDSA signing nonce. A
+  comment is not a guard, and `rng_health.c` opens by warning against exactly
+  this class of assumption.
+- The bootloader reaches the same code through `signatures_ok()`, so any of
+  this in a bootloader is a brick with no recovery path.
+
+**The prerequisite is a defined degraded-RNG recovery mode** spanning firmware
+and bootloader crypto: what a device does when its generator has failed, such
+that it still boots, still verifies firmware, still signs with RFC6979 (which
+needs no entropy) to move funds out, and still refuses to mint new key material.
+Until that exists, inverting the default converts a degraded device into a dead
+one.
+
+**The rejected crypto branch has been deleted.** `BitHighlander/trezor-firmware`
+carried `fix/blinding-draws-raw`, which made blinding draw raw behind a
+`KK_BLINDING_RANDOM32` macro. It was removed rather than left unmerged so that
+nobody repins to it later on the strength of its commit message, which argued a
+case the loop condition above disproves. The approach is recorded here; the
+branch is not.
+
+---
+
 ## STOP — hard gate on the NEXT BOOTLOADER RELEASE
 
 **Not an RC28 item. Do not fix it in an RC28 PR. Do not build and ship a
