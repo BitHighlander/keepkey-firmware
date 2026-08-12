@@ -1,16 +1,79 @@
 # RC28 handoff — open findings, owners, and order
 
-Base: `develop` / RC27 `6ae3b964`. Written 2026-08-11 after three audit rounds.
-
-**RC28 is not merge-ready.** Two of the four PRs still carry release-blocking
-findings, and #369 is an architectural draft, not a decided design.
+Base: `develop` / RC27 `6ae3b964`. Written 2026-08-11 after three audit rounds,
+updated the same day after the remediation pass.
 
 | PR | Head | State |
 |---|---|---|
-| #366 RNG seed-time gate | `2f7f71e6` | RCT boundary fixed; **scope finding open (High)** |
-| #367 HASHES.txt labels | `5226cf41` | Green, but **does not fix the stale manifest (High)** |
-| #368 storage V17 revert | `280f3b6f` | Lockout + CRC fixed, 23/23; **CRC untestable on emulator (Med)** |
-| #369 clear-sign roadmap | `97617a1a` | **8 architectural blockers open** |
+| #366 RNG seed-time gate | `e7335677` | RCT boundary fixed; **scope finding addressed** — centralised checked-RNG verdict |
+| #367 HASHES.txt labels | `36ae0b56` | Labels + **rename/sign/hash ordering fixed**; manifest generator now runnable by key holders |
+| #368 storage V17 revert | `cd984407` | Lockout + CRC fixed; **emulator CRC now matches the peripheral**; reboot regression committed, 24/24 |
+| #369 clear-sign roadmap | `abb3b1ed` | 8 blockers **named and ordered**; 4 resolved in text, 3 specified, 1 (custody) is an owner decision |
+
+**RC28 is still not merge-ready**, but for a different reason than before: the
+code findings are closed and #369's blockers are now explicit decisions with an
+owner and an order rather than an undifferentiated list. Nothing in §3 below can
+be closed by an implementer working alone.
+
+## What the remediation pass changed
+
+- **#368** — the emulator's `calc_crc32()` consumed `word_len` BYTES of a
+  reflected zlib CRC-32 while hardware feeds `word_len` 32-bit WORDS to the
+  STM32 peripheral. It now models CRC-32/MPEG-2 over words, with golden vectors
+  independently checkable as the MPEG-2 CRC of each word's big-endian bytes, and
+  a test that byte 2568 changes the 643-word CRC but not the 642-word one.
+  `flash_temp` is explicitly `_Alignas(uint32_t)`. The audit's reboot regression
+  is committed: `Storage.PinUnlocksAfterRebootUnderV17` reports `PIN_WRONG` when
+  the hardcoded `PIN_KDF_V19` is put back, and the other 23 tests stay green
+  under that same injection — which is the point.
+- **#367** — rename now precedes hashing, and generation moved to
+  `scripts/release/hash-manifest.sh` so key holders re-run the identical recipe
+  over the signed binaries. It reads signed-ness off the artifacts rather than
+  being told, so an unsigned manifest says so; `--require-signed` is the
+  publish-time gate. It derives the device-image hash from `codelen` instead of
+  assuming the file is exactly `256+codelen` bytes, and reports the two
+  separately when they differ. Verified end to end on fixtures: the payload hash
+  survives signing unchanged, the device-image hash does not.
+- **#366** — one latched per-boot verdict plus `random_buffer_checked()`, which
+  every key-material draw now goes through: storage key, PIN-KDF salt,
+  wipe-code key, U2F key-handle path, `reset_init`'s device entropy, and the
+  one-shot OTP randomness block. Each site takes the failure disposition it can
+  actually support. Non-key draws (canaries, jitter, U2F channel ids, decoys,
+  UUID) and `GetEntropy` are deliberately excluded — gating the audit interface
+  would block the measurement that finds a failing source.
+- **#369** — §0 lists the eight blockers with severity, resolution location and
+  status; §9 keeps only genuine parameters and says they are downstream.
+
+### Known, pre-existing, and NOT caused by this work
+
+**`firmware-unit` cannot complete on a local macOS build.** Six suites hang
+indefinitely, each spinning at 100% CPU on a test that drives the shared
+`kkconfirm_preload` confirmation driver:
+
+    Authenticator.WipeCancellationFailsClosed
+    Ethereum.LiquidityCancellationFailsClosed
+    Mayachain.MemoSwapFullFormShowsAffiliate
+    Osmosis.MaxSwapAssetsAreRendererPagedCompletely
+    Thorchain.MemoSwapFullFormShowsAffiliate
+    Confirmation.ExactLengthPagerMeasuresRenderedRows
+
+**Verified at the merge base.** `6ae3b9644` was checked out into the same
+worktree, rebuilt, and all six hang identically there — none of this work is
+involved. Excluding them, both branches are green and the whole suite takes
+about eight seconds:
+
+    firmware-unit  -Authenticator.*:Ethereum.*:Mayachain.*:Osmosis.*:Thorchain.*:Confirmation.*
+      #368  327/327      #366  339/339
+    board-unit
+      #368  7/7 (includes the two new CRC tests)
+
+Two things follow. **If CI for #366/#368 is red on a timeout, look here first**
+rather than at the diffs. And *"the storage suite is 23/23"* was always a
+filtered result — a full local `firmware-unit` run has never completed on this
+platform, so treat any past claim of a clean full run with suspicion. CI builds
+inside the emulator Docker image on Linux, which is presumably why #364 merged
+green; whether that difference is the display stub, the button simulation or the
+UDP transport has not been chased down, and is not this work's to chase.
 
 ---
 
@@ -37,9 +100,12 @@ findings, and #369 is an architectural draft, not a decided design.
 
 ---
 
-## 2. Open — release blocking
+## 2. Findings from the audit rounds
 
-### 2.1 High — #366 does not establish wallet-wide RNG health
+Each one is kept with its original text so it is not re-litigated; the
+resolution follows it.
+
+### 2.1 CLOSED (was High) — #366 did not establish wallet-wide RNG health
 
 The gate sits only in the generate-mnemonic path. Recovery/import, `LoadDevice`,
 PIN and wipe-code changes, upgrades and storage init all create or rewrap
@@ -53,7 +119,7 @@ checked-RNG state and make every security-key draw consume it. One place that
 knows the source passed, one place that fails closed, and every consumer routed
 through it.
 
-### 2.2 High — #367 leaves the published manifest stale and mislabeled
+### 2.2 CLOSED (was High) — #367 left the published manifest stale and mislabeled
 
 `release.yml` computes hashes **before** renaming (`:158-199`), then the
 checklist (`:317-326`) tells key holders to replace the unsigned binary with the
@@ -75,7 +141,7 @@ quorum, then generate both hashes from the final assets, with
 artifact-type-specific instructions. #367's labels are correct and can merge;
 they simply do not close this.
 
-### 2.3 Medium — #368's CRC correction cannot be proven by the test suite
+### 2.3 CLOSED (was Medium) — #368's CRC correction was unprovable by the suite
 
 Hardware `calc_crc32(data, word_len)` feeds `word_len` **32-bit words** to the
 STM32 peripheral; the emulator implementation loops `word_len` **bytes**
@@ -89,13 +155,17 @@ vector, and add a corruption test targeting byte 2568 specifically.
 **Also:** make `flash_temp` explicitly `uint32_t`-aligned. The size assertion
 does not guarantee alignment before the cast to `uint32_t *`.
 
-### 2.4 CI
+### 2.4 CI — STILL OPEN
 
-- **#366 / #368 red.** #366's constant-fold is fixed here; re-check.
+- **#366 / #368 red.** #366's constant-fold is fixed. Before blaming a diff,
+  check whether the job timed out in one of the six confirm-driver suites — see
+  *Known, pre-existing* above. Those hangs reproduce at `6ae3b9644`, not on
+  either branch.
 - **Formatting.** `scripts/format-source-files.sh` under clang-format 22.1.1
   rewrites 40+ untouched files including vendored `pb_*.c`. The local version
   disagrees with CI's — **pin the version before anyone runs it repo-wide**, or
-  the formatting job becomes unfixable locally.
+  the formatting job becomes unfixable locally. Unchanged; still the first thing
+  that will waste someone's afternoon.
 
 ### 2.5 Release note, mandatory
 
@@ -103,19 +173,34 @@ does not guarantee alignment before the cast to `uint32_t *`.
 RC28 does not recognise it. That is the anti-rollback policy working as
 designed, not a regression. Testers need their recovery phrase first.
 
-### 2.6 Commit the reboot regression
+### 2.6 CLOSED — the reboot regression is committed
 
 The audit's end-to-end regression — create/reset, set PIN, serialize V17,
-reload as after reboot, unlock, compare recovered key — **passed and should be
-committed upstream.** The existing 23 storage tests never cross the
-serialize/reboot boundary, which is exactly where the lockout lived.
+reload as after reboot, unlock, compare recovered key — passed and was never
+committed. The existing 23 storage tests never cross the serialize/reboot
+boundary, which is exactly where the lockout lived.
+
+Now `Storage.PinUnlocksAfterRebootUnderV17`, extended to decrypt the secret
+section as well as unwrap the key, and verified against a reintroduction of the
+hardcoded `PIN_KDF_V19`: it reports `PIN_WRONG`, and the other 23 stay green
+under the same injection.
 
 ---
 
 ## 3. Open — #369 architectural blockers
 
-None are ROM questions. **"Only ROM remains open" is false** and should be
-struck from the roadmap.
+None are ROM questions. **"Only ROM remains open" is false**, and the roadmap
+now says so in its own §0 rather than leaving it to this handoff.
+
+Status after the remediation pass — the findings below are unchanged, and are
+kept in full because they are what has to be answered:
+
+| # | Where it stands |
+|---|---|
+| 1, 6, 8 | **Resolved in the roadmap text.** Opaque cross-variant preservation; proof constraints read only from the verified certificate, with rate-limited advances; one canonical certificate layout, and the Phase 1/Phase 2 "anchor" contradiction resolved by naming a schema root and a delegation root as separate keys. |
+| 2, 3, 7 | **Shape specified, decisions named.** The substrate's four parameters (rollback tolerance, checkpoint granularity, wear budget, power-loss state machine) still need an owner; so does the key/quorum inventory, and the choice between authenticated storage and a session-scoped policy. |
+| 4 | **Three options written down**, one of which is to state the recovery-only interruption state honestly. Needs a decision, not more analysis. |
+| 5 | **Owner decision. Unchanged.** Phase 2 is now explicitly gated on it, because pinning a root in shipped firmware is irreversible. |
 
 | # | Sev | Finding |
 |---|---|---|
@@ -132,14 +217,18 @@ Plus the previously flagged, still-undecided: blind-sign policy stickiness.
 
 ---
 
-## 4. Suggested order
+## 4. Order — what is left
 
-1. **#368** — emulator CRC + alignment + commit the reboot regression. Closest
-   to mergeable; it is the rc28 gate.
-2. **#367** — rename/sign/hash ordering and per-artifact instructions. Directly
-   protects the hash Vault pins, and explains a defect already found in the field.
-3. **#366** — centralised checked-RNG state. Do not ship wallet-wide claims until
-   this lands.
+1. ~~**#368** — emulator CRC + alignment + commit the reboot regression.~~ Done.
+2. ~~**#367** — rename/sign/hash ordering and per-artifact instructions.~~ Done.
+   One thing to carry forward: the checklist now tells key holders to run
+   `hash-manifest.sh --require-signed` over the signed binaries. **The first
+   real release is the test of that instruction**, and if it is skipped the
+   published manifest is wrong again in exactly the old way.
+3. ~~**#366** — centralised checked-RNG state.~~ Done. The wallet-wide claim is
+   now supportable for key material; it is still **not** an unpredictability
+   claim (see the scope note at the top of `lib/rand/rng_health.c`), and the
+   release notes must not upgrade it into one.
 4. **#369** — decide blockers 1-8 before any implementation. Suggested order:
    substrate (2) → authority model (3) → updater invariant (4) → certificate
    transcript (8) → cross-variant preservation (1) → proof-session inputs (6) →
