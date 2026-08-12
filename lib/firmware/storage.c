@@ -1678,9 +1678,12 @@ void storage_commit(void) {
   // pass commit verification and only surface later as a secret fingerprint
   // failure, which reaches storage_wipe(). 2572 = 643 words covers all 2569.
   //
-  // _Alignas because calc_crc32() casts to uint32_t*: the size assertion below
+  // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
   // says the buffer is a whole number of words, not that it starts on one.
-  static _Alignas(uint32_t) char flash_temp[2572];
+  // __attribute__((aligned)) rather than C11 _Alignas -- the ARM toolchain
+  // rejects _Alignas here, and this is the form the rest of the tree already
+  // uses (fsm.c msg_resp, usb.c buffers).
+  static char flash_temp[2572] __attribute__((aligned(4)));
   _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
                  "flash_temp must be word-sized or the CRC drops its tail");
   _Static_assert(sizeof(flash_temp) >= 2569,
@@ -1963,9 +1966,15 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
    * derives v15/v16 and fails every PIN: an intact but permanently unopenable
    * wallet. Every path that CREATES or REWRAPS a wrap must agree with
    * storage_activePinKdfVersion(). */
+  /* One value, captured once, used for both the derivation and the flag that
+   * describes it. Calling storage_rewrapPinKdfVersion() twice would couple the
+   * persisted description to a second invocation rather than to the wrap
+   * actually produced -- fine today because the helper is pure, and exactly
+   * the kind of gap that reopens this lockout the day it is not. */
+  const pin_kdf_version_t rewrap_to = storage_rewrapPinKdfVersion();
+
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true,
-                            storage_rewrapPinKdfVersion(),
+  storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true, rewrap_to,
                             storage->pub.random_salt, _("Encrypting Secrets"));
 
   // Derive a new storageKey.
@@ -1976,7 +1985,8 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
                          storage->pub.wrapped_storage_key);
   storage->pub.sca_hardened = true;
   storage->pub.v15_16_trans = true;
-  /* Must describe the wrap actually produced above, not an aspiration.
+  /* Describes the wrap actually produced above, because it tests the same
+   * captured value that produced it.
    *
    * Always false while STORAGE_PIN_KDF_V19 is 0, and cppcheck is right to say
    * so — but the comparison is the point. Writing `false` here would leave the
@@ -1984,7 +1994,7 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
    * the gate would ship a v19 wrap described as v16: the exact lockout this
    * branch exists to fix. Keep it derived. */
   // cppcheck-suppress knownConditionTrueFalse
-  storage->pub.pin_kdf_v2 = (storage_rewrapPinKdfVersion() == PIN_KDF_V19);
+  storage->pub.pin_kdf_v2 = (rewrap_to == PIN_KDF_V19);
 
   // Fingerprint the storageKey.
   storage_keyFingerprint(ss->storageKey, storage->pub.storage_key_fingerprint);
