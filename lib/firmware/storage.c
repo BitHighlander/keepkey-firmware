@@ -80,8 +80,13 @@
 #define PIN_ITER_CHUNK_v15 1000
 #define PIN_ITER_COUNT_v16 10
 #define PIN_ITER_CHUNK_v16 1
-#define PIN_ITER_COUNT_v19 100000
-#define PIN_ITER_CHUNK_v19 1000
+/* 70k, not 100k: a 30% cut in unlock wall-clock. The offline work factor this
+ * buys is bounded by the PIN search space (alphabet 1-9, and most users pick
+ * four digits), so the last 30k iterations cost every unlock and move a GPU
+ * attack by minutes. Must be settled before V19 ships -- these are storage
+ * format, so changing it later costs a V20 migration. */
+#define PIN_ITER_COUNT_v19 70000
+#define PIN_ITER_CHUNK_v19 700
 #endif
 
 #define U2F_KEY_PATH 0x80553246
