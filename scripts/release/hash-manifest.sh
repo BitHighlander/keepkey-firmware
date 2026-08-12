@@ -53,9 +53,16 @@ sig_present() {
 # distinct, and each of the three 64-byte signature regions independently
 # non-zero.
 #
-# This is a STRUCTURAL check, not signature verification -- it catches "the
-# unsigned binary got uploaded", which is the failure actually observed. It
-# cannot catch a well-formed forgery, and must not be described as if it could.
+# WHAT THIS PROVES, EXACTLY: that the canonical unsigned draft -- zero indices,
+# zero signature area -- was not published. Nothing more. A region holding a
+# single non-zero byte passes, so this cannot distinguish a real ECDSA
+# signature from a placeholder, and it cannot detect a forgery at all.
+#
+# The five signing public keys are in include/keepkey/board/pubkeys.h, so real
+# verification is not blocked on obtaining them -- it needs a host-side
+# secp256k1 verifier over sha256 of the image, which nobody has written. Until
+# that exists, do not let this check be described as proof the release is
+# correctly signed.
 has_quorum() {
   _i1=$(u8 "$1" 8); _i2=$(u8 "$1" 9); _i3=$(u8 "$1" 10)
   for _i in "$_i1" "$_i2" "$_i3"; do
@@ -142,17 +149,29 @@ OUT="HASHES${SUFFIX}.txt"
 # image found at all" were the same answer, so --require-signed exited 0 on an
 # empty directory and announced "Generated from the signed release artifacts" --
 # a gate that passes when there is nothing to gate.
+# Exactly one application image, and it must be the one this invocation names.
+# A directory holding both variants' artifacts -- which is precisely what the
+# release job's merge-multiple download produces -- would otherwise hash the
+# bitcoin-only image into the full variant's manifest and vice versa.
+EXPECTED_APP="firmware.keepkey.v${VERSION}${SUFFIX}.bin"
 UNSIGNED=0
 APPS=0
 for f in *.bin; do
   [ -f "$f" ] || continue
   is_kpky "$f" || continue
+  if [ "$f" != "$EXPECTED_APP" ]; then
+    echo "ERROR: unexpected application image '$f'; this manifest is for" >&2
+    echo "       '${EXPECTED_APP}'. Generate each variant from its own" >&2
+    echo "       directory, or the variants cross-contaminate." >&2
+    exit 1
+  fi
   APPS=$((APPS + 1))
   has_quorum "$f" || UNSIGNED=1
 done
 
 if [ "$REQUIRE_SIGNED" -eq 1 ] && [ "$APPS" -eq 0 ]; then
-  echo "ERROR: no KPKY application image in $(pwd) — nothing to publish." >&2
+  echo "ERROR: no application image '${EXPECTED_APP}' in $(pwd) —" >&2
+  echo "       nothing to publish." >&2
   exit 1
 fi
 
@@ -168,9 +187,12 @@ fi
     echo "# Only the 'payload' hash survives signing unchanged."
   else
     echo "# Generated from the signed release artifacts: ${APPS} application"
-    echo "# image(s), each carrying three distinct signer slots in 1..5 and three"
-    echo "# non-empty signatures. That is a STRUCTURAL check -- it proves the"
-    echo "# unsigned binary was not published, NOT that the signatures verify."
+    echo "# image, carrying three distinct signer slots in 1..5 and three"
+    echo "# non-empty signature regions."
+    echo "#"
+    echo "# That is a STRUCTURAL check with a narrow meaning: it proves the"
+    echo "# canonical UNSIGNED DRAFT was not published. It does NOT verify the"
+    echo "# signatures, and a region holding one non-zero byte would pass it."
   fi
   echo ""
 } >> "$OUT"
@@ -196,6 +218,16 @@ for f in *.bin *.elf; do
 
   CODELEN=$(le32 "$f" 4)
   SIZE=$(wc -c < "$f" | tr -d ' ')
+
+  # head -c stops at EOF without complaining, so a truncated image would be
+  # hashed over fewer bytes than its own descriptor claims and published as if
+  # it were whole.
+  if [ "$SIZE" -lt $((256 + CODELEN)) ]; then
+    echo "ERROR: '$f' is ${SIZE} bytes but its descriptor claims 256+${CODELEN}" >&2
+    echo "       = $((256 + CODELEN)). Truncated image; refusing to hash it." >&2
+    exit 1
+  fi
+
   DEVICE=$(head -c $((256 + CODELEN)) "$f" | digest)
   PAYLOAD=$(tail -c +257 "$f" | digest)
 
