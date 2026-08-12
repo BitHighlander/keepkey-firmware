@@ -53,6 +53,7 @@
 
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/layout.h"
+#include "keepkey/rand/rng.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/rand.h"
 
@@ -109,8 +110,8 @@ bool rng_source_live(void) {
    * check rather than an assertion, and it keeps the caller's branch meaningful
    * in both builds. */
   uint32_t a = 0, b = 0;
-  random_buffer((uint8_t*)&a, sizeof(a));
-  random_buffer((uint8_t*)&b, sizeof(b));
+  random_buffer_raw((uint8_t*)&a, sizeof(a));
+  random_buffer_raw((uint8_t*)&b, sizeof(b));
   return a != b;
 #endif
 }
@@ -228,7 +229,10 @@ static bool rng_health_gate(void) {
   uint8_t chunk[32];
   for (size_t drawn = 0; drawn < RNG_HEALTH_SAMPLE_BYTES;
        drawn += sizeof(chunk)) {
-    random_buffer(chunk, sizeof(chunk));
+    /* RAW. random_buffer() consults this verdict, so drawing checked entropy
+     * to compute the verdict would recurse forever. The gate is the thing that
+     * measures the unchecked source. */
+    random_buffer_raw(chunk, sizeof(chunk));
     rng_health_update(&ctx, chunk, sizeof(chunk));
   }
   memzero(chunk, sizeof(chunk));
@@ -282,7 +286,7 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
     return false;
   }
 
-  random_buffer(buf, len);
+  random_buffer_raw(buf, len);
   rng_health_update(&rng_continuous, buf, len);
 
   if (!rng_continuous.ok) {
@@ -295,8 +299,8 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
   return true;
 }
 
-void random_buffer_or_die(uint8_t* buf, size_t len) {
-  if (random_buffer_checked(buf, len)) return;
+void rng_health_require(void) {
+  if (rng_health_check()) return;
   layout_warning_static("RNG self-test failed. Reboot device!");
   shutdown();
 }

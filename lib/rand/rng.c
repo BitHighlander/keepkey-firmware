@@ -19,6 +19,8 @@
 
 #include "keepkey/rand/rng.h"
 
+#include "keepkey/rand/rng_health.h"
+
 #include "trezor/crypto/rand.h"
 
 #ifdef EMULATOR
@@ -92,12 +94,13 @@ void reset_rng(void) {
 
   // to be extra careful and heed the STM32F205xx Reference manual,
   // Section 20.3.1 we don't use the first random number generated after setting
-  // the RNGEN bit in setup
-  random32();
+  // the RNGEN bit in setup. Raw: this runs from inside the health machinery's
+  // own recovery path, and a discarded sample is not key material.
+  random32_raw();
 #endif
 }
 
-uint32_t random32(void) {
+uint32_t random32_raw(void) {
 #ifndef EMULATOR
   uint32_t rng_samples = 0, rng_sr_img;
   static uint32_t last = 0, new = 0;
@@ -134,12 +137,29 @@ uint32_t random32(void) {
 #endif
 }
 
+void random_buffer_raw(uint8_t* buf, size_t len) {
+  uint32_t r = 0;
+  for (size_t i = 0; i < len; i++) {
+    if (i % 4 == 0) r = random32_raw();
+    buf[i] = (r >> ((i % 4) * 8)) & 0xff;
+  }
+}
+
+/* The checked default. Everything that does not explicitly ask for a raw draw
+ * arrives here, including trezor-crypto's random_buffer() and random_uniform()
+ * and therefore every cryptographic consumer inside deps/. */
+uint32_t random32(void) {
+  rng_health_require();
+  return random32_raw();
+}
+
 #if defined(EMULATOR) && !defined(__APPLE__)
 /* trezor-crypto declares random_buffer() as a weak symbol so platforms can
  * supply their own. GNU/MinGW ld will NOT extract a weak definition from a
  * static archive to satisfy a strong reference (fsm.c/reset.c/storage.c),
  * which breaks the Linux .so and Windows .dll links. Provide a strong
- * definition here — identical to trezor-crypto's, built on our random32().
+ * definition here — identical to trezor-crypto's, built on our random32(),
+ * so it inherits the check exactly as the weak one does.
  * macOS ld64 resolves the weak one fine, so it's left untouched there. */
 void random_buffer(uint8_t* buf, size_t len) {
   uint32_t r = 0;

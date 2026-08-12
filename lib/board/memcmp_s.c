@@ -45,7 +45,9 @@ int memcmp_s(const void* lhs, const void* rhs, size_t len) {
   }
 
   static uint8_t decoys[DECOY_COUNT][255];
-  random_buffer(&decoys[0][0], sizeof(decoys));
+  /* Raw: decoys exist to equalise timing, not to be unguessable, and this
+   * runs on the PIN-compare path where halting would be its own oracle. */
+  random_buffer_raw(&decoys[0][0], sizeof(decoys));
 
   static void* permuted[DECOY_COUNT + 2];
   for (size_t i = 0; i != DECOY_COUNT; i++) {

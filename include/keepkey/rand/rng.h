@@ -26,6 +26,36 @@
 /// Reset the hardware random number generator
 void reset_rng(void);
 
+/* THE DEFAULT IS CHECKED.
+ *
+ * random32() -- and therefore trezor-crypto's random_buffer(), random_uniform()
+ * and everything built on them -- consults the RNG health verdict and HALTS the
+ * device rather than returning entropy from a generator that failed its
+ * self-test. That is deliberately the path of least resistance: an earlier
+ * revision gated a list of call sites instead, and the list could never be
+ * complete. It missed the Orchard RedPallas signing nonce in the pinned crypto
+ * submodule, where a repeated nonce discloses the spend authorization key --
+ * a dependency we do not own and would have had to remember to audit forever.
+ *
+ * Because the dependency calls random32() through the same symbol, checking
+ * here covers RedPallas, SecAESSTM32 masking and ECDSA blinding without
+ * touching deps/ at all.
+ *
+ * The raw entries below skip that check. Reach for one ONLY when the draw is
+ * not key material AND halting would be worse than proceeding:
+ *
+ *   - the health test itself, which would otherwise recurse into its own gate;
+ *   - GetEntropy, the RNG audit interface -- gating it would block the very
+ *     measurement that finds a failing source;
+ *   - stack canaries, timer jitter, U2F channel ids and constant-time-compare
+ *     decoys, whose unpredictability protects nothing and which run on paths
+ *     (pre-display boot, the bootloader) that must stay recoverable.
+ *
+ * Using a raw entry is a decision. Naming it makes that decision visible in
+ * review. */
+uint32_t random32_raw(void);
+void random_buffer_raw(uint8_t* buf, size_t len);
+
 void random_permute_char(char* str, size_t len);
 void random_permute_u16(uint16_t* buf, size_t count);
 

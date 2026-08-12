@@ -35,6 +35,7 @@
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/keepkey_leds.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/rand/rng.h"
 #include "keepkey/board/supervise.h"
 #include "trezor/crypto/rand.h"
 
@@ -245,7 +246,7 @@ void timer_init(void) {
 
 uint32_t fi_defense_delay(volatile uint32_t value) {
 #ifndef EMULATOR
-  int wait = random32() & 0x4fff;
+  int wait = random32_raw() & 0x4fff; /* jitter, not key material */
   volatile int i = 0;
   volatile int j = wait;
   while (i < wait) {

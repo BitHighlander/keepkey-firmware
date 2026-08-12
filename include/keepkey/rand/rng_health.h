@@ -92,25 +92,24 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 /// the same verdict and cannot be forgotten.
 bool rng_health_check(void);
 
-/// Draw \p len bytes of KEY MATERIAL.
+/// Consult the verdict and HALT the device if the generator has not passed, or
+/// has since failed, its self-test. This is what random32() calls, so it is the
+/// single place the whole system fails closed -- including every consumer
+/// inside deps/, which reaches it through trezor-crypto's random_buffer().
 ///
-/// Returns false, with \p buf zeroed, if the generator has not passed or has
-/// since failed its self-test. This is the one place that fails closed: every
-/// draw that becomes a key, a wrapping salt, a seed or a derivation path must
-/// come through here rather than random_buffer(), so a new call site inherits
-/// the check instead of having to remember one.
-///
-/// Draws that are NOT key material -- stack canaries, timer jitter, U2F channel
-/// ids, constant-time-compare decoys, the device UUID -- deliberately do not
-/// use this: they must not be able to halt the device, and nothing is protected
-/// by their unpredictability.
-bool random_buffer_checked(uint8_t* buf, size_t len);
+/// Halting is the same disposition storage_secMigrate() already takes when
+/// secrets fail to decrypt: there is no useful way to continue, and continuing
+/// would mean emitting key material from a source known to be bad.
+void rng_health_require(void);
 
-/// random_buffer_checked() for the key-material paths that have no way to
-/// report a failure to anyone. Warns and halts rather than proceeding with a
-/// zeroed buffer, which is the same disposition storage_secMigrate() already
-/// takes when secrets fail to decrypt.
-void random_buffer_or_die(uint8_t* buf, size_t len);
+/// Draw \p len bytes and report failure instead of halting, for the paths that
+/// have somewhere better to go: a host-visible error, or a one-shot write that
+/// should simply be skipped and retried on a later healthy boot. Returns false
+/// with \p buf zeroed.
+///
+/// This is NOT the way to get checked entropy -- plain random_buffer() is
+/// already checked. Use this only when you need to handle the failure yourself.
+bool random_buffer_checked(uint8_t* buf, size_t len);
 
 #ifdef EMULATOR
 /// Test-only: force the latched verdict. `false` stands in for a generator

@@ -659,7 +659,11 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
   RESP_INIT(Entropy);
 
   resp->entropy.size = len;
-  random_buffer(resp->entropy.bytes, len);
+  /* RAW, deliberately. This is the RNG audit interface: gating it would
+   * block the very measurement an auditor uses to find a failing source,
+   * and the bytes are handed out for inspection, not used as a key.
+   * fsm.c includes keepkey/rand/rng.h. */
+  random_buffer_raw(resp->entropy.bytes, len);
   msg_write(MessageType_MessageType_Entropy, resp);
   layoutHome();
 }

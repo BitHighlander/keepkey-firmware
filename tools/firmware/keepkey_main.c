@@ -190,7 +190,9 @@ int main(void) {
     (void)flash_programModel();
 
     /* Init for safeguard against stack overflow (-fstack-protector-all) */
-    __stack_chk_guard = (uintptr_t)random32();
+    /* Raw: runs before the display is usable, protects nothing an attacker
+     * can predict their way past, and must never halt the boot. */
+    __stack_chk_guard = (uintptr_t)random32_raw();
 
     drbg_init();
 

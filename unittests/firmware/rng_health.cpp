@@ -1,5 +1,7 @@
 extern "C" {
+#include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
+#include "trezor/crypto/rand.h"
 }
 
 #include <gtest/gtest.h>
@@ -175,16 +177,48 @@ TEST(RngHealth, CheckedDrawRejectsNull) {
   EXPECT_FALSE(random_buffer_checked(nullptr, 32));
 }
 
-// The paths with nowhere to report a failure -- storage_setPin_impl() drawing
-// the storage encryption key, for one -- halt instead of continuing.
-TEST(RngHealthDeathTest, OrDieHaltsOnAFailedVerdict) {
+// THE INVERSION, PINNED. Plain random_buffer() is the checked path, so a
+// consumer that never heard of this module -- including redpallas.c inside the
+// pinned crypto submodule, which draws its Orchard signing nonce this way --
+// cannot obtain entropy from a failed generator. A repeated RedPallas nonce
+// discloses the spend authorization key, and enumerating call sites could never
+// have covered a dependency we do not own.
+TEST(RngHealthDeathTest, PlainRandomBufferHaltsOnAFailedVerdict) {
   EXPECT_EXIT(
       {
         rng_health_force_verdict(false);
         uint8_t buf[64];
-        random_buffer_or_die(buf, sizeof(buf));
+        random_buffer(buf, sizeof(buf));
       },
       ::testing::ExitedWithCode(1), "");
+}
+
+TEST(RngHealthDeathTest, PlainRandom32HaltsOnAFailedVerdict) {
+  EXPECT_EXIT(
+      {
+        rng_health_force_verdict(false);
+        (void)random32();
+      },
+      ::testing::ExitedWithCode(1), "");
+}
+
+// ...and the raw entries stay usable, because the boot paths that call them
+// must not be able to halt: stack canaries, timer jitter, U2F channel ids,
+// constant-time decoys, and the health test itself, which would otherwise
+// recurse into its own gate.
+TEST(RngHealth, RawDrawsSurviveAFailedVerdict) {
+  rng_health_force_verdict(false);
+  uint8_t a[32] = {0};
+  uint8_t b[32] = {0};
+  random_buffer_raw(a, sizeof(a));
+  random_buffer_raw(b, sizeof(b));
+  EXPECT_NE(0, memcmp(a, b, sizeof(a)));
+  EXPECT_NE(random32_raw(), random32_raw());
+
+  // And the gate can still be re-run on a source that recovers, because it
+  // measures the raw source rather than the checked one.
+  rng_health_force_verdict(true);
+  EXPECT_TRUE(rng_health_check());
 }
 
 }  // namespace
