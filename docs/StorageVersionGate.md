@@ -38,13 +38,19 @@ Two `_Static_assert`s in `lib/firmware/storage.c`, both compile-time:
 | Check | Fires when |
 |---|---|
 | `STORAGE_VERSION >= STORAGE_VERSION_LAST_SHIPPED` | Someone lowers the version below a shipped release |
-| `StorageVersion_##LAST == LAST` | `storage_versions.inc` stops being contiguous from 1 |
+| `StorageVersion_##N == N`, on every entry | `storage_versions.inc` stops being contiguous from 1 |
 
 The second works because the enum is emitted in `.inc` order after
 `StorageVersion_NONE = 0`, so a contiguous `1..N` list makes
 `StorageVersion_N == N`. Delete entry 5 and `StorageVersion_17` becomes 16, and
-the build stops. It is checked on the last entry because that is the only one
-whose value depends on every entry before it.
+the build stops.
+
+It is asserted on **every** entry, not just the last. Checking only the last
+entry pins the entry *count*, which is weaker than it looks: renumbering
+`ENTRY(16)` to `ENTRY(99)` leaves `StorageVersion_17` at 17 and compiles clean,
+while `version_from_int` quietly loses `case 16` and every device carrying
+version 16 is wiped on upgrade. That gap was found by mutation-testing the
+assert rather than by reading it.
 
 `STORAGE_VERSION_LAST_SHIPPED` lives in `include/keepkey/firmware/storage.h`.
 
@@ -55,7 +61,7 @@ whose value depends on every entry before it.
    is no valid reason to lower it on a branch; a revert of unshipped work should
    restore the *reader* while leaving the version number alone.
 2. **Did `storage_versions.inc` change?** Only ever by appending. Any deletion or
-   reordering is a wipe, and the build will say so.
+   renumbering is a wipe, and the build will say so.
 3. **Did `STORAGE_VERSION_LAST_SHIPPED` change?** Only legitimate in a release
    commit, and only upward. A bump appearing in a feature branch, or any
    decrease, is the single highest-severity review item in this file — it is
