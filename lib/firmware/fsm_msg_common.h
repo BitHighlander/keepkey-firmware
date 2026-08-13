@@ -878,10 +878,24 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg) {
     // ShapeShift policy is always disabled.
     if (strcmp(msg->policy[i].policy_name, "ShapeShift") == 0) continue;
 
-    if (!confirm_with_custom_button_request(
-            resp, enabled ? "Enable Policy" : "Disable Policy",
-            "Do you want to %s %s policy?", enabled ? "enable" : "disable",
-            msg->policy[i].policy_name)) {
+    /* AdvancedMode is session-scoped: never written to flash, off again after a
+     * power cycle. This screen is the only place the device says what enabling
+     * costs, and a bare "enable policy" reads as permanent. */
+    const bool advanced_enable =
+        enabled && strcmp(msg->policy[i].policy_name, "AdvancedMode") == 0;
+    bool confirmed;
+    if (advanced_enable) {
+      confirmed = confirm_with_custom_button_request(
+          resp, "Enable Policy",
+          "Do you want to enable AdvancedMode policy? It turns off when you "
+          "unplug the device.");
+    } else {
+      confirmed = confirm_with_custom_button_request(
+          resp, enabled ? "Enable Policy" : "Disable Policy",
+          "Do you want to %s %s policy?", enabled ? "enable" : "disable",
+          msg->policy[i].policy_name);
+    }
+    if (!confirmed) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "Apply policies cancelled");
       layoutHome();

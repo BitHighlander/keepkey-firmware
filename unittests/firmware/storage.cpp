@@ -6,6 +6,9 @@ extern "C" {
 #include "trezor/crypto/aes/aes.h"
 #include "types.pb.h"
 #include "storage.h"
+
+/* Emulator flash bring-up, same forward declaration signed_metadata.cpp uses. */
+void setup(void);
 }
 
 #include "gtest/gtest.h"
@@ -13,6 +16,7 @@ extern "C" {
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 using ::testing::ElementsAreArray;
 
@@ -371,6 +375,189 @@ TEST(Storage, SetPolicy) {
   EXPECT_EQ(storage.pub.policies[3].enabled, true);
 }
 
+// AdvancedMode is the blind-sign gate (ethereum.c, eos.c, solana.c). It lives
+// in the PUBLIC storage section, which has no authenticated integrity against
+// physical flash modification -- the same reason RC18 refused to persist
+// clear-sign trust anchors there. So it is session-scoped: never written, and
+// never restored, no matter what the flash says.
+//
+// Two directions, and the second is the one that matters. A comment in
+// storage.c does not stop someone reinstating `flags & (1u << 12)` in a new
+// storage version; this test does.
+TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
+  // storage_setPolicy matches by name against the GLOBAL shadow config, whose
+  // policy table is zeroed until storage_init() populates it. Same guarded
+  // idiom as signed_metadata.cpp: re-running storage_init() over an already
+  // live shadow would try to migrate and decrypt it.
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+
+  ConfigFlash start;
+  memset(&start, 0, sizeof(start));
+  memcpy(start.meta.magic, "stor", 4);
+  start.storage.version = STORAGE_VERSION;
+  start.storage.encrypted_sec_version = STORAGE_VERSION;
+  storage_resetPolicies(&start.storage);
+
+  // Enable it in the shadow config, which is what the writer serializes from
+  // (storage_writeStorageV16Plaintext reads policy state via
+  // storage_isPolicyEnabled, i.e. from the shadow, not from `start`).
+  // shadow_config is process-global and 16 production call sites read it, so
+  // the restore must survive an ASSERT_* early return out of the TEST body.
+  struct RestorePolicy {
+    ~RestorePolicy() { storage_setPolicy("AdvancedMode", false); }
+  } restore_policy;
+
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(storage_isPolicyEnabled("AdvancedMode"))
+      << "test precondition: the writer must have something to leak";
+
+  std::vector<uint8_t> flash(2570);
+  memset(&flash[0], 0, flash.size());
+  storage_writeV17((char *)&flash[0], flash.size(), &start);
+
+  // 1. The writer must not persist it. Storage begins at +44, flags at +4.
+  uint32_t flags = 0;
+  memcpy(&flags, &flash[44 + 4], sizeof(flags));
+  EXPECT_EQ(flags & (1u << 12), 0u)
+      << "AdvancedMode was written to flash; it must be session-scoped";
+
+  // 2. The reader must ignore the bit even when it IS set -- an upgraded
+  //    device, or one an attacker wrote to directly.
+  flags |= (1u << 12);
+  memcpy(&flash[44 + 4], &flags, sizeof(flags));
+
+  // Every reader that resolves policies[3] gets the same buffer. V11 and V16
+  // are separate storage_readPolicyV2 call sites on live migration paths, so
+  // testing only V17 would let someone reinstate `flags & (1u << 12)` in one of
+  // the others with the suite still green -- the exact regression this guards.
+  struct {
+    const char *name;
+    void (*read)(ConfigFlash *, const char *, size_t);
+  } readers[] = {
+      {"V11", storage_readV11},
+      {"V16", storage_readV16},
+      {"V17", storage_readV17},
+  };
+
+  for (const auto &r : readers) {
+    ConfigFlash end;
+    memset(&end, 0, sizeof(end));
+    r.read(&end, (const char *)&flash[0], flash.size());
+
+    EXPECT_EQ(std::string(end.storage.pub.policies[3].policy_name),
+              "AdvancedMode")
+        << r.name;
+    EXPECT_FALSE(end.storage.pub.policies[3].enabled)
+        << r.name << ": a flash bit re-enabled blind signing across a reboot";
+  }
+
+  // 3. Ignoring the stale bit is not enough -- it must be SCRUBBED. Firmware
+  //    <= 7.15 still reads bit 12 as the policy, so a downgrade would boot with
+  //    blind signing already on. storage_fromFlash must therefore report
+  //    SUS_Updated (which makes storage_init commit, and the writer zeroes it)
+  //    rather than SUS_Valid, which commits nothing.
+  {
+    static char sector[STORAGE_SECTOR_LEN];
+    memset(sector, 0, sizeof(sector));
+    memcpy(sector, "stor", 4);
+    uint32_t v = STORAGE_VERSION;
+    memcpy(sector + 44, &v, sizeof(v));
+
+    SessionState ss;
+    ConfigFlash out;
+
+    uint32_t clean = 0;
+    memcpy(sector + 48, &clean, sizeof(clean));
+    memset(&ss, 0, sizeof(ss));
+    memset(&out, 0, sizeof(out));
+    EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Valid)
+        << "a clean V17 sector must not force a needless flash write";
+
+    uint32_t stale = (1u << 12);
+    memcpy(sector + 48, &stale, sizeof(stale));
+    memset(&ss, 0, sizeof(ss));
+    memset(&out, 0, sizeof(out));
+    EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Updated)
+        << "a stale AdvancedMode bit must force a commit that scrubs it";
+  }
+}
+
+// The legacy (version 2-10) storage record carried a policy NAME in flash.
+// storage_upgradePolicies only fills entries from policies_count upward, and
+// storage_isPolicyEnabled_impl returns on the first name match scanning from
+// index 0 -- so a record naming itself "AdvancedMode" answered before the real
+// entry at index 3, re-enabling blind signing straight out of unauthenticated
+// flash. That defeats session-scoping entirely, so it is tested separately.
+TEST(Storage, LegacyPolicyRecordCannotNameAdvancedMode) {
+  std::vector<char> buf(852, 0);
+
+  // version 2 selects the legacy reader (version 1 never read the record).
+  buf[0] = 2;
+
+  // The attacker-controlled legacy policy record at +464:
+  //   +0  has_policy_name, +1..15 policy_name, +16 has_enabled, +17 enabled
+  buf[464] = 1;
+  const char *name = "AdvancedMode";
+  memcpy(&buf[465], name, strlen(name));
+  buf[480] = 1;
+  buf[481] = 1;
+
+  SessionState ss;
+  memset(&ss, 0, sizeof(ss));
+  Storage storage;
+  memset(&storage, 0, sizeof(storage));
+
+  storage_readStorageV1(&ss, &storage, &buf[0], buf.size());
+  storage_upgradePolicies(&storage);
+
+  EXPECT_NE(std::string(storage.pub.policies[0].policy_name), "AdvancedMode")
+      << "flash controlled a policy NAME; it shadows the real AdvancedMode "
+         "entry";
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"))
+      << "a crafted legacy record enabled blind signing";
+}
+
+// AdvancedMode is scoped to the UNLOCKED session, not just the power cycle:
+// session_clear revokes the runtime ClearSign signers it authorizes, so it must
+// disarm the policy too, or the screensaver locks and blind signing is still
+// armed after the PIN goes back in.
+TEST(Storage, SessionClearDisarmsAdvancedMode) {
+  Storage storage;
+  memset(&storage, 0, sizeof(storage));
+  storage_resetPolicies(&storage);
+
+  ASSERT_TRUE(
+      storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  ASSERT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
+
+  SessionState ss;
+
+  // A soft re-init must NOT disarm it. fsm_msgInitialize calls
+  // session_clear(false) and hosts send Initialize routinely -- disarming there
+  // would demand a fresh button press before every operation.
+  memset(&ss, 0, sizeof(ss));
+  session_clear_impl(&ss, &storage, /*clear_pin=*/false);
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"))
+      << "Initialize disarmed AdvancedMode; blind signing is now unusable";
+
+  // A lock must.
+  memset(&ss, 0, sizeof(ss));
+  session_clear_impl(&ss, &storage, /*clear_pin=*/true);
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"))
+      << "locking left blind signing armed";
+  // Unrelated policies are untouched: this disarms one capability, it is not a
+  // policy reset.
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "Pin Caching"));
+}
+
 TEST(Storage, ResetCache) {
   Cache src;
   memset(&src, 0xCC, sizeof(src));
@@ -497,7 +684,13 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
-  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
+  // Was `true` here, read straight out of the legacy flash record. Policy state
+  // is no longer trusted from flash at any version (see
+  // LegacyPolicyRecordCannotNameAdvancedMode), so this is now the compiled
+  // default. Nothing regresses: every V11+ reader already forced ShapeShift to
+  // false, so the migrated `true` never survived the first commit -- it was
+  // transient and inconsistent with what the very next boot would see.
+  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, false);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);

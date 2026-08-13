@@ -194,8 +194,17 @@ static uint8_t read_u8(const char* ptr) { return *ptr; }
 static void write_u8(char* ptr, uint8_t val) { *ptr = val; }
 
 static uint32_t read_u32_le(const char* ptr) {
-  return ((uint32_t)ptr[0]) | ((uint32_t)ptr[1]) << 8 |
-         ((uint32_t)ptr[2]) << 16 | ((uint32_t)ptr[3]) << 24;
+  /* Read through unsigned char. `char` is signed on x86 (the emulator and the
+   * unit tests), so indexing it directly sign-extends any byte >= 0x80 and
+   * floods the upper bits: the flags word always has bit 7 set ("Pin Caching,
+   * enabled always"), so byte 0 is >= 0xC0 and read_u32_le returned
+   * 0xffffffc0. storage_writeStorageV17 read-modify-writes that same word,
+   * which wrote the corrupted value back. ARM defaults to unsigned char, so
+   * shipping firmware was unaffected -- but the signedness of plain `char` is
+   * implementation-defined and must not be relied on either way. */
+  const uint8_t* p = (const uint8_t*)ptr;
+  return ((uint32_t)p[0]) | ((uint32_t)p[1]) << 8 | ((uint32_t)p[2]) << 16 |
+         ((uint32_t)p[3]) << 24;
 }
 
 static void write_u32_le(char* ptr, uint32_t val) {
@@ -842,12 +851,18 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  if (storage->version == 1) {
-    storage->pub.policies_count = 0;
-  } else {
-    storage->pub.policies_count = 1;
-    storage_readPolicyV1(&storage->pub.policies[0], ptr + 464, 17);
-  }
+  /* Policy state is NEVER trusted from flash, at any version. Reading the
+   * legacy record put a FLASH-CONTROLLED NAME into policies[0]: because
+   * storage_upgradePolicies only fills indices from policies_count upward, and
+   * storage_isPolicyEnabled_impl returns on the FIRST name match scanning from
+   * index 0, a crafted record naming itself "AdvancedMode" with enabled=1 was
+   * answered before the real entry at index 3 was ever reached -- re-enabling
+   * blind signing from unauthenticated storage.
+   *
+   * Nothing is lost by discarding it: the only policy this record could name
+   * legitimately is ShapeShift, which every V11+ reader already forces to
+   * false, and which has no storage_isPolicyEnabled consumer anywhere. */
+  storage_resetPolicies(storage);
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
@@ -857,7 +872,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage->pub.u2f_counter = 0;
 
   if (storage->version == 1) {
-    storage_resetPolicies(storage);
+    /* policies were reset unconditionally above */
     storage_resetCache(&storage->sec.cache);
   } else {
     storage_readCacheV1(&storage->sec.cache, ptr + 484, 75);
@@ -896,24 +911,30 @@ void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
   if (len < 852) return;
   write_u32_le(ptr, storage->version);
 
-  uint32_t flags = (storage->pub.has_pin ? (1u << 0) : 0) |
-                   (storage->pub.has_language ? (1u << 1) : 0) |
-                   (storage->pub.has_label ? (1u << 2) : 0) |
-                   (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
-                   (storage->pub.imported ? (1u << 4) : 0) |
-                   (storage->pub.passphrase_protection ? (1u << 5) : 0) |
-                   (/* ShapeShift policy, enabled always */ (1u << 6)) |
-                   (/* Pin Caching policy, enabled always */ (1u << 7)) |
-                   (storage->pub.has_node ? (1u << 8) : 0) |
-                   (storage->pub.has_mnemonic ? (1u << 9) : 0) |
-                   (storage->pub.has_u2froot ? (1u << 10) : 0) |
-                   (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
-                   (storage->pub.no_backup ? (1u << 13) : 0) |
-                   (storage->has_sec_fingerprint ? (1u << 14) : 0) |
-                   // cppcheck-suppress badBitmaskCheck
-                   (storage->pub.sca_hardened ? (1u << 15) : 0) |
-                   /* reserved 31:16 */ 0;
+  uint32_t flags =
+      (storage->pub.has_pin ? (1u << 0) : 0) |
+      (storage->pub.has_language ? (1u << 1) : 0) |
+      (storage->pub.has_label ? (1u << 2) : 0) |
+      (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
+      (storage->pub.imported ? (1u << 4) : 0) |
+      (storage->pub.passphrase_protection ? (1u << 5) : 0) |
+      (/* ShapeShift policy, enabled always */ (1u << 6)) |
+      (/* Pin Caching policy, enabled always */ (1u << 7)) |
+      (storage->pub.has_node ? (1u << 8) : 0) |
+      (storage->pub.has_mnemonic ? (1u << 9) : 0) |
+      (storage->pub.has_u2froot ? (1u << 10) : 0) |
+      (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
+      /* bit 12 was AdvancedMode. It is session-scoped now and
+       * MUST NOT be persisted: this section has no authenticated
+       * integrity, so a physical attacker who sets the bit in
+       * flash would silently re-enable blind signing. Written as
+       * zero, ignored on read. Do not reuse the bit -- a device
+       * downgraded to older firmware would read it as the policy. */
+      (storage->pub.no_backup ? (1u << 13) : 0) |
+      (storage->has_sec_fingerprint ? (1u << 14) : 0) |
+      // cppcheck-suppress badBitmaskCheck
+      (storage->pub.sca_hardened ? (1u << 15) : 0) |
+      /* reserved 31:16 */ 0;
   write_u32_le(ptr + 4, flags);
 
   write_u32_le(ptr + 8, storage->pub.pin_failed_attempts);
@@ -967,8 +988,11 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  /* Ignore whatever bit 12 holds: AdvancedMode is session-scoped and every
+   * boot starts with it OFF. A device upgrading with the bit already set in
+   * flash must not inherit the policy, and neither must one where an attacker
+   * set it. See storage_writeStorageV16Plaintext. */
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -1013,26 +1037,32 @@ void storage_writeStorageV16Plaintext(char* ptr, size_t len,
   if (len < 852) return;
   write_u32_le(ptr, storage->version);
 
-  uint32_t flags = (storage->pub.has_pin ? (1u << 0) : 0) |
-                   (storage->pub.has_language ? (1u << 1) : 0) |
-                   (storage->pub.has_label ? (1u << 2) : 0) |
-                   (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
-                   (storage->pub.imported ? (1u << 4) : 0) |
-                   (storage->pub.passphrase_protection ? (1u << 5) : 0) |
-                   (/* ShapeShift policy, enabled always */ (1u << 6)) |
-                   (/* Pin Caching policy, enabled always */ (1u << 7)) |
-                   (storage->pub.has_node ? (1u << 8) : 0) |
-                   (storage->pub.has_mnemonic ? (1u << 9) : 0) |
-                   (storage->pub.has_u2froot ? (1u << 10) : 0) |
-                   (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
-                   (storage->pub.no_backup ? (1u << 13) : 0) |
-                   (storage->has_sec_fingerprint ? (1u << 14) : 0) |
-                   (storage->pub.sca_hardened ? (1u << 15) : 0) |
-                   (storage->pub.has_wipe_code ? (1u << 16) : 0) |
-                   // cppcheck-suppress badBitmaskCheck
-                   (storage->pub.v15_16_trans ? (1u << 17) : 0) |
-                   /* reserved 31:18 */ 0;
+  uint32_t flags =
+      (storage->pub.has_pin ? (1u << 0) : 0) |
+      (storage->pub.has_language ? (1u << 1) : 0) |
+      (storage->pub.has_label ? (1u << 2) : 0) |
+      (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
+      (storage->pub.imported ? (1u << 4) : 0) |
+      (storage->pub.passphrase_protection ? (1u << 5) : 0) |
+      (/* ShapeShift policy, enabled always */ (1u << 6)) |
+      (/* Pin Caching policy, enabled always */ (1u << 7)) |
+      (storage->pub.has_node ? (1u << 8) : 0) |
+      (storage->pub.has_mnemonic ? (1u << 9) : 0) |
+      (storage->pub.has_u2froot ? (1u << 10) : 0) |
+      (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
+      /* bit 12 was AdvancedMode. It is session-scoped now and
+       * MUST NOT be persisted: this section has no authenticated
+       * integrity, so a physical attacker who sets the bit in
+       * flash would silently re-enable blind signing. Written as
+       * zero, ignored on read. Do not reuse the bit -- a device
+       * downgraded to older firmware would read it as the policy. */
+      (storage->pub.no_backup ? (1u << 13) : 0) |
+      (storage->has_sec_fingerprint ? (1u << 14) : 0) |
+      (storage->pub.sca_hardened ? (1u << 15) : 0) |
+      (storage->pub.has_wipe_code ? (1u << 16) : 0) |
+      // cppcheck-suppress badBitmaskCheck
+      (storage->pub.v15_16_trans ? (1u << 17) : 0) |
+      /* reserved 31:18 */ 0;
   write_u32_le(ptr + 4, flags);
 
   write_u32_le(ptr + 8, storage->pub.pin_failed_attempts);
@@ -1095,8 +1125,11 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  /* Ignore whatever bit 12 holds: AdvancedMode is session-scoped and every
+   * boot starts with it OFF. A device upgrading with the bit already set in
+   * flash must not inherit the policy, and neither must one where an attacker
+   * set it. See storage_writeStorageV16Plaintext. */
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -1373,6 +1406,18 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       // the same version, report SUS_Valid, and nothing is rewritten to flash.
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
+      // ...except when the retired AdvancedMode bit is still set in flash from
+      // a build that persisted it. This firmware ignores the bit on read, but
+      // firmware <= 7.15 does not, so leaving it there means a downgrade boots
+      // with blind signing already on and no confirmation. Report SUS_Updated
+      // so storage_init commits once and the writer scrubs it to zero.
+      //
+      // It cannot be left to the next incidental commit: a device with no PIN
+      // may never make one. storage_init calls storage_isPinCorrect(""), which
+      // returns PIN_GOOD without a rewrap once sca_hardened and v15_16_trans
+      // are set -- which 7.14 and 7.15 both guarantee -- so no commit path runs
+      // at boot at all. Costs exactly one flash write, once.
+      if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
 
     case StorageVersion_BTC_ONLY:
@@ -1645,6 +1690,27 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      calling function is required to update the flash with a storage_commit().
   */
   pintest_t ret = PIN_WRONG;
+
+  /* AdvancedMode belongs to the unlocked session, like the runtime ClearSign
+   * signers session_clear() revokes -- fsm_msgApplyPolicies calls those signers
+   * "an AdvancedMode capability", so revoking them while leaving the policy
+   * that authorized them armed is the inconsistent half. Re-arming costs
+   * another on-device confirmation.
+   *
+   * Gated on clear_pin, and that gate is load-bearing. clear_pin distinguishes
+   * a LOCK (screensaver home_sm.c, ClearSession fsm.c, recovery) from a soft
+   * re-init: fsm_msgInitialize calls session_clear(false), and hosts send
+   * Initialize routinely -- often before every operation. Disarming there would
+   * demand a fresh button press after each one, which does not make blind
+   * signing session-scoped, it makes it unusable. Signers survive that only
+   * because the host can silently reload them; a physical confirmation cannot
+   * be reloaded.
+   *
+   * Shadow only -- writes no flash, so the "does not modify flash storage
+   * config state" contract above holds. AdvancedMode is never persisted. */
+  if (clear_pin) {
+    storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
+  }
 
   bip32_cache_clear();
   bip39_cache_clear();
