@@ -16,50 +16,193 @@ The governing sentence for this work:
 
 ## 0. Blocking decisions — read this before costing anything
 
-An earlier reading of this document concluded that the architecture was settled
-and only ROM measurement remained open. **That is false, and it is the most
-expensive misreading available here.** Ten foundations are undecided, and most
-of them change *what would be measured*: the ratchet substrate does not exist in
-the form this document assumes, the authority model names a class rather than a
-key, the updater invariant it depends on is contradicted by the shipping
-bootloader, and the certificate schema described one signed object three
-different ways. Measuring a validator against an undecided substrate produces a
-number with no referent.
+**All ten are now decided (2026-08-13).** The decisions and their reasoning are
+recorded in *Decisions locked* immediately below; the analysis that produced
+them is left in place in the sections that follow, because the reasoning is
+what makes them re-checkable later.
 
-Read the Status column literally. **Resolved** means the text now decides it.
-**Specified** means the shape is fixed but a parameter, an inventory or a
-sign-off is still owed — that is not the same as done, and the distinction is
-exactly the one this section exists to stop collapsing.
+The history is worth keeping: an earlier reading of this document concluded that
+the architecture was settled and only ROM measurement remained open. That was
+false, and it was the most expensive misreading available here. The ratchet
+substrate did not exist in the form this document assumed, the authority model
+named a class rather than a key, the updater invariant was contradicted by the
+shipping bootloader, and the certificate schema described one signed object
+three different ways. Measuring a validator against an undecided substrate
+produces a number with no referent.
 
-ROM measurement comes **last**, after every row above it is settled.
+ROM measurement comes **last**, and is now unblocked — every row below is
+settled, so a measured validator finally has a referent.
 
 | # | Sev | Blocker | Where resolved | Status |
 |---|---|---|---|---|
-| 2 | High | Ratchet substrate. The four-field `SecurityRatchets` facility does not exist; the anti-rollback RFC defines a single 256-step unary OTP counter that cannot represent a block height. | §5b *Substrate* | Shape specified here; four parameters need an owner |
-| 3 | High | Authority model. "ROOT SIGNATURE" is an authority class, not a key. | §5b *Authority* | Requirement specified; key/quorum inventory needed |
-| 4 | High | Updater invariant. The bootloader erases the whole application partition before it has seen the candidate. | §8 *Updater invariant* | Three options stated; needs a decision |
-| 8 | Med | Certificate schema conflicts across the document; the acceptance rule tests an epoch range that is never defined. | §6 *Canonical certificate* | Conflict removed; byte layout **proposed, not ratified** |
+| 2 | High | Ratchet substrate. The four-field `SecurityRatchets` facility does not exist; the anti-rollback RFC defines a single 256-step unary OTP counter that cannot represent a block height. | §5b *Substrate* | **DECIDED** — descoped to epochs; use the anti-rollback OTP counter |
+| 3 | High | Authority model. "ROOT SIGNATURE" is an authority class, not a key. | §5b *Authority* | **DECIDED** — distinct keys, domain-tagged transcripts, negative tests |
+| 4 | High | Updater invariant. The bootloader erases the whole application partition before it has seen the candidate. | §8 *Updater invariant* | **DECIDED** — recovery-only state documented; RFC amended |
+| 8 | Med | Certificate schema conflicts across the document; the acceptance rule tests an epoch range that is never defined. | §6 *Canonical certificate* | **DECIDED** — ratified at 169 bytes (freshness fields removed) |
 | 1 | High | Cross-variant preservation. "absent or inert" in bitcoin-only resurrects expired delegates on the round trip back to full. | §5b *Variant scope* | Resolved here |
-| 6 | High | Proof-session inputs are host-supplied. | §5b *What the device validates* | Resolved here |
-| 7 | High | Blind-sign policy is security-critical persistent state with no integrity protection. | §5b *Policy integrity* | Requirement specified; storage medium follows #2 |
+| 6 | High | Proof-session inputs are host-supplied. | §5b *What the device validates* | **OUT OF SCOPE** — no freshness proofs |
+| 7 | High | Blind-sign policy is security-critical persistent state with no integrity protection. | §5b *Policy integrity* | **DECIDED** — session-scoped, nothing persisted |
 | 9 | High | "Already-verified certificate" is circular: the proof session needs a verified certificate, and §6 acceptance needs freshness, which only a proof session establishes. A new device bootstraps nothing. | §5b *Blocker 9* | Resolved here — authenticated vs authorized |
-| 10 | High | A single global freshness height is committed, but each proof is checked against its own certificate's `expiry_min_work`. A weak certificate's proof expires certificates whose higher threshold was never met. | §5b *Blocker 10* | **Three options stated; not resolved** |
-| 5 | High | Single-root custody: one compromise yields globally warning-free false interpretations until firmware replacement. Applies to **both** roots — the schema root has no expiry at all. | §4 *Custody* | **Owner decision. Not decidable in this document.** Gates Phase 1 and Phase 2. |
+| 10 | High | A single global freshness height is committed, but each proof is checked against its own certificate's `expiry_min_work`. A weak certificate's proof expires certificates whose higher threshold was never met. | §5b *Blocker 10* | **OUT OF SCOPE** — no freshness accounting |
+| 5 | High | Single-root custody: one compromise yields globally warning-free false interpretations until firmware replacement. Applies to **both** roots — the schema root has no expiry at all. | §4 *Custody* | **DECIDED** — 1-of-1 on a stock signed KeepKey; risk accepted |
 
-Suggested order — substrate (2) → authority (3) → updater invariant (4) →
-certificate transcript (8) → cross-variant preservation (1) → proof-session
-inputs (6, 9) → freshness accounting (10) → policy integrity (7) → custody (5).
-Each one changes the shape of the next.
+**Custody (5) no longer blocks the build, but it does gate the first ceremony.**
+The custody device must run stock, signed 7.15 — so the release ships first, the
+device is provisioned second, and only a later release may pin an anchor. That
+ordering works because 7.15 pins no anchor: `signed_metadata.c` deliberately
+rejects persistent trust anchors and uses RAM-only session signers, so the root
+pubkey does not need to exist at build time. The circular dependency people
+expect here appears only at the release that pins an anchor, and that is not
+this one.
 
-**Custody (5) is last in that order but gates the earliest ship.** It is placed
-last because the others change what a root has authority over, not because it
-can wait: Phase 1 cannot pin a schema root before it is answered, and Phase 2
-cannot pin a delegation root. If any date matters, start (5) in parallel — it is
-an operational programme, not an engineering task, and it is the one item here
-that cannot be compressed by working harder.
+Blind-sign policy stickiness, previously flagged as undecided, is settled by
+decision 7: nothing is persisted, so there is no stickiness to define.
 
-Still undecided and previously flagged: blind-sign policy stickiness (§5b,
-*Four things the policy model must get right*, item 4).
+---
+
+## 0a. Decisions locked — 2026-08-13
+
+Decided by the owner in one pass, biggest risk first. Each records what was
+chosen, and what was knowingly accepted by choosing it. Where a decision closes
+a blocker by removing scope rather than solving it, that is said outright.
+
+### D1 — Custody: 1-of-1 on a stock, signed KeepKey (blocker 5)
+
+The root is a single production KeepKey running stock signed firmware. Not a
+threshold, not an HSM.
+
+**Accepted risk, unchanged from the finding:** one compromise yields globally
+warning-free false interpretations, remediable only by a firmware release.
+
+**Why it is defensible.** DR is solved by construction — the root is a BIP-39
+seed, so device loss is a restore, and a threshold scheme would have *added* a
+DR problem rather than removed one. Rotation is cheap today and stays cheap
+until an anchor is pinned; pinning is what converts a bundle push into a
+firmware release, and it is now a dated decision rather than a side effect.
+And with a single root the compensating control is not quorum but **visibility**:
+every schema and certificate this key signs is published to a signing log, so a
+signature nobody authorised is noticeable. Detection, not prevention.
+
+**Operational requirements:** dedicated device that never holds funds; PIN set;
+offline except during a ceremony; seed backed up to the existing safe; signing
+log published; ceremony rehearsed on a throwaway device before the real key
+exists.
+
+**Sequencing:** the device must run stock signed 7.15 — the attestor messages
+(`ClearsignAttestorGetPublicKey`) do not exist on 7.14.1 — so the release ships
+first and the key is generated second.
+
+### D2 — Freshness is out of scope; the ratchet is epochs only (blockers 2, 6, 10)
+
+`clearsign_freshness` is dropped. `SecurityRatchets` reduces to epoch counters,
+which the anti-rollback OTP mechanism already provides. Do not build a second
+mechanism.
+
+**What this removes:** the authenticated journal, the OTP-generation binding,
+the wear budget, the power-loss state machine, and the four parameters this
+document said needed an owner. Bitcoin headers as a freshness oracle are not
+being implemented. Blockers 6 and 10 close with it — there are no proof-session
+inputs to constrain and no work accounting to reconcile.
+
+**What replaces expiry:** ordering, not time. Each delegation carries an epoch;
+the device refuses anything below its stored minimum and never lowers it.
+Rotation is **monthly**, and revocation is rotating early.
+
+**Why monthly matters:** the OTP block is a 256-step unary counter, so monthly
+rotation is roughly 21 years of device lifetime. The counter fits without a
+journal. Weekly rotation would be about 5 years and would eventually force the
+journal back into scope — so the cadence is not a scheduling preference, it is
+the parameter that keeps the substrate simple.
+
+**Residual risk, stated for the audit:** a device that never sees a newer epoch
+keeps accepting an old delegation indefinitely. The one-month bound is real for
+a device that connects; it is unbounded for one that does not.
+
+**Why that is tolerable here:** the per-transaction signing flow is server
+hosted, so a device using the delegated path is by definition connected, and the
+epoch bump travels the same channel. A device that never connects cannot reach
+the hot key and is therefore not exposed to a compromised delegate.
+
+### D3 — Authority separation is cryptographic (blocker 3)
+
+1. **Distinct keys.** Schema root and delegate are separate keys. The schema
+   root uses a dedicated derivation path on the custody device, used for nothing
+   else.
+2. **Domain-tagged transcripts.** Every signed message begins with a purpose
+   string (`KeepKey/ClearSign/Schema/v1`, `KeepKey/ClearSign/Delegate/v1`).
+   Verifiers reject an untagged transcript rather than treating it as legacy.
+3. **Context binding.** Network, model, variant, format version, purpose and
+   epoch are inside the signed bytes.
+4. **Negative tests are a merge gate.** Cross-protocol replay and type confusion
+   must fail to verify, as tests. Without them the tags are decoration nobody
+   checks — the same failure mode as a quorum gate that passes on one non-zero
+   byte.
+
+The delegate certificate and the per-transaction blob carry **different** tags.
+They are signed by the same key but authorise different things, so a stolen
+per-tx blob must never be presentable as a delegation.
+
+Firmware signing format is unchanged and cannot be tagged retroactively —
+signed images exist in the field. Tagging only the new authorities is sufficient:
+clear-sign transcripts hash `tag || payload`, firmware hashes the image, and
+crossing them requires a preimage collision.
+
+### D4 — Updater invariant: recovery-only, and the spec says so (blocker 4)
+
+Amended in `anti-rollback-security-epoch-rfc.md` (commit `a3bd19fe7`). The
+old-or-new bootability requirement is withdrawn as unachievable on this
+hardware: one 640 KiB application slot against a ~568 KiB image leaves no room
+to stage a candidate, and ~192 KiB of RAM cannot buffer one either.
+
+An interrupted update leaves the device **recovery-only** — no bootable
+application, bootloader intact and able to accept another image, application
+magic installed only after verification, storage preserved under the usual
+`should_restore()` conditions.
+
+Dual-slot is recorded as a **hardware-revision requirement**, not a firmware
+backlog item. New hardware is not planned, so it is not something anyone can
+pick up.
+
+### D5 — Blind-sign policy is session-scoped (blocker 7)
+
+`AdvancedMode` stops being persistent. Enabling it requires physical
+confirmation once per power cycle; nothing is written to flash.
+
+**Why this over authenticated storage.** It matches the precedent already set:
+`signed_metadata.c` deliberately rejects persistent trust anchors *because the
+public storage section has no authenticated integrity against physical flash
+modification*, and uses RAM-only session signers instead. Blind-sign policy is
+the same class of state, in the same section, under the same threat. Answering
+it differently would be the inconsistency. It also avoids a storage version bump,
+which is now a deliberate gated act (see `docs/StorageVersionGate.md`).
+
+**It also removes three sub-questions.** Behaviour after reset, after variant
+change, and on corrupted policy are all trivially "off" when nothing is
+persisted.
+
+**Cost:** anyone who legitimately blind-signs re-enables after each power cycle.
+That belongs in release notes. For a deliberate security downgrade the friction
+is arguably correct — during 7.15 testing a persistent `AdvancedMode` was left
+on and silently converted four test suites' "rejected correctly" results into
+false greens, because the rejection had been a human pressing cancel rather than
+the gate firing.
+
+### D6 — Certificate layout ratified at 169 bytes (blocker 8)
+
+The layout in §6 is ratified with the four freshness fields removed
+(`btc_anchor_hash`, `btc_anchor_height`, `expiry_height_delta`,
+`expiry_min_work`). Signed transcript is bytes 0..104; signature at 105; total
+169.
+
+They are **removed, not reserved.** `format_version` already refuses anything
+not exactly known, so freshness — if it ever ships — is format_version 2 with a
+longer layout, and old verifiers reject it cleanly. Dead must-be-zero fields on
+a trust boundary are how an issuer and a verifier drift apart.
+
+`cert_hash` keeps its definition (sha256 over all 169 bytes, signature included,
+distinct from the transcript hash). It loses its old consumer with
+`BitcoinFreshnessBegin` and gains a better one: it is the identifier used by the
+signing log from D1.
 
 ---
 
@@ -361,6 +504,16 @@ lied to about?
 
 ### Bitcoin headers as the freshness oracle
 
+> **OUT OF SCOPE (D2).** Bitcoin-derived freshness is not being implemented.
+> Expiry is replaced by epoch ordering with monthly rotation; revocation is
+> rotating early. Everything from here to the end of the freshness material —
+> the proof session, the header validation rules, `BitcoinFreshnessBegin`, the
+> anchor and work fields, and blocker 10's accounting — describes a design that
+> was evaluated and deliberately not built. Retained as the rationale, and as
+> the starting point if freshness is ever reinstated. **Do not implement from
+> it.**
+
+
 Validating a header is one `sha256d` and a target comparison, and forging one
 at mainnet difficulty means outspending the network. That makes a header
 genuine evidence that work and time have passed, and it beats a KeepKey-signed
@@ -400,7 +553,18 @@ That asymmetry is the point. It turns any parser or work-accounting mistake
 from a potential key-management failure into, at worst, a clear-sign
 availability failure.
 
-### Substrate — BLOCKER 2. The facility this design assumes does not exist
+### Substrate — BLOCKER 2. DESCOPED by D2; analysis retained
+
+**Decided (D2): `clearsign_freshness` is not being built.** `SecurityRatchets`
+reduces to epoch counters, which the anti-rollback OTP mechanism already
+provides — no journal, no generation binding, no wear budget, no power-loss
+state machine, and none of the four parameters below need an owner. Monthly
+rotation over a 256-step unary counter is ~21 years, so the counter suffices
+unaltered.
+
+The analysis below is retained because it is the reason freshness was dropped,
+and because it is what must be re-read if anyone proposes reinstating it. **Do
+not implement from this section.**
 
 Do NOT collapse everything into one global integer. The intent is **one**
 integrity-protected monotonic state facility -- one implementation, one atomic
@@ -923,6 +1087,16 @@ historical anchors.
 
 ### BLOCKER 10 — a global height silently discards the work witness
 
+> **OUT OF SCOPE (D2).** Bitcoin-derived freshness is not being implemented.
+> Expiry is replaced by epoch ordering with monthly rotation; revocation is
+> rotating early. Everything from here to the end of the freshness material —
+> the proof session, the header validation rules, `BitcoinFreshnessBegin`, the
+> anchor and work fields, and blocker 10's accounting — describes a design that
+> was evaluated and deliberately not built. Retained as the rationale, and as
+> the starting point if freshness is ever reinstated. **Do not implement from
+> it.**
+
+
 The paragraph below was written as if height alone carried the proof's cost,
 and it does not. Each proof is checked against **its own certificate's**
 `expiry_min_work`, but what gets committed is a single global height that then
@@ -1083,7 +1257,12 @@ The point is containment: **a compromised TOKEN_METADATA signer must never be
 able to author a dynamic transaction interpretation.** Generic "metadata
 authority" gives an attacker the whole surface from any one key.
 
-### Canonical certificate — BLOCKER 8. One layout, defined here
+### Canonical certificate — BLOCKER 8. RATIFIED at 169 bytes (D6)
+
+**Decided (D6): this layout is ratified with the four freshness fields removed.**
+They are removed rather than reserved — `format_version` refuses anything not
+exactly known, so freshness would be format_version 2 with a longer layout.
+Build from this table.
 
 This document previously described the certificate twice, with different
 fields: §5b named `btc_anchor_hash` / `btc_anchor_height` /
@@ -1118,33 +1297,28 @@ new primitive:
      68    4  cert_epoch           u32 LE. Accepted only if >= the device's
                                    stored clearsign_epoch.
      72   33  delegate_pubkey      compressed secp256k1.
-    105   32  btc_anchor_hash      internal byte order, as hashed — NOT the
-                                   display-reversed form.
-    137    4  btc_anchor_height    u32 LE.
-    141    4  expiry_height_delta  u32 LE, e.g. 4320.
-    145   32  expiry_min_work      u256 BE. Compared as a big-endian magnitude.
-    ---------  signed transcript ends at 177 -----------------------------------
-    177   64  root_signature       compact ECDSA (r||s, 32+32 BE) over
-                                   sha256(bytes 0..176) by the DELEGATION root.
+    ---------  signed transcript ends at 105 -----------------------------------
+    105   64  root_signature       compact ECDSA (r||s, 32+32 BE) over
+                                   sha256(bytes 0..104) by the DELEGATION root.
                                    MUST be low-S canonical: s <= n/2, reject
                                    otherwise. Both s and n-s verify, so without
                                    this one certificate has two valid encodings
                                    and therefore two different canonical
                                    hashes -- and cert_hash covers the
                                    signature.
-    ---------  total 241 bytes ----------------------------------------------
+    ---------  total 169 bytes ----------------------------------------------
 
 Three rules the table alone does not carry, and each is a place two
 implementations would otherwise diverge:
 
-- **The signed transcript is exactly bytes 0..176** — every field above the
+- **The signed transcript is exactly bytes 0..104** — every field above the
   signature, nothing else, no length prefix, no trailing padding. State it in
   bytes rather than as "the certificate", or the issuer and the verifier will
   eventually disagree about whether the signature covers itself.
-- **The canonical certificate hash is `sha256` over all 241 bytes**, signature
-  included. That is the value `BitcoinFreshnessBegin` sends as `cert_hash`, and
-  it must differ from the signed transcript hash so the two can never be
-  confused for one another.
+- **The canonical certificate hash is `sha256` over all 169 bytes**, signature
+  included, and it must differ from the signed transcript hash so the two can
+  never be confused for one another. Its consumer is the signing log (D1), not
+  `BitcoinFreshnessBegin` — that message is out of scope with freshness.
 - **Reject rather than ignore.** Unknown `format_version`, unknown `usage`,
   `chain_count` of 0 or above the maximum, non-ascending or duplicate chain ids,
   non-zero padding past `chain_count`, `can_delegate != 0`, a non-canonical
