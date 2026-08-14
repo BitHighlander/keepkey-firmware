@@ -887,8 +887,8 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg) {
     if (advanced_enable) {
       confirmed = confirm_with_custom_button_request(
           resp, "Enable Policy",
-          "Do you want to enable AdvancedMode policy? It turns off when you "
-          "unplug the device.");
+          "Enable AdvancedMode policy? It turns off when the device locks or "
+          "is unplugged.");
     } else {
       confirmed = confirm_with_custom_button_request(
           resp, enabled ? "Enable Policy" : "Disable Policy",
