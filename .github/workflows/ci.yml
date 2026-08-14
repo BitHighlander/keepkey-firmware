@@ -18,8 +18,11 @@
 #   │                          variant's coin/token gating actually compiles+passes]
 #   └─ python-integration      full test suite (full/default variant only)
 #
-# Stage 4: PUBLISH (manual trigger, all tests must pass)
-#   └─ publish-emulator   DockerHub push, full/default variant only (workflow_dispatch only)
+# Stage 4: PUBLISH (all tests must pass)
+#   ├─ publish-emulator       DockerHub push, full/default variant only (workflow_dispatch only)
+#   └─ publish-emulator-libs  macOS dylib + Windows DLL → rolling prerelease
+#                             'emulator-dylib-latest' (push to alpha only).
+#                             Both platforms ship together or the job fails.
 
 name: CI
 
@@ -769,16 +772,61 @@ jobs:
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
           echo "DYLIB_PATH=$(pwd)/$DYLIB" >> $GITHUB_ENV
 
-      - name: Upload libkkemu.dylib
-        # Always upload, even on later test failure — the binary is
+      # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
+      # Uses cmake/toolchains/mingw-w64-x86_64.cmake, so no Windows runner
+      # is needed. BLOCKING on purpose: the DLL and the dylib are the same
+      # deliverable on two platforms, and this job is the only place either
+      # is built. When the cross-build was non-blocking, a regression here
+      # published a macOS-only set and stayed green — the Windows DLL went
+      # stale for six weeks before anyone noticed. Fail loudly instead.
+      - name: Install MinGW-w64
+        run: brew install mingw-w64
+
+      - name: Cross-build Windows emulator DLL
+        run: |
+          # Same nanopb PATH dance as the macOS configure step above; the
+          # toolchain file cannot see the pyenv wrappers on its own.
+          NANOPB_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')"
+          export PATH="$PATH:$NANOPB_DIR/generator"
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64-x86_64.cmake \
+            -DKK_EMULATOR=1 \
+            -DKK_BUILD_DYLIB=1 \
+            -DKK_DEBUG_LINK=ON \
+            -DNANOPB_DIR="$NANOPB_DIR" \
+            -DNANOPB_PLUGIN="$(command -v protoc-gen-nanopb)" \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -B build-emu-win .
+          cmake --build build-emu-win --target kkemulator_dylib -j$(sysctl -n hw.ncpu)
+          DLL=$(find build-emu-win -name 'libkkemu.dll' | head -1)
+          test -f "$DLL" || (echo "::error::libkkemu.dll not produced by cross-build" && exit 1)
+          file "$DLL"
+          echo "WIN_DLL_PATH=$(pwd)/$DLL" >> $GITHUB_ENV
+
+      - name: Stage emulator libraries
+        # One directory, published names applied here so the publish job
+        # is a straight copy. Both-or-neither is enforced by the upload
+        # condition below, not by tolerating a gap.
+        if: always() && env.DYLIB_PATH != '' && env.WIN_DLL_PATH != ''
+        run: |
+          mkdir -p emulator-libs
+          cp "$DYLIB_PATH" emulator-libs/libkkemu-macos-arm64.dylib
+          cp "$WIN_DLL_PATH" emulator-libs/libkkemu-win-x64.dll
+          ls -lh emulator-libs/
+
+      - name: Upload emulator libraries
+        # Always upload, even on later test failure — the binaries are
         # what vault and external auditors actually consume from this
         # PR. Tagged with the short commit SHA so multiple PR pushes
         # don't overwrite each other when a reviewer downloads them.
-        if: always() && env.DYLIB_PATH != ''
+        #
+        # Gated on BOTH paths: a partial artifact carrying only the dylib
+        # is exactly the silent drop this coupling exists to prevent.
+        if: always() && env.DYLIB_PATH != '' && env.WIN_DLL_PATH != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: libkkemu-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ env.DYLIB_PATH }}
+          path: emulator-libs/
           retention-days: 30
           if-no-files-found: error
 
@@ -926,3 +974,73 @@ jobs:
         run: |
           docker push kktech/kkemu:latest
           docker push kktech/kkemu:v${{ steps.version.outputs.fw_version }}
+
+  # ═══════════════════════════════════════════════════════════
+  # STAGE 4b: PUBLISH EMULATOR LIBS — rolling release of the
+  # emulator native libraries so downstream consumers (vault
+  # native-emulator / OLED preview) have a stable download URL
+  # instead of scraping per-run, 30-day-retention CI artifacts.
+  #
+  # macOS dylib and Windows DLL ship together, always. They are
+  # one deliverable on two platforms; a release carrying only
+  # one is a broken release, not a partial success. Every check
+  # here is fatal for that reason — see the history: the first
+  # version of this job tolerated a missing DLL, the job was
+  # then lost in a branch reset, and alpha published macOS-only
+  # from 2026-06-30 while CI stayed green.
+  # ═══════════════════════════════════════════════════════════
+  publish-emulator-libs:
+    needs: [python-dylib-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/alpha'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Download emulator libraries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: libkkemu-${{ github.sha }}
+          path: release-dylib
+
+      - name: Stage release assets
+        run: |
+          FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+')
+          # Traceability — which firmware/commit these binaries correspond to.
+          {
+            echo "firmware_version=${FW_VERSION}"
+            echo "commit=${GITHUB_SHA}"
+            echo "branch=${GITHUB_REF_NAME}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > release-dylib/VERSION.txt
+          echo "=== Assets ===" && ls -lh release-dylib/
+          # Both binaries or no publish. The upload side already enforces
+          # this; asserting again here means a hand-crafted or partially
+          # expired artifact cannot slip a one-platform release through.
+          for asset in libkkemu-macos-arm64.dylib libkkemu-win-x64.dll; do
+            test -f "release-dylib/$asset" || \
+              (echo "::error::$asset missing — refusing to publish a partial emulator release" && exit 1)
+          done
+
+      - name: Publish to rolling prerelease
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: emulator-dylib-latest
+          name: "Emulator libraries (latest alpha)"
+          body: |
+            Rolling build of the KeepKey emulator native libraries from `alpha`.
+
+            - `libkkemu-macos-arm64.dylib` — macOS Apple Silicon
+            - `libkkemu-win-x64.dll` — Windows x86_64 (MinGW cross-build)
+            - `VERSION.txt` — firmware version + commit these correspond to
+
+            Both platforms are published together; CI fails rather than
+            shipping one without the other.
+
+            Updated automatically on every push to `alpha`. Not a signed firmware release.
+          prerelease: true
+          files: release-dylib/*
+          fail_on_unmatched_files: true
