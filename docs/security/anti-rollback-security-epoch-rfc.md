@@ -7,13 +7,55 @@ document.
 
 After a device accepts an official firmware image in security epoch `N`, no
 officially signed image with an epoch lower than `N` may be installed or booted.
-A power loss must leave the device able to boot either the previous accepted
-image or the new accepted image; it must never advance the floor before the new
-image has passed all integrity and signature checks.
+The floor must never advance before the new image has passed all integrity and
+signature checks.
+
+A power loss during an update leaves the device with **no bootable
+application** — see "Interruption behaviour" below. This RFC previously
+required that a power loss leave the device able to boot either the previous or
+the new image. That is not achievable on this hardware and the requirement has
+been withdrawn.
 
 Semantic versions are not the monotonic value. Patch and release-candidate
 numbers are allowed to move independently; the security epoch advances only
 when an older signed image must be permanently revoked.
+
+## Interruption behaviour
+
+The device has a single application slot: sectors 7-11, 128 KiB each, 640 KiB
+total (`include/keepkey/board/memory.h`). A 7.15 image is roughly 568 KiB, so
+two resident copies would need about 1.14 MB. **A/B slots do not fit, and no
+amount of firmware work makes them fit** — this is a hardware-revision
+requirement, not a backlog item, and it should not be carried in one.
+
+For the same reason the candidate cannot be verified before erase. There is
+nowhere to stage it: no spare flash, and roughly 192 KiB of RAM against a
+568 KiB image, so it cannot be buffered either. The signature covers the whole
+image and cannot be checked until the final byte arrives, by which point the
+installed application is already gone. `handler_erase`
+(`tools/bootloader/usb_flash.c`) erases sectors 7-11 on a button press, before
+any image bytes exist.
+
+What is therefore true, and what integrators may rely on:
+
+- Between erase and the installation of the application magic there is **no
+  bootable application**. An update interrupted in that window leaves the
+  device in a **recovery-only** state.
+- The bootloader (sectors 5-6) is never erased by an application update, so the
+  device is always able to accept another image. Recovery-only is not a brick;
+  re-running the update restores the device.
+- The application magic is installed only after the flashed image and its epoch
+  verify, so an interrupted update cannot leave a partially written image
+  bootable.
+- Storage is preserved across the interruption under the usual signature
+  conditions (`should_restore()`): the outgoing firmware must have been
+  officially signed and the incoming image must verify. An unsigned image on
+  either side wipes storage by design.
+
+Recovery-only is the honest name for this state. Documenting it is not an
+endorsement: an update that cannot be made atomic is a real limitation, and the
+mitigation is procedural — do not interrupt an update — until hardware with a
+second slot exists.
 
 ## Why ordinary flash is insufficient
 
@@ -48,12 +90,17 @@ preferred.
 ## Update state machine
 
 1. Parse the candidate metadata without trusting it.
-2. Verify image bounds, hash, and the complete 3-of-N signature policy.
-3. Decode the current OTP floor and reject malformed OTP.
-4. Reject `candidate_epoch < floor` before erasing the installed image.
+2. Decode the current OTP floor and reject malformed OTP.
+3. Reject `candidate_epoch < floor` before erasing the installed image. This is
+   the only candidate check that can precede the erase: the epoch is declared in
+   metadata, whereas hash and signature cover an image that has not arrived yet.
+4. Erase the application sectors. **From here until step 7 the device has no
+   bootable application** (see "Interruption behaviour").
 5. Write the candidate while preserving the existing storage-protection
    contract.
-6. Re-read and verify the flashed image from flash.
+6. Re-read from flash and verify image bounds, hash, and the complete 3-of-N
+   signature policy. A failure here leaves the device recovery-only, which is
+   correct: a candidate that fails verification must not be bootable.
 7. If `candidate_epoch > floor`, program and verify each required OTP bit.
 8. Install the application magic only after image and epoch verification.
 9. At every boot, reject an installed image whose epoch is below the OTP floor.
@@ -95,7 +142,9 @@ devices whose installed bootloader ignores epochs.
 - unsigned firmware with a higher claimed epoch;
 - hash mismatch after flash write;
 - power loss before erase, during image write, after image verification, during
-  OTP programming, and before application magic installation;
+  OTP programming, and before application magic installation — each must leave
+  the device either bootable on the previous image (power loss strictly before
+  erase) or recovery-only, and never bootable on an unverified image;
 - boot of an installed image below the floor; and
 - recovery-mode behavior when no eligible application remains.
 
