@@ -11,6 +11,9 @@ Release Process
         1. We stay in compliance with the GPL license.
 1. Build a release build of the firmware on multiple different machines, and compare firmware hashes.
 1. Sign it on the airgapped machine with 3/5 signers.
+1. Verify the signatures before publishing: `scripts/release/verify-signatures.py <image>`.
+    * `hash-manifest.sh --require-signed` is structural only — a signature region holding one non-zero byte passes it. This does the real 3-of-5 ECDSA check the device does.
+    * It parses the keys from `include/keepkey/board/pubkeys.h`, so a rotation cannot leave it checking a stale set.
 1. Double check that storage upgrade preserves keys on a production device.
 1. Upload the signed firmware to github.
 1. Publish release notes on github.
