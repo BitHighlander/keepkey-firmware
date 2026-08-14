@@ -221,6 +221,33 @@ enum StorageVersion {
 _Static_assert(STORAGE_VERSION < STORAGE_VERSION_BTC_ONLY_BASE,
                "storage version must stay below the bitcoin-only band");
 
+/* HARD CHECK 1 -- a signed upgrade must never wipe.
+ * Lowering STORAGE_VERSION makes every device upgrading FROM a shipped release
+ * unreadable (StorageVersion_NONE -> SUS_Invalid -> storage_reset). */
+_Static_assert(STORAGE_VERSION >= STORAGE_VERSION_LAST_SHIPPED,
+               "STORAGE_VERSION is below a version that has shipped: every "
+               "upgrading device would be wiped. Storage versions only go up.");
+
+/* HARD CHECK 2 -- no shipped version may stop being recognised.
+ * The enum is emitted in .inc order after StorageVersion_NONE = 0, so a
+ * contiguous 1..N list makes StorageVersion_N == N. Deleting, renumbering or
+ * skipping an entry breaks that equality, and each one silently converts some
+ * field device's upgrade into a wipe.
+ *
+ * Asserted on EVERY entry, not just the last. The last entry alone only pins
+ * the entry COUNT: renumbering ENTRY(16) to ENTRY(99) leaves StorageVersion_17
+ * at 17 and compiles clean, while version_from_int loses `case 16` and every
+ * device carrying version 16 is wiped on upgrade.
+ *
+ * STORAGE_VERSION_LAST falls back to STORAGE_VERSION_ENTRY inside the .inc, so
+ * defining ENTRY here covers the last entry too. */
+#define STORAGE_VERSION_ENTRY(VAL)                                       \
+  _Static_assert(StorageVersion_##VAL == (VAL),                          \
+                 "storage_versions.inc is not contiguous from 1: a "     \
+                 "shipped version was removed, renumbered, or skipped, " \
+                 "and devices carrying it would be wiped on upgrade.");
+#include "storage_versions.inc"
+
 static enum StorageVersion version_from_int(int version) {
 #define STORAGE_VERSION_LAST(VAL)        \
   _Static_assert(VAL == STORAGE_VERSION, \
