@@ -13,6 +13,33 @@ accepted or rejected deliberately rather than by omission.
 
 ---
 
+## Scope invariant — this release
+
+Stated as rules rather than a phase number, because the number is an index into a
+document: it renumbers, it collides between documents, and a reader cannot check
+it. These can be checked against code in under a minute.
+
+1. **Additive only.** A provider adds screens; it never removes one.
+   Enforced in firmware — EVM: `signed_metadata_from_loaded_signer()` forces
+   `needs_confirm` and `data_needs_confirm` back to true, so the raw-calldata
+   review still runs (`ethereum.c`). Solana: `signed_metadata_signer_is_runtime()`
+   (`fsm_msg_solana.h`). Grep the names; the line numbers rot.
+2. **Never claims KeepKey approval.** A runtime signer renders the provider's own
+   alias and fingerprint plus "NOT verified by KeepKey".
+3. **Opt-in, per session.** `AdvancedMode` is session state and never written to
+   flash, and `signed_metadata_confirm_load` is a device confirm that cannot be
+   suppressed. Identities are RAM-only.
+
+**Anything that suppresses a screen or renders a KeepKey endorsement is a
+different release.** Root custody, delegate certificates, quorum and freshness all
+sit on that side of the line — see `clearsign-key-delegation-roadmap.md` §0a,
+where every one of those decisions is already locked.
+
+Phase numbers in this repo label history, not scope. If a phase number and this
+section ever disagree, this section wins.
+
+---
+
 ## The model
 
 A **clear-sign provider** is a third-party identity that supplies decode context.
@@ -44,7 +71,7 @@ None of the following needs firmware work:
 |---|---|
 | load a provider identity at runtime | `LoadClearsignSigner` (alias, 33-byte pubkey, optional icon) |
 | user sees WHO they are trusting | `signed_metadata_confirm_load(alias, fingerprint, icon)` — an on-device confirm |
-| provider context is additive only | `signed_metadata_signer_is_runtime()` keeps the blind-sign warning after the decoded screens (`ethereum.c:798`, `fsm_msg_solana.h:833`) |
+| provider context is additive only | EVM: `signed_metadata_from_loaded_signer()` forces `needs_confirm` and `data_needs_confirm` back to true, so the raw-calldata review still runs (`ethereum.c`). Solana: `signed_metadata_signer_is_runtime()` (`fsm_msg_solana.h`) |
 | a rogue provider cannot hide bytes | runtime signers may never suppress the raw-data review (the failure that closed fw #322) |
 | trust dies on its own | identities are RAM-only: cleared by reboot, `ClearSession`, session teardown, or disabling `AdvancedMode` |
 | pre-signed additive payloads | EVM v2 blobs; Solana KKSOLSC1 instruction schemas |
