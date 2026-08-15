@@ -530,8 +530,10 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 void fsm_msgResetDevice(ResetDevice* msg) {
   CHECK_NOT_INITIALIZED
 
-  reset_init(msg->has_display_random && msg->display_random,
-             msg->has_strength ? msg->strength : 128,
+  // display_random remains in the wire schema for host compatibility, but is
+  // intentionally ignored: internal entropy is seed pre-image material and
+  // must never be rendered or returned by production firmware.
+  reset_init(msg->has_strength ? msg->strength : 128,
              msg->has_passphrase_protection && msg->passphrase_protection,
              msg->has_pin_protection && msg->pin_protection,
              msg->has_language ? msg->language : 0,
@@ -539,7 +541,8 @@ void fsm_msgResetDevice(ResetDevice* msg) {
              msg->has_no_backup ? msg->no_backup : false,
              msg->has_auto_lock_delay_ms ? msg->auto_lock_delay_ms
                                          : STORAGE_DEFAULT_SCREENSAVER_TIMEOUT,
-             msg->has_u2f_counter ? msg->u2f_counter : 0);
+             msg->has_u2f_counter ? msg->u2f_counter : 0,
+             msg->has_dice_entropy && msg->dice_entropy);
 }
 
 void fsm_msgEntropyAck(EntropyAck* msg) {
