@@ -20,6 +20,7 @@ option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
+option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
@@ -127,6 +128,15 @@ if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
   add_definitions(-DDEBUG_LINK=0)
+endif()
+
+
+# Value macros (always defined 0/1) -- device builds use -Wundef -Werror, so an
+# undefined identifier in `#if` is a hard error. Guard code with `#if FLAG`.
+if(${KK_BITCOIN_ONLY})
+  add_definitions(-DBITCOIN_ONLY=1)
+else()
+  add_definitions(-DBITCOIN_ONLY=0)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
