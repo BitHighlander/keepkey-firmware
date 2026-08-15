@@ -88,10 +88,17 @@ def main():
     # Render first so a failed candidate still has a truthful diagnostic PDF,
     # then fail the job if any catalog entry failed or is missing.  Deliberate
     # feature/policy skips remain valid per the report generator contract.
+    #
+    # Validate against the SAME merged evidence the PDF was rendered from.  It
+    # used to validate against the Python JUnit alone, so any catalog entry
+    # naming a native firmware unit test resolved to "missing" and the gate
+    # could never accept one -- which is half of why no native test was ever
+    # catalogued.  The canonical-Python-evidence requirement is already
+    # enforced above, before the merge, so nothing is weakened here.
     validate_cmd = [
         sys.executable,
         REPORT_GENERATOR,
-        '--junit=%s' % python_junit,
+        '--junit=%s' % (merged or python_junit),
         '--validate-junit',
     ]
     if fw_version:

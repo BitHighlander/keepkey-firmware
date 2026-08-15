@@ -146,6 +146,29 @@ typedef enum {
   PIN_KDF_V19,
 } pin_kdf_version_t;
 
+/* Gate for the storage-version-19 PIN KDF.
+ *
+ * 0 = implemented, tested, and NOT reachable from flash. This firmware writes
+ * storage version 17, and the flag that records a v19 wrap only round-trips in
+ * version 19, so persisting a v19 wrap here would lock the wallet out on the
+ * next boot.
+ *
+ * Do not flip this to 1 on its own. Version 19 is a one-way migration: any
+ * device that boots firmware writing it can no longer be downgraded without
+ * being wiped, and the wipe is the correct anti-rollback behaviour, not a bug
+ * to work around. Enable it only in a release whose bootloader enforces a
+ * minimum security epoch that refuses firmware unable to read version 19 --
+ * so the downgrade is rejected up front rather than costing a user their
+ * wallet. The full gate list is in docs/security/pin-kdf-v19-migration.md. */
+#define STORAGE_PIN_KDF_V19 0
+
+/* Single source of truth for KDF selection, so tests cannot drift from
+ * production by reimplementing the choice. Both the unlock path and the unit
+ * tests must call these rather than naming a PIN_KDF_* constant directly. */
+pin_kdf_version_t storage_activePinKdfVersion(bool v15_16_trans,
+                                              bool pin_kdf_v2);
+pin_kdf_version_t storage_rewrapPinKdfVersion(void);
+
 #define MAX_MNEMONIC_LEN 240
 
 void storage_loadNode(HDNode* dst, const HDNodeType* src);
@@ -239,10 +262,12 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len);
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
+void storage_readV17(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV18(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV19(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
+void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV18(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 

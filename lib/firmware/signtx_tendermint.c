@@ -128,8 +128,8 @@ bool tendermint_signTxUpdateMsgSend(const uint64_t amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, to_address)) {
     return false;
@@ -194,8 +194,8 @@ bool tendermint_signTxUpdateMsgDelegate(const uint64_t amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -260,8 +260,8 @@ bool tendermint_signTxUpdateMsgUndelegate(const uint64_t amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -325,8 +325,8 @@ bool tendermint_signTxUpdateMsgRedelegate(
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -399,8 +399,8 @@ bool tendermint_signTxUpdateMsgRewards(const uint64_t* amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -468,8 +468,8 @@ bool tendermint_signTxUpdateMsgIBCTransfer(
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
+  char hrp[BECH32_MAX_HRP_LEN + 1];
+  uint8_t decoded[BECH32_DECODED_MAX];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, receiver)) {
     return false;

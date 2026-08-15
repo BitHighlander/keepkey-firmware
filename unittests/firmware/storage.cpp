@@ -6,6 +6,9 @@ extern "C" {
 #include "trezor/crypto/aes/aes.h"
 #include "types.pb.h"
 #include "storage.h"
+
+/* Emulator flash bring-up, same forward declaration signed_metadata.cpp uses. */
+void setup(void);
 }
 
 #include "gtest/gtest.h"
@@ -13,6 +16,7 @@ extern "C" {
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 using ::testing::ElementsAreArray;
 
@@ -195,12 +199,12 @@ TEST(Storage, ReadStorageV1) {
 
   // Decrypt upgraded storage.
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey("123456789", wrapping_key, dst.pub.sca_hardened,
-                            dst.pub.pin_kdf_v2
-                                ? PIN_KDF_V19
-                                : (dst.pub.v15_16_trans ? PIN_KDF_V16
-                                                       : PIN_KDF_V15),
-                            dst.pub.random_salt, "");  // strongest pin evar
+  storage_deriveWrappingKey(
+      "123456789", wrapping_key, dst.pub.sca_hardened,
+      /* The V1 upgrade path re-wraps through storage_setPin_impl, so this must
+         track whatever production wraps with -- not a fixed version. */
+      storage_activePinKdfVersion(dst.pub.v15_16_trans, dst.pub.pin_kdf_v2),
+      dst.pub.random_salt, "");  // strongest pin evar
   storage_unwrapStorageKey(wrapping_key, dst.pub.wrapped_storage_key,
                            session.storageKey);
   storage_secMigrate(&session, &dst, /*encrypt=*/false);
@@ -371,6 +375,189 @@ TEST(Storage, SetPolicy) {
   EXPECT_EQ(storage.pub.policies[3].enabled, true);
 }
 
+// AdvancedMode is the blind-sign gate (ethereum.c, eos.c, solana.c). It lives
+// in the PUBLIC storage section, which has no authenticated integrity against
+// physical flash modification -- the same reason RC18 refused to persist
+// clear-sign trust anchors there. So it is session-scoped: never written, and
+// never restored, no matter what the flash says.
+//
+// Two directions, and the second is the one that matters. A comment in
+// storage.c does not stop someone reinstating `flags & (1u << 12)` in a new
+// storage version; this test does.
+TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
+  // storage_setPolicy matches by name against the GLOBAL shadow config, whose
+  // policy table is zeroed until storage_init() populates it. Same guarded
+  // idiom as signed_metadata.cpp: re-running storage_init() over an already
+  // live shadow would try to migrate and decrypt it.
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+
+  ConfigFlash start;
+  memset(&start, 0, sizeof(start));
+  memcpy(start.meta.magic, "stor", 4);
+  start.storage.version = STORAGE_VERSION;
+  start.storage.encrypted_sec_version = STORAGE_VERSION;
+  storage_resetPolicies(&start.storage);
+
+  // Enable it in the shadow config, which is what the writer serializes from
+  // (storage_writeStorageV16Plaintext reads policy state via
+  // storage_isPolicyEnabled, i.e. from the shadow, not from `start`).
+  // shadow_config is process-global and 16 production call sites read it, so
+  // the restore must survive an ASSERT_* early return out of the TEST body.
+  struct RestorePolicy {
+    ~RestorePolicy() { storage_setPolicy("AdvancedMode", false); }
+  } restore_policy;
+
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(storage_isPolicyEnabled("AdvancedMode"))
+      << "test precondition: the writer must have something to leak";
+
+  std::vector<uint8_t> flash(2570);
+  memset(&flash[0], 0, flash.size());
+  storage_writeV17((char *)&flash[0], flash.size(), &start);
+
+  // 1. The writer must not persist it. Storage begins at +44, flags at +4.
+  uint32_t flags = 0;
+  memcpy(&flags, &flash[44 + 4], sizeof(flags));
+  EXPECT_EQ(flags & (1u << 12), 0u)
+      << "AdvancedMode was written to flash; it must be session-scoped";
+
+  // 2. The reader must ignore the bit even when it IS set -- an upgraded
+  //    device, or one an attacker wrote to directly.
+  flags |= (1u << 12);
+  memcpy(&flash[44 + 4], &flags, sizeof(flags));
+
+  // Every reader that resolves policies[3] gets the same buffer. V11 and V16
+  // are separate storage_readPolicyV2 call sites on live migration paths, so
+  // testing only V17 would let someone reinstate `flags & (1u << 12)` in one of
+  // the others with the suite still green -- the exact regression this guards.
+  struct {
+    const char *name;
+    void (*read)(ConfigFlash *, const char *, size_t);
+  } readers[] = {
+      {"V11", storage_readV11},
+      {"V16", storage_readV16},
+      {"V17", storage_readV17},
+  };
+
+  for (const auto &r : readers) {
+    ConfigFlash end;
+    memset(&end, 0, sizeof(end));
+    r.read(&end, (const char *)&flash[0], flash.size());
+
+    EXPECT_EQ(std::string(end.storage.pub.policies[3].policy_name),
+              "AdvancedMode")
+        << r.name;
+    EXPECT_FALSE(end.storage.pub.policies[3].enabled)
+        << r.name << ": a flash bit re-enabled blind signing across a reboot";
+  }
+
+  // 3. Ignoring the stale bit is not enough -- it must be SCRUBBED. Firmware
+  //    <= 7.15 still reads bit 12 as the policy, so a downgrade would boot with
+  //    blind signing already on. storage_fromFlash must therefore report
+  //    SUS_Updated (which makes storage_init commit, and the writer zeroes it)
+  //    rather than SUS_Valid, which commits nothing.
+  {
+    static char sector[STORAGE_SECTOR_LEN];
+    memset(sector, 0, sizeof(sector));
+    memcpy(sector, "stor", 4);
+    uint32_t v = STORAGE_VERSION;
+    memcpy(sector + 44, &v, sizeof(v));
+
+    SessionState ss;
+    ConfigFlash out;
+
+    uint32_t clean = 0;
+    memcpy(sector + 48, &clean, sizeof(clean));
+    memset(&ss, 0, sizeof(ss));
+    memset(&out, 0, sizeof(out));
+    EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Valid)
+        << "a clean V17 sector must not force a needless flash write";
+
+    uint32_t stale = (1u << 12);
+    memcpy(sector + 48, &stale, sizeof(stale));
+    memset(&ss, 0, sizeof(ss));
+    memset(&out, 0, sizeof(out));
+    EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Updated)
+        << "a stale AdvancedMode bit must force a commit that scrubs it";
+  }
+}
+
+// The legacy (version 2-10) storage record carried a policy NAME in flash.
+// storage_upgradePolicies only fills entries from policies_count upward, and
+// storage_isPolicyEnabled_impl returns on the first name match scanning from
+// index 0 -- so a record naming itself "AdvancedMode" answered before the real
+// entry at index 3, re-enabling blind signing straight out of unauthenticated
+// flash. That defeats session-scoping entirely, so it is tested separately.
+TEST(Storage, LegacyPolicyRecordCannotNameAdvancedMode) {
+  std::vector<char> buf(852, 0);
+
+  // version 2 selects the legacy reader (version 1 never read the record).
+  buf[0] = 2;
+
+  // The attacker-controlled legacy policy record at +464:
+  //   +0  has_policy_name, +1..15 policy_name, +16 has_enabled, +17 enabled
+  buf[464] = 1;
+  const char *name = "AdvancedMode";
+  memcpy(&buf[465], name, strlen(name));
+  buf[480] = 1;
+  buf[481] = 1;
+
+  SessionState ss;
+  memset(&ss, 0, sizeof(ss));
+  Storage storage;
+  memset(&storage, 0, sizeof(storage));
+
+  storage_readStorageV1(&ss, &storage, &buf[0], buf.size());
+  storage_upgradePolicies(&storage);
+
+  EXPECT_NE(std::string(storage.pub.policies[0].policy_name), "AdvancedMode")
+      << "flash controlled a policy NAME; it shadows the real AdvancedMode "
+         "entry";
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"))
+      << "a crafted legacy record enabled blind signing";
+}
+
+// AdvancedMode is scoped to the UNLOCKED session, not just the power cycle:
+// session_clear revokes the runtime ClearSign signers it authorizes, so it must
+// disarm the policy too, or the screensaver locks and blind signing is still
+// armed after the PIN goes back in.
+TEST(Storage, SessionClearDisarmsAdvancedMode) {
+  Storage storage;
+  memset(&storage, 0, sizeof(storage));
+  storage_resetPolicies(&storage);
+
+  ASSERT_TRUE(
+      storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  ASSERT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
+
+  SessionState ss;
+
+  // A soft re-init must NOT disarm it. fsm_msgInitialize calls
+  // session_clear(false) and hosts send Initialize routinely -- disarming there
+  // would demand a fresh button press before every operation.
+  memset(&ss, 0, sizeof(ss));
+  session_clear_impl(&ss, &storage, /*clear_pin=*/false);
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"))
+      << "Initialize disarmed AdvancedMode; blind signing is now unusable";
+
+  // A lock must.
+  memset(&ss, 0, sizeof(ss));
+  session_clear_impl(&ss, &storage, /*clear_pin=*/true);
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"))
+      << "locking left blind signing armed";
+  // Unrelated policies are untouched: this disarms one capability, it is not a
+  // policy reset.
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "Pin Caching"));
+}
+
 TEST(Storage, ResetCache) {
   Cache src;
   memset(&src, 0xCC, sizeof(src));
@@ -469,9 +656,10 @@ TEST(Storage, StorageUpgrade_Normal) {
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(
       "123456789", wrapping_key, shadow.storage.pub.sca_hardened,
-      shadow.storage.pub.pin_kdf_v2
-          ? PIN_KDF_V19
-          : (shadow.storage.pub.v15_16_trans ? PIN_KDF_V16 : PIN_KDF_V15),
+      /* The V1 upgrade path re-wraps through storage_setPin_impl, so this must
+         track whatever production wraps with -- not a fixed version. */
+      storage_activePinKdfVersion(shadow.storage.pub.v15_16_trans,
+                                  shadow.storage.pub.pin_kdf_v2),
       shadow.storage.pub.random_salt, "");  // strongest pin evar
   storage_unwrapStorageKey(wrapping_key, shadow.storage.pub.wrapped_storage_key,
                            session.storageKey);
@@ -496,7 +684,13 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
-  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
+  // Was `true` here, read straight out of the legacy flash record. Policy state
+  // is no longer trusted from flash at any version (see
+  // LegacyPolicyRecordCannotNameAdvancedMode), so this is now the compiled
+  // default. Nothing regresses: every V11+ reader already forced ShapeShift to
+  // false, so the migrated `true` never survived the first commit -- it was
+  // transient and inconsistent with what the very next boot would see.
+  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, false);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);
@@ -854,8 +1048,8 @@ TEST(Storage, IsPinCorrect) {
   uint8_t wrapping_key[64];
   uint8_t random_salt[32];
   memset(random_salt, 0, sizeof(random_salt));
-  storage_deriveWrappingKey("1234", wrapping_key, sca_hardened, PIN_KDF_V19,
-                            random_salt, "");
+  storage_deriveWrappingKey("1234", wrapping_key, sca_hardened,
+                            storage_rewrapPinKdfVersion(), random_salt, "");
 
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t wrapped_key[64];
@@ -872,7 +1066,7 @@ TEST(Storage, IsPinCorrect) {
   EXPECT_TRUE(memcmp(key_out, storage_key, 64) == 0);
 }
 
-TEST(Storage, PinKdfV16RewrapsToV19AfterCorrectPin) {
+TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
   const char* pin = "1234";
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t random_salt[RANDOM_SALT_LEN] = {0};
@@ -901,18 +1095,32 @@ TEST(Storage, PinKdfV16RewrapsToV19AfterCorrectPin) {
   EXPECT_EQ(0,
             memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 
+  // This is the gate's negative test. The key above is already v16-wrapped and
+  // sca-hardened, so with STORAGE_PIN_KDF_V19 off there is nothing left to
+  // upgrade: the correct PIN must simply succeed, leave the wrap untouched,
+  // and produce no v19 claim. Persisting a v19 wrap under a V17 record -- where
+  // the flag cannot round-trip -- would lock the wallet out on the next boot.
+#if STORAGE_PIN_KDF_V19
   EXPECT_EQ(PIN_REWRAP,
             storage_isPinCorrect_impl(
                 pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
                 &pin_kdf_v2, key_out, random_salt));
   EXPECT_TRUE(pin_kdf_v2);
-  EXPECT_EQ(0, memcmp(key_out, storage_key, sizeof(key_out)));
   EXPECT_NE(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
+#else
+  EXPECT_EQ(PIN_GOOD,
+            storage_isPinCorrect_impl(
+                pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
+                &pin_kdf_v2, key_out, random_salt));
+  EXPECT_FALSE(pin_kdf_v2);
+  EXPECT_EQ(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
+#endif
+  EXPECT_EQ(0, memcmp(key_out, storage_key, sizeof(key_out)));
 
   uint8_t v19_wrapping_key[64];
   uint8_t v19_key_out[64];
-  storage_deriveWrappingKey(pin, v19_wrapping_key, true, PIN_KDF_V19,
-                            random_salt, "");
+  storage_deriveWrappingKey(pin, v19_wrapping_key, true,
+                            storage_rewrapPinKdfVersion(), random_salt, "");
   storage_unwrapStorageKey(v19_wrapping_key, wrapped_key, v19_key_out);
   EXPECT_EQ(0, memcmp(v19_key_out, storage_key, sizeof(v19_key_out)));
 
@@ -984,8 +1192,8 @@ TEST(Storage, Vuln1996) {
 
     // first obtain the storage key generated above
     storage_deriveWrappingKey(v.pin, wrapping_key,
-                              config.storage.pub.sca_hardened, PIN_KDF_V19,
-                              random_salt, "");
+                              config.storage.pub.sca_hardened,
+                              storage_rewrapPinKdfVersion(), random_salt, "");
     storage_unwrapStorageKey(
         wrapping_key, config.storage.pub.wrapped_storage_key, storage_key);
 
@@ -1132,4 +1340,76 @@ TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
   memset(&end, 0xCC, sizeof(end));
   storage_readV18(&end, (const char*)&flash[0], flash.size());
   EXPECT_FALSE(end.storage.pub.pin_kdf_v2);
+}
+
+// The wallet lockout this branch fixes lived on the serialize/reboot boundary:
+// storage_setPin_impl() produced a wrap the V17 record could not describe, and
+// nothing noticed until the next boot re-derived the wrapping key from the
+// persisted flags and every PIN failed. Every one of the tests above stays in
+// RAM, so none of them could see it.
+//
+// This is the whole round trip, in the order the device performs it: create,
+// set a PIN, serialize the V17 record exactly as storage_commit() does, reload
+// it into fresh state as a boot would, unlock, and recover the secrets.
+TEST(Storage, PinUnlocksAfterRebootUnderV17) {
+  ConfigFlash cfg;
+  SessionState ss;
+  memset(&cfg, 0, sizeof(cfg));
+  memset(&ss, 0, sizeof(ss));
+  memcpy(cfg.meta.magic, "stor", 4);
+
+  storage_reset_impl(&ss, &cfg);
+
+  // Something recognisable to recover. has_mnemonic stays false so the reload
+  // does not detour through u2froot derivation; the mnemonic still rides
+  // through the encrypted section either way.
+  cfg.storage.has_sec = true;
+  strlcpy(cfg.storage.sec.mnemonic, "all all all all all all all all all all all all",
+          sizeof(cfg.storage.sec.mnemonic));
+
+  storage_setPin_impl(&ss, &cfg.storage, "1234");
+
+  uint8_t key_before_reboot[64];
+  memcpy(key_before_reboot, ss.storageKey, sizeof(key_before_reboot));
+
+  // storage_commit()'s buffer, same size, same writer.
+  std::vector<char> flash(2572, 0);
+  storage_writeV17(&flash[0], flash.size(), &cfg);
+
+  // Reboot: nothing carries over but the flash sector.
+  ConfigFlash reloaded;
+  SessionState fresh;
+  memset(&reloaded, 0, sizeof(reloaded));
+  memset(&fresh, 0, sizeof(fresh));
+  ASSERT_EQ(SUS_Valid, storage_fromFlash(&fresh, &reloaded, &flash[0]))
+      << "V17 is the current version; reading it back must not migrate";
+
+  bool sca_hardened = reloaded.storage.pub.sca_hardened;
+  bool v15_16_trans = reloaded.storage.pub.v15_16_trans;
+  bool pin_kdf_v2 = reloaded.storage.pub.pin_kdf_v2;
+
+  EXPECT_EQ(PIN_WRONG,
+            storage_isPinCorrect_impl(
+                "9999", reloaded.storage.pub.wrapped_storage_key,
+                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
+                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
+                reloaded.storage.pub.random_salt));
+
+  ASSERT_EQ(PIN_GOOD,
+            storage_isPinCorrect_impl(
+                "1234", reloaded.storage.pub.wrapped_storage_key,
+                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
+                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
+                reloaded.storage.pub.random_salt))
+      << "the PIN set before the reboot no longer opens the wallet";
+  EXPECT_EQ(0, memcmp(fresh.storageKey, key_before_reboot,
+                      sizeof(key_before_reboot)));
+
+  // A wrap that survives unwrapping still has to decrypt the secrets: on a
+  // fingerprint mismatch storage_secMigrate() wipes and shuts down.
+  storage_secMigrate(&fresh, &reloaded.storage, /*encrypt=*/false);
+  EXPECT_STREQ("all all all all all all all all all all all all",
+               reloaded.storage.sec.mnemonic);
+
+  memzero(key_before_reboot, sizeof(key_before_reboot));
 }

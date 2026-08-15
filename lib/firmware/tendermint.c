@@ -99,7 +99,7 @@ bool tendermint_isValidAsset(const char* asset) {
 bool tendermint_isValidSigner(const char* signer, const char* hrp) {
   size_t decoded_len;
   char decoded_hrp[45];
-  uint8_t decoded[38];
+  uint8_t decoded[BECH32_DECODED_MAX];
   if (!signer || !bech32_decode(decoded_hrp, decoded, &decoded_len, signer)) {
     return false;
   }

@@ -34,7 +34,13 @@ void kk_board_init(void);
  * from the socket queue. Preloading exactly N accept pairs before invoking
  * the code under test auto-accepts exactly N screens, and
  * kkconfirm_drain() == 0 afterwards proves exactly N screens were shown
- * (fewer screens leave packets queued; more screens would hang the test).
+ * (fewer screens leave packets queued; more screens HANG the test until the
+ * CI job hits its timeout and reports "cancelled", which reads like flake
+ * rather than a wrong expectation — so get the count right).
+ *
+ * Screen counts are value-dependent now that confirm() pages a body too long
+ * for BODY_ROWS: the same format string is one screen for a 3-row body and
+ * two for a 4-row one. Long test vectors are the ones to check.
  *
  * These helpers have external linkage so mayachain.cpp can share the
  * one-time board/usb initialization.
@@ -64,7 +70,20 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
                 sizeof(addr)) == (ssize_t)sizeof(frame);
 }
 
-// Queue nYes accepted screens followed by nNo rejected screens.
+/* One ButtonAck + one DebugLinkDecision, i.e. what a single screen eats. */
+#define KKCONFIRM_MSGS_PER_SCREEN 2
+
+// Queue nYes accepted screens followed by nNo rejected screens, plus one
+// trailing rejection as a sentinel.
+//
+// The sentinel is what keeps a wrong count cheap. A screen the test did not
+// budget for consumes it, is rejected, and the code under test returns false
+// immediately, so the test FAILS in milliseconds. Without it that extra
+// screen blocks forever on an answer nobody queued and the only symptom is a
+// CI job burning its whole timeout and reporting "cancelled" — which reads
+// like infrastructure flake rather than a wrong expectation. confirm() paging
+// long bodies makes screen counts value-dependent, so this is a mistake worth
+// catching in the harness instead of in a 30-minute timeout.
 bool kkconfirm_preload(int nYes, int nNo) {
   static bool initialized = false;
   if (!initialized) {
@@ -76,7 +95,7 @@ bool kkconfirm_preload(int nYes, int nNo) {
 
   static const uint8_t yes[] = {0x08, 0x01};  // DebugLinkDecision.yes_no
   static const uint8_t no[] = {0x08, 0x00};
-  for (int i = 0; i < nYes + nNo; i++) {
+  for (int i = 0; i < nYes + nNo + 1; i++) {
     if (!kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0))
       return false;
     const uint8_t* decision = (i < nYes) ? yes : no;
@@ -87,7 +106,10 @@ bool kkconfirm_preload(int nYes, int nNo) {
   return true;
 }
 
-// Consume and count any tiny messages left in the queue.
+// Consume and count any tiny messages left in the queue, discounting the
+// sentinel kkconfirm_preload() always queues. 0 keeps meaning exactly what it
+// meant before — every preloaded screen was shown and no more. A NEGATIVE
+// count means the sentinel was consumed: more screens than the test expected.
 int kkconfirm_drain(void) {
   uint8_t buf[MSG_TINY_BFR_SZ];
   int n = 0;
@@ -99,7 +121,7 @@ int kkconfirm_drain(void) {
     if (id == MSG_TINY_TYPE_ERROR) break;
     n++;
   }
-  return n;
+  return n - KKCONFIRM_MSGS_PER_SCREEN;
 }
 
 // Vectors computed with the trezor-crypto library directly (see
@@ -196,9 +218,13 @@ static bool parseMemo(const char* memo) {
 }
 
 // Classic full-form swap memo: asset + dest + limit + affiliate + fee bps
-// = 4 screens (the 4th is the new affiliate fee screen)
+// = 4 screens (the 4th is the new affiliate fee screen), but the asset screen
+// pages: "Confirm swap asset USDT-0xdac...ec7\n on chain ETH" is 4 rows and a
+// body only gets BODY_ROWS=3, so it is shown as 1/2 + 2/2 = 5 presses. Before
+// confirm() paged, that 4th row — the tail of the USDT contract address — was
+// simply dropped from the screen.
 TEST(Thorchain, MemoSwapFullFormShowsAffiliate) {
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  ASSERT_TRUE(kkconfirm_preload(5, 0));
   EXPECT_TRUE(
       parseMemo("SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:"
                 "0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75"));
@@ -311,7 +337,9 @@ TEST(Thorchain, MemoExactBufferCapacityKeepsLastChar) {
       prefix + std::string(256 - prefix.size() - suffix.size(), 'd') + suffix;
   ASSERT_EQ(memo.size(), 256u);
 
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  /* 6 presses, not 4: the 240-char destination needs 8 rows, so its screen
+   * pages 3 ways (1 + 3 + 1 + 1). Every byte of the memo reaches the screen. */
+  ASSERT_TRUE(kkconfirm_preload(6, 0));
   EXPECT_TRUE(parseMemo(memo.c_str(), memo.size())); /* no NUL counted */
   EXPECT_EQ(0, kkconfirm_drain());
 }

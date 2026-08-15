@@ -86,6 +86,23 @@ typedef struct {
 typedef void (*layout_notification_t)(const char* str1, const char* str2,
                                       NotificationType type);
 
+/// Split a confirm body into screen-sized pages.
+///
+/// Only BODY_ROWS rows of body text are on screen; draw_string() stops at the
+/// first character that will not fit and says nothing about it, so a longer
+/// body loses its tail — the last hex digits of an address, the chain an asset
+/// sits on, a "NOT verified" warning. confirm() pages such bodies instead.
+///
+/// \param body        The body to split. Not modified.
+/// \param body_width  Row width in pixels — BODY_WIDTH, or
+///                    BODY_WIDTH_WITH_ICON when an icon takes the left margin.
+/// \param index       Which page to write to \p out. Ignored if out is NULL.
+/// \param out         Receives page \p index, NUL-terminated. Must hold
+///                    BODY_CHAR_MAX bytes. NULL to count pages only.
+/// \returns the total number of pages, or 0 if \p body cannot be split.
+size_t confirm_body_split(const char* body, uint16_t body_width, size_t index,
+                          char* out);
+
 /// User confirmation.
 /// \param type            The kind of button request to send to the host.
 /// \param request_title   Title of confirm message.

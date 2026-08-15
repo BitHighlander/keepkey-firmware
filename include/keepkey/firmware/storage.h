@@ -26,7 +26,25 @@
 #include "keepkey/firmware/authenticator.h"
 
 #define STORAGE_VERSION \
-  19 /* Must add case fallthrough in storage_fromFlash after increment*/
+  17 /* Must add case fallthrough in storage_fromFlash after increment*/
+
+/* The highest storage version written by any firmware that has SHIPPED in a
+ * signed release.
+ *
+ * A signed UPGRADE MUST NEVER WIPE. An upgrading device arrives carrying a blob
+ * written by the release it is leaving; if the incoming firmware does not
+ * recognise that version, version_from_int() returns StorageVersion_NONE,
+ * storage_fromFlash() returns SUS_Invalid, and storage_init() calls
+ * storage_reset() + storage_commit() -- the wallet is gone with no prompt. A
+ * DOWNGRADE hitting that path is intended and normal: older firmware cannot be
+ * expected to read a newer blob.
+ *
+ * So STORAGE_VERSION may only ever go UP. Bump this baseline when a release
+ * ships, in the release commit, never to make a build compile: lowering it is
+ * the exact edit that turns every upgrade in the field into a silent wipe, and
+ * it must be an explicit, reviewed act rather than a side effect. See
+ * docs/Release.md "Storage version gate". */
+#define STORAGE_VERSION_LAST_SHIPPED 17
 
 /* A seed CREATED under bitcoin-only firmware is stamped with a version in a
  * reserved band (base + the normal version). Multi-chain firmware that knows

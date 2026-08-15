@@ -28,6 +28,7 @@
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/memzero.h"
@@ -105,7 +106,32 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     }
   }
 
-  random_buffer(int_entropy, 32);
+  /* Asked here rather than only inside the draw below so the host gets a real
+   * error message instead of a halted device: this is the one key-material path
+   * with somewhere to report a failure to.
+   *
+   * This does NOT prove the generator is unpredictable; see the scope note at
+   * the top of lib/rand/rng_health.c. It proves it is present and not stuck. */
+  if (!rng_health_check()) {
+    /* FirmwareError, not SyntaxError/Other: nothing about the request is
+     * wrong. The device's own entropy source failed its self-test, which is a
+     * hardware/firmware fault the host cannot correct by retrying. */
+    fsm_sendFailure(
+        FailureType_Failure_FirmwareError,
+        _("Random number generator self-test failed; cannot create a wallet"));
+    layoutHome();
+    return;
+  }
+
+  /* The gate above and this draw are deliberately not separable: the check
+   * cannot be edited out of this function while leaving the draw behind. */
+  if (!random_buffer_checked(int_entropy, 32)) {
+    fsm_sendFailure(
+        FailureType_Failure_FirmwareError,
+        _("Random number generator self-test failed; cannot create a wallet"));
+    layoutHome();
+    return;
+  }
 
   /* Dice fold in before EntropyRequest, so the host contribution arrives
    * strictly after the device has committed to its own.
@@ -158,6 +184,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
 
   if (pin_protection) {
     if (!change_pin()) {
+      dice_digest_clear();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("PINs do not match"));
       layoutHome();

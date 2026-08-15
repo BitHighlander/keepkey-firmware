@@ -131,7 +131,14 @@ add_definitions(-DUSE_CARDANO=0)
 add_definitions(-DUSE_MONERO=0)
 add_definitions(-DUSE_NEM=0)
 
-add_definitions(-DRAND_PLATFORM_INDEPENDENT=0)
+# NOT a USE_* style on/off toggle despite sitting next to them: trezor-crypto's
+# rand.c tests this macro with #ifndef, so only its *definedness* matters. The
+# old -D...=0 spelling read as "off" while actually meaning "on", and the
+# insecure LCG random32() stayed out of the build purely by that double
+# negation. Define it bare, matching upstream trezor-core's SConscript.firmware,
+# so a future cleanup of an apparent "=0 means unused" define cannot silently
+# compile in the LCG. lib/rand/rng.c #errors if this ever goes missing.
+add_definitions(-DRAND_PLATFORM_INDEPENDENT)
 
 add_definitions(-DPB_FIELD_16BIT=1)
 add_definitions(-DPB_NO_ERRMSG=1)

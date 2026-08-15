@@ -101,16 +101,48 @@ KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
+# Merge in the native firmware unit results before validating or rendering.
+# The test-reports volume is shared rw with the firmware-unit container, which
+# runs first, so its XMLs are already here. Validating against the Python JUnit
+# alone made every catalog entry naming a native unit test resolve to "missing",
+# which is why no native test could ever be catalogued and all 432 of them were
+# invisible to the report.
+#
+# If the native XMLs are absent this falls back to Python-only, and any native
+# catalog entry then fails as "missing" -- i.e. it still fails closed, it does
+# not quietly pass.
+echo "=== Phase 2: Merge JUnit evidence ==="
+MERGED=/kkemu/test-reports/junit-merged.xml
+python3 - <<'PY'
+import glob, os, xml.etree.ElementTree as ET
+files = sorted(glob.glob('/kkemu/test-reports/python-keepkey/junit*.xml'))
+native = sorted(glob.glob('/kkemu/test-reports/firmware-unit/*.xml'))
+root = ET.Element('testsuites')
+for f in files + native:
+    try:
+        for suite in ET.parse(f).iter('testsuite'):
+            root.append(suite)
+    except ET.ParseError:
+        print("WARN: skipping malformed %s" % f)
+ET.ElementTree(root).write('/kkemu/test-reports/junit-merged.xml',
+                           xml_declaration=True, encoding='unicode')
+print("Merged %d Python + %d native JUnit file(s)" % (len(files), len(native)))
+if not native:
+    print("WARN: no firmware-unit XMLs found; native catalog entries will "
+          "report as missing")
+PY
+[ -s "$MERGED" ] || MERGED=/kkemu/test-reports/python-keepkey/junit.xml
+
 echo "=== Phase 2: Validate report catalog ==="
 python3 ../scripts/generate-test-report.py \
-  --junit=/kkemu/test-reports/python-keepkey/junit.xml \
+  --junit="$MERGED" \
   ${FW_VERSION:+--fw-version=$FW_VERSION} \
   --validate-junit
 CATALOG_RC=$?
 
 echo "=== Phase 2: Generate test report ==="
 python3 ../scripts/generate-test-report.py \
-  --junit=/kkemu/test-reports/python-keepkey/junit.xml \
+  --junit="$MERGED" \
   ${FW_VERSION:+--fw-version=$FW_VERSION} \
   --screenshots=/kkemu/test-reports/screenshots \
   --output=/kkemu/test-reports/test-report.pdf

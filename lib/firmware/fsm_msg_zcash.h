@@ -266,8 +266,42 @@ static bool zcash_verify_and_confirm_orchard_output(
 
   char amount_str[32];
   zcash_format_amount(msg->value, amount_str, sizeof(amount_str));
+
+  /* Two screens, deliberately.
+   *
+   * A unified address is 106 characters, which is three full body rows on its
+   * own -- exactly what layout_zcash_address_text_notification is built to
+   * render, and what the display-address flow already shows. The standard
+   * notification body is three rows and draw_string simply stops emitting
+   * once a character will not fit: there is no scroll and no pagination, so
+   * surplus text is dropped without any indication.
+   *
+   * Putting the question, the address and the amount in one body therefore
+   * rendered the question plus the first 76 characters of the address and
+   * silently discarded the rest of it along with the entire amount line.
+   * That is not a cosmetic screen: total_amount on the summary prompt is
+   * taken from the host message, and the contract documented in
+   * zcash_pczt_sign() delegates verification of Orchard output values to this
+   * confirm -- so dropping the amount removed the only place the user could
+   * see the value being committed to.
+   *
+   * Amount first, on a body that cannot overflow, then the full address
+   * through the layout that fits it.
+   *
+   * test_msg_zcash_sign_pczt_device.py asserts both screens are emitted; it
+   * fails with "expected 2 ConfirmOutput screens, got 1" against the packed
+   * single-screen version. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Zcash Output",
-               "Send shielded ZEC?\n%s\nAmount: %s", address, amount_str)) {
+               "Send shielded ZEC?\nAmount: %s", amount_str)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    memzero(address, sizeof(address));
+    return false;
+  }
+
+  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
+                                  ButtonRequestType_ButtonRequest_ConfirmOutput,
+                                  "Shielded recipient", "%s", address)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));
     memzero(address, sizeof(address));
@@ -1261,6 +1295,28 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
     return;
   }
 
+  /* Same invariant as the transparent input handler, and it has to be stated
+   * separately: this is a different array with its own free-running counter.
+   *
+   * After the declared outputs are stored, the dispatch below moves on to
+   * transparent inputs without incrementing current_transparent_input, which
+   * leaves this handler re-armed. A host that ignores the ack and keeps
+   * sending outputs walks current_transparent_output past
+   * n_transparent_outputs, and each extra message wrote a host-controlled
+   * amount and a 128-byte script_pubkey past the end of
+   * transparent_outputs[8] -- landing first on transparent_inputs[0] and then
+   * outside the struct entirely. */
+  if (msg->index >= zcash_signing.n_transparent_outputs ||
+      msg->index >= ZCASH_MAX_TRANSPARENT_OUTPUTS ||
+      zcash_signing.current_transparent_output >=
+          zcash_signing.n_transparent_outputs) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Transparent output index out of range"));
+    zcash_signing_abort();
+    layoutHome();
+    return;
+  }
+
   if (msg->index != zcash_signing.current_transparent_output) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Unexpected transparent output index"));
@@ -1356,6 +1412,26 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
       zcash_signing.n_transparent_outputs) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Transparent outputs not yet complete"));
+    zcash_signing_abort();
+    layoutHome();
+    return;
+  }
+
+  /* Bound the index against the array before it is used to address it.
+   *
+   * Matching current_transparent_input is not sufficient on its own. Nothing
+   * stops a host sending further ZcashTransparentInput messages after the
+   * declared count has been consumed: the ack loop simply stops asking, while
+   * current_transparent_input keeps incrementing past n_transparent_inputs on
+   * every extra message. Each one then wrote a fully host-controlled
+   * ZcashTransparentInputState -- amount, 32-byte txid, script_pubkey, the
+   * whole address_n array -- past the end of an 8-element static array. */
+  if (msg->index >= zcash_signing.n_transparent_inputs ||
+      msg->index >= ZCASH_MAX_TRANSPARENT_INPUTS ||
+      zcash_signing.current_transparent_input >=
+          zcash_signing.n_transparent_inputs) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Transparent input index out of range"));
     zcash_signing_abort();
     layoutHome();
     return;
