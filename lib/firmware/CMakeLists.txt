@@ -56,6 +56,10 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/lib/firmware
   ${CMAKE_CURRENT_BINARY_DIR})
 
+if(NOT ${KK_BITCOIN_ONLY})
+  list(APPEND sources zcash.c)
+endif()
+
 add_library(kkfirmware ${sources})
 add_dependencies(kkfirmware kktransport.pb trezorcrypto qrcodegenerator ethereum_tokens.def)
 

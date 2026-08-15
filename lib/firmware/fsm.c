@@ -296,3 +296,6 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #include "fsm_msg_bip85.h"
+#if !BITCOIN_ONLY
+#include "fsm_msg_zcash.h"
+#endif

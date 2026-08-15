@@ -143,5 +143,13 @@ void fsm_msgFlashHash(FlashHash* msg);
 void fsm_msgSoftReset(SoftReset* msg);
 
 void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic* msg);
+#if !BITCOIN_ONLY
+void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg);
+void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg);
+void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg);
+void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg);
+void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg);
+void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg);
+#endif
 
 #endif

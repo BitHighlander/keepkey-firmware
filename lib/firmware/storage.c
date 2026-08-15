@@ -20,6 +20,7 @@
 #include "storage.h"
 
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/zcash.h"
 
 #include "variant.h"
 
@@ -2456,3 +2457,34 @@ const char* storage_getMnemonic(void) { return debuglink_mnemonic; }
 
 HDNode* storage_getNode(void) { return &debuglink_node; }
 #endif
+
+#if !BITCOIN_ONLY
+/* ZIP-32 Orchard derives from the raw 64-byte BIP-39 seed rather than the
+ * BIP-32 master node. storage owns seed access and returns only derived
+ * material; the seed pointer never leaves this translation unit. */
+static void storage_zcash_orchard_progress(uint32_t completed, uint32_t total,
+                                           void* context) {
+  (void)context;
+  if (total == 0) return;
+  animating_progress_handler(_("Deriving Zcash"),
+                             (int)((completed * 1000u) / total));
+}
+
+bool storage_zcashOrchardKeys(uint32_t account, bool usePassphrase,
+                              ZcashOrchardKeys* keys_out) {
+  if (!keys_out) return false;
+  const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
+  if (!seed) return false;
+  animating_progress_handler(_("Deriving Zcash"), 0);
+  return zcash_derive_orchard_keys_with_progress(
+      seed, 64, account, keys_out, storage_zcash_orchard_progress, NULL);
+}
+
+bool storage_zcashSeedFingerprint(bool usePassphrase,
+                                  uint8_t fingerprint_out[32]) {
+  if (!fingerprint_out) return false;
+  const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
+  if (!seed) return false;
+  return zcash_calculate_seed_fingerprint(seed, 64, fingerprint_out);
+}
+#endif  // !BITCOIN_ONLY

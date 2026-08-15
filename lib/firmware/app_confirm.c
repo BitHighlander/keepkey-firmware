@@ -567,3 +567,17 @@ bool confirm_data(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
   return confirm_bytes(button_request, title, data, size);
 }
+
+#if !BITCOIN_ONLY
+bool confirm_zcash_address(const char* desc, const char* address) {
+  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
+                                  ButtonRequestType_ButtonRequest_Address, desc,
+                                  "%s", address)) {
+    return false;
+  }
+
+  return confirm_with_custom_layout(&layout_zcash_address_notification,
+                                    ButtonRequestType_ButtonRequest_Address,
+                                    desc, "%s", address);
+}
+#endif  // !BITCOIN_ONLY

@@ -137,6 +137,10 @@ if(${KK_BITCOIN_ONLY})
   add_definitions(-DBITCOIN_ONLY=1)
 else()
   add_definitions(-DBITCOIN_ONLY=0)
+  # The Orchard engine leaves the regular image tightest on flash; shrink the
+  # Gladman AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM,
+  # slightly slower AES). Bitcoin-only keeps the fast FOUR_TABLES.
+  add_definitions(-DAES_SMALL_TABLES)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")

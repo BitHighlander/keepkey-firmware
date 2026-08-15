@@ -127,4 +127,12 @@ void set_leaving_handler(leaving_handler_t leaving_func);
 void layoutU2FDialog(bool request, const char* title, const char* body, ...)
     __attribute__((format(printf, 3, 4)));
 
+#if !BITCOIN_ONLY
+void layout_zcash_address_notification(const char* desc, const char* address,
+                                       NotificationType type);
+void layout_zcash_address_text_notification(const char* desc,
+                                            const char* address,
+                                            NotificationType type);
+#endif  // !BITCOIN_ONLY
+
 #endif
