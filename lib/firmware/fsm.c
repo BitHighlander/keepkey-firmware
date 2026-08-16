@@ -33,6 +33,7 @@
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/rand/rng_health.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"

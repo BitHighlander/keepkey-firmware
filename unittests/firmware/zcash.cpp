@@ -989,25 +989,21 @@ TEST(Zcash, IronwoodNoteCommitment_V3KnownVector) {
       0x28, 0x35, 0xf6, 0x9f, 0xeb, 0x30, 0x21, 0x93, 0xc9, 0x26, 0x60,
       0x44, 0x4f, 0x26, 0x62, 0x4f, 0xd1, 0x3e, 0x00, 0xea, 0x7a, 0xc7,
       0x74, 0xcd, 0x55, 0x07, 0x4d, 0x63, 0x67, 0xef, 0xef, 0x37};
-  const uint8_t rho[32] = {
-      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-      0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-      0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00};
-  const uint8_t rseed[32] = {
-      0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef,
-      0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-      0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-      0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18};
+  const uint8_t rho[32] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                           0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+                           0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                           0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00};
+  const uint8_t rseed[32] = {0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef,
+                             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                             0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+                             0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18};
   const uint8_t expected_cmx[32] = {
-      0x89, 0x6e, 0xe3, 0x45, 0xd8, 0xb0, 0x40, 0x98,
-      0x72, 0x17, 0x25, 0x37, 0x66, 0x6a, 0x48, 0x24,
-      0x09, 0x66, 0x1a, 0x22, 0xad, 0x77, 0xc0, 0x98,
-      0x96, 0xa3, 0xe7, 0x17, 0x65, 0xf1, 0x86, 0x33};
+      0x89, 0x6e, 0xe3, 0x45, 0xd8, 0xb0, 0x40, 0x98, 0x72, 0x17, 0x25,
+      0x37, 0x66, 0x6a, 0x48, 0x24, 0x09, 0x66, 0x1a, 0x22, 0xad, 0x77,
+      0xc0, 0x98, 0x96, 0xa3, 0xe7, 0x17, 0x65, 0xf1, 0x86, 0x33};
 
   uint8_t cmx[32] = {0};
-  ASSERT_TRUE(
-      zcash_ironwood_compute_cmx(recipient, 12345678, rho, rseed, cmx));
+  ASSERT_TRUE(zcash_ironwood_compute_cmx(recipient, 12345678, rho, rseed, cmx));
   EXPECT_TRUE(memcmp(cmx, expected_cmx, sizeof(cmx)) == 0);
   memzero(cmx, sizeof(cmx));
 }
@@ -1500,16 +1496,14 @@ TEST(Zcash, ComputeV6ShieldedSighash_KnownVector) {
   memset(sapling, 0x33, sizeof(sapling));
   memset(orchard, 0x44, sizeof(orchard));
   memset(ironwood, 0x55, sizeof(ironwood));
-  const uint8_t expected[32] = {
-      0xdc, 0x07, 0x66, 0x98, 0xdb, 0xe0, 0x8b, 0x6d,
-      0xcd, 0x23, 0xf5, 0xa1, 0xb6, 0xbb, 0xae, 0x41,
-      0xf7, 0xb1, 0x23, 0xd8, 0xb2, 0x47, 0xf3, 0x88,
-      0x7f, 0x7c, 0xa2, 0xbb, 0x68, 0xb5, 0xdc, 0xaa};
+  const uint8_t expected[32] = {0xdc, 0x07, 0x66, 0x98, 0xdb, 0xe0, 0x8b, 0x6d,
+                                0xcd, 0x23, 0xf5, 0xa1, 0xb6, 0xbb, 0xae, 0x41,
+                                0xf7, 0xb1, 0x23, 0xd8, 0xb2, 0x47, 0xf3, 0x88,
+                                0x7f, 0x7c, 0xa2, 0xbb, 0x68, 0xb5, 0xdc, 0xaa};
 
   uint8_t sighash[32] = {0};
   ASSERT_TRUE(zcash_compute_v6_shielded_sighash(
-      header, transparent, sapling, orchard, ironwood, 0x37a5165b,
-      sighash));
+      header, transparent, sapling, orchard, ironwood, 0x37a5165b, sighash));
   EXPECT_TRUE(memcmp(sighash, expected, sizeof(sighash)) == 0);
 }
 
@@ -1650,8 +1644,10 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
 
   RedPallasProgressCapture progress;
   uint8_t signature[64];
+  uint8_t nonce[32];
+  memset(nonce, 0x5A, sizeof(nonce));
   ASSERT_EQ(redpallas_sign_digest_with_ak(
-                keys.ask, keys.ak, alpha, public_rk, sighash, signature,
+                keys.ask, keys.ak, alpha, public_rk, sighash, nonce, signature,
                 capture_redpallas_progress, &progress),
             0);
   EXPECT_TRUE(progress.monotonic);
@@ -1663,9 +1659,10 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   uint8_t wrong_rk[32];
   memcpy(wrong_rk, public_rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
-  EXPECT_NE(redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, wrong_rk,
-                                          sighash, signature, nullptr, nullptr),
-            0);
+  EXPECT_NE(
+      redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, wrong_rk, sighash,
+                                    nonce, signature, nullptr, nullptr),
+      0);
 
   memzero(&keys, sizeof(keys));
 }
@@ -1684,10 +1681,12 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
 
   RedPallasProgressCapture progress;
   uint8_t signature[64];
-  ASSERT_EQ(
-      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, signature,
-                                   capture_redpallas_progress, &progress),
-      0);
+  uint8_t nonce[32];
+  memset(nonce, 0x5A, sizeof(nonce));
+  ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, nonce,
+                                         signature, capture_redpallas_progress,
+                                         &progress),
+            0);
   EXPECT_TRUE(progress.monotonic);
   EXPECT_EQ(256u, progress.calls);
   EXPECT_EQ(1000u, progress.last);
@@ -1698,7 +1697,7 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   memcpy(wrong_rk, rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, wrong_rk, sighash,
-                                         signature, nullptr, nullptr),
+                                         nonce, signature, nullptr, nullptr),
             0);
   EXPECT_NE(redpallas_verify_digest(rk, sighash, signature), 0);
 
@@ -1719,7 +1718,9 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   alpha[31] = 0x00;
 
   uint8_t signature[64];
-  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, signature);
+  uint8_t nonce[32];
+  memset(nonce, 0x5A, sizeof(nonce));
+  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, nonce, signature);
   EXPECT_EQ(ret, 0) << "RedPallas signing must succeed";
 
   /* Signature must be nonzero */
@@ -1781,11 +1782,90 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   uint8_t zero[64] = {0};
   for (int i = 0; i < 3; i++) {
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, sig), 0)
+    uint8_t nonce[32];
+    memset(nonce, 0x40 + i, sizeof(nonce));
+    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, nonce, sig), 0)
         << "Signing must succeed on call " << i;
     EXPECT_TRUE(memcmp(sig, zero, 64) != 0)
         << "Signature must be nonzero on call " << i;
   }
+
+  memzero(&keys, sizeof(keys));
+}
+
+/* A degraded entropy source must produce NO signature, not a predictable one.
+ *
+ * The old code drew the nonce internally with unchecked random_buffer() and
+ * ran the result through a constant-time "replace zero with one" fixup, so a
+ * stuck-at-zero generator signed every action under nonce 1 -- and any two
+ * such signatures disclose the spend authorization key. The nonce is now
+ * caller-supplied and a dead source is refused at both ends: the firmware
+ * draws through random_buffer_checked() and aborts before signing, and the
+ * library below refuses the all-zero nonce that a stuck source produces.
+ *
+ * Asserting sig_out is untouched matters as much as the return code: a caller
+ * that ignored the error must not find usable signature bytes in the buffer. */
+TEST(Zcash, RedPallasRefusesStuckOrMissingNonce) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x01, 32);
+  alpha[31] = 0x00;
+
+  uint8_t sighash[32];
+  memset(sighash, 0xAB, 32);
+
+  uint8_t rk[32];
+  ASSERT_EQ(redpallas_derive_rk(keys.ask, alpha, rk), 0);
+
+  const uint8_t stuck_nonce[32] = {0};  // what a dead generator returns
+  uint8_t sig[64];
+  const uint8_t canary = 0xE5;
+
+  /* Stuck source, via the path the Orchard signing handler uses. */
+  memset(sig, canary, sizeof(sig));
+  EXPECT_NE(redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash,
+                                         stuck_nonce, sig, nullptr, nullptr),
+            0)
+      << "an all-zero nonce must be refused";
+  for (size_t i = 0; i < sizeof(sig); i++) {
+    EXPECT_EQ(sig[i], canary) << "no signature bytes may be emitted, at " << i;
+  }
+
+  /* Absent nonce is refused the same way. */
+  memset(sig, canary, sizeof(sig));
+  EXPECT_NE(redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, nullptr,
+                                         sig, nullptr, nullptr),
+            0);
+  for (size_t i = 0; i < sizeof(sig); i++) {
+    EXPECT_EQ(sig[i], canary);
+  }
+
+  /* Same contract on the other two entry points. */
+  memset(sig, canary, sizeof(sig));
+  EXPECT_NE(redpallas_sign_digest(keys.ask, alpha, sighash, stuck_nonce, sig),
+            0);
+  for (size_t i = 0; i < sizeof(sig); i++) {
+    EXPECT_EQ(sig[i], canary);
+  }
+
+  memset(sig, canary, sizeof(sig));
+  EXPECT_NE(redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, rk, sighash,
+                                          stuck_nonce, sig, nullptr, nullptr),
+            0);
+  for (size_t i = 0; i < sizeof(sig); i++) {
+    EXPECT_EQ(sig[i], canary);
+  }
+
+  /* A healthy nonce still signs, so the guard is not simply refusing all. */
+  uint8_t good_nonce[32];
+  memset(good_nonce, 0x5A, sizeof(good_nonce));
+  memset(sig, canary, sizeof(sig));
+  EXPECT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash,
+                                         good_nonce, sig, nullptr, nullptr),
+            0);
+  EXPECT_EQ(redpallas_verify_digest(rk, sighash, sig), 0);
 
   memzero(&keys, sizeof(keys));
 }
@@ -1803,8 +1883,13 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
   memset(sighash_b, 0xBB, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, sig_b), 0);
+  uint8_t nonce_a[32], nonce_b[32];
+  memset(nonce_a, 0x11, sizeof(nonce_a));
+  memset(nonce_b, 0x22, sizeof(nonce_b));
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, nonce_a, sig_a),
+            0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, nonce_b, sig_b),
+            0);
 
   EXPECT_TRUE(memcmp(sig_a, sig_b, 64) != 0)
       << "Different sighash must produce different signatures";

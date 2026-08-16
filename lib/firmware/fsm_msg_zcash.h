@@ -184,6 +184,16 @@ static bool zcash_resolve_account(bool has_account, uint32_t account_field,
                                   uint32_t address_n_count,
                                   uint32_t* account_out) {
   if (has_account) {
+    /* Derivation ORs in the hardened bit, so any account with bit 31 already
+     * set collides with the un-hardened value: account 0x80000000 would derive
+     * exactly the keys of account 0 while being reported as a different
+     * account. Reject rather than mask -- masking would silently answer for an
+     * account the host did not ask for. */
+    if (account_field & 0x80000000) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Zcash account must be below 0x80000000"));
+      return false;
+    }
     *account_out = account_field;
     return true;
   }
@@ -914,8 +924,13 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
     return;
   }
 
-  if (msg->has_show_display && msg->show_display &&
-      !confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+  /* Always ask. show_display is host-supplied, so honouring it as a condition
+   * let a compromised host export the full viewing key and seed fingerprint
+   * from an unlocked device with no physical acknowledgement. That cannot
+   * spend, but it discloses the wallet's entire Zcash history and links its
+   * addresses, which is exactly what a viewing key is for. */
+  (void)msg->show_display;
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
                "Export Zcash View Key",
                "Export Orchard viewing key for account %u?\nReveals Zcash "
                "activity.",
@@ -1171,10 +1186,27 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     ZcashActionProgress signing_progress = {verification_target,
                                             action_target - verification_target,
                                             verification_target};
-    if (redpallas_sign_digest_for_rk(
-            zcash_signing.keys.ask, msg->alpha.bytes, msg->rk.bytes, sighash,
-            zcash_signing.signatures[zcash_signing.signature_count],
-            zcash_action_progress, &signing_progress) != 0) {
+    /* Draw the Schnorr nonce through the health-checked source and fail before
+     * signing if it refuses. Two signatures made under a repeated nonce
+     * disclose the spend authorization key, so a degraded generator must yield
+     * no signature at all rather than a weak one. The crypto library no longer
+     * draws this itself -- see redpallas.h. */
+    uint8_t spend_nonce[32];
+    if (!random_buffer_checked(spend_nonce, sizeof(spend_nonce))) {
+      memzero(spend_nonce, sizeof(spend_nonce));
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("RNG health check failed; refusing to sign"));
+      zcash_signing_abort();
+      layoutHome();
+      return;
+    }
+
+    const int sign_rc = redpallas_sign_digest_for_rk(
+        zcash_signing.keys.ask, msg->alpha.bytes, msg->rk.bytes, sighash,
+        spend_nonce, zcash_signing.signatures[zcash_signing.signature_count],
+        zcash_action_progress, &signing_progress);
+    memzero(spend_nonce, sizeof(spend_nonce));
+    if (sign_rc != 0) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Orchard spend authorization failed"));
       zcash_signing_abort();

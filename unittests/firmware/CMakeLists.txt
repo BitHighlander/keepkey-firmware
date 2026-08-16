@@ -4,7 +4,9 @@ set(sources
     eos.cpp
     ethereum.cpp
     nano.cpp
+    authenticator.cpp
     recovery.cpp
+    rng_health.cpp
     signed_metadata.cpp
     ripple.cpp
     storage.cpp
@@ -21,7 +23,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       osmosis.cpp
       solana.cpp
       thorchain.cpp
-      tron.cpp)
+      tron.cpp
+      zcash.cpp)
 endif()
 
 include_directories(
