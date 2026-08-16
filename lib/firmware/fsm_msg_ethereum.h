@@ -305,6 +305,20 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
 
   CHECK_PIN
 
+  /* This endpoint receives only precomputed hashes, so the device cannot bind
+   * them to the typed data the host claims they represent. Treat it exactly
+   * like every other blind-signing path. */
+  if (!ethereum_typed_hash_policy_allows(
+          storage_isPolicyEnabled("AdvancedMode"))) {
+    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                 "Typed-hash signing requires AdvancedMode. "
+                 "Enable in device settings.");
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Typed-hash signing disabled by policy"));
+    layoutHome();
+    return;
+  }
+
   if (msg->domain_separator_hash.size != 32 ||
       (msg->has_message_hash && msg->message_hash.size != 32)) {
     fsm_sendFailure(FailureType_Failure_Other,

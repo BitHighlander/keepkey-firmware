@@ -34,6 +34,7 @@ set(sources
     signing.c
     signtx_tendermint.c
     solana.c
+    signed_metadata.c
     storage.c
     tron.c
     ton.c

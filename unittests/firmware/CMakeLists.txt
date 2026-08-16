@@ -5,10 +5,24 @@ set(sources
     ethereum.cpp
     nano.cpp
     recovery.cpp
+    signed_metadata.cpp
     ripple.cpp
     storage.cpp
     usb_rx.cpp
     u2f.cpp)
+
+# Coin/token unit tests exercise handlers that are compiled out of the
+# bitcoin-only firmware, so they only build against a full-feature image.
+if(NOT ${KK_BITCOIN_ONLY})
+  list(APPEND sources
+      binance.cpp
+      eip712.cpp
+      mayachain.cpp
+      osmosis.cpp
+      solana.cpp
+      thorchain.cpp
+      tron.cpp)
+endif()
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/include

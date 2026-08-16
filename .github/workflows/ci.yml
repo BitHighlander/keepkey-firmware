@@ -211,6 +211,19 @@ jobs:
           done
           [ "$FAILED" = "0" ] || exit 1
 
+      - name: Verify security invariants
+        run: |
+          # The signer keyring ships empty: the messages that load signers are
+          # not registered in this release, so every attestation must fail
+          # closed. A partial implementation here would silently start trusting
+          # host-supplied token symbols and instruction schemas, which is the
+          # failure mode that looks exactly like passing.
+          if git grep -n -E 'return[[:space:]]+true' -- \
+            lib/firmware/signed_metadata.c; then
+            echo "::error::signed_metadata keyring must fail closed until the clearsign engine lands"
+            exit 1
+          fi
+
   # ═══════════════════════════════════════════════════════════
   # STAGE 2: BUILD — compile only after gate passes
   # ═══════════════════════════════════════════════════════════

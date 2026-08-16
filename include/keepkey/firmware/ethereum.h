@@ -75,4 +75,8 @@ bool ethereum_path_check(uint32_t address_n_count, const uint32_t* address_n,
 void e712_types_values(Ethereum712TypesValues* msg,
                        EthereumTypedDataSignature* resp, const HDNode* node);
 
+/* Typed-hash signing receives a precomputed hash the device cannot bind to
+ * the typed data it claims to represent, so it is gated like blind signing. */
+bool ethereum_typed_hash_policy_allows(bool advanced_mode);
+
 #endif
