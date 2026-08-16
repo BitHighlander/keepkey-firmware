@@ -103,7 +103,11 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # cppcheck scales with the tree: 4m54s before the 7.15 firmware landed,
+    # 5m11s after, against a 5-minute cap -- so the previous green was six
+    # seconds from a false red. Timeouts report as "cancelled", which reads
+    # like infrastructure flake rather than a budget that needs raising.
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v6
