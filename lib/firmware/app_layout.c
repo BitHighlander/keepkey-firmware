@@ -597,6 +597,7 @@ void layout_nano_address_notification(const char* desc, const char* address,
   layout_notification_icon(type, &sp);
 }
 
+
 /*
  * layout_address_notification() - Display address notification
  *
@@ -628,8 +629,35 @@ void layout_address_notification(const char* desc, const char* address,
   sp.y += font_height(address_font) + ADDRESS_TOP_MARGIN;
   sp.x = LEFT_MARGIN;
   sp.color = BODY_COLOR;
+
+  /* Bech32 addresses longer than one line (p2wsh and p2tr are both 62 chars)
+     did not fit: draw_string() stops at the bottom of the canvas and drops the
+     remainder SILENTLY, so the user verified a prefix while the QR beside it
+     encoded the whole address.
+     Close the padding between lines rather than moving the block up -- the QR
+     is drawn last and would overwrite the start of a raised first line. */
+  uint16_t address_line_height =
+      font_height(address_font) + BODY_FONT_LINE_PADDING;
+  {
+    const uint32_t lines =
+        calc_str_line(address_font, address, TRANSACTION_WIDTH);
+    if (lines > ONE_LINE) {
+      /* Close the inter-line padding first: raising the block is what collides
+         with the QR, which is drawn afterwards and would overwrite the start of
+         the first line. */
+      address_line_height = font_height(address_font);
+      const uint16_t bottom =
+          sp.y + (lines - 1) * address_line_height + font_height(address_font);
+      if (bottom > KEEPKEY_DISPLAY_HEIGHT) {
+        /* Still short: raise by the minimum that fits, no more. */
+        const uint16_t overflow = bottom - KEEPKEY_DISPLAY_HEIGHT;
+        sp.y = (sp.y > overflow) ? sp.y - overflow : 0;
+      }
+    }
+  }
+
   draw_string(canvas, address_font, address, &sp, TRANSACTION_WIDTH,
-              font_height(address_font) + BODY_FONT_LINE_PADDING);
+              address_line_height);
 
   /* Draw description */
   if (strcmp(desc, "") != 0) {
@@ -693,7 +721,8 @@ void layout_pin(const char* str, char pin[]) {
  * OUTPUT
  *     none
  */
-void layout_cipher(const char* current_word, const char* cipher) {
+void layout_cipher(const char* current_word, const char* cipher,
+                   const char* prev_word_info) {
   DrawableParams sp;
   const Font* title_font = get_body_font();
   Canvas* canvas = layout_get_canvas();
@@ -701,8 +730,18 @@ void layout_cipher(const char* current_word, const char* cipher) {
   call_leaving_handler();
   layout_clear();
 
-  /* Draw prompt */
-  sp.y = 11;
+  /* Draw previous word info at top-left -- must be x < 76 to avoid
+   * being wiped by cipher animation which clears x >= CIPHER_START_X */
+  if (prev_word_info && prev_word_info[0]) {
+    sp.y = 2;
+    sp.x = 4;
+    sp.color = CIPHER_FONT_COLOR; /* gray -- less prominent than current word */
+    draw_string(canvas, title_font, prev_word_info, &sp, 68,
+                font_height(title_font));
+  }
+
+  /* Draw prompt -- push down when prev word is shown */
+  sp.y = (prev_word_info && prev_word_info[0]) ? 14 : 11;
   sp.x = 4;
   sp.color = BODY_COLOR;
   draw_string(canvas, title_font, "Recovery Cipher:", &sp, 58,

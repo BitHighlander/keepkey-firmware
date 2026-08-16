@@ -1153,7 +1153,30 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   memzero(dst, sizeof(*dst));
 
   // Load config values from active config node.
-  enum StorageVersion version = version_from_int(read_u32_le(flash + 44));
+  uint32_t raw_version = read_u32_le(flash + 44);
+
+  /* Storage version 18 shipped in v7.15.0-rc17 through -rc26 before the
+   * format was reverted to 17 for release. V18 is V17 with a clear-sign
+   * identity block appended after encrypted_sec; that block is not read and
+   * this firmware has no field for it, so a V18 record is read exactly as V17
+   * and rewritten as V17 on commit.
+   *
+   * Without this arm, version_from_int() answers StorageVersion_NONE, which
+   * is SUS_Invalid, which calls storage_reset() -- silently destroying the
+   * wallet on any device that ran one of those release candidates.
+   *
+   * Version 19 is deliberately NOT accepted here. It records a PIN wrapped
+   * with the v19 KDF, which this firmware does not compile; reading it as V17
+   * would derive the wrong wrapping key and lock the device out with no
+   * recovery path, which is worse than refusing it. No tagged build ever
+   * wrote 19 -- it existed only on branches and was reverted in 6bebde7b2. */
+  if (raw_version == 18) {
+    storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
+    dst->storage.version = STORAGE_VERSION;
+    return SUS_Updated;
+  }
+
+  enum StorageVersion version = version_from_int(raw_version);
 
   switch (version) {
     case StorageVersion_1:

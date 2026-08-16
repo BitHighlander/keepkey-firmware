@@ -206,6 +206,10 @@ void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
 
+void storage_readV17(ConfigFlash* dst, const char* flash, size_t len);
+
+void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
+
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len);
 void storage_readHDNode(HDNodeType* node, const char* ptr, size_t len);
