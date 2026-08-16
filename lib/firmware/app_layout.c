@@ -597,7 +597,6 @@ void layout_nano_address_notification(const char* desc, const char* address,
   layout_notification_icon(type, &sp);
 }
 
-
 /*
  * layout_address_notification() - Display address notification
  *
