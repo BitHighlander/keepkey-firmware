@@ -30,6 +30,7 @@ set(sources
     recovery_cipher.c
     reset.c
     dice_input.c
+    bip85.c
     ripple.c
     ripple_base58.c
     signing.c
