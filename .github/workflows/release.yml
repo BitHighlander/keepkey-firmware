@@ -265,6 +265,12 @@ jobs:
     needs: [validate, build-firmware, test]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
+      # Reading the CI run's artifacts (the emulator libraries) needs
+      # actions:read. The top-level block grants contents only, and a
+      # declared block zeroes every scope it omits.
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
@@ -291,6 +297,41 @@ jobs:
             exit 1
           fi
 
+      - name: Attach emulator libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Every release ships the emulator native libs alongside the
+          # device firmware. They are NOT rebuilt here: CI already built
+          # and tested them on the branch push this tag points at, and
+          # validate/ already required that run to be green. Reusing that
+          # artifact means the published binaries are the ones that were
+          # tested, not a lookalike from a second build.
+          RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
+            --workflow CI --commit "$GITHUB_SHA" \
+            --json status,conclusion,databaseId \
+            --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | map(.databaseId) | first')
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "::error::No successful CI run for ${GITHUB_SHA} — cannot source emulator libraries."
+            exit 1
+          fi
+          echo "Sourcing emulator libraries from CI run ${RUN_ID}"
+          # Artifacts expire after 30 days. Tagging a commit older than
+          # that means re-running CI on it to regenerate them.
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            -n "libkkemu-${GITHUB_SHA}" -D emulator-libs
+
+          # Both platforms or no release. A firmware release that ships a
+          # macOS emulator lib and silently omits the Windows one is the
+          # exact failure this coupling exists to prevent.
+          for asset in libkkemu-macos-arm64.dylib libkkemu-win-x64.dll; do
+            test -f "emulator-libs/$asset" || \
+              (echo "::error::$asset missing from CI artifact — refusing to publish a partial emulator set." && exit 1)
+          done
+          cp emulator-libs/libkkemu-macos-arm64.dylib \
+             emulator-libs/libkkemu-win-x64.dll release-assets/
+          ls -lh release-assets/
+
       - name: Generate release body
         run: |
           VER="${{ needs.validate.outputs.fw_version }}"
@@ -300,6 +341,14 @@ jobs:
           ### Variants
           - **regular** — \`firmware.keepkey.v${VER}.bin\` — all supported chains, including Zcash shielded/Orchard
           - **bitcoin-only** — \`firmware.keepkey.v${VER}-bitcoin-only.bin\` — BTC-only, non-BTC coins stripped
+
+          ### Emulator
+          The same firmware built as a host shared library, for running this
+          release in Vault's native emulator without a device:
+          - \`libkkemu-macos-arm64.dylib\` — macOS Apple Silicon
+          - \`libkkemu-win-x64.dll\` — Windows x86_64
+
+          Both are built from this exact commit by CI and published together.
 
           ### Reproducible Build Verification
           \`\`\`bash
