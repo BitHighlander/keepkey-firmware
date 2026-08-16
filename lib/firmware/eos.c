@@ -418,10 +418,19 @@ bool eos_compileActionUnknown(const EosActionCommon* common,
     return false;
   }
 
+  /* An unknown action is opaque bytes the device cannot decode, so the user is
+   * approving a fingerprint rather than a transaction. That is blind signing,
+   * and it is gated like every other blind-signing path rather than merely
+   * warned about -- a dismissible notice does not stop a signature. */
   if (!storage_isPolicyEnabled("AdvancedMode")) {
-    (void)review(ButtonRequestType_ButtonRequest_Other, "Warning",
-                 "Signing of arbitrary EOS actions is recommended only for "
-                 "experienced users. Enable 'AdvancedMode' policy to dismiss.");
+    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                 "Signing arbitrary EOS actions requires AdvancedMode. "
+                 "Enable in device settings.");
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Blind signing disabled by policy");
+    eos_signingAbort();
+    layoutHome();
+    return false;
   }
 
   if (unknown_remaining == 0) {

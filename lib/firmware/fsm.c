@@ -62,6 +62,9 @@
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
+#if !BITCOIN_ONLY
+#include "keepkey/firmware/zcash.h"
+#endif
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/ton.h"
 #include "keepkey/firmware/transaction.h"
@@ -273,8 +276,40 @@ void fsm_sendFailure(FailureType code, const char* text) {
   msg_write(MessageType_MessageType_Failure, resp);
 }
 
+/* Tear down every signing flow that holds key material or a partial
+ * transaction.
+ *
+ * These flows are multi-message: a handler stashes secrets and buffered state,
+ * then later continuation messages proceed on an "active" flag without
+ * repeating CHECK_PIN. Anything that ends a session must therefore end all of
+ * them, or a cancelled or locked device keeps signing state alive for whatever
+ * arrives next. Zcash is the sharpest case -- it retains the spend
+ * authorization key, transaction digests and already-computed signatures.
+ *
+ * Every abort here is idempotent and safe on an inactive flow, so callers do
+ * not need to know which one was running. Add new signing flows to this list;
+ * being reachable from Cancel is not optional. */
+void fsm_abortAllSigningFlows(void) {
+  recovery_cipher_abort();
+  signing_abort();
+  ethereum_signing_abort();
+  ethereum_typed_data_abort();
+  tendermint_signAbort();
+  thorchain_signAbort();
+  mayachain_signAbort();
+  osmosis_signAbort();
+  binance_signAbort();
+  eos_signingAbort();
+#if !BITCOIN_ONLY
+  zcash_signing_abort();
+#endif
+}
+
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
+  /* Clearing the session drops the PIN, so nothing may continue signing
+   * afterwards on a flag alone. */
+  fsm_abortAllSigningFlows();
   session_clear(/*clear_pin=*/true);
   fsm_sendSuccess("Session cleared");
 }

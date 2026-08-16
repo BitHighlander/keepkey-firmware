@@ -1,10 +1,6 @@
 void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
-  recovery_cipher_abort();
-  signing_abort();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
+  fsm_abortAllSigningFlows();
   session_clear(false);  // do not clear PIN
   layoutHome();
   fsm_msgGetFeatures(0);
@@ -555,11 +551,7 @@ void fsm_msgEntropyAck(EntropyAck* msg) {
 
 void fsm_msgCancel(Cancel* msg) {
   (void)msg;
-  recovery_cipher_abort();
-  signing_abort();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
+  fsm_abortAllSigningFlows();
   fsm_sendFailure(FailureType_Failure_ActionCancelled, "Aborted");
 }
 

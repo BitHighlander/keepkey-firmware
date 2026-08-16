@@ -75,6 +75,11 @@ void storage_init(void);
 ///        reflashing bitcoin-only firmware recovers the wallet.
 bool storage_isBitcoinOnlyLocked(void);
 
+/* True when flash holds storage this firmware cannot read. The device acts
+ * locked and flash is left untouched, so the wallet is recovered by flashing
+ * firmware that understands the format. */
+bool storage_isUnsupportedVersionLocked(void);
+
 /// \brief Reset configuration UUID with random numbers.
 void storage_resetUuid(void);
 

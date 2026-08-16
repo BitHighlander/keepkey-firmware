@@ -383,13 +383,28 @@ bool confirm_sign_identity(const IdentityType* identity,
     strlcat(body, "\n", sizeof(body));
   }
 
-  /* Format challenge */
-  if (challenge && strlen(challenge) != 0) {
-    strlcat(body, challenge, sizeof(body));
+  /* The challenge gets its own screen rather than being appended here.
+   *
+   * This body is CONFIRM_SIGN_IDENTITY_BODY (416) bytes, but confirm() formats
+   * through a BODY_CHAR_MAX (352) byte scratch buffer and truncates silently.
+   * Long host/user/proto fields could therefore push the tail of the challenge
+   * past the cut while the signature still covers all of challenge_visual --
+   * so a malicious suffix could be signed without ever being displayed.
+   *
+   * confirm_bytes() pages every byte, so the challenge cannot be clipped
+   * regardless of how much room the identity header consumed. */
+  if (!confirm(ButtonRequestType_ButtonRequest_SignIdentity, title, "%s",
+               body)) {
+    return false;
   }
 
-  return confirm(ButtonRequestType_ButtonRequest_SignIdentity, title, "%s",
-                 body);
+  if (challenge && challenge[0]) {
+    return confirm_bytes(ButtonRequestType_ButtonRequest_SignIdentity,
+                         "Challenge", (const uint8_t*)challenge,
+                         strlen(challenge));
+  }
+
+  return true;
 }
 
 bool confirm_bytes_is_text(const uint8_t* data, size_t size) {

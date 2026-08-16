@@ -217,6 +217,13 @@ typedef enum {
   SUS_Valid,
   SUS_Updated,
   SUS_BitcoinOnlyLocked,  // written by bitcoin-only firmware; refuse to load
+  /* Written by a firmware whose storage format this build does not understand.
+   * Distinct from SUS_Invalid, which means "unusable, reset it": here the
+   * record is intact and readable by the firmware that wrote it, so flash must
+   * NOT be touched. The device presents as locked and the wallet is recovered
+   * by flashing firmware that understands the format. Erasing would destroy a
+   * wallet whose seed is still perfectly good. */
+  SUS_UnsupportedVersion,
 } StorageUpdateStatus;
 
 /// \brief Copy configuration from storage partition in flash memory to shadow

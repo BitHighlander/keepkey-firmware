@@ -1210,7 +1210,26 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 cancelled",                          // 34 (USER_CANCELLED)
 };
 
+/* EIP-712 signing spans two messages: the first approves and computes the
+ * domain separator, the second computes the message hash and signs using both.
+ * The approval carried between them is bound to the account it was granted for
+ * so that a domain approved on one derivation path cannot be spent by a later
+ * message that derives a different one, and it is torn down on every exit from
+ * the flow rather than left armed for the next caller. */
+static uint8_t domainSeparatorHash[32] = {0};
+static uint8_t messageHash[32] = {0};
+static uint8_t ds_pubkeyhash[20] = {0};
+static bool have_ds = false;
+
+void ethereum_typed_data_abort(void) {
+  memzero(domainSeparatorHash, sizeof(domainSeparatorHash));
+  memzero(messageHash, sizeof(messageHash));
+  memzero(ds_pubkeyhash, sizeof(ds_pubkeyhash));
+  have_ds = false;
+}
+
 void failMessage(int err) {
+  ethereum_typed_data_abort();
   if (err == USER_CANCELLED) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     return;
@@ -1237,10 +1256,6 @@ void e712_types_values(Ethereum712TypesValues* msg,
   char* primaryTypeJsonStr;
   char* valuesJsonStr;
   json_t const* obTest;
-  static uint8_t domainSeparatorHash[32] = {0};
-  // cppcheck-suppress variableScope
-  static uint8_t messageHash[32] = {0};
-  static bool have_ds = false;
 
   typesJsonStr = msg->eip712types;
   primaryTypeJsonStr = msg->eip712primetype;
@@ -1253,27 +1268,36 @@ void e712_types_values(Ethereum712TypesValues* msg,
   jsonV = json_create(valuesJsonStr, memVals, sizeof memVals / sizeof *memVals);
 
   if (!jsonT) {
+    ethereum_typed_data_abort();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("EIP-712 type property data error"));
     return;
   }
   if (!jsonPT) {
+    ethereum_typed_data_abort();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("EIP-712 primaryType property data error"));
     return;
   }
   if (!jsonV) {
+    ethereum_typed_data_abort();
     fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 values data error"));
     return;
   }
 
   if (msg->eip712typevals == 1) {
     // Compute domain seperator hash
-    have_ds = false;
-    memzero(domainSeparatorHash, 32);
+    ethereum_typed_data_abort();
     if ((int)SUCCESS != (errRet = encode(jsonT, jsonV, "EIP712Domain",
                                          resp->domain_separator_hash.bytes))) {
       failMessage(errRet);
+      return;
+    }
+    /* Bind the approval to the account it was granted for before arming it. */
+    if (!hdnode_get_ethereum_pubkeyhash(node, ds_pubkeyhash)) {
+      ethereum_typed_data_abort();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Ethereum address derivation failed"));
       return;
     }
     have_ds = true;
@@ -1285,6 +1309,23 @@ void e712_types_values(Ethereum712TypesValues* msg,
   } else {
     if (!have_ds) {
       failMessage(MSG_NO_DS);
+      return;
+    }
+    /* The domain was approved for one account; refuse to spend that approval
+     * from any other derivation path. */
+    uint8_t signer_pubkeyhash[20] = {0};
+    if (!hdnode_get_ethereum_pubkeyhash(node, signer_pubkeyhash)) {
+      ethereum_typed_data_abort();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Ethereum address derivation failed"));
+      return;
+    }
+    if (0 != memcmp(signer_pubkeyhash, ds_pubkeyhash,
+                    sizeof(signer_pubkeyhash))) {
+      ethereum_typed_data_abort();
+      fsm_sendFailure(
+          FailureType_Failure_Other,
+          _("EIP-712 domain was approved for a different account"));
       return;
     }
     if (NULL == (obTest = json_getProperty(jsonPT, "primaryType"))) {
@@ -1333,6 +1374,7 @@ void e712_types_values(Ethereum712TypesValues* msg,
     uint8_t v = 0;
     if (0 != eip712_sign(domainSeparatorHash, messageHash, resp->has_msg_hash,
                          node, &v, resp->signature.bytes)) {
+      ethereum_typed_data_abort();
       fsm_sendFailure(FailureType_Failure_Other,
                       _("EIP-712 typed hash signing failed"));
       return;
@@ -1341,9 +1383,8 @@ void e712_types_values(Ethereum712TypesValues* msg,
     resp->signature.bytes[64] = 27 + v;
     resp->signature.size = 65;
 
-    memzero(domainSeparatorHash, 32);
-    memzero(messageHash, 32);
-    have_ds = false;
+    /* One approval, one signature. */
+    ethereum_typed_data_abort();
   }
 
   /* Debug-link reads during confirmation reuse msg_resp, so populate the

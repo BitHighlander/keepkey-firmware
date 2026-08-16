@@ -1049,11 +1049,17 @@ TEST(Storage, V18RecordIsUpgradedRatherThanWiped) {
   EXPECT_EQ(end.storage.version, STORAGE_VERSION);
 }
 
-/* Version 19 is refused on purpose. It records a PIN wrapped with the v19 KDF,
- * which this firmware does not compile, so reading it as V17 would derive the
- * wrong wrapping key and lock the device out with no recovery path. No tagged
- * build ever wrote 19 -- it existed only on branches and was reverted. */
-TEST(Storage, V19RecordIsRefusedNotMisread) {
+/* A storage record this firmware cannot read must not be erased.
+ *
+ * The first version of this fix returned SUS_Invalid for V19 and called that
+ * "refusing" it. In storage_init() SUS_Invalid means storage_reset() followed
+ * by storage_commit() -- so the refusal erased the wallet, and the test
+ * asserting SUS_Invalid pinned that behaviour under a name claiming safety.
+ *
+ * SUS_UnsupportedVersion is the correct answer: reset RAM so the device
+ * presents as locked, and leave flash alone so the seed survives and flashing
+ * firmware that understands V19 recovers it. */
+TEST(Storage, V19RecordIsLockedOutNotErased) {
   ConfigFlash start;
   memset(&start, 0xAB, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
@@ -1066,11 +1072,23 @@ TEST(Storage, V19RecordIsRefusedNotMisread) {
   storage_writeV17((char *)&flash[0], flash.size(), &start);
   flash[44] = 19;
 
+  std::vector<uint8_t> before = flash;
+
   SessionState session;
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
 
-  EXPECT_EQ(storage_fromFlash(&session, &end, (char *)&flash[0]), SUS_Invalid);
+  StorageUpdateStatus status =
+      storage_fromFlash(&session, &end, (char *)&flash[0]);
+
+  EXPECT_EQ(status, SUS_UnsupportedVersion);
+  EXPECT_NE(status, SUS_Invalid)
+      << "SUS_Invalid makes storage_init() reset and commit, erasing the seed";
+
+  /* The record must be byte-identical afterwards: that is the property which
+   * keeps the wallet recoverable. */
+  EXPECT_EQ(memcmp(&flash[0], &before[0], flash.size()), 0)
+      << "flash was modified while refusing an unreadable record";
 }
 
 TEST(Storage, NoopSecMigrate) {

@@ -36,6 +36,8 @@ typedef struct _CoinType CoinType;
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm);
 void ethereum_signing_abort(void);
+/* Discards a carried EIP-712 domain approval. Safe when none is armed. */
+void ethereum_typed_data_abort(void);
 void ethereum_signing_txack(EthereumTxAck* tx);
 void format_ethereum_address(const uint8_t* to, char* destination_str,
                              uint32_t destination_str_len);

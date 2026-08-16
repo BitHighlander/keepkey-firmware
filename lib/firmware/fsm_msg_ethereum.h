@@ -191,44 +191,26 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   layoutHome();
 }
 
-#define MSG_MAX (38 * 3)  // 38 chars per line, three lines max
 void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
-  char msgBuf[MSG_MAX + 1] = {0};
-  const char* typeIndicator;
-  unsigned ctr;
-  unsigned msgLen = 0;
-  bool canPrint = true;
-
   RESP_INIT(EthereumMessageSignature);
 
   CHECK_INITIALIZED
 
   CHECK_PIN
 
-  // truncate to display size if too long
-  msgLen = msg->message.size * 2;
-  if (msgLen > MSG_MAX) {
-    msgLen = MSG_MAX;
-  }
-  for (ctr = 0; ctr < msg->message.size; ctr++) {
-    if (isprint(msg->message.bytes[ctr]) == false) {
-      canPrint = false;
-      break;
-    }
-  }
-  if (canPrint) {
-    typeIndicator = "Sign Message";
-    strncpy(msgBuf, (char*)msg->message.bytes, MSG_MAX + 1);
-    msgBuf[MSG_MAX] = '\0';
-  } else {
-    typeIndicator = "Sign Bytes";
-    for (ctr = 0; ctr < msgLen / 2; ctr++) {
-      snprintf(&msgBuf[2 * ctr], 3, "%02x", msg->message.bytes[ctr]);
-    }
-  }
+  /* The display used to stop at 114 characters of text, or 57 bytes rendered
+   * as hex, while ethereum_message_sign() below hashes the whole message --
+   * up to 1024 bytes. Everything past the cut was signed without ever being
+   * shown, which is how a login prompt hides an authorization clause after
+   * the part the user reads. confirm_bytes() pages every byte. */
+  const char* typeIndicator =
+      confirm_bytes_is_text(msg->message.bytes, msg->message.size)
+          ? "Sign Message"
+          : "Sign Bytes";
 
-  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, _(typeIndicator),
-               "%s", msgBuf)) {
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                     _(typeIndicator), msg->message.bytes,
+                     msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
@@ -244,12 +226,6 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
 }
 
 void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg) {
-  char msgBuf[MSG_MAX + 1] = {0};
-  const char* typeIndicator;
-  unsigned ctr;
-  unsigned msgLen = 0;
-  bool canPrint = true;
-
   CHECK_PARAM(msg->has_address, _("No address provided"));
   CHECK_PARAM(msg->has_message, _("No message provided"));
 
@@ -266,29 +242,14 @@ void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg) {
     return;
   }
 
-  // truncate to display size if too long
-  msgLen = msg->message.size;
-  if (msgLen > MSG_MAX) {
-    msgLen = MSG_MAX;
-  }
-  for (ctr = 0; ctr < msgLen; ctr++) {
-    if (isprint(msg->message.bytes[ctr]) == false) {
-      canPrint = false;
-      break;
-    }
-  }
-  if (canPrint) {
-    typeIndicator = "Message Verified";
-    strncpy(msgBuf, (char*)msg->message.bytes, MSG_MAX + 1);
-    msgBuf[MSG_MAX] = '\0';
-  } else {
-    typeIndicator = "Bytes Verified";
-    for (ctr = 0; ctr < msgLen / 2; ctr++) {
-      snprintf(&msgBuf[2 * ctr], 3, "%02x", msg->message.bytes[ctr]);
-    }
-  }
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, _(typeIndicator), "%s",
-               msgBuf)) {
+  /* Page the whole message rather than truncating it -- what the user is
+   * asked to accept as verified must be what was actually verified. */
+  const char* typeIndicator =
+      confirm_bytes_is_text(msg->message.bytes, msg->message.size)
+          ? "Message Verified"
+          : "Bytes Verified";
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, _(typeIndicator),
+                     msg->message.bytes, msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;

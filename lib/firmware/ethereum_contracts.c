@@ -55,8 +55,19 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
 
   if (sa_isWithdrawFromSalary(msg)) return true;
   if (zx_isZxSwap(msg)) return true;
-  if (zx_isZxLiquidTx(msg)) return true;
-  if (zx_isZxApproveLiquid(msg)) return true;
+
+  /* The Uniswap liquidity handlers are deliberately NOT claimed here.
+   *
+   * Claiming a contract suppresses the generic amount/recipient screen, so the
+   * handler becomes the only thing the user sees. Both liquidity handlers are
+   * unfit for that: zx_confirmZxLiquidTx never reads msg->value, so an
+   * addLiquidityETH call displayed a modest "minimum ETH" while transferring
+   * whatever the host asked for, and both handlers discard confirm() results
+   * and return true regardless, so Reject did not stop signing.
+   *
+   * Falling through instead routes them down the generic path: the real value
+   * and recipient are shown, and arbitrary calldata requires AdvancedMode.
+   * Restore these only with the value displayed and every confirm() checked. */
 
   if (thor_isMayachainTx(msg)) return true;
   if (thor_isThorchainTx(msg)) return true;
@@ -78,10 +89,7 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
 
   if (zx_isZxSwap(msg)) return zx_confirmZxSwap(data_total, msg);
 
-  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg);
-
-  if (zx_isZxApproveLiquid(msg))
-    return zx_confirmApproveLiquidity(data_total, msg);
+  /* Uniswap liquidity: see ethereum_contractHandled(). Not dispatched. */
 
   if (thor_isMayachainTx(msg)) return thor_confirmMayaTx(data_total, msg);
   if (thor_isThorchainTx(msg)) return thor_confirmThorTx(data_total, msg);

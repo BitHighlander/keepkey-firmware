@@ -152,4 +152,9 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg);
 void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg);
 #endif
 
+/* Tear down every signing flow holding key material or partial transaction
+ * state. Called by Cancel, Initialize and ClearSession; add new signing flows
+ * to its body in fsm.c. */
+void fsm_abortAllSigningFlows(void);
+
 #endif

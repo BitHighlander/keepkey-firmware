@@ -102,8 +102,13 @@ static ConfigFlash CONFIDENTIAL shadow_config;
  * build understands. Set from the SUS_BitcoinOnlyLocked path in either build.
  */
 static bool btc_only_locked = false;
+static bool unsupported_version_locked = false;
 
 bool storage_isBitcoinOnlyLocked(void) { return btc_only_locked; }
+
+bool storage_isUnsupportedVersionLocked(void) {
+  return unsupported_version_locked;
+}
 
 // Stamp a newly-created seed into the reserved bitcoin-only version band so
 // multi-chain firmware refuses it (see storage_fromFlash). Called only from
@@ -1334,11 +1339,17 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
    * is SUS_Invalid, which calls storage_reset() -- silently destroying the
    * wallet on any device that ran one of those release candidates.
    *
-   * Version 19 is deliberately NOT accepted here. It records a PIN wrapped
-   * with the v19 KDF, which this firmware does not compile; reading it as V17
-   * would derive the wrong wrapping key and lock the device out with no
-   * recovery path, which is worse than refusing it. No tagged build ever
-   * wrote 19 -- it existed only on branches and was reverted in 6bebde7b2. */
+   * Version 19 is not readable here: it records a PIN wrapped with the v19
+   * KDF, which this firmware does not compile, so reading it as V17 would
+   * derive the wrong wrapping key. It returns SUS_UnsupportedVersion rather
+   * than SUS_Invalid -- the latter makes storage_init() reset and COMMIT,
+   * erasing a wallet whose seed is intact and whose record is still readable
+   * by the firmware that wrote it. No tagged build wrote 19 (it existed only
+   * on branches, reverted in 6bebde7b2), but erasing on the off chance is the
+   * wrong direction. */
+  if (raw_version == 19) {
+    return SUS_UnsupportedVersion;
+  }
   if (raw_version == 18) {
     storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
     dst->storage.version = STORAGE_VERSION;
@@ -1588,6 +1599,15 @@ void storage_init(void) {
       btc_only_locked = true;
       storage_reset();
       break;
+    case SUS_UnsupportedVersion:
+      // Storage written by a firmware whose format this build cannot read.
+      // Same contract as the bitcoin-only case: reset RAM so the device
+      // presents as locked, but do NOT commit. The record on flash is intact
+      // and the wallet is recovered by flashing firmware that understands it.
+      // Committing here would erase a seed that is still perfectly good.
+      unsupported_version_locked = true;
+      storage_reset();
+      break;
   }
 
   if (!storage_hasPin()) {
@@ -1640,6 +1660,7 @@ void storage_wipe(void) {
 
   // The bitcoin-only wallet (if any) is gone; the device may be used freely.
   btc_only_locked = false;
+  unsupported_version_locked = false;
 }
 
 void storage_clearKeys(void) {

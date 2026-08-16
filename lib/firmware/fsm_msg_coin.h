@@ -270,8 +270,14 @@ void fsm_msgSignMessage(SignMessage* msg) {
 
   CHECK_INITIALIZED
 
-  if (!confirm(ButtonRequestType_ButtonRequest_SignMessage, "Sign Message",
-               "%s", (char*)msg->message.bytes)) {
+  /* message is a length-delimited protobuf field, not a C string. Rendering it
+   * with %s stopped at the first NUL byte while cryptoMessageSign() below
+   * covers message.size, so a host could append anything after a NUL and have
+   * it signed unseen; long messages were additionally truncated by the
+   * formatter's scratch buffer before paging. confirm_bytes() pages every byte
+   * -- as text when printable, as complete hex otherwise. */
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage, "Sign Message",
+                     msg->message.bytes, msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign message cancelled");
     layoutHome();
