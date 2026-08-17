@@ -172,9 +172,39 @@ jobs:
           cp artifacts/*.bin artifacts/*.elf artifacts/HASHES.txt release-assets/
           ls -lh release-assets/
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install ecdsa
+        run: pip install ecdsa
+
+      # State the signature status of the assets actually attached, rather than
+      # leaving it to a checkbox someone ticks by hand. These are expected to
+      # read NOT VERIFIED here: the pipeline builds unsigned and signing happens
+      # offline. The point is that the draft says so in the artifact's own words,
+      # and that the same verifier gates publication (release-gate.yml).
+      - name: Record signature status of draft assets
+        id: sigstatus
+        run: |
+          shopt -s nullglob
+          images=(release-assets/*.bin)
+          if python3 scripts/release/verify-signatures.py "${images[@]}" > sigreport.txt 2>&1; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat sigreport.txt
+
       - name: Generate release body
         run: |
           VER="${{ needs.validate.outputs.fw_version }}"
+          if [ "${{ steps.sigstatus.outputs.signed }}" = "true" ]; then
+            SIG_LINE="✅ **All attached images carry a valid 3-of-5 signature.**"
+          else
+            SIG_LINE="⚠️ **These assets are UNSIGNED.** Do not publish until the signed build replaces them — \`Release Gate\` will fail if you do."
+          fi
           cat > release-body.md <<EOF
           ## KeepKey Firmware v${VER}
 
@@ -185,6 +215,17 @@ jobs:
           \`\`\`
 
           > **DRAFT** — firmware must be signed by 3/5 key holders before publishing.
+
+          ### Signature status (checked by \`scripts/release/verify-signatures.py\`)
+          ${SIG_LINE}
+
+          \`\`\`
+          $(cat sigreport.txt)
+          \`\`\`
+
+          Publishing runs the same verification against the attached assets
+          (\`.github/workflows/release-gate.yml\`) and fails loudly if they are
+          not properly signed.
 
           ### Signing Checklist
           - [ ] Built on multiple machines, hashes match

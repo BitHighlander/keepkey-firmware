@@ -1,0 +1,99 @@
+# Publication gate for KeepKey firmware releases.
+#
+# release.yml builds and drafts. Everything it produces is UNSIGNED by design:
+# signing happens offline on an air-gapped machine, the signed .bin replaces
+# the unsigned draft asset, and only then is the release published.
+#
+# Nothing enforced that last step. The draft body carried a "[ ] Signed on
+# air-gapped machine" checkbox, which is self-attestation -- ticking it proves
+# nothing, and a release published with the unsigned build attached would look
+# exactly like a correct one. hash-manifest.sh --require-signed does not close
+# it either: that gate is structural, and a signature region holding a single
+# non-zero byte satisfies it.
+#
+# So the check runs at publication, against the assets actually attached, and
+# performs the same verification the device's bootloader performs
+# (lib/board/signatures.c signatures_ok()). If a published release carries
+# firmware that is unsigned, placeholder-signed, forged, or signed by a key
+# outside pubkeys.h, this job goes red.
+#
+# It cannot un-publish -- that would need the release deleted out from under
+# whoever published it. It makes an unsigned publication loud and immediate
+# instead of silent.
+
+name: Release Gate
+
+on:
+  release:
+    types: [published, released]
+  # Runnable against a tag by hand, so the gate can be exercised on a draft
+  # before publishing rather than discovered afterwards.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify (e.g. v7.15.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-signatures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install ecdsa
+        run: pip install ecdsa
+
+      # The gate is worthless if the verifier itself is broken -- a crashing or
+      # always-passing script would read as "no problem found". The self-test
+      # covers a valid image, a corrupted one, duplicate and out-of-range key
+      # indices, a signature from the wrong key, and the non-zero placeholder
+      # that the structural gate misses.
+      - name: Self-test the verifier
+        run: python3 scripts/release/verify-signatures.py --self-test
+
+      - name: Determine tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag || github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag to verify"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Verifying release ${TAG}"
+
+      - name: Download published firmware assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p published
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern '*.bin' --dir published
+          ls -lh published/
+
+      - name: Verify 3-of-5 signatures on every published image
+        run: |
+          shopt -s nullglob
+          images=(published/*.bin)
+          if [ ${#images[@]} -eq 0 ]; then
+            echo "::error::release ${{ steps.tag.outputs.tag }} has no .bin assets to verify"
+            exit 1
+          fi
+          # Exits non-zero if ANY image fails to verify.
+          python3 scripts/release/verify-signatures.py "${images[@]}"
+
+      - name: Report
+        if: failure()
+        run: |
+          echo "::error::Published release ${{ steps.tag.outputs.tag }} contains firmware that does not carry a valid 3-of-5 signature. Unpublish it and attach the signed build."
