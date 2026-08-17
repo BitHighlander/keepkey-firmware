@@ -135,12 +135,28 @@ extern "C" {
 // (0xdef1abe32c034e558cdd535791643c58a13acc10), so allowing chain 10 for
 // ZXSWAP_ADDRESS would narrate an unrelated contract.
 TEST(Ethereum, ZxExchangeProxyChainAllowlist) {
-  EXPECT_TRUE(zx_isExchangeProxyChain(1));      // Ethereum
-  EXPECT_TRUE(zx_isExchangeProxyChain(56));     // BNB Chain
-  EXPECT_TRUE(zx_isExchangeProxyChain(137));    // Polygon
-  EXPECT_TRUE(zx_isExchangeProxyChain(8453));   // Base
-  EXPECT_TRUE(zx_isExchangeProxyChain(42161));  // Arbitrum
-  EXPECT_TRUE(zx_isExchangeProxyChain(43114));  // Avalanche
+  // Chains where the token table can actually name the tokens, so the input
+  // and minimum-output amounts that bound the trade are rendered.
+  EXPECT_TRUE(zx_isExchangeProxyChain(1));    // Ethereum
+  EXPECT_TRUE(zx_isExchangeProxyChain(56));   // BNB Chain
+  EXPECT_TRUE(zx_isExchangeProxyChain(137));  // Polygon
+
+  // 0x deploys the same Exchange Proxy on these three, but TokenType.chain_id
+  // and tokenByChainAddress() are uint8_t, so the ids truncate to values that
+  // match no table entry: 8453->5, 42161->177, 43114->106. Both operands then
+  // render "Unknown token value" and the screen shows no bound at all, which
+  // is a blind signature with a decoder's title. They must fall through to the
+  // AdvancedMode raw-calldata path until #455 widens the chain id.
+  EXPECT_FALSE(zx_isExchangeProxyChain(8453))
+      << "Base truncates to 5 and renders no amounts";
+  EXPECT_FALSE(zx_isExchangeProxyChain(42161))
+      << "Arbitrum truncates to 177 and renders no amounts";
+  EXPECT_FALSE(zx_isExchangeProxyChain(43114))
+      << "Avalanche truncates to 106 and renders no amounts";
+
+  // The truncated values themselves must not be a way back in.
+  EXPECT_FALSE(zx_isExchangeProxyChain(177));
+  EXPECT_FALSE(zx_isExchangeProxyChain(106));
 
   EXPECT_FALSE(zx_isExchangeProxyChain(10)) << "Optimism uses a different 0x proxy";
 
