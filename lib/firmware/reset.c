@@ -57,6 +57,33 @@ static void dice_digest_clear(void) {
   has_dice_digest = false;
 }
 
+/* Disarm a reset that was started and then abandoned.
+ *
+ * reset_init() arms awaiting_entropy and leaves the device's own entropy in
+ * int_entropy while it waits for the host's half. If the user walks away at
+ * that point -- Cancel, Initialize, a lock -- nothing used to clear either one,
+ * so an EntropyAck arriving arbitrarily later resumed the abandoned reset and
+ * generated a wallet from it. With no_backup set that path commits the mnemonic
+ * to storage and reports success without asking the user anything further, so
+ * the abandonment produced a live wallet whose seed the user never saw.
+ *
+ * Everything the flow accumulates is cleared here, not just the flag: the
+ * entropy is key material, the dice digest is a verification oracle over the
+ * roll sequence, and the display scratch holds mnemonic words. */
+void reset_abort(void) {
+  awaiting_entropy = false;
+  memzero(int_entropy, sizeof(int_entropy));
+  memzero(current_words, sizeof(current_words));
+  strength = 0;
+  no_backup = false;
+  dice_digest_clear();
+
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+}
+
 /* Shared paginated-mnemonic display scratch — see reset.h for the contract
  * (also used by the BIP-85 flow; each user zeroes at entry and exit). */
 char CONFIDENTIAL mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];

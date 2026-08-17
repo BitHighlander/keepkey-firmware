@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/aes/aes.h"
 #include "types.pb.h"
@@ -1089,6 +1090,84 @@ TEST(Storage, V19RecordIsLockedOutNotErased) {
    * keeps the wallet recoverable. */
   EXPECT_EQ(memcmp(&flash[0], &before[0], flash.size()), 0)
       << "flash was modified while refusing an unreadable record";
+}
+
+/* The test above proves storage_fromFlash() REPORTS the unreadable record.
+ * That alone is not the lockout: storage_init() leaves the device looking
+ * uninitialized, so ResetDevice, LoadDevice and recovery all become reachable,
+ * and each one ends in storage_commit(). If commit is not itself guarded, the
+ * very next provisioning flow overwrites the record the lockout exists to
+ * preserve -- and a seed that a downgrade could have recovered is gone.
+ *
+ * So this drives the real path: seed a V19 record into emulated flash, run
+ * storage_init(), then attempt an actual storage_commit() and require the
+ * sector to be untouched. */
+TEST(Storage, UnsupportedVersionLockoutRefusesCommit) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+
+  /* The lockout is a process-global. Leaving it engaged would quietly turn
+   * storage_commit() into a no-op for every test that runs after this one, so
+   * the wipe (the lockout's only intended exit) must survive an early return
+   * out of the body. */
+  struct RestoreStorage {
+    ~RestoreStorage() {
+      storage_wipe();
+      storage_init();
+    }
+  } restore_storage;
+
+  /* Built the same way as the sibling test above: a well-formed V17 record
+   * with its version byte bumped to one this firmware cannot parse. A merely
+   * zeroed sector is not equivalent -- it fails earlier checks and never
+   * reaches the version arm. */
+  ConfigFlash start;
+  memset(&start, 0xAB, sizeof(start));
+  memcpy(start.meta.magic, "stor", 4);
+  start.storage.version = STORAGE_VERSION;
+  start.storage.encrypted_sec_version = STORAGE_VERSION;
+  start.storage.pub.has_mnemonic = true;
+  start.storage.has_sec = true;
+
+  std::vector<uint8_t> record(2570);
+  storage_writeV17((char *)&record[0], record.size(), &start);
+  record[44] = 19;
+  ASSERT_LE(record.size(), (size_t)STORAGE_SECTOR_LEN);
+
+  /* Seeded into all three sectors rather than into storage_getLocation():
+   * storage_init() re-runs find_active_storage(), which takes the FIRST sector
+   * carrying the magic and not necessarily the one currently active, so
+   * whichever it lands on has to be the unreadable record. */
+  for (int a = FLASH_STORAGE1; a <= FLASH_STORAGE3; a++) {
+    char *const sector = (char *)flash_write_helper((Allocation)a);
+    ASSERT_NE(sector, nullptr);
+    memset(sector, 0xFF, STORAGE_SECTOR_LEN);
+    memcpy(sector, &record[0], record.size());
+  }
+
+  storage_init();
+
+  ASSERT_TRUE(storage_isUnsupportedVersionLocked())
+      << "storage_init() did not engage the lockout for a V19 record";
+
+  std::vector<std::vector<uint8_t> > before;
+  for (int a = FLASH_STORAGE1; a <= FLASH_STORAGE3; a++) {
+    const char *sector = (const char *)flash_write_helper((Allocation)a);
+    before.push_back(std::vector<uint8_t>(sector, sector + STORAGE_SECTOR_LEN));
+  }
+
+  storage_commit();
+
+  for (int a = FLASH_STORAGE1; a <= FLASH_STORAGE3; a++) {
+    const char *sector = (const char *)flash_write_helper((Allocation)a);
+    EXPECT_EQ(
+        memcmp(sector, &before[a - FLASH_STORAGE1][0], STORAGE_SECTOR_LEN), 0)
+        << "storage_commit() wrote sector " << a
+        << " while the unsupported-version lockout was engaged; the preserved "
+           "wallet is destroyed";
+  }
 }
 
 TEST(Storage, NoopSecMigrate) {

@@ -5,14 +5,25 @@
 #include <string.h>
 
 const TokenType tokens[] = {
+#if BITCOIN_ONLY
+    /* The bitcoin-only image declares TOKENS_COUNT == 0, so the ERC-20 table
+       must not be emitted -- carrying it would cost the flash this variant
+       exists to save, and would contradict the count every iterator uses. C
+       has no zero-length array, so one placeholder keeps the declaration
+       valid; TOKENS_COUNT == 0 means nothing ever reads it. */
+    {"", "", 0, 0},
+#else
 #define X(CHAIN_ID, CONTRACT_ADDR, TICKER, DECIMALS) \
   {(CONTRACT_ADDR), (TICKER), (CHAIN_ID), (DECIMALS)},
 #include "keepkey/firmware/uniswap_tokens.def"
 #include "keepkey/firmware/ethereum_tokens.def"
+#endif
 };
 
+#if !BITCOIN_ONLY
 _Static_assert(sizeof(tokens) / sizeof(tokens[0]) == TOKENS_COUNT,
                "TOKENS_COUNT mismatch");
+#endif
 
 static const TokenType Unknown = {
     "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"

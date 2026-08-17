@@ -276,8 +276,8 @@ void fsm_msgSignMessage(SignMessage* msg) {
    * it signed unseen; long messages were additionally truncated by the
    * formatter's scratch buffer before paging. confirm_bytes() pages every byte
    * -- as text when printable, as complete hex otherwise. */
-  if (!confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage, "Sign Message",
-                     msg->message.bytes, msg->message.size)) {
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage,
+                     "Sign Message", msg->message.bytes, msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign message cancelled");
     layoutHome();
@@ -331,8 +331,17 @@ void fsm_msgVerifyMessage(VerifyMessage* msg) {
       layoutHome();
       return;
     }
-    if (!review(ButtonRequestType_ButtonRequest_Other, "Message Verified", "%s",
-                (char*)msg->message.bytes)) {
+    /* cryptoMessageVerify() above checked all message.size bytes, so the
+     * screen has to show all of them. Rendering a length-delimited field with
+     * "%s" stopped at the first NUL and truncated anything long, which lets a
+     * forged-looking message be attested as verified while the part that
+     * changes its meaning is never displayed. */
+    const char* verifiedTitle =
+        confirm_bytes_is_text(msg->message.bytes, msg->message.size)
+            ? "Message Verified"
+            : "Bytes Verified";
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, verifiedTitle,
+                       msg->message.bytes, msg->message.size)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Action cancelled by user"));
       layoutHome();

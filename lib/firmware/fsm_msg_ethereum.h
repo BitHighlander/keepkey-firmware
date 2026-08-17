@@ -209,8 +209,7 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
           : "Sign Bytes";
 
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
-                     _(typeIndicator), msg->message.bytes,
-                     msg->message.size)) {
+                     _(typeIndicator), msg->message.bytes, msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;

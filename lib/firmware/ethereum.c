@@ -1320,12 +1320,11 @@ void e712_types_values(Ethereum712TypesValues* msg,
                       _("Ethereum address derivation failed"));
       return;
     }
-    if (0 != memcmp(signer_pubkeyhash, ds_pubkeyhash,
-                    sizeof(signer_pubkeyhash))) {
+    if (0 !=
+        memcmp(signer_pubkeyhash, ds_pubkeyhash, sizeof(signer_pubkeyhash))) {
       ethereum_typed_data_abort();
-      fsm_sendFailure(
-          FailureType_Failure_Other,
-          _("EIP-712 domain was approved for a different account"));
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("EIP-712 domain was approved for a different account"));
       return;
     }
     if (NULL == (obTest = json_getProperty(jsonPT, "primaryType"))) {

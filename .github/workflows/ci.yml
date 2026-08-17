@@ -292,6 +292,19 @@ jobs:
     needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      # Both variants ship, so both must build. Nothing compiled the
+      # bitcoin-only image here before, and it had been broken for some time
+      # without any job going red. fail-fast off so a break in one variant
+      # still reports the other.
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            cmake_flags: ""
+          - variant: bitcoin-only
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
+    name: build-arm-firmware (${{ matrix.variant }})
     steps:
       - name: Checkout
         uses: actions/checkout@v6

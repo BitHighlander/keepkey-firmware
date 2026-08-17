@@ -1676,6 +1676,22 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+  /* Losing PIN authorization has to tear down every retained signing flow, not
+   * merely the session keys. The screensaver auto-lock arrives here too
+   * (home_sm.c), and the multi-message engines keep a derived node across
+   * messages while gating their continuation on nothing more than "is this
+   * flow running?" -- so a signer left alive across a lock stays completable by
+   * the host, and a signature is produced with no PIN ever re-entered.
+   *
+   * Enforced at this chokepoint rather than at each caller precisely because
+   * there are several of them (ClearSession, screensaver, recovery) and a
+   * future one would otherwise have to remember. Gated on clear_pin for the
+   * same reason AdvancedMode is: Initialize passes false and hosts send it
+   * routinely, so tearing down there would break every ordinary flow. */
+  if (clear_pin) {
+    fsm_abortAllSigningFlows();
+  }
+
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -1763,6 +1779,15 @@ void storage_commit(void) {
   // only way out is storage_wipe() (which clears the lock). This is the
   // backstop behind the per-handler checks.
   if (btc_only_locked) return;
+
+  // Same backstop for a record written by a firmware version newer than this
+  // one. storage_init() refuses to parse it and leaves the device looking
+  // uninitialized, which puts ResetDevice, LoadDevice and recovery back within
+  // reach -- and every one of them ends in a commit that would overwrite the
+  // record the lockout exists to preserve, destroying a seed that a downgrade
+  // could still have recovered. Declining the write leaves storage_wipe() as
+  // the only exit, which is the one exit the user explicitly asks for.
+  if (unsupported_version_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
   //

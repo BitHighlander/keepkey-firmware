@@ -143,11 +143,18 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   if (msg->has_start && msg->has_end) {
     resp->table_count = msg->end - msg->start;
 
+    /* Compared against the running total rather than against TOKENS_COUNT
+     * directly: the bitcoin-only image has TOKENS_COUNT == 0, which turns a
+     * bare "unsigned < TOKENS_COUNT" into a provably-false comparison and
+     * -Werror=type-limits rejects it. */
+    const size_t table_total = (size_t)COINS_COUNT + (size_t)TOKENS_COUNT;
+
     for (size_t i = 0; i < msg->end - msg->start; i++) {
-      if (msg->start + i < COINS_COUNT) {
-        resp->table[i] = coins[msg->start + i];
-      } else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
-        coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
+      const size_t idx = (size_t)msg->start + i;
+      if (idx < (size_t)COINS_COUNT) {
+        resp->table[i] = coins[idx];
+      } else if (idx < table_total) {
+        coinFromToken(&resp->table[i], &tokens[idx - (size_t)COINS_COUNT]);
       }
     }
   }

@@ -276,21 +276,24 @@ void fsm_sendFailure(FailureType code, const char* text) {
   msg_write(MessageType_MessageType_Failure, resp);
 }
 
-/* Tear down every signing flow that holds key material or a partial
- * transaction.
+/* Tear down every flow that holds key material, a partial transaction, or an
+ * armed provisioning step.
  *
  * These flows are multi-message: a handler stashes secrets and buffered state,
  * then later continuation messages proceed on an "active" flag without
  * repeating CHECK_PIN. Anything that ends a session must therefore end all of
- * them, or a cancelled or locked device keeps signing state alive for whatever
- * arrives next. Zcash is the sharpest case -- it retains the spend
- * authorization key, transaction digests and already-computed signatures.
+ * them, or a cancelled or locked device keeps that state alive for whatever
+ * arrives next. Zcash is the sharpest signing case -- it retains the spend
+ * authorization key, transaction digests and already-computed signatures --
+ * and reset is the sharpest provisioning case, where a stale armed flag lets a
+ * later EntropyAck finish an abandoned wallet creation.
  *
  * Every abort here is idempotent and safe on an inactive flow, so callers do
- * not need to know which one was running. Add new signing flows to this list;
- * being reachable from Cancel is not optional. */
+ * not need to know which one was running. Add new flows to this list; being
+ * reachable from Cancel and from a lock is not optional. */
 void fsm_abortAllSigningFlows(void) {
   recovery_cipher_abort();
+  reset_abort();
   signing_abort();
   ethereum_signing_abort();
   ethereum_typed_data_abort();
@@ -307,9 +310,8 @@ void fsm_abortAllSigningFlows(void) {
 
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
-  /* Clearing the session drops the PIN, so nothing may continue signing
-   * afterwards on a flag alone. */
-  fsm_abortAllSigningFlows();
+  /* session_clear(clear_pin=true) performs the teardown -- every path that
+   * drops the PIN does, including the screensaver lock. */
   session_clear(/*clear_pin=*/true);
   fsm_sendSuccess("Session cleared");
 }

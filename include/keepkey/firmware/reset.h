@@ -48,6 +48,9 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
                 bool _no_backup, uint32_t _auto_lock_delay_ms,
                 uint32_t _u2f_counter, bool dice_entropy);
 void reset_entropy(const uint8_t* ext_entropy, uint32_t len);
+/* Disarm an abandoned reset: clears awaiting_entropy, the internal entropy,
+ * the dice digest and the mnemonic display scratch. Safe when none is armed. */
+void reset_abort(void);
 uint32_t reset_get_int_entropy(uint8_t* entropy);
 const char* reset_get_word(void);
 uint32_t reset_get_dice_digest(uint8_t* digest);
