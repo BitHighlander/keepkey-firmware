@@ -143,19 +143,32 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   if (msg->has_start && msg->has_end) {
     resp->table_count = msg->end - msg->start;
 
-    /* Compared against the running total rather than against TOKENS_COUNT
-     * directly: the bitcoin-only image has TOKENS_COUNT == 0, which turns a
-     * bare "unsigned < TOKENS_COUNT" into a provably-false comparison and
-     * -Werror=type-limits rejects it. */
-    const size_t table_total = (size_t)COINS_COUNT + (size_t)TOKENS_COUNT;
-
     for (size_t i = 0; i < msg->end - msg->start; i++) {
       const size_t idx = (size_t)msg->start + i;
       if (idx < (size_t)COINS_COUNT) {
         resp->table[i] = coins[idx];
-      } else if (idx < table_total) {
-        coinFromToken(&resp->table[i], &tokens[idx - (size_t)COINS_COUNT]);
+        continue;
       }
+#if !BITCOIN_ONLY
+      /* Compiled out of the bitcoin-only image rather than left as a bounds
+       * check, because there TOKENS_COUNT is 0: the table is empty, so the
+       * branch is unreachable and the comparison provably false. Written as a
+       * bare "< TOKENS_COUNT" it is a -Werror=type-limits error; written
+       * against a running total it merely hides from the compiler and
+       * cppcheck reports the same dead condition. The honest form is to not
+       * emit the branch when there is no table to walk. */
+      const size_t token_idx = idx - (size_t)COINS_COUNT;
+      /* cppcheck reads TOKENS_COUNT as 0 and calls this always-false. It is
+       * not: TOKENS_COUNT expands to an enum built by including
+       * ethereum_tokens.def, which is GENERATED into the build directory and
+       * so is absent from the source tree cppcheck analyses. The compiler,
+       * which does see the table, is the authority here -- and it accepts the
+       * comparison in this build precisely because the count is non-zero. */
+      // cppcheck-suppress unsignedLessThanZero
+      if (token_idx < (size_t)TOKENS_COUNT) {
+        coinFromToken(&resp->table[i], &tokens[token_idx]);
+      }
+#endif
     }
   }
 
@@ -549,6 +562,14 @@ void fsm_msgResetDevice(ResetDevice* msg) {
 }
 
 void fsm_msgEntropyAck(EntropyAck* msg) {
+  /* ResetDevice above is gated on CHECK_NOT_INITIALIZED; its continuation was
+   * not, and reset_entropy() checks only that a reset was armed. So a reset
+   * armed on a blank device, followed by the wallet being provisioned some
+   * other way (LoadDevice, recovery), left this message able to finish the old
+   * reset and overwrite the wallet that now exists. The gate belongs on both
+   * halves of the flow, not just the first. */
+  CHECK_NOT_INITIALIZED
+
   if (msg->has_entropy) {
     reset_entropy(msg->entropy.bytes, msg->entropy.size);
   } else {

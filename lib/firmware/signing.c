@@ -1902,4 +1902,13 @@ void signing_abort(void) {
   }
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
+  /* The legacy (non-segwit) input path copies a spending key into `privkey`
+   * at signing_sign_input() and nothing ever cleared it -- not this abort, not
+   * the success paths that also land here. A raw secp256k1 private key was
+   * left resident in SRAM after every completed, cancelled, locked or wiped
+   * signing session, until the next power cycle. The segwit paths sign from
+   * `node`, which was already covered; this is the sibling that was missed.
+   * Zeroed unconditionally, like root and node, so it is correct even when
+   * called on an inactive flow. */
+  memzero(privkey, sizeof(privkey));
 }

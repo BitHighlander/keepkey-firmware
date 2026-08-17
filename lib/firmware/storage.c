@@ -1654,6 +1654,13 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
 }
 
 void storage_wipe(void) {
+  /* A wipe destroys the wallet, so nothing derived from it may outlive the
+   * call. WipeDevice reaches storage_wipe() without passing through
+   * session_clear(), which left the multi-message engines holding a derived
+   * node and their continuation messages still answerable on a device the user
+   * had just erased. */
+  fsm_abortAllSigningFlows();
+
   flash_erase_word(FLASH_STORAGE1);
   flash_erase_word(FLASH_STORAGE2);
   flash_erase_word(FLASH_STORAGE3);
@@ -1664,6 +1671,13 @@ void storage_wipe(void) {
 }
 
 void storage_clearKeys(void) {
+  /* Zeroing the wrapped storage key is an irreversible revocation -- it is how
+   * the wipe-code path (pin_sm.c) destroys access. It clears the session with
+   * clear_pin=false, though, so it never reached the teardown, and the engines
+   * kept a derived node on a device whose storage key had just been thrown
+   * away. */
+  fsm_abortAllSigningFlows();
+
   session_clear_impl(&session, &shadow_config.storage, false);
   memzero(&session.storageKey, sizeof(session.storageKey));
   memzero(&shadow_config.storage.pub.wrapped_storage_key,
@@ -1676,22 +1690,6 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
-  /* Losing PIN authorization has to tear down every retained signing flow, not
-   * merely the session keys. The screensaver auto-lock arrives here too
-   * (home_sm.c), and the multi-message engines keep a derived node across
-   * messages while gating their continuation on nothing more than "is this
-   * flow running?" -- so a signer left alive across a lock stays completable by
-   * the host, and a signature is produced with no PIN ever re-entered.
-   *
-   * Enforced at this chokepoint rather than at each caller precisely because
-   * there are several of them (ClearSession, screensaver, recovery) and a
-   * future one would otherwise have to remember. Gated on clear_pin for the
-   * same reason AdvancedMode is: Initialize passes false and hosts send it
-   * routinely, so tearing down there would break every ordinary flow. */
-  if (clear_pin) {
-    fsm_abortAllSigningFlows();
-  }
-
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -1714,7 +1712,29 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   */
   pintest_t ret = PIN_WRONG;
 
-  /* AdvancedMode belongs to the unlocked session, like the runtime ClearSign
+  /* Losing PIN authorization has to tear down every retained signing flow, not
+   * merely the session keys. The multi-message engines keep a derived node
+   * across messages and gate their continuation on nothing more than "is this
+   * flow running?", so a signer left alive across a lock stays completable by
+   * the host and a signature is produced with no PIN ever re-entered.
+   *
+   * This lives in the _impl rather than in session_clear() because four call
+   * sites reach a clear_pin=true de-authorization WITHOUT going through that
+   * wrapper -- storage_isPinCorrect()'s wrong-PIN branch, storage_isWipeCode-
+   * Correct(), and storage_readStorageV1() all call this function directly.
+   * Putting the teardown in the wrapper looked like a chokepoint and was not
+   * one. Here it genuinely is: there is no way to clear the PIN without
+   * passing through this function.
+   *
+   * It touches no flash, so the "does not modify flash storage config state"
+   * contract above still holds, and every abort is idempotent and safe on an
+   * inactive flow.
+   *
+   * Gated on clear_pin: fsm_msgInitialize passes false and hosts send
+   * Initialize routinely, so tearing down there would break ordinary flows --
+   * the same gate, and the same reasoning, as AdvancedMode below.
+   *
+   * AdvancedMode belongs to the unlocked session, like the runtime ClearSign
    * signers session_clear() revokes -- fsm_msgApplyPolicies calls those signers
    * "an AdvancedMode capability", so revoking them while leaving the policy
    * that authorized them armed is the inconsistent half. Re-arming costs
@@ -1732,6 +1752,7 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
    * Shadow only -- writes no flash, so the "does not modify flash storage
    * config state" contract above holds. AdvancedMode is never persisted. */
   if (clear_pin) {
+    fsm_abortAllSigningFlows();
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 
