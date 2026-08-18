@@ -52,11 +52,11 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
   return advanced_mode;
 }
 
-/* The legacy JSON parser cannot guarantee that every displayed value is the
- * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
- * but fail closed in the FSM until the complete parser hardening is backported.
- */
-bool ethereum_structured_eip712_enabled(void) { return false; }
+/* The released encoder is enabled only after e712_types_values() preflights a
+ * bounded canonical subset and binds the two protocol messages into one
+ * signing session. Unsupported shapes fail closed and may use the explicit
+ * AdvancedMode typed-hash endpoint instead. */
+bool ethereum_structured_eip712_enabled(void) { return true; }
 
 #define MAX_CHAIN_ID 2147483630
 
@@ -1191,6 +1191,40 @@ void failMessage(int err) {
   return;
 }
 
+static uint8_t e712_domain_separator_hash[32] = {0};
+static uint8_t e712_message_hash[32] = {0};
+static uint8_t e712_types_binding[32] = {0};
+static char e712_signer_binding[43] = {0};
+static bool e712_have_domain = false;
+
+static void e712_clear_session(void) {
+  memzero(e712_domain_separator_hash, sizeof(e712_domain_separator_hash));
+  memzero(e712_message_hash, sizeof(e712_message_hash));
+  memzero(e712_types_binding, sizeof(e712_types_binding));
+  memzero(e712_signer_binding, sizeof(e712_signer_binding));
+  e712_have_domain = false;
+}
+
+static void e712_hash_types(const char* types, uint8_t hash[32]) {
+  struct SHA3_CTX ctx;
+  sha3_256_Init(&ctx);
+  sha3_Update(&ctx, (const unsigned char*)types, strlen(types));
+  keccak_Final(&ctx, hash);
+}
+
+static const char* e712_primary_type(const json_t* json) {
+  if (!json || json_getType(json) != JSON_OBJ) return NULL;
+  const json_t* property = json_getChild(json);
+  if (!property || json_getSibling(property) || !json_getName(property) ||
+      strcmp(json_getName(property), "primaryType") != 0 ||
+      json_getType(property) != JSON_TEXT) {
+    return NULL;
+  }
+  return json_getValue(property);
+}
+
+/* json_create() tokenizes the protobuf's JSON buffers in place. */
+// cppcheck-suppress constParameterPointer
 void e712_types_values(Ethereum712TypesValues* msg,
                        EthereumTypedDataSignature* resp, const HDNode* node) {
   int errRet = SUCCESS;
@@ -1203,15 +1237,29 @@ void e712_types_values(Ethereum712TypesValues* msg,
   char* typesJsonStr;
   char* primaryTypeJsonStr;
   char* valuesJsonStr;
-  json_t const* obTest;
-  static uint8_t domainSeparatorHash[32] = {0};
-  // cppcheck-suppress variableScope
-  static uint8_t messageHash[32] = {0};
-  static bool have_ds = false;
+  uint8_t types_binding[32] = {0};
 
   typesJsonStr = msg->eip712types;
   primaryTypeJsonStr = msg->eip712primetype;
   valuesJsonStr = msg->eip712data;
+
+  if (msg->eip712typevals != 1 && msg->eip712typevals != 2) {
+    e712_clear_session();
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Invalid EIP-712 request sequence"));
+    return;
+  }
+  if (!eip712_json_is_supported(typesJsonStr) ||
+      !eip712_json_is_supported(primaryTypeJsonStr) ||
+      !eip712_json_is_supported(valuesJsonStr)) {
+    e712_clear_session();
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Unsupported EIP-712 Unicode escape"));
+    return;
+  }
+  /* json_create() edits its input in place, so bind the exact schema bytes
+     before parsing either half of the two-message protocol. */
+  e712_hash_types(typesJsonStr, types_binding);
 
   jsonT =
       json_create(typesJsonStr, memTypes, sizeof memTypes / sizeof *memTypes);
@@ -1220,55 +1268,91 @@ void e712_types_values(Ethereum712TypesValues* msg,
   jsonV = json_create(valuesJsonStr, memVals, sizeof memVals / sizeof *memVals);
 
   if (!jsonT) {
+    e712_clear_session();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("EIP-712 type property data error"));
     return;
   }
   if (!jsonPT) {
+    e712_clear_session();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("EIP-712 primaryType property data error"));
     return;
   }
   if (!jsonV) {
+    e712_clear_session();
     fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 values data error"));
     return;
   }
 
   if (msg->eip712typevals == 1) {
-    // Compute domain seperator hash
-    have_ds = false;
-    memzero(domainSeparatorHash, 32);
+    e712_clear_session();
+    if (!eip712_document_is_supported(jsonT, jsonV, "EIP712Domain")) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Unsupported or non-canonical EIP-712 domain"));
+      return;
+    }
+    // Compute domain separator hash using the released encoder.
     if ((int)SUCCESS != (errRet = encode(jsonT, jsonV, "EIP712Domain",
                                          resp->domain_separator_hash.bytes))) {
       failMessage(errRet);
+      e712_clear_session();
       return;
     }
-    have_ds = true;
-    memcpy(domainSeparatorHash, resp->domain_separator_hash.bytes, 32);
+    memcpy(e712_domain_separator_hash, resp->domain_separator_hash.bytes, 32);
+    memcpy(e712_types_binding, types_binding, sizeof(e712_types_binding));
+    snprintf(e712_signer_binding, sizeof(e712_signer_binding), "%s",
+             resp->address);
+    e712_have_domain = true;
     resp->has_domain_separator_hash = true;
     resp->domain_separator_hash.size = 32;
     resp->has_msg_hash = false;
 
   } else {
-    if (!have_ds) {
+    if (!e712_have_domain) {
       failMessage(MSG_NO_DS);
       return;
     }
-    if (NULL == (obTest = json_getProperty(jsonPT, "primaryType"))) {
-      failMessage(JSON_PTYPENAMEERR);
+    if (memcmp(types_binding, e712_types_binding, sizeof(types_binding)) != 0 ||
+        strcmp(resp->address, e712_signer_binding) != 0) {
+      e712_clear_session();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("EIP-712 domain/message binding mismatch"));
       return;
     }
-    const char* primeType;
-    if (0 == (primeType = json_getValue(obTest))) {
+    const char* primeType = e712_primary_type(jsonPT);
+    if (!primeType || primeType[0] == '\0') {
+      e712_clear_session();
       failMessage(JSON_PTYPEVALERR);
       return;
     }
-    if (0 != strncmp(primeType, "EIP712Domain",
-                     strlen(primeType))) {  // if primaryType is "EIP712Domain",
-                                            // message hash is NULL
+    if (strcmp(primeType, "EIP712Domain") != 0) {
+      if (!eip712_document_is_supported(jsonT, jsonV, primeType)) {
+        e712_clear_session();
+        fsm_sendFailure(FailureType_Failure_Other,
+                        _("Unsupported or non-canonical EIP-712 message"));
+        return;
+      }
+    } else if (!eip712_empty_message_is_supported(jsonV)) {
+      e712_clear_session();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Invalid EIP-712 domain-only message"));
+      return;
+    }
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
+                       "EIP-712 Primary Type", (const uint8_t*)primeType,
+                       strlen(primeType))) {
+      e712_clear_session();
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("EIP-712 cancelled"));
+      return;
+    }
+
+    if (strcmp(primeType, "EIP712Domain") != 0) {
       errRet = encode(jsonT, jsonV, primeType, resp->message_hash.bytes);
       if (!(SUCCESS == errRet || NULL_MSG_HASH == errRet)) {
         failMessage(errRet);
+        e712_clear_session();
         return;
       }
     } else {
@@ -1279,31 +1363,29 @@ void e712_types_values(Ethereum712TypesValues* msg,
       resp->has_message_hash = false;
       resp->has_msg_hash = false;
     } else {
-      memcpy(messageHash, resp->message_hash.bytes, 32);
+      memcpy(e712_message_hash, resp->message_hash.bytes, 32);
       resp->has_message_hash = true;
       resp->message_hash.size = 32;
       resp->has_msg_hash = true;
     }
-    memcpy(resp->domain_separator_hash.bytes, domainSeparatorHash, 32);
+    memcpy(resp->domain_separator_hash.bytes, e712_domain_separator_hash, 32);
     resp->has_domain_separator_hash = true;
     resp->domain_separator_hash.size = 32;
 
-    // Every screen shown while parsing the typed data is a review(), which
-    // cannot express refusal. Take one real confirmation before producing a
-    // signature so a host cannot obtain one without a button press.
+    // Require an explicit final signing confirmation after the exact field and
+    // value review screens.
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
                  "Sign with address %s?", resp->address)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "Signing cancelled by user");
-      memzero(domainSeparatorHash, 32);
-      memzero(messageHash, 32);
-      have_ds = false;
+      e712_clear_session();
       return;
     }
 
     uint8_t v = 0;
-    if (0 != eip712_sign(domainSeparatorHash, messageHash, resp->has_msg_hash,
-                         node, &v, resp->signature.bytes)) {
+    if (0 != eip712_sign(e712_domain_separator_hash, e712_message_hash,
+                         resp->has_msg_hash, node, &v, resp->signature.bytes)) {
+      e712_clear_session();
       fsm_sendFailure(FailureType_Failure_Other,
                       _("EIP-712 typed hash signing failed"));
       return;
@@ -1312,9 +1394,7 @@ void e712_types_values(Ethereum712TypesValues* msg,
     resp->signature.bytes[64] = 27 + v;
     resp->signature.size = 65;
 
-    memzero(domainSeparatorHash, 32);
-    memzero(messageHash, 32);
-    have_ds = false;
+    e712_clear_session();
   }
 
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);

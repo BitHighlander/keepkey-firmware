@@ -37,6 +37,7 @@
 #include <string.h>
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "trezor/crypto/sha3.h"
@@ -67,6 +68,295 @@ static bool decode_address(const char* string, uint8_t decoded[20]) {
     decoded[i] = (uint8_t)((high << 4) | low);
   }
   return true;
+}
+
+/* 7.14.2 restores the released encoder for a deliberately bounded subset:
+   flat structs made from canonical atomic EIP-712 types.  The existing encoder
+   remains the single hashing implementation; this preflight only proves that
+   its assumptions hold before any value is displayed or hashed.  Arrays and
+   nested structs fail closed and remain available through the explicit
+   AdvancedMode typed-hash endpoint. */
+#define EIP712_IDENTIFIER_MAX 32
+
+typedef enum {
+  EIP712_ATOMIC_ADDRESS,
+  EIP712_ATOMIC_BOOL,
+  EIP712_ATOMIC_STRING,
+  EIP712_ATOMIC_BYTES,
+  EIP712_ATOMIC_BYTES_N,
+  EIP712_ATOMIC_UINT,
+  EIP712_ATOMIC_INT,
+} eip712_atomic_kind;
+
+typedef struct {
+  eip712_atomic_kind kind;
+  unsigned width;
+} eip712_atomic_type;
+
+static size_t json_child_count(const json_t* object) {
+  if (!object || (json_getType(object) != JSON_OBJ &&
+                  json_getType(object) != JSON_ARRAY)) {
+    return 0;
+  }
+  size_t count = 0;
+  for (const json_t* child = json_getChild(object); child;
+       child = json_getSibling(child)) {
+    count++;
+  }
+  return count;
+}
+
+static size_t json_named_child_count(const json_t* object, const char* name) {
+  if (!object || json_getType(object) != JSON_OBJ || !name) return 0;
+  size_t count = 0;
+  for (const json_t* child = json_getChild(object); child;
+       child = json_getSibling(child)) {
+    if (json_getName(child) && strcmp(json_getName(child), name) == 0) count++;
+  }
+  return count;
+}
+
+static bool eip712_identifier_is_valid(const char* value) {
+  if (!value || value[0] == '\0') return false;
+  const size_t len = strlen(value);
+  if (len > EIP712_IDENTIFIER_MAX) return false;
+  if (!((value[0] >= 'A' && value[0] <= 'Z') ||
+        (value[0] >= 'a' && value[0] <= 'z') || value[0] == '_')) {
+    return false;
+  }
+  for (size_t i = 1; i < len; i++) {
+    const char c = value[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '_')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool parse_decimal_width(const char* text, unsigned limit,
+                                unsigned* width) {
+  if (!text || text[0] == '\0') return false;
+  unsigned parsed = 0;
+  for (const char* p = text; *p; p++) {
+    if (*p < '0' || *p > '9') return false;
+    const unsigned digit = (unsigned)(*p - '0');
+    if (parsed > (limit - digit) / 10u) return false;
+    parsed = parsed * 10u + digit;
+  }
+  *width = parsed;
+  return true;
+}
+
+static bool eip712_atomic_type_parse(const char* text,
+                                     eip712_atomic_type* type) {
+  if (!text || !type) return false;
+  memset(type, 0, sizeof(*type));
+  if (strcmp(text, "address") == 0) {
+    type->kind = EIP712_ATOMIC_ADDRESS;
+    return true;
+  }
+  if (strcmp(text, "bool") == 0) {
+    type->kind = EIP712_ATOMIC_BOOL;
+    return true;
+  }
+  if (strcmp(text, "string") == 0) {
+    type->kind = EIP712_ATOMIC_STRING;
+    return true;
+  }
+  if (strcmp(text, "bytes") == 0) {
+    type->kind = EIP712_ATOMIC_BYTES;
+    return true;
+  }
+
+  unsigned width = 0;
+  if (strncmp(text, "bytes", 5) == 0 &&
+      parse_decimal_width(text + 5, 32, &width) && width >= 1) {
+    type->kind = EIP712_ATOMIC_BYTES_N;
+    type->width = width;
+    return true;
+  }
+  if (strncmp(text, "uint", 4) == 0 &&
+      parse_decimal_width(text + 4, 256, &width) && width >= 8 &&
+      width % 8 == 0) {
+    type->kind = EIP712_ATOMIC_UINT;
+    type->width = width;
+    return true;
+  }
+  if (strncmp(text, "int", 3) == 0 &&
+      parse_decimal_width(text + 3, 256, &width) && width >= 8 &&
+      width % 8 == 0) {
+    type->kind = EIP712_ATOMIC_INT;
+    type->width = width;
+    return true;
+  }
+  return false;
+}
+
+static bool eip712_hex_is_valid(const char* text, size_t expected_bytes,
+                                bool exact_size) {
+  if (!text || text[0] != '0' || text[1] != 'x') return false;
+  const size_t chars = strlen(text + 2);
+  if ((chars & 1u) != 0 || (exact_size && chars != expected_bytes * 2u)) {
+    return false;
+  }
+  for (size_t i = 0; i < chars; i++) {
+    if (hex_nibble(text[i + 2]) < 0) return false;
+  }
+  return true;
+}
+
+static bool eip712_integer_is_valid(const char* text,
+                                    const eip712_atomic_type* type) {
+  if (!text || !type || text[0] == '\0') return false;
+  const bool negative = text[0] == '-';
+  const char* digits = negative ? text + 1 : text;
+  if (digits[0] == '\0' || (digits[0] == '0' && digits[1] != '\0') ||
+      (negative && strcmp(digits, "0") == 0)) {
+    return false;
+  }
+  for (const char* p = digits; *p; p++) {
+    if (*p < '0' || *p > '9') return false;
+  }
+  if (type->kind == EIP712_ATOMIC_UINT && negative) return false;
+
+  /* The released encoder stores values in a signed long long. Prove the
+     decimal magnitude fits both that implementation and the declared EIP-712
+     width without depending on libc overflow behavior or errno. */
+  uint64_t maximum;
+  if (type->kind == EIP712_ATOMIC_UINT) {
+    maximum = type->width < 63 ? (UINT64_C(1) << type->width) - 1u
+                               : (uint64_t)INT64_MAX;
+  } else if (negative) {
+    maximum =
+        type->width < 64 ? UINT64_C(1) << (type->width - 1) : UINT64_C(1) << 63;
+  } else {
+    maximum = type->width < 64 ? (UINT64_C(1) << (type->width - 1)) - 1u
+                               : (uint64_t)INT64_MAX;
+  }
+  uint64_t magnitude = 0;
+  for (const char* p = digits; *p; p++) {
+    const uint64_t digit = (uint64_t)(*p - '0');
+    if (magnitude > (maximum - digit) / 10u) return false;
+    magnitude = magnitude * 10u + digit;
+  }
+  return true;
+}
+
+static bool eip712_atomic_value_is_valid(const json_t* value,
+                                         const eip712_atomic_type* type) {
+  if (!value || !type) return false;
+  const jsonType_t json_type = json_getType(value);
+  const char* text = json_getValue(value);
+  switch (type->kind) {
+    case EIP712_ATOMIC_ADDRESS: {
+      uint8_t decoded[20] = {0};
+      return json_type == JSON_TEXT && decode_address(text, decoded);
+    }
+    case EIP712_ATOMIC_BOOL:
+      return json_type == JSON_BOOLEAN &&
+             (strcmp(text, "true") == 0 || strcmp(text, "false") == 0);
+    case EIP712_ATOMIC_STRING:
+      return json_type == JSON_TEXT;
+    case EIP712_ATOMIC_BYTES:
+      return json_type == JSON_TEXT && eip712_hex_is_valid(text, 0, false);
+    case EIP712_ATOMIC_BYTES_N:
+      return json_type == JSON_TEXT &&
+             eip712_hex_is_valid(text, type->width, true);
+    case EIP712_ATOMIC_UINT:
+    case EIP712_ATOMIC_INT:
+      return (json_type == JSON_TEXT || json_type == JSON_INTEGER) &&
+             eip712_integer_is_valid(text, type);
+  }
+  return false;
+}
+
+bool eip712_json_is_supported(const char* json) {
+  if (!json) return false;
+  /* tiny-json replaces every JSON Unicode escape with '?'. Refuse those
+     spellings instead of signing a different string from the one the host
+     supplied. Raw UTF-8 remains supported and is reviewed byte-for-byte. */
+  for (const char* p = json; *p; p++) {
+    if (p[0] == '\\' && p[1] == 'u') return false;
+  }
+  return true;
+}
+
+bool eip712_document_is_supported(const json_t* jsonTypes,
+                                  const json_t* jsonVals, const char* typeS) {
+  if (!jsonTypes || !jsonVals || !eip712_identifier_is_valid(typeS) ||
+      json_getType(jsonTypes) != JSON_OBJ || json_child_count(jsonTypes) != 1 ||
+      json_named_child_count(jsonTypes, "types") != 1) {
+    return false;
+  }
+  const json_t* types = json_getProperty(jsonTypes, "types");
+  if (!types || json_getType(types) != JSON_OBJ ||
+      json_named_child_count(types, typeS) != 1) {
+    return false;
+  }
+  const json_t* fields = json_getProperty(types, typeS);
+  if (!fields || json_getType(fields) != JSON_ARRAY) return false;
+
+  const char* property =
+      strcmp(typeS, "EIP712Domain") == 0 ? "domain" : "message";
+  if (json_getType(jsonVals) != JSON_OBJ || json_child_count(jsonVals) != 1 ||
+      json_named_child_count(jsonVals, property) != 1) {
+    return false;
+  }
+  const json_t* values = json_getProperty(jsonVals, property);
+  if (!values || json_getType(values) != JSON_OBJ ||
+      json_child_count(fields) != json_child_count(values)) {
+    return false;
+  }
+
+  for (const json_t* field = json_getChild(fields); field;
+       field = json_getSibling(field)) {
+    if (json_getType(field) != JSON_OBJ || json_child_count(field) != 2) {
+      return false;
+    }
+    const json_t* name = json_getChild(field);
+    const json_t* type_value = name ? json_getSibling(name) : NULL;
+    if (!name || !type_value || !json_getName(name) ||
+        !json_getName(type_value) || strcmp(json_getName(name), "name") != 0 ||
+        strcmp(json_getName(type_value), "type") != 0 ||
+        json_getType(name) != JSON_TEXT ||
+        json_getType(type_value) != JSON_TEXT) {
+      return false;
+    }
+    const char* field_name = json_getValue(name);
+    const char* field_type = json_getValue(type_value);
+    eip712_atomic_type parsed;
+    if (!eip712_identifier_is_valid(field_name) ||
+        !eip712_atomic_type_parse(field_type, &parsed) ||
+        json_named_child_count(values, field_name) != 1 ||
+        !eip712_atomic_value_is_valid(json_getProperty(values, field_name),
+                                      &parsed)) {
+      return false;
+    }
+    /* A duplicate declaration could otherwise make the field/value counts
+       agree while leaving an unrelated value outside the reviewed schema. */
+    for (const json_t* other = json_getChild(fields); other;
+         other = json_getSibling(other)) {
+      if (other == field) continue;
+      const json_t* other_name = json_getChild(other);
+      if (other_name && json_getValue(other_name) &&
+          strcmp(json_getValue(other_name), field_name) == 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool eip712_empty_message_is_supported(const json_t* jsonVals) {
+  if (!jsonVals || json_getType(jsonVals) != JSON_OBJ ||
+      json_child_count(jsonVals) != 1 ||
+      json_named_child_count(jsonVals, "message") != 1) {
+    return false;
+  }
+  const json_t* message = json_getProperty(jsonVals, "message");
+  return message && json_getType(message) == JSON_OBJ &&
+         json_child_count(message) == 0;
 }
 
 /* Append value to dest, a caller-allocated, NUL-terminated buffer of
@@ -279,17 +569,15 @@ int encString(const char* string, uint8_t* encoded) {
 }
 
 int encodeBytes(const char* string, uint8_t* encoded) {
+  if (!eip712_hex_is_valid(string, 0, false)) return GENERAL_ERROR;
   struct SHA3_CTX byteCtx;
   const char* valStrPtr = string + 2;
-  uint8_t valByte[1];
-  char byteStrBuf[3] = {0};
 
   sha3_256_Init(&byteCtx);
   while (*valStrPtr != '\0') {
-    strncpy(byteStrBuf, valStrPtr, 2);
-    valByte[0] = (uint8_t)(strtol(byteStrBuf, NULL, 16));
-    sha3_Update(&byteCtx, (const unsigned char*)valByte,
-                (size_t)sizeof(uint8_t));
+    const uint8_t value =
+        (uint8_t)((hex_nibble(valStrPtr[0]) << 4) | hex_nibble(valStrPtr[1]));
+    sha3_Update(&byteCtx, &value, sizeof(value));
     valStrPtr += 2;
   }
   keccak_Final(&byteCtx, encoded);
@@ -297,27 +585,18 @@ int encodeBytes(const char* string, uint8_t* encoded) {
 }
 
 int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
-  char byteStrBuf[3] = {0};
-  unsigned ctr;
-
-  if (MAX_ENCBYTEN_SIZE < strlen(string)) {
-    return BYTESN_STRING_ERROR;
-  }
-
-  // parse out the length val
-  uint8_t byteTypeSize = (uint8_t)(strtol((typeT + 5), NULL, 10));
-  if (32 < byteTypeSize) {
+  eip712_atomic_type parsed;
+  if (!eip712_atomic_type_parse(typeT, &parsed) ||
+      parsed.kind != EIP712_ATOMIC_BYTES_N) {
     return BYTESN_SIZE_ERROR;
   }
-  for (ctr = 0; ctr < 32; ctr++) {
-    // zero padding
-    encoded[ctr] = 0;
+  if (!eip712_hex_is_valid(string, parsed.width, true)) {
+    return BYTESN_STRING_ERROR;
   }
-  unsigned zeroFillLen = 32 - ((strlen(string) - 2 /* skip '0x' */) / 2);
-  // bytesN are zero padded on the right
-  for (ctr = zeroFillLen; ctr < 32; ctr++) {
-    strncpy(byteStrBuf, &string[2 + 2 * (ctr - zeroFillLen)], 2);
-    encoded[ctr - zeroFillLen] = (uint8_t)(strtol(byteStrBuf, NULL, 16));
+  memset(encoded, 0, 32);
+  for (size_t i = 0; i < parsed.width; i++) {
+    encoded[i] = (uint8_t)((hex_nibble(string[2 + 2 * i]) << 4) |
+                           hex_nibble(string[3 + 2 * i]));
   }
   return SUCCESS;
 }
@@ -328,21 +607,23 @@ int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
    and encode() would still hash typed data the user never saw. They are
    confirm() now and refusal is reported to parseVals() as USER_CANCELLED, so
    no hash is produced at all. */
-int confirmName(const char* name, bool valAvailable) {
-  if (valAvailable) {
-    nameForValue = name;
-  } else {
-    if (!confirm(ButtonRequestType_ButtonRequest_Other, "MESSAGE DATA",
-                 "Press button to continue for\n\"%s\" values", name)) {
-      return USER_CANCELLED;
-    }
+int confirmName(const char* name, const char* type) {
+  if (!name || !type) return GENERAL_ERROR;
+  char field[EIP712_IDENTIFIER_MAX + MAX_TYPESTRING + 2] = {0};
+  const int written = snprintf(field, sizeof(field), "%s %s", type, name);
+  if (written < 0 || (size_t)written >= sizeof(field)) return GENERAL_ERROR;
+  nameForValue = name;
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, "EIP-712 Field",
+                     (const uint8_t*)field, (size_t)written)) {
+    return USER_CANCELLED;
   }
   return SUCCESS;
 }
 
 int confirmValue(const char* value) {
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, "MESSAGE DATA", "%s %s",
-               nameForValue, value)) {
+  if (!value ||
+      !confirm_bytes(ButtonRequestType_ButtonRequest_Other, "EIP-712 Value",
+                     (const uint8_t*)value, strlen(value))) {
     return USER_CANCELLED;
   }
   return SUCCESS;
@@ -391,21 +672,15 @@ void marshallDsVals(const char* value) {
   return;
 }
 
+static int confirmTypedValue(bool ds_vals, const char* value) {
+  if (ds_vals) marshallDsVals(value);
+  return confirmValue(value);
+}
+
 int dsConfirm(void) {
-  char name[41] = {0};
-  char version[11] = {0};
   IconType iconNum = NO_ICON;
-  char title[64] = {0};
-  char* fillerStr = "";
   char chainStr[33] = {0};
   char verifyingContract[65] = {0};
-
-  if (dsname != NULL) {
-    strncpy(name, dsname, 40);
-  }
-  if (dsversion != NULL) {
-    strncpy(version, dsversion, 10);
-  }
 
   if (dsverifyingContract != NULL) {
     /* EIP-712 types are host-controlled, so verifyingContract may reach this
@@ -449,18 +724,15 @@ int dsConfirm(void) {
     //     iconNum = ETHEREUM_ICON;
     // }
   }
-  strncpy(title, name, 40);
-  if (NULL != dsversion) {
-    strncat(title, " Ver: ", 63 - strlen(title));
-    strncat(title, version, 63 - strlen(title));
-  }
   if (NULL != dschainId) {
     snprintf(chainStr, 32, "chain %s,  ", dschainId);
   }
-  // snprintf(contractStr, 64, "verifyingContract: %s", verifyingContract);
+  /* Name, version, chain and contract were already reviewed exactly on their
+     field/value pages. Keep this convenience summary, but never put the
+     host-controlled domain name in the trusted title position. */
   bool confirmed =
-      confirm_with_icon(ButtonRequestType_ButtonRequest_Other, iconNum, title,
-                        "%s %s%s", chainStr, verifyingContract, fillerStr);
+      confirm_with_icon(ButtonRequestType_ButtonRequest_Other, iconNum,
+                        "EIP-712 Domain", "%s %s", chainStr, verifyingContract);
   /* Clear the marshalled domain values on the refusal path too: they are file
      statics and a later attempt must not inherit them. */
   clearDsVals();
@@ -517,7 +789,6 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
       walkVals = nextVal;
       while (0 != walkVals) {
         if (0 == strcmp(json_getName(walkVals), typeName)) {
-          valStr = json_getValue(walkVals);
           break;
         } else {
           // keep looking for val
@@ -525,16 +796,18 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         }
       }
 
-      bool hasValue = (JSON_TEXT == json_getType(walkVals) ||
-                       JSON_INTEGER == json_getType(walkVals));
-      errRet = confirmName(typeName, hasValue);
-      if (SUCCESS != errRet) {
-        return errRet;
-      }
-
       if (walkVals == 0) {
         return JSON_TYPE_WNOVAL;
-      } else {
+      }
+      const jsonType_t value_type = json_getType(walkVals);
+      const bool hasValue = value_type == JSON_TEXT ||
+                            value_type == JSON_INTEGER ||
+                            value_type == JSON_BOOLEAN;
+      valStr = hasValue ? json_getValue(walkVals) : NULL;
+      errRet = confirmName(typeName, typeType);
+      if (SUCCESS != errRet) return errRet;
+
+      {
         if (0 == strncmp("address", typeType, strlen("address") - 1)) {
           if (']' == typeType[strlen(typeType) - 1]) {
             // array of addresses
@@ -543,14 +816,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             while (0 != addrVals) {
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
-              if (ds_vals) {
-                marshallDsVals(json_getValue(addrVals));
-              } else {
-                errRet = confirmValue(json_getValue(addrVals));
-                if (SUCCESS != errRet) {
-                  return errRet;
-                }
-              }
+              errRet = confirmTypedValue(ds_vals, json_getValue(addrVals));
+              if (SUCCESS != errRet) return errRet;
 
               errRet = encAddress(json_getValue(addrVals), encBytes);
               if (SUCCESS != errRet) {
@@ -561,14 +828,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
             keccak_Final(&valCtx, encBytes);
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
+            errRet = confirmTypedValue(ds_vals, valStr);
+            if (SUCCESS != errRet) return errRet;
             errRet = encAddress(valStr, encBytes);
             if (SUCCESS != errRet) {
               return errRet;
@@ -584,14 +845,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             while (0 != stringVals) {
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
-              if (ds_vals) {
-                marshallDsVals(json_getValue(stringVals));
-              } else {
-                errRet = confirmValue(json_getValue(stringVals));
-                if (SUCCESS != errRet) {
-                  return errRet;
-                }
-              }
+              errRet = confirmTypedValue(ds_vals, json_getValue(stringVals));
+              if (SUCCESS != errRet) return errRet;
               errRet = encString(json_getValue(stringVals), strEncBytes);
               if (SUCCESS != errRet) {
                 return errRet;
@@ -601,14 +856,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
             keccak_Final(&valCtx, encBytes);
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
+            errRet = confirmTypedValue(ds_vals, valStr);
+            if (SUCCESS != errRet) return errRet;
             errRet = encString(valStr, encBytes);
             if (SUCCESS != errRet) {
               return errRet;
@@ -620,14 +869,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
           if (']' == typeType[strlen(typeType) - 1]) {
             return INT_ARRAY_ERROR;
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
+            errRet = confirmTypedValue(ds_vals, valStr);
+            if (SUCCESS != errRet) return errRet;
             uint8_t negInt = 0;  // 0 is positive, 1 is negative
             if (0 == strncmp("int", typeType, strlen("int") - 1)) {
               if (*valStr == '-') {
@@ -662,14 +905,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             return BYTESN_ARRAY_ERROR;
           } else {
             // This could be 'bytes', 'bytes1', ..., 'bytes32'
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
+            errRet = confirmTypedValue(ds_vals, valStr);
+            if (SUCCESS != errRet) return errRet;
             if (0 == strcmp(typeType, "bytes")) {
               errRet = encodeBytes(valStr, encBytes);
               if (SUCCESS != errRet) {
@@ -688,14 +925,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
           if (']' == typeType[strlen(typeType) - 1]) {
             return BOOL_ARRAY_ERROR;
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
+            errRet = confirmTypedValue(ds_vals, valStr);
+            if (SUCCESS != errRet) return errRet;
             for (ctr = 0; ctr < 32; ctr++) {
               // leading zeros in bool
               encBytes[ctr] = 0;

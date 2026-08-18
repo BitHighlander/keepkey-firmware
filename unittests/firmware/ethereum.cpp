@@ -88,8 +88,144 @@ TEST(Ethereum, PrecomputedTypedHashesRequireAdvancedMode) {
   EXPECT_TRUE(tron_typed_hash_policy_allows(true));
 }
 
-TEST(Ethereum, StructuredEip712IsDisabledForPointRelease) {
-  EXPECT_FALSE(ethereum_structured_eip712_enabled());
+TEST(Ethereum, StructuredEip712EnablesBoundedCanonicalSubset) {
+  EXPECT_TRUE(ethereum_structured_eip712_enabled());
+}
+
+TEST(Ethereum, StructuredEip712AcceptsCanonicalFlatDomain) {
+  char types_json[] =
+      "{\"types\":{\"EIP712Domain\":["
+      "{\"name\":\"name\",\"type\":\"string\"},"
+      "{\"name\":\"chainId\",\"type\":\"uint256\"},"
+      "{\"name\":\"verifyingContract\",\"type\":\"address\"},"
+      "{\"name\":\"salt\",\"type\":\"bytes32\"}]}}";
+  char values_json[] =
+      "{\"domain\":{\"name\":\"KeepKey\",\"chainId\":1,"
+      "\"verifyingContract\":\"0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC\","
+      "\"salt\":"
+      "\"0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"
+      "}";
+  json_t type_nodes[24] = {};
+  json_t value_nodes[16] = {};
+  const json_t* types = json_create(types_json, type_nodes, 24);
+  const json_t* values = json_create(values_json, value_nodes, 16);
+  ASSERT_NE(nullptr, types);
+  ASSERT_NE(nullptr, values);
+  EXPECT_TRUE(eip712_document_is_supported(types, values, "EIP712Domain"));
+}
+
+TEST(Ethereum, StructuredEip712AcceptsFlatPermitMessage) {
+  char types_json[] =
+      "{\"types\":{\"Permit\":["
+      "{\"name\":\"owner\",\"type\":\"address\"},"
+      "{\"name\":\"spender\",\"type\":\"address\"},"
+      "{\"name\":\"value\",\"type\":\"uint256\"},"
+      "{\"name\":\"nonce\",\"type\":\"uint256\"},"
+      "{\"name\":\"deadline\",\"type\":\"uint256\"}]}}";
+  char values_json[] =
+      "{\"message\":{"
+      "\"owner\":\"0x00112233445566778899aabbccddeeff00112233\","
+      "\"spender\":\"0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC\","
+      "\"value\":\"1000000000000000000\",\"nonce\":0,"
+      "\"deadline\":\"1700000000\"}}";
+  json_t type_nodes[28] = {};
+  json_t value_nodes[20] = {};
+  const json_t* types = json_create(types_json, type_nodes, 28);
+  const json_t* values = json_create(values_json, value_nodes, 20);
+  ASSERT_NE(nullptr, types);
+  ASSERT_NE(nullptr, values);
+  EXPECT_TRUE(eip712_document_is_supported(types, values, "Permit"));
+}
+
+TEST(Ethereum, StructuredEip712RejectsUnprovenShapesAndValues) {
+  struct TestCase {
+    const char* types;
+    const char* values;
+    const char* primary_type;
+  } cases[] = {
+      // Nested structs remain on the AdvancedMode typed-hash path.
+      {"{\"types\":{\"Mail\":[{\"name\":\"from\",\"type\":\"Person\"}]}}",
+       "{\"message\":{\"from\":{\"name\":\"Alice\"}}}", "Mail"},
+      // Arrays are not in the bounded point-release subset.
+      {"{\"types\":{\"List\":[{\"name\":\"items\",\"type\":\"string[]\"}]}}",
+       "{\"message\":{\"items\":[\"one\"]}}", "List"},
+      // Values not declared by the schema would be signed invisibly if they
+      // were merely ignored.
+      {"{\"types\":{\"Note\":[{\"name\":\"text\",\"type\":\"string\"}]}}",
+       "{\"message\":{\"text\":\"hello\",\"hidden\":\"tail\"}}", "Note"},
+      // Duplicate declarations cannot be used to balance an extra value.
+      {"{\"types\":{\"Note\":[{\"name\":\"text\",\"type\":\"string\"},"
+       "{\"name\":\"text\",\"type\":\"string\"}]}}",
+       "{\"message\":{\"text\":\"hello\",\"hidden\":\"tail\"}}", "Note"},
+      // Text is not accepted as a boolean, even when it reads like one.
+      {"{\"types\":{\"Flag\":[{\"name\":\"ok\",\"type\":\"bool\"}]}}",
+       "{\"message\":{\"ok\":\"false\"}}", "Flag"},
+      // Integer strings have one canonical spelling.
+      {"{\"types\":{\"Count\":[{\"name\":\"n\",\"type\":\"uint8\"}]}}",
+       "{\"message\":{\"n\":\"01\"}}", "Count"},
+      {"{\"types\":{\"Count\":[{\"name\":\"n\",\"type\":\"uint8\"}]}}",
+       "{\"message\":{\"n\":\"256\"}}", "Count"},
+      // The released encoder is intentionally bounded to signed 64-bit input.
+      {"{\"types\":{\"Count\":[{\"name\":\"n\",\"type\":\"uint256\"}]}}",
+       "{\"message\":{\"n\":\"9223372036854775808\"}}", "Count"},
+      // Fixed bytes must contain exactly the declared number of octets.
+      {"{\"types\":{\"Blob\":[{\"name\":\"data\",\"type\":\"bytes4\"}]}}",
+       "{\"message\":{\"data\":\"0x0011aa\"}}", "Blob"},
+  };
+
+  for (const auto& test : cases) {
+    char types_json[256] = {0};
+    char values_json[256] = {0};
+    ASSERT_LT(strlen(test.types), sizeof(types_json));
+    ASSERT_LT(strlen(test.values), sizeof(values_json));
+    strcpy(types_json, test.types);
+    strcpy(values_json, test.values);
+    json_t type_nodes[20] = {};
+    json_t value_nodes[20] = {};
+    const json_t* types = json_create(types_json, type_nodes, 20);
+    const json_t* values = json_create(values_json, value_nodes, 20);
+    ASSERT_NE(nullptr, types);
+    ASSERT_NE(nullptr, values);
+    EXPECT_FALSE(
+        eip712_document_is_supported(types, values, test.primary_type));
+  }
+}
+
+TEST(Ethereum, StructuredEip712DomainOnlyRequiresAnEmptyMessageObject) {
+  char valid_json[] = "{\"message\":{}}";
+  char extra_json[] = "{\"message\":{},\"other\":{}}";
+  char nonempty_json[] = "{\"message\":{\"hidden\":1}}";
+  json_t valid_nodes[4] = {};
+  json_t extra_nodes[8] = {};
+  json_t nonempty_nodes[8] = {};
+  EXPECT_TRUE(eip712_empty_message_is_supported(
+      json_create(valid_json, valid_nodes, 4)));
+  EXPECT_FALSE(eip712_empty_message_is_supported(
+      json_create(extra_json, extra_nodes, 8)));
+  EXPECT_FALSE(eip712_empty_message_is_supported(
+      json_create(nonempty_json, nonempty_nodes, 8)));
+}
+
+TEST(Ethereum, StructuredEip712BytesRejectMalformedHex) {
+  uint8_t encoded[32] = {0};
+  EXPECT_EQ(SUCCESS, encodeBytes("0x00a1FF", encoded));
+  EXPECT_NE(SUCCESS, encodeBytes("00a1", encoded));
+  EXPECT_NE(SUCCESS, encodeBytes("0x0", encoded));
+  EXPECT_NE(SUCCESS, encodeBytes("0x0z", encoded));
+
+  EXPECT_EQ(SUCCESS, encodeBytesN("bytes4", "0x0011aAff", encoded));
+  EXPECT_NE(SUCCESS, encodeBytesN("bytes4", "0x0011aa", encoded));
+  EXPECT_NE(SUCCESS, encodeBytesN("bytes4", "0x0011aaff00", encoded));
+  EXPECT_NE(SUCCESS, encodeBytesN("bytes0", "0x", encoded));
+  EXPECT_NE(SUCCESS, encodeBytesN("bytes33", "0x", encoded));
+}
+
+TEST(Ethereum, StructuredEip712RejectsUnicodeEscapesTinyJsonCannotDecode) {
+  EXPECT_TRUE(eip712_json_is_supported("{\"message\":{\"text\":\"hello\"}}"));
+  EXPECT_TRUE(
+      eip712_json_is_supported("{\"message\":{\"text\":\"caf\xC3\xA9\"}}"));
+  EXPECT_FALSE(
+      eip712_json_is_supported("{\"message\":{\"text\":\"\\u00e9\"}}"));
 }
 
 // Two real chain-1 table entries, so the decoder's token lookups resolve.

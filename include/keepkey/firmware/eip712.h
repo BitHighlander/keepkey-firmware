@@ -107,8 +107,14 @@ typedef enum { DOMAIN = 1, MESSAGE } dm;
 #define USER_CANCELLED 34
 
 int encAddress(const char* string, uint8_t* encoded);
+int encodeBytes(const char* string, uint8_t* encoded);
+int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded);
 int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
            uint8_t* hashRet);
+bool eip712_document_is_supported(const json_t* jsonTypes,
+                                  const json_t* jsonVals, const char* typeS);
+bool eip712_empty_message_is_supported(const json_t* jsonVals);
+bool eip712_json_is_supported(const char* json);
 bool eip712_parse_canonical_u32(const char* text, uint32_t* value);
 
 #endif
