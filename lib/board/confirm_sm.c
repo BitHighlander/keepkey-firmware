@@ -45,6 +45,26 @@ static bool button_request_acked = false;
 extern bool reset_msg_stack;
 
 static CONFIDENTIAL char strbuf[BODY_CHAR_MAX];
+static CONFIDENTIAL char scroll_body[BODY_CHAR_MAX];
+static CONFIDENTIAL char scroll_title[TITLE_CHAR_MAX];
+
+typedef struct {
+  bool enabled;
+  volatile bool advance;
+  const uint8_t* data;
+  size_t size;
+  size_t offset;
+  size_t page;
+  size_t pages;
+  uint16_t body_width;
+  confirm_page_formatter_t formatter;
+  const char* title;
+} ScrollInfo;
+
+typedef struct {
+  volatile StateInfo* state;
+  volatile ScrollInfo* scroll;
+} ScreenContext;
 
 /* Set by format_body() when the formatted body did not fit strbuf, i.e. when
  * characters were lost before any screen existed to show them. Read and
@@ -66,13 +86,20 @@ static void format_body(const char* request_body, va_list vl) {
 static void handle_screen_press(void* context) {
   assert(context != NULL);
 
-  StateInfo* si = (StateInfo*)context;
+  ScreenContext* screen = (ScreenContext*)context;
 
   if (button_request_acked) {
+    volatile StateInfo* si = screen->state;
+    const volatile ScrollInfo* scroll = screen->scroll;
     switch (si->display_state) {
       case HOME:
-        si->active_layout = LAYOUT_CONFIRM_ANIMATION;
-        si->display_state = CONFIRM_WAIT;
+        if (scroll->enabled && scroll->offset < scroll->size) {
+          si->active_layout = LAYOUT_REQUEST_NO_ANIMATION;
+          si->display_state = SCROLLING;
+        } else {
+          si->active_layout = LAYOUT_CONFIRM_ANIMATION;
+          si->display_state = CONFIRM_WAIT;
+        }
         break;
 
       default:
@@ -86,9 +113,17 @@ static void handle_screen_press(void* context) {
 static void handle_screen_release(void* context) {
   assert(context != NULL);
 
-  StateInfo* si = (StateInfo*)context;
+  ScreenContext* screen = (ScreenContext*)context;
+  volatile StateInfo* si = screen->state;
 
   switch (si->display_state) {
+    case SCROLLING:
+      /* Pause on exactly the page that is currently visible. Reaching the end
+       * still comes back through HOME, so approval requires a fresh press. */
+      si->active_layout = LAYOUT_REQUEST_NO_ANIMATION;
+      si->display_state = HOME;
+      break;
+
     case CONFIRM_WAIT:
       si->active_layout = LAYOUT_REQUEST_NO_ANIMATION;
       si->display_state = HOME;
@@ -101,6 +136,17 @@ static void handle_screen_release(void* context) {
 
     default:
       break;
+  }
+}
+
+/// Ask the main loop to advance one page. Formatting and drawing stay out of
+/// the timer interrupt so the OLED never reads a page buffer while it changes.
+static void handle_scroll_timeout(void* context) {
+  assert(context != NULL);
+
+  ScreenContext* screen = (ScreenContext*)context;
+  if (screen->state->display_state == SCROLLING) {
+    screen->scroll->advance = true;
   }
 }
 
@@ -166,6 +212,54 @@ static void swap_layout(ActiveLayout active_layout, volatile StateInfo* si,
   };
 }
 
+static size_t count_scroll_pages(const uint8_t* data, size_t size,
+                                 confirm_page_formatter_t formatter,
+                                 uint16_t body_width) {
+  size_t pages = 0;
+  size_t offset = 0;
+
+  while (offset < size) {
+    const size_t take = formatter(data + offset, size - offset, scroll_body,
+                                  sizeof(scroll_body), body_width);
+    if (take == 0 || take > size - offset) return 0;
+    offset += take;
+    pages++;
+  }
+
+  return pages;
+}
+
+static bool prepare_scroll_page(volatile ScrollInfo* scroll,
+                                volatile StateInfo* state) {
+  if (scroll->offset >= scroll->size) return false;
+
+  const size_t take = scroll->formatter(
+      scroll->data + scroll->offset, scroll->size - scroll->offset, scroll_body,
+      sizeof(scroll_body), scroll->body_width);
+  if (take == 0 || take > scroll->size - scroll->offset) return false;
+
+  scroll->offset += take;
+  scroll->page++;
+
+  const int title_len =
+      (scroll->pages > 1)
+          ? snprintf(scroll_title, sizeof(scroll_title), "%s %u/%u",
+                     scroll->title, (unsigned)scroll->page,
+                     (unsigned)scroll->pages)
+          : snprintf(scroll_title, sizeof(scroll_title), "%s", scroll->title);
+  const char* page_title = scroll->title;
+  if (title_len >= 0 && (size_t)title_len < sizeof(scroll_title)) {
+    page_title = scroll_title;
+  }
+
+  for (size_t layout = LAYOUT_REQUEST; layout <= LAYOUT_CONFIRMED; layout++) {
+    state->lines[layout].request_title = page_title;
+    state->lines[layout].request_body = scroll_body;
+  }
+
+  return true;
+}
+
 /// Run one confirmation screen: draw it, then wait for either the user's hold
 /// or the host's Cancel. Callers go through confirm_helper() below, which is
 /// what the public confirm()/review() wrappers use.
@@ -177,11 +271,18 @@ static bool confirm_screen(const char* request_title_param,
                            const char* request_body,
                            layout_notification_t layout_notification_func,
                            bool constant_power, IconType iconNum,
-                           bool immediate) {
+                           bool immediate, const uint8_t* page_data,
+                           size_t page_size,
+                           confirm_page_formatter_t page_formatter,
+                           uint16_t page_body_width) {
   bool ret_stat = false;
   volatile StateInfo state_info;
+  volatile ScrollInfo scroll_info;
+  ScreenContext screen_context = {&state_info, &scroll_info};
   ActiveLayout new_layout, cur_layout;
   DisplayState new_ds;
+  bool scroll_timer_pending = false;
+  bool scroll_advance;
   uint16_t tiny_msg;
   static CONFIDENTIAL uint8_t msg_tiny_buf[MSG_TINY_BFR_SZ];
   const char* request_title;
@@ -197,6 +298,7 @@ static bool confirm_screen(const char* request_title_param,
   reset_msg_stack = false;
 
   memset((void*)&state_info, 0, sizeof(state_info));
+  memset((void*)&scroll_info, 0, sizeof(scroll_info));
   state_info.immediate = immediate;
   state_info.display_state = HOME;
   state_info.active_layout = LAYOUT_REQUEST;
@@ -215,9 +317,25 @@ static bool confirm_screen(const char* request_title_param,
   state_info.lines[LAYOUT_CONFIRMED].request_title = request_title;
   state_info.lines[LAYOUT_CONFIRMED].request_body = request_body;
 
-  keepkey_button_set_on_press_handler(&handle_screen_press, (void*)&state_info);
+  if (page_formatter != NULL) {
+    scroll_info.data = page_data;
+    scroll_info.size = page_size;
+    scroll_info.formatter = page_formatter;
+    scroll_info.body_width = page_body_width;
+    scroll_info.title = request_title;
+    scroll_info.pages = count_scroll_pages(page_data, page_size, page_formatter,
+                                           page_body_width);
+    if (scroll_info.pages == 0 ||
+        !prepare_scroll_page(&scroll_info, &state_info)) {
+      goto confirm_screen_exit;
+    }
+    scroll_info.enabled = scroll_info.pages > 1;
+  }
+
+  keepkey_button_set_on_press_handler(&handle_screen_press,
+                                      (void*)&screen_context);
   keepkey_button_set_on_release_handler(&handle_screen_release,
-                                        (void*)&state_info);
+                                        (void*)&screen_context);
 
   cur_layout = LAYOUT_INVALID;
 
@@ -227,6 +345,7 @@ static bool confirm_screen(const char* request_title_param,
 #endif
     new_layout = state_info.active_layout;
     new_ds = state_info.display_state;
+    scroll_advance = scroll_info.advance;
 #ifndef EMULATOR
     svc_enable_interrupts();
 #endif
@@ -273,6 +392,39 @@ static bool confirm_screen(const char* request_title_param,
       }
     }
 
+    if (new_ds != SCROLLING) {
+      if (scroll_timer_pending) {
+        remove_runnable(&handle_scroll_timeout);
+        scroll_timer_pending = false;
+      }
+      scroll_info.advance = false;
+    } else {
+      bool page_advanced = false;
+
+      if (scroll_advance) {
+        scroll_info.advance = false;
+        scroll_timer_pending = false;
+        if (!prepare_scroll_page(&scroll_info, &state_info)) {
+          ret_stat = false;
+          goto confirm_screen_exit;
+        }
+
+        (*layout_notification_func)(
+            state_info.lines[LAYOUT_REQUEST_NO_ANIMATION].request_title,
+            state_info.lines[LAYOUT_REQUEST_NO_ANIMATION].request_body,
+            NOTIFICATION_REQUEST_NO_ANIMATION);
+        cur_layout = LAYOUT_REQUEST_NO_ANIMATION;
+        page_advanced = true;
+      }
+
+      if (scroll_info.offset < scroll_info.size && !scroll_timer_pending) {
+        post_delayed(&handle_scroll_timeout, (void*)&screen_context,
+                     page_advanced ? CONFIRM_SCROLL_PERIOD_MS
+                                   : CONFIRM_SCROLL_INITIAL_MS);
+        scroll_timer_pending = true;
+      }
+    }
+
     if (new_ds == FINISHED) {
       ret_stat = true;
       break; /* confirmation done.  Exiting function */
@@ -303,8 +455,11 @@ static bool confirm_screen(const char* request_title_param,
 
 confirm_screen_exit:
 
+  remove_runnable(&handle_scroll_timeout);
   keepkey_button_set_on_press_handler(NULL, NULL);
   keepkey_button_set_on_release_handler(NULL, NULL);
+  memzero(scroll_body, sizeof(scroll_body));
+  memzero(scroll_title, sizeof(scroll_title));
 
   return (ret_stat);
 }
@@ -353,22 +508,37 @@ bool confirm_body_fits(const char* body, uint16_t body_width) {
                           font_height(body_font) + BODY_FONT_LINE_PADDING);
 }
 
-/// Show a confirmation, warning first when its body will not fit the screen.
-///
-/// draw_string() draws until a glyph no longer fits the canvas and then simply
-/// stops: a body taller than BODY_ROWS is drawn in part, with no ellipsis and
-/// nothing to tell the user that the tail of an address, an amount or a
-/// warning was dropped. The vsnprintf() into strbuf[BODY_CHAR_MAX] below cuts
-/// long host strings a second time, just as quietly.
-///
-/// So when the body will not fit, put an explicit screen in front of it. That
-/// screen costs its own hold, and the hold is a real consent signal: a host
-/// Cancel breaks it and the caller reports ActionCancelled, exactly as it
-/// would for the body screen. A body that is only partly shown is now never
-/// shown without saying so.
-///
-/// Bodies that fit take exactly the path they took before: one screen, one
-/// ButtonRequest, one hold.
+size_t confirm_body_format_page(const uint8_t* data, size_t size, char* out,
+                                size_t out_len, uint16_t body_width) {
+  if ((!data && size != 0) || !out || out_len < 2 || body_width == 0) return 0;
+
+  const size_t limit = size < out_len - 1 ? size : out_len - 1;
+  size_t best = 0;
+
+  /* Prefix fit is normally monotonic, but the standard layout vertically
+   * re-centres one- and two-line bodies. Scan the complete bounded buffer so a
+   * future font/layout adjustment cannot make an early non-fit hide a later,
+   * valid three-line prefix. */
+  for (size_t take = 1; take <= limit; take++) {
+    memcpy(out, data, take);
+    out[take] = '\0';
+    if (confirm_body_fits(out, body_width)) best = take;
+  }
+
+  if (best == 0) {
+    out[0] = '\0';
+    return 0;
+  }
+
+  memcpy(out, data, best);
+  out[best] = '\0';
+  return best;
+}
+
+/// Show a confirmation, scrolling ordinary text when its complete formatted
+/// body does not fit. Source truncation cannot be repaired after vsnprintf()
+/// has discarded bytes, so that case fails closed without showing an
+/// approve-able prefix.
 static bool confirm_helper(const char* request_title, const char* request_body,
                            layout_notification_t layout_notification_func,
                            bool constant_power, IconType iconNum,
@@ -382,44 +552,40 @@ static bool confirm_helper(const char* request_title, const char* request_body,
   const bool truncated = body_truncated;
   body_truncated = false;
 
-  /* Two independent ways the user can be shown less than what is being
-   * approved, and they need separate measurements because they happen at
-   * different times:
-   *
-   *   SOURCE       the formatted body did not fit strbuf. Characters were lost
-   *                before the renderer ever saw them, so no amount of looking
-   *                at the screen can detect it -- only vsnprintf()'s return
-   *                value could, and format_body() kept it.
-   *   RENDER       the body reached the renderer intact but did not fit the
-   *                canvas. draw_string_fits() replays the real placement and
-   *                reports whether the last character landed.
-   *
-   * Only layout_standard_notification is known to wrap the body at BODY_WIDTH
-   * over BODY_ROWS rows. Custom layouts place and size their own body, and
-   * layout_constant_power_notification draws from x = 128 + LEFT_MARGIN where
-   * the canvas edge, not BODY_WIDTH, is the limit. Measuring either of those
-   * against BODY_WIDTH would be wrong, so leave them exactly as they were --
-   * but a SOURCE truncation is layout-independent and must warn regardless.  */
+  /* Custom layouts own their geometry. Only the standard notification can use
+   * this renderer-backed pager; source truncation is layout-independent. */
   const bool render_incomplete =
       (layout_notification_func == &layout_standard_notification) &&
       !confirm_body_fits(request_body, body_width);
 
-  if (truncated || render_incomplete) {
-    /* No second ButtonRequest is written: the host already sent one and its
-     * ButtonAck armed button_request_acked, which stays armed for the body
-     * screen below. The wire dialogue is unchanged; only the number of holds
-     * is not. */
-    if (!confirm_screen("Cut Off",
-                        "This text is too long for the screen. Only part "
-                        "of it is shown. Hold to view it anyway.",
-                        &layout_standard_notification, constant_power, NO_ICON,
-                        immediate)) {
-      return false;
-    }
+  if (truncated) return false;
+
+  if (render_incomplete) {
+    return confirm_screen(request_title, request_body, layout_notification_func,
+                          constant_power, iconNum, immediate,
+                          (const uint8_t*)request_body, strlen(request_body),
+                          &confirm_body_format_page, body_width);
   }
 
   return confirm_screen(request_title, request_body, layout_notification_func,
-                        constant_power, iconNum, immediate);
+                        constant_power, iconNum, immediate, NULL, 0, NULL, 0);
+}
+
+bool confirm_paged(ButtonRequestType type, const char* request_title,
+                   const uint8_t* data, size_t size,
+                   confirm_page_formatter_t formatter) {
+  if (!request_title || !data || size == 0 || !formatter) return false;
+
+  button_request_acked = false;
+
+  ButtonRequest resp;
+  memset(&resp, 0, sizeof(ButtonRequest));
+  resp.has_code = true;
+  resp.code = type;
+  msg_write(MessageType_MessageType_ButtonRequest, &resp);
+
+  return confirm_screen(request_title, "", &layout_standard_notification, false,
+                        NO_ICON, false, data, size, formatter, BODY_WIDTH);
 }
 
 bool confirm(ButtonRequestType type, const char* request_title,

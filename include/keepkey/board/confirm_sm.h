@@ -25,6 +25,8 @@
 #include "keepkey/board/layout.h"
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 /* implement a means to display debug information */
 #ifdef DEBUG_ON
@@ -53,7 +55,19 @@
 /* The number of milliseconds to wait for a confirmation */
 #define CONFIRM_TIMEOUT_MS 1200
 
-typedef enum { HOME, CONFIRM_WAIT, CONFIRMED, FINISHED } DisplayState;
+/* Long confirmations advance quickly while the button remains down. The
+ * initial delay prevents an ordinary tap from skipping the first page; later
+ * pages move at roughly eight screens per second. */
+#define CONFIRM_SCROLL_INITIAL_MS 300
+#define CONFIRM_SCROLL_PERIOD_MS 120
+
+typedef enum {
+  HOME,
+  SCROLLING,
+  CONFIRM_WAIT,
+  CONFIRMED,
+  FINISHED
+} DisplayState;
 
 typedef enum {
   LAYOUT_REQUEST,
@@ -86,16 +100,39 @@ typedef struct {
 typedef void (*layout_notification_t)(const char* str1, const char* str2,
                                       NotificationType type);
 
+/** Format the largest displayable prefix of data into a NUL-terminated page.
+ *
+ * The return value is the number of input bytes represented by the page.
+ */
+typedef size_t (*confirm_page_formatter_t)(const uint8_t* data, size_t size,
+                                           char* out, size_t out_len,
+                                           uint16_t body_width);
+
 /// \brief Will a confirmation body fit on the screen it is drawn on?
 ///
 /// draw_string() stops drawing once a glyph no longer fits the canvas and
 /// reports nothing, so a body taller than BODY_ROWS rows is shown in part with
-/// nothing on screen to say so. Callers that measure first can say so.
+/// nothing on screen to say so. Callers use this boundary to paginate first.
 ///
 /// \param body        The body text as it will be drawn (NULL reads as "").
 /// \param body_width  Wrap width: BODY_WIDTH, or BODY_WIDTH_WITH_ICON.
 /// \returns true iff the whole body will be on screen.
 bool confirm_body_fits(const char* body, uint16_t body_width);
+
+/** Split ordinary confirmation text using the real OLED renderer boundary. */
+size_t confirm_body_format_page(const uint8_t* data, size_t size, char* out,
+                                size_t out_len, uint16_t body_width);
+
+/**
+ * Confirm a formatter-backed, potentially multi-page value.
+ *
+ * A long value starts on page one. Holding advances pages automatically;
+ * releasing pauses on the current page. After the final page has been shown,
+ * the user must release and perform a fresh hold to approve.
+ */
+bool confirm_paged(ButtonRequestType type, const char* request_title,
+                   const uint8_t* data, size_t size,
+                   confirm_page_formatter_t formatter);
 
 /// User confirmation.
 /// \param type            The kind of button request to send to the host.

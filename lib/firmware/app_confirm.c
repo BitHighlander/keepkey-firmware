@@ -417,7 +417,7 @@ size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
     if (used >= out_len - 1 || token_len > (out_len - 1) - used) break;
 
     memcpy(out + used, token, token_len + 1);
-    if (calc_str_line(get_body_font(), out, BODY_WIDTH) > BODY_ROWS) {
+    if (!confirm_body_fits(out, BODY_WIDTH)) {
       out[used] = '\0';
       break;
     }
@@ -429,50 +429,19 @@ size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
   return consumed;
 }
 
+static size_t confirm_bytes_scroll_page(const uint8_t* data, size_t size,
+                                        char* out, size_t out_len,
+                                        uint16_t body_width) {
+  (void)body_width;
+  return confirm_bytes_format_page(data, size, out, out_len);
+}
+
 bool confirm_bytes(ButtonRequestType button_request, const char* title,
                    const uint8_t* data, size_t size) {
   if (!title || (!data && size != 0)) return false;
   if (size == 0) return confirm(button_request, title, "(empty)");
-
-  static char page_body[BODY_CHAR_MAX];
-  static char page_title[TITLE_CHAR_MAX];
-  bool approved = false;
-
-  size_t pages = 0;
-  size_t offset = 0;
-  while (offset < size) {
-    const size_t take = confirm_bytes_format_page(data + offset, size - offset,
-                                                  page_body, sizeof(page_body));
-    if (take == 0) goto cleanup;
-    offset += take;
-    pages++;
-  }
-
-  offset = 0;
-  for (size_t page = 0; page < pages; page++) {
-    const size_t take = confirm_bytes_format_page(data + offset, size - offset,
-                                                  page_body, sizeof(page_body));
-    if (take == 0) goto cleanup;
-
-    int title_len;
-    if (pages == 1) {
-      title_len = snprintf(page_title, sizeof(page_title), "%s", title);
-    } else {
-      title_len = snprintf(page_title, sizeof(page_title), "%s %u/%u", title,
-                           (unsigned)(page + 1), (unsigned)pages);
-    }
-    if (title_len < 0 || (size_t)title_len >= sizeof(page_title)) goto cleanup;
-
-    if (!confirm(button_request, page_title, "%s", page_body)) goto cleanup;
-    offset += take;
-  }
-
-  approved = true;
-
-cleanup:
-  memzero(page_body, sizeof(page_body));
-  memzero(page_title, sizeof(page_title));
-  return approved;
+  return confirm_paged(button_request, title, data, size,
+                       &confirm_bytes_scroll_page);
 }
 
 bool confirm_omni(ButtonRequestType button_request, const char* title,
