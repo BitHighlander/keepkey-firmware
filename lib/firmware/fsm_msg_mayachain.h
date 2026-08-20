@@ -194,11 +194,19 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
     if (msg->deposit.has_memo) {
       // See if we can parse the memo
-      if (!mayachain_parseConfirmMemo(msg->deposit.memo,
-                                      sizeof(msg->deposit.memo))) {
+      /* strnlen, not sizeof: the capacity of a fixed array is not the length
+         of the memo in it. Mirrors the THORChain path. */
+      if (!mayachain_parseConfirmMemo(
+              msg->deposit.memo,
+              strnlen(msg->deposit.memo, sizeof(msg->deposit.memo)))) {
         // Memo not recognizable, ask to confirm it
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, _("Memo"),
-                     "%s", msg->deposit.memo)) {
+        /* confirm_bytes, not confirm("%s"): "%s" stops at the first NUL, so
+           an unparsed memo with an embedded zero would be signed with its tail
+           hidden. Takes an explicit length and escapes non-printables. */
+        if (!confirm_bytes(
+                ButtonRequestType_ButtonRequest_ConfirmMemo, _("Memo"),
+                (const uint8_t*)msg->deposit.memo,
+                strnlen(msg->deposit.memo, sizeof(msg->deposit.memo)))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
           layoutHome();
@@ -225,10 +233,12 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
   if (sign_tx->has_memo && !msg->deposit.has_memo) {
     // See if we can parse the tx memo. This memo ignored if deposit msg has
     // memo
-    if (!mayachain_parseConfirmMemo(sign_tx->memo, sizeof(sign_tx->memo))) {
+    if (!mayachain_parseConfirmMemo(
+            sign_tx->memo, strnlen(sign_tx->memo, sizeof(sign_tx->memo)))) {
       // Memo not recognizable, ask to confirm it
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, _("Memo"), "%s",
-                   sign_tx->memo)) {
+      if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, _("Memo"),
+                         (const uint8_t*)sign_tx->memo,
+                         strnlen(sign_tx->memo, sizeof(sign_tx->memo)))) {
         mayachain_signAbort();
         fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
         layoutHome();
