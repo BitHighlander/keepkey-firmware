@@ -68,6 +68,14 @@ static void handle_screen_press(void* context) {
 
   StateInfo* si = (StateInfo*)context;
 
+  /* A screen that opened while the button was still down -- or still bouncing
+     from the previous screen's release -- has not seen a genuine press yet.
+     The driver has no debounce and reports a release bounce as a press, so
+     without this the release of one hold satisfies the NEXT screen. #484. */
+  if (!si->armed) {
+    return;
+  }
+
   if (button_request_acked) {
     switch (si->display_state) {
       case HOME:
@@ -87,6 +95,10 @@ static void handle_screen_release(void* context) {
   assert(context != NULL);
 
   StateInfo* si = (StateInfo*)context;
+
+  /* The button is up: any bounce from a previous screen has settled and the
+     next press on this screen is the user's own. #484. */
+  si->armed = true;
 
   switch (si->display_state) {
     case CONFIRM_WAIT:
@@ -200,6 +212,15 @@ static bool confirm_screen(const char* request_title_param,
   state_info.immediate = immediate;
   state_info.display_state = HOME;
   state_info.active_layout = LAYOUT_REQUEST;
+  /* Arm immediately only if the button is already up. If it is down, this
+     screen waits for the release before it will accept anything. #484.
+     There is no button under EMULATOR -- keepkey_button_up() is a constant
+     false there -- so arm unconditionally or emulated presses never land. */
+#ifdef EMULATOR
+  state_info.armed = true;
+#else
+  state_info.armed = keepkey_button_up();
+#endif
 
   /* Request */
   state_info.lines[LAYOUT_REQUEST].request_title = request_title;

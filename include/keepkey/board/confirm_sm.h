@@ -79,6 +79,11 @@ typedef struct {
   DisplayState display_state;
   ActiveLayout active_layout;
   bool immediate;
+  /* False until the button has been observed released while this screen owned
+     it. The button driver has no debounce, so releasing a hold bounces the line
+     and dispatches a press; a screen armed a moment earlier would otherwise
+     accept that bounce as consent. See #484. */
+  bool armed;
 } StateInfo;
 
 #define isprint(c) ((c) >= 0x20 && (c) < 0x7f)
