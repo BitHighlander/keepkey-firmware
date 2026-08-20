@@ -35,7 +35,6 @@
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"
-#include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
 #include "keepkey/firmware/binance.h"
@@ -56,10 +55,7 @@
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
-#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
-#include "keepkey/firmware/zcash.h"
-#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -94,10 +90,12 @@
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
-#include "messages-zcash.pb.h"
-#include "messages-hive.pb.h"
 
 #include <stdio.h>
+/* strnlen: the THORChain memo paths measure fixed arrays rather than
+   trusting their capacity. Included explicitly instead of relying on the
+   fsm_msg_*.h textual includes below to drag it in by accident. */
+#include <string.h>
 
 #define _(X) (X)
 
@@ -117,13 +115,17 @@ static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
     return;                                                            \
   }
 
-#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
-  if (storage_isBitcoinOnlyLocked()) {                              \
-    fsm_sendFailure(FailureType_Failure_Other,                      \
-                    "Device holds a bitcoin-only wallet. Wipe the " \
-                    "device to use multi-chain firmware.");         \
-    layoutHome();                                                   \
-    return;                                                         \
+/* Only the two ceremony STARTS use this. Every other message that persists
+ * anything is handled structurally instead: storage_commit() aborts an armed
+ * ceremony, so a handler that writes can never have its write consumed by
+ * one -- the worst it can do is end it. */
+#define CHECK_NO_CEREMONY                                     \
+  if (setup_isArmed()) {                                      \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
+                    "Device is in the middle of setup. Send " \
+                    "Initialize or Cancel first.");           \
+    layoutHome();                                             \
+    return;                                                   \
   }
 
 #define CHECK_PIN              \
@@ -287,30 +289,16 @@ void fsm_sendFailure(FailureType code, const char* text) {
 
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
-  /* Abort every signing engine before clearing, the way fsm_msgInitialize and
-   * fsm_msgCancel already do. session_clear() reaches
-   * signed_metadata_clear_signers() -> signed_metadata_clear(), which drops
-   * the clear-sign tx<->metadata binding and relied_on_metadata. Ethereum
-   * signing was left running across that, so this unauthenticated,
-   * no-button-press message could disarm the binding mid-flight and let the
-   * remaining calldata chunks be signed with the enforcement gate seeing
-   * nothing to enforce. Only Zcash was being aborted here. */
-  ethereum_signing_abort();
-  zcash_signing_abort();
   session_clear(/*clear_pin=*/true);
   fsm_sendSuccess("Session cleared");
 }
 
-// Always-on handlers: Bitcoin/common (fsm_msg_coin), CipherKeyValue/identity
-// (fsm_msg_crypto), debug-link, and BIP85 -- none are coin engines.
 #include "fsm_msg_common.h"
 #include "fsm_msg_coin.h"
-#include "fsm_msg_crypto.h"
-#include "fsm_msg_debug.h"
-#include "fsm_msg_bip85.h"
-#if !BITCOIN_ONLY
 #include "fsm_msg_ethereum.h"
 #include "fsm_msg_nano.h"
+#include "fsm_msg_crypto.h"
+#include "fsm_msg_debug.h"
 #include "fsm_msg_eos.h"
 #include "fsm_msg_cosmos.h"
 #include "fsm_msg_osmosis.h"
@@ -322,25 +310,3 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
-#include "fsm_msg_hive.h"
-/* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
-#include "fsm_msg_clearsign_attestor.h"
-#else
-// Bitcoin-only: the coin engines above are compiled out, but the always-on
-// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
-// and factory-reset calls signed_metadata_clear_signers() (EVM clearsign).
-// With no state to reset, no-ops are correct.
-void ethereum_signing_abort(void) {}
-void tendermint_signAbort(void) {}
-void eos_signingAbort(void) {}
-void signed_metadata_clear_signers(void) {}
-#endif  // !BITCOIN_ONLY
-#if ZCASH_PRIVACY
-#include "fsm_msg_zcash.h"
-#else
-// Zcash shielded/Orchard engine compiled out. The always-on
-// Initialize/ClearSession/Cancel handlers still call zcash_signing_abort();
-// with no privacy state to reset, a no-op is correct. (Bitcoin-only forces
-// privacy off, so this stub also covers the bitcoin-only image.)
-void zcash_signing_abort(void) {}
-#endif

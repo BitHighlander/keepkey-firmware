@@ -31,47 +31,21 @@
 #include <libopencm3/stm32/f2/rng.h>
 #endif
 
-/* random32() has two implementations selected by a build flag: the STM32
- * hardware RNG, and -- under EMULATOR -- the host OS CSPRNG. Neither is a
- * weak PRNG today, and the emulator branch deliberately aborts rather than
- * degrading to libc random().
- *
- * This assertion guards the *selection*, not either implementation. The
- * July 2026 COLDCARD incident was not a broken RNG: a board config left
- * the hardware-RNG macro defined-but-zero, the supporting library tested
- * only whether that macro was *defined* rather than enabled, and seed
- * generation silently used the wrong source for five years (~1,367 BTC
- * drained across 4,585 addresses). Nothing about the output looked wrong
- * -- the substituted generator passed every statistical test, it was just
- * seeded with ~40 bits -- so no amount of host-side entropy testing could
- * have caught it. Only the build configuration was wrong.
- *
- * The lesson is that "which RNG did we actually compile in" deserves a
- * check the build cannot silently get wrong. __arm__ comes from the
- * compiler's own target definition rather than from any board config or
- * CMake option, so a mistaken -DEMULATOR cannot satisfy both conditions:
- * firmware targeting the STM32 can only ever compile the RNG_DR path.
- * Hosted emulator builds (x86_64 / __aarch64__) are unaffected. */
+/* EMULATOR is a definedness switch throughout this firmware.  Reject it on an
+ * ARM target regardless of its value, so -DEMULATOR=0 cannot silently select a
+ * hosted RNG in production firmware. */
 #if defined(EMULATOR) && defined(__arm__)
 #error \
-    "EMULATOR selects the host-CSPRNG random32(); ARM firmware must use the STM32 hardware RNG"
+    "EMULATOR selects the host CSPRNG; ARM firmware must use the STM32 hardware RNG"
 #endif
 
-/* The same lesson applied to the other RNG selection switch. trezor-crypto's
- * crypto/rand.c carries a zero-seeded LCG random32() under #ifndef
- * RAND_PLATFORM_INDEPENDENT, and rand.c is compiled into the trezorcrypto
- * library (deps/crypto/CMakeLists.txt). It is excluded today only because the
- * top-level CMakeLists defines that macro -- previously as "=0", which reads
- * like a disable but, against an #ifndef test, is an enable.
- *
- * Every target that links trezorcrypto also links kkrand, so a stale build
- * would currently hit a duplicate-symbol error on random32() rather than
- * silently take the LCG. That is an accident of the link graph, not a
- * guarantee: a future target linking trezorcrypto alone would build clean and
- * deterministic. Assert the macro instead of relying on either coincidence. */
+/* trezor-crypto's crypto/rand.c contains a zero-seeded test LCG under
+ * #ifndef RAND_PLATFORM_INDEPENDENT.  Production supplies random32() here, so
+ * make removal of that provider declaration a compile failure rather than
+ * relying on today's duplicate-symbol link failure. */
 #ifndef RAND_PLATFORM_INDEPENDENT
 #error \
-    "RAND_PLATFORM_INDEPENDENT must be defined; without it trezor-crypto compiles its insecure LCG random32()"
+    "RAND_PLATFORM_INDEPENDENT must be defined; otherwise trezor-crypto compiles its insecure test LCG"
 #endif
 
 void reset_rng(void) {
@@ -125,30 +99,13 @@ uint32_t random32(void) {
   last = new;
   return new;
 #else
-  /* Emulator cryptography must use the host OS CSPRNG. emulatorRandom() is
-   * backed by /dev/urandom on POSIX and BCryptGenRandom on Windows and aborts
-   * the process on failure; never fall back to libc random(). */
-  uint32_t v = 0;
-  emulatorRandom(&v, sizeof(v));
-  return v;
+  /* Emulator cryptography uses the existing host OS CSPRNG implementation,
+   * which reads /dev/urandom and aborts on failure. */
+  uint32_t value = 0;
+  emulatorRandom(&value, sizeof(value));
+  return value;
 #endif
 }
-
-#if defined(EMULATOR) && !defined(__APPLE__)
-/* trezor-crypto declares random_buffer() as a weak symbol so platforms can
- * supply their own. GNU/MinGW ld will NOT extract a weak definition from a
- * static archive to satisfy a strong reference (fsm.c/reset.c/storage.c),
- * which breaks the Linux .so and Windows .dll links. Provide a strong
- * definition here — identical to trezor-crypto's, built on our random32().
- * macOS ld64 resolves the weak one fine, so it's left untouched there. */
-void random_buffer(uint8_t* buf, size_t len) {
-  uint32_t r = 0;
-  for (size_t i = 0; i < len; i++) {
-    if (i % 4 == 0) r = random32();
-    buf[i] = (r >> ((i % 4) * 8)) & 0xff;
-  }
-}
-#endif
 
 // I miss C++ templates sooo bad.
 #define RANDOM_PERMUTE(BUFF, COUNT)             \

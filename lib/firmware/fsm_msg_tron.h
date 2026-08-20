@@ -102,101 +102,40 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     return;
   }
 
-  /* Clear-sign from raw_data itself — the exact bytes being signed.
-   * (The proto's side-channel to_address/amount fields are never trusted:
-   * they are not part of what is signed.) */
-  TronParsedTx parsed;
-  TronTxType tx_type =
-      tron_parseRawTx(msg->raw_data.bytes, msg->raw_data.size, &parsed);
+  /* The signature covers raw_data and nothing else (tron.c: sha256_Raw over
+   * msg->raw_data, then ecdsa_sign_digest). The proto's to_address/amount
+   * fields are a host-supplied side channel that is never hashed, so the old
+   * "Send %s TRX to %s?" screen asserted a destination and an amount the
+   * device had no way to vouch for: a host could display one payee and get a
+   * signature over a transfer to another, and a host that simply omitted both
+   * optional fields suppressed the screen altogether. This firmware has no
+   * TRON protobuf parser, so every TronSignTx is a blind signature. Disclose
+   * that instead of displaying unbound data, behind the same AdvancedMode
+   * policy used for opaque Solana transactions and unknown-data ETH calls. */
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Enable AdvancedMode to blind-sign"));
+    layoutHome();
+    return;
+  }
 
-  if (tx_type == TRON_TX_UNVERIFIED) {
-    /* Unrecognized contract or payload: explicit blind-sign only,
-     * same policy gate as Solana opaque transactions. */
-    if (!storage_isPolicyEnabled("AdvancedMode")) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Enable AdvancedMode to blind-sign"));
-      layoutHome();
-      return;
-    }
-    char blind_msg[48];
-    snprintf(blind_msg, sizeof(blind_msg), "Sign %u-byte TRON transaction?",
-             (unsigned)msg->raw_data.size);
-    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TRON Blind Sign",
-                 "%s", blind_msg)) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
-      layoutHome();
-      return;
-    }
-  } else {
-    /* The parsed owner account is the one spending — it must be ours. */
-    char derived_addr[TRON_ADDRESS_MAX_LEN];
-    char owner_addr[TRON_ADDRESS_MAX_LEN];
-    if (!tron_getAddress(node->public_key, derived_addr,
-                         sizeof(derived_addr)) ||
-        !tron_addressFromBytes(parsed.owner, owner_addr, sizeof(owner_addr)) ||
-        strcmp(derived_addr, owner_addr) != 0) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("TX owner does not match derived key"));
-      layoutHome();
-      return;
-    }
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
+               "Sign unverified %u-byte TRON transaction? Amount and "
+               "destination unknown.",
+               (unsigned)msg->raw_data.size)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+    layoutHome();
+    return;
+  }
 
-    char to_str[TRON_ADDRESS_MAX_LEN];
-    if (!tron_addressFromBytes(parsed.to, to_str, sizeof(to_str))) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_Other, _("Address encoding failed"));
-      layoutHome();
-      return;
-    }
-
-    bool confirmed = false;
-    if (tx_type == TRON_TX_TRANSFER) {
-      char amount_str[32];
-      tron_formatAmount(amount_str, sizeof(amount_str), parsed.amount);
-      confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "TRON",
-                          "Send %s to %s?", amount_str, to_str);
-    } else { /* TRON_TX_TRC20_TRANSFER */
-      char contract_str[TRON_ADDRESS_MAX_LEN];
-      char amount_str[90];
-      confirmed =
-          tron_addressFromBytes(parsed.contract, contract_str,
-                                sizeof(contract_str)) &&
-          tron_formatTrc20Amount(parsed.trc20_amount, amount_str,
-                                 sizeof(amount_str)) &&
-          confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                  "TRC-20 Transfer", "Token contract %s", contract_str) &&
-          /* Token decimals are not known on-device; show base units. */
-          confirm(ButtonRequestType_ButtonRequest_SignTx, "TRC-20 Transfer",
-                  "Send %s base units to %s?", amount_str, to_str);
-    }
-
-    if (confirmed && parsed.has_fee_limit) {
-      char fee_str[32];
-      tron_formatAmount(fee_str, sizeof(fee_str), parsed.fee_limit);
-      confirmed = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TRON",
-                          "Max network fee %s", fee_str);
-    }
-
-    if (confirmed && parsed.memo_len > 0) {
-      /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
-       * other memo surface. The old single-screen path showed up to 114 chars
-       * unpaged, but 3 OLED lines only guarantee ~84 chars with wide glyphs —
-       * an 85..114-char memo could have its signed tail (affiliate bps,
-       * destination tail) silently clipped. The pager also discloses
-       * non-printable memos as complete hex instead of a byte-count summary. */
-      confirmed = thorchain_confirm_full_memo("Memo", (const char*)parsed.memo,
-                                              parsed.memo_len);
-    }
-
-    if (!confirmed) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
-      layoutHome();
-      return;
-    }
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction",
+               "Really sign this TRON transaction?")) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+    layoutHome();
+    return;
   }
 
   // Sign the transaction with secp256k1
@@ -219,6 +158,22 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
 
   CHECK_PIN
 
+  /* Merge note (#432 vs this branch): #432 gated TRON message signing behind
+   * AdvancedMode because the message was a blind sign. It is not any more —
+   * confirm_bytes() below paginates and displays EVERY signed byte, which is
+   * the property the gate was standing in for.
+   *
+   * The gate is dropped here for the same reason it was dropped from
+   * fsm_msgEthereumSignMessage: full disclosure is the stronger guarantee, and
+   * AdvancedMode is session state that resets on power cycle, so keeping it
+   * would block a default device from signing after every replug. Leaving ETH
+   * ungated while TRON stayed gated would also be an inconsistency with no
+   * principled basis, since both now show the user every byte.
+   *
+   * Note this is NOT the same call as the TRON SignTx fence (#405), which
+   * stays: a TRON *transaction* still cannot be parsed or bound on this line,
+   * so it remains genuinely blind and keeps its AdvancedMode gate. */
+
   // Validate path: m/44'/195'/...
   if (msg->address_n_count < 3 || msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 195)) {
@@ -229,7 +184,7 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
   }
 
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
-                     "Sign TRON Message", msg->message.bytes,
+                     _("Sign TRON Message"), msg->message.bytes,
                      msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
@@ -271,7 +226,7 @@ void fsm_msgTronVerifyMessage(const TronVerifyMessage* msg) {
   }
 
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
-                     "TRON Message Verified", msg->message.bytes,
+                     _("TRON Message Verified"), msg->message.bytes,
                      msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
@@ -304,6 +259,20 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
     return;
   }
 
+  if (!tron_typed_hash_policy_allows(storage_isPolicyEnabled("AdvancedMode"))) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Enable AdvancedMode to blind-sign typed hashes"));
+    layoutHome();
+    return;
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_Other, "TIP-712 Blind Sign",
+               "Cannot verify these hashes. Trust the host?")) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
@@ -314,31 +283,6 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
   if (!tron_getAddress(node->public_key, address, sizeof(address))) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_Other, _("Address derivation failed"));
-    layoutHome();
-    return;
-  }
-
-  /* Blind-sign gate: device only receives pre-computed hashes — it cannot
-   * reconstruct or verify the original typed-data struct. Require the same
-   * AdvancedMode policy as TronSignTx blind-signing so this message type
-   * can't be used to route around the kill-switch. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
-    memzero(node, sizeof(*node));
-    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
-                 "TIP-712 blind signing is disabled. "
-                 "Enable AdvancedMode in device settings.");
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Blind signing disabled by policy"));
-    layoutHome();
-    return;
-  }
-
-  /* The user must explicitly acknowledge blind signing before the hashes. */
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, "TIP-712 Blind Sign",
-               "Device cannot verify typed-data contents. "
-               "Only proceed if you trust the host application.")) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }

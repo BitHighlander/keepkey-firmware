@@ -22,8 +22,9 @@ bool binance_isValidDenom(const char* denom) {
   if (len == 0 || len > BINANCE_MAX_DENOM_LEN) return false;
   for (size_t i = 0; i < len; i++) {
     const char c = denom[i];
-    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'))
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-')) {
       return false;
+    }
   }
   return true;
 }
@@ -31,22 +32,20 @@ bool binance_isValidDenom(const char* denom) {
 bool binance_validateTransfer(const BinanceTransferMsg* transfer) {
   if (!transfer || transfer->inputs_count != 1 ||
       transfer->inputs[0].coins_count != 1 || transfer->outputs_count != 1 ||
-      transfer->outputs[0].coins_count != 1)
+      transfer->outputs[0].coins_count != 1) {
     return false;
+  }
 
   const BinanceInputOutput* input = &transfer->inputs[0];
   const BinanceInputOutput* output = &transfer->outputs[0];
   const BinanceCoin* input_coin = &input->coins[0];
   const BinanceCoin* output_coin = &output->coins[0];
-  if (!input->has_address || !output->has_address || !input_coin->has_amount ||
-      !output_coin->has_amount || !input_coin->has_denom ||
-      !output_coin->has_denom || input_coin->amount <= 0 ||
-      output_coin->amount <= 0 || input_coin->amount != output_coin->amount ||
-      strcmp(input_coin->denom, output_coin->denom) != 0 ||
-      !binance_isValidDenom(input_coin->denom))
-    return false;
-
-  return true;
+  return input->has_address && output->has_address && input_coin->has_amount &&
+         output_coin->has_amount && input_coin->has_denom &&
+         output_coin->has_denom && input_coin->amount > 0 &&
+         output_coin->amount > 0 && input_coin->amount == output_coin->amount &&
+         strcmp(input_coin->denom, output_coin->denom) == 0 &&
+         binance_isValidDenom(input_coin->denom);
 }
 
 bool binance_signTxInit(const HDNode* _node, const BinanceSignTx* _msg) {
@@ -54,8 +53,9 @@ bool binance_signTxInit(const HDNode* _node, const BinanceSignTx* _msg) {
   if (!_node || !_msg || !_msg->has_msg_count || _msg->msg_count == 0 ||
       !_msg->has_account_number || _msg->account_number < 0 ||
       !_msg->has_chain_id || _msg->chain_id[0] == '\0' || !_msg->has_sequence ||
-      _msg->sequence < 0 || !_msg->has_source || _msg->source < 0)
+      _msg->sequence < 0 || !_msg->has_source || _msg->source < 0) {
     return false;
+  }
 
   msgs_remaining = _msg->msg_count;
 
@@ -92,8 +92,9 @@ bool binance_signTxInit(const HDNode* _node, const BinanceSignTx* _msg) {
 
 bool binance_serializeCoin(const BinanceCoin* coin) {
   if (!coin || !coin->has_amount || coin->amount <= 0 || !coin->has_denom ||
-      !binance_isValidDenom(coin->denom))
+      !binance_isValidDenom(coin->denom)) {
     return false;
+  }
 
   bool success = true;
   char buffer[64 + 1];
@@ -107,8 +108,8 @@ bool binance_serializeCoin(const BinanceCoin* coin) {
 
 bool binance_serializeInputOutput(const BinanceInputOutput* io) {
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
   if (!bech32_decode(hrp, decoded, &decoded_len, io->address)) {
     return false;
   }
@@ -129,8 +130,9 @@ bool binance_serializeInputOutput(const BinanceInputOutput* io) {
 }
 
 bool binance_signTxUpdateTransfer(const BinanceTransferMsg* _msg) {
-  if (!initialized || msgs_remaining == 0 || !binance_validateTransfer(_msg))
+  if (!initialized || msgs_remaining == 0 || !binance_validateTransfer(_msg)) {
     return false;
+  }
 
   bool success = true;
 
@@ -161,8 +163,10 @@ bool binance_signTxUpdateTransfer(const BinanceTransferMsg* _msg) {
 
 bool binance_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
   if (!initialized || msgs_remaining != 0 || !has_message || !public_key ||
-      !signature)
+      !signature) {
     return false;
+  }
+
   char buffer[64 + 1];
 
   if (!tendermint_snprintf(&ctx, buffer, sizeof(buffer),

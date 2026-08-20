@@ -146,12 +146,10 @@ void fsm_msgTendermintMsgAck(const TendermintMsgAck* msg) {
   switch (msg->send.address_type) {
     case OutputAddressType_TRANSFER:
     default: {
-      /* The host-supplied denomination is part of the signed Amino JSON. Do
-       * not relabel or rescale it using unrelated coin metadata. */
       char amount_str[48];
       const int amount_len =
           snprintf(amount_str, sizeof(amount_str), "%" PRIu64 " %s",
-                   msg->send.amount, msg->denom);
+                   msg->send.amount, sign_tx->denom);
       if (amount_len <= 0 || (size_t)amount_len >= sizeof(amount_str)) {
         tendermint_signAbort();
         fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -197,9 +195,6 @@ void fsm_msgTendermintMsgAck(const TendermintMsgAck* msg) {
     return;
   }
 
-  /* Review the exact session values that bind the signed JSON. These fields
-   * are host supplied, so a friendly chain label must never substitute for
-   * the denomination or message-type prefix actually hashed. */
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, "Chain ID",
                      (const uint8_t*)sign_tx->chain_id,
                      strlen(sign_tx->chain_id)) ||

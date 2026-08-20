@@ -4,6 +4,16 @@ set(sources
     recovery.cpp
     rng_health.cpp
     signing.cpp
+    binance.cpp
+    coins.cpp
+    cosmos.cpp
+    eos.cpp
+    ethereum.cpp
+    nano.cpp
+    recovery.cpp
+    setup_ceremony.cpp
+    ripple.cpp
+    solana.cpp
     storage.cpp
     transaction.cpp
     usb_rx.cpp

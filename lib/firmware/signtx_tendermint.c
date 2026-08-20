@@ -47,8 +47,10 @@ bool tendermint_signTxInit(const HDNode* _node, const void* _msg,
                            TendermintSigningType type) {
   tendermint_signAbort();
   if (!_node || !_msg || !denom ||
-      (type != TENDERMINT_SIGNING_COSMOS && type != TENDERMINT_SIGNING_GENERIC))
+      (type != TENDERMINT_SIGNING_COSMOS &&
+       type != TENDERMINT_SIGNING_GENERIC)) {
     return false;
+  }
 
   /*
     _msg is expected to be of type TendermintSignTx, CosmosSignTx or
@@ -128,8 +130,8 @@ bool tendermint_signTxUpdateMsgSend(const uint64_t amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, to_address)) {
     return false;
@@ -194,8 +196,8 @@ bool tendermint_signTxUpdateMsgDelegate(const uint64_t amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -260,8 +262,8 @@ bool tendermint_signTxUpdateMsgUndelegate(const uint64_t amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -325,8 +327,8 @@ bool tendermint_signTxUpdateMsgRedelegate(
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -399,8 +401,8 @@ bool tendermint_signTxUpdateMsgRewards(const uint64_t* amount,
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
     return false;
@@ -468,8 +470,8 @@ bool tendermint_signTxUpdateMsgIBCTransfer(
   if (!tendermint_canUpdate()) return false;
   char buffer[128];
   size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
+  char hrp[45];
+  uint8_t decoded[38];
 
   if (!bech32_decode(hrp, decoded, &decoded_len, receiver)) {
     return false;
@@ -544,7 +546,10 @@ bool tendermint_signTxUpdateMsgIBCTransfer(
 }
 
 bool tendermint_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
-  if (!initialized || msgs_remaining != 0 || !has_message) return false;
+  if (!initialized || msgs_remaining != 0 || !has_message || !public_key ||
+      !signature) {
+    return false;
+  }
   char buffer[128];
 
   // 14 + ^20 + 2 = ^36
@@ -576,7 +581,7 @@ bool tendermint_signingConfigMatches(const char* chain_name, const char* denom,
 }
 
 bool tendermint_signingIsFinished(void) {
-  return initialized && msgs_remaining == 0;
+  return initialized && msgs_remaining == 0 && has_message;
 }
 
 void tendermint_signAbort(void) {

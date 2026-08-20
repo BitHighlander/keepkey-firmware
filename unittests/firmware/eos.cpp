@@ -27,7 +27,7 @@ TEST(EOS, NewAccountCannotDowngradeToUnknownAction) {
 TEST(EOS, FormatNameVec) {
   struct {
     uint64_t value;
-    const char *name;
+    const char* name;
     bool ret;
   } vec[] = {
       {0x5530ea0000000000, "eosio", true},
@@ -48,7 +48,7 @@ TEST(EOS, FormatNameVec) {
       {0x0, "", true},
   };
 
-  for (const auto &v : vec) {
+  for (const auto& v : vec) {
     char str[EOS_NAME_STR_SIZE];
     ASSERT_EQ(v.ret, eos_formatName(v.value, str));
     if (v.name) ASSERT_EQ(v.name, std::string(str));
@@ -97,7 +97,7 @@ TEST(EOS, FormatAssetVec) {
       {10000000000000L, 0x000000534f4504L, "1000000000.0000 EOS", true},
   };
 
-  for (const auto &v : vec) {
+  for (const auto& v : vec) {
     char str[EOS_ASSET_STR_SIZE];
     EosAsset asset;
     asset.has_amount = true;

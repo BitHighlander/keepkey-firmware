@@ -21,6 +21,9 @@ target_link_libraries(crypto-unit
     kkrand
     kkemulator
     qrcodegenerator
+    qrcodegenerator
+    kkrand
+    kkemulator
     trezorcrypto
     kktransport)
 

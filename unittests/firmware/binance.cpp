@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/transport/interface.h"
 #include "keepkey/firmware/binance.h"
+#include "trezor/crypto/secp256k1.h"
 }
 
 #include "gtest/gtest.h"
@@ -47,7 +48,6 @@ TEST(Binance, TransferValidationFailsClosed) {
 
   msg = transfer("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 1000000000);
   EXPECT_TRUE(binance_validateTransfer(&msg));
-
   msg = transfer("BNB", 0);
   EXPECT_FALSE(binance_validateTransfer(&msg));
   msg = transfer("BNB", -1);

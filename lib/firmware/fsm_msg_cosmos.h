@@ -377,7 +377,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
     }
   } else if (msg->has_ibc_transfer) {
     /** Confirm required transaction parameters exist */
-    if (!msg->ibc_transfer.has_receiver || !msg->ibc_transfer.has_sender ||
+    if (!msg->ibc_transfer.has_sender || !msg->ibc_transfer.has_receiver ||
         !msg->ibc_transfer.has_source_channel ||
         !msg->ibc_transfer.has_source_port ||
         !msg->ibc_transfer.has_revision_height ||
@@ -403,10 +403,18 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
       return;
     }
 
-    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, "IBC Sender",
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
+                       "Confirm sender address",
                        (const uint8_t*)msg->ibc_transfer.sender,
-                       strlen(msg->ibc_transfer.sender)) ||
-        !confirm_bytes(ButtonRequestType_ButtonRequest_Other, "IBC Receiver",
+                       strlen(msg->ibc_transfer.sender))) {
+      tendermint_signAbort();
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      layoutHome();
+      return;
+    }
+
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
+                       "Confirm dest. address",
                        (const uint8_t*)msg->ibc_transfer.receiver,
                        strlen(msg->ibc_transfer.receiver))) {
       tendermint_signAbort();
