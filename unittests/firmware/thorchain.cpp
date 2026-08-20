@@ -13,22 +13,34 @@ TEST(Thorchain, MemoWithEmbeddedNulIsNotParsed) {
      the buffer to strtok, which stops at the first NUL. A memo such as
      "=:ETH.ETH:<dest>:0\0:affiliate:75" is signed in FULL -- the EVM caller
      passes the true ABI length -- but parsing and confirmation stopped at the
-     zero byte, so the affiliate suffix was never shown.
-     There is no honest way to parse a field that lies about where it ends, so
-     the parser must fail closed and let the caller disclose the raw bytes with
-     a length-aware writer. */
-  static const char kMemo[] =
+     zero byte, so the affiliate suffix was never shown. */
+  static const char kHiddenSuffix[] =
       "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0\0:affiliate:75";
-  /* sizeof - 1 keeps the embedded NUL and drops only the literal's terminator.
-   */
-  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
-            thorchain_parseConfirmMemo(kMemo, sizeof(kMemo) - 1));
+  EXPECT_EQ(
+      THORCHAIN_MEMO_UNPARSED,
+      thorchain_parseConfirmMemo(kHiddenSuffix, sizeof(kHiddenSuffix) - 1));
 
-  /* A trailing NUL at the very end is the same rule: the length says those
-     bytes are content. */
-  static const char kTrailing[] = "=:ETH.ETH:0xabc:0\0";
+  /* A TRAILING NUL inside the declared length is refused too.
+
+     An earlier fix exempted this case, reasoning that nothing is hidden behind
+     bytes that are all zero. It was adopted to make two fixtures pass -- and
+     those fixtures were wrong, declaring 59 bytes for a 58-byte memo. Relaxing
+     firmware disclosure to satisfy a test is the one move this release's
+     invariant forbids.
+
+     It is also inconsistent: a length word that does not describe its own
+     content is a non-canonical ABI encoding, which the offset-word validation
+     already refuses. A declaration the device cannot trust does not become
+     trustworthy because the bytes it misdescribes happen to be zero. */
+  static const char kTrailingNul[] =
+      "ADD:ETH.ETH:0xc5b2608927ea95ed43f842f553e3a27b09c050e8:420\0";
   EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
-            thorchain_parseConfirmMemo(kTrailing, sizeof(kTrailing) - 1));
+            thorchain_parseConfirmMemo(kTrailingNul, sizeof(kTrailingNul) - 1));
+
+  /* The SAME memo with a truthful length parses normally. This is the control:
+     it shows the rule rejects the misdeclaration, not the memo. */
+  EXPECT_NE(THORCHAIN_MEMO_UNPARSED,
+            thorchain_parseConfirmMemo(kTrailingNul, sizeof(kTrailingNul) - 2));
 }
 
 TEST(Thorchain, ThorchainGetAddress) {
