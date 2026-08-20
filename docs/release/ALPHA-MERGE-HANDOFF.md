@@ -75,6 +75,55 @@ STILL REFERENCED but no longer defined: 40  <-- these are regressions
 
 ```
 
+## Status as of this handoff
+
+`alpha-merge2` = `41949eaeb`. **32 regressions outstanding**, down from 40.
+
+Done:
+
+- **board / confirm** (batch 1, complete). `calc_str_line_n` and `calc_str_page`
+  restored for Hive, but NOT verbatim -- alpha's counted lines in a `uint8_t`,
+  which is the 255-newline wrap `0b2f08185` fixed. develop's `uint32_t` walk was
+  generalised to take a length instead, so both callers share one implementation
+  with the fix in it. `confirm_zcash_address` restored for `fsm_msg_zcash.h`.
+  Two obsolete test files removed, with the lost property recorded in
+  `board.cpp` rather than silently dropped.
+
+- **clearsign handlers**. `fsm_msgEthereumTxMetadata` and
+  `fsm_msgLoadClearsignSigner` restored -- `messagemap.def` dispatches both, so
+  their absence is a build break. Plus `ethereum_signing_isInProgress`, which
+  they depend on.
+
+- **`random_buffer`**, guarded `EMULATOR && !__APPLE__`. Not a general
+  definition: trezor-crypto declares it weak and GNU/MinGW ld will not extract a
+  weak definition from a static archive, breaking the Linux .so and Windows .dll.
+
+## The remaining 32, classified
+
+24 are called from `lib/` and must be restored. 8 are referenced only by tests,
+so the test is removed or retargeted.
+
+Clusters, heaviest first:
+
+| file | symbols | note |
+|---|---|---|
+| `storage.c` | 8 | PIN KDF V18/V19 readers/writers, Zcash Orchard keys, seed fingerprint. **Storage-format code -- a wrong merge here corrupts wallets, not screens. Do this one first and slowly.** |
+| `thorchain.c` / `mayachain.c` | 7 | asset/denom/signer validators |
+| `solana.c` | 1 real + 6 test-only | `solana_parseInstrSchema` is the real one |
+| `osmosis.c`, `transaction.c`, `reset.c`, `zxliquidtx.c`, `thortx.c` | 6 | |
+| `ethereum.c` | 1 test-only | `ethereum_eip712_is_domain_primary_type` |
+
+## Gate limitations -- read before trusting it
+
+The gate **over-reports**. It does not evaluate `#if` guards and does not look
+inside `deps/`, so a platform-guarded definition (`random_buffer`) or a vendored
+one reads as missing. Check by hand before restoring; two such cases have
+already come up.
+
+It also cannot see whether a restored function still *behaves* correctly against
+develop's surrounding code -- it only checks that a definition exists. Restoring
+a symbol is the start of the check, not the end.
+
 ## Suggested order
 
 Batch by subsystem, one PR each into alpha, gate after every batch:
