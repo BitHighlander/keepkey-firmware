@@ -35,7 +35,13 @@ regexTarget = "line"
 paths = ['''^docs/security/7\.15\.0-rc21-clearsign-release-control\.md$''']
 regexes = ['''^[[:space:]]*-[[:space:]]*python-keepkey:[[:space:]]*`c406a1ba9120da410c356dbff7f4d4bd1e1758fa`\.[[:space:]]*$''']
 
-[allowlist]
+# Converted from the deprecated singular [allowlist] to a fourth [[allowlists]]
+# entry. gitleaks refuses to load a config containing both forms ("[allowlist] is
+# deprecated, it cannot be used alongside [[allowlists]]"), which is what the
+# alpha<-develop merge produced: alpha carried three [[allowlists]] and develop
+# carried this one [allowlist]. The merge kept both and the scan died at config
+# load, taking the whole build graph with it. Content is unchanged.
+[[allowlists]]
 description = """
 Two U2F attestation artifacts are public by design and must not fail the scan.
 
