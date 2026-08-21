@@ -40,7 +40,7 @@
  * Every level costs one frame on the C stack, so this is the recursion bound
  * as well as the semantic one. EIP712_MAX_DEPTH is checked BEFORE descending,
  * never after. */
-#define EIP712_MAX_DEPTH 2
+#define EIP712_MAX_DEPTH 3
 
 /* Slots in the shared encoding pool. Each open container holds one 32-byte
  * slot per member encoded so far; when it completes, those collapse to a
@@ -51,7 +51,7 @@
  * reserve above the linker floor. Buffering 32-byte encodings instead costs
  * EIP712_MAX_SLOTS * 32, and only ONE SHA3_CTX is ever live: the one folding a
  * finished container. */
-#define EIP712_MAX_SLOTS 8
+#define EIP712_MAX_SLOTS 12
 
 /* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
  * hashed, not stored, so this bounds one chunk rather than the whole value. */

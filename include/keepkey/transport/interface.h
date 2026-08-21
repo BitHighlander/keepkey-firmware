@@ -45,8 +45,19 @@
 #include "trezor_transport.h"
 
 #ifndef EMULATOR
-/* The max size of a decoded protobuf */
-#define MAX_DECODE_SIZE (13 * 1024)
+/* The max size of a decoded protobuf.
+ *
+ * 12 KB, reduced from 13 KB to buy the SRAM structured EIP-712's array walk
+ * needs. Not a guess: fsm.c static-asserts sizeof() of EVERY registered
+ * inbound message against this value, so a message that outgrows it fails the
+ * BUILD rather than overflowing at runtime. 10 KB does not compile -- the real
+ * floor is between 10 and 12 KB -- so this is the last kilobyte available
+ * without shrinking a message.
+ *
+ * Measured: with arrays and a 13 KB buffer the runtime reserve is 16,180 B,
+ * which FAILS the linker's 16,384 B gate. At 12 KB it is 17,204 B, a margin of
+ * 820 B. */
+#define MAX_DECODE_SIZE (12 * 1024)
 #else
 #define MAX_DECODE_SIZE (26 * 1024)
 #endif

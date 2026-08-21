@@ -421,7 +421,13 @@ typedef struct {
   uint8_t slot_base;    /* first slot in the pool belonging to this frame */
   uint8_t member_count; /* members declared by the struct */
   uint8_t member_index; /* next member to absorb */
-  bool is_array;        /* array frames hash WITHOUT a typeHash prefix */
+  bool is_array;
+  uint8_t elem_data_type;
+  bool elem_has_size;
+  uint32_t elem_size;
+  char elem_struct[EIP712_MAX_STRUCT_NAME];
+  uint8_t levels_total;
+  uint8_t level_index;
   bool have_type_hash;
   uint8_t type_hash[32]; /* lives exactly as long as the frame that needs it */
   uint16_t array_len;
@@ -464,6 +470,12 @@ static struct {
   char pending_name[EIP712_MAX_STRUCT_NAME];
 
   /* typeHash sub-machine */
+  /* True while an array's LENGTH is the value in flight. The frame is not
+   * pushed until the length arrives, so the member_path the device sees still
+   * points AT the array rather than into it. */
+  bool want_array_len;
+  uint32_t pending_declared_dim;
+
   uint8_t phase;
   Eip712Closure closure;
   uint8_t closure_index;
@@ -653,10 +665,73 @@ static void complete_frame(void) {
   eip712_stream_abort();
 }
 
+/* Point the machine at element member_index of the array frame on top.
+ *
+ * An element is one of three things, and which one is fixed by the TYPE rather
+ * than by anything the host sends alongside the value: another array while
+ * dimensions remain, a struct if the leaf type is one, otherwise a leaf. */
+static void drive_array_element(void) {
+  Eip712Frame *arr = &e712.stack[e712.depth - 1];
+
+  if (arr->level_index + 1 < arr->levels_total) {
+    if (e712.depth >= EIP712_MAX_DEPTH) {
+      fail("EIP-712 array nests too deeply for this device");
+      return;
+    }
+    Eip712Frame *inner = &e712.stack[e712.depth];
+    memzero(inner, sizeof(*inner));
+    inner->is_array = true;
+    inner->slot_base = arr->slot_base + arr->array_len;
+    inner->elem_data_type = arr->elem_data_type;
+    inner->elem_has_size = arr->elem_has_size;
+    inner->elem_size = arr->elem_size;
+    strlcpy(inner->elem_struct, arr->elem_struct, EIP712_MAX_STRUCT_NAME);
+    inner->levels_total = arr->levels_total;
+    inner->level_index = arr->level_index + 1;
+    e712.pending_declared_dim = 0;
+    e712.want_array_len = true;
+    request_value();
+    return;
+  }
+
+  if (arr->elem_data_type ==
+      EthereumTypedDataStructAck_EthereumDataType_STRUCT) {
+    if (e712.depth >= EIP712_MAX_DEPTH) {
+      fail("EIP-712 document nests too deeply for this device");
+      return;
+    }
+    if (arr->elem_struct[0] == 0) {
+      fail("EIP-712 array of structs has no type name");
+      return;
+    }
+    Eip712Frame *child = &e712.stack[e712.depth];
+    memzero(child, sizeof(*child));
+    strlcpy(child->name, arr->elem_struct, EIP712_MAX_STRUCT_NAME);
+    child->slot_base = arr->slot_base + arr->array_len;
+    e712.depth++;
+    begin_type_hash();
+    return;
+  }
+
+  e712.pending_data_type = arr->elem_data_type;
+  e712.pending_has_size = arr->elem_has_size;
+  e712.pending_size = arr->elem_size;
+  strlcpy(e712.pending_name, "item", sizeof(e712.pending_name));
+  request_value();
+}
+
 /* A slot was just filled. Either the frame is done, or fetch the next member.
  */
 static void advance_after_slot(void) {
   Eip712Frame *f = &e712.stack[e712.depth - 1];
+  if (f->is_array) {
+    if (f->member_index >= f->array_len) {
+      complete_frame();
+      return;
+    }
+    drive_array_element();
+    return;
+  }
   if (f->member_index >= f->member_count) {
     complete_frame();
     return;
@@ -783,11 +858,31 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck *ack) {
       strlcpy(e712.pending_name, m->name, sizeof(e712.pending_name));
 
       if (m->type.array_levels_count > 0) {
-        /* Arrays are the one shape this walk does not yet handle. Refusing is
-         * the honest answer: the host falls back to the AdvancedMode-gated
-         * hashed path, which is what every typed-data payload gets today. */
-        fail("EIP-712 arrays are not supported on this firmware yet");
-        return false;
+        if (e712.depth >= EIP712_MAX_DEPTH || m->type.array_levels_count > 4) {
+          fail("EIP-712 array nests too deeply for this device");
+          return false;
+        }
+        /* Stage the element descriptor in the frame we are ABOUT to push, then
+         * ask for the array's length. The frame is not pushed yet, so the
+         * member_path the device sends still points AT the array rather than
+         * into it -- which is exactly the path whose value is the length. */
+        Eip712Frame *arr = &e712.stack[e712.depth];
+        memzero(arr, sizeof(*arr));
+        arr->is_array = true;
+        arr->slot_base = f->slot_base + f->member_count;
+        arr->elem_data_type = (uint8_t)m->type.data_type;
+        arr->elem_has_size = m->type.has_size;
+        arr->elem_size = m->type.size;
+        if (m->type.has_struct_name) {
+          strlcpy(arr->elem_struct, m->type.struct_name,
+                  EIP712_MAX_STRUCT_NAME);
+        }
+        arr->levels_total = (uint8_t)m->type.array_levels_count;
+        arr->level_index = 0;
+        e712.pending_declared_dim = m->type.array_levels[0];
+        e712.want_array_len = true;
+        request_value();
+        return true;
       }
 
       if (m->type.data_type ==
@@ -824,6 +919,41 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck *ack) {
     return false;
   }
   e712.waiting = EIP712_IDLE;
+
+  if (e712.want_array_len) {
+    /* Big-endian uint16. Anything else is a host not speaking this protocol. */
+    if (ack->value.size != 2) {
+      fail("EIP-712 array length must be two bytes");
+      return false;
+    }
+    uint16_t len = (uint16_t)((ack->value.bytes[0] << 8) | ack->value.bytes[1]);
+    Eip712Frame *arr = &e712.stack[e712.depth];
+
+    /* A FIXED dimension is part of the type string and therefore of typeHash.
+     * Accepting a different count would sign a document whose type declares
+     * another, and nothing downstream could notice. */
+    if (e712.pending_declared_dim != 0 && len != e712.pending_declared_dim) {
+      fail("EIP-712 array length does not match its declared size");
+      return false;
+    }
+    if ((uint32_t)arr->slot_base + len > EIP712_MAX_SLOTS) {
+      fail("EIP-712 array is too long for this device");
+      return false;
+    }
+
+    arr->array_len = len;
+    arr->member_index = 0;
+    e712.depth++;
+    e712.want_array_len = false;
+
+    if (len == 0) {
+      /* An empty array still hashes -- keccak of no bytes at all. */
+      complete_frame();
+      return true;
+    }
+    drive_array_element();
+    return true;
+  }
 
   Eip712FieldType rebuilt;
   memzero(&rebuilt, sizeof(rebuilt));
