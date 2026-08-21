@@ -31,6 +31,11 @@
 #define SOL_PUBKEY_SIZE 32
 #define SOL_SIG_SIZE 64
 #define SOL_MAX_ACCOUNTS 32
+/* KKSOLSW1: how many lookup-table-resolved accounts a provider may attest for
+   one transaction. Bounded because the preimage and the screens are both
+   linear in it, and because a provider that needs to name more than eight
+   accounts is describing something the user cannot meaningfully review. */
+#define SOL_MAX_LUT_ACCOUNTS 8
 #define SOL_MAX_INSTRUCTIONS 8
 #define SOL_LAMPORTS_DIVISOR 1000000000ULL
 #define SOL_MAX_TOKEN_DECIMALS 18
@@ -324,6 +329,28 @@ const SolanaTokenInfo* solana_findTokenInfo(
  * attested tuple — the caller must additionally confirm the attested decimals
  * match the signed instruction before trusting the amount. */
 bool solana_token_info_trusted(const SolanaTokenInfo* ti);
+
+/* KKSOLSW1: is the host-supplied lookup-table account list attested by a
+ * clear-sign signer FOR THIS EXACT TRANSACTION?
+ *
+ * A v0 message may source instruction accounts from an Address Lookup Table.
+ * Those bytes are not in the message being signed, so the device cannot derive
+ * them and forces the whole transaction opaque -- refused without AdvancedMode,
+ * an explicit blind sign with it. A provider may instead attest the resolved
+ * list, turning that blind sign into a clear sign.
+ *
+ * Preimage, domain-tagged so a signature made for any other purpose cannot be
+ * replayed as one, and bound to the message so it cannot be replayed onto a
+ * different transaction:
+ *
+ *   "KeepKeySolanaTxAccounts/1" || sha256(raw_tx) || count(le32) || key[i](32)
+ *
+ * Returns false unless a signer is loaded for `key_id` and the signature
+ * verifies. Annotation only: the caller still runs the unverified review. */
+bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
+                                 const uint8_t (*accounts)[32],
+                                 size_t num_accounts, uint32_t signer_key_id,
+                                 const uint8_t* sig, size_t sig_len);
 
 /* ceil(price * limit / 1,000,000) priority-fee lamports, overflow-safe. Returns
  * false (and leaves *out untouched) if the true value exceeds UINT64_MAX — the
