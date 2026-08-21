@@ -111,8 +111,9 @@ int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
            uint8_t* hashRet);
 bool eip712_parse_canonical_u32(const char* text, uint32_t* value);
 
-/* Exposed for strict-value regression tests. */
-int encAddress(const char* string, uint8_t* encoded);
+/* Exposed for strict-value regression tests. encAddress is declared above with
+   the rest of the encoder API; re-declaring it here trips -Werror=redundant-decls
+   on the ARM build. */
 int encodeBytes(const char* string, uint8_t* encoded);
 int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded);
 

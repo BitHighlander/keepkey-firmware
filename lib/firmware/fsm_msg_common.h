@@ -151,9 +151,16 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
     for (size_t i = 0; i < msg->end - msg->start; i++) {
       if (msg->start + i < COINS_COUNT) {
         resp->table[i] = coins[msg->start + i];
-      } else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
+      }
+#if !BITCOIN_ONLY
+      /* Guarded, not just skipped at runtime: the bitcoin-only image defines
+         TOKENS_COUNT as 0 and links neither `tokens` nor coinFromToken(), so
+         this branch is both an unsigned `< 0` comparison that -Werror=type-limits
+         rejects and an undefined reference at link. */
+      else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
         coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
       }
+#endif
     }
   }
 

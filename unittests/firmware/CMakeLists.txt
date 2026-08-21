@@ -1,18 +1,15 @@
+# Only tests that build against BOTH firmware variants belong here. The
+# multi-chain suites are appended below under NOT KK_BITCOIN_ONLY -- the merge
+# had leaked eight of them (binance, coins, cosmos, eos, ethereum, nano, ripple,
+# solana) into this unconditional list as well, so the bitcoin-only build
+# compiled them anyway and died on ethereum_address_checksum, which is compiled
+# out of that image. recovery.cpp was also listed twice.
 set(sources
     dice.cpp
     recovery.cpp
     rng_health.cpp
     signing.cpp
-    binance.cpp
-    coins.cpp
-    cosmos.cpp
-    eos.cpp
-    ethereum.cpp
-    nano.cpp
-    recovery.cpp
     setup_ceremony.cpp
-    ripple.cpp
-    solana.cpp
     storage.cpp
     transaction.cpp
     usb_rx.cpp
