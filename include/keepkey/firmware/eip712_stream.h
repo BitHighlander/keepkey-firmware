@@ -133,7 +133,33 @@ typedef enum {
   EIP712_FAILED,
 } Eip712Wait;
 
-/* Begin a signing session. Emits the first request. */
+/* What the machine wants next. The walk never writes a message: RESP_INIT uses
+ * msg_resp, which is private to fsm.c, and keeping key material and the wire
+ * out of the walk is what lets the whole thing be unit-tested. */
+typedef enum {
+  EIP712_REQ_NONE = 0,
+  EIP712_REQ_STRUCT,    /* send EthereumTypedDataStructRequest */
+  EIP712_REQ_VALUE,     /* send EthereumTypedDataValueRequest */
+  EIP712_REQ_DONE,      /* both hashes ready: derive, sign, respond */
+  EIP712_REQ_FAIL,      /* send Failure(error) */
+  EIP712_REQ_CANCELLED, /* the user declined a screen */
+} Eip712ReqKind;
+
+typedef struct {
+  Eip712ReqKind kind;
+  char struct_name[EIP712_MAX_STRUCT_NAME];
+  uint32_t member_path[EIP712_MAX_DEPTH + 2];
+  uint8_t member_path_len;
+  const char *error;
+  uint8_t domain_separator[32];
+  uint8_t message_hash[32];
+  uint32_t address_n[6];
+  size_t address_n_count;
+} Eip712Next;
+
+const Eip712Next *eip712_stream_next(void);
+
+/* Begin a signing session. Fills in the first request. */
 bool eip712_stream_begin(const EthereumSignTypedData *msg);
 
 /* Feed the machine. Each returns false and tears the session down on any
