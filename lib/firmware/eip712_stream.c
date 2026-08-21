@@ -528,20 +528,21 @@ static bool eip712_confirm_leaf(const char *name, const Eip712FieldType *field,
   /* Everything else as 0x hex. confirm_helper paginates, so a long dynamic
    * bytes value is disclosed across screens rather than truncated -- the
    * exact-byte disclosure rule 7.14.2 established. */
-  char hex[2 + 2 * 64 + 1];
-  uint16_t shown = len > 64 ? 64 : len;
+  /* Sized for a WHOLE leaf, so nothing signed is ever cut off the screen.
+   * confirm_helper paginates a long body across screens, which is the
+   * exact-byte disclosure rule 7.14.2 established -- a cap here would either
+   * truncate a signed value or refuse a valid one. This is ~2 KB of stack
+   * inside a 16 KB stack, and stack is not what the linker gate measures. */
+  char hex[2 + 2 * EIP712_MAX_LEAF + 1];
+  if (len > EIP712_MAX_LEAF) return false;
   hex[0] = '0';
   hex[1] = 'x';
-  for (uint16_t i = 0; i < shown; i++) {
+  for (uint16_t i = 0; i < len; i++) {
     static const char d[] = "0123456789abcdef";
     hex[2 + 2 * i] = d[value[i] >> 4];
     hex[3 + 2 * i] = d[value[i] & 0x0F];
   }
-  hex[2 + 2 * shown] = '\0';
-  if (shown != len) {
-    /* Never silently truncate a signed value. */
-    return false;
-  }
+  hex[2 + 2 * len] = '\0';
   return confirm(ButtonRequestType_ButtonRequest_Other, name, "%s: %s",
                  type_name, hex);
 }
@@ -589,7 +590,7 @@ static void request_value(void) {
 /* Start computing typeHash for the top frame's struct. A struct that appears
  * twice is hashed twice -- round trips are cheap here and .bss is not. */
 static void begin_type_hash(void) {
-  Eip712Frame *f = &e712.stack[e712.depth - 1];
+  const Eip712Frame *f = &e712.stack[e712.depth - 1];
   memzero(&e712.closure, sizeof(e712.closure));
   if (!closure_add(&e712.closure, f->name)) {
     fail("EIP-712 struct name too long");
@@ -723,7 +724,7 @@ static void drive_array_element(void) {
 /* A slot was just filled. Either the frame is done, or fetch the next member.
  */
 static void advance_after_slot(void) {
-  Eip712Frame *f = &e712.stack[e712.depth - 1];
+  const Eip712Frame *f = &e712.stack[e712.depth - 1];
   if (f->is_array) {
     if (f->member_index >= f->array_len) {
       complete_frame();
