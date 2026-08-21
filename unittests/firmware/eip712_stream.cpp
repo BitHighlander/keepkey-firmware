@@ -350,6 +350,79 @@ TEST(Eip712Stream, ReferencedStructsAreSortedByName) {
                                            "Zebra(uint256 stripes)"));
 }
 
+TEST(Eip712Stream, SortIsNotMerelyReversedDiscoveryOrder) {
+  // The two-struct canary above is WEAKER THAN IT LOOKS: with Zebra discovered
+  // before Apple, plain reversal produces the same order as a correct sort, so
+  // a buggy "reverse the discovery list" implementation passes it.
+  //
+  // Three dependencies separate the three hypotheses:
+  //   discovery  [Bravo, Charlie, Alpha]
+  //   reversed   [Alpha, Charlie, Bravo]
+  //   SORTED     [Alpha, Bravo, Charlie]   <- the only correct one
+  Fixture f;
+  const char *names[] = {"Bravo", "Charlie", "Alpha"};
+  for (const char *n : names) {
+    auto &d = f.defs[n];
+    memset(&d, 0, sizeof(d));
+    addMember(d, "v",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  }
+  auto &m = f.defs["M"];
+  memset(&m, 0, sizeof(m));
+  addMember(m, "b", structField("Bravo"));
+  addMember(m, "c", structField("Charlie"));
+  addMember(m, "a", structField("Alpha"));
+
+  EXPECT_EQ(typeHashHex(f, "M"), keccakHex("M(Bravo b,Charlie c,Alpha a)"
+                                           "Alpha(uint256 v)"
+                                           "Bravo(uint256 v)"
+                                           "Charlie(uint256 v)"));
+}
+
+TEST(Eip712Stream, TransitivelyReferencedStructsAreCollectedAndSorted) {
+  // A struct reached only THROUGH another dependency still belongs in the
+  // closure, and still sorts among the rest rather than trailing the struct
+  // that introduced it.
+  Fixture f;
+  auto &inner = f.defs["Aardvark"];
+  memset(&inner, 0, sizeof(inner));
+  addMember(inner, "n",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+
+  auto &mid = f.defs["Zulu"];
+  memset(&mid, 0, sizeof(mid));
+  addMember(mid, "deep", structField("Aardvark"));  // only reachable via Zulu
+
+  auto &m = f.defs["M"];
+  memset(&m, 0, sizeof(m));
+  addMember(m, "z", structField("Zulu"));
+
+  EXPECT_EQ(typeHashHex(f, "M"), keccakHex("M(Zulu z)"
+                                           "Aardvark(uint256 n)"
+                                           "Zulu(Aardvark deep)"));
+}
+
+TEST(Eip712Stream, StructReachableOnlyAsAnArrayElementIsStillInTheClosure) {
+  // Trezor fixed exactly this in 2.5.1. An array member still carries
+  // data_type STRUCT with array_levels set, so the collector must look at
+  // struct_name regardless of the dimensions.
+  Fixture f;
+  auto &person = f.defs["Person"];
+  memset(&person, 0, sizeof(person));
+  addMember(person, "wallet",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+
+  auto &m = f.defs["Group"];
+  memset(&m, 0, sizeof(m));
+  Field arr = structField("Person");
+  arr.array_levels_count = 1;
+  arr.array_levels[0] = 0;  // Person[]
+  addMember(m, "members", arr);
+
+  EXPECT_EQ(typeHashHex(f, "Group"),
+            keccakHex("Group(Person[] members)Person(address wallet)"));
+}
+
 TEST(Eip712Stream, Permit2PermitSingleTypeHash) {
   // The payload that started all of this. PermitSingle nests PermitDetails, so
   // any flat-structs-only implementation cannot sign a Uniswap approval.
