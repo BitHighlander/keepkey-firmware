@@ -40,7 +40,7 @@
  * Every level costs one frame on the C stack, so this is the recursion bound
  * as well as the semantic one. EIP712_MAX_DEPTH is checked BEFORE descending,
  * never after. */
-#define EIP712_MAX_DEPTH 4
+#define EIP712_MAX_DEPTH 2
 
 /* Slots in the shared encoding pool. Each open container holds one 32-byte
  * slot per member encoded so far; when it completes, those collapse to a
@@ -51,7 +51,7 @@
  * reserve above the linker floor. Buffering 32-byte encodings instead costs
  * EIP712_MAX_SLOTS * 32, and only ONE SHA3_CTX is ever live: the one folding a
  * finished container. */
-#define EIP712_MAX_SLOTS 16
+#define EIP712_MAX_SLOTS 8
 
 /* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
  * hashed, not stored, so this bounds one chunk rather than the whole value. */
@@ -60,11 +60,11 @@
 /* Distinct struct types one document may reference, including EIP712Domain
  * and the primary type. Permit2's PermitSingle needs 2, Seaport's
  * OrderComponents 3. */
-#define EIP712_MAX_STRUCTS 8
+#define EIP712_MAX_STRUCTS 3
 
 /* Longest struct name we will hold. The wire allows 80; names this long do
  * not occur in practice and every one costs EIP712_MAX_STRUCTS bytes. */
-#define EIP712_MAX_STRUCT_NAME 48
+#define EIP712_MAX_STRUCT_NAME 32
 
 /* Fetch one struct's member list by name. Returns NULL if the host has not
  * supplied it. Firmware backs this with the streaming state machine; the unit
@@ -108,3 +108,43 @@ bool eip712_validate_leaf(
     const uint8_t *value, uint16_t value_len);
 
 #endif
+
+/* ── The walk ────────────────────────────────────────────────────────
+ *
+ * KeepKey has no blocking request/response primitive. wait_for_tiny_msg is a
+ * 64-byte channel for ButtonAck and PinAck; a StructAck is 6 KB. OneKey drives
+ * its walk from a re-entrant call() that pumps usbPoll() from inside a handler,
+ * and that cannot be transplanted here.
+ *
+ * So the walk is a RESUMABLE state machine. Each handler runs to completion,
+ * emits at most one request, and returns; the next Ack resumes it. State lives
+ * in one static block, and the member_path is the cursor.
+ *
+ * Two sequential machines:
+ *   A. typeHash -- for the struct a frame is about to hash, stream its
+ *      encodeType closure and cache the digest.
+ *   B. values   -- walk members, absorbing each leaf as it is displayed.
+ */
+
+typedef enum {
+  EIP712_IDLE = 0,
+  EIP712_WANT_STRUCT, /* a StructAck will arrive next */
+  EIP712_WANT_VALUE,  /* a ValueAck will arrive next */
+  EIP712_FAILED,
+} Eip712Wait;
+
+/* Begin a signing session. Emits the first request. */
+bool eip712_stream_begin(const EthereumSignTypedData *msg);
+
+/* Feed the machine. Each returns false and tears the session down on any
+ * protocol or validation error, having already sent a Failure. */
+bool eip712_stream_on_struct(const EthereumTypedDataStructAck *ack);
+bool eip712_stream_on_value(const EthereumTypedDataValueAck *ack);
+
+/* True while a session is live, so the FSM can reject an out-of-order Ack. */
+Eip712Wait eip712_stream_waiting(void);
+
+/* Drop all session state. Called on completion, failure, Initialize and
+ * ClearSession -- a half-walked document must never survive into the next one.
+ */
+void eip712_stream_abort(void);

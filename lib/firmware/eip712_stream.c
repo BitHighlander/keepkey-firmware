@@ -36,6 +36,7 @@
 #include <string.h>
 
 #include "keepkey/board/util.h"
+#include "memzero.h"
 #include "sha3.h"
 
 typedef EthereumTypedDataStructAck_EthereumFieldType Eip712FieldType;
@@ -386,3 +387,64 @@ bool eip712_type_hash(const char *name, Eip712StructLookup lookup, void *ctx,
   keccak_Final(&hash, out);
   return true;
 }
+
+/* ── Session state ───────────────────────────────────────────────────
+ *
+ * Every byte here is .bss, and .bss is the only thing that counts against the
+ * linker gap -- that gap IS the stack, so transients on it are free.
+ *
+ * Measured budget: _stack - _ebss is 17,716 B against a 16,384 B floor, so
+ * there are 1,332 B to spend. The sizes in eip712_stream.h are chosen to fit
+ * with margin, not chosen first and hoped for.
+ *
+ * The single SHA3_CTX is shared. Only one hash is ever in progress: either an
+ * encodeType stream (which spans round trips, so it must live here) or a frame
+ * fold (which completes inside one handler and could have been a local). One
+ * context serves both because they never overlap.
+ */
+typedef struct {
+  char name[EIP712_MAX_STRUCT_NAME];
+  uint8_t slot_base;    /* first slot in the pool belonging to this frame */
+  uint8_t member_count; /* members declared by the struct */
+  uint8_t member_index; /* next member to absorb */
+  bool is_array;        /* array frames hash WITHOUT a typeHash prefix */
+  uint16_t array_len;
+} Eip712Frame;
+
+static struct {
+  bool active;
+  Eip712Wait waiting;
+
+  uint32_t address_n[8];
+  size_t address_n_count;
+  char primary_type[EIP712_MAX_STRUCT_NAME];
+  bool metamask_v4_compat;
+
+  /* Root 0 is the domain, root 1 the message; the domain separator is kept
+   * while the message is walked. */
+  uint8_t root;
+  uint8_t domain_separator[32];
+  bool have_domain_separator;
+
+  Eip712Frame stack[EIP712_MAX_DEPTH];
+  uint8_t depth;
+
+  uint8_t pool[EIP712_MAX_SLOTS][32];
+  uint8_t slots_used;
+
+  /* typeHash memo, so a struct used twice is not re-derived. */
+  char th_name[EIP712_MAX_STRUCTS][EIP712_MAX_STRUCT_NAME];
+  uint8_t th_value[EIP712_MAX_STRUCTS][32];
+  uint8_t th_count;
+
+  SHA3_CTX hash;
+
+  uint32_t path[EIP712_MAX_DEPTH + 2];
+  uint8_t path_len;
+} e712;
+
+Eip712Wait eip712_stream_waiting(void) {
+  return e712.active ? e712.waiting : EIP712_IDLE;
+}
+
+void eip712_stream_abort(void) { memzero(&e712, sizeof(e712)); }

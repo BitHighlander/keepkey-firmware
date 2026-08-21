@@ -318,6 +318,20 @@ TEST(Eip712Stream, TypeHashMatchesTheSpecExample) {
   addMember(mail, "contents",
             mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
 
+  // The expectation is the PUBLISHED literal, not a keccak of a string written
+  // in this test. That distinction is the whole point: an expectation this test
+  // derives the same way the implementation does would agree with a shared
+  // misreading of the spec and still go green.
+  //
+  // Source: assets/eip-712/Example.js in the ethereum/EIPs repository -- the
+  // reference implementation EIP-712 itself links to. Its assertions publish
+  // typeHash('Mail') verbatim. Independently republished by Example.sol in the
+  // same directory, by MetaMask eth-sig-util's hashStruct snapshots for both
+  // V3 and V4, and by Mrtenz/eip-712.
+  EXPECT_EQ(typeHashHex(f, "Mail"),
+            "a0cedeb2dc280ba39b857546d74f5549c3a1d7bdc2dd96bf881f76108e23dac2");
+
+  // And the string itself, so a failure says WHICH half diverged.
   EXPECT_EQ(typeHashHex(f, "Mail"),
             keccakHex("Mail(Person from,Person to,string contents)"
                       "Person(string name,address wallet)"));
@@ -451,6 +465,31 @@ TEST(Eip712Stream, Permit2PermitSingleTypeHash) {
                       "uint256 sigDeadline)"
                       "PermitDetails(address token,uint160 amount,"
                       "uint48 expiration,uint48 nonce)"));
+}
+
+TEST(Eip712Stream, Eip2612PermitTypeHashMatchesUsdcsOwnContract) {
+  // Circle publishes this constant in their deployed FiatTokenV2_2 source:
+  //   contracts/v2/EIP2612.sol
+  //   bytes32 public constant PERMIT_TYPEHASH =
+  //       0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
+  // OpenZeppelin's ERC20Permit computes the same value. A flat struct, so this
+  // pins field order and the atomic spellings rather than the closure.
+  Fixture f;
+  auto &permit = f.defs["Permit"];
+  memset(&permit, 0, sizeof(permit));
+  addMember(permit, "owner",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(permit, "spender",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(permit, "value",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  addMember(permit, "nonce",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  addMember(permit, "deadline",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+
+  EXPECT_EQ(typeHashHex(f, "Permit"),
+            "6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9");
 }
 
 TEST(Eip712Stream, TypeHashRefusesAMissingStruct) {
