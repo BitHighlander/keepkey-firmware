@@ -46,6 +46,14 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   strlcpy(resp->firmware_variant, variant_getName(),
           sizeof(resp->firmware_variant));
 
+  /* Taproot capability. signing.c handles SPENDTAPROOT inputs and PAYTOTAPROOT
+     outputs, and coins.def carries the BIP-86 entries, but the bit that tells a
+     host so was never set -- so hosts could not detect support and six
+     catalogued Bitcoin tests skipped with "Firmware does not report
+     supports_taproot", making a shipped feature invisible in the report. */
+  resp->has_supports_taproot = true;
+  resp->supports_taproot = true;
+
   /* Security settings */
   resp->has_pin_protection = true;
   resp->pin_protection = storage_hasPin();
