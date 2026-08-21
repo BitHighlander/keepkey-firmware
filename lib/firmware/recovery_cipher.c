@@ -380,7 +380,7 @@ void next_character(void) {
   memzero(current_word, sizeof(current_word));
 
   /* Show cipher and partial word */
-  layout_cipher(formatted_word, cipher);
+  layout_cipher(formatted_word, cipher, NULL);
   memzero(formatted_word, sizeof(formatted_word));
 }
 

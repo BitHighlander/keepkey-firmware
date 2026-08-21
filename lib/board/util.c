@@ -104,7 +104,7 @@ bool is_valid_ascii(const uint8_t* data, uint32_t size) {
 
 /* convert number in base units to specified decimal precision */
 int base_to_precision(uint8_t* dest, const uint8_t* value,
-                      const uint8_t dest_len, const uint8_t value_len,
+                      const size_t dest_len, const size_t value_len,
                       const uint8_t precision) {
   if (!(dest && value)) {
     // invalid pointer
