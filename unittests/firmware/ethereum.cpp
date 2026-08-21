@@ -257,6 +257,8 @@ TEST(Ethereum, LpApprovalRequiresMainnetDerivedPairAndCanonicalSpender) {
   msg = approve_liquidity_tx();
   msg.data_initial_chunk.bytes[4] = 1;
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+}
+
 TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
   uint8_t encoded[32] = {0};
   ASSERT_EQ(SUCCESS,

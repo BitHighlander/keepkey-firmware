@@ -82,6 +82,8 @@ TEST(Solana, DerivesAndMatchesAssociatedTokenRecipientOwner) {
   EXPECT_FALSE(solana_findTokenRecipientOwner(&msg, SOL_TOKEN_PROGRAM, mint,
                                               wrong_destination, matched));
   for (uint8_t byte : matched) EXPECT_EQ(byte, 0xaa);
+}
+
 TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
   char buf[64];
 
