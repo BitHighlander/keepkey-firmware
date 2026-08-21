@@ -199,7 +199,15 @@ bitcoin-only 32,092 B.
    all four argument types, 16-character labels. **CI success alone does not
    prove this display boundary.**
 3. The CI test report green with **nothing withheld**.
-4. `solana-schemas-local.json` CI test key replaced or removed.
+4. `solana-schemas-local.json` CI test key replaced or removed. **Host-side
+   deliverable** — the file is not in this repository; it ships with the
+   provider/Vault tooling. Listed here because a device cannot verify a
+   schema signed with a test key, so it gates the release even though the
+   fix lands elsewhere. **Host-side
+   deliverable** — the file is not in this repository; it ships with the
+   provider/Vault tooling. Listed here because a device cannot verify a
+   schema signed with a test key, so it gates the release even though the
+   fix lands elsewhere.
 5. R-1.4 re-verified on the exact release candidate.
 6. The D-01 sub-item (duplicate detector never observed firing correctly)
    resolved or accepted in writing.
