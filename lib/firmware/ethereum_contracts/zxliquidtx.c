@@ -157,11 +157,23 @@ static bool confirmFromAccountMatch(const EthereumSignTx* msg) {
     snprintf(&address_str[2 + i * 2], 3, "%02x", recipient[i]);
   }
 
+  /* The screen states plainly which of the two cases this is and shows the
+   * recipient's full address, so a press here is informed consent to exactly
+   * that recipient. Return whether the USER approved -- not whether the
+   * recipient happened to be us.
+   *
+   * `return is_self` refused the transaction AFTER the user approved it, and
+   * ethereum.c turns that false into ActionCancelled, so the device reported
+   * "Signing cancelled by user" for a transaction the user had just confirmed.
+   * That made every removeLiquidityETH to a third party unsignable, which is
+   * the normal way to withdraw a pool position to another address. Withholding
+   * the disclosure is not what makes this safe; showing "NOT this wallet" and
+   * the address is. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                "Uniswap Recipient", "%s\n%s",
                is_self ? "this wallet" : "NOT this wallet", address_str))
     return false;
-  return is_self;
+  return true;
 }
 
 bool zx_isZxLiquidTx(const EthereumSignTx* msg) {
