@@ -153,8 +153,10 @@ TEST(Mayachain, MayachainSignTxUpdateMsgSendRejectsInvalidDenom) {
 static bool parseMayaMemo(const char *memo, size_t size) {
   return mayachain_parseConfirmMemo(memo, size);
 }
+/* strlen(memo), NOT strlen(memo) + 1 -- see the same note in thorchain.cpp.
+ * Maya inherited THORChain's memo grammar and its canonical-length refusal. */
 static bool parseMayaMemo(const char *memo) {
-  return parseMayaMemo(memo, strlen(memo) + 1);
+  return parseMayaMemo(memo, strlen(memo));
 }
 
 // Classic full-form swap memo = 4 screens (4th is the affiliate fee screen),

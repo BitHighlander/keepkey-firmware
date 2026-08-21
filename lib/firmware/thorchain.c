@@ -361,8 +361,8 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
         (nfields > 3 && fields[3][0] != '\0') ? fields[3] : "none";
     const char* affiliate =
         (nfields > 4 && fields[4][0] != '\0') ? fields[4] : NULL;
-    const char* fee_bps =
-        (nfields > 5 && fields[5][0] != '\0') ? fields[5] : "unspecified";
+    const bool has_fee = (nfields > 5 && fields[5][0] != '\0');
+    const char* fee_bps = has_fee ? fields[5] : "unspecified";
     /* DEX-aggregator swap-out fields — all router-executed, so all displayed.
      */
     const char* agg_addr =
@@ -391,11 +391,16 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                  "Thorchain swap", "Confirm limit %s", limit)) {
       return THORCHAIN_MEMO_CANCELLED;
     }
-    // Never hide the affiliate fee skim from the user
-    if (affiliate != NULL) {
+    /* Never hide the affiliate fee skim. Gated on EITHER field being present,
+     * not on the affiliate alone: a memo may carry a fee with an empty
+     * affiliate slot ("=:ETH.ETH:0xdest:0::75"), and those bytes are inside
+     * the signed length whether or not the slot naming their recipient is
+     * filled in. Showing the fee against "(none given)" discloses what is
+     * actually signed; skipping the screen discloses nothing. */
+    if (affiliate != NULL || has_fee) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Thorchain swap", "Affiliate fee %s bps to %s", fee_bps,
-                   affiliate)) {
+                   affiliate ? affiliate : "(none given)")) {
         return THORCHAIN_MEMO_CANCELLED;
       }
     }
@@ -427,8 +432,8 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
     const char* pool = (nfields > 2 && fields[2][0] != '\0') ? fields[2] : NULL;
     const char* affiliate =
         (nfields > 3 && fields[3][0] != '\0') ? fields[3] : NULL;
-    const char* fee_bps =
-        (nfields > 4 && fields[4][0] != '\0') ? fields[4] : "unspecified";
+    const bool has_fee = (nfields > 4 && fields[4][0] != '\0');
+    const char* fee_bps = has_fee ? fields[4] : "unspecified";
 
     /* ADD grammar defines at most 5 fields; more than that is structure we
      * cannot label and must not sign hidden, so refuse it. */
@@ -447,11 +452,12 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
         return THORCHAIN_MEMO_CANCELLED;
       }
     }
-    // Never hide the affiliate fee skim from the user
-    if (affiliate != NULL) {
+    /* Same as the SWAP branch: a fee in an otherwise-unnamed affiliate slot
+     * is still signed, so it is still shown. */
+    if (affiliate != NULL || has_fee) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Thorchain add liquidity", "Affiliate fee %s bps to %s",
-                   fee_bps, affiliate)) {
+                   fee_bps, affiliate ? affiliate : "(none given)")) {
         return THORCHAIN_MEMO_CANCELLED;
       }
     }

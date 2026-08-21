@@ -245,11 +245,22 @@ TEST(Thorchain, ThorchainSignTxInvalidDenom) {
  *  screens and kkconfirm_drain() == 0 proves N screens were shown.
  * ===================================================================== */
 
+/* thorchain_parseConfirmMemo returns a THREE-valued ThorchainMemoResult, and
+ * THORCHAIN_MEMO_CONFIRMED is 0 -- so returning it as a bool inverts the sense
+ * of every test in this file. Compare against the enum. UNPARSED and CANCELLED
+ * both read as false here, which is what these tests mean by "not confirmed";
+ * the tests that care which one it is check the enum directly. */
 static bool parseMemo(const char* memo, size_t size) {
-  return thorchain_parseConfirmMemo(memo, size);
+  return thorchain_parseConfirmMemo(memo, size) == THORCHAIN_MEMO_CONFIRMED;
 }
+/* strlen(memo), NOT strlen(memo) + 1. `size` is the DECLARED length and every
+ * byte inside it is covered by the signature, so declaring the terminator is
+ * declaring a byte the memo does not contain. The device refuses that as a
+ * non-canonical length (a length word that does not describe its own content),
+ * which is deliberate -- exempting a trailing NUL to make fixtures pass is
+ * exactly what the release invariant forbids. The fixture is what was wrong. */
 static bool parseMemo(const char* memo) {
-  return parseMemo(memo, strlen(memo) + 1);
+  return parseMemo(memo, strlen(memo));
 }
 
 // Classic full-form swap memo: asset + dest + limit + affiliate + fee bps
@@ -263,6 +274,25 @@ TEST(Thorchain, MemoSwapFullFormShowsAffiliate) {
   EXPECT_TRUE(
       parseMemo("SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:"
                 "0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// An affiliate FEE with an EMPTY affiliate slot must still be disclosed. The
+// bytes "75" are inside the signed length whether or not the slot naming their
+// recipient is filled in, and the empty-field-preserving split keeps them in
+// field 5 rather than shifting them into the limit. Gating the screen on the
+// affiliate alone showed the user no fee at all.
+TEST(Thorchain, MemoSwapFeeWithEmptyAffiliateIsStillShown) {
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  EXPECT_TRUE(parseMemo("=:ETH.ETH:0xdest:0::75"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// The same memo without the fee: one screen fewer, which is what makes the
+// count above evidence that the fee got its own screen.
+TEST(Thorchain, MemoSwapNoFeeIsThreeScreens) {
+  ASSERT_TRUE(kkconfirm_preload(3, 0));
+  EXPECT_TRUE(parseMemo("=:ETH.ETH:0xdest:0"));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
