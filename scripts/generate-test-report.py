@@ -95,11 +95,15 @@ def main():
     # could never accept one -- which is half of why no native test was ever
     # catalogued.  The canonical-Python-evidence requirement is already
     # enforced above, before the merge, so nothing is weakened here.
-    # The report generator ships a screenshot audit -- every catalog entry that
-    # DECLARES an OLED screen must have captured one -- and nothing was calling
-    # it.  Seven entries had drifted into declaring screens their test cannot
-    # draw (wire-only getaddress paths, in-memory vector checks) and no run ever
-    # said so.  A gate nobody runs is a gate that rots, so run it here.
+    # Second run of the screenshot audit, on purpose.
+    #
+    # python-keepkey-tests.sh already runs it inside the emulator container,
+    # immediately after capture.  That one answers "did the firmware draw?".
+    # This one answers a different question: "does the PDF being shipped have
+    # the screens it claims?"  The report is built from a DOWNLOADED artifact,
+    # and a partial upload would render a report with declared-but-absent
+    # screens that nothing else checks -- the container gate has already
+    # passed and gone.
     #
     # Only when the screenshots artifact actually arrived: its download is
     # continue-on-error, and a flaked upload must not be reported as a firmware

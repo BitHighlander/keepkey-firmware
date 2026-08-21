@@ -132,25 +132,41 @@ wrong scale. *Verify:* `Solana.FormatTokenAmountNeverShowsZeroForNonzero`.
 **R-3.5** A refused screen SHALL abort signing, never be re-asked differently.
 *Verify:* `ThorchainMemoResult` CANCELLED vs UNPARSED.
 
-### 3.4 Solana per-transaction context — NOT YET IMPLEMENTED
+### 3.4 Solana per-transaction context — IMPLEMENTED
 
-**R-4.1** The device SHOULD display provider-attested, transaction-bound context
+**R-4.1** The device SHALL display provider-attested, transaction-bound context
 for instructions whose accounts are not in the signed message (Address Lookup
 Tables), behind AdvancedMode, additive.
 
-**Status: not implemented.** `SolanaSignTx` reserves tags 5–8 for the
-transaction-bound `KKSOLSW1` descriptor; only the reservation comment exists.
-Today `solana.c:848` skips such instructions and renders **nothing**, so any
-display is strictly additive.
+**Status: implemented** (`KKSOLSW1`, firmware PR #500 — 146 added lines, no new
+crypto primitive). Before it, `solana.c` skipped such instructions and rendered
+**nothing**: the accounts an instruction would actually touch were invisible
+while still being signed. That is the gap 7.15 closes, and closing it adds
+screens.
 
-Binding requirements when built (model: `signed_metadata_matches_tx`):
-- bind to the exact message hash AND the resolved account list;
-- reset the decode proof per call so a stale match cannot carry over;
-- fail closed to the existing unverified review;
-- render the provider alias and "NOT verified by KeepKey" like every other
-  runtime-signer screen.
+The attestation binds to the transaction, not to the account list alone:
 
-**This is the one genuine firmware build item in 7.15.**
+```
+preimage = "KeepKeySolanaTxAccounts/1"
+        || sha256(raw_tx)
+        || count            (le32)
+        || key[0..count-1]  (32 bytes each)
+```
+
+Verified through the existing chain-agnostic
+`signed_metadata_verify_attestation()`. Three properties follow, each with a
+test in section S of the atlas:
+
+- `sha256(raw_tx)` in the preimage means an attestation harvested from one
+  transaction cannot be replayed onto another — the same accounts under a
+  different transaction do not verify;
+- a bad signature degrades to today's flow rather than refusing, so a broken
+  provider costs a user nothing but the extra screen;
+- with no signer loaded the screens do not appear at all, which is the additive
+  invariant (R-1.1) restated for this path.
+
+The domain tag is versioned in the preimage itself, so a future account-context
+format cannot be verified by a device that predates it.
 
 ### 3.5 Products
 
@@ -192,8 +208,8 @@ bitcoin-only 32,092 B.
 
 ## 5. Exit criteria
 
-1. R-4.1 implemented, or explicitly deferred with the ALT gap documented as a
-   known limitation.
+1. ~~R-4.1 implemented, or explicitly deferred~~ — **met.** KKSOLSW1 landed
+   (firmware #500); §3.4.
 2. Gate 3 OLED evidence per `7.15.0-rc21-clearsign-release-control.md`: a
    44-character base58 program ID, an 8-byte discriminator on its own screen,
    all four argument types, 16-character labels. **CI success alone does not
@@ -203,11 +219,57 @@ bitcoin-only 32,092 B.
    deliverable** — the file is not in this repository; it ships with the
    provider/Vault tooling. Listed here because a device cannot verify a
    schema signed with a test key, so it gates the release even though the
-   fix lands elsewhere. **Host-side
-   deliverable** — the file is not in this repository; it ships with the
-   provider/Vault tooling. Listed here because a device cannot verify a
-   schema signed with a test key, so it gates the release even though the
    fix lands elsewhere.
 5. R-1.4 re-verified on the exact release candidate.
 6. The D-01 sub-item (duplicate detector never observed firing correctly)
    resolved or accepted in writing.
+
+---
+
+## 6. Landing plan — alpha → fork `develop`
+
+7.15 is cut from `alpha` into the fork's `develop`. `alpha` is *ahead* of 7.15:
+it carries 7.16+ work, so the cut is a selection, not a fast-forward. What
+follows is the selection.
+
+### 6.1 What goes
+
+| # | Change | Lines | Why it is in 7.15 |
+|---|---|---|---|
+| L1 | 7.14.2 security merge + the 10 defects it exposed | see `DEFECTS-2026-08.md` | Three are shipping bugs. They go first because everything else rebases on them. |
+| L2 | Clear-sign provider context, additive (§3.1–3.3) | — | The release's reason to exist. |
+| L3 | KKSOLSW1 Solana account context (§3.4) | +146 | Last firmware build item. |
+| L4 | Bitcoin-only variant (§3.5) | — | Second product, its own emulator leg. |
+| L5 | Storage upgrade preservation (§3.6) | — | Proves a signed upgrade does not wipe. |
+| L6 | Token table budget — 1,945 → 500 entries | −23,104 B flash | Pays for the above. `TOKEN-TABLE-BUDGET.md`. |
+| L7 | Test atlas sections F, I, L, U, J, Q, K, P + the report gates | — | The evidence. Without it none of the above is auditable. |
+
+### 6.2 What does NOT go
+
+Everything gated on a firmware-pinned provider key: the reductive branch, the
+delegate certificate chain, expiry. It is written up in
+`DESIGN-716-reductive.md` and it stays there. The release gate is mechanical
+and checkable — **no pinned provider key bytes in the artifact** — which is why
+7.15 needs no custody programme (`ROADMAP-715-717.md`).
+
+### 6.3 Order
+
+L1 → L6 → L2 → L3 → L4 → L5 → L7.
+
+L6 goes early, directly after the defect fixes: it frees the flash the rest
+spends, and a ROM overflow discovered after L2–L5 have landed is a bisect
+through five features instead of one.
+
+### 6.4 The gate on each PR
+
+`ci-gate` green — not a green run summary. A failed Stage-1 gate marks the
+whole downstream graph *skipped*, and a skipped required job is not a pass;
+this has silently produced an all-green-looking run three times on this line.
+`ci-gate` is the only check whose success means the entire graph ran.
+
+### 6.5 What CI cannot close
+
+Exit criterion 2. Every display bound in §3.1–3.4 is a claim about pixels, and
+the emulator's framebuffer is not the OLED. Gate 3 is hardware, and it is
+**still NOT PERFORMED** — it is the one item between a green `develop` and a
+signable release candidate.
