@@ -751,6 +751,24 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg) {
       layoutHome();
       return;
     }
+
+    /* Disabling AdvancedMode REVOKES the runtime clear-sign signers it
+     * authorized, rather than suspending them.
+     *
+     * Every consumer in signed_metadata.c already refuses a runtime slot while
+     * the policy is off, so the difference is only visible on the way back:
+     * without this, re-enabling AdvancedMode silently re-arms a provider the
+     * user never re-loaded, on a confirmation screen that names the policy and
+     * not the signer. A user who turned the policy off to drop a provider had
+     * not dropped it.
+     *
+     * Re-loading costs one LoadClearsignSigner consent screen, which names the
+     * alias and fingerprint -- the screen that should be shown whenever trust
+     * begins. */
+    if (!msg->policy[i].enabled &&
+        strcmp(msg->policy[i].policy_name, "AdvancedMode") == 0) {
+      signed_metadata_clear_signers();
+    }
   }
 
   storage_commit();
