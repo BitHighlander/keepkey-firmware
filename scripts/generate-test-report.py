@@ -95,6 +95,32 @@ def main():
     # could never accept one -- which is half of why no native test was ever
     # catalogued.  The canonical-Python-evidence requirement is already
     # enforced above, before the merge, so nothing is weakened here.
+    # The report generator ships a screenshot audit -- every catalog entry that
+    # DECLARES an OLED screen must have captured one -- and nothing was calling
+    # it.  Seven entries had drifted into declaring screens their test cannot
+    # draw (wire-only getaddress paths, in-memory vector checks) and no run ever
+    # said so.  A gate nobody runs is a gate that rots, so run it here.
+    #
+    # Only when the screenshots artifact actually arrived: its download is
+    # continue-on-error, and a flaked upload must not be reported as a firmware
+    # that stopped drawing.
+    if screenshot_dir:
+        audit_cmd = [
+            sys.executable,
+            REPORT_GENERATOR,
+            '--screenshot-audit=%s' % screenshot_dir,
+            '--audit-junit=%s' % (merged or python_junit),
+        ]
+        if fw_version:
+            audit_cmd.append('--fw-version=%s' % fw_version)
+        print("Auditing screens: %s" % ' '.join(audit_cmd))
+        audit = subprocess.run(audit_cmd)
+        if audit.returncode != 0:
+            print("ERROR: declared OLED screens were not captured", file=sys.stderr)
+            sys.exit(audit.returncode)
+    else:
+        print("WARN: no screenshots artifact -- screen audit not run", file=sys.stderr)
+
     validate_cmd = [
         sys.executable,
         REPORT_GENERATOR,
