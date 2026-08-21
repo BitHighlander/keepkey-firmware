@@ -1826,9 +1826,20 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
-
+  /* Stamp the magic BEFORE serialising, not after. storage_writeV17() copies
+     shadow_config.meta -- magic included -- into flash_temp, so setting it
+     afterwards left the RECORD WE ARE ABOUT TO WRITE carrying whatever the
+     magic held, which on a device whose storage has never been written is
+     zeroes. find_active_storage()/storage_isActiveSector() then did not
+     recognise the sector we had just committed, so the next boot took the
+     not-an-active-sector path again: storage_resetUuid() + storage_commit(),
+     every boot, until the first storage-changing operation happened to write
+     it correctly. That is a redundant flash erase+write on every boot and a
+     window in which no sector is valid. The CRC below is computed over
+     flash_temp after this call, so the magic is now covered by it too. */
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+
+  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
 
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
