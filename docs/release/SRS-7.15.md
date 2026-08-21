@@ -105,7 +105,8 @@ separates 7.15 from 7.16.**
 *Verify:* atlas I1; `storage.c` ignores legacy bit 12 at four sites.
 
 **R-2.2** Loaded identities SHALL be RAM-only, cleared by reboot,
-`ClearSession`, and session teardown. *Verify:* I3–I5.
+`ClearSession`, session teardown, and **disabling AdvancedMode**.
+*Verify:* I3–I6.
 
 **R-2.3** Loading a provider SHALL require an on-device confirm that cannot be
 suppressed. *Verify:* V14; `signed_metadata_confirm_load`.
@@ -114,10 +115,16 @@ suppressed. *Verify:* V14; `signed_metadata_confirm_load`.
 It renders the provider's own alias and fingerprint plus "NOT verified by
 KeepKey".
 
-**Known deviation.** Disabling AdvancedMode makes a loaded signer **inert but
-not erased**; re-enabling it in the same session restores it. The tier document
-claims it is cleared. Recorded in atlas I6 as measured behaviour. **Decide in
-7.16:** erase on disable, or correct the document.
+**Deviation closed** (was: disable makes a signer inert but not erased).
+`fsm_msgApplyPolicies` now calls `signed_metadata_clear_signers()` when
+AdvancedMode is turned off. With the policy off the two behaviours were
+indistinguishable — every consumer in `signed_metadata.c` already refuses a
+runtime slot — so the bug was only visible on the way back: re-enabling
+restored the provider to VERIFIED with no second trust screen, on a
+confirmation that named the policy and never the signer. A user who disabled
+AdvancedMode to drop a provider had not dropped it. I6 now asserts the signer
+is gone, and its expected-response list (one ButtonRequest, one Success) proves
+no trust screen appears on the way back.
 
 ### 3.3 Disclosure completeness
 
