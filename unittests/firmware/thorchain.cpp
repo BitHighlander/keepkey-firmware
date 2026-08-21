@@ -23,6 +23,7 @@ void kk_board_init(void);
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 /*
  * confirm() auto-accept driver for unit tests.
@@ -93,6 +94,24 @@ bool kkconfirm_preload(int nYes, int nNo) {
     initialized = true;
   }
 
+  // Start from a known-empty queue. The socket and its queue are process-wide
+  // and shared with every other file that uses this driver, so a test that
+  // never reached its kkconfirm_drain() — a fatal ASSERT between preload and
+  // drain, or a test that simply forgot to drain — would otherwise hand its
+  // leftovers to whichever test ran next, and the verdict for that test would
+  // depend on what preceded it. Anything still queued here was sent at least
+  // one test ago and has long since been delivered, so a non-blocking sweep is
+  // enough; the grace window in kkconfirm_drain() is what covers packets sent
+  // moments earlier.
+  {
+    uint8_t stale[MSG_TINY_BFR_SZ];
+    // volatile for the same reason as in kkconfirm_drain(): 0xFFFF is outside
+    // the MessageType enum, so the compiler may fold the comparison away.
+    volatile uint16_t id;
+    while ((id = (uint16_t)check_for_tiny_msg(stale)) != MSG_TINY_TYPE_ERROR) {
+    }
+  }
+
   static const uint8_t yes[] = {0x08, 0x01};  // DebugLinkDecision.yes_no
   static const uint8_t no[] = {0x08, 0x00};
   for (int i = 0; i < nYes + nNo + 1; i++) {
@@ -110,16 +129,39 @@ bool kkconfirm_preload(int nYes, int nNo) {
 // sentinel kkconfirm_preload() always queues. 0 keeps meaning exactly what it
 // meant before — every preloaded screen was shown and no more. A NEGATIVE
 // count means the sentinel was consumed: more screens than the test expected.
+//
+// An empty read is NOT proof the queue is empty. The emulator reads its UDP
+// socket with MSG_DONTWAIT, and loopback delivery is asynchronous (the
+// datagram is handed to the network input thread by sendto(), not deposited
+// in the receiving socket's buffer by it). A test whose code under test shows
+// ZERO screens never blocks anywhere, so it can poll microseconds after
+// preload() and see nothing yet: the old "break on the first empty read"
+// counted 0 packets and reported -2 — "you showed one screen too many" — for
+// a refusal that in fact showed no screen at all. That misreads a harness
+// race as a disclosure bug, and pointed at the one direction this file must
+// never be edited in. So wait out a grace period after the last packet before
+// declaring the queue drained.
+//
+// This can only ever count MORE packets, never fewer, so it cannot hide an
+// extra screen: a screen that really ran consumed its two packets, and no
+// amount of waiting brings those back.
+#define KKCONFIRM_DRAIN_GRACE_US 200000 /* 200ms after the last packet seen */
 int kkconfirm_drain(void) {
   uint8_t buf[MSG_TINY_BFR_SZ];
   int n = 0;
-  for (;;) {
+  int idle_us = 0;
+  while (idle_us < KKCONFIRM_DRAIN_GRACE_US) {
     // volatile: 0xFFFF (MSG_TINY_TYPE_ERROR) is outside the MessageType
     // enum range, so an unguarded comparison is a tautology the compiler
     // may fold away.
     volatile uint16_t id = (uint16_t)check_for_tiny_msg(buf);
-    if (id == MSG_TINY_TYPE_ERROR) break;
-    n++;
+    if (id != MSG_TINY_TYPE_ERROR) {
+      n++;
+      idle_us = 0;  // restart the grace window after every packet
+      continue;
+    }
+    usleep(1000);
+    idle_us += 1000;
   }
   return n - KKCONFIRM_MSGS_PER_SCREEN;
 }
@@ -130,6 +172,18 @@ int kkconfirm_drain(void) {
 // all expected values here are derived from the actual crypto library.
 
 TEST(Thorchain, MemoWithEmbeddedNulIsNotParsed) {
+  /* The control at the end of this test drives real confirm screens, so the
+     board/usb one-time init inside kkconfirm_preload() has to have run before
+     any of it: without it confirm()'s message path trips
+     "MessagesMap != NULL" and ABORTS the whole binary.
+
+     Budget the WHOLE test with one preload: 0 screens for the two refusals
+     plus the 3 screens the control's ADD memo confirms. That makes the count
+     assert both halves at once -- a refusal that displayed anything would eat
+     an accept pair, leaving the control short and landing it on the reject
+     sentinel, so the CONFIRMED expectation below fails. */
+  ASSERT_TRUE(kkconfirm_preload(3, 0));
+
   /* thorchain_parseConfirmMemo() copies an explicit byte count and then hands
      the buffer to strtok, which stops at the first NUL. A memo such as
      "=:ETH.ETH:<dest>:0\0:affiliate:75" is signed in FULL -- the EVM caller
@@ -159,9 +213,17 @@ TEST(Thorchain, MemoWithEmbeddedNulIsNotParsed) {
             thorchain_parseConfirmMemo(kTrailingNul, sizeof(kTrailingNul) - 1));
 
   /* The SAME memo with a truthful length parses normally. This is the control:
-     it shows the rule rejects the misdeclaration, not the memo. */
-  EXPECT_NE(THORCHAIN_MEMO_UNPARSED,
+     it shows the rule rejects the misdeclaration, not the memo.
+
+     Parsing it is not silent -- it is the ADD-liquidity branch, which confirms
+     3 screens (asset+chain, paired address, affiliate fee) before returning
+     CONFIRMED. drain() == 0 therefore proves BOTH that the truthful-length
+     path disclosed all 3 (which is what makes refusing the misdeclared length
+     lossless) and that the two refusals above disclosed nothing: UNPARSED
+     means nothing was displayed and nothing was confirmed. */
+  EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED,
             thorchain_parseConfirmMemo(kTrailingNul, sizeof(kTrailingNul) - 2));
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Thorchain, ThorchainGetAddress) {
@@ -502,20 +564,42 @@ TEST(Thorchain, FullMemoShortAsciiIsOnePage) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
-// Page breaks use measured rendered rows, including word-wrap behavior.
+// A memo too long for one screen is paged, and every byte lands on some page.
+//
+// The vector is a real DEX-aggregator swap memo (the 9-field grammar
+// thorchain_parseConfirmMemo documents), 206 printable bytes. The pager
+// measures rendered rows, so the break point is not a byte count: it fills
+// three BODY_ROWS rows, which lands at 121 bytes on page 1 and the remaining
+// 85 on page 2.
+//
+// It used to be a 67-byte '%'-and-space string carried over from the branch
+// whose pager rendered a space AS a space, so word-wrap pushed the last word
+// onto a fourth row and forced a second page. This pager escapes every byte
+// outside 0x21..0x7e, so a space is disclosed as the four glyphs "\x20" and
+// there is no word-wrap for it to exploit — that 67-byte memo now measures to
+// three rows and is one page that shows all 67 bytes. Nothing is hidden by
+// that, so this test needed a vector that genuinely exceeds one screen; it is
+// asserting that paging happens and is complete, not that any particular
+// string is two screens.
 TEST(Thorchain, FullMemoLongAsciiPagesAll) {
   const char memo[] =
-      "%%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%%";
+      "=:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7"
+      ":0x41e5560054824ea6b0732e656e3ad64e20e94e45:420/1/0:kk:75"
+      ":0x1111111254eeb25477b68fb85ed929f73a960582"
+      ":0xdac17f958d2ee523a2206206994597c13d831ec7:100000000";
   ASSERT_TRUE(kkconfirm_preload(2, 0));
   EXPECT_TRUE(thorchain_confirm_full_memo("Memo", memo, strlen(memo)));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
 // Rejecting any page aborts the whole disclosure (so the handler aborts
-// signing).
+// signing). Same two-page vector as above, for the same reason.
 TEST(Thorchain, FullMemoRejectPropagates) {
   const char memo[] =
-      "%%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%%";
+      "=:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7"
+      ":0x41e5560054824ea6b0732e656e3ad64e20e94e45:420/1/0:kk:75"
+      ":0x1111111254eeb25477b68fb85ed929f73a960582"
+      ":0xdac17f958d2ee523a2206206994597c13d831ec7:100000000";
   ASSERT_TRUE(kkconfirm_preload(1, 1));  // approve page 1, reject page 2
   EXPECT_FALSE(thorchain_confirm_full_memo("Memo", memo, strlen(memo)));
   EXPECT_EQ(0, kkconfirm_drain());
@@ -523,10 +607,17 @@ TEST(Thorchain, FullMemoRejectPropagates) {
 
 // Non-printable memo bytes are disclosed in complete renderer-measured hex
 // pages, never hidden behind a byte-count summary.
+//
+// Four pages, not two: this pager spells a non-printable byte as the escape
+// "\x01" — four glyphs, unambiguously not text — where the other branch
+// emitted a bare two-digit "01" that a printable memo could imitate. Four
+// glyphs per byte is 29 bytes to a three-row page, so 100 bytes is
+// 29+29+29+13. The count went UP because each byte is disclosed more
+// explicitly; do not shrink it back by shortening the escape.
 TEST(Thorchain, FullMemoBinaryPagesAsHex) {
   char memo[100];
   memset(memo, 0x01, sizeof(memo));
-  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
   EXPECT_TRUE(thorchain_confirm_full_memo("Memo", memo, sizeof(memo)));
   EXPECT_EQ(0, kkconfirm_drain());
 }
@@ -539,11 +630,25 @@ TEST(Thorchain, FullMemoEmptyShowsEmpty) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
-// Renderer-aware paging must split the exact 69-byte word-wrap exploit from
-// the second-pass audit. A byte-count pager treated this as one screen even
-// though the OLED renderer placed the final signed word on a fourth row.
+// Renderer-aware paging must split a payload the OLED cannot fit, rather than
+// trusting a byte count. This began as the 69-byte word-wrap exploit from the
+// second-pass audit, where a byte-count pager called it one screen while the
+// renderer pushed the final signed word onto a fourth row.
+//
+// That exact vector no longer pages, and the reason matters: this tree renders
+// bytes through develop's confirm_byte_token(), which escapes everything
+// outside 0x21..0x7e -- SPACE included -- as the four glyphs \x20. With no
+// literal space left there is no word-wrap point, so the original exploit is
+// closed by the escaping rather than by the pager, and the 67-byte payload now
+// measures as a single page that FITS (verified: 1 screen).
+//
+// The payload is doubled to 134 bytes so it genuinely overflows and the pager
+// is still the thing under test. Measured, not assumed: 2 pages exactly.
+// If you change this vector, re-measure -- preload one screen too few and the
+// test hangs instead of failing.
 TEST(Confirmation, ExactLengthPagerMeasuresRenderedRows) {
   const char payload[] =
+      "%%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%%"
       "%%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%%";
   ASSERT_TRUE(kkconfirm_preload(2, 0));
   EXPECT_TRUE(confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage,
@@ -554,6 +659,7 @@ TEST(Confirmation, ExactLengthPagerMeasuresRenderedRows) {
 
 TEST(Confirmation, ExactLengthPagerRejectPropagates) {
   const char payload[] =
+      "%%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%%"
       "%%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%% %%%%%%%%%%%%%%%%";
   ASSERT_TRUE(kkconfirm_preload(1, 1));
   EXPECT_FALSE(confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage,

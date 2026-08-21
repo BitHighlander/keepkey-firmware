@@ -1299,8 +1299,7 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 pair name is NULL",
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
-    "EIP-712 no value for type during walkVals",  // 33
-    "EIP-712 cancelled",                          // 34 (USER_CANCELLED)
+    "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
 };
 
 void failMessage(int err) {
@@ -1310,11 +1309,11 @@ void failMessage(int err) {
        host sends Cancel or Initialize. Report it as a cancellation so the host
        does not read a refusal as a malformed message.
 
-       USER_CANCELLED *is* LAST_ERROR and does occupy the final
-       failMsgReturn[] slot, so this branch is not merely a range guard -- it
-       is what picks the FailureType. Falling through to the table would send
-       the right text under FailureType_Failure_Other, i.e. report a user
-       refusal as a device error. It must stay first. */
+       USER_CANCELLED sits deliberately ABOVE LAST_ERROR and has no
+       failMsgReturn[] slot: the table is sized LAST_ERROR - 2 and indexed
+       err - 3, so giving a cancellation a row would shift every message
+       already in it. This branch is therefore the only thing that names the
+       code, and it also picks the FailureType. It must stay first. */
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("EIP-712 cancelled"));
     return;

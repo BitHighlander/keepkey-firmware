@@ -990,15 +990,10 @@ void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
     show_frac /= 10;
   }
   frac_str[show_dec] = '\0';
-  while (show_dec > 0 && frac_str[show_dec - 1] == '0') {
-    frac_str[--show_dec] = '\0';
-  }
-  if (show_dec == 0) {
-    snprintf(buf, len, "%llu %s", (unsigned long long)whole, symbol);
-  } else {
-    snprintf(buf, len, "%llu.%s %s", (unsigned long long)whole, frac_str,
-             symbol);
-  }
+  /* Every fractional place is shown, trailing zeros included. Trimming them
+   * ("1.000000000" -> "1") hides the scale the signed base-unit count was
+   * divided by, which is the one thing this screen exists to disclose. */
+  snprintf(buf, len, "%llu.%s %s", (unsigned long long)whole, frac_str, symbol);
 }
 
 const SolanaKnownToken* solana_findKnownToken(

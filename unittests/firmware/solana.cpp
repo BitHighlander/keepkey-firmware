@@ -19,17 +19,22 @@ TEST(Solana, FormatAmount) {
   EXPECT_STREQ(buf, "2.500000000 SOL");
 }
 
-TEST(Solana, FormatTokenAmountUsesSignedDecimalsAndTrimsZeros) {
+/* The property here is that the amount is scaled by the decimals carried in
+   the signed instruction -- not that trailing zeros are trimmed. Trimming was
+   an older rendering detail on one branch; it is gone, because "1 USDC" hides
+   the scale the base-unit count was divided by while "1.000000 USDC" states
+   it. Every fractional place the scale produces is now shown. */
+TEST(Solana, FormatTokenAmountUsesSignedDecimals) {
   char buf[48];
 
   solana_formatTokenAmount(buf, sizeof(buf), 2000, "USDC", 6);
-  EXPECT_STREQ(buf, "0.002 USDC");
+  EXPECT_STREQ(buf, "0.002000 USDC");
 
   solana_formatTokenAmount(buf, sizeof(buf), 1000000, "USDC", 6);
-  EXPECT_STREQ(buf, "1 USDC");
+  EXPECT_STREQ(buf, "1.000000 USDC");
 
   solana_formatTokenAmount(buf, sizeof(buf), 2000, "tokens", 2);
-  EXPECT_STREQ(buf, "20 tokens");
+  EXPECT_STREQ(buf, "20.00 tokens");
 }
 
 TEST(Solana, MainnetUsdcIsFirmwareKnown) {
