@@ -208,8 +208,26 @@ bitcoin-only 32,092 B.
 | `firmware-unit` (bitcoin-only) | 63/63 |
 | pyk suite (full emulator) | 620 passed, 33 skipped, 0 failed |
 | pyk suite (bitcoin-only emulator) | 11/11 |
-| ARM SRAM reserve | full 18,172 B · btc-only 32,092 B |
+| ARM SRAM reserve | full **17,716 B** · btc-only **31,648 B** (budget ≥ 16,384 B, both PASS) |
+| Token table applied | `ethereum_tokens: 350 of 1378 kept` · `uniswap_tokens: 150 of 568 kept` |
 | Hardware (gate 3) | **NOT PERFORMED** |
+
+Measured on the ARM cross-build of the KKSOLSW1 candidate, both variants. The
+reserve is `_stack - _ebss` and the gate is enforced in CI, not read off a
+build log.
+
+The full-variant reserve fell 456 B from the previous line (18,172 B) and that
+is KKSOLSW1: `fsm_msg_solana.h` flattens the nanopb array into a
+`uint8_t lut_keys[SOL_MAX_LUT_ACCOUNTS][SOL_PUBKEY_SIZE]` so the attested keys
+are contiguous for hashing. It is the honest cost of the feature and it is
+recorded here rather than absorbed silently, because SRAM on this part is spent
+once and an unexplained 456 B is the kind of thing that only becomes visible
+when the next feature does not fit.
+
+The token budget is what pays for it: 500 of 1,946 candidate entries, −23,104 B
+of flash. See `TOKEN-TABLE-BUDGET.md` for what that cannot buy — the pinned
+data source has been stale since 2023-04-06, so the long tail is not coverage
+of anything current.
 
 ---
 
