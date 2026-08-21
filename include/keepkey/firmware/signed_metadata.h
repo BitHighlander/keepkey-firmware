@@ -16,9 +16,8 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
-/* Identity icon cap (1bpp mono RLE). Must equal the device-protocol
- * LoadClearsignSigner.icon max_size and storage.h CLEARSIGN_ICON_MAX
- * (static-asserted in signed_metadata.c). */
+/* Session identity icon cap (1bpp mono RLE). Must equal the device-protocol
+ * LoadClearsignSigner.icon max_size. Identities are never persisted. */
 #define METADATA_ICON_MAX 384
 /* hex(first 4 bytes of sha256(pubkey)) + NUL */
 #define METADATA_FINGERPRINT_LEN 9

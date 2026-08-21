@@ -5,6 +5,8 @@
 # compiled them anyway and died on ethereum_address_checksum, which is compiled
 # out of that image. recovery.cpp was also listed twice.
 set(sources
+    ctap2.cpp
+    ctap2_cbor.cpp
     dice.cpp
     recovery.cpp
     rng_health.cpp

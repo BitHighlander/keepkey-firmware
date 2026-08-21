@@ -27,3 +27,6 @@ target_link_libraries(fuzz-eos_formatAsset ${libraries})
 
 add_executable(fuzz-ripple_decode ripple_decode.cpp)
 target_link_libraries(fuzz-ripple_decode ${libraries})
+
+add_executable(fuzz-ctap2_cbor ctap2_cbor.cpp)
+target_link_libraries(fuzz-ctap2_cbor ${libraries})

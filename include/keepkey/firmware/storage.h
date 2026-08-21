@@ -24,9 +24,10 @@
 #include "trezor/crypto/bip32.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/passkey.h"
 
 #define STORAGE_VERSION \
-  17 /* Must add case fallthrough in storage_fromFlash after increment*/
+  18 /* Must add case fallthrough in storage_fromFlash after increment*/
 
 /* The highest storage version written by any firmware that has SHIPPED in a
  * signed release.
@@ -199,6 +200,10 @@ void storage_setAutoLockDelayMs(uint32_t auto_lock_delay_ms);
 bool storage_getAuthData(authType* returnData);
 void storage_setAuthData(const authType* setData);
 void storage_wipeAuthData(void);
+
+/// Read or atomically replace CTAP2 PIN and discoverable-credential metadata.
+void storage_getPasskeyData(PasskeyStorage* data);
+void storage_setPasskeyData(const PasskeyStorage* data);
 
 #ifdef DEBUG_LINK
 typedef struct _HDNodeType HDNodeType;
