@@ -1104,6 +1104,50 @@ bool solana_token_info_trusted(const SolanaTokenInfo* ti) {
                                             ti->signature.size);
 }
 
+bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
+                                 const uint8_t (*accounts)[32],
+                                 size_t num_accounts, uint32_t signer_key_id,
+                                 const uint8_t* sig, size_t sig_len) {
+  if (!raw_tx || !accounts || !sig || num_accounts == 0) return false;
+  if (num_accounts > SOL_MAX_LUT_ACCOUNTS) return false;
+  /* uint32 field: reject out-of-range slots BEFORE narrowing to the uint8 the
+   * keyring uses, so key_id 256 cannot alias slot 0. Same reasoning as
+   * solana_token_info_trusted(). */
+  if (signer_key_id >= METADATA_MAX_KEYS) return false;
+
+  /* Bind to the transaction by hashing the exact bytes being signed. Solana
+     signs the message directly, so a sha256 over it is ours alone and never
+     collides with the ed25519 signature the device is about to produce. */
+  uint8_t msg_hash[SHA256_DIGEST_LENGTH];
+  sha256_Raw(raw_tx, raw_len, msg_hash);
+
+  /* Build the preimage in full and hand it over RAW: verify_attestation()
+     hashes what it is given, so passing a digest here would verify over
+     sha256(sha256(preimage)) and no honest signer could ever match it. Same
+     shape as solana_token_info_trusted(). Bounded by SOL_MAX_LUT_ACCOUNTS, so
+     the worst case is 25 + 32 + 4 + 8*32 = 317 bytes. */
+  static const char kTag[] = "KeepKeySolanaTxAccounts/1";
+  uint8_t blob[sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
+               SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
+  size_t n = 0;
+  memcpy(blob + n, kTag, sizeof(kTag) - 1);
+  n += sizeof(kTag) - 1;
+  memcpy(blob + n, msg_hash, sizeof(msg_hash));
+  n += sizeof(msg_hash);
+  uint32_t count = (uint32_t)num_accounts;
+  blob[n++] = (uint8_t)count;
+  blob[n++] = (uint8_t)(count >> 8);
+  blob[n++] = (uint8_t)(count >> 16);
+  blob[n++] = (uint8_t)(count >> 24);
+  for (size_t i = 0; i < num_accounts; i++) {
+    memcpy(blob + n, accounts[i], SOL_PUBKEY_SIZE);
+    n += SOL_PUBKEY_SIZE;
+  }
+
+  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
+                                            sig, sig_len);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Signing                                                            */
 /* ------------------------------------------------------------------ */
