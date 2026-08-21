@@ -461,6 +461,28 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
 #endif
 }
 
+/* The RNG audit budget.
+ *
+ * Telling a working hardware RNG from a stuck or grossly biased one needs a
+ * bulk sample, and a button press per 8 KiB turns the pre-PIN health check into
+ * an eight-press ceremony that users will click through without reading. So an
+ * UNINITIALIZED device serves this many bytes press-free, and then stops.
+ *
+ * The budget is denominated in BYTES, not requests, so asking for a larger
+ * chunk cannot buy more of it.
+ *
+ * It is safe only because of what an uninitialized device is: it holds no seed
+ * and no secret, so raw RNG output discloses nothing. The moment it holds one
+ * -- storage_isInitialized() -- every request confirms again, and so does every
+ * request after the budget is spent. Both halves are asserted by atlas C27.
+ */
+#define ENTROPY_AUDIT_BUDGET (64 * 1024)
+static uint32_t entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+
+static void fsm_entropyAuditBudgetReset(void) {
+  entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+}
+
 void fsm_msgWipeDevice(WipeDevice* msg) {
   (void)msg;
 
@@ -476,6 +498,11 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_reset();
   storage_resetUuid();
   storage_commit();
+
+  /* A wipe returns the device to the state the audit budget exists for, so it
+   * returns the budget. Without this a device that had been initialized once
+   * could never be RNG-audited again without a press per chunk. */
+  fsm_entropyAuditBudgetReset();
 
   fsm_sendSuccess("Device wiped");
   layoutHome();
@@ -494,20 +521,28 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
 }
 
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
-               "Do you want to generate and return entropy using the hardware "
-               "RNG?")) {
+  uint32_t len = msg->size;
+
+  if (len > ENTROPY_BUF) {
+    len = ENTROPY_BUF;
+  }
+
+  /* Spend the budget only on a device with nothing to disclose, and only for
+   * what this request actually returns. */
+  bool press_free = !storage_isInitialized() && len <= entropy_audit_remaining;
+
+  if (press_free) {
+    entropy_audit_remaining -= len;
+  } else if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy,
+                      "Generate Entropy",
+                      "Do you want to generate and return entropy using the "
+                      "hardware RNG?")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
     layoutHome();
     return;
   }
 
   RESP_INIT(Entropy);
-  uint32_t len = msg->size;
-
-  if (len > ENTROPY_BUF) {
-    len = ENTROPY_BUF;
-  }
 
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
@@ -750,6 +785,24 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg) {
                       "Policies could not be applied");
       layoutHome();
       return;
+    }
+
+    /* Disabling AdvancedMode REVOKES the runtime clear-sign signers it
+     * authorized, rather than suspending them.
+     *
+     * Every consumer in signed_metadata.c already refuses a runtime slot while
+     * the policy is off, so the difference is only visible on the way back:
+     * without this, re-enabling AdvancedMode silently re-arms a provider the
+     * user never re-loaded, on a confirmation screen that names the policy and
+     * not the signer. A user who turned the policy off to drop a provider had
+     * not dropped it.
+     *
+     * Re-loading costs one LoadClearsignSigner consent screen, which names the
+     * alias and fingerprint -- the screen that should be shown whenever trust
+     * begins. */
+    if (!msg->policy[i].enabled &&
+        strcmp(msg->policy[i].policy_name, "AdvancedMode") == 0) {
+      signed_metadata_clear_signers();
     }
   }
 

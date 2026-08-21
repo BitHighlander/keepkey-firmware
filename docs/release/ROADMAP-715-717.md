@@ -58,6 +58,8 @@ one-way door.
 
 - `SRS-7.15.md` — requirements, verification status, exit criteria
 - `SRS-7.16.md` — delegation and what changes on screen
+- `../security/DESIGN-716-reductive.md` — how the reductive branch is built, and why it is small
+- `TOKEN-TABLE-BUDGET.md` — the 500-entry cap, and what it cannot fix
 - `SRS-7.17.md` — rotation, revocation, asserted-vs-derived context
 - `DEFECTS-2026-08.md` — defect register from the alpha integration
 - `../testing/ATLAS-GUIDE.md` — how to read the test report, and what it cannot tell you

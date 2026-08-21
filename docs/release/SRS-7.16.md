@@ -109,9 +109,9 @@ Its reference hashes are preserved in `test_sign_typed_data.py` for exactly this
 
 ### 3.5 Carried from 7.15
 
-**R-5.1** Resolve the AdvancedMode-disable deviation (SRS-7.15 §3.2): either
-erase loaded signers on disable, or correct the tier document. **Erase is the
-behaviour the document already promises.**
+~~**R-5.1** Resolve the AdvancedMode-disable deviation~~ — **closed in 7.15.**
+`fsm_msgApplyPolicies` erases loaded signers on disable, which is what the tier
+document already promised. Four lines. Nothing carried here.
 **R-5.2** Resolve the duplicate-transaction detector question (D-01 sub-item):
 either demonstrate a correct true-positive or simplify the check.
 
@@ -126,6 +126,9 @@ pass UNCHANGED against 7.16 firmware. This is the regression that matters most:
 capture of both tiers side by side.
 **V-3** An expired or revoked certificate falls back to additive rendering.
 **V-4** Gate 3 OLED evidence for both tiers.
+
+Implementation shape, open decisions and the custody argument are in
+`../security/DESIGN-716-reductive.md`.
 
 ---
 

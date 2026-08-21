@@ -15,9 +15,17 @@ single most important thing to understand about it:
 The header line is the verdict:
 
 ```
-Firmware 7.15.0 | 2026-08-21 01:34 | 374 tests: 355 passed, 43 skipped, 0 pending
-Candidate: alpha@dda531024922bcda57d8131e02ebae172612bf5f
+Firmware 7.15.0 | 2026-08-21 20:12 | 376 tests: 372 passed, 4 skipped, 0 pending
+Candidate: alpha@d3bb0055f...
 ```
+
+**The four counts add up to the total, and the report asserts it** before
+printing. They once did not: the scope paragraph rebound `skipped` to the
+run-wide census, so the catalog's breakdown quoted a skip count from a
+different population and nothing reconciled. The total counts DISTINCT tests,
+not catalog rows — a few tests are deliberately catalogued twice because they
+carry two different arguments (J9 and VG2 are the same refusal), and summing
+rows made the header claim more tests than the run contains.
 
 Read the **candidate** first. A report is evidence about one commit. A green
 report for a tree that is not the one you are shipping proves nothing about the
@@ -80,7 +88,23 @@ defaulting.
 
 The screenshot list drives capture. **An empty list is legitimate and
 deliberate** for a refusal path that draws nothing — its evidence is the Failure
-on the wire plus the *absence* of a ButtonRequest.
+on the wire plus the *absence* of a ButtonRequest. Because empty means
+something here, an entry that is empty for a *different* reason must say so on
+the line: seven entries once declared screens their test cannot draw at all
+(the `getaddress` tests answer on the wire; the drawing is the `show_address`
+sibling), and the audit that catches this failed on every run until someone
+read it.
+
+Every entry needs a **context** — the sentence saying what it proves. An entry
+without one renders as a bare test name, which is exactly the row an auditor
+cannot evaluate. `_audit_catalog()` asserts it on every render, along with
+unique section letters and unique test ids.
+
+A module listed in `MUST_RUN_MODULES` turns a skip into a failure from the
+named firmware version onward. Use it for a capability the build CLAIMS to
+have: taproot tests open with `requires_taproot()`, so a regressed capability
+would skip all six and the report would still read green — certifying coverage
+it never obtained.
 
 For a claim about ORDER, add the test to `FULL_SEQUENCE_TESTS`, or the report
 shows a best-of-3 frame sample and hides the very thing being proved.
