@@ -258,3 +258,131 @@ bool eip712_validate_leaf(const Eip712FieldType *field, const uint8_t *value,
       return false;
   }
 }
+
+/* ── encodeType ──────────────────────────────────────────────────────
+ *
+ *   encodeType(S) = seg(S) || seg(D1) || seg(D2) || ...
+ *
+ * where D1..Dn are every struct S transitively references, SORTED BY NAME,
+ * and seg(T) = "T(type1 name1,type2 name2,...)".
+ *
+ * The sort is what eip712.c never did. It appended referenced definitions in
+ * discovery order -- there is no sort call anywhere in that file -- so a
+ * document naming two structs out of alphabetical order hashed a type string
+ * no compliant verifier reproduces. The device would have been internally
+ * consistent and still signing something nobody else agrees the document says.
+ *
+ * Nothing is stored: each segment is streamed into a keccak context as it is
+ * fetched, so only the closure's NAMES are held.
+ */
+
+typedef struct {
+  char names[EIP712_MAX_STRUCTS][EIP712_MAX_STRUCT_NAME];
+  uint8_t count;
+} Eip712Closure;
+
+static bool closure_contains(const Eip712Closure *c, const char *name) {
+  for (uint8_t i = 0; i < c->count; i++) {
+    if (strcmp(c->names[i], name) == 0) return true;
+  }
+  return false;
+}
+
+static bool closure_add(Eip712Closure *c, const char *name) {
+  size_t len = strlen(name);
+  if (len == 0 || len + 1 > EIP712_MAX_STRUCT_NAME) return false;
+  if (closure_contains(c, name)) return true;
+  if (c->count >= EIP712_MAX_STRUCTS) return false;
+  memcpy(c->names[c->count], name, len + 1);
+  c->count++;
+  return true;
+}
+
+/* Collect every struct `name` transitively references, excluding itself.
+ * Iterative: the worklist is the closure itself, walked as it grows, so a
+ * cyclical schema terminates on the already-present check rather than
+ * recursing. EIP-712 leaves cyclical data undefined; we simply do not loop. */
+static bool closure_collect(const char *name, Eip712StructLookup lookup,
+                            void *ctx, Eip712Closure *out) {
+  Eip712Closure seen;
+  memset(&seen, 0, sizeof(seen));
+  if (!closure_add(&seen, name)) return false;
+
+  for (uint8_t i = 0; i < seen.count; i++) {
+    const EthereumTypedDataStructAck *def = lookup(seen.names[i], ctx);
+    if (!def) return false;
+    for (size_t m = 0; m < def->members_count; m++) {
+      const Eip712FieldType *ft = &def->members[m].type;
+      if (ft->data_type != EthereumTypedDataStructAck_EthereumDataType_STRUCT)
+        continue;
+      if (!ft->has_struct_name) return false;
+      if (!closure_add(&seen, ft->struct_name)) return false;
+      /* `seen` grows while we iterate it, which is the traversal. */
+    }
+  }
+
+  /* The primary type leads and is not sorted with the rest. */
+  memset(out, 0, sizeof(*out));
+  for (uint8_t i = 1; i < seen.count; i++) {
+    if (!closure_add(out, seen.names[i])) return false;
+  }
+
+  /* Insertion sort by name. n <= EIP712_MAX_STRUCTS, so this is cheaper and
+   * far easier to audit than pulling in qsort. */
+  for (uint8_t i = 1; i < out->count; i++) {
+    char key[EIP712_MAX_STRUCT_NAME];
+    memcpy(key, out->names[i], EIP712_MAX_STRUCT_NAME);
+    int8_t j = (int8_t)i - 1;
+    while (j >= 0 && strcmp(out->names[j], key) > 0) {
+      memcpy(out->names[j + 1], out->names[j], EIP712_MAX_STRUCT_NAME);
+      j--;
+    }
+    memcpy(out->names[j + 1], key, EIP712_MAX_STRUCT_NAME);
+  }
+  return true;
+}
+
+/* Stream "Name(type1 name1,type2 name2,...)" into the hash. */
+static bool hash_type_segment(const char *name, Eip712StructLookup lookup,
+                              void *ctx, SHA3_CTX *hash) {
+  const EthereumTypedDataStructAck *def = lookup(name, ctx);
+  if (!def) return false;
+
+  keccak_Update(hash, (const uint8_t *)name, strlen(name));
+  keccak_Update(hash, (const uint8_t *)"(", 1);
+
+  for (size_t m = 0; m < def->members_count; m++) {
+    char type_name[EIP712_MAX_TYPE_NAME];
+    if (!eip712_type_name(&def->members[m].type, type_name, sizeof(type_name)))
+      return false;
+    const char *member_name = def->members[m].name;
+    if (member_name[0] == '\0') return false;
+
+    if (m > 0) keccak_Update(hash, (const uint8_t *)",", 1);
+    keccak_Update(hash, (const uint8_t *)type_name, strlen(type_name));
+    keccak_Update(hash, (const uint8_t *)" ", 1);
+    keccak_Update(hash, (const uint8_t *)member_name, strlen(member_name));
+  }
+
+  keccak_Update(hash, (const uint8_t *)")", 1);
+  return true;
+}
+
+bool eip712_type_hash(const char *name, Eip712StructLookup lookup, void *ctx,
+                      uint8_t out[32]) {
+  if (!name || !lookup || !out) return false;
+  if (strlen(name) == 0 || strlen(name) + 1 > EIP712_MAX_STRUCT_NAME)
+    return false;
+
+  Eip712Closure deps;
+  if (!closure_collect(name, lookup, ctx, &deps)) return false;
+
+  SHA3_CTX hash;
+  keccak_256_Init(&hash);
+  if (!hash_type_segment(name, lookup, ctx, &hash)) return false;
+  for (uint8_t i = 0; i < deps.count; i++) {
+    if (!hash_type_segment(deps.names[i], lookup, ctx, &hash)) return false;
+  }
+  keccak_Final(&hash, out);
+  return true;
+}

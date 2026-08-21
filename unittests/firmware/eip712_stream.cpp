@@ -1,11 +1,13 @@
 extern "C" {
 #include "keepkey/firmware/eip712_stream.h"
 #include "messages-ethereum.pb.h"
+#include "sha3.h"
 }
 
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <map>
 #include <string>
 
 namespace {
@@ -248,4 +250,156 @@ TEST(Eip712Stream, ValidateBytesNIsExact) {
   EXPECT_TRUE(eip712_validate_leaf(&f, v, 4));
   EXPECT_FALSE(eip712_validate_leaf(&f, v, 3));
   EXPECT_FALSE(eip712_validate_leaf(&f, v, 5));
+}
+
+// ── encodeType / typeHash ───────────────────────────────────────────
+//
+// Backed by a fixture lookup rather than a device, which is the whole point of
+// taking the lookup as a callback: the type graph is testable without an
+// emulator, and these are the vectors a compliant verifier must agree with.
+
+namespace {
+
+struct Fixture {
+  std::map<std::string, EthereumTypedDataStructAck> defs;
+};
+
+const EthereumTypedDataStructAck *fixtureLookup(const char *name, void *ctx) {
+  Fixture *f = static_cast<Fixture *>(ctx);
+  auto it = f->defs.find(std::string(name));
+  return it == f->defs.end() ? nullptr : &it->second;
+}
+
+void addMember(EthereumTypedDataStructAck &ack, const char *mname,
+               const Field &type) {
+  auto &m = ack.members[ack.members_count++];
+  memset(&m, 0, sizeof(m));
+  m.type = type;
+  strcpy(m.name, mname);
+}
+
+Field structField(const char *sname) {
+  Field f = mk(EthereumTypedDataStructAck_EthereumDataType_STRUCT);
+  f.has_struct_name = true;
+  strcpy(f.struct_name, sname);
+  return f;
+}
+
+std::string typeHashHex(Fixture &f, const char *primary) {
+  uint8_t out[32];
+  if (!eip712_type_hash(primary, fixtureLookup, &f, out)) return "<refused>";
+  return hexOf(out, 32);
+}
+
+// keccak256 of a literal, for building expectations in the test itself.
+std::string keccakHex(const std::string &s) {
+  uint8_t out[32];
+  keccak_256(reinterpret_cast<const uint8_t *>(s.data()), s.size(), out);
+  return hexOf(out, 32);
+}
+
+}  // namespace
+
+TEST(Eip712Stream, TypeHashMatchesTheSpecExample) {
+  // The canonical EIP-712 example. Note Person sorts AFTER Mail's own segment
+  // and is appended, not interleaved.
+  Fixture f;
+  auto &person = f.defs["Person"];
+  memset(&person, 0, sizeof(person));
+  addMember(person, "name",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  addMember(person, "wallet",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+
+  auto &mail = f.defs["Mail"];
+  memset(&mail, 0, sizeof(mail));
+  addMember(mail, "from", structField("Person"));
+  addMember(mail, "to", structField("Person"));
+  addMember(mail, "contents",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+
+  EXPECT_EQ(typeHashHex(f, "Mail"),
+            keccakHex("Mail(Person from,Person to,string contents)"
+                      "Person(string name,address wallet)"));
+}
+
+TEST(Eip712Stream, ReferencedStructsAreSortedByName) {
+  // THE CANARY. eip712.c appends referenced definitions in DISCOVERY order and
+  // contains no sort call, so this document -- which names Zebra before Apple
+  // -- is exactly the case it gets wrong. Two devices would disagree with each
+  // other and both would look internally consistent.
+  Fixture f;
+  auto &zebra = f.defs["Zebra"];
+  memset(&zebra, 0, sizeof(zebra));
+  addMember(zebra, "stripes",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+
+  auto &apple = f.defs["Apple"];
+  memset(&apple, 0, sizeof(apple));
+  addMember(apple, "colour",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+
+  auto &m = f.defs["M"];
+  memset(&m, 0, sizeof(m));
+  addMember(m, "z", structField("Zebra"));  // referenced FIRST
+  addMember(m, "a", structField("Apple"));  // referenced SECOND
+
+  // Alphabetical, not discovery order: Apple before Zebra.
+  EXPECT_EQ(typeHashHex(f, "M"), keccakHex("M(Zebra z,Apple a)"
+                                           "Apple(string colour)"
+                                           "Zebra(uint256 stripes)"));
+}
+
+TEST(Eip712Stream, Permit2PermitSingleTypeHash) {
+  // The payload that started all of this. PermitSingle nests PermitDetails, so
+  // any flat-structs-only implementation cannot sign a Uniswap approval.
+  Fixture f;
+  auto &details = f.defs["PermitDetails"];
+  memset(&details, 0, sizeof(details));
+  addMember(details, "token",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(details, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 20));
+  addMember(details, "expiration",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 6));
+  addMember(details, "nonce",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 6));
+
+  auto &single = f.defs["PermitSingle"];
+  memset(&single, 0, sizeof(single));
+  addMember(single, "details", structField("PermitDetails"));
+  addMember(single, "spender",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(single, "sigDeadline",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+
+  EXPECT_EQ(typeHashHex(f, "PermitSingle"),
+            keccakHex("PermitSingle(PermitDetails details,address spender,"
+                      "uint256 sigDeadline)"
+                      "PermitDetails(address token,uint160 amount,"
+                      "uint48 expiration,uint48 nonce)"));
+}
+
+TEST(Eip712Stream, TypeHashRefusesAMissingStruct) {
+  Fixture f;
+  auto &m = f.defs["M"];
+  memset(&m, 0, sizeof(m));
+  addMember(m, "ghost", structField("NotSupplied"));
+  EXPECT_EQ(typeHashHex(f, "M"), "<refused>");
+}
+
+TEST(Eip712Stream, TypeHashTerminatesOnACycle) {
+  // EIP-712 leaves cyclical data undefined. The collector must not recurse
+  // forever on a host that supplies one.
+  Fixture f;
+  auto &a = f.defs["A"];
+  memset(&a, 0, sizeof(a));
+  addMember(a, "b", structField("B"));
+  auto &b = f.defs["B"];
+  memset(&b, 0, sizeof(b));
+  addMember(b, "a", structField("A"));
+
+  // Terminates. The value is not the interesting part; not hanging is.
+  std::string h = typeHashHex(f, "A");
+  EXPECT_EQ(h, keccakHex("A(B b)B(A a)"));
 }

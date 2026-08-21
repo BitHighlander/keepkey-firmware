@@ -40,7 +40,7 @@
  * Every level costs one frame on the C stack, so this is the recursion bound
  * as well as the semantic one. EIP712_MAX_DEPTH is checked BEFORE descending,
  * never after. */
-#define EIP712_MAX_DEPTH 5
+#define EIP712_MAX_DEPTH 4
 
 /* Slots in the shared encoding pool. Each open container holds one 32-byte
  * slot per member encoded so far; when it completes, those collapse to a
@@ -51,11 +51,42 @@
  * reserve above the linker floor. Buffering 32-byte encodings instead costs
  * EIP712_MAX_SLOTS * 32, and only ONE SHA3_CTX is ever live: the one folding a
  * finished container. */
-#define EIP712_MAX_SLOTS 24
+#define EIP712_MAX_SLOTS 16
 
 /* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
  * hashed, not stored, so this bounds one chunk rather than the whole value. */
 #define EIP712_MAX_LEAF 1024
+
+/* Distinct struct types one document may reference, including EIP712Domain
+ * and the primary type. Permit2's PermitSingle needs 2, Seaport's
+ * OrderComponents 3. */
+#define EIP712_MAX_STRUCTS 8
+
+/* Longest struct name we will hold. The wire allows 80; names this long do
+ * not occur in practice and every one costs EIP712_MAX_STRUCTS bytes. */
+#define EIP712_MAX_STRUCT_NAME 48
+
+/* Fetch one struct's member list by name. Returns NULL if the host has not
+ * supplied it. Firmware backs this with the streaming state machine; the unit
+ * tests back it with a fixture table, which is what makes encodeType testable
+ * without a device. */
+typedef const EthereumTypedDataStructAck *(*Eip712StructLookup)(
+    const char *name, void *ctx);
+
+/* Assemble encodeType(name) and hash it, per EIP-712:
+ *
+ *   encodeType = <primary segment> || <each referenced struct, SORTED BY NAME>
+ *
+ * The sort is the part the old parser got wrong: eip712.c appended referenced
+ * definitions in DISCOVERY order and there is no sort call anywhere in it, so
+ * two structs named out of alphabetical order produced a typeHash no compliant
+ * verifier reproduces -- an internally consistent device signing something
+ * nobody else agrees the document says.
+ *
+ * Returns false if a referenced struct is missing, the closure exceeds
+ * EIP712_MAX_STRUCTS, or any member type cannot be spelled. */
+bool eip712_type_hash(const char *name, Eip712StructLookup lookup, void *ctx,
+                      uint8_t out[32]);
 
 /* Render a field's Solidity type exactly as encodeType must spell it --
  * "uint256", "bytes32", "Person[3]", "int16[2][][4]". This string is part of
