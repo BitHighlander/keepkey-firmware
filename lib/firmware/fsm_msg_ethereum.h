@@ -523,3 +523,124 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
 
   layoutHome();
 }
+
+/* ── Structured EIP-712 ──────────────────────────────────────────────
+ *
+ * The walk in eip712_stream.c never writes a message. It describes what it
+ * wants next and these three handlers emit it, because msg_resp and the HD
+ * node live here. One pump serves all three so the wire behaviour has exactly
+ * one definition.
+ */
+static void eip712_pump(void) {
+  const Eip712Next* next = eip712_stream_next();
+
+  switch (next->kind) {
+    case EIP712_REQ_STRUCT: {
+      RESP_INIT(EthereumTypedDataStructRequest);
+      strlcpy(resp->name, next->struct_name, sizeof(resp->name));
+      msg_write(MessageType_MessageType_EthereumTypedDataStructRequest, resp);
+      return;
+    }
+    case EIP712_REQ_VALUE: {
+      RESP_INIT(EthereumTypedDataValueRequest);
+      resp->member_path_count = next->member_path_len;
+      memcpy(resp->member_path, next->member_path,
+             next->member_path_len * sizeof(uint32_t));
+      msg_write(MessageType_MessageType_EthereumTypedDataValueRequest, resp);
+      return;
+    }
+    case EIP712_REQ_DONE: {
+      /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))) */
+      uint8_t preimage[66];
+      preimage[0] = 0x19;
+      preimage[1] = 0x01;
+      memcpy(preimage + 2, next->domain_separator, 32);
+      memcpy(preimage + 34, next->message_hash, 32);
+      uint8_t sighash[32];
+      keccak_256(preimage, sizeof(preimage), sighash);
+
+      const HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, next->address_n,
+                                              next->address_n_count, NULL);
+      if (!node) return;
+
+      RESP_INIT(EthereumTypedDataSignature);
+      uint8_t pubkeyhash[20];
+      if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+        fsm_sendFailure(FailureType_Failure_Other,
+                        _("Ethereum address derivation failed"));
+        layout_home();
+        return;
+      }
+      resp->address[0] = '0';
+      resp->address[1] = 'x';
+      ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+
+      uint8_t sig[64];
+      uint8_t v = 0;
+      if (ecdsa_sign_digest(&secp256k1, node->private_key, sighash, sig, &v,
+                            NULL) != 0) {
+        fsm_sendFailure(FailureType_Failure_Other, _("Signing failed"));
+        layout_home();
+        return;
+      }
+      resp->signature.size = 65;
+      memcpy(resp->signature.bytes, sig, 64);
+      resp->signature.bytes[64] = 27 + v;
+      resp->has_domain_separator_hash = true;
+      resp->domain_separator_hash.size = 32;
+      memcpy(resp->domain_separator_hash.bytes, next->domain_separator, 32);
+      resp->has_msg_hash = true;
+      resp->has_message_hash = true;
+      resp->message_hash.size = 32;
+      memcpy(resp->message_hash.bytes, next->message_hash, 32);
+      msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
+      layout_home();
+      return;
+    }
+    case EIP712_REQ_CANCELLED:
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("EIP-712 cancelled"));
+      layout_home();
+      return;
+    case EIP712_REQ_FAIL:
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      next->error ? next->error : "EIP-712 error");
+      layout_home();
+      return;
+    default:
+      fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 internal state"));
+      layout_home();
+      return;
+  }
+}
+
+void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  /* Same gate the hashed path carries. Structured display is strictly more
+   * information than the blind path it replaces, but this is new parser
+   * surface reachable from a website, so it stays behind AdvancedMode until it
+   * has hardware evidence behind it. */
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Enable AdvancedMode to sign typed data"));
+    layout_home();
+    return;
+  }
+
+  eip712_stream_begin(msg);
+  eip712_pump();
+}
+
+void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg) {
+  CHECK_INITIALIZED
+  eip712_stream_on_struct(msg);
+  eip712_pump();
+}
+
+void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
+  CHECK_INITIALIZED
+  eip712_stream_on_value(msg);
+  eip712_pump();
+}

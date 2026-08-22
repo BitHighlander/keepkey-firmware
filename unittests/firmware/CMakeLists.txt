@@ -30,6 +30,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       eip712.cpp
       eos.cpp
       ethereum.cpp
+      eip712_stream.cpp
       hive.cpp
       mayachain.cpp
       nano.cpp

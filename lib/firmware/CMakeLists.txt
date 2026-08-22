@@ -27,6 +27,7 @@ if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
       binance.c
       eip712.c
+      eip712_stream.c
       eos.c
       eos-contracts/eosio.system.c
       eos-contracts/eosio.token.c
