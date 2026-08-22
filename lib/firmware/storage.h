@@ -72,7 +72,7 @@ typedef struct _Storage {
     bool authdata_encrypted;
     uint8_t random_salt[32];
     uint8_t authdata_fingerprint[32];
-    /* V18 CTAP2 state stored in the V17 reserved plaintext area. */
+    /* V20 CTAP2 state stored in the V17 reserved plaintext area. */
     PasskeyStorage passkeys;
   } pub;
 
@@ -239,12 +239,12 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV17(ConfigFlash* dst, const char* flash, size_t len);
-void storage_readV18(ConfigFlash* dst, const char* flash, size_t len);
+void storage_readV20(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV19(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
-void storage_writeV18(char* flash, size_t len, const ConfigFlash* src);
+void storage_writeV20(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);
@@ -253,14 +253,14 @@ void storage_readHDNode(HDNodeType* node, const char* ptr, size_t len);
 void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
                            size_t len);
 void storage_readStorageV11(Storage* storage, const char* ptr, size_t len);
-void storage_readStorageV18(Storage* storage, const char* ptr, size_t len);
+void storage_readStorageV20(Storage* storage, const char* ptr, size_t len);
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len);
 
 void storage_writeMeta(char* ptr, size_t len, const Metadata* meta);
 void storage_writePolicyV1(char* ptr, size_t len, const PolicyType* policy);
 void storage_writeHDNode(char* ptr, size_t len, const HDNodeType* node);
 void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage);
-void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage);
+void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage);
 void storage_writeCacheV1(char* ptr, size_t len, const Cache* cache);
 
 bool storage_setPolicy_impl(PolicyType ps[POLICY_COUNT],
