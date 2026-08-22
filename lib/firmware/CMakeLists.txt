@@ -70,6 +70,16 @@ include_directories(
   ${CMAKE_CURRENT_BINARY_DIR})
 
 add_library(kkfirmware ${sources})
+
+# A release build ships NO clear-signing root key -- see clearsign_root.c. The
+# unit tests need one to prove the ceremony's certificates verify, so they are
+# the only build that compiles the test key in, and they must ask for it by
+# name. OFF by default so that forgetting it yields a device that clear-signs
+# nothing rather than one trusting a key whose private half is on a laptop.
+option(KK_CLEARSIGN_TEST_ROOT "Compile in the TEST clear-signing root key (unit tests only)" OFF)
+if(KK_CLEARSIGN_TEST_ROOT)
+  target_compile_definitions(kkfirmware PRIVATE KK_CLEARSIGN_TEST_ROOT=1)
+endif()
 add_dependencies(kkfirmware kktransport.pb trezorcrypto qrcodegenerator ethereum_tokens.def)
 
 set(ETHEREUM_TOKENS ${CMAKE_BINARY_DIR}/include/keepkey/firmware/ethereum_tokens)

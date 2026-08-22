@@ -54,6 +54,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
 
 add_executable(firmware-unit ${sources})
+
 target_link_libraries(firmware-unit
     gmock_main
     kkfirmware

@@ -28,22 +28,31 @@
 
 /* ── The root public key ─────────────────────────────────────────────
  *
- * TEST KEY. Generated 2026-08-21 on a marked KeepKey for ceremony practice,
- * and it must not reach a signed release. It was produced the way the
- * production root will be -- a seed generated on the device, never exported --
- * so the only thing that changes for the real ceremony is which device runs
- * it. m/44'/60'/0'/0/0, device 393137350D4736341B003900.
+ * A RELEASE BUILD SHIPS NO ROOT. The array is all-zero unless the build
+ * explicitly asks for a test key, which is the 7.15 posture carried forward:
+ * with no root, no certificate can ever verify, so the suppression branch is
+ * unreachable rather than merely unused. clearsign_root_is_present() exposes
+ * that so a release test asserts it instead of a human grepping key bytes.
  *
- * An all-zero array here means NO ROOT, which is the 7.15 posture: the
- * suppression branch stays unreachable because nothing can ever verify a
- * certificate. clearsign_root_is_present() exposes that so a release test can
- * assert it rather than a human grepping for key bytes.
+ * The real root will be generated on a KeepKey, will never exist as a file,
+ * and gets pasted in at the release cut as a reviewable one-line diff. Making
+ * the DEFAULT empty means forgetting that step produces a device that
+ * clear-signs nothing -- the safe failure -- rather than one that trusts a key
+ * whose private half sits in a scratch directory.
  */
+#if defined(KK_CLEARSIGN_TEST_ROOT)
+/* TEST KEY, unit tests and bench only. Generated 2026-08-21 on a marked
+ * KeepKey the way the production root will be -- seed generated on the device,
+ * never exported -- so the only thing that changes for the real ceremony is
+ * which device runs it. m/44'/60'/0'/0/0, device 393137350D4736341B003900. */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
     0x02, 0xbe, 0x12, 0xc1, 0x94, 0x0f, 0x5d, 0xdf, 0x08, 0x4a, 0x53,
     0x9a, 0x02, 0xe0, 0x3d, 0xe8, 0x68, 0xa3, 0xa3, 0x31, 0x4c, 0x1e,
     0x5b, 0xb4, 0x1e, 0x1e, 0xba, 0xbd, 0x47, 0x1b, 0x64, 0x07, 0x41,
 };
+#else
+static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {0};
+#endif
 
 bool clearsign_root_is_present(void) {
   for (size_t i = 0; i < CLEARSIGN_PUBKEY_LEN; i++) {
