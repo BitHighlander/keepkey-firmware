@@ -53,6 +53,19 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
                               const HDNode* node) {
   (void)node;
 
+  /* Only a CALL to a contract may be clear-signed, never a CREATE.
+   * ethereum_signing_check() deliberately permits to.size == 0 when there is
+   * calldata, and a true return here sets needs_confirm = false, which
+   * suppresses BOTH layoutEthereumConfirmTx's "new contract?" screen and the
+   * ETH value screen. Most decoders pin msg->to against a known address and so
+   * cannot match a CREATE, but makerdao_isMakerDAO never inspects msg->to at
+   * all -- attacker-chosen init code carrying the `open(address)` selector and
+   * the Tub constant would otherwise be narrated as "MakerDAO / Open CDP?"
+   * while a contract deployment and its attached value were signed unseen.
+   * Refuse before any decoder runs, so a deployment always falls through to
+   * the generic disclosure path. */
+  if (msg->to.size != 20) return false;
+
   /* Every handler parses and displays fixed offsets inside the initial chunk
    * only. If the calldata does not fit in that chunk, the remainder streams
    * in via EthereumTxAck and is hashed into the signature without ever being
@@ -73,6 +86,7 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
   if (zx_isZxLiquidTx(msg)) return true;
   if (zx_isZxApproveLiquid(msg)) return true;
 
+  if (thor_isMayachainTx(msg)) return true;
   if (thor_isThorchainTx(msg)) return true;
 
   if (makerdao_isMakerDAO(data_total, msg)) return true;
@@ -97,6 +111,7 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
   if (zx_isZxApproveLiquid(msg))
     return zx_confirmApproveLiquidity(data_total, msg);
 
+  if (thor_isMayachainTx(msg)) return thor_confirmMayaTx(data_total, msg);
   if (thor_isThorchainTx(msg)) return thor_confirmThorTx(data_total, msg);
 
   if (makerdao_isMakerDAO(data_total, msg))

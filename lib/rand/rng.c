@@ -107,6 +107,22 @@ uint32_t random32(void) {
 #endif
 }
 
+#if defined(EMULATOR) && !defined(__APPLE__)
+/* trezor-crypto declares random_buffer() as a weak symbol so platforms can
+ * supply their own. GNU/MinGW ld will NOT extract a weak definition from a
+ * static archive to satisfy a strong reference (fsm.c/reset.c/storage.c),
+ * which breaks the Linux .so and Windows .dll links. Provide a strong
+ * definition here — identical to trezor-crypto's, built on our random32().
+ * macOS ld64 resolves the weak one fine, so it's left untouched there. */
+void random_buffer(uint8_t* buf, size_t len) {
+  uint32_t r = 0;
+  for (size_t i = 0; i < len; i++) {
+    if (i % 4 == 0) r = random32();
+    buf[i] = (r >> ((i % 4) * 8)) & 0xff;
+  }
+}
+#endif
+
 // I miss C++ templates sooo bad.
 #define RANDOM_PERMUTE(BUFF, COUNT)             \
   do {                                          \

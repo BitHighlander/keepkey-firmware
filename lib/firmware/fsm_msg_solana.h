@@ -424,6 +424,81 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       return;
     }
 
+    /* KKSOLSW1: a provider may attest the accounts this message resolves
+       through a lookup table -- the ones the device cannot derive, and the
+       reason it went opaque at all. Showing them turns a blind sign into a
+       described one.
+
+       Strictly additive, and deliberately BEFORE the blind-sign warning rather
+       than instead of it: a runtime signer is annotation, never authority, so
+       the user still sees "the device cannot fully verify the contents" and
+       still has to approve it. If the attestation is absent, malformed, or
+       fails to verify, nothing extra is drawn and the flow is byte-for-byte
+       what it was. */
+    /* nanopb gives each repeated `bytes` element as a {size, bytes[32]}
+       struct, NOT a bare 32-byte array -- casting the array to
+       (uint8_t(*)[32]) would hash the size word plus 28 bytes of the first
+       key. Flatten explicitly, and require every element to be a full
+       SOL_PUBKEY_SIZE key so a short one cannot silently hash as zero-padded.
+     */
+    uint8_t lut_keys[SOL_MAX_LUT_ACCOUNTS][SOL_PUBKEY_SIZE];
+    size_t lut_n = 0;
+    bool lut_well_formed = msg->lut_account_count > 0 &&
+                           msg->lut_account_count <= SOL_MAX_LUT_ACCOUNTS;
+    for (size_t li = 0; lut_well_formed && li < msg->lut_account_count; li++) {
+      if (msg->lut_account[li].size != SOL_PUBKEY_SIZE) {
+        lut_well_formed = false;
+        break;
+      }
+      memcpy(lut_keys[lut_n++], msg->lut_account[li].bytes, SOL_PUBKEY_SIZE);
+    }
+
+    if (lut_well_formed && msg->has_lut_signature &&
+        msg->has_lut_signer_key_id &&
+        solana_lut_accounts_trusted(
+            msg->raw_tx.bytes, msg->raw_tx.size,
+            (const uint8_t (*)[32])lut_keys, lut_n, msg->lut_signer_key_id,
+            msg->lut_signature.bytes, msg->lut_signature.size)) {
+      char fp[METADATA_FINGERPRINT_LEN];
+      const char* alias =
+          signed_metadata_signer_alias((uint8_t)msg->lut_signer_key_id);
+      if (!signed_metadata_signer_fingerprint((uint8_t)msg->lut_signer_key_id,
+                                              fp)) {
+        fp[0] = '\0';
+      }
+      /* Name WHO is describing these accounts before showing what they say.
+         The user is being asked to trust a third party, and the tier never
+         claims KeepKey verified it. */
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Lookup Accounts",
+                   "%s (%s) describes %u account(s).\nNOT verified by KeepKey.",
+                   alias ? alias : "Unknown signer", fp,
+                   (unsigned)msg->lut_account_count)) {
+        memzero(node, sizeof(*node));
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        _("Signing cancelled"));
+        layoutHome();
+        return;
+      }
+      for (size_t li = 0; li < lut_n; li++) {
+        char b58[64];
+        size_t b58_len = sizeof(b58);
+        if (!solana_base58_encode(lut_keys[li], SOL_PUBKEY_SIZE, b58,
+                                  &b58_len)) {
+          continue;
+        }
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                     "Lookup Account", "%u/%u\n%s", (unsigned)(li + 1),
+                     (unsigned)lut_n, b58)) {
+          memzero(node, sizeof(*node));
+          fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                          _("Signing cancelled"));
+          layoutHome();
+          return;
+        }
+      }
+    }
+
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
                  "Sign unverified Solana transaction? "
                  "The device cannot fully verify the contents.")) {
@@ -548,8 +623,7 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
 
   /* Ed25519 sign */
   uint8_t sig[SOL_SIG_SIZE];
-  ed25519_sign(msg->message.bytes, msg->message.size, node->private_key,
-               node->public_key + 1, sig);
+  ed25519_sign(msg->message.bytes, msg->message.size, node->private_key, sig);
 
   resp->has_signature = true;
   resp->signature.size = SOL_SIG_SIZE;
