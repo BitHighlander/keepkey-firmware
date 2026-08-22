@@ -455,8 +455,8 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
   }
 
   // 3. Ignoring the stale bit is not enough -- it must be SCRUBBED during the
-  //    mandatory V17 -> V18 migration. storage_fromFlash reports SUS_Updated,
-  //    storage_init commits V18, and the writer zeroes the retired bit.
+  //    mandatory V17 -> V20 migration. storage_fromFlash reports SUS_Updated,
+  //    storage_init commits V20, and the writer zeroes the retired bit.
   {
     static char sector[STORAGE_SECTOR_LEN];
     memset(sector, 0, sizeof(sector));
@@ -472,7 +472,7 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
     memset(&ss, 0, sizeof(ss));
     memset(&out, 0, sizeof(out));
     EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Updated)
-        << "a clean V17 sector must migrate to V18";
+        << "a clean V17 sector must migrate to V20";
 
     uint32_t stale = (1u << 12);
     memcpy(sector + 48, &stale, sizeof(stale));
@@ -1005,7 +1005,7 @@ TEST(Storage, StorageV17MigrationRoundTrip) {
             start.storage.sec.cache.root_seed_cache_status);
 }
 
-TEST(Storage, PasskeyMetadataV18RoundTrip) {
+TEST(Storage, PasskeyMetadataV20RoundTrip) {
   ConfigFlash start;
   memset(&start, 0, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
@@ -1029,11 +1029,11 @@ TEST(Storage, PasskeyMetadataV18RoundTrip) {
   strcpy(credential->user_name, "alice");
 
   std::vector<uint8_t> flash(3480);
-  storage_writeV18(reinterpret_cast<char *>(flash.data()), flash.size(),
+  storage_writeV20(reinterpret_cast<char *>(flash.data()), flash.size(),
                    &start);
   ConfigFlash restored;
   memset(&restored, 0, sizeof(restored));
-  storage_readV18(&restored, reinterpret_cast<const char *>(flash.data()),
+  storage_readV20(&restored, reinterpret_cast<const char *>(flash.data()),
                   flash.size());
   EXPECT_EQ(restored.storage.pub.passkeys.pin_retries, 6);
   EXPECT_EQ(0, memcmp(&restored.storage.pub.passkeys,
@@ -1312,8 +1312,8 @@ TEST(Storage, Reset) {
 }
 
 // An unshipped 7.15 RC appended unauthenticated clear-sign identities after the
-// V17 record. V18 must ignore that trailing block and never copy it into RAM.
-TEST(Storage, V18IgnoresRetiredClearsignIdentityBlock) {
+// V17 record. V20 must ignore that trailing block and never copy it into RAM.
+TEST(Storage, V20IgnoresRetiredClearsignIdentityBlock) {
   ConfigFlash start;
   memset(&start, 0, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
@@ -1323,16 +1323,16 @@ TEST(Storage, V18IgnoresRetiredClearsignIdentityBlock) {
   start.storage.pub.passkeys.pin_retries = PASSKEY_PIN_RETRIES;
 
   std::vector<uint8_t> flash(3480, 0);
-  storage_writeV18((char*)&flash[0], flash.size(), &start);
+  storage_writeV20((char*)&flash[0], flash.size(), &start);
   const size_t identity_block_off = 44 + 1501 + V17_ENCSEC_SIZE;
   const size_t identity_block_len = 2 * (71 + 384);
 
-  // Simulate attacker-controlled legacy trailing flash. V18 parses only its
+  // Simulate attacker-controlled legacy trailing flash. V20 parses only its
   // bounded 2569-byte record, so passkey state remains unchanged.
   memset(&flash[identity_block_off], 0xA5, identity_block_len);
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
-  storage_readV18(&end, (const char*)&flash[0], flash.size());
+  storage_readV20(&end, (const char*)&flash[0], flash.size());
   EXPECT_EQ(1, end.storage.pub.passkeys.version);
   EXPECT_EQ(PASSKEY_PIN_RETRIES, end.storage.pub.passkeys.pin_retries);
 }
@@ -1353,7 +1353,7 @@ TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
   EXPECT_TRUE(end.storage.pub.pin_kdf_v2);
 
   memset(&end, 0xCC, sizeof(end));
-  storage_readV18(&end, (const char*)&flash[0], flash.size());
+  storage_readV20(&end, (const char*)&flash[0], flash.size());
   EXPECT_FALSE(end.storage.pub.pin_kdf_v2);
 }
 
@@ -1399,7 +1399,7 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
   memset(&reloaded, 0, sizeof(reloaded));
   memset(&fresh, 0, sizeof(fresh));
   ASSERT_EQ(SUS_Updated, storage_fromFlash(&fresh, &reloaded, &flash[0]))
-      << "the last-shipped V17 record must migrate to V18";
+      << "the last-shipped V17 record must migrate to V20";
 
   bool sca_hardened = reloaded.storage.pub.sca_hardened;
   bool v15_16_trans = reloaded.storage.pub.v15_16_trans;
