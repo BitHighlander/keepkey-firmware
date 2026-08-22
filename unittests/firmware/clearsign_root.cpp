@@ -10,21 +10,26 @@ extern "C" {
 
 namespace {
 
-// Produced by scripts/ceremony sign_delegate_cert.py --backend file, against
-// the untracked TEST root. This fixture is the pipeline's proof: the ceremony
-// that will one day run on a KeepKey and the firmware that verifies its output
-// were written separately, and this is where they have to agree.
+// Signed ON A KEEPKEY by sign_delegate_cert.py --backend keepkey, against a
+// root seed generated on the device itself -- the production ceremony shape,
+// where the root key never exists as a file anywhere.
 //
-//   alias      KeepKey Test
+// This fixture is the pipeline's proof. The ceremony and the firmware verifier
+// were written separately, and this is where they have to agree; they did not,
+// once. The root signs via EthereumSignTypedHash, so the preimage below is
+// keccak(0x19||0x01||DOMAIN_SEP||keccak(cert[0..74])) and NOT a bare sha256
+// tag -- that mismatch is exactly what this fixture exists to catch.
+//
+//   alias      KeepKey
 //   chain_id   1
-//   not_after  1798761600
+//   not_after  1818806400
 //   flags      MAY_SUPPRESS_RAW
 const char *kValidCertHex =
-    "0101000000016b36ec804b6565704b657920546573740000000000000000000000"
-    "00000000000000000002b109ac4f6d75797e4ebb39ffb2a368e18f7228c9d77352"
-    "f15b3c15dc2acc57f37f1e87ea6b2681228d5a83807cc8c3c58c95c4fdde98b9bb"
-    "be3874db92d7dd6f37009032f2f8f946646801c195ce485b0fabd6a226909564f3"
-    "50c991833f064c";
+    "0101000000016c68c8804b6565704b6579000000000000000000000000000000"
+    "000000000000000000000289265fa1eeb7482b853f8181d15a56c412ab0c9671"
+    "51613dc43a58a5437dae9a6712901937d524e51dff7aad73d189fc0e291b595d"
+    "0ad163dfbc6df0a77e265d1a00fb9447ba1e5c6333baf802bd09975ed9b3a518"
+    "51078b461acf2ee08ce934";
 
 std::vector<uint8_t> unhex(const std::string &h) {
   std::vector<uint8_t> out;

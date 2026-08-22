@@ -24,12 +24,15 @@
 #include "ecdsa.h"
 #include "secp256k1.h"
 #include "sha2.h"
+#include "trezor/crypto/sha3.h"
 
 /* ── The root public key ─────────────────────────────────────────────
  *
- * TEST KEY. Generated 2026-08-21 for bench and ceremony practice, and it must
- * not reach a signed release. The production root will be generated on a
- * KeepKey and will never exist as a file anywhere.
+ * TEST KEY. Generated 2026-08-21 on a marked KeepKey for ceremony practice,
+ * and it must not reach a signed release. It was produced the way the
+ * production root will be -- a seed generated on the device, never exported --
+ * so the only thing that changes for the real ceremony is which device runs
+ * it. m/44'/60'/0'/0/0, device 393137350D4736341B003900.
  *
  * An all-zero array here means NO ROOT, which is the 7.15 posture: the
  * suppression branch stays unreachable because nothing can ever verify a
@@ -37,9 +40,9 @@
  * assert it rather than a human grepping for key bytes.
  */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
-    0x02, 0xb1, 0x09, 0xac, 0x4f, 0x6d, 0x75, 0x79, 0x7e, 0x4e, 0xbb,
-    0x39, 0xff, 0xb2, 0xa3, 0x68, 0xe1, 0x8f, 0x72, 0x28, 0xc9, 0xd7,
-    0x73, 0x52, 0xf1, 0x5b, 0x3c, 0x15, 0xdc, 0x2a, 0xcc, 0x57, 0xf3,
+    0x02, 0xbe, 0x12, 0xc1, 0x94, 0x0f, 0x5d, 0xdf, 0x08, 0x4a, 0x53,
+    0x9a, 0x02, 0xe0, 0x3d, 0xe8, 0x68, 0xa3, 0xa3, 0x31, 0x4c, 0x1e,
+    0x5b, 0xb4, 0x1e, 0x1e, 0xba, 0xbd, 0x47, 0x1b, 0x64, 0x07, 0x41,
 };
 
 bool clearsign_root_is_present(void) {
@@ -79,14 +82,25 @@ bool clearsign_root_verify_cert(const uint8_t *cert, size_t cert_len) {
   const uint8_t prefix = cert[CLEARSIGN_CERT_OFF_PUBKEY];
   if (prefix != 0x02 && prefix != 0x03) return false;
 
-  /* sha256(TAG || cert[0..74]). The tag is ours, never the host's. */
-  SHA256_CTX ctx;
+  /* keccak(0x19 || 0x01 || DOMAIN_SEP || keccak(cert[0..74])).
+   *
+   * Byte for byte what EthereumSignTypedHash produces, so the root can be an
+   * ordinary KeepKey. The domain separator is ours and never crosses the
+   * wire. */
+  static const uint8_t domain_sep[32] = CLEARSIGN_DOMAIN_SEPARATOR;
+  struct SHA3_CTX ctx;
   uint8_t digest[32];
-  sha256_Init(&ctx);
-  sha256_Update(&ctx, (const uint8_t *)CLEARSIGN_DOMAIN_TAG,
-                strlen(CLEARSIGN_DOMAIN_TAG));
-  sha256_Update(&ctx, cert, CLEARSIGN_CERT_SIGNED_LEN);
-  sha256_Final(&ctx, digest);
+
+  sha3_256_Init(&ctx);
+  sha3_Update(&ctx, cert, CLEARSIGN_CERT_SIGNED_LEN);
+  keccak_Final(&ctx, digest);
+
+  const uint8_t prefix712[2] = {0x19, 0x01};
+  sha3_256_Init(&ctx);
+  sha3_Update(&ctx, prefix712, sizeof(prefix712));
+  sha3_Update(&ctx, domain_sep, sizeof(domain_sep));
+  sha3_Update(&ctx, digest, sizeof(digest));
+  keccak_Final(&ctx, digest);
 
   return ecdsa_verify_digest(&secp256k1, kk_clearsign_root_pubkey,
                              &cert[CLEARSIGN_CERT_OFF_SIG], digest) == 0;

@@ -46,7 +46,7 @@
  *     6    4  not_after, big endian unix seconds
  *    10   32  alias, NUL-padded ASCII
  *    42   33  delegate_pubkey, compressed secp256k1 (0x02 or 0x03)
- *    75   64  root_sig, compact ECDSA over sha256(TAG || cert[0..74])
+ *    75   64  root_sig, compact ECDSA over the EIP-712 digest of cert[0..74]
  *          = 139
  */
 #define CLEARSIGN_CERT_LEN 139
@@ -65,12 +65,26 @@
 #define CLEARSIGN_ALIAS_LEN 32
 #define CLEARSIGN_PUBKEY_LEN 33
 
-/* Prepended by the device, NEVER transmitted, so a host can neither substitute
- * nor elide it. It matters because the EVM metadata blob carries no domain tag
- * of its own -- the tag is what guarantees a certificate preimage can never
- * also parse as a metadata payload. Versioned, so a future certificate format
- * cannot be verified by a device that predates it. */
-#define CLEARSIGN_DOMAIN_TAG "KeepKeyClearsignDelegate/1"
+/* The EIP-712 domain separator, precomputed and compiled in.
+ *
+ *   keccak(keccak("EIP712Domain(string name,string version)")
+ *          || keccak("KeepKey Clearsign Delegation") || keccak("1"))
+ *
+ * EIP-712 and not a bare sha256 tag for one concrete reason: it makes the
+ * root a STOCK KeepKey. EthereumSignTypedHash takes a domain separator and a
+ * message hash and signs keccak(0x19||0x01||ds||mh) -- which IS this
+ * preimage -- so the ceremony needs no raw-digest signing path and no special
+ * firmware on the root device. The device also low-S normalises for free.
+ *
+ * The domain is still ours and never transmitted, so a host can neither
+ * substitute nor elide it, and a certificate preimage can never also parse as
+ * a metadata payload. Versioned via the domain string. */
+#define CLEARSIGN_DOMAIN_SEPARATOR                                          \
+  {                                                                         \
+    0x88, 0x39, 0x40, 0x1f, 0x8d, 0x01, 0x12, 0xb4, 0x34, 0x87, 0x70, 0xdd, \
+        0xac, 0xe1, 0x52, 0xe9, 0x6f, 0xc5, 0xe5, 0x08, 0x1a, 0xef, 0xee,   \
+        0xd6, 0xb5, 0xd8, 0xbe, 0xf0, 0xd6, 0xec, 0xdf, 0x66                \
+  }
 
 /* The expiry floor, and the only revocation lever this release has.
  *
