@@ -107,7 +107,7 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 /// it through random_buffer_checked() deliberately. Inverting the default so
 /// that coverage was automatic was built for 7.15 and descoped; the reasons
 /// and the follow-up project are in
-/// docs/security/rc28-open-findings-handoff.md.
+/// docs/security/rng-coverage-scope.md.
 bool rng_health_check(void);
 
 /// Fold \p len bytes of freshly drawn output into the boot-lifetime continuous

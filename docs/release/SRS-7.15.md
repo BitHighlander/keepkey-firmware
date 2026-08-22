@@ -37,7 +37,7 @@ There is no separate `zcash-privacy` artifact.
 
 ### 1.4 References
 - `docs/security/clearsign-provider-tier.md` — the tier's own scope rules
-- `docs/security/clearsign-key-delegation-roadmap.md` — phases 0–3
+- the 7.16 delegation roadmap — phases 0–3 (lands with 7.16; on `alpha`)
 - `docs/security/7.15.0-rc18-release-shape.md` — the two-product decision
 - `docs/release/DEFECTS-2026-08.md` — defect register
 - `deps/python-keepkey/scripts/generate-test-report.py` — the atlas (`SECTIONS`)
@@ -273,7 +273,7 @@ follows is the selection.
 
 Everything gated on a firmware-pinned provider key: the reductive branch, the
 delegate certificate chain, expiry. It is written up in
-`DESIGN-716-reductive.md` and it stays there. The release gate is mechanical
+the 7.16 design doc on `alpha`, and it stays there. The release gate is mechanical
 and checkable — **no pinned provider key bytes in the artifact** — which is why
 7.15 needs no custody programme (`ROADMAP-715-717.md`).
 

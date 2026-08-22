@@ -4,7 +4,7 @@ Status: **planning**. No code change proposed for 7.15.0 — this records the
 measurement, the phasing, and the one ordering constraint that must not be
 missed.
 
-Companion docs: `clearsign-key-delegation-roadmap.md` (why tx-time injection
+Companion docs: the 7.16 delegation roadmap on `alpha` (why tx-time injection
 needs a delegation system), `7.15.0-rc21-clearsign-release-control.md` (what
 ships today and its AdvancedMode requirement).
 
@@ -159,7 +159,7 @@ silent-empty generator above.
 
 Requires metadata to *replace* the token display rather than annotate it, which
 requires a non-loaded (pinned or delegated) signer — the custody decision in
-`clearsign-key-delegation-roadmap.md`, marked there as
+the 7.16 delegation roadmap on `alpha`, marked there as
 "Owner decision. Not decidable in this document." Blocked on that, not on
 engineering.
 

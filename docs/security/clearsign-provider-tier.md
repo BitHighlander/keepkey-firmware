@@ -1,7 +1,8 @@
 # Clear-sign providers: Phase 0 as a shippable tier
 
 Status: **goals**, for agreement before build. Companion to
-`clearsign-key-delegation-roadmap.md` (which defines Phases 0–3) and
+the 7.16 delegation roadmap (which defines Phases 0–3, and lands with
+7.16 — it is on `alpha`) and
 `7.15.0-rc21-clearsign-release-control.md` (what ships today).
 
 The roadmap treats Phase 0 as a developer affordance — "that path is for
@@ -32,7 +33,7 @@ it. These can be checked against code in under a minute.
 
 **Anything that suppresses a screen or renders a KeepKey endorsement is a
 different release.** Root custody, delegate certificates, quorum and freshness all
-sit on that side of the line — see `clearsign-key-delegation-roadmap.md` §0a,
+sit on that side of the line — see the 7.16 delegation roadmap §0a on `alpha`,
 where every one of those decisions is already locked.
 
 Phase numbers in this repo label history, not scope. If a phase number and this
