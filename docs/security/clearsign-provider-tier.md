@@ -25,7 +25,10 @@ it. These can be checked against code in under a minute.
    review still runs (`ethereum.c`). Solana: `signed_metadata_signer_is_runtime()`
    (`fsm_msg_solana.h`). Grep the names; the line numbers rot.
 2. **Never claims KeepKey approval.** A runtime signer renders the provider's own
-   alias and fingerprint plus "NOT verified by KeepKey".
+   alias and fingerprint. The "NOT verified by KeepKey" wording appears on the
+   LOAD-TIME consent screen only (signed_metadata.c:609-612), not per
+   transaction -- corrected 2026-08-21 against the code. Solana differs and
+   does show it per transaction (fsm_msg_solana.h:474).
 3. **Opt-in, per session.** `AdvancedMode` is session state and never written to
    flash, and `signed_metadata_confirm_load` is a device confirm that cannot be
    suppressed. Identities are RAM-only.

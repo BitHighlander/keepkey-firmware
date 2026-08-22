@@ -76,10 +76,31 @@ different identity.
 
 **R-2.1** A provider key SHALL be trusted only via a root-signed delegate
 certificate.
-**R-2.2** A certificate SHALL carry an expiry, and the device SHALL refuse an
-expired one.
+**R-2.2** A certificate SHALL carry an expiry. On an expired certificate the
+device SHALL refuse to honour the DELEGATION; it SHALL NOT refuse the
+transaction. It degrades to the 7.15 additive path.
+
+*Corrected 2026-08-21.* The previous wording -- "the device SHALL refuse an
+expired one" -- reads as refusing the transaction, which contradicts this
+document's own V-3 and would hand anyone able to age out a certificate a remote
+kill switch for signing. A stale describer is one we no longer trust; an
+undescribed transaction is what 7.15 already handles safely.
+
 **R-2.3** Revocation SHALL be possible without a firmware update, or its absence
 SHALL be stated as an accepted limitation with its blast radius.
+
+*Answered: NOT possible in 7.16, and the blast radius is stated here rather
+than discovered later.* A leaked delegate key can render suppressed
+descriptions on any 7.16.x device, for any transaction it chooses to describe,
+until the user installs a firmware whose compiled-in expiry floor exceeds that
+certificate's `not_after`. **A device that never updates never revokes.**
+Revocation granularity equals firmware-release granularity, and the revocation
+channel is the one that already requires a signed update.
+
+What genuinely bounds it: certificates are never stored on the device, so a
+host must present a compromised one on every single transaction; and issuance
+policy keeps lifetimes short enough that the floor bites within one release
+cycle.
 
 ### 3.3 Suppression — what actually changes on screen
 

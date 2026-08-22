@@ -4,3 +4,13 @@ build
 .vscode/
 
 build-btconly-check/
+
+# Secrets never belong in this tree. The 7.16 delegate-root TEST key lives
+# outside the repository entirely; this is belt-and-braces so a stray
+# `git add -A` cannot stage one. The PRODUCTION root key never exists as a
+# file at all -- it lives on a KeepKey.
+.env
+.env.*
+*.env
+*.seed
+*.privkey

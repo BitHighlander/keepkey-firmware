@@ -76,7 +76,16 @@ from a runtime one. 7.15 shows the provider alias plus "NOT verified by
 KeepKey". 7.16 must not merely delete that line; see §4.
 
 Estimated diff: **under 150 lines of C**, most of it the key blob and its
-comment. If it grows past that, the design has drifted.
+comment.
+
+But line count is the wrong tripwire, because it can be satisfied by writing
+dense code. The test that actually catches drift is structural:
+
+  ONE key, ONE certificate format, ONE suppression predicate,
+  ZERO new crypto primitives, ZERO new proto messages, ZERO submodule repins.
+
+If any of those zeros becomes non-zero, the design has changed and needs
+re-reviewing regardless of how few lines it took.
 
 ## 4. What the user sees, and why it is the hard part
 
@@ -90,7 +99,25 @@ exactly three states to distinguish:
 1. **Nobody.** Raw review. The device shows bytes and says it cannot interpret
    them.
 2. **A stranger** (runtime provider). Decoded screens, the provider's own alias
-   and fingerprint, "NOT verified by KeepKey", and the raw review still follows.
+   and fingerprint, and the raw review still follows.
+
+   CORRECTED 2026-08-21, against the code rather than the intent. On EVM the
+   string "NOT verified by KeepKey" is drawn EXACTLY ONCE, on the load-time
+   consent screen (signed_metadata.c:609-612). The per-transaction screen
+   deliberately omits it and shows the identity instead, and says why in a
+   comment at signed_metadata.c:793-797: the user approved this identity as
+   their trust anchor, so naming it is "the honest framing" rather than a
+   scary banner.
+
+   This SHARPENS the argument in section 4 rather than weakening it. If there
+   is no per-transaction stranger warning on EVM, then the absence of one was
+   never going to be the signal, and a POSITIVE marker for the KeepKey tier is
+   not a nicety -- it is the only thing that distinguishes the two states on
+   that screen.
+
+   Solana is inconsistent with EVM here: it DOES render the warning per
+   transaction (fsm_msg_solana.h:474). Reconciling them is 7.17 work; this
+   document records the divergence rather than pretending it away.
 3. **KeepKey** (delegate). Decoded screens; the raw review may be omitted.
 
 State 3 must carry a positive marker rather than the absence of state 2's
@@ -102,6 +129,13 @@ not merely stop saying "NOT verified". That is one string and one screen, and it
 is the difference between a tier system and a trap.
 
 ## 5. Open decisions — answer before building
+
+> **Decision 4 (AdvancedMode disable) is CLOSED**, and was closed in 7.15 rather
+> than deferred here. `fsm_msg_common.h:803-805` calls
+> `signed_metadata_clear_signers()` when a policy update disables AdvancedMode.
+> Verified in code 2026-08-21. The delegate tier deliberately does not
+> participate: it is not AdvancedMode-gated and holds no session state, so
+> toggling the policy neither installs nor erases anything.
 
 1. **Marker wording for state 3.** Fully warning-free, or a subtler
    *"described by KeepKey, 12 Aug"*? The roadmap asks this for delegated v1 and
