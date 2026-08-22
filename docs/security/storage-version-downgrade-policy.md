@@ -1,6 +1,6 @@
 # Storage version and downgrade policy
 
-Status: current as of the rc28 revert. Read this before touching
+Status: updated for the draft 7.16 passkeys migration. Read this before touching
 `STORAGE_VERSION`, `storage_versions.inc`, or `STORAGE_PIN_KDF_V19`.
 
 ---
@@ -40,8 +40,8 @@ above.
 
 | Version | State |
 |---|---|
-| 17 | **What this firmware reads and writes.** Same as shipped v7.14.1. |
-| 18 | Never shipped. Added and reverted inside the 7.15 line. Reader/writer functions still exist but are unreachable — no enum entry. |
+| 17 | **Last shipped storage version.** Same as shipped v7.14.1/7.15. |
+| 18 | Draft 7.16 passkey layout. Adds CTAP2 state in V17's reserved area while continuing to scrub the retired clear-sign identity block. It must not ship until the bootloader security-epoch gate is enforced. |
 | 19 | Never shipped. Same as 18. The PIN-KDF implementation is retained and unit-tested behind `STORAGE_PIN_KDF_V19 == 0`. |
 
 RC27 wrote version 19. **Installing rc28 on a device that ran RC27 wipes it**,
@@ -134,11 +134,10 @@ anchor compiled into the firmware, which costs zero device storage. If that is
 the chosen endgame, the identity block should be deleted outright rather than
 carried to version 18.
 
-Follow-up not done in the revert: the V18/V19 reader/writer functions and the
-identity array are still compiled, just unreachable. Removing them reclaims
-~910 bytes of the `ConfigFlash` shadow copy, which matters against the SRAM
-budget gates. Kept out of the revert to keep a wallet-critical diff small and
-reviewable.
+The draft passkey branch makes V18 reachable but never parses, trusts, or
+carries forward the retired identity block. It removes the legacy in-memory
+identity array, reclaiming ~910 bytes from the `ConfigFlash` shadow copy, and
+keeps the bounded V18 record within the V17 footprint. V19 remains unreachable.
 
 ---
 

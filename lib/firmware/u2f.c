@@ -31,6 +31,7 @@
 #include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_layout.h"
+#include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f/u2f.h"
@@ -157,6 +158,14 @@ void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
     }
 
     if ((f->type & TYPE_INIT) && reader->seq == 255) {
+      if (reader->cmd == U2FHID_CBOR && f->init.cmd != U2FHID_CANCEL) {
+        send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
+        return;
+      }
+      if (f->init.cmd == U2FHID_CANCEL && MSG_LEN(*f) != 0) {
+        send_u2fhid_error(f->cid, ERR_INVALID_LEN);
+        return;
+      }
       u2fhid_init_cmd(f);
       return;
     }
@@ -236,8 +245,11 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
       }
     }
 
-    // We have all the data
-    switch (reader->cmd) {
+    // We have all the data. Mark the transport ready for an asynchronous
+    // CTAPHID_CANCEL while a CTAP2 command waits for user presence.
+    uint8_t command = reader->cmd;
+    reader->seq = 255;
+    switch (command) {
       case 0:
         // message was aborted by init
         break;
@@ -246,6 +258,14 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
         break;
       case U2FHID_MSG:
         u2fhid_msg((APDU*)reader->buf, reader->len);
+        break;
+      case U2FHID_CBOR:
+        u2fhid_cbor(reader->buf, reader->len);
+        break;
+      case U2FHID_CANCEL:
+        /* Commands are currently synchronous. Accepting CANCEL is still
+         * required at the transport boundary and becomes meaningful when the
+         * CTAP user-presence state machine is active. */
         break;
       case U2FHID_WINK:
         u2fhid_wink(reader->buf, reader->len);
@@ -284,7 +304,10 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
   }
 }
 
-void u2fInit(void) { usb_set_u2f_rx_callback(u2fhid_read); }
+void u2fInit(void) {
+  ctap2_init();
+  usb_set_u2f_rx_callback(u2fhid_read);
+}
 
 void u2fhid_ping(const uint8_t* buf, uint32_t len) {
   debugLog(0, "", "u2fhid_ping");
@@ -332,7 +355,7 @@ void u2fhid_init(const U2FHID_FRAME* in) {
   resp.versionMajor = MAJOR_VERSION;
   resp.versionMinor = MINOR_VERSION;
   resp.versionBuild = PATCH_VERSION;
-  resp.capFlags = CAPFLAG_WINK;
+  resp.capFlags = CAPFLAG_WINK | CAPFLAG_CBOR;
   memcpy(&f.init.data, &resp, sizeof(resp));
 
   queue_u2f_pkt(&f);
@@ -389,6 +412,14 @@ void u2fhid_msg(const APDU* a, uint32_t len) {
       debugLog(0, "", "u2f unknown cmd");
       send_u2f_error(U2F_SW_INS_NOT_SUPPORTED);
   }
+}
+
+void u2fhid_cbor(const uint8_t* buf, uint32_t len) {
+  static uint8_t response[CTAP2_MAX_RESPONSE_SIZE];
+  size_t response_len = 0;
+  ctap2_set_transport_channel(cid);
+  ctap2_handle(buf, len, response, sizeof(response), &response_len);
+  send_u2fhid_msg(U2FHID_CBOR, response, response_len);
 }
 
 void send_u2fhid_msg(const uint8_t cmd, const uint8_t* data,
@@ -584,6 +615,54 @@ static const HDNode* validateKeyHandle(const uint8_t app_id[],
 
   // Done!
   return node;
+}
+
+bool u2f_generate_credential(const uint8_t app_id[32], uint8_t key_handle[64],
+                             uint8_t private_key[32], uint8_t public_key[65]) {
+  const HDNode* node = generateKeyHandle(app_id, key_handle);
+  if (node == NULL) return false;
+  memcpy(private_key, node->private_key, 32);
+  ecdsa_get_public_key65(&nist256p1, node->private_key, public_key);
+  return true;
+}
+
+bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
+                         uint8_t private_key[32], uint8_t public_key[65]) {
+  const HDNode* node = validateKeyHandle(app_id, key_handle);
+  if (node == NULL) return false;
+  memcpy(private_key, node->private_key, 32);
+  ecdsa_get_public_key65(&nist256p1, node->private_key, public_key);
+  return true;
+}
+
+bool ctap2_request_user_presence(const char* rp_id, bool registration) {
+  layoutU2FDialog(true, registration ? "Create Passkey" : "Use Passkey",
+                  registration ? "Create a passkey for %s?" : "Sign in to %s?",
+                  rp_id);
+  bool saw_button_up = false;
+  for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
+    if (reader != NULL && reader->cmd == U2FHID_CANCEL) {
+      layoutHome();
+      return false;
+    }
+    saw_button_up = saw_button_up || keepkey_button_up();
+    if (saw_button_up && keepkey_button_down()) {
+      layoutU2FDialog(false, registration ? "Create Passkey" : "Use Passkey",
+                      "%s", rp_id);
+      return true;
+    }
+    if ((remaining % (U2F_TIMEOUT / 4)) == 0) {
+      const uint8_t status = 0x02; /* CTAPHID_KEEPALIVE_STATUS_UPNEEDED */
+      send_u2fhid_msg(U2FHID_KEEPALIVE, &status, 1);
+    }
+    usbPoll();
+  }
+  layoutHome();
+  return false;
+}
+
+bool ctap2_user_presence_was_cancelled(void) {
+  return reader != NULL && reader->cmd == U2FHID_CANCEL;
 }
 
 static void promptRegister(bool request, const U2F_REGISTER_REQ* req) {

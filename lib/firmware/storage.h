@@ -25,37 +25,13 @@
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/policy.h"
+#include "keepkey/firmware/passkey.h"
 
 // The length of the external salt in bytes.
 #define EXTERNAL_SALT_SIZE 32
 
 #define V16_ENCSEC_SIZE 512  // for reading old encrypted sec size
 #define V17_ENCSEC_SIZE 1024
-
-/* Retired V18 clear-sign identity record. The fixed-size fields remain in the
- * in-memory/storage layout for backward compatibility, but RC18 never trusts,
- * returns, or writes their contents: this public section lacks authenticated
- * integrity against physical flash modification.
- *   pubkey  : 33-byte compressed secp256k1 (matches signed_metadata slots)
- *   alias   : METADATA_ALIAS_MAX_LEN(31)+1, printable [A-Za-z0-9 _-]
- *   icon    : 1bpp mono row-major bitmap, <= CLEARSIGN_ICON_MAX bytes,
- *             icon_len==0 => text-only identity (no logo)
- * Serialized size is fixed (CLEARSIGN_IDENTITY_SERIALIZED_LEN) — appended after
- * encrypted_sec in the V18 storage layout; never reorder existing fields. */
-#define CLEARSIGN_ICON_MAX 384
-#define CLEARSIGN_IDENTITY_ALIAS_SIZE 32 /* METADATA_ALIAS_MAX_LEN(31) + 1 */
-#define PERSISTENT_IDENTITY_COUNT 2
-typedef struct _ClearsignIdentity {
-  bool present;
-  uint8_t key_id;  // the signer slot (1..METADATA_MAX_KEYS-1) this identity
-                   // reloads into; the per-tx blob's key_id selects it
-  uint8_t pubkey[33];
-  char alias[CLEARSIGN_IDENTITY_ALIAS_SIZE];
-  uint8_t icon_w;
-  uint8_t icon_h;
-  uint16_t icon_len;
-  uint8_t icon[CLEARSIGN_ICON_MAX];
-} ClearsignIdentity;
 
 typedef struct _authBlockType {
   authType authData[AUTHDATA_SIZE];                          // 450
@@ -96,8 +72,8 @@ typedef struct _Storage {
     bool authdata_encrypted;
     uint8_t random_salt[32];
     uint8_t authdata_fingerprint[32];
-    /* V18 legacy clear-sign records. Always scrubbed on read and write. */
-    ClearsignIdentity clearsign_identities[PERSISTENT_IDENTITY_COUNT];
+    /* V20 CTAP2 state stored in the V17 reserved plaintext area. */
+    PasskeyStorage passkeys;
   } pub;
 
   bool has_sec;
@@ -263,12 +239,12 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV17(ConfigFlash* dst, const char* flash, size_t len);
-void storage_readV18(ConfigFlash* dst, const char* flash, size_t len);
+void storage_readV20(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV19(ConfigFlash* dst, const char* flash, size_t len);
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
-void storage_writeV18(char* flash, size_t len, const ConfigFlash* src);
+void storage_writeV20(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);
@@ -277,12 +253,14 @@ void storage_readHDNode(HDNodeType* node, const char* ptr, size_t len);
 void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
                            size_t len);
 void storage_readStorageV11(Storage* storage, const char* ptr, size_t len);
+void storage_readStorageV20(Storage* storage, const char* ptr, size_t len);
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len);
 
 void storage_writeMeta(char* ptr, size_t len, const Metadata* meta);
 void storage_writePolicyV1(char* ptr, size_t len, const PolicyType* policy);
 void storage_writeHDNode(char* ptr, size_t len, const HDNodeType* node);
 void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage);
+void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage);
 void storage_writeCacheV1(char* ptr, size_t len, const Cache* cache);
 
 bool storage_setPolicy_impl(PolicyType ps[POLICY_COUNT],

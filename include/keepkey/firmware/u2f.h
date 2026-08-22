@@ -45,12 +45,17 @@ void u2fhid_wink(const uint8_t* buf, uint32_t len);
 void u2fhid_sync(const uint8_t* buf, uint32_t len);
 void u2fhid_lock(const uint8_t* buf, uint32_t len);
 void u2fhid_msg(const APDU* a, uint32_t len);
+void u2fhid_cbor(const uint8_t* buf, uint32_t len);
 void queue_u2f_pkt(const U2FHID_FRAME* u2f_pkt);
 
 uint8_t* u2f_out_data(void);
 void u2f_register(const APDU* a);
 void u2f_version(const APDU* a);
 void u2f_authenticate(const APDU* a);
+bool u2f_generate_credential(const uint8_t app_id[32], uint8_t key_handle[64],
+                             uint8_t private_key[32], uint8_t public_key[65]);
+bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
+                         uint8_t private_key[32], uint8_t public_key[65]);
 
 void send_u2f_msg(const uint8_t* data, uint32_t len);
 void send_u2f_error(uint16_t err);
