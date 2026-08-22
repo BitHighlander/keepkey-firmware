@@ -776,6 +776,29 @@ static MetadataClassification process_certified(const uint8_t* payload,
   if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
     return METADATA_MALFORMED;
 
+  /* The inner payload MUST be v2. This is the load-bearing check of the whole
+   * tier, not a format nicety.
+   *
+   * The reason a KeepKey-certified describer is allowed to suppress the raw
+   * review is structural: under v2 the DEVICE decodes the argument values out
+   * of the exact calldata it is about to sign, so what the screen says is
+   * bound to the signature by construction and the signer cannot lie about it.
+   *
+   * A v1 blob has no such property -- it carries argument values supplied
+   * WHOLESALE BY THE SIGNER, and v1 exists precisely because 7.15 tolerates a
+   * hot per-transaction key: mislabelling is survivable there only because the
+   * raw review always follows. Grant that same blob the suppression tier and
+   * the one thing that made it safe is gone. The delegate could then show
+   * "Amount: 0.1 ETH" over calldata doing something else entirely, with
+   * nothing behind it.
+   *
+   * Rejecting degrades to the additive 7.15 path, which is exactly where a v1
+   * describer belongs. */
+  if (stored_metadata.version != METADATA_VERSION_SCHEMA) {
+    signed_metadata_clear();
+    return METADATA_MALFORMED;
+  }
+
   size_t signed_len = inner_len - sizeof(stored_metadata.signature) - 1;
   uint8_t digest[32];
   sha256_Raw(inner, signed_len, digest);
@@ -902,7 +925,11 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
  * it. The caller (signed_metadata_confirm) clears the runtime icon once on
  * return, covering every early-exit path. */
 static bool signed_metadata_confirm_screens(void) {
-  char body[128];
+  /* Sized so the widest argument cannot be silently truncated by snprintf:
+   * name + ":\n" + every value byte as hex + NUL. A truncating snprintf here
+   * would reintroduce exactly the concealment this renderer was fixed for. */
+  char body[METADATA_MAX_ARG_NAME_LEN + 2 + (METADATA_MAX_ARG_VALUE_LEN * 2) +
+            1];
   /* Compass shown on every screen once a signer with an icon is loaded. */
   IconType screen_icon = NO_ICON;
   Image icon_img;
@@ -1102,11 +1129,25 @@ static bool signed_metadata_confirm_screens(void) {
       case ARG_FORMAT_BYTES:
       case ARG_FORMAT_RAW:
       default: {
+        /* The WHOLE value, never an ellipsis.
+         *
+         * This used to show the first 16 bytes and trail a "...". Under 7.15
+         * that was merely terse, because the raw-calldata review followed and
+         * the hidden half was visible there. Under a suppressing KeepKey
+         * delegate there is no such review, and the remaining bytes are
+         * displayed NOWHERE while still being covered by the signature.
+         *
+         * That is a redirection primitive, not a cosmetic limit: a bytes32
+         * recipient (a bridge mintRecipient, say) differing only in its low 16
+         * bytes produced a screen sequence byte-for-byte identical to the
+         * honest one. ADDRESS is already documented as "never truncated" for
+         * exactly this reason; a signed word is no different.
+         *
+         * confirm_helper paginates, so a long body costs screens, not
+         * information. */
         char hex[(METADATA_MAX_ARG_VALUE_LEN * 2) + 1];
-        size_t display_len = arg->value_len > 16 ? 16 : (size_t)arg->value_len;
-        data2hex(arg->value, display_len, hex);
-        snprintf(body, sizeof(body), "%s:\n%s%s", arg->name, hex,
-                 arg->value_len > 16 ? "..." : "");
+        data2hex(arg->value, arg->value_len, hex);
+        snprintf(body, sizeof(body), "%s:\n%s", arg->name, hex);
         break;
       }
     }
