@@ -54,10 +54,21 @@
  * floor is between 10 and 12 KB -- so this is the last kilobyte available
  * without shrinking a message.
  *
- * Measured: with arrays and a 13 KB buffer the runtime reserve is 16,180 B,
- * which FAILS the linker's 16,384 B gate. At 12 KB it is 17,204 B, a margin of
- * 820 B. */
-#define MAX_DECODE_SIZE (12 * 1024)
+ * Measured, structured EIP-712 only: 13 KB gives a 16,180 B reserve, which
+ * FAILS the linker's 16,384 B gate; 12 KB gives 17,204 B.
+ *
+ * Then passkeys landed and took 1,248 B of static allocation -- a passkey
+ * credential is 212 B and the storage struct is held TWICE in RAM, live in
+ * shadow_config and staged in flash_temp -- which spent that margin and left
+ * the reserve at 15,956 B, 428 B under the gate.
+ *
+ * 11 KB restores it to 16,980 B, a 596 B margin, with both ARM variants
+ * linking. Chosen over cutting PASSKEY_MAX_DISCOVERABLE_CREDENTIALS from 4
+ * because that is a permanent, user-visible product limit (4 is already low
+ * against a YubiKey's 25+) while this is protocol headroom nobody sees, and
+ * every registered message is static-asserted against it -- outgrowing it
+ * fails the BUILD, not the field. */
+#define MAX_DECODE_SIZE (11 * 1024)
 #else
 #define MAX_DECODE_SIZE (26 * 1024)
 #endif
