@@ -27,6 +27,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       cosmos.cpp
       eip712.cpp
       eos.cpp
+      clearsign_root.cpp
       ethereum.cpp
       eip712_stream.cpp
       hive.cpp
@@ -53,6 +54,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
 
 add_executable(firmware-unit ${sources})
+
 target_link_libraries(firmware-unit
     gmock_main
     kkfirmware

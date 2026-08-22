@@ -487,6 +487,26 @@ jobs:
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T - && \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
+      - name: Assert no TEST clear-signing root shipped
+        run: |
+          # The 7.16 clear-signing root is the one key that can tell a device to
+          # SUPPRESS the raw-data review, so a hardware binary must never carry
+          # a root whose private half has ever touched a laptop. Release builds
+          # get an all-zero root because KK_CLEARSIGN_TEST_ROOT defaults OFF and
+          # only scripts/emulator/Dockerfile turns it on -- this asserts that
+          # actually held, rather than trusting that it did.
+          python3 - <<'EOF'
+          import sys
+          TEST_ROOT = bytes.fromhex(
+              "02be12c1940f5ddf084a539a02e03de868a3a3314c1e5bb41e1ebabd471b640741")
+          blob = open("bin/firmware.keepkey.bin", "rb").read()
+          if TEST_ROOT in blob:
+              sys.exit("::error::TEST clear-signing root key found in the ARM "
+                       "binary. KK_CLEARSIGN_TEST_ROOT must never be set for a "
+                       "hardware build.")
+          print("No test root in the binary.")
+          EOF
+
       # SRAM budget gate — RC7's privacy-enabled build hard-faulted on boot
       # because static SRAM left an 11.2 KB gap while msg_write() carried a
       # 12.4 KB stack frame. keepkey.ld now ASSERTs a 16 KiB reserve at link
