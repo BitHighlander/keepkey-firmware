@@ -1,5 +1,7 @@
 #include "keepkey/firmware/signed_metadata.h"
 
+#include "keepkey/firmware/clearsign_root.h"
+
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/draw.h"     // draw_bitmap_mono_rle_valid
 #include "keepkey/board/layout.h"   // RUNTIME_ICON + layout_set_runtime_icon
@@ -21,7 +23,14 @@
 
 static bool metadata_available = false;
 static bool relied_on_metadata = false;
-static bool metadata_signer_loaded = false;
+static uint8_t metadata_tier = METADATA_TIER_NONE;
+
+/* Set ONLY on the certified path, cleared with everything else. A delegation
+ * never outlives the message that carried it. */
+static char delegate_alias[CLEARSIGN_ALIAS_LEN + 1];
+static char delegate_fp[METADATA_FINGERPRINT_LEN];
+static uint32_t delegate_chain_id;
+static bool delegate_may_suppress;
 /* v2 only: set true once decode_v2_args() has decoded this metadata's args from
  * the tx calldata. The v2 enforce path REQUIRES it — v2 has no committed
  * tx_hash, so this is the explicit proof (not an implicit call-order
@@ -411,7 +420,11 @@ void signed_metadata_clear(void) {
   memzero(&stored_metadata, sizeof(stored_metadata));
   metadata_available = false;
   relied_on_metadata = false;
-  metadata_signer_loaded = false;
+  metadata_tier = METADATA_TIER_NONE;
+  memzero(delegate_alias, sizeof(delegate_alias));
+  memzero(delegate_fp, sizeof(delegate_fp));
+  delegate_chain_id = 0;
+  delegate_may_suppress = false;
   metadata_schema_decoded = false;
 }
 
@@ -625,7 +638,7 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
 }
 
 bool signed_metadata_from_loaded_signer(void) {
-  return metadata_available && metadata_signer_loaded;
+  return metadata_available && metadata_tier == METADATA_TIER_RUNTIME;
 }
 
 /* Resolve the verification key for a slot. */
@@ -675,6 +688,10 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
   return ok;
 }
 
+/* Defined below, next to the suppression predicate it feeds. */
+static MetadataClassification process_certified(const uint8_t* payload,
+                                                size_t payload_len);
+
 MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                size_t payload_len,
                                                uint8_t key_id) {
@@ -684,6 +701,22 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   const uint8_t* pubkey;
 
   signed_metadata_clear();
+
+  /* A certified envelope carries its own verification key inside a
+   * KeepKey-signed certificate, so it is dispatched BEFORE the runtime key ring
+   * is consulted -- the delegate is not in that ring and must never be put
+   * there. key_id is required to be the reserved sentinel so a certified
+   * envelope can never be confused with a runtime slot. */
+  if (payload && payload_len > 1 + CLEARSIGN_CERT_LEN &&
+      payload[0] == METADATA_VERSION_CERTIFIED) {
+    if (key_id != METADATA_KEYID_DELEGATE) {
+      signed_metadata_clear();
+      return METADATA_MALFORMED;
+    }
+    MetadataClassification c = process_certified(payload, payload_len);
+    if (c == METADATA_MALFORMED) signed_metadata_clear();
+    return c;
+  }
 
   pubkey = metadata_pubkey_for(key_id, &is_loaded);
   if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode")) ||
@@ -707,8 +740,93 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   }
 
   metadata_available = true;
-  metadata_signer_loaded = is_loaded;
+  metadata_tier = is_loaded ? METADATA_TIER_RUNTIME : METADATA_TIER_NONE;
   return stored_metadata.classification;
+}
+
+/* ── The KeepKey tier ────────────────────────────────────────────────
+ *
+ * A certified envelope is [0x03][cert 139][inner v2 payload]. The certificate
+ * is verified against the compiled-in root, its fields are copied out for the
+ * screen, and the certificate itself is DISCARDED -- the inner payload is then
+ * processed exactly as a v2 payload would be, against the delegate's key.
+ *
+ * Nothing about a delegation survives the message. There is no slot to
+ * promote, nothing to revoke at runtime, and no state a later transaction can
+ * inherit.
+ */
+static MetadataClassification process_certified(const uint8_t* payload,
+                                                size_t payload_len) {
+  if (payload_len <= 1 + CLEARSIGN_CERT_LEN) return METADATA_MALFORMED;
+
+  const uint8_t* cert = payload + 1;
+  if (!clearsign_root_verify_cert(cert, CLEARSIGN_CERT_LEN)) {
+    /* Unverifiable, expired, wrong chain shape, or no root compiled in. The
+     * CALLER degrades to the additive path -- this is not a refusal. */
+    return METADATA_MALFORMED;
+  }
+
+  /* The inner payload is verified against the DELEGATE's key, which the
+   * certificate carries. The root vouches for the delegate; the delegate signs
+   * the description. Two signatures, two distinct keys, one message. */
+  const uint8_t* delegate_pub = cert + CLEARSIGN_CERT_OFF_PUBKEY;
+  const uint8_t* inner = payload + 1 + CLEARSIGN_CERT_LEN;
+  size_t inner_len = payload_len - 1 - CLEARSIGN_CERT_LEN;
+
+  if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
+    return METADATA_MALFORMED;
+
+  size_t signed_len = inner_len - sizeof(stored_metadata.signature) - 1;
+  uint8_t digest[32];
+  sha256_Raw(inner, signed_len, digest);
+  if (ecdsa_verify_digest(&secp256k1, delegate_pub, stored_metadata.signature,
+                          digest) != 0) {
+    return METADATA_MALFORMED;
+  }
+
+  memcpy(delegate_alias, cert + CLEARSIGN_CERT_OFF_ALIAS, CLEARSIGN_ALIAS_LEN);
+  delegate_alias[CLEARSIGN_ALIAS_LEN] = '\0';
+  signed_metadata_pubkey_fingerprint(delegate_pub, delegate_fp);
+  delegate_chain_id = ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN] << 24) |
+                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN + 1] << 16) |
+                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN + 2] << 8) |
+                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN + 3]);
+  delegate_may_suppress =
+      (cert[CLEARSIGN_CERT_OFF_FLAGS] & CLEARSIGN_USAGE_MAY_SUPPRESS_RAW) != 0;
+
+  metadata_available = true;
+  metadata_tier = METADATA_TIER_KEEPKEY;
+  return stored_metadata.classification;
+}
+
+/* The ONE place suppression is decided.
+ *
+ * Positive and conjunctive on purpose. An else-arm answers "not a runtime
+ * signer", which quietly becomes true for any tier added later -- including
+ * one nobody has reviewed against this question. Every clause here has to be
+ * satisfied deliberately.
+ */
+bool signed_metadata_may_suppress(uint32_t tx_chain_id) {
+  if (!metadata_available) return false;
+  if (metadata_tier != METADATA_TIER_KEEPKEY) return false;
+  if (!delegate_may_suppress) return false;
+  if (delegate_chain_id == 0) return false;
+  /* Bound to ONE network. A certificate for mainnet must not describe a
+   * transaction on another chain, where the same address means something
+   * entirely different. */
+  if (delegate_chain_id != tx_chain_id) return false;
+  if (!clearsign_root_is_present()) return false;
+  return true;
+}
+
+const char* signed_metadata_delegate_alias(void) {
+  return (metadata_tier == METADATA_TIER_KEEPKEY) ? delegate_alias : "";
+}
+
+bool signed_metadata_delegate_fingerprint(char out[METADATA_FINGERPRINT_LEN]) {
+  if (metadata_tier != METADATA_TIER_KEEPKEY) return false;
+  memcpy(out, delegate_fp, METADATA_FINGERPRINT_LEN);
+  return true;
 }
 
 bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
@@ -790,7 +908,37 @@ static bool signed_metadata_confirm_screens(void) {
   Image icon_img;
   AnimationFrame icon_frame;
 
-  if (metadata_signer_loaded) {
+  /* ── State 3: KeepKey vouched for this describer ───────────────────
+   *
+   * A POSITIVE marker, not the absence of a warning.
+   *
+   * That distinction is the whole reason this screen exists. An absence
+   * signals nothing to a user who has never seen the thing that is missing --
+   * and on EVM there is nothing to miss anyway: the "NOT verified by KeepKey"
+   * wording appears only on the load-time consent screen, never per
+   * transaction. So a KeepKey-delegated describer that merely dropped a
+   * warning would be indistinguishable from a stranger, on the one screen
+   * where the difference decides whether the raw review is about to be
+   * skipped.
+   *
+   * The alias and fingerprint stay because they are the only forensic handle
+   * if a delegate key ever leaks. No expiry date: the device has no clock, so
+   * showing one would imply a freshness check it did not perform. */
+  if (metadata_tier == METADATA_TIER_KEEPKEY) {
+    char fp[METADATA_FINGERPRINT_LEN];
+    if (!signed_metadata_delegate_fingerprint(fp)) {
+      strlcpy(fp, "????????", sizeof(fp));
+    }
+    const char* alias = signed_metadata_delegate_alias();
+    if (!alias || alias[0] == '\0') alias = "unknown";
+    if (!confirm(ButtonRequestType_ButtonRequest_Other,
+                 _("Verified by KeepKey"),
+                 "%s (%s)\ndescribes this transaction.", alias, fp)) {
+      return false;
+    }
+  }
+
+  if (metadata_tier == METADATA_TIER_RUNTIME) {
     /* Lead with the loaded IDENTITY (logo, if any, + alias + fingerprint)
      * BEFORE any clearsign page. The user approved this identity as their
      * trust anchor, so showing it — not a scary "NOT verified by KeepKey"

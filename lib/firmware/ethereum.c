@@ -825,19 +825,38 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        if (signed_metadata_from_loaded_signer()) {
-          /* A self-service signer is annotation-only. Its decoded screens are
-           * followed by the same amount and raw-calldata review an Advanced
-           * transaction would have received without metadata. A lying runtime
-           * schema therefore cannot conceal transaction bytes. */
-          needs_confirm = true;
-          data_needs_confirm = true;
-        } else {
-          /* A future firmware-pinned signer may replace the raw-data screen.
-           * Payable calls still show amount/recipient because a v2 schema
-           * describes calldata only and cannot bind msg->value. */
+        /* Suppression is the POSITIVE arm, deliberately.
+         *
+         * This used to read "if runtime signer ... else suppress", and an
+         * else-arm answers "not a runtime signer" -- which quietly becomes
+         * true for any trust tier added later, including one nobody reviewed
+         * against this question. Asking may_suppress() instead means a new
+         * tier defaults to the additive path and has to be let in on purpose.
+         *
+         * The chain id is passed because a certificate is bound to ONE
+         * network: the same address means something entirely different
+         * elsewhere, so a mainnet delegate must not describe an L2
+         * transaction. */
+        if (signed_metadata_may_suppress(chain_id)) {
+          /* KeepKey vouched for this describer, so the raw-data screen may be
+           * replaced by the decoded one. Payable calls still show
+           * amount/recipient because a v2 schema describes calldata only and
+           * cannot bind msg->value. */
           needs_confirm = signed_metadata_schema_moves_value();
           data_needs_confirm = false;
+        } else {
+          /* Everything else -- no metadata, a self-service signer, an expired
+           * or unverifiable certificate, a certificate for another chain -- is
+           * ANNOTATION ONLY. The decoded screens are followed by the same
+           * amount and raw-calldata review the transaction would have received
+           * without metadata, so a lying describer cannot conceal bytes.
+           *
+           * Note this is also the DEGRADE path: a certificate that fails to
+           * verify lands here rather than refusing the transaction. A stale
+           * describer is one we no longer trust; an undescribed transaction is
+           * what 7.15 already handles safely. */
+          needs_confirm = true;
+          data_needs_confirm = true;
         }
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,

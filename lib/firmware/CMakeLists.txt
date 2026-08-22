@@ -39,6 +39,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts/zxtransERC20.c
       ethereum_contracts/zxswap.c
       ethereum_tokens.c
+      clearsign_root.c
       signed_metadata.c
       mayachain.c
       nano.c

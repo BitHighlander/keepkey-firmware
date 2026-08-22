@@ -27,6 +27,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       cosmos.cpp
       eip712.cpp
       eos.cpp
+      clearsign_root.cpp
       ethereum.cpp
       eip712_stream.cpp
       hive.cpp
