@@ -1473,9 +1473,15 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       return SUS_Updated;
     /* 18 and 19 are BURNED formats -- see storage_versions.inc. A blob stamped
      * with either came from an alpha build whose layout has nothing to do with
-     * passkeys, so there is deliberately NO reader here. It falls through to
-     * the default and the device wipes, which is the documented behaviour for
-     * an unrecognised format and is strictly better than misparsing one. */
+     * passkeys, so there is deliberately NO reader. Listed explicitly and NOT
+     * left to a default, because this switch has no default on purpose: that
+     * is what makes the compiler name any version we forget. Returning
+     * SUS_Invalid wipes, which is the documented behaviour for a format we do
+     * not recognise and strictly better than misparsing one. */
+    case StorageVersion_18:
+    case StorageVersion_19:
+      return SUS_Invalid;
+
     case StorageVersion_20:
       storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
