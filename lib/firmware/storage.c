@@ -1262,13 +1262,13 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
   memcpy(storage->encrypted_sec, ptr + 1501, sizeof(storage->encrypted_sec));
 }
 
-// V18 stores passkey state inside V17's 996-byte reserved plaintext area. An
+// V20 stores passkey state inside V17's 996-byte reserved plaintext area. An
 // unshipped 7.15 RC appended clear-sign identities after encrypted_sec; those
 // unauthenticated records are retired and deliberately outside this record.
 // Readers ignore trailing bytes, and storage_commit erases the destination
 // sector before writing this bounded record, so legacy identities never carry
 // forward into the next active sector.
-#define V18_STORAGE_LEN (1501 + V17_ENCSEC_SIZE)  // 2525
+#define V20_STORAGE_LEN (1501 + V17_ENCSEC_SIZE)  // 2525
 #define PASSKEY_STORAGE_OFF 501
 
 static void storage_resetPasskeyData(PasskeyStorage* passkeys) {
@@ -1294,8 +1294,8 @@ static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
   }
 }
 
-void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
-  if (len < V18_STORAGE_LEN) return;
+void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage) {
+  if (len < V20_STORAGE_LEN) return;
   storage_writeStorageV17(ptr, len, storage);
   _Static_assert(sizeof(PasskeyStorage) <= 996,
                  "passkey metadata exceeds the V17 reserved area");
@@ -1303,8 +1303,8 @@ void storage_writeStorageV18(char* ptr, size_t len, const Storage* storage) {
          sizeof(storage->pub.passkeys));
 }
 
-void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
-  if (len < V18_STORAGE_LEN) return;
+void storage_readStorageV20(Storage* storage, const char* ptr, size_t len) {
+  if (len < V20_STORAGE_LEN) return;
   storage_readStorageV17(storage, ptr, len);
   memcpy(&storage->pub.passkeys, ptr + PASSKEY_STORAGE_OFF,
          sizeof(storage->pub.passkeys));
@@ -1312,14 +1312,14 @@ void storage_readStorageV18(Storage* storage, const char* ptr, size_t len) {
 }
 
 void storage_writeStorageV19(char* ptr, size_t len, const Storage* storage) {
-  storage_writeStorageV18(ptr, len, storage);
+  storage_writeStorageV20(ptr, len, storage);
   uint32_t flags = read_u32_le(ptr + 4);
   flags |= storage->pub.pin_kdf_v2 ? (1u << 20) : 0;
   write_u32_le(ptr + 4, flags);
 }
 
 void storage_readStorageV19(Storage* storage, const char* ptr, size_t len) {
-  storage_readStorageV18(storage, ptr, len);
+  storage_readStorageV20(storage, ptr, len);
   uint32_t flags = read_u32_le(ptr + 4);
   storage->pub.pin_kdf_v2 = flags & (1u << 20);
 }
@@ -1392,26 +1392,26 @@ void storage_writeV17(char* flash, size_t len, const ConfigFlash* src) {
   storage_writeStorageV17(flash + 44, 852, &src->storage);
 }
 
-void storage_readV18(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 44 + V18_STORAGE_LEN) return;
+void storage_readV20(ConfigFlash* dst, const char* flash, size_t len) {
+  if (len < 44 + V20_STORAGE_LEN) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV18(&dst->storage, flash + 44, len - 44);
+  storage_readStorageV20(&dst->storage, flash + 44, len - 44);
 }
 
-void storage_writeV18(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 44 + V18_STORAGE_LEN) return;
+void storage_writeV20(char* flash, size_t len, const ConfigFlash* src) {
+  if (len < 44 + V20_STORAGE_LEN) return;
   storage_writeMeta(flash, 44, &src->meta);
-  storage_writeStorageV18(flash + 44, len - 44, &src->storage);
+  storage_writeStorageV20(flash + 44, len - 44, &src->storage);
 }
 
 void storage_readV19(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 44 + V18_STORAGE_LEN) return;
+  if (len < 44 + V20_STORAGE_LEN) return;
   storage_readMeta(&dst->meta, flash, 44);
   storage_readStorageV19(&dst->storage, flash + 44, len - 44);
 }
 
 void storage_writeV19(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 44 + V18_STORAGE_LEN) return;
+  if (len < 44 + V20_STORAGE_LEN) return;
   storage_writeMeta(flash, 44, &src->meta);
   storage_writeStorageV19(flash + 44, len - 44, &src->storage);
 }
@@ -1471,8 +1471,13 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
       return SUS_Updated;
-    case StorageVersion_18:
-      storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
+    /* 18 and 19 are BURNED formats -- see storage_versions.inc. A blob stamped
+     * with either came from an alpha build whose layout has nothing to do with
+     * passkeys, so there is deliberately NO reader here. It falls through to
+     * the default and the device wipes, which is the documented behaviour for
+     * an unrecognised format and is strictly better than misparsing one. */
+    case StorageVersion_20:
+      storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
       return SUS_Valid;
 
@@ -1500,7 +1505,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       } else if (underlying == 17) {
         storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       } else {
-        storage_readV18(dst, flash, STORAGE_SECTOR_LEN);
+        storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
       return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
@@ -1830,10 +1835,10 @@ void storage_commit(void) {
 
   // Temporary storage for marshalling secrets in & out of flash.
   //
-  // V18 reuses V17's reserved bytes, so meta (44) + storage (2525) = 2569
+  // V20 reuses V17's reserved bytes, so meta (44) + storage (2525) = 2569
   // meaningful bytes. The size MUST be a multiple of 4: the CRC below is
   // computed as sizeof(flash_temp) / sizeof(uint32_t) words, so integer
-  // division would silently drop a tail. 2572 covers the complete V18 record.
+  // division would silently drop a tail. 2572 covers the complete V20 record.
   //
   // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
   // says the buffer is a whole number of words, not that it starts on one.
@@ -1844,7 +1849,7 @@ void storage_commit(void) {
   _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
                  "flash_temp must be word-sized or the CRC drops its tail");
   _Static_assert(sizeof(flash_temp) >= 2569,
-                 "flash_temp must cover the whole V18 record");
+                 "flash_temp must cover the whole V20 record");
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -1854,7 +1859,7 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  /* Stamp the magic BEFORE serialising, not after. storage_writeV18() copies
+  /* Stamp the magic BEFORE serialising, not after. storage_writeV20() copies
      shadow_config.meta -- magic included -- into flash_temp, so setting it
      afterwards left the RECORD WE ARE ABOUT TO WRITE carrying whatever the
      magic held, which on a device whose storage has never been written is
@@ -1867,7 +1872,7 @@ void storage_commit(void) {
      flash_temp after this call, so the magic is now covered by it too. */
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
 
-  storage_writeV18(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV20(flash_temp, sizeof(flash_temp), &shadow_config);
 
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
