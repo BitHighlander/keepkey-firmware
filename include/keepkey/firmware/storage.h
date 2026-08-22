@@ -26,8 +26,13 @@
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/passkey.h"
 
+/* 20, not 18. 18 was the clear-sign identity block and 19 the PIN-KDF
+ * migration -- both ACTIVE in alpha builds before 6bebde7b2 reverted the format
+ * to V17, so devices carrying blobs stamped with either exist. Reusing a number
+ * would make this firmware PARSE one as passkey state instead of refusing it.
+ * See lib/firmware/storage_versions.inc. */
 #define STORAGE_VERSION \
-  18 /* Must add case fallthrough in storage_fromFlash after increment*/
+  20 /* Must add case fallthrough in storage_fromFlash after increment*/
 
 /* The highest storage version written by any firmware that has SHIPPED in a
  * signed release.
