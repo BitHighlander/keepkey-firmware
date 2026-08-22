@@ -365,16 +365,24 @@ TEST(Eip712Stream, ReferencedStructsAreSortedByName) {
 }
 
 TEST(Eip712Stream, SortIsNotMerelyReversedDiscoveryOrder) {
-  // The two-struct canary above is WEAKER THAN IT LOOKS: with Zebra discovered
-  // before Apple, plain reversal produces the same order as a correct sort, so
-  // a buggy "reverse the discovery list" implementation passes it.
+  // The Zebra/Apple canary above is WEAKER THAN IT LOOKS. Zebra is discovered
+  // before Apple, so plain "reverse the discovery list" produces the same
+  // order as a correct sort and a buggy implementation passes it.
   //
-  // Three dependencies separate the three hypotheses:
-  //   discovery  [Bravo, Charlie, Alpha]
-  //   reversed   [Alpha, Charlie, Bravo]
-  //   SORTED     [Alpha, Bravo, Charlie]   <- the only correct one
+  // Discovering in ALPHABETICAL order separates them, because now reversal is
+  // the one thing that gets it wrong:
+  //   discovery  [Alpha, Bravo]
+  //   reversed   [Bravo, Alpha]   <- wrong
+  //   SORTED     [Alpha, Bravo]   <- correct
+  //
+  // The two canaries are complementary and neither is redundant: Zebra/Apple
+  // catches "no sort at all", this one catches "reversed". Deleting either
+  // leaves a wrong implementation that passes the other. A single three-
+  // dependency case would separate all three hypotheses at once, but the
+  // closure holds EIP712_MAX_STRUCTS names INCLUDING the primary type, so
+  // three dependencies do not fit -- see RefusesADocumentWiderThanTheClosure.
   Fixture f;
-  const char *names[] = {"Bravo", "Charlie", "Alpha"};
+  const char *names[] = {"Alpha", "Bravo"};
   for (const char *n : names) {
     auto &d = f.defs[n];
     memset(&d, 0, sizeof(d));
@@ -383,14 +391,37 @@ TEST(Eip712Stream, SortIsNotMerelyReversedDiscoveryOrder) {
   }
   auto &m = f.defs["M"];
   memset(&m, 0, sizeof(m));
+  addMember(m, "a", structField("Alpha"));
+  addMember(m, "b", structField("Bravo"));
+
+  EXPECT_EQ(typeHashHex(f, "M"), keccakHex("M(Alpha a,Bravo b)"
+                                           "Alpha(uint256 v)"
+                                           "Bravo(uint256 v)"));
+}
+
+TEST(Eip712Stream, RefusesADocumentWiderThanTheClosure) {
+  // EIP712_MAX_STRUCTS bounds the closure INCLUDING the primary type, so the
+  // real ceiling is that many distinct struct types in one document. Seaport's
+  // OrderComponents sits exactly at it (itself plus OfferItem plus
+  // ConsiderationItem); one more dependency must be REFUSED rather than
+  // silently truncated, because a truncated closure still produces a
+  // well-formed 32-byte typeHash -- one that no verifier reproduces.
+  Fixture f;
+  const char *names[] = {"Alpha", "Bravo", "Charlie"};
+  for (const char *n : names) {
+    auto &d = f.defs[n];
+    memset(&d, 0, sizeof(d));
+    addMember(d, "v",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  }
+  auto &m = f.defs["M"];
+  memset(&m, 0, sizeof(m));
+  addMember(m, "a", structField("Alpha"));
   addMember(m, "b", structField("Bravo"));
   addMember(m, "c", structField("Charlie"));
-  addMember(m, "a", structField("Alpha"));
 
-  EXPECT_EQ(typeHashHex(f, "M"), keccakHex("M(Bravo b,Charlie c,Alpha a)"
-                                           "Alpha(uint256 v)"
-                                           "Bravo(uint256 v)"
-                                           "Charlie(uint256 v)"));
+  // M + three dependencies exceeds EIP712_MAX_STRUCTS.
+  EXPECT_EQ(typeHashHex(f, "M"), "<refused>");
 }
 
 TEST(Eip712Stream, TransitivelyReferencedStructsAreCollectedAndSorted) {

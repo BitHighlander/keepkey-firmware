@@ -607,7 +607,7 @@ static void begin_type_hash(void) {
  *   array:  keccak(enc(e1) || ... || enc(en))   -- no typeHash, per EIP-712
  */
 static bool fold_frame(uint8_t out[32]) {
-  Eip712Frame *f = &e712.stack[e712.depth - 1];
+  const Eip712Frame *f = &e712.stack[e712.depth - 1];
   keccak_256_Init(&e712.hash);
   if (!f->is_array) {
     if (!f->have_type_hash) return false;
