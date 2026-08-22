@@ -458,10 +458,22 @@ from the build date**: an auto-moving floor rots test fixtures silently and
 cannot be reviewed in a diff, and the entire value of the mechanism is that
 revocation is one reviewable line in a signed release.
 
-The current value is `1755000000` = **2025-08-12T12:00:00Z**, which is already
-in the past. As it stands the floor revokes nothing and rejects only
-certificates issued with a nonsense expiry. **Setting it is a decision the
-release cut has to actually make**, not a line to leave alone.
+The current value is `1787270400` = **2026-08-21T00:00:00Z**, the 7.16 cut
+instant. The floor IS the cut, which is the only value that costs nothing and
+still means something: it honours every certificate that had not already
+expired when the firmware was built, and rejects every one that had.
+
+It was `1755000000` = 2025-08-12, a year *before* its own cut, so it passed
+every certificate that has ever existed and the lever was decoration.
+**Setting it is a decision the release cut has to actually make**, not a line
+to leave alone.
+
+The next bump is squeezed between two bounds that pull opposite ways. To revoke
+a delegate the floor must go **above** that certificate's `not_after` — a bump
+that does not clear it is not a revocation. To keep every other delegate
+working it must stay **below** theirs, including the committed unit-test
+fixture's `1818806400` (2027-08-21T00:00:00Z). When those two cannot both be
+satisfied, the fixture gets re-minted; see §6.3.
 
 ### 6.2 The consequence, stated plainly
 

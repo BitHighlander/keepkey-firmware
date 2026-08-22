@@ -91,9 +91,29 @@
  * silently and cannot be reviewed in a diff, and the entire value of this
  * mechanism is that revocation is one reviewable line in a signed release.
  *
+ * 1787270400 = 2026-08-21T00:00:00Z, the 7.16 cut instant. The floor IS the
+ * cut, which is the only value that costs nothing and still means something:
+ * it honours every certificate that had not already expired when this
+ * firmware was built, and rejects every one that had. The previous value,
+ * 1755000000 = 2025-08-12, predated its own cut by a year, so it passed every
+ * certificate that has ever existed and the lever was decoration.
+ *
+ * Two bounds squeeze the next bump, and they pull opposite ways:
+ *   - To revoke a delegate the floor must go ABOVE that certificate's
+ *     not_after. A bump that does not clear it is not a revocation.
+ *   - It must stay BELOW the not_after of every certificate meant to keep
+ *     working, INCLUDING the committed unit-test fixture (1818806400 =
+ *     2027-08-21T00:00:00Z). Past that the fixture has to be re-minted -- and
+ *     a green test run across a bump means the boundary stopped being tested,
+ *     not that nothing broke.
+ *
+ * Mirrored, deliberately by hand, in the ceremony signer (MIN_EXPIRY in
+ * sign_delegate_cert.py) and the integration test; selfcheck.py compares the
+ * signer's copy against this line and fails loudly when they drift.
+ *
  * The consequence, stated plainly because it does not improve by being left
  * implicit: a device that never updates never revokes. */
-#define KK_CLEARSIGN_MIN_EXPIRY 1755000000u
+#define KK_CLEARSIGN_MIN_EXPIRY 1787270400u
 
 /* Verify a delegate certificate against the compiled-in root.
  *
