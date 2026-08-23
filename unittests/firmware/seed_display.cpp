@@ -115,10 +115,16 @@ TEST(SeedDisplay, TwoNumberedWordsDoNotAlwaysFitOneLine) {
       << "the historical 3-space separator";
 }
 
-// A page is at most three lines, so the packer must never need more pages than
-// the buffers hold. Worst case is every word the widest one, which is legal
-// BIP-39 because repeats are allowed.
-TEST(SeedDisplay, WorstCaseMnemonicFitsWithinMaxPages) {
+// GROUPING, not subpaging, is what MAX_PAGES bounds.
+//
+// The earlier version of this test packed at CONSTANT_POWER_BODY_WIDTH and
+// compared the result to MAX_PAGES. That was stale the moment the design
+// changed: groups are formed at BODY_WIDTH -- because the grouping is the host
+// protocol boundary, one ButtonRequest per group -- and the 124 px fitting
+// happens as subpages INSIDE a group, which consume no page slots. Comparing
+// physical subpages against MAX_PAGES compared two different things and would
+// have failed for the wrong reason.
+TEST(SeedDisplay, WorstCaseMnemonicGroupsWithinMaxPages) {
   const Font *body = get_body_font();
 
   const char *widest_word = "";
@@ -131,27 +137,27 @@ TEST(SeedDisplay, WorstCaseMnemonicFitsWithinMaxPages) {
     }
   }
 
-  // Reproduce the packer's decision rule: a page holds at most three lines when
-  // measured at the width the page is actually drawn at.
+  // Reproduce the GROUPING rule: reset.c packs at BODY_WIDTH, unchanged.
   std::string page;
-  int pages = 1;
+  int groups = 1;
   for (int i = 0; i < MAX_WORDS; i++) {
     char word[64];
     snprintf(word, sizeof(word), (i & 1) ? "%d.%s\n" : "%d.%s", i + 1,
              widest_word);
     std::string cand = page + "   " + word;
-    if (calc_str_line(body, cand.c_str(), CONSTANT_POWER_BODY_WIDTH) > 3) {
-      pages++;
+    if (calc_str_line(body, cand.c_str(), BODY_WIDTH) > 3) {
+      groups++;
       cand = std::string("   ") + word;
     }
     page = cand;
   }
 
-  EXPECT_LE(pages, MAX_PAGES)
-      << "an all-\"" << widest_word << "\" mnemonic needs " << pages
-      << " pages but MAX_PAGES is " << MAX_PAGES
-      << "; wallet creation would fail closed with \"Too many pages\" on a "
-         "legal seed";
+  EXPECT_LE(groups, MAX_PAGES)
+      << "an all-\"" << widest_word << "\" mnemonic forms " << groups
+      << " groups but MAX_PAGES is " << MAX_PAGES;
+  EXPECT_EQ(MAX_PAGES, 6)
+      << "MAX_PAGES must stay at the legacy value: raising it was the approach "
+         "that changed the host ButtonRequest count";
 }
 
 // The known clipping vector from the finding. Under the old 225px packing this

@@ -42,6 +42,14 @@
 /* Button request ack */
 static bool button_request_acked = false;
 
+#if DEBUG_LINK
+/* Whether the last confirm_screen() exited on a DebugLinkDecision rather than a
+ * physical press. DebugLink supplies ONE decision per ButtonRequest, so a
+ * confirmation that renders several screens under a single request must not
+ * wait for a decision per screen -- it would hang after the first. */
+static bool last_exit_was_debug_decision = false;
+#endif
+
 extern bool reset_msg_stack;
 
 static CONFIDENTIAL char strbuf[BODY_CHAR_MAX];
@@ -179,6 +187,9 @@ static bool confirm_screen(const char* request_title_param,
                            bool constant_power, IconType iconNum,
                            bool immediate) {
   bool ret_stat = false;
+#if DEBUG_LINK
+  last_exit_was_debug_decision = false;
+#endif
   volatile StateInfo state_info;
   ActiveLayout new_layout, cur_layout;
   DisplayState new_ds;
@@ -286,6 +297,7 @@ static bool confirm_screen(const char* request_title_param,
 #if DEBUG_LINK
 
     if (debug_decided && button_request_acked) {
+      last_exit_was_debug_decision = true;
       break; /* confirmation done via debug link.  Exiting function */
     }
 
@@ -581,12 +593,12 @@ static bool confirm_helper(const char* request_title, const char* request_body,
    * duplicated words. That is a protocol change for every host, not just a test
    * artifact, and it silently corrupts the thing the user is writing down.
    *
-   * So the measurement stays available and honest -- see
-   * confirm_body_fits_constant_power(), and the test that pins a real clipped
-   * backup page -- but it does not silently change the flow. Fixing the
-   * clipping properly means packing reset.c's pages against the width they are
-   * actually drawn at, which needs MAX_PAGES raised (~3.7 KB more static SRAM)
-   * and on-device OLED verification. Tracked in #519. */
+   * So this generic path stays off for constant-power layouts. The clipping is
+   * fixed instead by confirm_constant_power_paged(), which renders the extra
+   * screens a group needs at the real width under a SINGLE ButtonRequest -- the
+   * group count, and therefore the host transcript, does not move. MAX_PAGES
+   * stays at its legacy value; raising it was the approach that changed the
+   * request count. */
   const bool render_incomplete =
       (layout_notification_func == &layout_standard_notification) &&
       !confirm_body_fits(request_body, body_width);
@@ -646,17 +658,25 @@ bool confirm(ButtonRequestType type, const char* request_title,
   return ret;
 }
 
-/// Split `body` at the LAST newline that still leaves <= 3 rendered lines at
-/// the real constant-power width, so each chunk is a whole number of mnemonic
-/// rows. Returns the number of bytes to take, always at least 1.
+/// Split `body` at the LAST row boundary that still fits one constant-power
+/// screen, measured by the RENDERER rather than by a line count.
+///
+/// confirm_body_fits_constant_power() replays draw_string()'s own loop and its
+/// own per-glyph fit test with the pixel writes switched off, at the origin the
+/// constant-power layout actually draws from. calc_str_line() is a second model
+/// of the screen, and the guard it backs has been broken three separate ways in
+/// this file's history -- by plain overflow, by a uint8_t line counter
+/// wrapping, and by space padding one walk collapses and the other does not.
+/// Measuring and drawing must be the same code, and this is a security
+/// decision: a row that does not fit is a seed word the user never sees.
+///
+/// Splits ONLY at row boundaries, so a numbered word is never divided across
+/// screens. Returns the number of bytes to take, always at least one row.
 static size_t constant_power_subpage_take(const char* body) {
-  const Font* font = get_body_font();
   const size_t len = strlen(body);
   if (len == 0) return 0;
 
   size_t best = 0;
-  /* Only ever break at a row boundary: mnemonic rows are newline separated and
-   * a word must never be split across screens. */
   for (size_t i = 0; i < len; i++) {
     if (body[i] != '\n' && i + 1 != len) continue;
     const size_t take = i + 1;
@@ -664,14 +684,15 @@ static size_t constant_power_subpage_take(const char* body) {
     if (take >= sizeof(probe)) break;
     memcpy(probe, body, take);
     probe[take] = '\0';
-    if (calc_str_line(font, probe, CONSTANT_POWER_BODY_WIDTH) <= BODY_ROWS) {
+    if (confirm_body_fits_constant_power(probe, CONSTANT_POWER_BODY_WIDTH)) {
       best = take;
     } else {
-      break;
+      break; /* longer prefixes only get taller */
     }
   }
-  /* A single row wider than three lines cannot be split further; show it and
-   * let the row itself wrap rather than looping forever. */
+
+  /* A single row that does not fit on its own cannot be split further at a row
+   * boundary. Show it rather than looping forever; the row itself wraps. */
   if (best == 0) {
     const char* nl = strchr(body, '\n');
     best = nl ? (size_t)(nl - body + 1) : len;
@@ -713,6 +734,9 @@ bool confirm_constant_power_paged(ButtonRequestType type,
   static CONFIDENTIAL char sub[BODY_CHAR_MAX];
   const char* p = request_body ? request_body : "";
   bool ok = true;
+#if DEBUG_LINK
+  bool decided_via_debug = false;
+#endif
 
   while (*p && ok) {
     const size_t take = constant_power_subpage_take(p);
@@ -724,9 +748,28 @@ bool confirm_constant_power_paged(ButtonRequestType type,
     while (*p == ' ') p++; /* a leading space is dropped at a row start */
 
     const bool last = (*p == '\0');
+
+#if DEBUG_LINK
+    if (decided_via_debug) {
+      /* DebugLink supplies ONE decision per ButtonRequest, and this whole group
+       * is one request. The decision already taken covers every remaining
+       * subpage: render it -- so DebugLinkGetState still reads the screen --
+       * and advance, rather than waiting for a decision that will never come.
+       * Without this the first internal subpage consumes the decision and the
+       * next one hangs. */
+      layout_clear();
+      layout_constant_power_notification(request_title, sub, NOTIFICATION_INFO);
+      display_refresh();
+      continue;
+    }
+#endif
+
     ok = confirm_screen(request_title, sub, &layout_constant_power_notification,
                         true, NO_ICON,
                         /*immediate=*/!last);
+#if DEBUG_LINK
+    if (ok && last_exit_was_debug_decision) decided_via_debug = true;
+#endif
   }
 
   memzero(sub, sizeof(sub));
