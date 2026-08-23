@@ -14,7 +14,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <unistd.h>
 
 extern "C" {
 #include "keepkey/board/confirm_sm.h"
@@ -22,7 +21,6 @@ extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/layout.h"
-#include "keepkey/board/timer.h"
 #include "keepkey/firmware/reset.h"
 #include "trezor/crypto/bip39_english.h"
 }
@@ -43,29 +41,20 @@ extern "C" {
 // These tests pin the arithmetic the fix depends on, using the real font
 // metrics rather than a model of them.
 
+void kk_test_board_init(void);  // unittests/firmware/test_board.cpp
+
 namespace {
 
 // confirm_body_fits_constant_power() asks the real renderer, so it needs the
-// canvas the renderer draws into.
+// canvas the renderer draws into -- layout_init(display_canvas_init()), which
+// kk_board_init() does after kk_timer_init() has filled free_queue. Without
+// that ordering layout_init() -> post_periodic() pops a NULL free node and
+// dereferences it.
 //
-// timer_init() is required and cannot be dropped: it fills free_queue, and
-// layout_init() calls post_periodic(), which does runnable_queue_pop(&free_queue)
-// and dereferences the result with no NULL check. Without timer_init() that is a
-// null dereference, not merely a missing tick.
-//
-// timer_init() is also what arms the 1 kHz SIGALRM (ualarm(1000, 1000)), so it
-// is disarmed immediately afterwards. No signal() call and no TearDown: this
-// fixture neither installs SIG_IGN process-wide nor restores a handler, so it
-// cannot leak state into the rest of the binary in either direction.
-void EnsureCanvas() {
-  static bool ready = false;
-  if (!ready) {
-    timer_init();
-    layout_init(display_canvas_init());
-    ualarm(0, 0);
-    ready = true;
-  }
-}
+// It must be THE bootstrap, not another one: see test_board.cpp. Calling
+// timer_init() here bootstrapped the binary a second time behind a second
+// guard, the runnable queues went circular, and the full unit-tests job hung
+// until its 10-minute timeout.
 
 int TextWidth(const Font *font, const char *s) {
   int w = 0;
@@ -83,7 +72,7 @@ namespace {
 // is distinct AND the linkage is internal, so neither can bite later.
 class SeedDisplayBodyFits : public ::testing::Test {
  protected:
-  void SetUp() override { EnsureCanvas(); }
+  void SetUp() override { kk_test_board_init(); }
 };
 
 }  // namespace

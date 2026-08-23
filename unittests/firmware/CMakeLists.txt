@@ -10,6 +10,7 @@ set(sources
     dice.cpp
     recovery.cpp
     seed_display.cpp
+    test_board.cpp
     rng_health.cpp
     signing.cpp
     setup_ceremony.cpp
