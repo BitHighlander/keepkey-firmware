@@ -11,7 +11,6 @@
 // C-compiled firmware objects.
 #include "gtest/gtest.h"
 
-#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -47,17 +46,23 @@ extern "C" {
 namespace {
 
 // confirm_body_fits_constant_power() asks the real renderer, so it needs the
-// canvas the renderer draws into -- board_init() does this on the device.
+// canvas the renderer draws into.
 //
-// Canvas init is one-time; the SIGALRM suppression is NOT. It is installed and
-// restored per test, because restoring in TearDown while installing only once
-// would leave every test after the first running with the animation tick live,
-// repainting the canvas underneath the measurement.
+// timer_init() is required and cannot be dropped: it fills free_queue, and
+// layout_init() calls post_periodic(), which does runnable_queue_pop(&free_queue)
+// and dereferences the result with no NULL check. Without timer_init() that is a
+// null dereference, not merely a missing tick.
+//
+// timer_init() is also what arms the 1 kHz SIGALRM (ualarm(1000, 1000)), so it
+// is disarmed immediately afterwards. No signal() call and no TearDown: this
+// fixture neither installs SIG_IGN process-wide nor restores a handler, so it
+// cannot leak state into the rest of the binary in either direction.
 void EnsureCanvas() {
   static bool ready = false;
   if (!ready) {
     timer_init();
     layout_init(display_canvas_init());
+    ualarm(0, 0);
     ready = true;
   }
 }
@@ -70,27 +75,18 @@ int TextWidth(const Font *font, const char *s) {
 
 }  // namespace
 
-class BodyFits : public ::testing::Test {
+namespace {
+
+// Internal linkage: unittests/board/board.cpp defines its own BodyFits fixture,
+// and two different class definitions sharing one external name is an ODR
+// violation even when they happen to land in separate binaries today. The name
+// is distinct AND the linkage is internal, so neither can bite later.
+class SeedDisplayBodyFits : public ::testing::Test {
  protected:
-  void SetUp() override {
-    EnsureCanvas();
-    // layout_init() starts a 1 ms animation tick that would repaint the canvas
-    // underneath these geometry-only measurements. Suppress it for the duration
-    // of THIS test and put the previous handler back afterwards, so nothing
-    // leaks into tests that run later in the same binary.
-    ualarm(0, 0);
-    prev_alarm_handler_ = signal(SIGALRM, SIG_IGN);
-  }
-
-  void TearDown() override {
-    if (prev_alarm_handler_ != SIG_ERR) {
-      signal(SIGALRM, prev_alarm_handler_);
-    }
-  }
-
- private:
-  void (*prev_alarm_handler_)(int) = SIG_ERR;
+  void SetUp() override { EnsureCanvas(); }
 };
+
+}  // namespace
 
 // The budget is derived from the real draw origin, not asserted as a literal.
 TEST(SeedDisplay, ConstantPowerBudgetIsDerivedFromTheDrawOrigin) {
@@ -237,7 +233,7 @@ TEST(SeedDisplay, KnownClippingVectorWrapsInsteadOfOverflowing) {
 // them individually -- a DebugLink screenshot sees a group's LAST subpage only.
 // Evidence for what each subpage contains therefore comes from here and from
 // physical OLED capture, never from assumed DebugLink screenshots.
-TEST_F(BodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
+TEST_F(SeedDisplayBodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
   // A group as reset.c formats one: rows are newline separated, two numbered
   // words per row, leading indent on each row.
   static const char kGroup[] =
@@ -287,7 +283,7 @@ TEST_F(BodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
 // The splitter proves the row does not fit and then must refuse: returning it
 // anyway would render clipped content while the pager reported success -- the
 // exact failure this change exists to remove. Fail closed.
-TEST_F(BodyFits, UnsplittableRowIsRejectedRatherThanClipped) {
+TEST_F(SeedDisplayBodyFits, UnsplittableRowIsRejectedRatherThanClipped) {
   // Four widest numbered words on one row: far past the 124 px budget, and
   // there is no row boundary inside it to split on.
   const std::string wide =
