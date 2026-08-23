@@ -115,11 +115,40 @@ static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
     return;                                             \
   }
 
-#define CHECK_NOT_INITIALIZED                                          \
-  if (storage_isInitialized()) {                                       \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,             \
-                    "Device is already initialized. Use Wipe first."); \
-    return;                                                            \
+/* A locked bitcoin-only wallet leaves the RAM shadow reset, so handlers that
+ * merely PERSIST settings look perfectly ordinary: storage_setPin(),
+ * storage_setLabel() and friends update the shadow, storage_commit() then
+ * returns without writing (the btc_only_locked backstop in storage.c), and the
+ * handler answers Success. The change appears to take effect for the rest of
+ * the session and is gone at the next boot.
+ *
+ * CHECK_NOT_INITIALIZED already refuses this for the ceremonies that CREATE a
+ * seed. The same reasoning applies to every handler that expects its write to
+ * survive a reboot, and those were missed. Refuse before doing the work rather
+ * than reporting a success that did not happen. */
+#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                \
+  if (storage_isBitcoinOnlyLocked()) {                               \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
+                    "Bitcoin-only wallet present. Use Wipe first."); \
+    layoutHome();                                                    \
+    return;                                                          \
+  }
+
+#define CHECK_NOT_INITIALIZED                                              \
+  if (storage_isInitialized()) {                                           \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
+                    "Device is already initialized. Use Wipe first.");     \
+    return;                                                                \
+  }                                                                        \
+  /* A locked bitcoin-only wallet leaves the device LOOKING uninitialized: \
+   * the RAM shadow was reset at boot, so storage_isInitialized() is       \
+   * false. Refuse here, loudly, before the user does the work -- a        \
+   * ceremony allowed to run would end in storage_commit() declining to    \
+   * write and the handler reporting success anyway. */                    \
+  if (storage_isBitcoinOnlyLocked()) {                                     \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
+                    "Bitcoin-only wallet present. Use Wipe first.");       \
+    return;                                                                \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
