@@ -43,6 +43,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       solana.cpp
       thorchain.cpp
       tron.cpp)
+else()
+  list(APPEND sources bitcoin_only.cpp)
 endif()
 
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only

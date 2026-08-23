@@ -15,7 +15,9 @@
 static const VariantAnimation* screensaver;
 static const VariantAnimation* logo;
 static const VariantAnimation* logo_reversed;
+#if !defined(EMULATOR) && !BITCOIN_ONLY
 static const char* name;
+#endif
 
 // Retrieves model information from storage
 Model getModel(void) {
@@ -163,11 +165,22 @@ const char* variant_getName(void) {
   return "Emulator";
 #endif
 #else
+#if BITCOIN_ONLY
+  /* The physical bitcoin-only image must identify itself distinctly too.
+     Vault uses Features.firmware_variant to remove every non-Bitcoin surface,
+     purge stale multi-chain balances, and avoid probing unsupported message
+     types. Reporting the ordinary hardware variant name here makes the reduced
+     image look like full firmware after boot. Keep this literal in the ARM
+     binary as well: Vault also scans a candidate payload for it before flash,
+     when Features is unavailable. */
+  return "KeepKeyBTC";
+#else
   if (name) {
     return name;
   }
 
   name = variant_getInfo()->name;
   return name;
+#endif
 #endif
 }
