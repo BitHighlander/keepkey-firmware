@@ -1780,9 +1780,14 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
 
 TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   /*
-   * RedPallas uses randomized nonces — signatures are intentionally
-   * non-deterministic. Verify that multiple calls all succeed and
-   * produce valid (nonzero) 64-byte signatures.
+   * Signing is repeatable and must stay that way. The construction is HEDGED,
+   * not randomized: r = H*(T || rk || M) is a pure function of its inputs, so
+   * a fixed T over one message reproduces one signature. (Production varies T
+   * per signature; that is the caller's job, not the signer's.)
+   *
+   * Verify that repeated calls all succeed and produce valid, nonzero
+   * signatures. RedPallasNonce_SameInputs_Deterministic asserts the equality
+   * itself.
    */
   ZcashOrchardKeys keys;
   ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));

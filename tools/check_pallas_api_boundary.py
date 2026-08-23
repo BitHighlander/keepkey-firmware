@@ -126,6 +126,17 @@ def main():
     forbid(sign_core, "pallas_ct_scalar_replace_zero_with_one",
            "RedPallas signing core")
     forbid(sign_core, "random_buffer", "RedPallas signing core")
+
+    # The nonce hash must wipe its BLAKE2b context, not just the digest buffer.
+    # blake2b_Final() clears its own scratch but leaves the finished state in
+    # ctx: h[0..7] IS the digest it serialized, and buf still holds the last
+    # input block, which contains T. Either one recovers the nonce r, and r plus
+    # the emitted signature gives up the randomized signing key via
+    # rsk = (s - r) / c. Found in review after the fix landed, so it is pinned
+    # here rather than left to the next reader to notice.
+    nonce_hash = code_only(function_body(redpallas, "redpallas_hash_nonce"))
+    require(nonce_hash, "memzero(&ctx", "RedPallas nonce hash")
+    require(nonce_hash, "memzero(hash_out", "RedPallas nonce hash")
     for token in ("pallas_add_mod_q(", "pallas_mod_q(", "pallas_mul_mod_q("):
         forbid(sign_core, token, "RedPallas signing core")
 
