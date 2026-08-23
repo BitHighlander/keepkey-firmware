@@ -1168,25 +1168,34 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
    * can never satisfy the action's rk. Stream and verify every action above,
    * but return compact signatures only for real spends, in action order. */
   if (msg->is_spend) {
-    /* Draw the spend-authorization nonce here, from the CHECKED source, and
-     * hand it to the signer.
+    /* Draw the spend-authorization randomness T here, from the CHECKED source,
+     * and hand it to the signer.
      *
-     * redpallas_sign_digest_for_rk() takes its nonce from the caller precisely
-     * so this decision is visible. A REPEATED nonce discloses the spend
-     * authorization key from any two signatures, so the entropy must come from
-     * a source that has been health-checked, and a degraded source must yield
-     * NO signature rather than a predictable one.
+     * redpallas_sign_digest_for_rk() takes T from the caller precisely so this
+     * decision is visible. The signer derives the nonce as r = H*(T || rk || M)
+     * rather than reducing T directly, so a repeat of T alone is survivable --
+     * but a REPEATED NONCE discloses the spend authorization key from any two
+     * signatures, so the entropy must still come from a source that has been
+     * health-checked, and a degraded source must yield NO signature rather than
+     * a predictable one.
      *
      * random_buffer_checked() folds the drawn bytes into the continuous
      * SP 800-90B state and returns false if the RCT or APT trips;
      * rng_health_check() is the latched boot verdict. Both must hold, and the
-     * signer independently refuses an all-zero nonce.
+     * signer independently refuses an all-zero T.
+     *
+     * 80 bytes, not 32: T is the randomness input to the RedDSA nonce
+     * derivation r = H*(T || rk || M), and the Zcash protocol specification
+     * sizes it at 80 so that H*'s output is statistically uniform over the
+     * scalar field. The signer hashes T with the verification key and the
+     * message rather than reducing it directly, so a repeated T across two
+     * DIFFERENT messages still yields different nonces.
      *
      * Refusing to sign is always safe. Signing with a repeated nonce is not.
      */
-    uint8_t zcash_nonce[32];
-    if (!rng_health_check() || !random_buffer_checked(zcash_nonce, 32)) {
-      memzero(zcash_nonce, sizeof(zcash_nonce));
+    uint8_t zcash_T[80];
+    if (!rng_health_check() || !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
+      memzero(zcash_T, sizeof(zcash_T));
       fsm_sendFailure(FailureType_Failure_Other,
                       _("RNG health check failed; refusing to sign"));
       zcash_signing_abort();
@@ -1199,9 +1208,9 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
                                             verification_target};
     int sign_rc = redpallas_sign_digest_for_rk(
         zcash_signing.keys.ask, msg->alpha.bytes, msg->rk.bytes, sighash,
-        zcash_nonce, zcash_signing.signatures[zcash_signing.signature_count],
+        zcash_T, zcash_signing.signatures[zcash_signing.signature_count],
         zcash_action_progress, &signing_progress);
-    memzero(zcash_nonce, sizeof(zcash_nonce));
+    memzero(zcash_T, sizeof(zcash_T));
     if (sign_rc != 0) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Orchard spend authorization failed"));

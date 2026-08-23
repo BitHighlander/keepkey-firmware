@@ -294,12 +294,19 @@ static const uint8_t HASH_ZCASH_TEST_KEEPKEY_ORCHARD[32] = {
     0xfe, 0xfd, 0x6c, 0x2f, 0xe9, 0x3f, 0x2d, 0x60, 0xef, 0x33,
 };
 
-// Fixed non-zero nonce. redpallas_sign_* now take the nonce from the caller,
-// so these vectors are deterministic instead of depending on the RNG.
-static const uint8_t kRedPallasTestNonce[32] = {
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
-    0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
-    0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20};
+// Fixed non-zero T (80 bytes, per the Zcash spec's RedDSA nonce input).
+// redpallas_sign_* take T from the caller, so these vectors are deterministic
+// instead of depending on the RNG. T is NOT the nonce: the signer derives
+// r = H*(T || rk || M), so reusing T here is safe as long as the message or
+// the key differs -- which is exactly the property RepeatedT_* below asserts.
+static const uint8_t kRedPallasTestT[80] = {
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+    0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24,
+    0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c,
+    0x3d, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+    0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50};
 
 static const uint8_t ORCHARD_GD_EMPTY[32] = {
     0x3f, 0x90, 0xd3, 0xe5, 0x80, 0xd5, 0x6a, 0x66, 0x2b, 0x27, 0x36,
@@ -1658,7 +1665,7 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   RedPallasProgressCapture progress;
   uint8_t signature[64];
   ASSERT_EQ(redpallas_sign_digest_with_ak(
-                keys.ask, keys.ak, alpha, public_rk, sighash, kRedPallasTestNonce, signature,
+                keys.ask, keys.ak, alpha, public_rk, sighash, kRedPallasTestT, signature,
                 capture_redpallas_progress, &progress),
             0);
   EXPECT_TRUE(progress.monotonic);
@@ -1671,7 +1678,7 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   memcpy(wrong_rk, public_rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   EXPECT_NE(redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, wrong_rk,
-                                          sighash, kRedPallasTestNonce, signature, nullptr, nullptr),
+                                          sighash, kRedPallasTestT, signature, nullptr, nullptr),
             0);
 
   memzero(&keys, sizeof(keys));
@@ -1692,7 +1699,7 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   RedPallasProgressCapture progress;
   uint8_t signature[64];
   ASSERT_EQ(
-      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, kRedPallasTestNonce, signature,
+      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, kRedPallasTestT, signature,
                                    capture_redpallas_progress, &progress),
       0);
   EXPECT_TRUE(progress.monotonic);
@@ -1705,7 +1712,7 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   memcpy(wrong_rk, rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, wrong_rk, sighash,
-                                         kRedPallasTestNonce,
+                                         kRedPallasTestT,
                                          signature, nullptr, nullptr),
             0);
   EXPECT_NE(redpallas_verify_digest(rk, sighash, signature), 0);
@@ -1727,7 +1734,7 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   alpha[31] = 0x00;
 
   uint8_t signature[64];
-  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestNonce, signature);
+  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, signature);
   EXPECT_EQ(ret, 0) << "RedPallas signing must succeed";
 
   /* Signature must be nonzero */
@@ -1789,7 +1796,7 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   uint8_t zero[64] = {0};
   for (int i = 0; i < 3; i++) {
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestNonce, sig), 0)
+    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, sig), 0)
         << "Signing must succeed on call " << i;
     EXPECT_TRUE(memcmp(sig, zero, 64) != 0)
         << "Signature must be nonzero on call " << i;
@@ -1811,11 +1818,189 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
   memset(sighash_b, 0xBB, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestNonce, sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestNonce, sig_b), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT, sig_a), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT, sig_b), 0);
 
   EXPECT_TRUE(memcmp(sig_a, sig_b, 64) != 0)
       << "Different sighash must produce different signatures";
+
+  memzero(&keys, sizeof(keys));
+}
+
+/* --- RedDSA nonce derivation ------------------------------------- *
+ *
+ * These are the regression tests for the nonce defect. The signer used to
+ * reduce 32 raw entropy bytes straight to a scalar, so the nonce was a
+ * function of the caller's randomness ALONE. Under that code every assertion
+ * below on R (the nonce commitment, sig[0..31]) failed: R was byte-identical
+ * across different messages and even across different KEYS, and two
+ * signatures sharing an R disclose the signing key by
+ *
+ *     ask + alpha = (s1 - s2) / (c1 - c2)
+ *
+ * which is arithmetic an observer can do from public data. The fix hashes the
+ * randomness together with the verification key and the message,
+ * r = H*(T || rk || M), so R moves whenever either does.
+ *
+ * These tests assert the property that denies the attack its input. They do
+ * not mount the recovery itself -- that would need an independent BLAKE2b,
+ * wide reduction and inverse mod q reimplemented here, and it would catch
+ * nothing this does not.
+ */
+
+/* Same T, different message. THE test: this is the reuse that discloses the
+ * key, and it is the one a caller can hit for real -- an RNG that repeats,
+ * a replayed draw, a device signing two actions from one entropy pool. */
+TEST(Zcash, RedPallasNonce_RepeatedT_DifferentMessage_DifferentR) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x03, 32);
+  alpha[31] = 0x00;
+
+  uint8_t sighash_a[32], sighash_b[32];
+  memset(sighash_a, 0x11, 32);
+  memset(sighash_b, 0x22, 32);
+
+  uint8_t sig_a[64], sig_b[64];
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT,
+                                  sig_a), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT,
+                                  sig_b), 0);
+
+  EXPECT_NE(memcmp(sig_a, sig_b, 32), 0)
+      << "Identical T over different messages reused the nonce commitment R. "
+         "Two such signatures disclose the signing key.";
+
+  memzero(&keys, sizeof(keys));
+}
+
+/* Same T, same message, different key: r must bind the verification key too,
+ * or one entropy pool shared across accounts leaks across them. */
+TEST(Zcash, RedPallasNonce_RepeatedT_DifferentKey_DifferentR) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t sighash[32];
+  memset(sighash, 0x44, 32);
+
+  /* Two different randomizers => two different rk from one ask. */
+  uint8_t alpha_a[32], alpha_b[32];
+  memset(alpha_a, 0x05, 32);
+  alpha_a[31] = 0x00;
+  memset(alpha_b, 0x06, 32);
+  alpha_b[31] = 0x00;
+
+  uint8_t sig_a[64], sig_b[64];
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha_a, sighash, kRedPallasTestT,
+                                  sig_a), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha_b, sighash, kRedPallasTestT,
+                                  sig_b), 0);
+
+  EXPECT_NE(memcmp(sig_a, sig_b, 32), 0)
+      << "R did not bind the verification key: one T reused across two "
+         "randomized keys repeated the nonce.";
+
+  memzero(&keys, sizeof(keys));
+}
+
+/* The construction is hedged, not randomized: identical inputs reproduce the
+ * signature exactly. This is what makes the vectors above deterministic, and
+ * it is the control for the two tests above -- without it, "R differs" could
+ * be satisfied by an unrelated source of variation. */
+TEST(Zcash, RedPallasNonce_SameInputs_Deterministic) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x07, 32);
+  alpha[31] = 0x00;
+  uint8_t sighash[32];
+  memset(sighash, 0x55, 32);
+
+  uint8_t sig_a[64], sig_b[64];
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
+                                  sig_a), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
+                                  sig_b), 0);
+
+  EXPECT_EQ(memcmp(sig_a, sig_b, 64), 0)
+      << "Identical (ask, alpha, M, T) must reproduce the signature exactly";
+
+  memzero(&keys, sizeof(keys));
+}
+
+/* A dead entropy source must FAIL the signature, never be normalised into a
+ * usable nonce. The removed pallas_ct_scalar_replace_zero_with_one() turned
+ * exactly this input into the constant nonce 1 on every signature -- reused
+ * AND publicly known, which discloses the key from a SINGLE signature. */
+TEST(Zcash, RedPallasNonce_AllZeroT_Refused) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x08, 32);
+  alpha[31] = 0x00;
+  uint8_t sighash[32];
+  memset(sighash, 0x66, 32);
+
+  uint8_t zero_T[80] = {0};
+  uint8_t sig[64];
+  memset(sig, 0xEE, sizeof(sig));
+
+  EXPECT_NE(redpallas_sign_digest(keys.ask, alpha, sighash, zero_T, sig), 0)
+      << "An all-zero T is a dead entropy source and must not produce a "
+         "signature";
+
+  uint8_t untouched[64];
+  memset(untouched, 0xEE, sizeof(untouched));
+  EXPECT_EQ(memcmp(sig, untouched, 64), 0)
+      << "A refused signature must not write to the output buffer";
+
+  memzero(&keys, sizeof(keys));
+}
+
+TEST(Zcash, RedPallasNonce_NullT_Refused) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x09, 32);
+  alpha[31] = 0x00;
+  uint8_t sighash[32];
+  memset(sighash, 0x77, 32);
+  uint8_t sig[64];
+
+  EXPECT_NE(redpallas_sign_digest(keys.ask, alpha, sighash, nullptr, sig), 0)
+      << "A NULL T must be refused, not dereferenced";
+
+  memzero(&keys, sizeof(keys));
+}
+
+/* Signatures produced from a repeated T are still valid signatures -- the fix
+ * changes which nonce is used, not whether the result verifies. */
+TEST(Zcash, RedPallasNonce_RepeatedT_StillVerifies) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+
+  uint8_t alpha[32];
+  memset(alpha, 0x0a, 32);
+  alpha[31] = 0x00;
+
+  uint8_t rk[32];
+  ASSERT_EQ(redpallas_derive_rk(keys.ask, alpha, rk), 0);
+
+  const uint8_t fills[2] = {0x31, 0x32};
+  for (int i = 0; i < 2; i++) {
+    uint8_t sighash[32];
+    memset(sighash, fills[i], 32);
+    uint8_t sig[64];
+    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
+                                    sig), 0);
+    EXPECT_EQ(redpallas_verify_digest(rk, sighash, sig), 0)
+        << "Signature " << i << " from a repeated T must still verify";
+  }
 
   memzero(&keys, sizeof(keys));
 }
