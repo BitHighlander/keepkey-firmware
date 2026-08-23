@@ -1194,7 +1194,8 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
      * Refusing to sign is always safe. Signing with a repeated nonce is not.
      */
     uint8_t zcash_T[80];
-    if (!rng_health_check() || !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
+    if (!rng_health_check() ||
+        !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
       memzero(zcash_T, sizeof(zcash_T));
       fsm_sendFailure(FailureType_Failure_Other,
                       _("RNG health check failed; refusing to sign"));
