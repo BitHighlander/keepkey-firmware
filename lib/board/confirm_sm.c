@@ -691,12 +691,10 @@ size_t confirm_constant_power_subpage_take(const char* body) {
     }
   }
 
-  /* A single row that does not fit on its own cannot be split further at a row
-   * boundary. Show it rather than looping forever; the row itself wraps. */
-  if (best == 0) {
-    const char* nl = strchr(body, '\n');
-    best = nl ? (size_t)(nl - body + 1) : len;
-  }
+  /* FAIL CLOSED. If even the first row does not fit, there is no split that
+   * makes it fit, and showing it anyway would render CLIPPED content while the
+   * caller reported success -- the exact failure this whole change exists to
+   * remove. Return 0 and let the pager refuse. */
   return best;
 }
 
@@ -740,12 +738,20 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 
   while (*p && ok) {
     const size_t take = confirm_constant_power_subpage_take(p);
-    if (take == 0) break;
-    const size_t n = take < sizeof(sub) - 1 ? take : sizeof(sub) - 1;
-    memcpy(sub, p, n);
-    sub[n] = '\0';
+    if (take == 0 || take >= sizeof(sub)) {
+      /* Nothing renderable, or the chunk would have to be truncated to fit the
+       * scratch buffer. Truncating here would show the user a partial row and
+       * still return success, so refuse instead. */
+      ok = false;
+      break;
+    }
+    memcpy(sub, p, take);
+    sub[take] = '\0';
     p += take;
-    while (*p == ' ') p++; /* a leading space is dropped at a row start */
+    /* Indentation is PRESERVED. Every row begins with the formatter's indent,
+     * and skipping leading spaces at a chunk boundary would strip it from every
+     * subpage after the first -- changing what the user is shown, and making
+     * the subpages no longer reassemble to the group they came from. */
 
     const bool last = (*p == '\0');
 

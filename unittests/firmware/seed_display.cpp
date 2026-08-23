@@ -39,13 +39,21 @@ namespace {
 // canvas the renderer draws into -- board_init() does this on the device.
 class BodyFitsEnv {
  public:
+  static void (*prev_alarm_handler)(int);
+  static void Restore() {
+    if (prev_alarm_handler != SIG_ERR) signal(SIGALRM, prev_alarm_handler);
+  }
   static void Ensure() {
     static bool ready = false;
     if (!ready) {
       timer_init();
       layout_init(display_canvas_init());
+      // layout_init() starts a 1 ms animation tick that would repaint the
+      // canvas underneath these geometry-only measurements. Silence it, but
+      // RESTORE the previous handler rather than leaving SIGALRM globally
+      // ignored -- that would leak into every test that runs after this one.
       ualarm(0, 0);
-      signal(SIGALRM, SIG_IGN);
+      prev_alarm_handler = signal(SIGALRM, SIG_IGN);
       ready = true;
     }
   }
@@ -62,6 +70,7 @@ int TextWidth(const Font *font, const char *s) {
 class BodyFits : public ::testing::Test {
  protected:
   void SetUp() override { BodyFitsEnv::Ensure(); }
+  void TearDown() override { BodyFitsEnv::Restore(); }
 };
 
 // The budget is derived from the real draw origin, not asserted as a literal.
@@ -236,7 +245,9 @@ TEST_F(BodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
 
     reassembled += chunk;
     p += take;
-    while (*p == ' ') p++;  // matches the pager's leading-space skip
+    // No leading-space skip: the pager preserves indentation, so the chunks
+    // must reassemble to the group BYTE FOR BYTE. Skipping spaces here while
+    // production stripped them would have hidden exactly that divergence.
     subpages++;
     ASSERT_LT(subpages, 32) << "splitter failed to terminate";
   }
@@ -248,10 +259,21 @@ TEST_F(BodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
   EXPECT_GE(subpages, 1);
 }
 
-// A single row too wide to fit must still make progress rather than loop.
-TEST_F(BodyFits, SplitterTerminatesOnAnUnsplittableRow) {
-  std::string wide = "   1.mushroom   2.mushroom   3.mushroom   4.mushroom\n";
-  const size_t take = confirm_constant_power_subpage_take(wide.c_str());
-  EXPECT_GT(take, 0u) << "an unsplittable row must still advance the pager";
-  EXPECT_LE(take, wide.size());
+// A row that cannot fit must be REJECTED, not shown clipped.
+//
+// The splitter proves the row does not fit and then must refuse: returning it
+// anyway would render clipped content while the pager reported success -- the
+// exact failure this change exists to remove. Fail closed.
+TEST_F(BodyFits, UnsplittableRowIsRejectedRatherThanClipped) {
+  // Four widest numbered words on one row: far past the 124 px budget, and
+  // there is no row boundary inside it to split on.
+  const std::string wide =
+      "   1.mushroom   2.mushroom   3.mushroom   4.mushroom\n";
+  ASSERT_FALSE(confirm_body_fits_constant_power(wide.c_str(),
+                                                CONSTANT_POWER_BODY_WIDTH))
+      << "precondition: this row must genuinely not fit";
+
+  EXPECT_EQ(confirm_constant_power_subpage_take(wide.c_str()), 0u)
+      << "a row that cannot be shown in full must be refused, not returned for "
+         "display; the pager treats 0 as failure and declines to sign";
 }
