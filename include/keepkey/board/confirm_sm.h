@@ -108,6 +108,15 @@ bool confirm_constant_power_paged(ButtonRequestType type,
                                   const char* request_title,
                                   const char* request_body);
 
+/// How many bytes of `body` fit one constant-power screen, split only at row
+/// boundaries so a numbered word is never divided across screens.
+///
+/// Exposed for tests. The carried subpages inside a group are drawn but not
+/// waited on, so DebugLinkGetState cannot observe them individually -- a
+/// DebugLink screenshot sees a group's LAST subpage. Per-subpage content is
+/// proven here and on physical hardware instead.
+size_t confirm_constant_power_subpage_take(const char* body);
+
 /// Same, for constant-power screens, which draw from x = 128 + LEFT_MARGIN.
 ///
 /// Only KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) px exists past that origin,

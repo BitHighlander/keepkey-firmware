@@ -672,7 +672,7 @@ bool confirm(ButtonRequestType type, const char* request_title,
 ///
 /// Splits ONLY at row boundaries, so a numbered word is never divided across
 /// screens. Returns the number of bytes to take, always at least one row.
-static size_t constant_power_subpage_take(const char* body) {
+size_t confirm_constant_power_subpage_take(const char* body) {
   const size_t len = strlen(body);
   if (len == 0) return 0;
 
@@ -739,7 +739,7 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 #endif
 
   while (*p && ok) {
-    const size_t take = constant_power_subpage_take(p);
+    const size_t take = confirm_constant_power_subpage_take(p);
     if (take == 0) break;
     const size_t n = take < sizeof(sub) - 1 ? take : sizeof(sub) - 1;
     memcpy(sub, p, n);
@@ -753,10 +753,17 @@ bool confirm_constant_power_paged(ButtonRequestType type,
     if (decided_via_debug) {
       /* DebugLink supplies ONE decision per ButtonRequest, and this whole group
        * is one request. The decision already taken covers every remaining
-       * subpage: render it -- so DebugLinkGetState still reads the screen --
-       * and advance, rather than waiting for a decision that will never come.
-       * Without this the first internal subpage consumes the decision and the
-       * next one hangs. */
+       * subpage, so advance rather than waiting for one that will never come:
+       * without this the first internal subpage consumes the decision and the
+       * next one hangs.
+       *
+       * OBSERVABILITY, stated so nobody builds evidence on it: these carried
+       * subpages are drawn but NOT waited on, so the message loop never runs
+       * between them and DebugLinkGetState cannot observe them. A screenshot
+       * taken over DebugLink sees the LAST subpage of a group, not each one.
+       * Per-subpage visual proof comes from unit instrumentation over
+       * confirm_constant_power_subpage_take() and from physical OLED capture --
+       * never from assumed DebugLink screenshots. */
       layout_clear();
       layout_constant_power_notification(request_title, sub, NOTIFICATION_INFO);
       display_refresh();

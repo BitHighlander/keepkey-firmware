@@ -1,5 +1,8 @@
 extern "C" {
 #include "keepkey/board/font.h"
+#include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/timer.h"
+#include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/keepkey_display.h"
 #include "keepkey/firmware/reset.h"
@@ -10,6 +13,8 @@ extern "C" {
 
 #include <cstdio>
 #include <cstring>
+#include <csignal>
+#include <unistd.h>
 #include <string>
 
 // The seed backup and BIP-85 display are drawn by
@@ -30,6 +35,22 @@ extern "C" {
 
 namespace {
 
+// confirm_body_fits_constant_power() asks the real renderer, so it needs the
+// canvas the renderer draws into -- board_init() does this on the device.
+class BodyFitsEnv {
+ public:
+  static void Ensure() {
+    static bool ready = false;
+    if (!ready) {
+      timer_init();
+      layout_init(display_canvas_init());
+      ualarm(0, 0);
+      signal(SIGALRM, SIG_IGN);
+      ready = true;
+    }
+  }
+};
+
 int TextWidth(const Font *font, const char *s) {
   int w = 0;
   for (; *s; s++) w += font_get_char(font, *s)->width;
@@ -37,6 +58,11 @@ int TextWidth(const Font *font, const char *s) {
 }
 
 }  // namespace
+
+class BodyFits : public ::testing::Test {
+ protected:
+  void SetUp() override { BodyFitsEnv::Ensure(); }
+};
 
 // The budget is derived from the real draw origin, not asserted as a literal.
 TEST(SeedDisplay, ConstantPowerBudgetIsDerivedFromTheDrawOrigin) {
@@ -174,4 +200,58 @@ TEST(SeedDisplay, KnownClippingVectorWrapsInsteadOfOverflowing) {
   // And it WOULD have been accepted under the old, wrong width.
   EXPECT_LE(calc_str_line(body, kClipped, BODY_WIDTH), 3u)
       << "if this fails the vector no longer demonstrates the original bug";
+}
+
+// The subpage splitter is where per-subpage content is proven.
+//
+// The carried subpages inside a group are drawn but not waited on, so the
+// message loop never runs between them and DebugLinkGetState cannot observe
+// them individually -- a DebugLink screenshot sees a group's LAST subpage only.
+// Evidence for what each subpage contains therefore comes from here and from
+// physical OLED capture, never from assumed DebugLink screenshots.
+TEST_F(BodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
+  // A group as reset.c formats one: rows are newline separated, two numbered
+  // words per row, leading indent on each row.
+  static const char kGroup[] =
+      "   1.mushroom   2.mushroom\n"
+      "   3.mushroom   4.mushroom\n"
+      "   5.mushroom   6.mushroom\n";
+
+  std::string reassembled;
+  const char *p = kGroup;
+  int subpages = 0;
+  while (*p) {
+    const size_t take = confirm_constant_power_subpage_take(p);
+    ASSERT_GT(take, 0u) << "splitter must always make progress";
+    ASSERT_LE(take, strlen(p));
+
+    std::string chunk(p, take);
+    // A subpage must never end mid-row: it ends at a newline or at the body end.
+    ASSERT_TRUE(chunk.back() == '\n' || take == strlen(p))
+        << "subpage split inside a row: \"" << chunk << "\"";
+    // And it must actually fit, measured by the renderer.
+    EXPECT_TRUE(confirm_body_fits_constant_power(chunk.c_str(),
+                                                 CONSTANT_POWER_BODY_WIDTH))
+        << "subpage does not fit: \"" << chunk << "\"";
+
+    reassembled += chunk;
+    p += take;
+    while (*p == ' ') p++;  // matches the pager's leading-space skip
+    subpages++;
+    ASSERT_LT(subpages, 32) << "splitter failed to terminate";
+  }
+
+  // Every row appears exactly once and in order.
+  EXPECT_EQ(reassembled, std::string(kGroup))
+      << "subpages must reassemble to the group with nothing lost, duplicated "
+         "or reordered";
+  EXPECT_GE(subpages, 1);
+}
+
+// A single row too wide to fit must still make progress rather than loop.
+TEST_F(BodyFits, SplitterTerminatesOnAnUnsplittableRow) {
+  std::string wide = "   1.mushroom   2.mushroom   3.mushroom   4.mushroom\n";
+  const size_t take = confirm_constant_power_subpage_take(wide.c_str());
+  EXPECT_GT(take, 0u) << "an unsplittable row must still advance the pager";
+  EXPECT_LE(take, wide.size());
 }
