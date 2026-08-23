@@ -145,6 +145,42 @@ TEST_F(BodyFits, ConfirmBodyFits) {
 
   // The fourth row would land at y = 66, past KEEPKEY_DISPLAY_HEIGHT.
   EXPECT_FALSE(confirm_body_fits("one\ntwo\nthree\nfour", BODY_WIDTH));
+}
+
+// Constant-power screens draw from x = 128 + LEFT_MARGIN, so only
+// KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) px exists past that origin --
+// not BODY_WIDTH. A body measured from the LEFT margin can therefore be
+// declared to fit and still be clipped when drawn on the right half.
+//
+// This is not hypothetical. The seed-backup pages are drawn by exactly this
+// layout. Replaying the real font tables and the real placement rules over
+// 200,000 random 24-word mnemonics: 1.7% produce a page the renderer clips,
+// and 0.65% never show one of the words at all, because draw_string_walk()
+// stops at the first rejected glyph and drops every character after it --
+// including whole later lines. No ellipsis, no warning, no page indicator.
+//
+// The page below is from one of those mnemonics. 39 of its 41 characters are
+// placed, so the user copying their backup writes down "24.observ".
+TEST(Board, ConstantPowerBodyFitsMeasuresFromItsOwnOrigin) {
+  static const char kClippedBackupPage[] =
+      "   22.second\n   23.together   24.observe\n";
+
+  // Measured from the left margin it fits, which is why the old completeness
+  // check -- hard-gated to layout_standard_notification -- saw nothing wrong.
+  EXPECT_TRUE(confirm_body_fits(kClippedBackupPage, BODY_WIDTH))
+      << "left-margin measurement should still consider this page fine; if "
+         "this fails the test no longer demonstrates the blind spot";
+
+  // Measured where it is actually drawn, it does not.
+  EXPECT_FALSE(confirm_body_fits_constant_power(kClippedBackupPage, BODY_WIDTH))
+      << "a constant-power page that the renderer clips must be reported as "
+         "not fitting, so the confirm layer pages it instead of silently "
+         "dropping the tail of the user's seed";
+
+  // Control: a short body fits under both probes, so the constant-power test
+  // is not simply refusing everything.
+  EXPECT_TRUE(confirm_body_fits("   1.abandon", BODY_WIDTH));
+  EXPECT_TRUE(confirm_body_fits_constant_power("   1.abandon", BODY_WIDTH));
 
   // confirm() first cuts the host's string into strbuf[BODY_CHAR_MAX], i.e.
   // to 351 characters. That cut cannot hide an overflow from this check: the
