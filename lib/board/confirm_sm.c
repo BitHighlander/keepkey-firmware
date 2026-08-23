@@ -457,7 +457,8 @@ static bool page_body_confirm(const char* request_title, const char* body,
   {
     const char* p = body;
     while (*p) {
-      const size_t take = page_take(p, body_width, page_buf, sizeof(page_buf));
+      const size_t take =
+          page_take(p, body_width, page_buf, sizeof(page_buf), fits);
       if (take == 0) break;
       p += take;
       while (*p == ' ') p++; /* a leading space is dropped at a line start */
@@ -474,7 +475,8 @@ static bool page_body_confirm(const char* request_title, const char* body,
   bool ok = false;
   const char* p = body;
   for (size_t page = 0; page < pages && *p; page++) {
-    const size_t take = page_take(p, body_width, page_buf, sizeof(page_buf));
+    const size_t take =
+        page_take(p, body_width, page_buf, sizeof(page_buf), fits);
     if (take == 0) break;
     memcpy(page_buf, p, take);
     page_buf[take] = '\0';
