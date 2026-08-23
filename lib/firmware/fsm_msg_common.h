@@ -6,8 +6,7 @@ void fsm_msgInitialize(Initialize* msg) {
   ethereum_signing_abort();
   tendermint_signAbort();
   eos_signingAbort();
-  zcash_signing_abort();
-  session_clear(false);  // do not clear PIN
+  session_clear(false);  // do not clear PIN, and clears the Zcash session
   layoutHome();
   fsm_msgGetFeatures(0);
 }
