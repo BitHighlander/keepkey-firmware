@@ -15,7 +15,9 @@
 static const VariantAnimation* screensaver;
 static const VariantAnimation* logo;
 static const VariantAnimation* logo_reversed;
+#if !defined(EMULATOR) && !BITCOIN_ONLY
 static const char* name;
+#endif
 
 // Retrieves model information from storage
 Model getModel(void) {
