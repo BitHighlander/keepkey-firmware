@@ -481,6 +481,7 @@ jobs:
                 --variant '${{ matrix.variant }}' && \
               python3 /root/keepkey-firmware/tools/check_bitcoin_only_identity.py \
                 --artifact bin/firmware.keepkey.bin \
+                --elf bin/firmware.keepkey.elf \
                 --variant '${{ matrix.variant }}' && \
               mkdir -p /root/keepkey-firmware/bin && \
               cp bin/*.bin /root/keepkey-firmware/bin/ && \
