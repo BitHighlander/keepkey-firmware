@@ -1,21 +1,32 @@
+// Include order matters here, and this mirrors unittests/board/board.cpp
+// exactly because that file already gets it right.
+//
+// C++ standard headers FIRST: the board headers pull in <ctype.h>, and having
+// that inside extern "C" before <string>/gtest have set up the C++ <cctype>
+// machinery breaks the build. That is precisely how this file first failed the
+// emulator job while ARM stayed green -- ARM does not compile unit tests.
+//
+// The board headers still need extern "C": none of them carry __cplusplus
+// guards, so without it they would get C++ linkage and fail to link against the
+// C-compiled firmware objects.
+#include "gtest/gtest.h"
+
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <unistd.h>
+
 extern "C" {
-#include "keepkey/board/font.h"
 #include "keepkey/board/confirm_sm.h"
-#include "keepkey/board/timer.h"
+#include "keepkey/board/font.h"
 #include "keepkey/board/keepkey_board.h"
-#include "keepkey/board/layout.h"
 #include "keepkey/board/keepkey_display.h"
+#include "keepkey/board/layout.h"
+#include "keepkey/board/timer.h"
 #include "keepkey/firmware/reset.h"
 #include "trezor/crypto/bip39_english.h"
 }
-
-#include "gtest/gtest.h"
-
-#include <cstdio>
-#include <cstring>
-#include <csignal>
-#include <unistd.h>
-#include <string>
 
 // The seed backup and BIP-85 display are drawn by
 // layout_constant_power_notification(), which starts at x = 128 + LEFT_MARGIN
