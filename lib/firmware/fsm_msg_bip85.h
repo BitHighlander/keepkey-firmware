@@ -71,8 +71,13 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
     snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
              mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
 
-    if (calc_str_line(get_body_font(), mnemonic_scratch_display, BODY_WIDTH) >
-        3) {
+    /* Same real-width measurement as the seed backup in reset.c: BIP-85
+     * displays derived words on the SAME constant-power screens, from
+     * the same scratch buffers, so it clipped in exactly the same way.
+     * A derived child mnemonic the user writes down is as unrecoverable
+     * as the master one if a word is missing. */
+    if (calc_str_line(get_body_font(), mnemonic_scratch_display,
+                      CONSTANT_POWER_BODY_WIDTH) > 3) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {

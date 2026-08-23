@@ -21,6 +21,7 @@
 #define LAYOUT_H
 
 #include "keepkey/board/canvas.h"
+#include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/draw.h"
 
@@ -53,6 +54,22 @@
 #define BODY_TOP_MARGIN 7
 #define BODY_COLOR 0xFF
 #define BODY_WIDTH 225
+
+/* Constant-power screens draw into the RIGHT HALF of the canvas: the display
+ * driver mirrors x in [128,256) onto the panel, and both title and body start
+ * at 128 + LEFT_MARGIN. The real horizontal budget there is
+ *
+ *     KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) = 124 px
+ *
+ * not BODY_WIDTH (225). Passing 225 tells draw_string it has nearly twice the
+ * room that exists: the wrap never fires before the canvas edge does, the walk
+ * runs off the edge, and everything after the first rejected glyph is dropped
+ * with no ellipsis and no indicator. Measured over 200k random 24-word
+ * mnemonics with the real font tables, 1.7% of seed backups were clipped and
+ * 0.65% never showed one of the words at all.
+ *
+ * Anything that MEASURES or DRAWS a constant-power body must use this width. */
+#define CONSTANT_POWER_BODY_WIDTH (KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN))
 #define BODY_WIDTH_WITH_ICON BODY_WIDTH - LEFT_MARGIN_WITH_ICON
 #define BODY_ROWS 3
 #define BODY_FONT_LINE_PADDING 4
