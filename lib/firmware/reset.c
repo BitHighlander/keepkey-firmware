@@ -422,16 +422,13 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
     snprintf(mnemonic_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
              formatted_mnemonic[page_count], formatted_word);
 
-    /* Measure against the width these pages are actually DRAWN at.
-     * Constant-power screens render from x = 128 + LEFT_MARGIN, so the
-     * budget is CONSTANT_POWER_BODY_WIDTH (124), not BODY_WIDTH (225).
-     * Packing against 225 fit words onto a page the renderer then ran
-     * off the edge of, silently -- no ellipsis, no warning. Measuring
-     * here at the real width makes the wrap fire before the canvas edge
-     * does, which naturally puts one word on a line when two will not
-     * fit and costs an extra page only for the seeds that need it. */
-    if (calc_str_line(get_body_font(), mnemonic_display,
-                      CONSTANT_POWER_BODY_WIDTH) > 3) {
+    /* Group at BODY_WIDTH, exactly as before. The GROUPING is the host
+     * protocol boundary -- reset.c emits one ButtonRequest per group and
+     * the host reads one word set per request -- so it must not change.
+     * Fitting the real 124 px draw width is handled INSIDE the
+     * confirmation by local subpaging, which emits no extra requests. */
+    if (calc_str_line(get_body_font(), mnemonic_scratch_display, BODY_WIDTH) >
+        3) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {
@@ -479,9 +476,13 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
                current_page + 1, page_count);
     }
 
-    if (!confirm_constant_power(ButtonRequestType_ButtonRequest_ConfirmWord,
-                                title, "%s",
-                                formatted_mnemonic[current_page])) {
+    /* Local subpaging: ONE ButtonRequest per group, any extra OLED
+     * screens navigated inside it. The group count is the host
+     * protocol boundary and does not change -- only the number of
+     * screens within a group does. */
+    if (!confirm_constant_power_paged(
+            ButtonRequestType_ButtonRequest_ConfirmWord, title,
+            formatted_mnemonic[current_page])) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
       setup_abort();

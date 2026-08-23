@@ -9,6 +9,7 @@ set(sources
     ctap2_cbor.cpp
     dice.cpp
     recovery.cpp
+    seed_display.cpp
     rng_health.cpp
     signing.cpp
     setup_ceremony.cpp

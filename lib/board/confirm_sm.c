@@ -646,6 +646,93 @@ bool confirm(ButtonRequestType type, const char* request_title,
   return ret;
 }
 
+/// Split `body` at the LAST newline that still leaves <= 3 rendered lines at
+/// the real constant-power width, so each chunk is a whole number of mnemonic
+/// rows. Returns the number of bytes to take, always at least 1.
+static size_t constant_power_subpage_take(const char* body) {
+  const Font* font = get_body_font();
+  const size_t len = strlen(body);
+  if (len == 0) return 0;
+
+  size_t best = 0;
+  /* Only ever break at a row boundary: mnemonic rows are newline separated and
+   * a word must never be split across screens. */
+  for (size_t i = 0; i < len; i++) {
+    if (body[i] != '\n' && i + 1 != len) continue;
+    const size_t take = i + 1;
+    char probe[BODY_CHAR_MAX];
+    if (take >= sizeof(probe)) break;
+    memcpy(probe, body, take);
+    probe[take] = '\0';
+    if (calc_str_line(font, probe, CONSTANT_POWER_BODY_WIDTH) <= BODY_ROWS) {
+      best = take;
+    } else {
+      break;
+    }
+  }
+  /* A single row wider than three lines cannot be split further; show it and
+   * let the row itself wrap rather than looping forever. */
+  if (best == 0) {
+    const char* nl = strchr(body, '\n');
+    best = nl ? (size_t)(nl - body + 1) : len;
+  }
+  return best;
+}
+
+/// Constant-power confirmation that pages LOCALLY inside one ButtonRequest.
+///
+/// The seed backup and BIP-85 display draw from x = 128 + LEFT_MARGIN, where
+/// only CONSTANT_POWER_BODY_WIDTH px exists -- not BODY_WIDTH. Content grouped
+/// for BODY_WIDTH therefore needs more than one screen at the real width.
+///
+/// It must NOT need more than one ButtonRequest. reset.c emits one request per
+/// logical group and the host reads one word set per request:
+///
+///     while isinstance(resp, ButtonRequest):
+///         mnemonic.append(client.debug.read_reset_word())
+///
+/// so an extra request makes the host read a group twice and reconstruct a
+/// mnemonic with duplicated words. page_body_confirm() does exactly that -- one
+/// request per page -- which is why it cannot be used here.
+///
+/// So: one request for the group, then subpages advanced locally. Intermediate
+/// subpages take a short press; only the LAST takes the caller's hold, because
+/// only the last is the approval. Cancelling any subpage cancels the group.
+bool confirm_constant_power_paged(ButtonRequestType type,
+                                  const char* request_title,
+                                  const char* request_body) {
+  button_request_acked = false;
+
+  /* Exactly one ButtonRequest for the whole group. */
+  ButtonRequest resp;
+  memset(&resp, 0, sizeof(ButtonRequest));
+  resp.has_code = true;
+  resp.code = type;
+  msg_write(MessageType_MessageType_ButtonRequest, &resp);
+
+  static CONFIDENTIAL char sub[BODY_CHAR_MAX];
+  const char* p = request_body ? request_body : "";
+  bool ok = true;
+
+  while (*p && ok) {
+    const size_t take = constant_power_subpage_take(p);
+    if (take == 0) break;
+    const size_t n = take < sizeof(sub) - 1 ? take : sizeof(sub) - 1;
+    memcpy(sub, p, n);
+    sub[n] = '\0';
+    p += take;
+    while (*p == ' ') p++; /* a leading space is dropped at a row start */
+
+    const bool last = (*p == '\0');
+    ok = confirm_screen(request_title, sub, &layout_constant_power_notification,
+                        true, NO_ICON,
+                        /*immediate=*/!last);
+  }
+
+  memzero(sub, sizeof(sub));
+  return ok;
+}
+
 bool confirm_constant_power(ButtonRequestType type, const char* request_title,
                             const char* request_body, ...) {
   button_request_acked = false;

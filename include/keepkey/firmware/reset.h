@@ -25,24 +25,7 @@
 
 #define MAX_WORDS 24
 #define MAX_WORD_LEN 10
-/* 12, not 6.
- *
- * Pages are packed against CONSTANT_POWER_BODY_WIDTH (124 px) now, the width
- * they are actually drawn at, rather than BODY_WIDTH (225). Two numbered words
- * do not always fit one line at 124 px -- the widest adjacent pair is 132 px
- * with NO separator at all, proven exhaustively over every BIP-39 word and
- * indices 1..24 -- so wide pairs split across lines and consume more pages.
- *
- * Measured with the real font tables:
- *   98.22% of random 24-word seeds  -> 6 pages (unchanged)
- *    1.78%                          -> 7 pages
- *   worst case, every word the widest -> 12 pages
- *
- * Repeated words are legal BIP-39, so that worst case is reachable and 12 is
- * the true bound. Sizing to the observed maximum instead would fail closed with
- * "Too many pages of mnemonic words" during wallet creation on a legal seed.
- * The cost is 6 extra pages of scratch, about 3.7 KB. */
-#define MAX_PAGES 12
+#define MAX_PAGES 6
 #define ADDITIONAL_WORD_PAD 5
 #define WORDS_PER_SCREEN 24
 #define TOKENED_MNEMONIC_BUF MAX_WORDS*(MAX_WORD_LEN + 1) + 1
