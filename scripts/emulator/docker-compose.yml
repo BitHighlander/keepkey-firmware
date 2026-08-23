@@ -5,6 +5,8 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/Dockerfile'
+      args:
+        coinsupport: ${COINSUPPORT:-}
     networks:
       - local-net
     ports:
@@ -32,6 +34,8 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/Dockerfile'
+      args:
+        coinsupport: ${COINSUPPORT:-}
     volumes:
       - test-reports:/kkemu/test-reports:rw
     entrypoint: ['scripts/emulator/firmware-unit.sh']
