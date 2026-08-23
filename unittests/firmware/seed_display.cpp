@@ -48,27 +48,19 @@ namespace {
 
 // confirm_body_fits_constant_power() asks the real renderer, so it needs the
 // canvas the renderer draws into -- board_init() does this on the device.
-class BodyFitsEnv {
- public:
-  static void (*prev_alarm_handler)(int);
-  static void Restore() {
-    if (prev_alarm_handler != SIG_ERR) signal(SIGALRM, prev_alarm_handler);
+//
+// Canvas init is one-time; the SIGALRM suppression is NOT. It is installed and
+// restored per test, because restoring in TearDown while installing only once
+// would leave every test after the first running with the animation tick live,
+// repainting the canvas underneath the measurement.
+void EnsureCanvas() {
+  static bool ready = false;
+  if (!ready) {
+    timer_init();
+    layout_init(display_canvas_init());
+    ready = true;
   }
-  static void Ensure() {
-    static bool ready = false;
-    if (!ready) {
-      timer_init();
-      layout_init(display_canvas_init());
-      // layout_init() starts a 1 ms animation tick that would repaint the
-      // canvas underneath these geometry-only measurements. Silence it, but
-      // RESTORE the previous handler rather than leaving SIGALRM globally
-      // ignored -- that would leak into every test that runs after this one.
-      ualarm(0, 0);
-      prev_alarm_handler = signal(SIGALRM, SIG_IGN);
-      ready = true;
-    }
-  }
-};
+}
 
 int TextWidth(const Font *font, const char *s) {
   int w = 0;
@@ -80,8 +72,24 @@ int TextWidth(const Font *font, const char *s) {
 
 class BodyFits : public ::testing::Test {
  protected:
-  void SetUp() override { BodyFitsEnv::Ensure(); }
-  void TearDown() override { BodyFitsEnv::Restore(); }
+  void SetUp() override {
+    EnsureCanvas();
+    // layout_init() starts a 1 ms animation tick that would repaint the canvas
+    // underneath these geometry-only measurements. Suppress it for the duration
+    // of THIS test and put the previous handler back afterwards, so nothing
+    // leaks into tests that run later in the same binary.
+    ualarm(0, 0);
+    prev_alarm_handler_ = signal(SIGALRM, SIG_IGN);
+  }
+
+  void TearDown() override {
+    if (prev_alarm_handler_ != SIG_ERR) {
+      signal(SIGALRM, prev_alarm_handler_);
+    }
+  }
+
+ private:
+  void (*prev_alarm_handler_)(int) = SIG_ERR;
 };
 
 // The budget is derived from the real draw origin, not asserted as a literal.
@@ -267,7 +275,11 @@ TEST_F(BodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
   EXPECT_EQ(reassembled, std::string(kGroup))
       << "subpages must reassemble to the group with nothing lost, duplicated "
          "or reordered";
-  EXPECT_GE(subpages, 1);
+  // The vector must actually CROSS a subpage boundary, or this test proves
+  // nothing about splitting: a single-subpage body reassembles trivially.
+  EXPECT_GT(subpages, 1)
+      << "the mushroom vector must need more than one subpage at "
+      << CONSTANT_POWER_BODY_WIDTH << " px, otherwise this regression is inert";
 }
 
 // A row that cannot fit must be REJECTED, not shown clipped.
