@@ -288,7 +288,14 @@ static const uint8_t SWU_1_Z_LE[32] = {
     0x1c, 0x10, 0xc3, 0x50, 0x12, 0x31, 0x8c, 0xcb, 0x86, 0x3f,
 };
 
-static const uint8_t HASH_ZCASH_TEST_TRANS_RIGHTS[32] = {
+static const uint8_t HASH_ZCASH_// Fixed non-zero nonce. redpallas_sign_* now take the nonce from the caller,
+// so these vectors are deterministic instead of depending on the RNG.
+static const uint8_t kRedPallasTestNonce[32] = {
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+    0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
+    0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20};
+
+TEST_TRANS_RIGHTS[32] = {
     0xd3, 0x6b, 0x0b, 0x64, 0x9b, 0x5c, 0x69, 0x36, 0x02, 0x7a, 0x18,
     0x0f, 0x7d, 0x25, 0x40, 0x23, 0x95, 0x6f, 0xc2, 0x88, 0x3d, 0xdf,
     0x23, 0xff, 0xc3, 0xc8, 0xfd, 0x1f, 0xa3, 0xcd, 0x18, 0x18,
@@ -1651,7 +1658,7 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   RedPallasProgressCapture progress;
   uint8_t signature[64];
   ASSERT_EQ(redpallas_sign_digest_with_ak(
-                keys.ask, keys.ak, alpha, public_rk, sighash, signature,
+                keys.ask, keys.ak, alpha, public_rk, sighash, kRedPallasTestNonce, signature,
                 capture_redpallas_progress, &progress),
             0);
   EXPECT_TRUE(progress.monotonic);
@@ -1664,7 +1671,7 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   memcpy(wrong_rk, public_rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   EXPECT_NE(redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, wrong_rk,
-                                          sighash, signature, nullptr, nullptr),
+                                          sighash, kRedPallasTestNonce, signature, nullptr, nullptr),
             0);
 
   memzero(&keys, sizeof(keys));
@@ -1685,7 +1692,7 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   RedPallasProgressCapture progress;
   uint8_t signature[64];
   ASSERT_EQ(
-      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, signature,
+      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, kRedPallasTestNonce, signature,
                                    capture_redpallas_progress, &progress),
       0);
   EXPECT_TRUE(progress.monotonic);
@@ -1698,6 +1705,7 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   memcpy(wrong_rk, rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, wrong_rk, sighash,
+                                         kRedPallasTestNonce,
                                          signature, nullptr, nullptr),
             0);
   EXPECT_NE(redpallas_verify_digest(rk, sighash, signature), 0);
@@ -1719,7 +1727,7 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   alpha[31] = 0x00;
 
   uint8_t signature[64];
-  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, signature);
+  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestNonce, signature);
   EXPECT_EQ(ret, 0) << "RedPallas signing must succeed";
 
   /* Signature must be nonzero */
@@ -1781,7 +1789,7 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   uint8_t zero[64] = {0};
   for (int i = 0; i < 3; i++) {
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, sig), 0)
+    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestNonce, sig), 0)
         << "Signing must succeed on call " << i;
     EXPECT_TRUE(memcmp(sig, zero, 64) != 0)
         << "Signature must be nonzero on call " << i;
@@ -1803,8 +1811,8 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
   memset(sighash_b, 0xBB, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, sig_b), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestNonce, sig_a), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestNonce, sig_b), 0);
 
   EXPECT_TRUE(memcmp(sig_a, sig_b, 64) != 0)
       << "Different sighash must produce different signatures";
