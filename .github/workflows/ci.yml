@@ -479,6 +479,9 @@ jobs:
               python3 /root/keepkey-firmware/tools/check_pallas_ct_disassembly.py \
                 --elf bin/firmware.keepkey.elf \
                 --variant '${{ matrix.variant }}' && \
+              python3 /root/keepkey-firmware/tools/check_bitcoin_only_identity.py \
+                --artifact bin/firmware.keepkey.bin \
+                --variant '${{ matrix.variant }}' && \
               mkdir -p /root/keepkey-firmware/bin && \
               cp bin/*.bin /root/keepkey-firmware/bin/ && \
               cp bin/*.elf /root/keepkey-firmware/bin/ && \
