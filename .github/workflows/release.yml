@@ -314,7 +314,7 @@ jobs:
         run: |
           mkdir -p release-assets
           cp artifacts/*.bin artifacts/*.elf artifacts/*.pdf artifacts/*.json \
-            artifacts/HASHES.txt release-assets/
+            artifacts/HASHES*.txt release-assets/
           ls -lh release-assets/
 
       - name: Generate release body
