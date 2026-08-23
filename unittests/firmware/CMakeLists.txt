@@ -1,17 +1,28 @@
 set(sources
-    binance.cpp
-    coins.cpp
-    cosmos.cpp
-    eos.cpp
-    ethereum.cpp
-    nano.cpp
     recovery.cpp
     setup_ceremony.cpp
-    ripple.cpp
-    solana.cpp
+    signing.cpp
     storage.cpp
+    transaction.cpp
     usb_rx.cpp
     u2f.cpp)
+
+# Suites for the coin engines the bitcoin-only image compiles out. Building
+# them against that image fails at the first reference to an absent symbol
+# (ethereum_address_checksum, tokenByTicker, ...), so they follow their
+# subjects out of the build. coins.cpp is here because it asserts the
+# multi-chain coin AND token table, not just the Bitcoin rows.
+if(NOT ${KK_BITCOIN_ONLY})
+  list(APPEND sources
+      binance.cpp
+      coins.cpp
+      cosmos.cpp
+      eos.cpp
+      ethereum.cpp
+      nano.cpp
+      ripple.cpp
+      solana.cpp)
+endif()
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
