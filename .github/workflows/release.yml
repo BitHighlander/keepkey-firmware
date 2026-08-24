@@ -137,6 +137,10 @@ jobs:
                 -DCMAKE_COLOR_MAKEFILE=ON \
                 ${{ matrix.cmake_flags }} && \
               make && \
+              python3 /root/keepkey-firmware/tools/check_bitcoin_only_identity.py \
+                --artifact bin/firmware.keepkey.bin \
+                --elf bin/firmware.keepkey.elf \
+                --variant '${{ matrix.variant }}' && \
               mkdir -p /root/keepkey-firmware/release && \
               cp bin/firmware.keepkey.bin /root/keepkey-firmware/release/ && \
               cp bin/firmware.keepkey.elf /root/keepkey-firmware/release/ && \

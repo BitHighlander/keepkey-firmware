@@ -5,6 +5,8 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/Dockerfile'
+      args:
+        coinsupport: ${COINSUPPORT:-}
     networks:
       - local-net
     ports:
@@ -23,6 +25,10 @@ services:
       dockerfile: 'scripts/emulator/python-keepkey.Dockerfile'
     volumes:
       - test-reports:/kkemu/test-reports:rw
+    environment:
+      # The report gate must know the product CI intended to build. Do not
+      # infer this from Features: firmware identity is itself under test.
+      KK_TEST_BUILD_VARIANT: ${KK_TEST_BUILD_VARIANT:-full}
     networks:
       - local-net
     depends_on:
@@ -32,6 +38,8 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/Dockerfile'
+      args:
+        coinsupport: ${COINSUPPORT:-}
     volumes:
       - test-reports:/kkemu/test-reports:rw
     entrypoint: ['scripts/emulator/firmware-unit.sh']

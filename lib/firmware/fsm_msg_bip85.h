@@ -71,6 +71,11 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
     snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
              mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
 
+    /* Group at BODY_WIDTH, exactly as before. The GROUPING is the host
+     * protocol boundary -- reset.c emits one ButtonRequest per group and
+     * the host reads one word set per request -- so it must not change.
+     * Fitting the real 124 px draw width is handled INSIDE the
+     * confirmation by local subpaging, which emits no extra requests. */
     if (calc_str_line(get_body_font(), mnemonic_scratch_display, BODY_WIDTH) >
         3) {
       page_count++;
@@ -113,9 +118,13 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
       snprintf(title, MEDIUM_STR_BUF, "BIP-85 Seed");
     }
 
-    if (!confirm_constant_power(ButtonRequestType_ButtonRequest_ConfirmWord,
-                                title, "%s",
-                                mnemonic_scratch_formatted[current_page])) {
+    /* Local subpaging: ONE ButtonRequest per group, any extra OLED
+     * screens navigated inside it. The group count is the host
+     * protocol boundary and does not change -- only the number of
+     * screens within a group does. */
+    if (!confirm_constant_power_paged(
+            ButtonRequestType_ButtonRequest_ConfirmWord, title,
+            mnemonic_scratch_formatted[current_page])) {
       memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
       memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
       memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));

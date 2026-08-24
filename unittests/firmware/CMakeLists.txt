@@ -9,6 +9,8 @@ set(sources
     ctap2_cbor.cpp
     dice.cpp
     recovery.cpp
+    seed_display.cpp
+    test_board.cpp
     rng_health.cpp
     signing.cpp
     setup_ceremony.cpp
@@ -41,6 +43,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       solana.cpp
       thorchain.cpp
       tron.cpp)
+else()
+  list(APPEND sources bitcoin_only.cpp)
 endif()
 
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
