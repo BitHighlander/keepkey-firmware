@@ -110,9 +110,33 @@ def main():
 
     sign_core = code_only(function_body(redpallas,
                                         "redpallas_sign_with_rsk"))
-    for token in ("pallas_ct_add_mod_q", "pallas_ct_mod_q",
-                  "pallas_ct_mul_mod_q", "pallas_ct_scalar_replace_zero_with_one"):
+    for token in ("pallas_ct_add_mod_q", "pallas_ct_mul_mod_q"):
         require(sign_core, token, "RedPallas signing core")
+
+    # The nonce must come from the spec construction, not from a raw reduction.
+    require(sign_core, "redpallas_hash_nonce", "RedPallas signing core")
+
+    # NEVER normalise a signing nonce. This gate used to REQUIRE
+    # pallas_ct_scalar_replace_zero_with_one() here, which institutionalised the
+    # defect as an invariant: a dead entropy source became the constant nonce 1
+    # on every signature, and a nonce that is reused AND publicly known
+    # discloses the key from a single signature. A zero scalar must fail the
+    # signature instead. Requiring a helper by name checked the shape of the
+    # code; this checks the security property.
+    forbid(sign_core, "pallas_ct_scalar_replace_zero_with_one",
+           "RedPallas signing core")
+    forbid(sign_core, "random_buffer", "RedPallas signing core")
+
+    # The nonce hash must wipe its BLAKE2b context, not just the digest buffer.
+    # blake2b_Final() clears its own scratch but leaves the finished state in
+    # ctx: h[0..7] IS the digest it serialized, and buf still holds the last
+    # input block, which contains T. Either one recovers the nonce r, and r plus
+    # the emitted signature gives up the randomized signing key via
+    # rsk = (s - r) / c. Found in review after the fix landed, so it is pinned
+    # here rather than left to the next reader to notice.
+    nonce_hash = code_only(function_body(redpallas, "redpallas_hash_nonce"))
+    require(nonce_hash, "memzero(&ctx", "RedPallas nonce hash")
+    require(nonce_hash, "memzero(hash_out", "RedPallas nonce hash")
     for token in ("pallas_add_mod_q(", "pallas_mod_q(", "pallas_mul_mod_q("):
         forbid(sign_core, token, "RedPallas signing core")
 
@@ -136,8 +160,22 @@ def main():
                                              "fsm_msgZcashPCZTAction"))
     require(action_handler, "msg->has_is_spend", "PCZT action handler")
     require(action_handler, "if (msg->is_spend)", "PCZT action handler")
-    require(action_handler, "redpallas_sign_digest_for_rk",
+    # The action handler must sign through the rk-VALIDATING entry point. This
+    # gate previously required redpallas_sign_digest_for_rk() here, which pinned
+    # the weaker path as an invariant: _for_rk feeds the host's rk straight into
+    # the nonce and challenge hashes without ever checking it describes this
+    # device's key, so the device would authorize under a verification key that
+    # is not its own. _with_ak derives rk from the device's ak and alpha,
+    # refuses on mismatch, and signs with the derived value.
+    #
+    # This is the second time this file has been found requiring the weaker of
+    # two available implementations by name (see the normaliser note above).
+    # Requiring a function by name pins whichever one happened to be in use;
+    # forbid the unsafe one as well, so the gate states the property.
+    require(action_handler, "redpallas_sign_digest_with_ak",
             "PCZT action handler")
+    forbid(action_handler, "redpallas_sign_digest_for_rk(",
+           "PCZT action handler")
     require(action_handler, "signatures[zcash_signing.signature_count]",
             "compact PCZT signature collection")
     require(action_handler, "zcash_signing.signature_count++",
@@ -145,8 +183,6 @@ def main():
     require(action_handler,
             "resp_signed->signatures_count = zcash_signing.signature_count",
             "compact PCZT signature response")
-    forbid(action_handler, "redpallas_sign_digest_with_ak",
-           "PCZT action handler")
     output_verification = code_only(function_body(
         zcash_fsm, "zcash_verify_and_confirm_orchard_output"))
     require(output_verification, "zcash_orchard_compute_cmx_with_progress",

@@ -22,6 +22,13 @@
 #include <limits.h>
 
 #include "keepkey/firmware/zcash.h"
+/* The is_spend path draws T through random_buffer_checked() behind
+ * rng_health_check(). Declared here, in the file that USES them, rather than
+ * relying on fsm.c's include order: alpha's fsm.c lacks the rng_health.h that
+ * release/7.15's carries, and the emulator and unit builds only compiled
+ * because a different ordering happened to supply the declarations. The full
+ * ARM and dylib builds did not. */
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/blake2b.h"
 #include "trezor/crypto/pallas.h"
 #include "trezor/crypto/redpallas.h"
@@ -39,6 +46,19 @@ static const uint8_t EMPTY_SAPLING_DIGEST[32] = {
     0x6f, 0x2f, 0xc8, 0xf9, 0x8f, 0xea, 0xfd, 0x94, 0xe7, 0x4a, 0x0d,
     0xf4, 0xbe, 0xd7, 0x43, 0x91, 0xee, 0x0b, 0x5a, 0x69, 0x94, 0x5e,
     0x4c, 0xed, 0x8c, 0xa8, 0xa0, 0x95, 0x20, 0x6f, 0x00, 0xae};
+
+/* ZIP-229 v6 adds/changes the Orchard-protocol component
+ * personalizations. Sapling's top-level personalization is unchanged from
+ * v5, so the empty Sapling component continues to use the value above. */
+static const uint8_t EMPTY_ORCHARD_DIGEST_V6[32] = {
+    0xa3, 0x36, 0x7d, 0x2f, 0xde, 0xa2, 0x91, 0x01, 0x59, 0xfc, 0x50,
+    0x26, 0xe9, 0xbf, 0x1f, 0xcc, 0xd3, 0xe2, 0x8c, 0xe5, 0xe6, 0xde,
+    0x46, 0xbf, 0xb7, 0x15, 0x87, 0x23, 0x0e, 0xea, 0x95, 0x15};
+
+static const uint8_t EMPTY_IRONWOOD_DIGEST_V6[32] = {
+    0xb9, 0xcf, 0xe6, 0x43, 0xce, 0x45, 0xb2, 0x8c, 0x33, 0x19, 0x0f,
+    0x0d, 0x52, 0x23, 0xe4, 0x75, 0x97, 0x2f, 0x2a, 0x14, 0x9d, 0xc5,
+    0x44, 0x04, 0xfd, 0x83, 0x65, 0x52, 0x1f, 0x84, 0x16, 0xc5};
 
 #define ZCASH_MAX_ACTIONS 16
 #define ZCASH_MAX_TRANSPARENT_INPUTS 8
@@ -658,6 +678,23 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
+  /* The device verifies only the ACTIVE pool's actions, so the inactive pool
+   * must be provably empty rather than host-attested. Without this, a v6
+   * request could carry any orchard_digest and the device would fold it into
+   * the sighash it signs having never seen the bundle it commits to. Refusing
+   * also fails closed on an Orchard->Ironwood migration transaction, which this
+   * signer cannot verify anyway: is_ironwood selects one set of personalization
+   * strings for every streamed action, so a transaction spanning both pools
+   * cannot be expressed here. */
+  if (is_ironwood &&
+      memcmp(msg->orchard_digest.bytes, EMPTY_ORCHARD_DIGEST_V6, 32) != 0) {
+    fsm_sendFailure(
+        FailureType_Failure_SyntaxError,
+        _("Ironwood transaction must have an empty Orchard bundle"));
+    layoutHome();
+    return;
+  }
+
   ZcashPCZTSigningRequestMeta signing_meta = {0};
   signing_meta.has_header_digest = msg->has_header_digest;
   signing_meta.header_digest_size = msg->header_digest.size;
@@ -801,6 +838,11 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   memcpy(zcash_signing.orchard_component_digest, msg->orchard_digest.bytes, 32);
   if (is_ironwood) {
     memcpy(zcash_signing.ironwood_component_digest, msg->ironwood_digest.bytes,
+           32);
+  } else if (zcash_signing.transaction_v6) {
+    /* An Orchard-v6 request does not stream an Ironwood bundle. Bind the
+     * canonical empty component rather than zero-filled state or host data. */
+    memcpy(zcash_signing.ironwood_component_digest, EMPTY_IRONWOOD_DIGEST_V6,
            32);
   }
   zcash_signing.has_device_sighash = false;
@@ -1168,13 +1210,59 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
    * can never satisfy the action's rk. Stream and verify every action above,
    * but return compact signatures only for real spends, in action order. */
   if (msg->is_spend) {
+    /* Draw the spend-authorization randomness T here, from the CHECKED source,
+     * and hand it to the signer.
+     *
+     * The signer takes T from the caller precisely so this decision is
+     * visible. The signer derives the nonce as r = H*(T || rk || M)
+     * rather than reducing T directly, so a repeat of T alone is survivable --
+     * but a REPEATED NONCE discloses the spend authorization key from any two
+     * signatures, so the entropy must still come from a source that has been
+     * health-checked, and a degraded source must yield NO signature rather than
+     * a predictable one.
+     *
+     * random_buffer_checked() folds the drawn bytes into the continuous
+     * SP 800-90B state and returns false if the RCT or APT trips;
+     * rng_health_check() is the latched boot verdict. Both must hold, and the
+     * signer independently refuses an all-zero T.
+     *
+     * 80 bytes, not 32: T is the randomness input to the RedDSA nonce
+     * derivation r = H*(T || rk || M), and the Zcash protocol specification
+     * sizes it at 80 so that H*'s output is statistically uniform over the
+     * scalar field. The signer hashes T with the verification key and the
+     * message rather than reducing it directly, so a repeated T across two
+     * DIFFERENT messages still yields different nonces.
+     *
+     * Refusing to sign is always safe. Signing with a repeated nonce is not.
+     */
+    uint8_t zcash_T[80];
+    if (!rng_health_check() ||
+        !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
+      memzero(zcash_T, sizeof(zcash_T));
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("RNG health check failed; refusing to sign"));
+      zcash_signing_abort();
+      layoutHome();
+      return;
+    }
+
     ZcashActionProgress signing_progress = {verification_target,
                                             action_target - verification_target,
                                             verification_target};
-    if (redpallas_sign_digest_for_rk(
-            zcash_signing.keys.ask, msg->alpha.bytes, msg->rk.bytes, sighash,
-            zcash_signing.signatures[zcash_signing.signature_count],
-            zcash_action_progress, &signing_progress) != 0) {
+    /* _with_ak, not _for_rk: it derives rk from the device's OWN ak and alpha
+     * and refuses when the host's rk does not match, then signs with the
+     * derived value. _for_rk feeds the host's rk straight into the nonce and
+     * challenge hashes without ever checking it describes this device's key,
+     * so the device would happily authorize under a verification key that is
+     * not its own. The validating variant already existed and production was
+     * calling the other one. */
+    int sign_rc = redpallas_sign_digest_with_ak(
+        zcash_signing.keys.ask, zcash_signing.keys.ak, msg->alpha.bytes,
+        msg->rk.bytes, sighash, zcash_T,
+        zcash_signing.signatures[zcash_signing.signature_count],
+        zcash_action_progress, &signing_progress);
+    memzero(zcash_T, sizeof(zcash_T));
+    if (sign_rc != 0) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Orchard spend authorization failed"));
       zcash_signing_abort();
@@ -1207,7 +1295,10 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       BLAKE2B_CTX orchard_ctx;
       blake2b_InitPersonal(
           &orchard_ctx, 32,
-          zcash_signing.is_ironwood ? "ZTxIdIronwd_H_v6" : "ZTxIdOrchardHash",
+          zcash_signing.is_ironwood
+              ? "ZTxIdIronwd_H_v6"
+              : (zcash_signing.transaction_v6 ? "ZTxIdOrchardH_v6"
+                                              : "ZTxIdOrchardHash"),
           16);
       blake2b_Update(&orchard_ctx, compact_hash, 32);
       blake2b_Update(&orchard_ctx, memos_hash, 32);

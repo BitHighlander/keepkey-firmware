@@ -362,7 +362,8 @@ void layout_constant_power_notification(const char* str1, const char* str2,
   DrawableParams sp;
   const Font* title_font = get_title_font();
   const Font* body_font = get_body_font();
-  const uint32_t body_line_count = calc_str_line(body_font, str2, BODY_WIDTH);
+  const uint32_t body_line_count =
+      calc_str_line(body_font, str2, CONSTANT_POWER_BODY_WIDTH);
 
   /* Determine vertical alignment and body width */
   sp.y = TOP_MARGIN;
@@ -388,7 +389,10 @@ void layout_constant_power_notification(const char* str1, const char* str2,
   sp.y += font_height(body_font) + BODY_TOP_MARGIN;
   sp.x = 128 + LEFT_MARGIN;
   sp.color = BODY_COLOR;
-  draw_string(canvas, body_font, str2, &sp, BODY_WIDTH,
+  /* The real budget from x = 128 + LEFT_MARGIN, not BODY_WIDTH: passing 225
+   * here is what let the walk run off the canvas edge and silently drop the
+   * tail of the body. */
+  draw_string(canvas, body_font, str2, &sp, CONSTANT_POWER_BODY_WIDTH,
               font_height(body_font) + BODY_FONT_LINE_PADDING);
 
   layout_notification_icon(type, &sp);

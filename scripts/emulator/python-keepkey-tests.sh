@@ -19,6 +19,17 @@ set -e
 # See #466.
 PYTEST_TIMEOUT_ARGS="--timeout=60 --timeout-method=signal"
 
+REPORT_BUILD_VARIANT=${KK_TEST_BUILD_VARIANT:-full}
+case "$REPORT_BUILD_VARIANT" in
+    full|bitcoin-only) ;;
+    *)
+        echo "FATAL: unsupported KK_TEST_BUILD_VARIANT=$REPORT_BUILD_VARIANT"
+        exit 1
+        ;;
+esac
+REPORT_VARIANT_ARG="--build-variant=$REPORT_BUILD_VARIANT"
+echo "Expected CI build variant: $REPORT_BUILD_VARIANT"
+
 mkdir -p /kkemu/test-reports/python-keepkey
 mkdir -p /kkemu/test-reports/screenshots
 
@@ -93,7 +104,7 @@ if [ -z "$FW_VERSION" ]; then
     echo "Detected FW_VERSION=$FW_VERSION from CMakeLists.txt"
 fi
 export FW_VERSION
-SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter --fw-version=$FW_VERSION 2>/dev/null)
+SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter --fw-version=$FW_VERSION "$REPORT_VARIANT_ARG" 2>/dev/null)
 if [ -z "$SCREENSHOT_FILTER" ]; then
     echo "WARNING: --screenshot-filter returned empty, falling back to full suite"
     SCREENSHOT_FILTER="test_"
@@ -134,6 +145,7 @@ echo "=== Screenshot audit (per-test) ==="
 python3 ../scripts/generate-test-report.py \
     --screenshot-audit /kkemu/test-reports/screenshots \
     --audit-junit /kkemu/test-reports/python-keepkey/junit-screenshots.xml \
+    "$REPORT_VARIANT_ARG" \
     --fw-version=$FW_VERSION || {
     echo "FATAL: tests declared screens they did not capture (see list above)."
     echo "1" > /kkemu/test-reports/python-keepkey/status
@@ -189,6 +201,7 @@ PY
 echo "=== Phase 2: Validate report catalog ==="
 python3 ../scripts/generate-test-report.py \
   --junit="$MERGED" \
+  "$REPORT_VARIANT_ARG" \
   ${FW_VERSION:+--fw-version=$FW_VERSION} \
   --validate-junit
 CATALOG_RC=$?
@@ -196,6 +209,7 @@ CATALOG_RC=$?
 echo "=== Phase 2: Generate test report ==="
 python3 ../scripts/generate-test-report.py \
   --junit="$MERGED" \
+  "$REPORT_VARIANT_ARG" \
   ${FW_VERSION:+--fw-version=$FW_VERSION} \
   --screenshots=/kkemu/test-reports/screenshots \
   --output=/kkemu/test-reports/test-report.pdf
