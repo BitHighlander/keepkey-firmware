@@ -25,7 +25,9 @@
  * include order.
  */
 
-void kk_board_init(void);  // lib/board/keepkey_board.c
+// keepkey_board.c is compiled as C.  This declaration must therefore carry C
+// linkage even though the test seam itself is C++.
+extern "C" void kk_board_init(void);  // lib/board/keepkey_board.c
 
 void kk_test_board_init(void) {
   static bool initialized = false;
