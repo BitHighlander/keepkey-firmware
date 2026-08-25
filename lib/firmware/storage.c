@@ -59,6 +59,7 @@
 #include "trezor/crypto/pbkdf2.h"
 #include "trezor/crypto/rand.h"
 
+#include <stddef.h>
 #include <string.h>
 #include <stdint.h>
 #include <assert.h>
@@ -167,7 +168,6 @@ uint32_t storage_nextU2FCounter(void) {
 
 void storage_setU2FCounter(uint32_t u2f_counter) {
   shadow_config.storage.pub.u2f_counter = u2f_counter;
-  storage_commit();
 }
 
 static bool storage_isActiveSector(const char* flash) {
@@ -286,6 +286,12 @@ void storage_readMeta(Metadata* meta, const char* ptr, size_t len) {
   memcpy(meta->magic, ptr, STORAGE_MAGIC_LEN);
   memcpy(meta->uuid, ptr + 4, STORAGE_UUID_LEN);
   memcpy(meta->uuid_str, ptr + 16, STORAGE_UUID_STR_LEN);
+  if (len >= STORAGE_METADATA_LEN) {
+    memcpy(meta->generation, ptr + STORAGE_GENERATION_OFFSET,
+           STORAGE_GENERATION_LEN);
+  } else {
+    memzero(meta->generation, sizeof(meta->generation));
+  }
 }
 
 void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
@@ -293,6 +299,18 @@ void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
   memcpy(ptr, meta->magic, STORAGE_MAGIC_LEN);
   memcpy(ptr + 4, meta->uuid, STORAGE_UUID_LEN);
   memcpy(ptr + 16, meta->uuid_str, STORAGE_UUID_STR_LEN);
+}
+
+static uint32_t storage_generation(const Metadata* meta) {
+  return (uint32_t)meta->generation[0] | ((uint32_t)meta->generation[1] << 8) |
+         ((uint32_t)meta->generation[2] << 16);
+}
+
+static void storage_generation_increment(Metadata* meta) {
+  uint32_t next = (storage_generation(meta) + 1u) & 0x00FFFFFFu;
+  meta->generation[0] = (uint8_t)next;
+  meta->generation[1] = (uint8_t)(next >> 8);
+  meta->generation[2] = (uint8_t)(next >> 16);
 }
 
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len) {
@@ -1401,6 +1419,11 @@ void storage_readV20(ConfigFlash* dst, const char* flash, size_t len) {
 void storage_writeV20(char* flash, size_t len, const ConfigFlash* src) {
   if (len < 44 + V20_STORAGE_LEN) return;
   storage_writeMeta(flash, 44, &src->meta);
+  /* Bytes 41..43 were padding in every legacy writer. Only the framed V20
+   * format gives them generation semantics; keeping this out of
+   * storage_writeMeta() preserves byte-exact V16/V17/V19 serialization. */
+  memcpy(flash + STORAGE_GENERATION_OFFSET, src->meta.generation,
+         STORAGE_GENERATION_LEN);
   storage_writeStorageV20(flash + 44, len - 44, &src->storage);
 }
 
@@ -1541,32 +1564,6 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   return SUS_Invalid;
 }
 
-/// \brief Shifts sector for config storage
-static void wear_leveling_shift(void) {
-  switch (storage_location) {
-    case FLASH_STORAGE1: {
-      storage_location = FLASH_STORAGE2;
-      break;
-    }
-
-    case FLASH_STORAGE2: {
-      storage_location = FLASH_STORAGE3;
-      break;
-    }
-
-    /* wraps around */
-    case FLASH_STORAGE3: {
-      storage_location = FLASH_STORAGE1;
-      break;
-    }
-
-    default: {
-      storage_location = STORAGE_SECT_DEFAULT;
-      break;
-    }
-  }
-}
-
 /// \brief Set root session seed in storage.
 ///
 /// \param cfg[in]    The active storage sector.
@@ -1625,8 +1622,22 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 void storage_init(void) {
   // Find storage sector with valid data and set storage_location variable.
   if (!find_active_storage(&storage_location)) {
-    // Otherwise initialize it to the default sector.
-    storage_location = STORAGE_SECT_DEFAULT;
+    /* A power cut may have landed after the old sector was retired but before
+     * the replacement's final magic word was programmed. Its trailer and CRC
+     * prove the replacement is complete; install its marker first, then make
+     * it visible to this firmware and to already-installed bootloaders. */
+    if (find_pending_storage(&storage_location)) {
+      if (!recover_pending_storage(storage_location)) {
+        /* Do not reinterpret a verified wallet record as factory-fresh merely
+         * because its marker/final-word recovery encountered a flash fault. */
+        layout_warning_static("Storage Recovery Failed. Reboot Device!");
+        shutdown();
+        return;
+      }
+    } else {
+      // Otherwise initialize it to the default sector.
+      storage_location = STORAGE_SECT_DEFAULT;
+    }
   }
   const char* flash = (const char*)flash_write_helper(storage_location);
 
@@ -1702,6 +1713,13 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
   memset(&cfg->storage, 0, sizeof(cfg->storage));
 
   storage_resetPolicies(&cfg->storage);
+
+  /* Every fresh/wiped record needs a new per-installation PIN-KDF salt. The
+   * legacy migration path already minted one, but records created after V2
+   * otherwise persisted zeroes for the device's lifetime. Keep the draw in
+   * the common reset implementation so factory init, WipeDevice, invalid
+   * storage recovery, and LoadDevice cannot diverge again. */
+  storage_drawKeyMaterial(cfg->storage.pub.random_salt, RANDOM_SALT_LEN);
 
   storage_setPin_impl(ss, &cfg->storage, "");
 
@@ -1849,20 +1867,27 @@ void storage_commit(void) {
   // Temporary storage for marshalling secrets in & out of flash.
   //
   // V20 reuses V17's reserved bytes, so meta (44) + storage (2525) = 2569
-  // meaningful bytes. The size MUST be a multiple of 4: the CRC below is
-  // computed as sizeof(flash_temp) / sizeof(uint32_t) words, so integer
-  // division would silently drop a tail. 2572 covers the complete V20 record.
+  // meaningful bytes. STORAGE_RECORD_DATA_LEN rounds that payload to a whole
+  // number of words for CRC, then STORAGE_RECORD_LEN appends a marker+CRC
+  // trailer that legacy firmware safely ignores.
   //
   // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
   // says the buffer is a whole number of words, not that it starts on one.
   // __attribute__((aligned)) rather than C11 _Alignas -- the ARM toolchain
   // rejects _Alignas here, and this is the form the rest of the tree already
   // uses (fsm.c msg_resp, usb.c buffers).
-  static char flash_temp[2572] __attribute__((aligned(4)));
-  _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
-                 "flash_temp must be word-sized or the CRC drops its tail");
-  _Static_assert(sizeof(flash_temp) >= 2569,
+  static char flash_temp[STORAGE_RECORD_LEN] __attribute__((aligned(4)));
+  _Static_assert(
+      STORAGE_RECORD_DATA_LEN % sizeof(uint32_t) == 0,
+      "storage payload must be word-sized or the CRC drops its tail");
+  _Static_assert(STORAGE_RECORD_DATA_LEN >= 2569,
                  "flash_temp must cover the whole V20 record");
+  _Static_assert(STORAGE_RECORD_LEN <= STORAGE_SECTOR_LEN,
+                 "storage record must fit in one sector");
+  _Static_assert(sizeof(Metadata) == STORAGE_METADATA_LEN,
+                 "generation must occupy only Metadata's former padding");
+  _Static_assert(offsetof(ConfigFlash, storage) == STORAGE_METADATA_LEN,
+                 "generation must not move the serialized Storage payload");
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -1884,28 +1909,38 @@ void storage_commit(void) {
      window in which no sector is valid. The CRC below is computed over
      flash_temp after this call, so the magic is now covered by it too. */
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+  storage_generation_increment(&shadow_config.meta);
 
-  storage_writeV20(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV20(flash_temp, STORAGE_RECORD_DATA_LEN, &shadow_config);
 
+  const uint32_t shadow_ram_crc32 =
+      calc_crc32(flash_temp, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
+  memcpy(flash_temp + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
+         STORAGE_RECORD_TRAILER_MAGIC_LEN);
+  memcpy(flash_temp + STORAGE_RECORD_CRC_OFFSET, &shadow_ram_crc32,
+         sizeof(shadow_ram_crc32));
+
+  const Allocation previous_storage_location = storage_location;
+  /* Commit into the spare sector, not the sector immediately following the
+   * active one: that following sector holds the boot-protection marker. The
+   * spare is the predecessor of the active sector, so after finalization its
+   * marker naturally occupies the retired old-active sector. */
+  const Allocation replacement_storage_location =
+      next_storage(next_storage(previous_storage_location));
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
-    /* Capture CRC for verification at restore */
-    uint32_t shadow_ram_crc32 =
-        calc_crc32(flash_temp, sizeof(flash_temp) / sizeof(uint32_t));
-
-    if (shadow_ram_crc32 == 0) {
-      continue; /* Retry */
-    }
-
     /* Make sure storage sector is valid before proceeding */
-    if (storage_location < FLASH_STORAGE1 ||
-        storage_location > FLASH_STORAGE3) {
+    if (previous_storage_location < FLASH_STORAGE1 ||
+        previous_storage_location > FLASH_STORAGE3) {
       /* Let it exhaust the retries and error out */
       continue;
     }
 
-    flash_erase_word(storage_location);
-    wear_leveling_shift();
+    /* Preserve both the active record and its boot marker until a complete
+     * replacement is present in the spare sector. Leave the replacement's
+     * leading magic erased: old bootloaders must not select it before its own
+     * marker exists. */
+    storage_location = replacement_storage_location;
     flash_erase_word(storage_location);
 
     /* Write storage data first before writing storage magic  */
@@ -1913,31 +1948,46 @@ void storage_commit(void) {
                           sizeof(flash_temp) - STORAGE_MAGIC_LEN,
                           (uint8_t*)flash_temp + STORAGE_MAGIC_LEN)) {
       flash_erase_word(storage_location);
+      storage_location = previous_storage_location;
       continue;  // Retry
     }
 
-    if (!flash_write_word(storage_location, 0, STORAGE_MAGIC_LEN,
-                          (uint8_t*)flash_temp)) {
-      flash_erase_word(storage_location);
-      continue;  // Retry
-    }
+    /* Verify every programmed byte before retiring anything. The stored CRC
+     * describes the final record (including "stor"), so byte comparison is
+     * the direct proof while the leading word intentionally remains erased. */
+    const uint8_t* flash_record =
+        (const uint8_t*)flash_write_helper(storage_location);
+    if (memcmp(flash_record + STORAGE_MAGIC_LEN, flash_temp + STORAGE_MAGIC_LEN,
+               sizeof(flash_temp) - STORAGE_MAGIC_LEN) == 0) {
+      /* The replacement is durable. Retire the previous record, install the
+       * replacement's marker in that now-erased sector, and program its magic
+       * last. recover_pending_storage() is deliberately reboot-idempotent if
+       * power fails anywhere in this three-step handoff. */
+      flash_erase_word(previous_storage_location);
+      if (recover_pending_storage(replacement_storage_location)) {
+        storage_location = replacement_storage_location;
+        /* The old marker is now the spare sector. */
+        flash_erase_word(next_storage(previous_storage_location));
+        break;
+      }
 
-    /* Flash write completed successfully.  Verify CRC */
-    uint32_t shadow_flash_crc32 =
-        calc_crc32((const void*)flash_write_helper(storage_location),
-                   sizeof(flash_temp) / sizeof(uint32_t));
-
-    if (shadow_flash_crc32 == shadow_ram_crc32) {
-      storage_protect_off();
-      /* Commit successful, break to exit */
+      /* No active record may be visible here, but the verified pending record
+       * remains recoverable on reboot. Never erase or cycle it on this path. */
+      storage_location = replacement_storage_location;
+      retries = STORAGE_RETRIES;
       break;
     }
+
+    flash_erase_word(storage_location);
+    storage_location = previous_storage_location;
   }
 
   memzero(flash_temp, sizeof(flash_temp));
 
   if (retries >= STORAGE_RETRIES) {
-    storage_wipe();
+    /* Before the handoff the old record+marker remain intact. After it begins,
+     * the pending replacement remains recoverable. In neither case should a
+     * write failure be converted into a wallet wipe. */
     layout_warning_static("Error Detected.  Reboot Device!");
     shutdown();
   }

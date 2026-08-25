@@ -7,7 +7,8 @@ extern "C" {
 #include "types.pb.h"
 #include "storage.h"
 
-/* Emulator flash bring-up, same forward declaration signed_metadata.cpp uses. */
+/* Emulator flash bring-up, same forward declaration signed_metadata.cpp uses.
+ */
 void setup(void);
 }
 
@@ -791,8 +792,7 @@ TEST(Storage, StorageV17MigrationRoundTrip) {
 
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey("", wrapping_key, start.storage.pub.sca_hardened,
-                            PIN_KDF_V15,
-                            start.storage.pub.random_salt, "");
+                            PIN_KDF_V15, start.storage.pub.random_salt, "");
   storage_unwrapStorageKey(wrapping_key, start.storage.pub.wrapped_storage_key,
                            session.storageKey);
 
@@ -986,7 +986,7 @@ TEST(Storage, StorageV17MigrationRoundTrip) {
   // clang-format on
 
   // If storage isn't correct, let's get an idea of where the failure is
-  for (int i=0; i<flash.size(); i++) {
+  for (int i = 0; i < flash.size(); i++) {
     if (flash[i] != expected_flash[i]) {
       printf("%d\n %x %x\n", i, flash[i], expected_flash[i]);
     }
@@ -1036,9 +1036,9 @@ TEST(Storage, PasskeyMetadataV20RoundTrip) {
   storage_readV20(&restored, reinterpret_cast<const char *>(flash.data()),
                   flash.size());
   EXPECT_EQ(restored.storage.pub.passkeys.pin_retries, 6);
-  EXPECT_EQ(0, memcmp(&restored.storage.pub.passkeys,
-                      &start.storage.pub.passkeys,
-                      sizeof(start.storage.pub.passkeys)));
+  EXPECT_EQ(0,
+            memcmp(&restored.storage.pub.passkeys, &start.storage.pub.passkeys,
+                   sizeof(start.storage.pub.passkeys)));
 }
 
 TEST(Storage, NoopSecMigrate) {
@@ -1103,7 +1103,7 @@ TEST(Storage, IsPinCorrect) {
 }
 
 TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
-  const char* pin = "1234";
+  const char *pin = "1234";
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t random_salt[RANDOM_SALT_LEN] = {0};
   uint8_t legacy_wrapping_key[64];
@@ -1121,15 +1121,13 @@ TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
   memcpy(original_wrapped_key, wrapped_key, sizeof(original_wrapped_key));
   storage_keyFingerprint(storage_key, fingerprint);
 
-  EXPECT_EQ(PIN_WRONG,
-            storage_isPinCorrect_impl(
-                "9999", wrapped_key, fingerprint, &sca_hardened,
-                &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
+  EXPECT_EQ(PIN_WRONG, storage_isPinCorrect_impl(
+                           "9999", wrapped_key, fingerprint, &sca_hardened,
+                           &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
   EXPECT_TRUE(sca_hardened);
   EXPECT_TRUE(v15_16_trans);
   EXPECT_FALSE(pin_kdf_v2);
-  EXPECT_EQ(0,
-            memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
+  EXPECT_EQ(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 
   // This is the gate's negative test. The key above is already v16-wrapped and
   // sca-hardened, so with STORAGE_PIN_KDF_V19 off there is nothing left to
@@ -1137,17 +1135,15 @@ TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
   // and produce no v19 claim. Persisting a v19 wrap under a V17 record -- where
   // the flag cannot round-trip -- would lock the wallet out on the next boot.
 #if STORAGE_PIN_KDF_V19
-  EXPECT_EQ(PIN_REWRAP,
-            storage_isPinCorrect_impl(
-                pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
-                &pin_kdf_v2, key_out, random_salt));
+  EXPECT_EQ(PIN_REWRAP, storage_isPinCorrect_impl(
+                            pin, wrapped_key, fingerprint, &sca_hardened,
+                            &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
   EXPECT_TRUE(pin_kdf_v2);
   EXPECT_NE(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 #else
-  EXPECT_EQ(PIN_GOOD,
-            storage_isPinCorrect_impl(
-                pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
-                &pin_kdf_v2, key_out, random_salt));
+  EXPECT_EQ(PIN_GOOD, storage_isPinCorrect_impl(
+                          pin, wrapped_key, fingerprint, &sca_hardened,
+                          &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
   EXPECT_FALSE(pin_kdf_v2);
   EXPECT_EQ(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 #endif
@@ -1204,18 +1200,17 @@ TEST(Storage, Vuln1996) {
   for (const auto &v : vec) {
     memset(&session, 0, sizeof(session));
     memset(&config, 0, sizeof(config));
-    memset(random_salt, 0, sizeof(random_salt));
     storage_reset_impl(&session, &config);
+    memcpy(random_salt, config.storage.pub.random_salt, sizeof(random_salt));
 
     storage_setPin_impl(&session, &config.storage, v.pin);
 
     ASSERT_TRUE(PIN_GOOD == storage_isPinCorrect_impl(
                                 v.pin, config.storage.pub.wrapped_storage_key,
                                 config.storage.pub.storage_key_fingerprint,
-                                &config.storage.pub.sca_hardened, 
+                                &config.storage.pub.sca_hardened,
                                 &config.storage.pub.v15_16_trans,
-                                &config.storage.pub.pin_kdf_v2,
-                                storage_key,
+                                &config.storage.pub.pin_kdf_v2, storage_key,
                                 random_salt));
     ASSERT_TRUE(config.storage.pub.sca_hardened == true);
     memcpy(wrapped_key1, config.storage.pub.wrapped_storage_key,
@@ -1258,14 +1253,34 @@ TEST(Storage, Vuln1996) {
     ASSERT_TRUE(storage_isPinCorrect_impl(
         v.pin, config.storage.pub.wrapped_storage_key,
         config.storage.pub.storage_key_fingerprint,
-        &config.storage.pub.sca_hardened, 
-        &config.storage.pub.v15_16_trans,
-        &config.storage.pub.pin_kdf_v2,
-        storage_key, random_salt));
+        &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+        &config.storage.pub.pin_kdf_v2, storage_key, random_salt));
     ASSERT_TRUE(memcmp(wrapped_key1, config.storage.pub.wrapped_storage_key,
                        sizeof(wrapped_key1)) == 0);
     ASSERT_TRUE(config.storage.pub.sca_hardened == true);
   }
+}
+
+TEST(Storage, ResetMintsFreshPinKdfSalt) {
+  ConfigFlash first;
+  ConfigFlash second;
+  SessionState first_session;
+  SessionState second_session;
+  memset(&first, 0, sizeof(first));
+  memset(&second, 0, sizeof(second));
+  memset(&first_session, 0, sizeof(first_session));
+  memset(&second_session, 0, sizeof(second_session));
+
+  storage_reset_impl(&first_session, &first);
+  storage_reset_impl(&second_session, &second);
+
+  const uint8_t zero_salt[RANDOM_SALT_LEN] = {0};
+  EXPECT_NE(
+      0, memcmp(first.storage.pub.random_salt, zero_salt, sizeof(zero_salt)));
+  EXPECT_NE(
+      0, memcmp(second.storage.pub.random_salt, zero_salt, sizeof(zero_salt)));
+  EXPECT_NE(0, memcmp(first.storage.pub.random_salt,
+                      second.storage.pub.random_salt, RANDOM_SALT_LEN));
 }
 
 TEST(Storage, Reset) {
@@ -1279,10 +1294,8 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(storage_isPinCorrect_impl(
       "", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
-      &config.storage.pub.sca_hardened, 
-      &config.storage.pub.v15_16_trans,
-      &config.storage.pub.pin_kdf_v2,
-      session.storageKey,
+      &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+      &config.storage.pub.pin_kdf_v2, session.storageKey,
       config.storage.pub.random_salt));
 
   uint8_t old_storage_key[64];
@@ -1297,10 +1310,8 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(storage_isPinCorrect_impl(
       "1234", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
-      &config.storage.pub.sca_hardened, 
-      &config.storage.pub.v15_16_trans,
-      &config.storage.pub.pin_kdf_v2,
-      new_storage_key,
+      &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+      &config.storage.pub.pin_kdf_v2, new_storage_key,
       config.storage.pub.random_salt));
 
   ASSERT_TRUE(storage_isWipeCodeCorrect_impl(
@@ -1323,7 +1334,7 @@ TEST(Storage, V20IgnoresRetiredClearsignIdentityBlock) {
   start.storage.pub.passkeys.pin_retries = PASSKEY_PIN_RETRIES;
 
   std::vector<uint8_t> flash(3480, 0);
-  storage_writeV20((char*)&flash[0], flash.size(), &start);
+  storage_writeV20((char *)&flash[0], flash.size(), &start);
   const size_t identity_block_off = 44 + 1501 + V17_ENCSEC_SIZE;
   const size_t identity_block_len = 2 * (71 + 384);
 
@@ -1332,7 +1343,7 @@ TEST(Storage, V20IgnoresRetiredClearsignIdentityBlock) {
   memset(&flash[identity_block_off], 0xA5, identity_block_len);
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
-  storage_readV20(&end, (const char*)&flash[0], flash.size());
+  storage_readV20(&end, (const char *)&flash[0], flash.size());
   EXPECT_EQ(1, end.storage.pub.passkeys.version);
   EXPECT_EQ(PASSKEY_PIN_RETRIES, end.storage.pub.passkeys.pin_retries);
 }
@@ -1345,15 +1356,15 @@ TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
   start.storage.pub.pin_kdf_v2 = true;
 
   std::vector<uint8_t> flash(2572, 0);
-  storage_writeV19((char*)&flash[0], flash.size(), &start);
+  storage_writeV19((char *)&flash[0], flash.size(), &start);
 
   ConfigFlash end;
   memset(&end, 0, sizeof(end));
-  storage_readV19(&end, (const char*)&flash[0], flash.size());
+  storage_readV19(&end, (const char *)&flash[0], flash.size());
   EXPECT_TRUE(end.storage.pub.pin_kdf_v2);
 
   memset(&end, 0xCC, sizeof(end));
-  storage_readV20(&end, (const char*)&flash[0], flash.size());
+  storage_readV20(&end, (const char *)&flash[0], flash.size());
   EXPECT_FALSE(end.storage.pub.pin_kdf_v2);
 }
 
@@ -1379,7 +1390,8 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
   // does not detour through u2froot derivation; the mnemonic still rides
   // through the encrypted section either way.
   cfg.storage.has_sec = true;
-  strlcpy(cfg.storage.sec.mnemonic, "all all all all all all all all all all all all",
+  strlcpy(cfg.storage.sec.mnemonic,
+          "all all all all all all all all all all all all",
           sizeof(cfg.storage.sec.mnemonic));
 
   storage_setPin_impl(&ss, &cfg.storage, "1234");
@@ -1405,19 +1417,17 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
   bool v15_16_trans = reloaded.storage.pub.v15_16_trans;
   bool pin_kdf_v2 = reloaded.storage.pub.pin_kdf_v2;
 
-  EXPECT_EQ(PIN_WRONG,
-            storage_isPinCorrect_impl(
-                "9999", reloaded.storage.pub.wrapped_storage_key,
-                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
-                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
-                reloaded.storage.pub.random_salt));
+  EXPECT_EQ(PIN_WRONG, storage_isPinCorrect_impl(
+                           "9999", reloaded.storage.pub.wrapped_storage_key,
+                           reloaded.storage.pub.storage_key_fingerprint,
+                           &sca_hardened, &v15_16_trans, &pin_kdf_v2,
+                           fresh.storageKey, reloaded.storage.pub.random_salt));
 
-  ASSERT_EQ(PIN_GOOD,
-            storage_isPinCorrect_impl(
-                "1234", reloaded.storage.pub.wrapped_storage_key,
-                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
-                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
-                reloaded.storage.pub.random_salt))
+  ASSERT_EQ(PIN_GOOD, storage_isPinCorrect_impl(
+                          "1234", reloaded.storage.pub.wrapped_storage_key,
+                          reloaded.storage.pub.storage_key_fingerprint,
+                          &sca_hardened, &v15_16_trans, &pin_kdf_v2,
+                          fresh.storageKey, reloaded.storage.pub.random_salt))
       << "the PIN set before the reboot no longer opens the wallet";
   EXPECT_EQ(0, memcmp(fresh.storageKey, key_before_reboot,
                       sizeof(key_before_reboot)));
