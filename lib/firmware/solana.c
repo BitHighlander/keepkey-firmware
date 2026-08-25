@@ -229,7 +229,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
       /* System program */
       if (data_len >= 4) {
         uint32_t instr_type = read_le32(instr_data);
-        if (instr_type == SOL_SYS_TRANSFER && data_len >= 12) {
+        if (instr_type == SOL_SYS_TRANSFER && data_len == 12 &&
+            num_acct_indices >= 2) {
           pi->type = SOL_INSTR_SYSTEM_TRANSFER;
           pi->lamports = read_le64(instr_data + 4);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -245,30 +246,36 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
            * until a full screen (destination + amount + owner + space) exists.
            */
           *force_opaque = true;
-        } else if (instr_type == SOL_SYS_ADVANCE_NONCE) {
+        } else if (instr_type == SOL_SYS_ADVANCE_NONCE && data_len == 4 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_SYSTEM_ADVANCE_NONCE;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-        } else if (instr_type == SOL_SYS_WITHDRAW_NONCE && data_len >= 12) {
+        } else if (instr_type == SOL_SYS_WITHDRAW_NONCE && data_len == 12 &&
+                   num_acct_indices >= 5) {
           pi->type = SOL_INSTR_SYSTEM_WITHDRAW_NONCE;
           pi->lamports = read_le64(instr_data + 4);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
-        } else if (instr_type == SOL_SYS_INITIALIZE_NONCE && data_len >= 36) {
+        } else if (instr_type == SOL_SYS_INITIALIZE_NONCE && data_len == 36 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_SYSTEM_INITIALIZE_NONCE;
           memcpy(pi->authority, instr_data + 4, SOL_PUBKEY_SIZE);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
-        } else if (instr_type == SOL_SYS_AUTHORIZE_NONCE && data_len >= 36) {
+        } else if (instr_type == SOL_SYS_AUTHORIZE_NONCE && data_len == 36 &&
+                   num_acct_indices >= 2) {
           pi->type = SOL_INSTR_SYSTEM_AUTHORIZE_NONCE;
           memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
-        } else if (instr_type == SOL_SYS_ASSIGN && data_len >= 36) {
+        } else if (instr_type == SOL_SYS_ASSIGN && data_len == 36 &&
+                   num_acct_indices >= 1) {
           pi->type = SOL_INSTR_SYSTEM_ASSIGN;
           memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
-        } else if (instr_type == SOL_SYS_ALLOCATE && data_len >= 12) {
+        } else if (instr_type == SOL_SYS_ALLOCATE && data_len == 12 &&
+                   num_acct_indices >= 1) {
           pi->type = SOL_INSTR_SYSTEM_ALLOCATE;
           pi->extra_value = read_le64(instr_data + 4);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -345,7 +352,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           /* Unchecked Approve hides the mint (which token is being delegated),
            * same as unchecked Transfer — require AdvancedMode. */
           *force_opaque = true;
-        } else if (token_instr == SOL_TOKEN_REVOKE_IX) {
+        } else if (token_instr == SOL_TOKEN_REVOKE_IX && data_len == 1 &&
+                   num_acct_indices >= 2) {
           pi->type = SOL_INSTR_TOKEN_REVOKE;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
@@ -429,20 +437,23 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 5);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
-        } else if (stake_instr == SOL_STAKE_WITHDRAW_IX && data_len >= 12) {
+        } else if (stake_instr == SOL_STAKE_WITHDRAW_IX && data_len == 12 &&
+                   num_acct_indices >= 5) {
           pi->type = SOL_INSTR_STAKE_WITHDRAW;
           pi->lamports = read_le64(instr_data + 4);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
-        } else if (stake_instr == SOL_STAKE_AUTHORIZE_IX && data_len >= 40) {
+        } else if (stake_instr == SOL_STAKE_AUTHORIZE_IX && data_len == 40 &&
+                   num_acct_indices >= 3) {
           /* new_authority(32) at +4 then authorize_type(le32) at +36, so the
            * instruction needs >= 40 bytes — reading extra_u8 at +36 with only
            * 36 bytes was a 4-byte over-read. */
           pi->type = SOL_INSTR_STAKE_AUTHORIZE;
           memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
-          copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+          /* [stake, clock sysvar, current authority, optional custodian]. */
+          copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
           pi->extra_u8 = (uint8_t)read_le32(instr_data + 36);
         } else if (stake_instr == SOL_STAKE_SPLIT_IX && data_len == 12 &&
                    num_acct_indices >= 3) {
@@ -473,20 +484,23 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     } else if (memcmp(pi->program_id, SOL_VOTE_PROGRAM, SOL_PUBKEY_SIZE) == 0) {
       if (data_len >= 4) {
         uint32_t vote_instr = read_le32(instr_data);
-        if (vote_instr == SOL_VOTE_AUTHORIZE_IX && data_len >= 40) {
+        if (vote_instr == SOL_VOTE_AUTHORIZE_IX && data_len == 40 &&
+            num_acct_indices >= 3) {
           pi->type = SOL_INSTR_VOTE_AUTHORIZE;
           memcpy(pi->extra, instr_data + 4, SOL_PUBKEY_SIZE);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
-          copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
+          /* [vote account, clock sysvar, current authority]. */
+          copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
           pi->extra_u8 = (uint8_t)read_le32(instr_data + 36);
-        } else if (vote_instr == SOL_VOTE_WITHDRAW_IX && data_len >= 12) {
+        } else if (vote_instr == SOL_VOTE_WITHDRAW_IX && data_len == 12 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_VOTE_WITHDRAW;
           pi->lamports = read_le64(instr_data + 4);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
         } else if (vote_instr == SOL_VOTE_UPDATE_VALIDATOR_IX &&
-                   data_len == 4) {
+                   data_len == 4 && num_acct_indices >= 3) {
           /* UpdateValidatorIdentity has NO data payload: the new validator is
            * account index 1. Reading 32 bytes from the data would display
            * attacker-supplied trailing bytes instead of the account actually
@@ -497,7 +511,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->extra, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
         } else if (vote_instr == SOL_VOTE_UPDATE_COMMISSION_IX &&
-                   data_len >= 5) {
+                   data_len == 5 && num_acct_indices >= 2) {
           pi->type = SOL_INSTR_VOTE_UPDATE_COMMISSION;
           pi->extra_u8 = instr_data[4];
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -518,14 +532,15 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
        * emit it by default (a token transfer whose recipient may lack an ATA),
        * and rejecting it forced the whole transaction opaque: an SPL transfer
        * that is otherwise fully decodable would blind-sign. */
-      if (data_len == 0 ||
-          (data_len == 1 && (instr_data[0] == 0 || instr_data[0] == 1))) {
+      if ((data_len == 0 ||
+           (data_len == 1 && (instr_data[0] == 0 || instr_data[0] == 1))) &&
+          num_acct_indices >= 4) {
         pi->type = SOL_INSTR_ATA_CREATE;
         copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
         copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
         copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
         copy_account(pi->mint, tx, acct_indices, num_acct_indices, 3);
-        pi->has_mint = (num_acct_indices >= 4);
+        pi->has_mint = true;
       } else {
         pi->type = SOL_INSTR_UNKNOWN;
         *has_unknown = true;
