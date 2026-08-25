@@ -2164,6 +2164,17 @@ void signing_abort(void) {
     layoutHome();
     signing = false;
   }
+  /* root is a pointer into fsm.c's fsm_getDerivedNode()'s function-static
+   * master-key buffer (the raw, un-derived m root when address_n_count==0,
+   * as used for SignTx). memzero(&root, sizeof(root)) only clears the
+   * pointer variable -- it never touched the ~100+ byte HDNode it
+   * references, so the actual master private key bytes stayed resident in
+   * that buffer indefinitely: past this abort, past WipeDevice (which
+   * never touches fsm.c's static node either), for the rest of the
+   * device's power-on lifetime. Scrub what root actually points to. */
+  if (root) {
+    memzero((void*)root, sizeof(*root));
+  }
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
   memzero(privkey, sizeof(privkey));
