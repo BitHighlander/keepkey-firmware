@@ -681,7 +681,15 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
 
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
-  char confirm_body_message[121] = {0};
+  /* layoutEthereumConfirmTx's amount[96] buffer (95 usable chars: 60 integer
+   * digits + '.' + 18 fractional + a suffix, sized to hold any 256-bit
+   * amount) is composed into this buffer via templates up to
+   * "Approve withdrawal of up to %s by %s?" (34 literal chars) plus a
+   * 42-char "0x"+40-hex address: 34 + 95 + 42 + 1 (NUL) = 172. The old
+   * 121-byte size predates amount's enlargement and could silently blank
+   * the whole confirmation body for an ordinary large-but-valid transfer;
+   * size for the real worst case with headroom. */
+  char confirm_body_message[176] = {0};
 
   ethereum_signing = true;
   sha3_256_Init(&keccak_ctx);

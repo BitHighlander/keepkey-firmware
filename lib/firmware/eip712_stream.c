@@ -247,8 +247,15 @@ bool eip712_validate_leaf(const Eip712FieldType *field, const uint8_t *value,
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
       return is_valid_utf8_printable(value, value_len);
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
-      /* bytesN is exactly N. Dynamic bytes is any length we can hold. */
-      if (field->has_size) return value_len == field->size;
+      /* bytesN is exactly N, N in [1,32] (bytes0 doesn't exist; >32 doesn't
+       * fit a word) -- same bound UINT/INT already enforce below. Without
+       * it, an out-of-spec size only failed later inside eip712_type_name(),
+       * whose failure gets reported to the host as a user Cancel instead of
+       * a validation error. Dynamic bytes (no declared size) is any length
+       * we can hold. */
+      if (field->has_size)
+        return field->size >= 1 && field->size <= 32 &&
+               value_len == field->size;
       return value_len <= EIP712_MAX_LEAF;
     case EthereumTypedDataStructAck_EthereumDataType_UINT:
     case EthereumTypedDataStructAck_EthereumDataType_INT:
