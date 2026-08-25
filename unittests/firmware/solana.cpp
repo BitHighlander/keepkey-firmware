@@ -129,6 +129,33 @@ TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
   EXPECT_STREQ(buf, "0.000000000 tokens");
 }
 
+TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
+  /* These messages end immediately after the count. A parser that correctly
+   * checks the count before reading accounts returns MALFORMED; the vulnerable
+   * OPAQUE path either stored 33 into an 8-bit loop bound (OOB past
+   * accounts[31]) or wrapped 256 to zero and skipped signer verification. */
+  const uint8_t legacy_33[] = {1, 0, 0, 33};
+  const uint8_t legacy_256[] = {1, 0, 0, 0x80, 0x02};
+  const uint8_t versioned_33[] = {0x80, 1, 0, 0, 33};
+  const uint8_t versioned_256[] = {0x80, 1, 0, 0, 0x80, 0x02};
+
+  const struct {
+    const uint8_t* raw;
+    size_t len;
+  } cases[] = {{legacy_33, sizeof(legacy_33)},
+               {legacy_256, sizeof(legacy_256)},
+               {versioned_33, sizeof(versioned_33)},
+               {versioned_256, sizeof(versioned_256)}};
+
+  for (const auto& test_case : cases) {
+    SolanaParsedTx tx;
+    memset(&tx, 0xa5, sizeof(tx));
+    EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+              solana_inspectTx(test_case.raw, test_case.len, &tx));
+    EXPECT_EQ(0, tx.num_accounts);
+  }
+}
+
 TEST(Solana, ParseSystemTransfer) {
   /* Construct a minimal Solana transaction with a system transfer.
    *
