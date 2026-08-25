@@ -72,14 +72,12 @@ include_directories(
 
 add_library(kkfirmware ${sources})
 
-# A release build ships NO clear-signing root key -- see clearsign_root.c. The
-# unit tests need one to prove the ceremony's certificates verify, so they are
-# the only build that compiles the test key in, and they must ask for it by
-# name. OFF by default so that forgetting it yields a device that clear-signs
-# nothing rather than one trusting a key whose private half is on a laptop.
-option(KK_CLEARSIGN_TEST_ROOT "Compile in the TEST clear-signing root key (unit tests only)" OFF)
-if(KK_CLEARSIGN_TEST_ROOT)
-  target_compile_definitions(kkfirmware PRIVATE KK_CLEARSIGN_TEST_ROOT=1)
+# Root inclusion is an explicit product choice. OFF remains fail-closed for
+# production/release builds. Alpha artifacts and emulator/unit builds opt into
+# the hardware-held alpha root whose certificates Vault currently serves.
+option(KK_CLEARSIGN_ALPHA_ROOT "Compile in the hardware-held alpha ClearSign root" OFF)
+if(KK_CLEARSIGN_ALPHA_ROOT)
+  target_compile_definitions(kkfirmware PRIVATE KK_CLEARSIGN_ALPHA_ROOT=1)
 endif()
 add_dependencies(kkfirmware kktransport.pb trezorcrypto qrcodegenerator ethereum_tokens.def)
 

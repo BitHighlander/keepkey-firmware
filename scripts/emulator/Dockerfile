@@ -5,11 +5,8 @@ COPY ./ /kkemu
 
 ARG coinsupport=""
 
-# KK_CLEARSIGN_TEST_ROOT compiles the TEST clear-signing root key in. The
-# emulator is never a hardware release and the unit tests run inside this
-# image, so this is the one build that gets a root at all -- ARM builds do not
-# pass it and ship an all-zero root, leaving the suppression branch
-# unreachable. See lib/firmware/clearsign_root.c.
+# The emulator and unit suite exercise the same hardware-held alpha root as the
+# alpha ARM artifact. Production builds still default to no root.
 RUN cmake -C ./cmake/caches/emulator.cmake . \
     -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_COMPILER=clang \
@@ -17,7 +14,7 @@ RUN cmake -C ./cmake/caches/emulator.cmake . \
     -DCMAKE_BUILD_TYPE=Debug \
     ${coinsupport} \
     -DCMAKE_COLOR_MAKEFILE=ON \
-    -DKK_CLEARSIGN_TEST_ROOT=ON
+    -DKK_CLEARSIGN_ALPHA_ROOT=ON
 
 RUN make -j
 

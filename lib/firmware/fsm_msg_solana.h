@@ -412,6 +412,94 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
   }
 }
 
+/* Render one structurally-complete schema instruction. Every value below is
+ * read from the transaction bytes (or from the certified canonical LUT list
+ * already installed in parsed.accounts); alias/fingerprint come from the root
+ * certificate and are shown before the description. */
+static bool solana_confirmSchemaInstruction(
+    const SolanaInstrSchema* schema, const SolanaParsedTx* parsed,
+    uint8_t ix_index, const char* alias,
+    const char fingerprint[METADATA_FINGERPRINT_LEN]) {
+  const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
+
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               "KeepKey ClearSign", "%s\nSigner %s", alias, fingerprint)) {
+    return false;
+  }
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               schema->program_name, "%s", schema->instruction_name)) {
+    return false;
+  }
+
+  uint16_t off = schema->disc_len;
+  for (uint8_t a = 0; a < schema->num_args; a++) {
+    const SolanaSchemaArg* arg = &schema->args[a];
+    char value[64] = {0};
+    switch (arg->type) {
+      case SOL_SCHEMA_ARG_U64: {
+        uint64_t v = 0;
+        for (uint8_t b = 0; b < 8; b++) {
+          v |= ((uint64_t)ix->data[off + b]) << (8 * b);
+        }
+        snprintf(value, sizeof(value), "%llu", (unsigned long long)v);
+        break;
+      }
+      case SOL_SCHEMA_ARG_U8:
+        snprintf(value, sizeof(value), "%u", (unsigned)ix->data[off]);
+        break;
+      case SOL_SCHEMA_ARG_PUBKEY: {
+        size_t enc = sizeof(value);
+        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value,
+                                  &enc)) {
+          return false;
+        }
+        break;
+      }
+      case SOL_SCHEMA_ARG_OPAQUE32:
+        snprintf(value, sizeof(value), "%02x%02x%02x%02x...%02x%02x%02x%02x",
+                 ix->data[off], ix->data[off + 1], ix->data[off + 2],
+                 ix->data[off + 3], ix->data[off + 28], ix->data[off + 29],
+                 ix->data[off + 30], ix->data[off + 31]);
+        break;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
+                 "%s", value)) {
+      return false;
+    }
+    off += solana_schemaArgWidth(arg->type);
+  }
+
+  for (uint8_t a = 0; a < schema->num_accounts; a++) {
+    const SolanaSchemaAccount* account = &schema->accounts[a];
+    const uint8_t account_index = ix->acct_indices[account->index];
+    char address[64];
+    size_t enc = sizeof(address);
+    if (account_index >= parsed->num_accounts ||
+        !solana_base58_encode(parsed->accounts[account_index], SOL_PUBKEY_SIZE,
+                              address, &enc) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, account->label,
+                 "%s", address)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool solana_confirmSchemaTransaction(
+    const SolanaInstrSchema* schema, const SolanaParsedTx* parsed,
+    uint8_t schema_ix, const char* alias,
+    const char fingerprint[METADATA_FINGERPRINT_LEN]) {
+  for (uint8_t i = 0; i < parsed->num_instructions; i++) {
+    const bool ok = i == schema_ix
+                        ? solana_confirmSchemaInstruction(schema, parsed, i,
+                                                          alias, fingerprint)
+                        : solana_confirmInstruction(&parsed->instructions[i], i,
+                                                    parsed->num_instructions);
+    if (!ok) return false;
+  }
+  return true;
+}
+
 /* Validate Solana derivation path: m/44'/501'/account'[/change'] */
 static bool solana_pathIsStandard(const uint32_t* path, size_t count) {
   if (count < 3 || count > 4) return false;
@@ -635,10 +723,158 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* Classify transaction for verified vs opaque signing UX */
   SolanaParsedTx parsed;
-  SolanaTxReview tx_review =
-      solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed);
+  SolanaInstrSchema schema;
+  memset(&schema, 0, sizeof(schema));
+  uint8_t schema_ix = 0;
+  bool certified = false;
+  bool runtime_schema = false;
+  char signer_alias[CLEARSIGN_ALIAS_LEN + 1] = {0};
+  char signer_fp[METADATA_FINGERPRINT_LEN] = {0};
+  uint8_t lut_keys[SOL_MAX_LUT_ACCOUNTS][SOL_PUBKEY_SIZE];
+  size_t lut_n = 0;
+
+  const bool has_lut_material = msg->lut_account_count > 0 ||
+                                msg->has_lut_signature ||
+                                msg->has_lut_signer_key_id;
+  const bool has_schema_material = msg->has_schema_payload ||
+                                   msg->has_schema_signature ||
+                                   msg->has_schema_signer_key_id;
+  const bool has_certified_material =
+      msg->has_clearsign_certificate ||
+      (msg->has_lut_signer_key_id &&
+       msg->lut_signer_key_id == METADATA_KEYID_DELEGATE) ||
+      (msg->has_schema_signer_key_id &&
+       msg->schema_signer_key_id == METADATA_KEYID_DELEGATE);
+
+  /* Flatten nanopb repeated bytes once. Every caller hashes real 32-byte keys,
+   * never the nanopb {size,bytes} wrapper. */
+  bool lut_well_formed = msg->lut_account_count <= SOL_MAX_LUT_ACCOUNTS;
+  for (size_t i = 0; lut_well_formed && i < msg->lut_account_count; i++) {
+    if (msg->lut_account[i].size != SOL_PUBKEY_SIZE) {
+      lut_well_formed = false;
+      break;
+    }
+    memcpy(lut_keys[lut_n++], msg->lut_account[i].bytes, SOL_PUBKEY_SIZE);
+  }
+
+  SolanaTxReview tx_review = SOL_TX_REVIEW_MALFORMED;
+  if (has_certified_material) {
+    /* Certified ClearSign always requires one certificate-authorized schema.
+     * A transaction-bound LUT proof is additionally mandatory exactly when
+     * the signed v0 message contains lookup-table entries. Self-contained
+     * legacy/v0 messages commit every account directly and therefore carry no
+     * LUT material. Partial material, mixed runtime slots, bad scope/signature,
+     * or a shape/proof mismatch is a hard failure; none may silently downgrade
+     * to blind sign. */
+    uint8_t delegate_pub[CLEARSIGN_PUBKEY_LEN];
+    if (!msg->has_clearsign_certificate ||
+        msg->clearsign_certificate.size != CLEARSIGN_CERT_LEN ||
+        !has_schema_material || !msg->has_schema_payload ||
+        !msg->has_schema_signature || !msg->has_schema_signer_key_id ||
+        msg->schema_signer_key_id != METADATA_KEYID_DELEGATE ||
+        !clearsign_root_cert_delegate(msg->clearsign_certificate.bytes,
+                                      msg->clearsign_certificate.size, 501,
+                                      delegate_pub, signer_alias)) {
+      memzero(node, sizeof(*node));
+      memzero(delegate_pub, sizeof(delegate_pub));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid certified Solana ClearSign proof"));
+      layoutHome();
+      return;
+    }
+    signed_metadata_pubkey_fingerprint(delegate_pub, signer_fp);
+    memzero(delegate_pub, sizeof(delegate_pub));
+
+    if (has_lut_material) {
+      if (!lut_well_formed || lut_n == 0 || !msg->has_lut_signature ||
+          !msg->has_lut_signer_key_id ||
+          msg->lut_signer_key_id != METADATA_KEYID_DELEGATE ||
+          !solana_lut_accounts_certified(
+              msg->raw_tx.bytes, msg->raw_tx.size,
+              (const uint8_t (*)[32])lut_keys, lut_n,
+              msg->clearsign_certificate.bytes, msg->clearsign_certificate.size,
+              msg->lut_signature.bytes, msg->lut_signature.size)) {
+        memzero(node, sizeof(*node));
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Invalid certified Solana LUT proof"));
+        layoutHome();
+        return;
+      }
+      tx_review = solana_inspectTxWithTrustedLut(
+          msg->raw_tx.bytes, msg->raw_tx.size,
+          (const uint8_t (*)[SOL_PUBKEY_SIZE])lut_keys, lut_n, &parsed);
+    } else {
+      tx_review =
+          solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed);
+    }
+
+    if (tx_review == SOL_TX_REVIEW_MALFORMED ||
+        /* A proof is required if and only if the message reaches outside its
+         * signed static account list. This rejects both a schema-only request
+         * for an ALT transaction and an unnecessary/suspicious LUT proof for
+         * a self-contained transaction. */
+        !solana_certifiedLutShapeMatches(&parsed, lut_n) ||
+        !solana_parseInstrSchema(msg->schema_payload.bytes,
+                                 msg->schema_payload.size, &schema) ||
+        !clearsign_root_verify_delegate_attestation(
+            msg->clearsign_certificate.bytes, msg->clearsign_certificate.size,
+            501, msg->schema_payload.bytes, msg->schema_payload.size,
+            msg->schema_signature.bytes, msg->schema_signature.size) ||
+        !solana_schemaApplies(&schema, &parsed, &schema_ix)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Certified Solana schema does not match transaction"));
+      layoutHome();
+      return;
+    }
+    certified = true;
+  } else {
+    tx_review = solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed);
+    if (tx_review == SOL_TX_REVIEW_MALFORMED) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Malformed Solana transaction"));
+      layoutHome();
+      return;
+    }
+
+    /* Runtime schemas remain an explicit Advanced Mode developer facility.
+     * They are structurally checked and shown, but never inherit the root
+     * certificate's authority and never suppress the blind-sign warning. */
+    if (has_schema_material) {
+      if (!msg->has_schema_payload || !msg->has_schema_signature ||
+          !msg->has_schema_signer_key_id ||
+          msg->schema_signer_key_id >= METADATA_MAX_KEYS ||
+          !solana_parseInstrSchema(msg->schema_payload.bytes,
+                                   msg->schema_payload.size, &schema) ||
+          !signed_metadata_verify_attestation(
+              (uint8_t)msg->schema_signer_key_id, msg->schema_payload.bytes,
+              msg->schema_payload.size, msg->schema_signature.bytes,
+              msg->schema_signature.size) ||
+          !solana_schemaApplies(&schema, &parsed, &schema_ix)) {
+        memzero(node, sizeof(*node));
+        memzero(&schema, sizeof(schema));
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Invalid Solana instruction schema"));
+        layoutHome();
+        return;
+      }
+      const char* alias =
+          signed_metadata_signer_alias((uint8_t)msg->schema_signer_key_id);
+      if (!alias || !signed_metadata_signer_fingerprint(
+                        (uint8_t)msg->schema_signer_key_id, signer_fp)) {
+        memzero(node, sizeof(*node));
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Missing Solana schema signer"));
+        layoutHome();
+        return;
+      }
+      strncpy(signer_alias, alias, sizeof(signer_alias) - 1);
+      runtime_schema = true;
+    }
+  }
 
   /* Signer verification: derived key must be a required signer.
    * For verified txs this is mandatory. For opaque txs we still check
@@ -654,7 +890,17 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
-  if (tx_review == SOL_TX_REVIEW_VERIFIED) {
+  if (certified) {
+    if (!solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
+                                         signer_alias, signer_fp)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+  } else if (tx_review == SOL_TX_REVIEW_VERIFIED) {
     /* Per-instruction confirmation for fully verified messages */
     for (uint8_t i = 0; i < parsed.num_instructions; i++) {
       if (!solana_confirmInstruction(&parsed.instructions[i], i,
@@ -665,6 +911,19 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
         layoutHome();
         return;
       }
+    }
+  } else if (runtime_schema) {
+    if (!storage_isPolicyEnabled("AdvancedMode") ||
+        !solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
+                                         signer_alias, signer_fp) ||
+        !confirm(ButtonRequestType_ButtonRequest_SignTx, "Advanced Mode",
+                 "Sign provider-described Solana transaction?")) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
     }
   } else if (tx_review == SOL_TX_REVIEW_OPAQUE) {
     /* Unsupported or opaque message: allow explicit blind-sign only. */
@@ -703,19 +962,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
        key. Flatten explicitly, and require every element to be a full
        SOL_PUBKEY_SIZE key so a short one cannot silently hash as zero-padded.
      */
-    uint8_t lut_keys[SOL_MAX_LUT_ACCOUNTS][SOL_PUBKEY_SIZE];
-    size_t lut_n = 0;
-    bool lut_well_formed = msg->lut_account_count > 0 &&
-                           msg->lut_account_count <= SOL_MAX_LUT_ACCOUNTS;
-    for (size_t li = 0; lut_well_formed && li < msg->lut_account_count; li++) {
-      if (msg->lut_account[li].size != SOL_PUBKEY_SIZE) {
-        lut_well_formed = false;
-        break;
-      }
-      memcpy(lut_keys[lut_n++], msg->lut_account[li].bytes, SOL_PUBKEY_SIZE);
-    }
-
-    if (lut_well_formed && msg->has_lut_signature &&
+    if (lut_well_formed && lut_n > 0 && msg->has_lut_signature &&
         msg->has_lut_signer_key_id &&
         solana_lut_accounts_trusted(
             msg->raw_tx.bytes, msg->raw_tx.size,
@@ -795,6 +1042,8 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
+  memzero(&schema, sizeof(schema));
+  memzero(lut_keys, sizeof(lut_keys));
   memzero(node, sizeof(*node));
   msg_write(MessageType_MessageType_SolanaSignedTx, resp);
   layoutHome();

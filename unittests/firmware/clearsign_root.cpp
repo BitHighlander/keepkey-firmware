@@ -50,6 +50,18 @@ TEST(ClearsignRoot, TheCeremonysCertificateVerifies) {
   EXPECT_TRUE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
+TEST(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
+  auto c = validCert();
+  uint8_t delegate[CLEARSIGN_PUBKEY_LEN] = {0};
+  char alias[CLEARSIGN_ALIAS_LEN + 1] = {0};
+  ASSERT_TRUE(clearsign_root_cert_delegate(c.data(), c.size(), 1, delegate,
+                                          alias));
+  EXPECT_STREQ(alias, "KeepKey");
+  EXPECT_TRUE(delegate[0] == 0x02 || delegate[0] == 0x03);
+  EXPECT_FALSE(clearsign_root_cert_delegate(c.data(), c.size(), 501, delegate,
+                                           alias));
+}
+
 TEST(ClearsignRoot, RootKeyIsPresentInThisBuild) {
   // The 7.15 release gate is the INVERSE of this: no root key compiled in, so
   // the suppression branch cannot be reached. Queryable so a release test can
@@ -105,7 +117,7 @@ TEST(ClearsignRoot, RejectsZeroChainId) {
   // Chain 0 is not a chain. Requiring nonzero means a certificate can never
   // become a wildcard by omission.
   auto c = validCert();
-  memset(&c[CLEARSIGN_CERT_OFF_CHAIN], 0, 4);
+  memset(&c[CLEARSIGN_CERT_OFF_SCOPE], 0, 4);
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 

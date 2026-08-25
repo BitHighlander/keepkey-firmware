@@ -467,7 +467,7 @@ jobs:
           - variant: full
             label: ""
             suffix: ""
-            cmake_flags: ""
+            cmake_flags: "-DKK_CLEARSIGN_ALPHA_ROOT=ON"
           - variant: bitcoin-only
             label: " (bitcoin-only)"
             suffix: "-bitcoin-only"
@@ -539,24 +539,26 @@ jobs:
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T - && \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
-      - name: Assert no TEST clear-signing root shipped
+      - name: Assert alpha ClearSign root product boundary
         run: |
-          # The 7.16 clear-signing root is the one key that can tell a device to
-          # SUPPRESS the raw-data review, so a hardware binary must never carry
-          # a root whose private half has ever touched a laptop. Release builds
-          # get an all-zero root because KK_CLEARSIGN_TEST_ROOT defaults OFF and
-          # only scripts/emulator/Dockerfile turns it on -- this asserts that
-          # actually held, rather than trusting that it did.
+          # Full alpha must carry the hardware-held root that issued Vault's
+          # alpha certificates. Bitcoin-only excludes all non-Bitcoin signing
+          # code and must not carry it. Assert both sides using the CURRENT key;
+          # the prior gate still searched for the superseded 02be... root and
+          # could not detect the 02de... key this source actually compiled.
           python3 - <<'EOF'
           import sys
-          TEST_ROOT = bytes.fromhex(
-              "02be12c1940f5ddf084a539a02e03de868a3a3314c1e5bb41e1ebabd471b640741")
+          ALPHA_ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
           blob = open("bin/firmware.keepkey.bin", "rb").read()
-          if TEST_ROOT in blob:
-              sys.exit("::error::TEST clear-signing root key found in the ARM "
-                       "binary. KK_CLEARSIGN_TEST_ROOT must never be set for a "
-                       "hardware build.")
-          print("No test root in the binary.")
+          expected = "${{ matrix.variant }}" == "full"
+          present = ALPHA_ROOT in blob
+          if present != expected:
+              sys.exit("::error::alpha ClearSign root presence mismatch: "
+                       "variant=${{ matrix.variant }}, expected=%s, present=%s"
+                       % (expected, present))
+          print("Alpha root boundary verified: variant=${{ matrix.variant }}, "
+                "present=%s" % present)
           EOF
 
       # SRAM budget gate — RC7's privacy-enabled build hard-faulted on boot
