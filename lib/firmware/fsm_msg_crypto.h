@@ -44,13 +44,16 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
     aes_cbc_encrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
+    memzero(&ctx, sizeof(ctx));
   } else {
     aes_decrypt_ctx ctx;
     aes_decrypt_key256(data, &ctx);
     aes_cbc_decrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
+    memzero(&ctx, sizeof(ctx));
   }
+  memzero(data, sizeof(data));
 
   resp->has_value = true;
   resp->value.size = msg->value.size;
