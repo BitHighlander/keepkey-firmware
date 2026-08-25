@@ -785,14 +785,21 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
         msg->clearsign_certificate.size != CLEARSIGN_CERT_LEN ||
         !has_schema_material || !msg->has_schema_payload ||
         !msg->has_schema_signature || !msg->has_schema_signer_key_id ||
-        msg->schema_signer_key_id != METADATA_KEYID_DELEGATE ||
-        !clearsign_root_cert_delegate(msg->clearsign_certificate.bytes,
+        msg->schema_signer_key_id != METADATA_KEYID_DELEGATE) {
+      memzero(node, sizeof(*node));
+      memzero(delegate_pub, sizeof(delegate_pub));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Incomplete certified Solana ClearSign proof"));
+      layoutHome();
+      return;
+    }
+    if (!clearsign_root_cert_delegate(msg->clearsign_certificate.bytes,
                                       msg->clearsign_certificate.size, 501,
                                       delegate_pub, signer_alias)) {
       memzero(node, sizeof(*node));
       memzero(delegate_pub, sizeof(delegate_pub));
       fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid certified Solana ClearSign proof"));
+                      _("Invalid certified Solana certificate"));
       layoutHome();
       return;
     }
