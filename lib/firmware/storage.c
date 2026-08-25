@@ -296,7 +296,7 @@ void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
 }
 
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len) {
-  if (len < 17) return;
+  if (len < 18) return;  // farthest access is ptr+17 (read_bool: 1 byte)
   policy->has_policy_name = read_bool(ptr);
   memset(policy->policy_name, 0, sizeof(policy->policy_name));
   memcpy(policy->policy_name, ptr + 1, 15);
@@ -314,7 +314,7 @@ void storage_readPolicyV2(PolicyType* policy, const char* policy_name,
 }
 
 void storage_writePolicyV1(char* ptr, size_t len, const PolicyType* policy) {
-  if (len < 17) return;
+  if (len < 18) return;  // farthest access is ptr+17 (write_bool: 1 byte)
   write_bool(ptr, policy->has_policy_name);
   memcpy(ptr + 1, policy->policy_name, 15);
   write_bool(ptr + 16, policy->has_enabled);

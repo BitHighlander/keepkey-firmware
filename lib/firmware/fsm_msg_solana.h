@@ -162,9 +162,24 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Set token authority to %s?", auth_str);
     }
 
-    case SOL_INSTR_TOKEN_MINT_TO:
+    case SOL_INSTR_TOKEN_MINT_TO: {
+      /* Same disclosure requirement as TOKEN_TRANSFER above: the mint and
+       * recipient are the signed instruction's only identity, and both are
+       * parsed -- show both, not just the raw amount. */
+      if (pi->has_mint) {
+        char mint_str[45];
+        solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Token mint\n%s", mint_str)) {
+          return false;
+        }
+      }
+      char to_str[45];
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Mint %llu tokens?", (unsigned long long)pi->amount);
+                     "Mint %llu tokens to %s?", (unsigned long long)pi->amount,
+                     to_str);
+    }
 
     case SOL_INSTR_TOKEN_BURN:
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -194,15 +209,21 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     case SOL_INSTR_STAKE_WITHDRAW: {
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
+      char to_str[45];
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Withdraw %s from stake?", amount_str);
+                     "Withdraw %s from stake to %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_STAKE_AUTHORIZE: {
       char auth_str[45];
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
+      /* StakeAuthorize enum: 0=Staker (can only redirect delegation),
+         1=Withdrawer (can drain the entire stake balance) -- the two are not
+         interchangeable risk, so the type must be disclosed. */
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Authorize stake to %s?", auth_str);
+                     "Authorize stake %s to %s?",
+                     pi->extra_u8 == 1 ? "WITHDRAWER" : "staker", auth_str);
     }
 
     case SOL_INSTR_STAKE_SPLIT: {
@@ -223,15 +244,20 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     case SOL_INSTR_VOTE_AUTHORIZE: {
       char auth_str[45];
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
+      /* VoteAuthorize enum: 0=Voter (can only redirect voting), 1=Withdrawer
+         (can drain the vote account's balance) -- disclose which. */
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Authorize vote to %s?", auth_str);
+                     "Authorize vote %s to %s?",
+                     pi->extra_u8 == 1 ? "WITHDRAWER" : "voter", auth_str);
     }
 
     case SOL_INSTR_VOTE_WITHDRAW: {
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
+      char to_str[45];
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Withdraw vote %s?", amount_str);
+                     "Withdraw vote %s to %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_VOTE_UPDATE_VALIDATOR: {

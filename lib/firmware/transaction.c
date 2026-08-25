@@ -558,6 +558,25 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
                 ButtonRequestType_ButtonRequest_ConfirmTransferToAccount,
                 amount_str, node_str))
           return TXOUT_CANCEL;
+        /* Same digest-reset requirement as the OP_RETURN path above: signing.c
+           already called txin_dgst_final() for this output, and returning
+           without re-arming leaves txin_hash_ctx finalized-but-never-
+           reinitialized, corrupting the NEXT SignTx's duplicate-transaction
+           digest. Unlike OP_RETURN, this output has a real amount+destination
+           worth comparing, so run it through the same
+           compare-then-save-and-reset the generic needs_confirm path below
+           uses, rather than a bare reset. */
+        if (txin_dgst_compare(amount_str, node_str)) {
+          char prev[DIGEST_STR_LEN], cur[DIGEST_STR_LEN];
+          txin_dgst_getstrs(prev, cur, DIGEST_STR_LEN);
+          review(ButtonRequestType_ButtonRequest_Other,
+                 "WARNING: Duplicate Transaction!",
+                 "Already signed a tx with the same outputs\n"
+                 "To try again, unplug/replug KeepKey.");
+          txin_dgst_save_and_reset(amount_str, node_str);
+          return TXOUT_CANCEL;
+        }
+        txin_dgst_save_and_reset(amount_str, node_str);
         return out->script_pubkey.size;
       }
     }
