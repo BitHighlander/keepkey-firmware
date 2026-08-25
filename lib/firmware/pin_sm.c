@@ -331,8 +331,7 @@ bool change_wipe_code(void) {
 
   if (!pin_request("Enter New Wipe Code", &wipe_code_info_first)) goto done;
 
-  if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second))
-    goto done;
+  if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second)) goto done;
 
   if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0)
     goto done;
