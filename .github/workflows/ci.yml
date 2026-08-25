@@ -106,7 +106,9 @@ jobs:
             -o "${GITLEAKS_ARCHIVE}"
           echo "${GITLEAKS_SHA256}  ${GITLEAKS_ARCHIVE}" | sha256sum --check --strict
           tar -xzf "${GITLEAKS_ARCHIVE}" -C /usr/local/bin gitleaks
-          gitleaks version
+          INSTALLED_VERSION=$(gitleaks version)
+          echo "gitleaks ${INSTALLED_VERSION}"
+          test "${INSTALLED_VERSION}" = "${GITLEAKS_VERSION}"
 
       - name: Run gitleaks
         env:
