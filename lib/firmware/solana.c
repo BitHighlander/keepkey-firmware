@@ -586,7 +586,18 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
 
-  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
+  /* Auditor-caught defect in an earlier version of this fix: storing a
+     truncated (uint8_t)num_accounts here and returning OPAQUE let
+     solana_signerInTx()'s `i < tx->num_accounts` loop bound exceed the real
+     32-entry tx->accounts[] array (33..255 accounts: genuine OOB read past
+     accounts[31]; 256, 512, ...: wraps to 0, silently reintroducing the
+     original signer-check skip). tx->accounts[] is never populated for this
+     path either way (the account-reading loop below is never reached), so
+     there is no safe count to record short of parsing a bounded signer
+     prefix. Fail closed instead: MALFORMED refuses unconditionally (see the
+     `else` branch in fsm_msgSolanaSignTx), rather than degrading into an
+     OPAQUE blind-sign path with unverifiable signer identity. */
+  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_MALFORMED;
   tx->num_accounts = (uint8_t)num_accounts;
 
   /* Read account keys */
@@ -638,7 +649,18 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
 
-  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
+  /* Auditor-caught defect in an earlier version of this fix: storing a
+     truncated (uint8_t)num_accounts here and returning OPAQUE let
+     solana_signerInTx()'s `i < tx->num_accounts` loop bound exceed the real
+     32-entry tx->accounts[] array (33..255 accounts: genuine OOB read past
+     accounts[31]; 256, 512, ...: wraps to 0, silently reintroducing the
+     original signer-check skip). tx->accounts[] is never populated for this
+     path either way (the account-reading loop below is never reached), so
+     there is no safe count to record short of parsing a bounded signer
+     prefix. Fail closed instead: MALFORMED refuses unconditionally (see the
+     `else` branch in fsm_msgSolanaSignTx), rather than degrading into an
+     OPAQUE blind-sign path with unverifiable signer identity. */
+  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_MALFORMED;
   tx->num_accounts = (uint8_t)num_accounts;
 
   for (uint16_t i = 0; i < num_accounts; i++) {
