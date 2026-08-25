@@ -48,6 +48,14 @@ env:
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
 
+# Least-privilege default: every job gets a read-only GITHUB_TOKEN unless it
+# declares its own `permissions:` override (publish-emulator-libs does, for
+# the `gh release` calls it needs `contents: write` for). Without this,
+# every job -- including ones that just checkout/build/test -- inherited
+# whatever the repo's default token scope was, with no explicit floor. #424.
+permissions:
+  contents: read
+
 jobs:
   # ═══════════════════════════════════════════════════════════
   # STAGE 1: GATE — kill bad PRs in seconds
