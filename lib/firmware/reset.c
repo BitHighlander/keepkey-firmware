@@ -240,6 +240,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
         !confirm(ButtonRequestType_ButtonRequest_Other, _("WARNING"),
                  _("The 'No Backup' option was selected.\n\n"
                    "I understand, and accept the risks.\n"))) {
+      setup_abort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
       layoutHome();

@@ -63,15 +63,20 @@ bool sa_confirmWithdrawFromSalary(uint32_t data_total,
                 &withdrawAmount);
 
   // confirm raw unformatted numbers
-  bn_format(&salaryId, NULL, "", 0, 0, false, confStr, sizeof(confStr));
+  /* bn_format() BLANKS its output buffer and returns 0 when the value does
+   * not fit -- ignoring the return renders an EMPTY amount on the
+   * confirmation screen, the one rendering a user cannot read as wrong. */
+  if (!bn_format(&salaryId, NULL, "", 0, 0, false, confStr, sizeof(confStr)))
+    return false;
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Sablier",
                "Salary ID %s", confStr)) {
     return false;
   }
 
   // confirm raw unformatted numbers
-  bn_format(&withdrawAmount, NULL, " Token Units", 0, 0, false, confStr,
-            sizeof(confStr));
+  if (!bn_format(&withdrawAmount, NULL, " Token Units", 0, 0, false, confStr,
+                 sizeof(confStr)))
+    return false;
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Sablier",
                "Withdraw Amount %s", confStr)) {
     return false;
