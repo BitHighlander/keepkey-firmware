@@ -1596,9 +1596,10 @@ static const uint8_t kRelayDisc[8] = {0x0d, 0x9e, 0x0d, 0xdf,
 
 /* Build a KKSOLSC1 payload: one u64 arg ("Amount") and one account ("Vault").
  */
-static size_t build_relay_schema(uint8_t* out, const uint8_t* program,
-                                 uint8_t n_args = 1,
-                                 uint8_t account_index = 0) {
+static size_t build_relay_schema(
+    uint8_t* out, const uint8_t* program, uint8_t n_args = 1,
+    uint8_t account_index = 0,
+    SolanaSchemaArgType amount_type = SOL_SCHEMA_ARG_U64) {
   size_t p = 0;
   memcpy(out + p, "KKSOLSC1", 8);
   p += 8;
@@ -1616,7 +1617,7 @@ static size_t build_relay_schema(uint8_t* out, const uint8_t* program,
   p += 7; /* instruction name */
   out[p++] = n_args;
   if (n_args >= 1) {
-    out[p++] = SOL_SCHEMA_ARG_U64;
+    out[p++] = amount_type;
     out[p++] = 6;
     memcpy(out + p, "Amount", 6);
     p += 6;
@@ -1788,15 +1789,19 @@ TEST(Solana, RealRelayV0NoLookupFixtureAcceptsCompleteSchema) {
   EXPECT_EQ(amount, 996374000ULL);
 
   uint8_t schema_blob[256];
-  const size_t schema_len =
-      build_relay_schema(schema_blob, instr->program_id, 2, 3);
+  const size_t schema_len = build_relay_schema(schema_blob, instr->program_id,
+                                               2, 3, SOL_SCHEMA_ARG_LAMPORTS);
   SolanaInstrSchema schema;
   ASSERT_TRUE(solana_parseInstrSchema(schema_blob, schema_len, &schema));
+  ASSERT_EQ(schema.args[0].type, SOL_SCHEMA_ARG_LAMPORTS);
+  EXPECT_EQ(solana_schemaArgWidth(schema.args[0].type), 8);
+  char amount_display[32];
+  solana_formatAmount(amount_display, sizeof(amount_display), amount);
+  EXPECT_STREQ(amount_display, "0.996374000 SOL");
   uint8_t schema_ix = 0xFF;
   ASSERT_TRUE(solana_schemaApplies(&schema, &tx, &schema_ix));
   EXPECT_EQ(schema_ix, 0);
-  EXPECT_EQ(memcmp(tx.accounts[instr->acct_indices[3]], tx.accounts[1], 32),
-            0);
+  EXPECT_EQ(memcmp(tx.accounts[instr->acct_indices[3]], tx.accounts[1], 32), 0);
 }
 
 TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
@@ -1838,8 +1843,9 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
   uint8_t resolved[2][SOL_PUBKEY_SIZE];
   memcpy(resolved[0], program, 32);
   memset(resolved[1], 0x77, 32);
-  ASSERT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 2, &tx),
-            SOL_TX_REVIEW_OPAQUE); /* unknown Relay instruction, now resolvable */
+  ASSERT_EQ(
+      solana_inspectTxWithTrustedLut(raw, pos, resolved, 2, &tx),
+      SOL_TX_REVIEW_OPAQUE); /* unknown Relay instruction, now resolvable */
   EXPECT_TRUE(tx.has_address_lookups);
   EXPECT_FALSE(solana_certifiedLutShapeMatches(&tx, 0));
   EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 2));
@@ -1853,9 +1859,9 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
   uint8_t ix = 0xFF;
   ASSERT_TRUE(solana_schemaApplies(&schema, &tx, &ix));
   EXPECT_EQ(ix, 0);
-  EXPECT_EQ(memcmp(tx.accounts[tx.instructions[ix].acct_indices[0]],
-                   resolved[1], 32),
-            0);
+  EXPECT_EQ(
+      memcmp(tx.accounts[tx.instructions[ix].acct_indices[0]], resolved[1], 32),
+      0);
 }
 
 TEST(Solana, SchemaNeverOverridesNativeDecoder) {
@@ -1895,8 +1901,7 @@ TEST(Solana, SchemaNeverOverridesNativeDecoder) {
   memcpy(fake_schema_bytes + schema_len, "Recipient", 9);
   schema_len += 9;
   SolanaInstrSchema schema;
-  ASSERT_TRUE(
-      solana_parseInstrSchema(fake_schema_bytes, schema_len, &schema));
+  ASSERT_TRUE(solana_parseInstrSchema(fake_schema_bytes, schema_len, &schema));
   uint8_t ix = 0;
   EXPECT_FALSE(solana_schemaApplies(&schema, &tx, &ix));
 }

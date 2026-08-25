@@ -436,12 +436,17 @@ static bool solana_confirmSchemaInstruction(
     const SolanaSchemaArg* arg = &schema->args[a];
     char value[64] = {0};
     switch (arg->type) {
-      case SOL_SCHEMA_ARG_U64: {
+      case SOL_SCHEMA_ARG_U64:
+      case SOL_SCHEMA_ARG_LAMPORTS: {
         uint64_t v = 0;
         for (uint8_t b = 0; b < 8; b++) {
           v |= ((uint64_t)ix->data[off + b]) << (8 * b);
         }
-        snprintf(value, sizeof(value), "%llu", (unsigned long long)v);
+        if (arg->type == SOL_SCHEMA_ARG_LAMPORTS) {
+          solana_formatAmount(value, sizeof(value), v);
+        } else {
+          snprintf(value, sizeof(value), "%llu", (unsigned long long)v);
+        }
         break;
       }
       case SOL_SCHEMA_ARG_U8:
@@ -600,14 +605,22 @@ static SolanaSchemaReviewResult solana_confirmAttestedSchema(
   const uint8_t* arg = ix->data + schema.disc_len;
   for (uint8_t i = 0; approved && i < schema.num_args; i++) {
     switch (schema.args[i].type) {
-      case SOL_SCHEMA_ARG_U64: {
+      case SOL_SCHEMA_ARG_U64:
+      case SOL_SCHEMA_ARG_LAMPORTS: {
         uint64_t value = 0;
         for (uint8_t j = 0; j < 8; j++) {
           value |= ((uint64_t)arg[j]) << (8 * j);
         }
-        approved =
-            confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                    schema.args[i].label, "%llu", (unsigned long long)value);
+        if (schema.args[i].type == SOL_SCHEMA_ARG_LAMPORTS) {
+          char amount[32];
+          solana_formatAmount(amount, sizeof(amount), value);
+          approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                             schema.args[i].label, "%s", amount);
+        } else {
+          approved =
+              confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                      schema.args[i].label, "%llu", (unsigned long long)value);
+        }
         arg += 8;
         break;
       }

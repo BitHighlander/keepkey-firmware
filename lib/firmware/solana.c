@@ -857,6 +857,7 @@ static bool schema_read_text(const uint8_t** cur, const uint8_t* end, char* out,
 uint16_t solana_schemaArgWidth(SolanaSchemaArgType t) {
   switch (t) {
     case SOL_SCHEMA_ARG_U64:
+    case SOL_SCHEMA_ARG_LAMPORTS:
       return 8;
     case SOL_SCHEMA_ARG_U8:
       return 1;
