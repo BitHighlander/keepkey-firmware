@@ -263,9 +263,12 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "validator_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_address is host-supplied and, unlike
+  // delegator_address, was never format-validated (no bech32_decode) either.
+  tendermint_sha256UpdateEscaped(&ctx, validator_address,
+                                 strlen(validator_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
   if (success) {
     has_message = true;
@@ -330,9 +333,12 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "validator_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_address is host-supplied and, unlike
+  // delegator_address, was never format-validated (no bech32_decode) either.
+  tendermint_sha256UpdateEscaped(&ctx, validator_address,
+                                 strlen(validator_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
   if (success) {
     has_message = true;
@@ -397,17 +403,19 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"validator_dst_address\":\"");
 
-  // ^53
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s",
-                                 validator_dst_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_dst_address/validator_src_address are
+  // host-supplied and, unlike delegator_address, never format-validated.
+  tendermint_sha256UpdateEscaped(&ctx, validator_dst_address,
+                                 strlen(validator_dst_address));
 
   // 27
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"validator_src_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_src_address);
+  tendermint_sha256UpdateEscaped(&ctx, validator_src_address,
+                                 strlen(validator_src_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
   if (success) {
     has_message = true;
@@ -573,9 +581,12 @@ bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "validator_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_address is host-supplied and, unlike
+  // delegator_address, was never format-validated (no bech32_decode) either.
+  tendermint_sha256UpdateEscaped(&ctx, validator_address,
+                                 strlen(validator_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
   if (success) {
     has_message = true;
