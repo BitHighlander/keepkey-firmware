@@ -44,6 +44,7 @@ bool thorchain_isValidAsset(const char* asset) {
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static ThorchainSignTx msg;
 static bool testnet;
@@ -140,6 +141,10 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
@@ -162,6 +167,9 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -174,6 +182,10 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   if (!thorchain_isValidAsset(depmsg->asset) ||
       !thorchain_isValidSigner(depmsg->signer)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -201,6 +213,9 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"signer\":\"%s\"}}", depmsg->signer);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -224,10 +239,13 @@ bool thorchain_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
 
 bool thorchain_signingIsInited(void) { return initialized; }
 
-bool thorchain_signingIsFinished(void) { return msgs_remaining == 0; }
+bool thorchain_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void thorchain_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));
@@ -477,7 +495,18 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
     }
 
     /* BPS rendered with integer math: snprintf is the integer-only sniprintf
-     * on the device, so no float formats. Negative BPS is a malformed memo. */
+     * on the device, so no float formats. Negative BPS is a malformed memo.
+     * atoi() silently stops at the first non-digit -- "1HELLO" would show
+     * "0.01%" while the full, unmutated "1HELLO" (undigested "HELLO"
+     * included) is what actually gets signed, since this function only
+     * decides what's confirmed on-screen. Require the whole field to be
+     * digits so the displayed percentage can never diverge from the
+     * signed memo bytes. */
+    for (const char* p = fields[2]; *p; p++) {
+      if (*p < '0' || *p > '9') {
+        return THORCHAIN_MEMO_UNPARSED;
+      }
+    }
     int bps = atoi(fields[2]);
     if (bps < 0) {
       return THORCHAIN_MEMO_UNPARSED;
