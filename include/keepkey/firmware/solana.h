@@ -160,6 +160,10 @@ typedef struct {
   /* For token transfers */
   uint8_t mint[SOL_PUBKEY_SIZE];
   bool has_mint;
+  /* True only when the signed SPL instruction carries a decimals byte.
+   * Unchecked MintTo/Burn must remain distinguishable from their Checked
+   * forms when decimals == 0. */
+  bool has_token_decimals;
   uint8_t extra_u8;
   /* Instruction payload (memo body display). Points into the raw message
    * buffer passed to solana_inspectTx — valid only while that buffer is. */

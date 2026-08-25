@@ -363,50 +363,52 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
            * AdvancedMode until a full screen (authority type + target +
            * new/None) exists. */
           *force_opaque = true;
-        } else if ((token_instr == SOL_TOKEN_MINT_TO_IX ||
-                    token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX) &&
-                   data_len >= 9) {
+        } else if (((token_instr == SOL_TOKEN_MINT_TO_IX && data_len == 9) ||
+                    (token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX &&
+                     data_len == 10)) &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_MINT_TO;
           pi->amount = read_le64(instr_data + 1);
           copy_account(pi->mint, tx, acct_indices, num_acct_indices, 0);
-          pi->has_mint = (num_acct_indices >= 1);
+          pi->has_mint = true;
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-          pi->extra_u8 =
-              (token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX && data_len >= 10)
-                  ? instr_data[9]
-                  : 0;
-        } else if ((token_instr == SOL_TOKEN_BURN_IX ||
-                    token_instr == SOL_TOKEN_BURN_CHECKED_IX) &&
-                   data_len >= 9) {
+          pi->has_token_decimals = token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX;
+          if (pi->has_token_decimals) pi->extra_u8 = instr_data[9];
+        } else if (((token_instr == SOL_TOKEN_BURN_IX && data_len == 9) ||
+                    (token_instr == SOL_TOKEN_BURN_CHECKED_IX &&
+                     data_len == 10)) &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_BURN;
           pi->amount = read_le64(instr_data + 1);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
-          pi->has_mint = (num_acct_indices >= 2);
+          pi->has_mint = true;
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-          pi->extra_u8 =
-              (token_instr == SOL_TOKEN_BURN_CHECKED_IX && data_len >= 10)
-                  ? instr_data[9]
-                  : 0;
-        } else if (token_instr == SOL_TOKEN_CLOSE_ACCOUNT_IX) {
+          pi->has_token_decimals = token_instr == SOL_TOKEN_BURN_CHECKED_IX;
+          if (pi->has_token_decimals) pi->extra_u8 = instr_data[9];
+        } else if (token_instr == SOL_TOKEN_CLOSE_ACCOUNT_IX && data_len == 1 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_CLOSE_ACCOUNT;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-        } else if (token_instr == SOL_TOKEN_FREEZE_ACCOUNT_IX) {
+        } else if (token_instr == SOL_TOKEN_FREEZE_ACCOUNT_IX &&
+                   data_len == 1 && num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_FREEZE_ACCOUNT;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
-          pi->has_mint = (num_acct_indices >= 2);
+          pi->has_mint = true;
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-        } else if (token_instr == SOL_TOKEN_THAW_ACCOUNT_IX) {
+        } else if (token_instr == SOL_TOKEN_THAW_ACCOUNT_IX && data_len == 1 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_THAW_ACCOUNT;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
-          pi->has_mint = (num_acct_indices >= 2);
+          pi->has_mint = true;
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-        } else if (token_instr == SOL_TOKEN_SYNC_NATIVE_IX) {
+        } else if (token_instr == SOL_TOKEN_SYNC_NATIVE_IX && data_len == 1 &&
+                   num_acct_indices >= 1) {
           pi->type = SOL_INSTR_TOKEN_SYNC_NATIVE;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
         } else {
@@ -421,7 +423,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                0) {
       if (data_len >= 4) {
         uint32_t stake_instr = read_le32(instr_data);
-        if (stake_instr == SOL_STAKE_DELEGATE_IX) {
+        if (stake_instr == SOL_STAKE_DELEGATE_IX && data_len == 4 &&
+            num_acct_indices >= 6) {
           pi->type = SOL_INSTR_STAKE_DELEGATE;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 5);
@@ -441,17 +444,20 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 1);
           pi->extra_u8 = (uint8_t)read_le32(instr_data + 36);
-        } else if (stake_instr == SOL_STAKE_SPLIT_IX && data_len >= 12) {
+        } else if (stake_instr == SOL_STAKE_SPLIT_IX && data_len == 12 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_STAKE_SPLIT;
           pi->lamports = read_le64(instr_data + 4);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-        } else if (stake_instr == SOL_STAKE_DEACTIVATE_IX) {
+        } else if (stake_instr == SOL_STAKE_DEACTIVATE_IX && data_len == 4 &&
+                   num_acct_indices >= 3) {
           pi->type = SOL_INSTR_STAKE_DEACTIVATE;
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-        } else if (stake_instr == SOL_STAKE_MERGE_IX) {
+        } else if (stake_instr == SOL_STAKE_MERGE_IX && data_len == 4 &&
+                   num_acct_indices >= 5) {
           pi->type = SOL_INSTR_STAKE_MERGE;
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 1);

@@ -40,6 +40,17 @@ static void solana_pubkeyToStr(const uint8_t key[SOL_PUBKEY_SIZE], char* out,
            key[31]);
 }
 
+/* Put each signed identity on its own confirmation screen. Combining two
+ * full Base58 keys into an action sentence makes truncation much harder to
+ * notice and can render distinct instructions identically. */
+static bool solana_confirmPubkey(const char* title, const char* label,
+                                 const uint8_t key[SOL_PUBKEY_SIZE]) {
+  char key_str[45];
+  solana_pubkeyToStr(key, key_str, sizeof(key_str));
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s\n%s",
+                 label, key_str);
+}
+
 /* Confirm a single parsed instruction.
  *
  * Takes no SolanaSignTx on purpose: every value on these screens is decoded
@@ -176,32 +187,73 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
+      char amount_str[64];
+      if (pi->has_token_decimals) {
+        solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
+                                 "tokens", pi->extra_u8);
+      } else {
+        snprintf(amount_str, sizeof(amount_str), "%llu base units",
+                 (unsigned long long)pi->amount);
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Mint %llu tokens to %s?", (unsigned long long)pi->amount,
-                     to_str);
+                     "Mint %s to %s?", amount_str, to_str);
     }
 
-    case SOL_INSTR_TOKEN_BURN:
+    case SOL_INSTR_TOKEN_BURN: {
+      if (!solana_confirmPubkey(title, "Source token account", pi->from)) {
+        return false;
+      }
+      if (!solana_confirmPubkey(title, "Token mint", pi->mint)) return false;
+      char amount_str[64];
+      if (pi->has_token_decimals) {
+        solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
+                                 "tokens", pi->extra_u8);
+      } else {
+        snprintf(amount_str, sizeof(amount_str), "%llu base units",
+                 (unsigned long long)pi->amount);
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Burn %llu tokens?", (unsigned long long)pi->amount);
+                     "Burn %s?", amount_str);
+    }
 
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
+      if (!solana_confirmPubkey(title, "Close token account", pi->from)) {
+        return false;
+      }
+      if (!solana_confirmPubkey(title, "Refund destination", pi->to)) {
+        return false;
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Close token account?");
 
     case SOL_INSTR_TOKEN_FREEZE_ACCOUNT:
+      if (!solana_confirmPubkey(title, "Freeze token account", pi->from)) {
+        return false;
+      }
+      if (!solana_confirmPubkey(title, "Token mint", pi->mint)) return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Freeze token account?");
 
     case SOL_INSTR_TOKEN_THAW_ACCOUNT:
+      if (!solana_confirmPubkey(title, "Thaw token account", pi->from)) {
+        return false;
+      }
+      if (!solana_confirmPubkey(title, "Token mint", pi->mint)) return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Thaw token account?");
 
     case SOL_INSTR_TOKEN_SYNC_NATIVE:
+      if (!solana_confirmPubkey(title, "Wrapped SOL account", pi->from)) {
+        return false;
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Sync wrapped SOL?");
 
     case SOL_INSTR_STAKE_DELEGATE: {
+      if (!solana_confirmPubkey(title, "Stake account", pi->from)) return false;
+      if (!solana_confirmPubkey(title, "Validator vote account", pi->to)) {
+        return false;
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Delegate stake?");
     }
@@ -227,6 +279,12 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     }
 
     case SOL_INSTR_STAKE_SPLIT: {
+      if (!solana_confirmPubkey(title, "Source stake account", pi->from)) {
+        return false;
+      }
+      if (!solana_confirmPubkey(title, "Split destination", pi->to)) {
+        return false;
+      }
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -234,10 +292,17 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     }
 
     case SOL_INSTR_STAKE_DEACTIVATE:
+      if (!solana_confirmPubkey(title, "Stake account", pi->from)) return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Deactivate stake?");
 
     case SOL_INSTR_STAKE_MERGE:
+      if (!solana_confirmPubkey(title, "Source stake account", pi->from)) {
+        return false;
+      }
+      if (!solana_confirmPubkey(title, "Merge destination", pi->to)) {
+        return false;
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Merge stake accounts?");
 
