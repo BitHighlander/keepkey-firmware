@@ -97,6 +97,20 @@ jobs:
           fetch-depth: 0
 
       - name: Install gitleaks
+        # PINNED + checksum-verified. Tracking releases/latest means a new
+        # upstream ruleset can turn this gate red with no change to this
+        # repository -- which is exactly what happened: a newer
+        # generic-api-key rule began flagging published BIP32 test vectors
+        # in 2014/2018 history, and because every build job declares
+        # `needs: [.., secret-scan]`, the whole build and test graph was
+        # SKIPPED rather than failed. Bump deliberately, with the scan
+        # re-verified and a fresh sha256 recorded below. See #424.
+        #
+        # This used to install this checksummed build and then immediately
+        # overwrite it with a second, unverified `curl | tar` of a different
+        # (older) version -- so the binary actually executed was never the
+        # one the checksum covered, defeating the point of pinning at all.
+        # See #586.
         run: |
           GITLEAKS_VERSION=8.30.1
           GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
@@ -106,15 +120,6 @@ jobs:
             -o "${GITLEAKS_ARCHIVE}"
           echo "${GITLEAKS_SHA256}  ${GITLEAKS_ARCHIVE}" | sha256sum --check --strict
           tar -xzf "${GITLEAKS_ARCHIVE}" -C /usr/local/bin gitleaks
-          # PINNED. Tracking releases/latest means a new upstream ruleset can turn
-          # this gate red with no change to this repository -- which is exactly what
-          # happened: a newer generic-api-key rule began flagging published BIP32 test
-          # vectors in 2014/2018 history, and because every build job declares
-          # `needs: [.., secret-scan]`, the whole build and test graph was SKIPPED
-          # rather than failed. Bump deliberately, with the scan re-verified. See #424.
-          GITLEAKS_VERSION=8.30.0
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
           gitleaks version
 
       - name: Run gitleaks
