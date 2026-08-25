@@ -589,6 +589,54 @@ TEST(Solana, ParseTxTooShort) {
   EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
 }
 
+/* #550 boundary regressions, requested by independent review before PR #557
+ * merged (and only added afterward, in round 4's remediation, per #583).
+ * tx->accounts[] has exactly SOL_MAX_ACCOUNTS(32) entries; num_accounts must
+ * be rejected -- MALFORMED, fully closed -- before it's ever stored or used
+ * as a loop bound, whether it's a small overage (33..255, which would read
+ * past accounts[31] as a uint16_t loop bound) or a value that silently wraps
+ * to a small/zero uint8_t (256, 512, ...), which would have reintroduced the
+ * original signer-check bypass this fix closed. */
+TEST(Solana, RejectsThirtyThreeAccounts) {
+  uint8_t raw[4];
+  size_t pos = 0;
+  raw[pos++] = 1;  /* num_required_sigs */
+  raw[pos++] = 0;  /* num_readonly_signed */
+  raw[pos++] = 1;  /* num_readonly_unsigned */
+  raw[pos++] = 33; /* compact-u16 num_accounts: 33 > SOL_MAX_ACCOUNTS(32) */
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
+TEST(Solana, RejectsAccountCountWrapAt256) {
+  uint8_t raw[5];
+  size_t pos = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  /* compact-u16 for 256: byte0 = (256 & 0x7F) | 0x80, byte1 = 256 >> 7 */
+  raw[pos++] = 0x80;
+  raw[pos++] = 0x02;
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
+TEST(Solana, RejectsAccountCountWrapAt512) {
+  uint8_t raw[5];
+  size_t pos = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  /* compact-u16 for 512: byte0 = (512 & 0x7F) | 0x80, byte1 = 512 >> 7 */
+  raw[pos++] = 0x80;
+  raw[pos++] = 0x04;
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
 TEST(Solana, RejectsTrailingBytes) {
   /* Build a valid 1-instruction system transfer, then append extra bytes */
   uint8_t raw[256];

@@ -622,6 +622,7 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
     aes_cbc_encrypt((const uint8_t*)scratch, storage->encrypted_sec,
                     sizeof(scratch), iv + 32, &ctx);
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
     storage->encrypted_sec_version = STORAGE_VERSION;
   } else {
     memzero(&storage->sec, sizeof(storage->sec));
@@ -640,6 +641,7 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
                       (uint8_t*)&scratch[0], sizeof(scratch), iv + 32, &ctx);
     }
     memzero(iv, sizeof(iv));
+    memzero(&ctx, sizeof(ctx));
 
     // De-serialize from scratch.
     storage_readHDNode(&storage->sec.node, &scratch[0], 129);
@@ -721,6 +723,7 @@ static void storage_cipherBlock(bool encrypt, const uint8_t* key,
     aes_cbc_encrypt((const uint8_t*)plaintextBlock, ciphertextBlock, blockSize,
                     iv + 32, &ctx);
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
   } else {
     // decrypt
     memcpy(iv, key, sizeof(iv));
@@ -729,6 +732,7 @@ static void storage_cipherBlock(bool encrypt, const uint8_t* key,
     aes_cbc_decrypt((const uint8_t*)ciphertextBlock, plaintextBlock, blockSize,
                     iv + 32, &ctx);
     memzero(iv, sizeof(iv));
+    memzero(&ctx, sizeof(ctx));
   }
 
   return;
@@ -811,6 +815,8 @@ bool storage_getAuthData(authType* returnData) {
                           sizeof(shadow_config.storage.sec.authBlock));
     } else {
       // encrypted, passphrase not available
+      memzero(authdataKey, sizeof(authdataKey));
+      memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
       return false;
     }
   } else {
@@ -825,11 +831,15 @@ bool storage_getAuthData(authType* returnData) {
   // authdata
   if (0 != memcmp(shadow_config.storage.pub.authdata_fingerprint, testFp,
                   sizeof(shadow_config.storage.pub.authdata_fingerprint))) {
+    memzero(authdataKey, sizeof(authdataKey));
+    memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
     return false;
   }
 
   memcpy(returnData, plaintextAuthBlock.authData,
          sizeof(plaintextAuthBlock.authData));
+  memzero(authdataKey, sizeof(authdataKey));
+  memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
   return true;
 }
 
@@ -856,6 +866,7 @@ void storage_setAuthData(const authType* setData) {
                         (uint8_t*)&shadow_config.storage.sec.authBlock,
                         sizeof(shadow_config.storage.sec.authBlock));
     shadow_config.storage.pub.authdata_encrypted = true;
+    memzero(authdataKey, sizeof(authdataKey));
   } else {
     // not encrypted
     memcpy((void*)&shadow_config.storage.sec.authBlock,
