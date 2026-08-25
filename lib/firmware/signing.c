@@ -2166,5 +2166,6 @@ void signing_abort(void) {
   }
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
+  memzero(privkey, sizeof(privkey));
   taproot_transaction_confirmed = false;
 }
