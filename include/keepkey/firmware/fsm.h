@@ -23,6 +23,9 @@
 #include "keepkey/transport/interface.h"
 #include "keepkey/board/messages.h"
 
+/* Scrub the function-static HDNode used by synchronous FSM derivations. */
+void fsm_clearDerivedNode(void);
+
 #define RESP_INIT(TYPE)                                                    \
   TYPE* resp = (TYPE*)msg_resp;                                            \
   _Static_assert(sizeof(msg_resp) >= sizeof(TYPE), #TYPE " is too large"); \

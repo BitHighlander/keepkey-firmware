@@ -41,6 +41,7 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
+#include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
@@ -1704,7 +1705,11 @@ void storage_resetUuid_impl(ConfigFlash* cfg) {
   data2hex(cfg->meta.uuid, sizeof(cfg->meta.uuid), cfg->meta.uuid_str);
 }
 
-void storage_reset(void) { storage_reset_impl(&session, &shadow_config); }
+void storage_reset(void) {
+  authenticator_clear_cache();
+  fsm_clearDerivedNode();
+  storage_reset_impl(&session, &shadow_config);
+}
 
 void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
   bip32_cache_clear();
@@ -1743,7 +1748,12 @@ void storage_wipe(void) {
 }
 
 void storage_clearKeys(void) {
-  session_clear_impl(&session, &shadow_config.storage, false);
+  /* A wipe code is a real authorization loss, not a soft Initialize. Clear the
+   * decrypted storage section and every plaintext cache before destroying the
+   * wrapping material. */
+  authenticator_clear_cache();
+  fsm_clearDerivedNode();
+  session_clear_impl(&session, &shadow_config.storage, true);
   memzero(&session.storageKey, sizeof(session.storageKey));
   memzero(&shadow_config.storage.pub.wrapped_storage_key,
           sizeof(shadow_config.storage.pub.wrapped_storage_key));
@@ -1755,6 +1765,10 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+  if (clear_pin) {
+    authenticator_clear_cache();
+    fsm_clearDerivedNode();
+  }
   /* Runtime ClearSign trust belongs to the unlocked device session. Any path
    * that tears that session down must also revoke its RAM-only signer slots. */
   signed_metadata_clear_signers();
