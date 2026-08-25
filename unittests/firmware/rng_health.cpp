@@ -179,6 +179,25 @@ TEST(RngHealth, CheckedDrawRejectsNull) {
   EXPECT_FALSE(random_buffer_checked(nullptr, 32));
 }
 
+TEST(RngHealth, CheckedPermutationPreservesEverySymbol) {
+  rng_health_force_verdict(true);
+  char value[] = "123456789";
+  ASSERT_TRUE(random_permute_char_checked(value, sizeof(value) - 1));
+
+  std::sort(value, value + sizeof(value) - 1);
+  EXPECT_EQ(0, memcmp(value, "123456789", sizeof(value) - 1));
+}
+
+TEST(RngHealth, CheckedPermutationFailsClosedAndWipes) {
+  rng_health_force_verdict(false);
+  char value[] = "123456789";
+  EXPECT_FALSE(random_permute_char_checked(value, sizeof(value) - 1));
+
+  const char zeros[sizeof(value) - 1] = {0};
+  EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
+  rng_health_force_verdict(true);
+}
+
 // THE CONTINUOUS TEST, ON THE DEFAULT PATH. The boot gate only says the source
 // was healthy once; the RCT and APT exist to notice one that goes degenerate
 // afterwards. An earlier revision folded bytes into the continuous state only
