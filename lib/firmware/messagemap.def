@@ -58,10 +58,6 @@
     MSG_IN(MessageType_MessageType_OsmosisSignTx,                   OsmosisSignTx,               fsm_msgOsmosisSignTx)
     MSG_IN(MessageType_MessageType_OsmosisMsgAck,                   OsmosisMsgAck,               fsm_msgOsmosisMsgAck)
 
-    MSG_IN(MessageType_MessageType_BinanceGetAddress,               BinanceGetAddress,           fsm_msgBinanceGetAddress)
-    MSG_IN(MessageType_MessageType_BinanceSignTx,                   BinanceSignTx,               fsm_msgBinanceSignTx)
-    MSG_IN(MessageType_MessageType_BinanceTransferMsg,              BinanceTransferMsg,          fsm_msgBinanceTransferMsg)
-
     MSG_IN(MessageType_MessageType_EosGetPublicKey,                 EosGetPublicKey,             fsm_msgEosGetPublicKey)
     MSG_IN(MessageType_MessageType_EosSignTx,                       EosSignTx,                   fsm_msgEosSignTx)
     MSG_IN(MessageType_MessageType_EosTxActionAck,                  EosTxActionAck,              fsm_msgEosTxActionAck)
@@ -121,11 +117,6 @@
     MSG_OUT(MessageType_MessageType_OsmosisAddress,                 OsmosisAddress,              NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_OsmosisMsgRequest,              OsmosisMsgRequest,           NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_OsmosisSignedTx,                OsmosisSignedTx,             NO_PROCESS_FUNC)
-
-    MSG_OUT(MessageType_MessageType_BinanceAddress,                 BinanceAddress,              NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_BinancePublicKey,               BinancePublicKey,            NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_BinanceTxRequest,               BinanceTxRequest,            NO_PROCESS_FUNC)
-    MSG_OUT(MessageType_MessageType_BinanceSignedTx,                BinanceSignedTx,             NO_PROCESS_FUNC)
 
     MSG_OUT(MessageType_MessageType_EosPublicKey,                   EosPublicKey,                NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_EosTxActionRequest,             EosTxActionRequest,          NO_PROCESS_FUNC)
