@@ -1225,6 +1225,125 @@ TEST(Solana, StakeAuthorizeCanonicalIsVerified) {
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
 }
 
+/* =====================================================================
+ *  Round-5 clear-sign identity disclosure regressions (#558, #559, #560,
+ *  #588): screens that omitted a signed account identity a compromised
+ *  host could substitute, and two account-index bugs (Stake/Vote Authorize
+ *  reading the Clock sysvar instead of the signer). build_single_instr_tx
+ *  gives account i the byte pattern (0x11 + i) repeated, so distinct
+ *  indices are distinguishable in assertions below.
+ * ===================================================================== */
+
+/* StakeAuthorize's canonical account layout is [0]=stake account,
+ * [1]=Clock sysvar, [2]=[SIGNER] current authority. Reading index 1 (as the
+ * code did before this fix) would treat the sysvar as the signer. */
+TEST(Solana, StakeAuthorizeSignerIsAccountIndexTwoNotSysvar) {
+  uint8_t d[40] = {SOL_STAKE_AUTHORIZE_IX, 0, 0, 0};
+  memset(d + 4, 0x77, 32);
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 3, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  uint8_t expected_signer[32];
+  memset(expected_signer, 0x11 + 2, sizeof(expected_signer));
+  EXPECT_EQ(memcmp(tx.instructions[0].authority, expected_signer, 32), 0);
+}
+
+/* Same bug, VoteAuthorize: [0]=vote account, [1]=Clock sysvar,
+ * [2]=[SIGNER] current authority. */
+TEST(Solana, VoteAuthorizeSignerIsAccountIndexTwoNotSysvar) {
+  uint8_t d[40] = {SOL_VOTE_AUTHORIZE_IX, 0, 0, 0};
+  memset(d + 4, 0x88, 32);
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_VOTE_PROGRAM, 3, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  uint8_t expected_signer[32];
+  memset(expected_signer, 0x11 + 2, sizeof(expected_signer));
+  EXPECT_EQ(memcmp(tx.instructions[0].authority, expected_signer, 32), 0);
+}
+
+/* CloseAccount is the critical case from #558: the rent refund destination
+ * (account 1) was never disclosed, so a host could redirect it while
+ * showing an identical "Close token account?" prompt. A short account list
+ * must fail closed, and the canonical case must expose both accounts. */
+TEST(Solana, TokenCloseAccountShortAccountsIsOpaque) {
+  uint8_t d[1] = {SOL_TOKEN_CLOSE_ACCOUNT_IX};
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, d, sizeof(d));
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+TEST(Solana, TokenCloseAccountCanonicalRevealsFromAndTo) {
+  uint8_t d[1] = {SOL_TOKEN_CLOSE_ACCOUNT_IX};
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  uint8_t expected_from[32], expected_to[32];
+  memset(expected_from, 0x11 + 0, sizeof(expected_from));
+  memset(expected_to, 0x11 + 1, sizeof(expected_to));
+  EXPECT_EQ(memcmp(tx.instructions[0].from, expected_from, 32), 0);
+  EXPECT_EQ(memcmp(tx.instructions[0].to, expected_to, 32), 0);
+}
+
+/* MintTo previously classified VERIFIED with as few as 1 account
+ * (has_mint's own gate), silently zero-filling `to`/`authority`. Zero
+ * base58-encodes to the real System Program address, so this did not look
+ * obviously fake on screen. */
+TEST(Solana, TokenMintToShortAccountsIsOpaque) {
+  uint8_t d[9] = {SOL_TOKEN_MINT_TO_IX, 1, 0, 0, 0, 0, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, d, sizeof(d));
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+/* StakeDelegate needs the vote account at index 1 and the signer at index 5
+ * -- the deepest index of any instruction here, and the sharpest test that
+ * the bounds check actually reaches past the shallow indices. */
+TEST(Solana, StakeDelegateShortAccountsIsOpaque) {
+  uint8_t d[4] = {SOL_STAKE_DELEGATE_IX, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 5, d, sizeof(d));
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+TEST(Solana, StakeDelegateCanonicalRevealsStakeAndVoteAccounts) {
+  uint8_t d[4] = {SOL_STAKE_DELEGATE_IX, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 6, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  uint8_t expected_stake[32], expected_vote[32];
+  memset(expected_stake, 0x11 + 0, sizeof(expected_stake));
+  memset(expected_vote, 0x11 + 1, sizeof(expected_vote));
+  EXPECT_EQ(memcmp(tx.instructions[0].from, expected_stake, 32), 0);
+  EXPECT_EQ(memcmp(tx.instructions[0].to, expected_vote, 32), 0);
+}
+
+/* System-program family: AdvanceNonce needs the authority at index 2. */
+TEST(Solana, SystemAdvanceNonceShortAccountsIsOpaque) {
+  uint8_t d[4] = {SOL_SYS_ADVANCE_NONCE, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, d, sizeof(d));
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+/* ATA Create needs payer/address/owner at indices 0-2 before disclosing
+ * them; previously it classified VERIFIED unconditionally. */
+TEST(Solana, AtaCreateShortAccountsIsOpaque) {
+  uint8_t d[1] = {0};
+  uint8_t raw[512];
+  size_t pos =
+      build_single_instr_tx(raw, SOL_ATA_PROGRAM, 2, d, /*data_len=*/0);
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
 /* ── KKSOLSC1 reusable instruction schemas ────────────────────────────
  *
  * Vector is the real Relay bridge deposit captured from api.relay.link on
