@@ -270,7 +270,7 @@ static bool hive_prepare_account_sign(const uint32_t* address_n,
   // Derive all four role keys from the device root.
   // Do this BEFORE fetching the signing node so the root static buffer
   // is not clobbered by the second fsm_getDerivedNode call.
-  const HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return false;
 
   uint32_t acc_hardened = account_index | 0x80000000u;
@@ -283,6 +283,10 @@ static bool hive_prepare_account_sign(const uint32_t* address_n,
 
   if (!keys_ok) {
     memzero(keys, sizeof(*keys));
+    /* root is the wallet's undived master node -- scrub it here too, same as
+       fsm_msgHiveGetPublicKeys does on every exit, instead of leaving it
+       resident until some unrelated later call happens to overwrite it. */
+    memzero(root, sizeof(*root));
     fsm_sendFailure(FailureType_Failure_FirmwareError,
                     _("Failed to derive Hive keys"));
     layoutHome();
