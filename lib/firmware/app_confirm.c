@@ -537,17 +537,10 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
 
 bool confirm_data(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  const char* str = (const char*)data;
-  char hex[50 * 2 + 1];
-  if (!is_valid_ascii(data, size)) {
-    if (size > 50) size = 50;
-    memset(hex, 0, sizeof(hex));
-    data2hex(data, size, hex);
-    if (size > 50) {
-      hex[50 * 2 - 1] = '.';
-      hex[50 * 2 - 2] = '.';
-    }
-    str = hex;
-  }
-  return confirm(button_request, title, "%s", str);
+  /* OP_RETURN is signed byte-for-byte, so disclose it byte-for-byte. The old
+   * non-ASCII path silently clamped at 50 bytes and then tested the already
+   * clamped length, making its ".." marker unreachable. The ASCII path also
+   * handed a size-delimited protobuf field to "%s", which assumes a trailing
+   * NUL that the wire format does not promise. */
+  return confirm_bytes(button_request, title, data, size);
 }
