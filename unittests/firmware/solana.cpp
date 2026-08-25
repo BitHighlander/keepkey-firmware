@@ -1,5 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/solana.h"
+#include "trezor/crypto/curves.h"
+#include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
 }
 
@@ -1150,6 +1152,41 @@ static size_t build_single_instr_tx(uint8_t* raw, const uint8_t* program,
 static void expect_repeated_pubkey(const uint8_t key[SOL_PUBKEY_SIZE],
                                    uint8_t byte) {
   for (size_t i = 0; i < SOL_PUBKEY_SIZE; i++) EXPECT_EQ(byte, key[i]);
+}
+
+TEST(Solana, PrefixedMessageReviewAndSignatureUseIdenticalSlice) {
+  uint8_t transfer[12] = {SOL_SYS_TRANSFER};
+  transfer[4] = 42;
+  uint8_t prefixed[513] = {0};
+  const size_t message_len = build_single_instr_tx(
+      prefixed + 1, SOL_SYSTEM_PROGRAM, 2, transfer, sizeof(transfer));
+
+  SolanaParsedTx parsed;
+  ASSERT_EQ(SOL_TX_REVIEW_VERIFIED,
+            solana_inspectTx(prefixed, message_len + 1, &parsed));
+
+  uint8_t seed[32] = {1};
+  HDNode node = {0};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), ED25519_NAME, &node));
+  hdnode_fill_public_key(&node);
+
+  SolanaSignTx request = SolanaSignTx_init_zero;
+  request.has_raw_tx = true;
+  request.raw_tx.size = message_len + 1;
+  memcpy(request.raw_tx.bytes, prefixed, request.raw_tx.size);
+  SolanaSignedTx response = SolanaSignedTx_init_zero;
+  ASSERT_TRUE(solana_signTx(&node, &request, &response));
+  ASSERT_TRUE(response.has_signature);
+  ASSERT_EQ(SOL_SIG_SIZE, response.signature.size);
+
+  /* The optional 0x00 is an unsigned-transaction signature-count prefix, not
+   * part of the serialized message Solana signs. The reviewed slice verifies;
+   * the old, unsliced byte string must not. */
+  EXPECT_EQ(0, ed25519_sign_open(prefixed + 1, message_len, node.public_key + 1,
+                                 response.signature.bytes));
+  EXPECT_NE(0, ed25519_sign_open(prefixed, message_len + 1, node.public_key + 1,
+                                 response.signature.bytes));
+  memzero(&node, sizeof(node));
 }
 
 TEST(Solana, SplAffectedIdentitiesAreCanonicalReviewMaterial) {
