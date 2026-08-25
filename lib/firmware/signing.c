@@ -823,6 +823,16 @@ static bool is_segwit_input_script_type(const TxInputType* txinput) {
   return false;
 }
 
+bool signing_multisig_quorum_is_valid(
+    const MultisigRedeemScriptType* multisig) {
+  if (multisig == NULL || !multisig->has_m) {
+    return false;
+  }
+  const uint32_t m = multisig->m;
+  const uint32_t n = multisig->pubkeys_count;
+  return m >= 1 && m <= 15 && n >= 1 && n <= 15 && m <= n;
+}
+
 static bool signing_validate_input(const TxInputType* txinput) {
   if (txinput->prev_hash.size != 32) {
     fsm_sendFailure(FailureType_Failure_Other,
@@ -837,15 +847,12 @@ static bool signing_validate_input(const TxInputType* txinput) {
     return false;
   }
   if (txinput->has_multisig) {
-    const uint32_t m = txinput->multisig.m;
-    const uint32_t n = txinput->multisig.pubkeys_count;
     /* Validate the quorum before tx_input_script_size() accounts for it.
      * cryptoMultisigFingerprint() normally performs most of these checks, but
      * the mixed single-sig/multisig path deliberately stops comparing a common
      * fingerprint. That used to leave m as an unbounded host-controlled weight
      * multiplier and could suppress the high-fee warning. */
-    if (!txinput->multisig.has_m || m < 1 || m > 15 || n < 1 || n > 15 ||
-        m > n) {
+    if (!signing_multisig_quorum_is_valid(&txinput->multisig)) {
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       _("Invalid multisig quorum"));
       signing_abort();
