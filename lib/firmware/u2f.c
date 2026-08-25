@@ -260,6 +260,19 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
         u2fhid_msg((APDU*)reader->buf, reader->len);
         break;
       case U2FHID_CBOR:
+        /* A CTAP2 request can interleave on the same channel while a legacy
+         * U2F AUTHENTICATE/REGISTER is still pending a button press
+         * (last_req_state == AUTH/REG, dialog_timeout still counting down).
+         * ctap2_request_user_presence() has its own self-contained button
+         * loop and never touches last_req_state/dialog_timeout, so without
+         * this reset the button press the user gives for THIS (CTAP2)
+         * request could satisfy the wait loop below's stale
+         * last_req_state==AUTH/REG check and silently advance the
+         * unrelated legacy request to AUTH_PASS/REG_PASS -- approving it
+         * with no dialog for it ever having been on screen at press time.
+         * Invalidate any pending legacy request once a different command
+         * type has interleaved. */
+        last_req_state = INIT;
         u2fhid_cbor(reader->buf, reader->len);
         break;
       case U2FHID_CANCEL:
