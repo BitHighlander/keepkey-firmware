@@ -515,7 +515,6 @@ jobs:
             ${{ env.BASE_IMAGE }} /bin/sh -c "\
               mkdir /root/build && cd /root/build && \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
-                ${{ matrix.cmake_flags }} \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
                 -DCMAKE_COLOR_MAKEFILE=ON \
                 ${{ matrix.cmake_flags }} && \
@@ -683,14 +682,14 @@ jobs:
           # because nothing had been copied out of the container yet.
           FW_RC=0
           PY_RC=0
-          docker compose up --build --exit-code-from firmware-unit firmware-unit || FW_RC=$?
-          docker compose up --build --exit-code-from python-keepkey python-keepkey || PY_RC=$?
-
-          # Run each test container — capture exit codes, always extract reports
+          COMPOSE_ARGS=(-f docker-compose.yml)
+          if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
+            COMPOSE_ARGS+=(-f docker-compose.bitcoin-only.yml)
+          fi
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
+            up --build --exit-code-from firmware-unit firmware-unit || FW_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+            up --build --exit-code-from python-keepkey python-keepkey || PY_RC=$?
 
           REPORT_ROOT=${{ github.workspace }}/test-reports/${{ matrix.variant }}
           mkdir -p "$REPORT_ROOT"
@@ -728,7 +727,7 @@ jobs:
           retention-days: 30
 
       - name: Upload native test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: firmware-unit-results-${{ matrix.variant }}
