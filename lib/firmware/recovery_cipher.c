@@ -53,6 +53,8 @@ static CONFIDENTIAL char mnemonic[MNEMONIC_BUF];
 static char english_alphabet[ENGLISH_ALPHABET_BUF] =
     "abcdefghijklmnopqrstuvwxyz";
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
+static int uncyphered_word_count = 0;
+static bool definitely_using_cipher = false;
 /* Accumulators for the word currently being entered. File-scope so
  * recovery_delete_character() can keep them in sync with backspaces —
  * otherwise stale bytes make a re-entered word fail validation and wipe a
@@ -60,6 +62,10 @@ static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
 static CONFIDENTIAL char last_completed_word[12];
+static CONFIDENTIAL char current_word_scratch[CURRENT_WORD_BUF];
+static CONFIDENTIAL char formatted_word_scratch[CURRENT_WORD_BUF + 10];
+static CONFIDENTIAL char final_mnemonic_scratch[MNEMONIC_BUF];
+static CONFIDENTIAL char temp_word_scratch[CURRENT_WORD_BUF];
 
 #if DEBUG_LINK
 static char auto_completed_word[CURRENT_WORD_BUF];
@@ -76,9 +82,18 @@ void recovery_cipher_reset(void) {
   word_count = 0;
   memzero(mnemonic, sizeof(mnemonic));
   memzero(cipher, sizeof(cipher));
+  uncyphered_word_count = 0;
+  definitely_using_cipher = false;
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
   memzero(last_completed_word, sizeof(last_completed_word));
+  memzero(current_word_scratch, sizeof(current_word_scratch));
+  memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
+  memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+  memzero(temp_word_scratch, sizeof(temp_word_scratch));
+#if DEBUG_LINK
+  memzero(auto_completed_word, sizeof(auto_completed_word));
+#endif
 }
 
 /* The `if (!dry_run) storage_reset();` that used to open this function is
@@ -401,8 +416,8 @@ void next_character(void) {
   }
 
   /* Show cipher and partial word */
-  layout_cipher(formatted_word, cipher, prev_info);
-  memzero(formatted_word, sizeof(formatted_word));
+  layout_cipher(formatted_word_scratch, cipher, prev_info);
+  memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
 /*
@@ -440,10 +455,6 @@ void recovery_character(const char* character) {
     layoutHome();
     return;
   }
-
-  // Count of words we think the user has entered without using the cipher:
-  static int uncyphered_word_count = 0;
-  static bool definitely_using_cipher = false;
 
   if (!mnemonic[0]) {
     uncyphered_word_count = 0;
