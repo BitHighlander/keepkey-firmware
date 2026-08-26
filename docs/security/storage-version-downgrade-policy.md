@@ -1,6 +1,6 @@
 # Storage version and downgrade policy
 
-Status: updated for the draft 7.16 passkeys migration. Read this before touching
+Status: updated for the 7.16 V20 release candidate. Read this before touching
 `STORAGE_VERSION`, `storage_versions.inc`, or `STORAGE_PIN_KDF_V19`.
 
 ---
@@ -41,13 +41,14 @@ above.
 | Version | State |
 |---|---|
 | 17 | **Last shipped storage version.** Same as shipped v7.14.1/7.15. |
-| 18 | Draft 7.16 passkey layout. Adds CTAP2 state in V17's reserved area while continuing to scrub the retired clear-sign identity block. It must not ship until the bootloader security-epoch gate is enforced. |
-| 19 | Never shipped. Same as 18. The PIN-KDF implementation is retained and unit-tested behind `STORAGE_PIN_KDF_V19 == 0`. |
+| 18 | **Burned.** An alpha clear-sign identity layout wrote this number. It is never reused. |
+| 19 | **Burned.** An alpha PIN-KDF layout wrote this number. The rewrap remains disabled behind `STORAGE_PIN_KDF_V19 == 0`. |
+| 20 | **7.16 release candidate.** Stores passkey state in V17's reserved area and scrubs the retired identity block. It must not ship until the bootloader security-epoch and exact-candidate V17→V20 hardware gates pass. |
 
-RC27 wrote version 19. **Installing rc28 on a device that ran RC27 wipes it**,
-because rc28 does not recognise version 19 — exactly per §0. That is correct
-behaviour and must appear in the rc28 release notes. Internal testers need
-their recovery phrase before updating.
+Internal devices that ran the old alpha V18 or V19 formats can be wiped by
+other builds exactly per §0. Those numbers remain in `storage_versions.inc` so
+the enum stays positional, but V20 never interprets either record as passkey
+state. Internal testers need their recovery phrase before changing lines.
 
 ### Why the revert was needed
 
@@ -87,7 +88,7 @@ boot. There is no safe path back down; migrated devices wipe and restore.
 
 ---
 
-## 3. Re-enabling version 19
+## 3. Enabling the dormant V19 PIN-KDF rewrap
 
 All of the following, in order. Flipping `STORAGE_PIN_KDF_V19` to 1 is the
 *last* step, not the first.
@@ -98,16 +99,18 @@ All of the following, in order. Flipping `STORAGE_PIN_KDF_V19` to 1 is the
 2. Prove bootloader update and interruption behaviour on real devices.
 3. Benchmark the 100,000-iteration PIN path on every supported board revision —
    minimum, median, maximum unlock latency, across temperature and power.
-4. Exercise v15, v16 and v18 migrations through wrong PIN, correct PIN,
+4. Exercise v15, v16, V17 and V20 records through wrong PIN, correct PIN,
    interrupted commit, reboot, and recovery.
 5. Power-loss testing at every write boundary during the rewrap commit.
 6. Ship in a release whose minimum epoch **refuses** firmware that cannot read
-   version 19, so a downgrade is rejected up front instead of wiping.
+   the active storage version, so a downgrade is rejected up front instead of
+   wiping.
 
-Only then: add `STORAGE_VERSION_ENTRY(18)` / `STORAGE_VERSION_LAST(19)` to
-`storage_versions.inc`, set `STORAGE_VERSION` to 19, restore the version cases
-in `storage_fromFlash`, point `storage_commit` at `storage_writeV19`, restore
-`flash_temp` to 3480, and set `STORAGE_PIN_KDF_V19` to 1.
+Only then, in a new storage version: round-trip a dedicated KDF flag in that
+version, switch the rewrap and serializer together, and set
+`STORAGE_PIN_KDF_V19` to 1. Do not repurpose burned version 19 and do not infer
+permission from the fact that V20's compatibility reader can parse its alpha
+shape.
 
 The `_Static_assert(VAL == STORAGE_VERSION)` in `version_from_int` and the
 absent `default:` case in the `storage_fromFlash` switch mean the compiler
@@ -119,8 +122,7 @@ done.
 ## 4. Clear-sign identity block
 
 `ClearsignIdentity` and the 910-byte `clearsign_identities` array are what made
-version 18. They are **dead**: nothing reads or writes them, and the header
-says so.
+the alpha version 18. They are **dead**: nothing reads or writes them.
 
 They exist because persisting clear-sign signer identities to public flash was
 **rejected** — a rogue persisted signer suppresses the raw-data screen, and
@@ -132,12 +134,12 @@ factory reset.
 least of all**: a KeepKey-issued schema signature verifies against a built-in
 anchor compiled into the firmware, which costs zero device storage. If that is
 the chosen endgame, the identity block should be deleted outright rather than
-carried to version 18.
+carried into a new format.
 
-The draft passkey branch makes V18 reachable but never parses, trusts, or
-carries forward the retired identity block. It removes the legacy in-memory
-identity array, reclaiming ~910 bytes from the `ConfigFlash` shadow copy, and
-keeps the bounded V18 record within the V17 footprint. V19 remains unreachable.
+The 7.16 passkey candidate writes V20, never parses or trusts V18/V19 as passkey
+state, and never carries forward the retired identity block. It removes the
+legacy in-memory identity array, reclaiming ~910 bytes from the `ConfigFlash`
+shadow copy, and keeps the bounded V20 record within the V17 footprint.
 
 ---
 
@@ -145,9 +147,10 @@ keeps the bounded V18 record within the V17 footprint. V19 remains unreachable.
 
 - The `storage_write*` family takes a `len` it does not honour —
   `storage_writeV17` guards `len < 1024` then writes to offset 2569, and the
-  V18 variant guarded the same 1024 while writing to 3479. The revert removes
-  the V18/V19 case; the V17 contract is still wrong and should be fixed
-  separately. `.cppcheck-suppressions` currently blanket-suppresses
+  historical V18 variant guarded the same 1024 while writing to 3479. V20's
+  bounded serializer has its own full-length guard; the legacy V17 contract is
+  still wrong and should be fixed separately. `.cppcheck-suppressions`
+  currently blanket-suppresses
   `bufferAccessOutOfBounds` for `storage.c`, so CI cannot see either.
 - Vault should warn before flashing firmware older than the connected device's
   storage version, whichever way this policy lands. The wipe is correct; a
