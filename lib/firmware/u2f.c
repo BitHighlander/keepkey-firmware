@@ -649,9 +649,16 @@ bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
 }
 
 bool ctap2_request_user_presence(const char* rp_id, bool registration) {
-  layoutU2FDialog(true, registration ? "Create Passkey" : "Use Passkey",
-                  registration ? "Create a passkey for %s?" : "Sign in to %s?",
-                  rp_id);
+  bool fits = layoutU2FDialog(
+      true, registration ? "Create Passkey" : "Use Passkey",
+      registration ? "Create a passkey for %s?" : "Sign in to %s?", rp_id);
+  if (!fits) {
+    // rp_id is host-controlled and can run up to 253 chars; the credential
+    // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
+    // an rp_id the user can't read in full must not be silently approved.
+    layoutHome();
+    return false;
+  }
   bool saw_button_up = false;
   for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
     if (reader != NULL && reader->cmd == U2FHID_CANCEL) {

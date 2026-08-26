@@ -550,7 +550,13 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
       case OutputScriptType_PAYTOP2SHWITNESS:
       case OutputScriptType_PAYTOTAPROOT: {
         char amount_str[32];
-        char node_str[NODE_STRING_LENGTH];
+        // ADDR_STR_LEN, not NODE_STRING_LENGTH: this buffer is passed to
+        // txin_dgst_compare()/txin_dgst_save_and_reset(), which unconditionally
+        // memcpy/strncmp ADDR_STR_LEN (130) bytes -- their real contract, per
+        // the other call site below which passes a 130-byte protobuf address
+        // field. A 50-byte NODE_STRING_LENGTH buffer here was an 80-byte OOB
+        // stack read.
+        char node_str[ADDR_STR_LEN];
         coin_amnt_to_str(coin, in->amount, amount_str, sizeof(amount_str));
         memset(node_str, 0, sizeof(node_str));
         if (!bip32_node_to_string(node_str, sizeof(node_str), coin,
