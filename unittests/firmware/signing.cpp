@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/transaction.h"
 }
 
 #include "gtest/gtest.h"
@@ -52,24 +53,35 @@ TEST(Signing, MultisigQuorumMustBeBoundedBeforeFeeAccounting) {
   multisig.has_m = true;
   multisig.m = 2;
   multisig.pubkeys_count = 3;
-  EXPECT_TRUE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_TRUE(transaction_multisig_quorum_is_valid(&multisig));
 
   multisig.has_m = false;
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(&multisig));
   multisig.has_m = true;
 
   multisig.m = 0;
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(&multisig));
   multisig.m = UINT32_MAX;
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(&multisig));
   multisig.m = 4;
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(&multisig));
 
   multisig.m = 1;
   multisig.pubkeys_count = 0;
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(&multisig));
   multisig.pubkeys_count = 16;
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(&multisig));
 
-  EXPECT_FALSE(signing_multisig_quorum_is_valid(nullptr));
+  EXPECT_FALSE(transaction_multisig_quorum_is_valid(nullptr));
+}
+
+TEST(Signing, ScriptTypeChecksumEncodingIsAbiIndependent) {
+  uint8_t encoded[4] = {0xff, 0xff, 0xff, 0xff};
+  signing_encode_script_type(InputScriptType_SPENDTAPROOT, encoded);
+  const uint32_t value = (uint32_t)InputScriptType_SPENDTAPROOT;
+  EXPECT_EQ(encoded[0], (uint8_t)value);
+  EXPECT_EQ(encoded[1], (uint8_t)(value >> 8));
+  EXPECT_EQ(encoded[2], (uint8_t)(value >> 16));
+  EXPECT_EQ(encoded[3], (uint8_t)(value >> 24));
+  EXPECT_EQ(sizeof(encoded), 4U);
 }

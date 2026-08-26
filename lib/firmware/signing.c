@@ -823,14 +823,12 @@ static bool is_segwit_input_script_type(const TxInputType* txinput) {
   return false;
 }
 
-bool signing_multisig_quorum_is_valid(
-    const MultisigRedeemScriptType* multisig) {
-  if (multisig == NULL || !multisig->has_m) {
-    return false;
-  }
-  const uint32_t m = multisig->m;
-  const uint32_t n = multisig->pubkeys_count;
-  return m >= 1 && m <= 15 && n >= 1 && n <= 15 && m <= n;
+void signing_encode_script_type(InputScriptType script_type, uint8_t out[4]) {
+  const uint32_t value = (uint32_t)script_type;
+  out[0] = (uint8_t)value;
+  out[1] = (uint8_t)(value >> 8);
+  out[2] = (uint8_t)(value >> 16);
+  out[3] = (uint8_t)(value >> 24);
 }
 
 static bool signing_validate_input(const TxInputType* txinput) {
@@ -852,7 +850,7 @@ static bool signing_validate_input(const TxInputType* txinput) {
      * the mixed single-sig/multisig path deliberately stops comparing a common
      * fingerprint. That used to leave m as an unbounded host-controlled weight
      * multiplier and could suppress the high-fee warning. */
-    if (!signing_multisig_quorum_is_valid(&txinput->multisig)) {
+    if (!transaction_multisig_quorum_is_valid(&txinput->multisig)) {
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       _("Invalid multisig quorum"));
       signing_abort();
@@ -929,6 +927,13 @@ static bool signing_validate_output(const TxOutputType* txoutput) {
   if (txoutput->has_multisig && !is_multisig_output_script_type(txoutput)) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Multisig field provided but not expected."));
+    signing_abort();
+    return false;
+  }
+  if (txoutput->has_multisig &&
+      !transaction_multisig_quorum_is_valid(&txoutput->multisig)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid multisig quorum"));
     signing_abort();
     return false;
   }
@@ -1078,8 +1083,9 @@ static bool signing_check_input(TxInputType* txinput) {
   // hash prevout and script type to check it later (relevant for fee
   // computation)
   tx_prevout_hash(&hasher_check, txinput);
-  hasher_Update(&hasher_check, (const uint8_t*)&txinput->script_type,
-                sizeof(&txinput->script_type));
+  uint8_t script_type_bytes[4];
+  signing_encode_script_type(txinput->script_type, script_type_bytes);
+  hasher_Update(&hasher_check, script_type_bytes, sizeof(script_type_bytes));
   return true;
 }
 
@@ -1876,8 +1882,10 @@ void signing_txack(TransactionType* tx) {
       }
       // check prevouts and script type
       tx_prevout_hash(&hasher_check, tx->inputs);
-      hasher_Update(&hasher_check, (const uint8_t*)&tx->inputs[0].script_type,
-                    sizeof(&tx->inputs[0].script_type));
+      uint8_t script_type_bytes[4];
+      signing_encode_script_type(tx->inputs[0].script_type, script_type_bytes);
+      hasher_Update(&hasher_check, script_type_bytes,
+                    sizeof(script_type_bytes));
       if (idx2 == idx1) {
         if (!compile_input_script_sig(&tx->inputs[0])) {
           fsm_sendFailure(FailureType_Failure_Other,
