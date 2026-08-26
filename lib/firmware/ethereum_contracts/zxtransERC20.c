@@ -21,6 +21,7 @@
 
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_tokens.h"
@@ -34,12 +35,29 @@ static bool isTransERC20Call(const EthereumSignTx* msg) {
   return false;
 }
 
+static bool tx_value_is_zero(const EthereumSignTx* msg) {
+  if (msg->value.size > 32 || (!msg->has_value && msg->value.size != 0))
+    return false;
+  for (size_t i = 0; i < msg->value.size; i++) {
+    if (msg->value.bytes[i] != 0) return false;
+  }
+  return true;
+}
+
+static bool transformations_offset_is_canonical(const EthereumSignTx* msg) {
+  const uint8_t* offset =
+      msg->data_initial_chunk.bytes + ZX_TRANSFORM_ERC20_HEAD_LEN - 32;
+  for (size_t i = 0; i < 31; i++) {
+    if (offset[i] != 0) return false;
+  }
+  return offset[31] == 0xa0;
+}
+
 /* Resolve both traded assets, or refuse.
  *
- * This is the whole basis on which transformERC20 is clear-signable. The
- * decoder shows four values and hides the transformations[] body; that is only
- * defensible because the input amount and the minimum output amount bound the
- * outcome. A bound the user cannot read is not a bound, and
+ * The structured screen names both traded assets and shows the input and
+ * minimum-output bounds; a following raw screen now discloses the complete
+ * transformations[] route. A bound the user cannot read is not a bound, and
  * ethereumFormatAmount() renders the literal "Unknown token value" whenever
  * tokenByChainAddress() misses -- so an unresolved token turns the screen into
  * a blind signature wearing a decoder's title.
@@ -55,10 +73,10 @@ static bool isTransERC20Call(const EthereumSignTx* msg) {
  */
 static bool resolveBothTokens(const EthereumSignTx* msg, const TokenType** in,
                               const TokenType** out) {
-  /* The two address words end at byte 68, but the confirm also reads the two
-   * amount words, so require what the confirm requires. Past .size the chunk
-   * buffer still holds bytes from an earlier message. */
-  if (msg->data_initial_chunk.size < 4 + 4 * 32) return false;
+  /* Require a complete canonical ABI head and the dynamic array's length word.
+   * Past .size the chunk buffer can still hold bytes from an earlier message.
+   */
+  if (msg->data_initial_chunk.size < ZX_TRANSFORM_ERC20_MIN_LEN) return false;
 
   const TokenType* i = tokenByChainAddress(
       msg->chain_id, msg->data_initial_chunk.bytes + 4 + 12);
@@ -82,10 +100,14 @@ bool zx_isZxTransformERC20(const EthereumSignTx* msg) {
      on BSC, Polygon and the rest from being clear-signed and dropped them
      to the raw-calldata path. Use the per-chain allowlist instead; unknown
      chains still fall through, which is the safe direction. */
-  if (!msg->has_chain_id || !zx_isExchangeProxyChain(msg->chain_id))
+  if (!msg->has_chain_id || !zx_isExchangeProxyChain(msg->chain_id) ||
+      !msg->has_to || msg->to.size != 20 || !msg->has_data_initial_chunk)
     return false;
   if (memcmp(msg->to.bytes, ZXSWAP_ADDRESS, 20) != 0) return false;
+  if (msg->data_initial_chunk.size < ZX_TRANSFORM_ERC20_MIN_LEN) return false;
   if (!isTransERC20Call(msg)) return false;
+  if (!transformations_offset_is_canonical(msg) || !tx_value_is_zero(msg))
+    return false;
 
   /* Claim the transaction only if the screen can name both assets. Refusing
      here is what makes it fall through to the raw-calldata path, which is
@@ -95,8 +117,6 @@ bool zx_isZxTransformERC20(const EthereumSignTx* msg) {
 }
 
 bool zx_confirmZxTransERC20(uint32_t data_total, const EthereumSignTx* msg) {
-  (void)data_total;
-
   /* transformERC20()'s four displayed arguments (input/output token, input
    * amount, minimum output amount) are STATIC head words, so their fixed
    * offsets stay correct wherever the dynamic transformations[] tail lands and
@@ -107,7 +127,9 @@ bool zx_confirmZxTransERC20(uint32_t data_total, const EthereumSignTx* msg) {
    * would mean the two disagreed; failing closed here keeps
    * "Unknown token value" off a screen that claims to bound a trade. */
   const TokenType *in, *out;
-  if (!resolveBothTokens(msg, &in, &out)) return false;
+  if (data_total != msg->data_initial_chunk.size ||
+      !zx_isZxTransformERC20(msg) || !resolveBothTokens(msg, &in, &out))
+    return false;
 
   char constr1[40], constr2[40];
   bignum256 inAmount, outAmount;
@@ -123,6 +145,20 @@ bool zx_confirmZxTransERC20(uint32_t data_total, const EthereumSignTx* msg) {
   snprintf(constr1, 32, "%s", inToken);
   snprintf(constr2, 32, "%s", outToken);
 
-  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Transform ERC20", "Input %s\nOutput %s", constr1, constr2);
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Transform ERC20",
+               "Input %s\nOutput %s", constr1, constr2))
+    return false;
+
+  /* The route is executable calldata too. Showing the complete dynamic tail
+   * makes transformations[] auditable instead of asking the user to trust a
+   * decoder that narrates only the four static arguments. */
+  return zx_confirmZxTransformRoute(
+      msg->data_initial_chunk.bytes + ZX_TRANSFORM_ERC20_HEAD_LEN,
+      msg->data_initial_chunk.size - ZX_TRANSFORM_ERC20_HEAD_LEN);
+}
+
+bool zx_confirmZxTransformRoute(const uint8_t* data, size_t size) {
+  if (!data || size < 32) return false;
+  return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                       "Transform Route", data, size);
 }

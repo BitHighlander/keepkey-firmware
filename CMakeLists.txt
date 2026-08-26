@@ -9,7 +9,7 @@ endif()
 
 project(
   KeepKeyFirmware
-  VERSION 7.15.0
+  VERSION 7.16.0
   LANGUAGES C CXX ASM)
 
 set(BOOTLOADER_MAJOR_VERSION 2)
@@ -20,8 +20,7 @@ option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
-option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
-       OFF)
+option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
 # Zcash shielded/Orchard support is part of the regular firmware. It is an
 # internal compile selection, not a third release variant: bitcoin-only strips
 # the Zcash coin and privacy engine; every regular device/emulator build ships
@@ -117,9 +116,9 @@ add_definitions(-DED25519_FORCE_32BIT=1)
 add_definitions(-DUSE_PRECOMPUTED_CP=0)
 
 if(${KK_BITCOIN_ONLY})
-  # Strip the coin-specific trezor-crypto primitives whose only callers
-  # (ethereum.c / nano.c) are themselves compiled out of this image. KECCAK
-  # stays on: it is a generic hash, and the saving is not worth the risk.
+  # Bitcoin-only: strip the coin-specific trezor-crypto primitives whose only
+  # callers (ethereum.c / nano.c) are compiled out below. KECCAK stays on --
+  # marginal size win, and it is a generic hash we don't want to risk.
   add_definitions(-DUSE_ETHEREUM=0)
   add_definitions(-DUSE_NANO=0)
 else()
@@ -171,11 +170,8 @@ else()
   add_definitions(-DDEBUG_LINK=0)
 endif()
 
-# Value macros: always defined, 0 or 1, and always tested with `#if FLAG`.
-# Device builds compile with -Wundef -Werror, so an undefined identifier inside
-# `#if` is a hard error rather than a silent zero -- which is what we want,
-# because a silently-zero guard would ship the coin engines into the stripped
-# image.
+# Value macros (always defined 0/1) -- device builds use -Wundef -Werror, so an
+# undefined identifier in `#if` is a hard error. Guard code with `#if FLAG`.
 if(${KK_BITCOIN_ONLY})
   add_definitions(-DBITCOIN_ONLY=1)
 else()

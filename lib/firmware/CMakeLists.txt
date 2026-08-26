@@ -2,8 +2,11 @@ set(sources
     app_confirm.c
     app_layout.c
     authenticator.c
+    bip85.c
     coins.c
     crypto.c
+    ctap2.c
+    ctap2_cbor.c
     dice_input.c
     fsm.c
     home_sm.c
@@ -22,9 +25,8 @@ set(sources
 # Non-Bitcoin coin families -- excluded from the bitcoin-only image.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      bip85.c
-      binance.c
       eip712.c
+      eip712_stream.c
       eos.c
       eos-contracts/eosio.system.c
       eos-contracts/eosio.token.c
@@ -38,6 +40,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts/zxtransERC20.c
       ethereum_contracts/zxswap.c
       ethereum_tokens.c
+      clearsign_root.c
       signed_metadata.c
       mayachain.c
       nano.c
@@ -68,6 +71,14 @@ include_directories(
   ${CMAKE_CURRENT_BINARY_DIR})
 
 add_library(kkfirmware ${sources})
+
+# Root inclusion is an explicit product choice. OFF remains fail-closed for
+# production/release builds. Alpha artifacts and emulator/unit builds opt into
+# the hardware-held alpha root whose certificates Vault currently serves.
+option(KK_CLEARSIGN_ALPHA_ROOT "Compile in the hardware-held alpha ClearSign root" OFF)
+if(KK_CLEARSIGN_ALPHA_ROOT)
+  target_compile_definitions(kkfirmware PRIVATE KK_CLEARSIGN_ALPHA_ROOT=1)
+endif()
 add_dependencies(kkfirmware kktransport.pb trezorcrypto qrcodegenerator ethereum_tokens.def)
 
 set(ETHEREUM_TOKENS ${CMAKE_BINARY_DIR}/include/keepkey/firmware/ethereum_tokens)
@@ -76,6 +87,9 @@ set(UNISWAP_TOKENS ${CMAKE_BINARY_DIR}/include/keepkey/firmware/uniswap_tokens)
 add_custom_target(ethereum_tokens.def
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/include/keepkey/firmware
   COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/ethereum_tokens.py ${ETHEREUM_TOKENS}.def
-  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/uniswap_tokens.py ${UNISWAP_TOKENS}.def)
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/uniswap_tokens.py ${UNISWAP_TOKENS}.def
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/verify-token-def.py
+          ${ETHEREUM_TOKENS}.def ${UNISWAP_TOKENS}.def
+  COMMENT "Generating and verifying firmware token tables")
 
 add_library(kkfirmware.keepkey variant/keepkey/resources.c)

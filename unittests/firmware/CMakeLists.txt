@@ -5,8 +5,14 @@
 # compiled them anyway and died on ethereum_address_checksum, which is compiled
 # out of that image. recovery.cpp was also listed twice.
 set(sources
+    ctap2.cpp
+    ctap2_cbor.cpp
+    confirm_test_utils.cpp
     dice.cpp
+    nanopb_bounds.cpp
     recovery.cpp
+    seed_display.cpp
+    test_board.cpp
     rng_health.cpp
     signing.cpp
     setup_ceremony.cpp
@@ -15,20 +21,20 @@ set(sources
     usb_rx.cpp
     u2f.cpp)
 
-# Suites for the coin engines the bitcoin-only image compiles out. Building
-# them against that image fails at the first reference to an absent symbol
-# (ethereum_address_checksum, tokenByTicker, ...), so they follow their
-# subjects out of the build. coins.cpp is here because it asserts the
-# multi-chain coin AND token table, not just the Bitcoin rows.
+# Coin/token unit tests exercise handlers/helpers that are compiled out of the
+# bitcoin-only firmware (ethereum_address_checksum, tokenByTicker, ...), so they
+# only build against a full-feature firmware. coins.cpp asserts the multi-chain
+# coin+token table.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
       authenticator.cpp
-      binance.cpp
       coins.cpp
       cosmos.cpp
       eip712.cpp
       eos.cpp
+      clearsign_root.cpp
       ethereum.cpp
+      eip712_stream.cpp
       hive.cpp
       mayachain.cpp
       nano.cpp
@@ -38,12 +44,12 @@ if(NOT ${KK_BITCOIN_ONLY})
       solana.cpp
       thorchain.cpp
       tron.cpp)
+else()
+  list(APPEND sources bitcoin_only.cpp)
 endif()
 
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
-# compiled into kkfirmware when the privacy flag is on. KK_BITCOIN_ONLY forces
-# KK_ZCASH_PRIVACY off (see the top-level CMakeLists), so the bitcoin-only build
-# skips it.
+# compiled into kkfirmware when the privacy flag is on.
 if(${KK_ZCASH_PRIVACY})
   list(APPEND sources zcash.cpp)
 endif()
@@ -55,6 +61,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
 
 add_executable(firmware-unit ${sources})
+
 target_link_libraries(firmware-unit
     gmock_main
     kkfirmware

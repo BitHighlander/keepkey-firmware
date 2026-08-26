@@ -34,6 +34,7 @@
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static OsmosisSignTx msg;
 static bool testnet;
@@ -166,6 +167,10 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   const char* const prelude = "{\"type\":\"cosmos-sdk/MsgSend\",\"value\":{";
@@ -194,6 +199,9 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -227,6 +235,10 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   // 9 + ^24 + 23 = ^56
@@ -251,10 +263,16 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "validator_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_address is host-supplied and, unlike
+  // delegator_address, was never format-validated (no bech32_decode) either.
+  tendermint_sha256UpdateEscaped(&ctx, validator_address,
+                                 strlen(validator_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -287,6 +305,10 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   // 9 + ^24 + 25 = ^58
@@ -311,10 +333,16 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "validator_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_address is host-supplied and, unlike
+  // delegator_address, was never format-validated (no bech32_decode) either.
+  tendermint_sha256UpdateEscaped(&ctx, validator_address,
+                                 strlen(validator_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -347,6 +375,10 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   // 9 + ^24 + 28 = ^64
@@ -371,18 +403,23 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"validator_dst_address\":\"");
 
-  // ^53
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s",
-                                 validator_dst_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_dst_address/validator_src_address are
+  // host-supplied and, unlike delegator_address, never format-validated.
+  tendermint_sha256UpdateEscaped(&ctx, validator_dst_address,
+                                 strlen(validator_dst_address));
 
   // 27
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"validator_src_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_src_address);
+  tendermint_sha256UpdateEscaped(&ctx, validator_src_address,
+                                 strlen(validator_src_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -394,6 +431,10 @@ bool osmosis_signTxUpdateMsgLPAdd(const uint64_t pool_id, const char* sender,
                                   const char* amount_in_max_b,
                                   const char* denom_in_max_b) {
   char buffer[96 + 1] = {0};
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -430,6 +471,9 @@ bool osmosis_signTxUpdateMsgLPAdd(const uint64_t pool_id, const char* sender,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\"denom\":\"%s\"}]}}", denom_in_max_b);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -441,6 +485,10 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
                                      const char* amount_out_min_b,
                                      const char* denom_out_min_b) {
   char buffer[96 + 1] = {0};
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -477,6 +525,9 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\"denom\":\"%s\"}]}}", denom_out_min_b);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -507,6 +558,10 @@ bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   // 9 + ^24 + 38 = ^72
@@ -526,10 +581,16 @@ bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "validator_address\":\"");
 
-  // ^53 + 3 = ^56
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
-                                 validator_address);
+  // Escape as defense-in-depth, same as delegator_address/memo elsewhere in
+  // this file -- validator_address is host-supplied and, unlike
+  // delegator_address, was never format-validated (no bech32_decode) either.
+  tendermint_sha256UpdateEscaped(&ctx, validator_address,
+                                 strlen(validator_address));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}}");
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -563,6 +624,10 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
   char from_address[54] = {0};
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -610,6 +675,9 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
       &ctx, buffer, sizeof(buffer),
       "\"token\":{\"amount\":\"%s\",\"denom\":\"%s\"}}}", amount, denom);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -623,6 +691,10 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
   char buffer[96 + 1] = {0};
 
   // TODO: add testnet support
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -652,6 +724,9 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
                                  "\"token_out_min_amount\":\"%s\"}}",
                                  token_out_min_amount);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -712,10 +787,13 @@ bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
 
 bool osmosis_signingIsInited(void) { return initialized; }
 
-bool osmosis_signingIsFinished(void) { return msgs_remaining == 0; }
+bool osmosis_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void osmosis_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));

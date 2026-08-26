@@ -72,6 +72,9 @@ unsigned addAuthAccount(char* accountWithSeed);
 unsigned getAuthAccount(const char* slotStr, char acc[]);
 unsigned removeAuthAccount(char* domAcc);
 unsigned wipeAuthData(void);
+/* Drop the plaintext TOTP cache without touching persistent authenticator
+ * storage. The next operation reloads it only after wallet authorization. */
+void authenticator_clear_cache(void);
 #if DEBUG_LINK
 void getAuthSlot(char* authSlotData);
 #endif

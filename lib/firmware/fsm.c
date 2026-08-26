@@ -36,10 +36,9 @@
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/bip85.h"
-#include "keepkey/rand/rng_health.h"
+#include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
-#include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts.h"
@@ -56,6 +55,7 @@
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/ripple.h"
+#include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
@@ -86,7 +86,6 @@
 #include "messages-ethereum.pb.h"
 #include "messages-hive.pb.h"
 #include "messages-zcash.pb.h"
-#include "messages-binance.pb.h"
 #include "messages-cosmos.pb.h"
 #include "messages-osmosis.pb.h"
 #include "messages-eos.pb.h"
@@ -107,6 +106,11 @@
 #define _(X) (X)
 
 static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+static HDNode CONFIDENTIAL fsm_derived_node;
+
+void fsm_clearDerivedNode(void) {
+  memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+}
 
 #define CHECK_INITIALIZED                               \
   if (!storage_isInitialized()) {                       \
@@ -230,7 +234,6 @@ static const CoinType* fsm_getCoin(bool has_name, const char* name) {
 static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
                                   size_t address_n_count,
                                   uint32_t* fingerprint) {
-  static HDNode CONFIDENTIAL node;
   if (fingerprint) {
     *fingerprint = 0;
   }
@@ -241,7 +244,7 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
     return 0;
   }
 
-  if (!storage_getRootNode(curve, true, &node)) {
+  if (!storage_getRootNode(curve, true, &fsm_derived_node)) {
     fsm_sendFailure(FailureType_Failure_NotInitialized,
                     "Device not initialized or passphrase request cancelled");
     layoutHome();
@@ -249,17 +252,17 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
   }
 
   if (!address_n || address_n_count == 0) {
-    return &node;
+    return &fsm_derived_node;
   }
 
-  if (hdnode_private_ckd_cached(&node, address_n, address_n_count,
+  if (hdnode_private_ckd_cached(&fsm_derived_node, address_n, address_n_count,
                                 fingerprint) == 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Failed to derive private key");
     layoutHome();
     return 0;
   }
 
-  return &node;
+  return &fsm_derived_node;
 }
 
 #if DEBUG_LINK
@@ -329,25 +332,19 @@ void fsm_msgClearSession(ClearSession* msg) {
   fsm_sendSuccess("Session cleared");
 }
 
-// Always-on handlers: Bitcoin and common device messages (fsm_msg_coin,
-// fsm_msg_common), CipherKeyValue/identity (fsm_msg_crypto) and debug-link.
-// None of these is a coin engine.
+// Always-on handlers: Bitcoin/common (fsm_msg_coin), CipherKeyValue/identity
+// (fsm_msg_crypto), debug-link, and BIP85 -- none are coin engines.
 #include "fsm_msg_common.h"
 #include "fsm_msg_coin.h"
 #include "fsm_msg_crypto.h"
 #include "fsm_msg_debug.h"
-#if !BITCOIN_ONLY
-// BIP-85 derives child mnemonics for OTHER wallets -- a multi-chain feature.
-// It must be gated in step with messagemap.def: a handler compiled with no
-// entry referencing it is an unused function, which -Werror turns into a
-// build failure.
 #include "fsm_msg_bip85.h"
+#if !BITCOIN_ONLY
 #include "fsm_msg_ethereum.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"
 #include "fsm_msg_cosmos.h"
 #include "fsm_msg_osmosis.h"
-#include "fsm_msg_binance.h"
 #include "fsm_msg_ripple.h"
 #include "fsm_msg_tendermint.h"
 #include "fsm_msg_thorchain.h"
@@ -362,8 +359,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 // Bitcoin-only: the coin engines above are compiled out, but the always-on
 // Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
 // and factory-reset calls signed_metadata_clear_signers() (EVM clearsign).
-// With no state to reset, no-ops are the correct definitions -- and defining
-// them here keeps those handlers free of build-variant branches.
+// With no state to reset, no-ops are correct.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}

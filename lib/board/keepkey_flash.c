@@ -105,6 +105,14 @@ void flash_erase_word(Allocation group) {
     }
     ++s;
   }
+#else
+  const FlashSector* s = flash_sector_map;
+  while (s->use != FLASH_INVALID) {
+    if (s->use == group) {
+      memset((void*)FLASH_PTR(s->start), 0xFF, s->len);
+    }
+    ++s;
+  }
 #endif
 }
 

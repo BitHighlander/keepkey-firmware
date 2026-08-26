@@ -7,7 +7,8 @@ extern "C" {
 #include "types.pb.h"
 #include "storage.h"
 
-/* Emulator flash bring-up, same forward declaration signed_metadata.cpp uses. */
+/* Emulator flash bring-up, same forward declaration signed_metadata.cpp uses.
+ */
 void setup(void);
 }
 
@@ -397,8 +398,8 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
   ConfigFlash start;
   memset(&start, 0, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
-  start.storage.version = STORAGE_VERSION;
-  start.storage.encrypted_sec_version = STORAGE_VERSION;
+  start.storage.version = 17;
+  start.storage.encrypted_sec_version = 17;
   storage_resetPolicies(&start.storage);
 
   // Enable it in the shadow config, which is what the writer serializes from
@@ -454,16 +455,14 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
         << r.name << ": a flash bit re-enabled blind signing across a reboot";
   }
 
-  // 3. Ignoring the stale bit is not enough -- it must be SCRUBBED. Firmware
-  //    <= 7.15 still reads bit 12 as the policy, so a downgrade would boot with
-  //    blind signing already on. storage_fromFlash must therefore report
-  //    SUS_Updated (which makes storage_init commit, and the writer zeroes it)
-  //    rather than SUS_Valid, which commits nothing.
+  // 3. Ignoring the stale bit is not enough -- it must be SCRUBBED during the
+  //    mandatory V17 -> V20 migration. storage_fromFlash reports SUS_Updated,
+  //    storage_init commits V20, and the writer zeroes the retired bit.
   {
     static char sector[STORAGE_SECTOR_LEN];
     memset(sector, 0, sizeof(sector));
     memcpy(sector, "stor", 4);
-    uint32_t v = STORAGE_VERSION;
+    uint32_t v = 17;
     memcpy(sector + 44, &v, sizeof(v));
 
     SessionState ss;
@@ -473,8 +472,8 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
     memcpy(sector + 48, &clean, sizeof(clean));
     memset(&ss, 0, sizeof(ss));
     memset(&out, 0, sizeof(out));
-    EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Valid)
-        << "a clean V17 sector must not force a needless flash write";
+    EXPECT_EQ(storage_fromFlash(&ss, &out, sector), SUS_Updated)
+        << "a clean V17 sector must migrate to V20";
 
     uint32_t stale = (1u << 12);
     memcpy(sector + 48, &stale, sizeof(stale));
@@ -760,12 +759,12 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
 }
 #endif
 
-TEST(Storage, StorageRoundTrip) {
+TEST(Storage, StorageV17MigrationRoundTrip) {
   ConfigFlash start;
   memset(&start, 0xAB, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
-  start.storage.version = STORAGE_VERSION;
-  start.storage.encrypted_sec_version = STORAGE_VERSION;
+  start.storage.version = 17;
+  start.storage.encrypted_sec_version = 17;
   start.storage.sec.node.fingerprint = 42;
   start.storage.pub.has_pin = true;
   start.storage.pub.has_language = true;
@@ -793,12 +792,13 @@ TEST(Storage, StorageRoundTrip) {
 
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey("", wrapping_key, start.storage.pub.sca_hardened,
-                            PIN_KDF_V15,
-                            start.storage.pub.random_salt, "");
+                            PIN_KDF_V15, start.storage.pub.random_salt, "");
   storage_unwrapStorageKey(wrapping_key, start.storage.pub.wrapped_storage_key,
                            session.storageKey);
 
   storage_secMigrate(&session, &start.storage, /*encrypt=*/true);
+  // Recreate a V17 image: migration encrypts using the current version marker.
+  start.storage.encrypted_sec_version = 17;
 
   std::vector<uint8_t> flash(2570);
 
@@ -823,7 +823,7 @@ TEST(Storage, StorageRoundTrip) {
   const uint8_t expected_flash[] = {
         0x73, 0x74, 0x6f, 0x72, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
         0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
-        0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x00, 0x00, 0x00, STORAGE_VERSION, 0x00, 0x00, 0x00,
+        0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0x00, 0x00, 0x00, 17, 0x00, 0x00, 0x00,
         0xff, 0x42, 0x01, 0x00, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
         0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
         0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
@@ -917,7 +917,7 @@ TEST(Storage, StorageRoundTrip) {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, STORAGE_VERSION, 0x00, 0x00, 0x00, 0xe4, 0x8d, 0xfe, 0xcf, 0xd0, 0x54, 0x71,
+        0x00, 0x00, 0x00, 0x00, 0x00, 17, 0x00, 0x00, 0x00, 0xe4, 0x8d, 0xfe, 0xcf, 0xd0, 0x54, 0x71,
         0x50, 0xcb, 0x12, 0x84, 0xfa, 0x5f, 0xbf, 0xcb, 0x09, 0xca, 0x00, 0xf1, 0x37, 0xe4, 0x8f, 0x5e,
         0xf9, 0x81, 0x57, 0x26, 0xb6, 0x7b, 0x8e, 0x03, 0x44, 0x9a, 0x2a, 0x7c, 0xf4, 0x3c, 0x79, 0x87,
         0x5d, 0x26, 0xae, 0x9b, 0x4b, 0xb4, 0xd2, 0xc4, 0x67, 0x97, 0xe7, 0x6b, 0x6c, 0x4c, 0xbe, 0x68,
@@ -986,7 +986,7 @@ TEST(Storage, StorageRoundTrip) {
   // clang-format on
 
   // If storage isn't correct, let's get an idea of where the failure is
-  for (int i=0; i<flash.size(); i++) {
+  for (int i = 0; i < flash.size(); i++) {
     if (flash[i] != expected_flash[i]) {
       printf("%d\n %x %x\n", i, flash[i], expected_flash[i]);
     }
@@ -995,7 +995,7 @@ TEST(Storage, StorageRoundTrip) {
 
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
-  EXPECT_EQ(storage_fromFlash(&session, &end, (char *)&flash[0]), SUS_Valid);
+  EXPECT_EQ(storage_fromFlash(&session, &end, (char *)&flash[0]), SUS_Updated);
 
   storage_secMigrate(&session, &end.storage, /*encrypt=*/false);
 
@@ -1003,6 +1003,42 @@ TEST(Storage, StorageRoundTrip) {
 
   EXPECT_EQ(end.storage.sec.cache.root_seed_cache_status,
             start.storage.sec.cache.root_seed_cache_status);
+}
+
+TEST(Storage, PasskeyMetadataV20RoundTrip) {
+  ConfigFlash start;
+  memset(&start, 0, sizeof(start));
+  memcpy(start.meta.magic, "stor", 4);
+  start.storage.version = STORAGE_VERSION;
+  start.storage.encrypted_sec_version = STORAGE_VERSION;
+  start.storage.pub.passkeys.version = 1;
+  start.storage.pub.passkeys.pin_set = 1;
+  start.storage.pub.passkeys.pin_retries = 6;
+  memset(start.storage.pub.passkeys.pin_salt, 0x24,
+         sizeof(start.storage.pub.passkeys.pin_salt));
+  memset(start.storage.pub.passkeys.pin_hash, 0x42,
+         sizeof(start.storage.pub.passkeys.pin_hash));
+  PasskeyCredential *credential = &start.storage.pub.passkeys.credentials[0];
+  credential->occupied = 1;
+  credential->user_id_length = 4;
+  memcpy(credential->user_id, "user", 4);
+  memcpy(credential->rp_id_hash, "01234567890123456789012345678901", 32);
+  memcpy(credential->credential_id,
+         "0123456789012345678901234567890123456789012345678901234567890123",
+         64);
+  strcpy(credential->user_name, "alice");
+
+  std::vector<uint8_t> flash(3480);
+  storage_writeV20(reinterpret_cast<char *>(flash.data()), flash.size(),
+                   &start);
+  ConfigFlash restored;
+  memset(&restored, 0, sizeof(restored));
+  storage_readV20(&restored, reinterpret_cast<const char *>(flash.data()),
+                  flash.size());
+  EXPECT_EQ(restored.storage.pub.passkeys.pin_retries, 6);
+  EXPECT_EQ(0,
+            memcmp(&restored.storage.pub.passkeys, &start.storage.pub.passkeys,
+                   sizeof(start.storage.pub.passkeys)));
 }
 
 TEST(Storage, NoopSecMigrate) {
@@ -1067,7 +1103,7 @@ TEST(Storage, IsPinCorrect) {
 }
 
 TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
-  const char* pin = "1234";
+  const char *pin = "1234";
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t random_salt[RANDOM_SALT_LEN] = {0};
   uint8_t legacy_wrapping_key[64];
@@ -1085,15 +1121,13 @@ TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
   memcpy(original_wrapped_key, wrapped_key, sizeof(original_wrapped_key));
   storage_keyFingerprint(storage_key, fingerprint);
 
-  EXPECT_EQ(PIN_WRONG,
-            storage_isPinCorrect_impl(
-                "9999", wrapped_key, fingerprint, &sca_hardened,
-                &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
+  EXPECT_EQ(PIN_WRONG, storage_isPinCorrect_impl(
+                           "9999", wrapped_key, fingerprint, &sca_hardened,
+                           &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
   EXPECT_TRUE(sca_hardened);
   EXPECT_TRUE(v15_16_trans);
   EXPECT_FALSE(pin_kdf_v2);
-  EXPECT_EQ(0,
-            memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
+  EXPECT_EQ(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 
   // This is the gate's negative test. The key above is already v16-wrapped and
   // sca-hardened, so with STORAGE_PIN_KDF_V19 off there is nothing left to
@@ -1101,17 +1135,15 @@ TEST(Storage, PinKdfRewrapsToActiveVersionAfterCorrectPin) {
   // and produce no v19 claim. Persisting a v19 wrap under a V17 record -- where
   // the flag cannot round-trip -- would lock the wallet out on the next boot.
 #if STORAGE_PIN_KDF_V19
-  EXPECT_EQ(PIN_REWRAP,
-            storage_isPinCorrect_impl(
-                pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
-                &pin_kdf_v2, key_out, random_salt));
+  EXPECT_EQ(PIN_REWRAP, storage_isPinCorrect_impl(
+                            pin, wrapped_key, fingerprint, &sca_hardened,
+                            &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
   EXPECT_TRUE(pin_kdf_v2);
   EXPECT_NE(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 #else
-  EXPECT_EQ(PIN_GOOD,
-            storage_isPinCorrect_impl(
-                pin, wrapped_key, fingerprint, &sca_hardened, &v15_16_trans,
-                &pin_kdf_v2, key_out, random_salt));
+  EXPECT_EQ(PIN_GOOD, storage_isPinCorrect_impl(
+                          pin, wrapped_key, fingerprint, &sca_hardened,
+                          &v15_16_trans, &pin_kdf_v2, key_out, random_salt));
   EXPECT_FALSE(pin_kdf_v2);
   EXPECT_EQ(0, memcmp(wrapped_key, original_wrapped_key, sizeof(wrapped_key)));
 #endif
@@ -1168,18 +1200,17 @@ TEST(Storage, Vuln1996) {
   for (const auto &v : vec) {
     memset(&session, 0, sizeof(session));
     memset(&config, 0, sizeof(config));
-    memset(random_salt, 0, sizeof(random_salt));
     storage_reset_impl(&session, &config);
+    memcpy(random_salt, config.storage.pub.random_salt, sizeof(random_salt));
 
     storage_setPin_impl(&session, &config.storage, v.pin);
 
     ASSERT_TRUE(PIN_GOOD == storage_isPinCorrect_impl(
                                 v.pin, config.storage.pub.wrapped_storage_key,
                                 config.storage.pub.storage_key_fingerprint,
-                                &config.storage.pub.sca_hardened, 
+                                &config.storage.pub.sca_hardened,
                                 &config.storage.pub.v15_16_trans,
-                                &config.storage.pub.pin_kdf_v2,
-                                storage_key,
+                                &config.storage.pub.pin_kdf_v2, storage_key,
                                 random_salt));
     ASSERT_TRUE(config.storage.pub.sca_hardened == true);
     memcpy(wrapped_key1, config.storage.pub.wrapped_storage_key,
@@ -1222,14 +1253,34 @@ TEST(Storage, Vuln1996) {
     ASSERT_TRUE(storage_isPinCorrect_impl(
         v.pin, config.storage.pub.wrapped_storage_key,
         config.storage.pub.storage_key_fingerprint,
-        &config.storage.pub.sca_hardened, 
-        &config.storage.pub.v15_16_trans,
-        &config.storage.pub.pin_kdf_v2,
-        storage_key, random_salt));
+        &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+        &config.storage.pub.pin_kdf_v2, storage_key, random_salt));
     ASSERT_TRUE(memcmp(wrapped_key1, config.storage.pub.wrapped_storage_key,
                        sizeof(wrapped_key1)) == 0);
     ASSERT_TRUE(config.storage.pub.sca_hardened == true);
   }
+}
+
+TEST(Storage, ResetMintsFreshPinKdfSalt) {
+  ConfigFlash first;
+  ConfigFlash second;
+  SessionState first_session;
+  SessionState second_session;
+  memset(&first, 0, sizeof(first));
+  memset(&second, 0, sizeof(second));
+  memset(&first_session, 0, sizeof(first_session));
+  memset(&second_session, 0, sizeof(second_session));
+
+  storage_reset_impl(&first_session, &first);
+  storage_reset_impl(&second_session, &second);
+
+  const uint8_t zero_salt[RANDOM_SALT_LEN] = {0};
+  EXPECT_NE(
+      0, memcmp(first.storage.pub.random_salt, zero_salt, sizeof(zero_salt)));
+  EXPECT_NE(
+      0, memcmp(second.storage.pub.random_salt, zero_salt, sizeof(zero_salt)));
+  EXPECT_NE(0, memcmp(first.storage.pub.random_salt,
+                      second.storage.pub.random_salt, RANDOM_SALT_LEN));
 }
 
 TEST(Storage, Reset) {
@@ -1243,10 +1294,8 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(storage_isPinCorrect_impl(
       "", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
-      &config.storage.pub.sca_hardened, 
-      &config.storage.pub.v15_16_trans,
-      &config.storage.pub.pin_kdf_v2,
-      session.storageKey,
+      &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+      &config.storage.pub.pin_kdf_v2, session.storageKey,
       config.storage.pub.random_salt));
 
   uint8_t old_storage_key[64];
@@ -1261,10 +1310,8 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(storage_isPinCorrect_impl(
       "1234", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
-      &config.storage.pub.sca_hardened, 
-      &config.storage.pub.v15_16_trans,
-      &config.storage.pub.pin_kdf_v2,
-      new_storage_key,
+      &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+      &config.storage.pub.pin_kdf_v2, new_storage_key,
       config.storage.pub.random_salt));
 
   ASSERT_TRUE(storage_isWipeCodeCorrect_impl(
@@ -1275,51 +1322,30 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(memcmp(session.storageKey, new_storage_key, 64) == 0);
 }
 
-// The V18 record layout remains reserved for compatibility, but RC18 must
-// neither write nor accept those unauthenticated public-storage trust anchors.
-TEST(Storage, ClearsignIdentityV18RecordsAreRetired) {
+// An unshipped 7.15 RC appended unauthenticated clear-sign identities after the
+// V17 record. V20 must ignore that trailing block and never copy it into RAM.
+TEST(Storage, V20IgnoresRetiredClearsignIdentityBlock) {
   ConfigFlash start;
   memset(&start, 0, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);
   start.storage.version = STORAGE_VERSION;
   start.storage.encrypted_sec_version = STORAGE_VERSION;
-
-  // Even a populated in-memory legacy record is serialized as zeros.
-  ClearsignIdentity* a = &start.storage.pub.clearsign_identities[0];
-  a->present = true;
-  a->key_id = 1;
-  memset(a->pubkey, 0x42, sizeof(a->pubkey));
-  strcpy(a->alias, "CI Test");
-  a->icon_w = 32;
-  a->icon_h = 32;
-  a->icon_len = 2;
-  a->icon[0] = 0x01;
-  a->icon[1] = 0xFF;
+  start.storage.pub.passkeys.version = 1;
+  start.storage.pub.passkeys.pin_retries = PASSKEY_PIN_RETRIES;
 
   std::vector<uint8_t> flash(3480, 0);
-  storage_writeV18((char*)&flash[0], flash.size(), &start);
+  storage_writeV20((char *)&flash[0], flash.size(), &start);
   const size_t identity_block_off = 44 + 1501 + V17_ENCSEC_SIZE;
-  const size_t identity_block_len =
-      PERSISTENT_IDENTITY_COUNT * (71 + CLEARSIGN_ICON_MAX);
-  for (size_t i = 0; i < identity_block_len; i++) {
-    ASSERT_EQ(0, flash[identity_block_off + i]) << "byte " << i;
-  }
+  const size_t identity_block_len = 2 * (71 + 384);
 
-  // Simulate attacker-controlled legacy flash. Deserialization must scrub the
-  // full in-memory block rather than parse or expose any of it.
+  // Simulate attacker-controlled legacy trailing flash. V20 parses only its
+  // bounded 2569-byte record, so passkey state remains unchanged.
   memset(&flash[identity_block_off], 0xA5, identity_block_len);
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
-  storage_readV18(&end, (const char*)&flash[0], flash.size());
-  const uint8_t* retired =
-      reinterpret_cast<const uint8_t*>(end.storage.pub.clearsign_identities);
-  for (size_t i = 0; i < sizeof(end.storage.pub.clearsign_identities); i++) {
-    ASSERT_EQ(0, retired[i]) << "byte " << i;
-  }
-  for (int k = 0; k < PERSISTENT_IDENTITY_COUNT; k++) {
-    const ClearsignIdentity* r = &end.storage.pub.clearsign_identities[k];
-    ASSERT_FALSE(r->present) << "present " << k;
-  }
+  storage_readV20(&end, (const char *)&flash[0], flash.size());
+  EXPECT_EQ(1, end.storage.pub.passkeys.version);
+  EXPECT_EQ(PASSKEY_PIN_RETRIES, end.storage.pub.passkeys.pin_retries);
 }
 
 TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
@@ -1329,16 +1355,16 @@ TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
   start.storage.version = STORAGE_VERSION;
   start.storage.pub.pin_kdf_v2 = true;
 
-  std::vector<uint8_t> flash(3480, 0);
-  storage_writeV19((char*)&flash[0], flash.size(), &start);
+  std::vector<uint8_t> flash(2572, 0);
+  storage_writeV19((char *)&flash[0], flash.size(), &start);
 
   ConfigFlash end;
   memset(&end, 0, sizeof(end));
-  storage_readV19(&end, (const char*)&flash[0], flash.size());
+  storage_readV19(&end, (const char *)&flash[0], flash.size());
   EXPECT_TRUE(end.storage.pub.pin_kdf_v2);
 
   memset(&end, 0xCC, sizeof(end));
-  storage_readV18(&end, (const char*)&flash[0], flash.size());
+  storage_readV20(&end, (const char *)&flash[0], flash.size());
   EXPECT_FALSE(end.storage.pub.pin_kdf_v2);
 }
 
@@ -1349,8 +1375,8 @@ TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
 // RAM, so none of them could see it.
 //
 // This is the whole round trip, in the order the device performs it: create,
-// set a PIN, serialize the V17 record exactly as storage_commit() does, reload
-// it into fresh state as a boot would, unlock, and recover the secrets.
+// set a PIN, serialize the last-shipped V17 record, reload it into fresh state
+// as a 7.16 boot would, migrate, unlock, and recover the secrets.
 TEST(Storage, PinUnlocksAfterRebootUnderV17) {
   ConfigFlash cfg;
   SessionState ss;
@@ -1364,16 +1390,19 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
   // does not detour through u2froot derivation; the mnemonic still rides
   // through the encrypted section either way.
   cfg.storage.has_sec = true;
-  strlcpy(cfg.storage.sec.mnemonic, "all all all all all all all all all all all all",
+  strlcpy(cfg.storage.sec.mnemonic,
+          "all all all all all all all all all all all all",
           sizeof(cfg.storage.sec.mnemonic));
 
   storage_setPin_impl(&ss, &cfg.storage, "1234");
+  cfg.storage.version = 17;
+  cfg.storage.encrypted_sec_version = 17;
 
   uint8_t key_before_reboot[64];
   memcpy(key_before_reboot, ss.storageKey, sizeof(key_before_reboot));
 
-  // storage_commit()'s buffer, same size, same writer.
-  std::vector<char> flash(2572, 0);
+  // storage_fromFlash reads a full sector, just as it does on device.
+  std::vector<char> flash(STORAGE_SECTOR_LEN, 0);
   storage_writeV17(&flash[0], flash.size(), &cfg);
 
   // Reboot: nothing carries over but the flash sector.
@@ -1381,26 +1410,24 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
   SessionState fresh;
   memset(&reloaded, 0, sizeof(reloaded));
   memset(&fresh, 0, sizeof(fresh));
-  ASSERT_EQ(SUS_Valid, storage_fromFlash(&fresh, &reloaded, &flash[0]))
-      << "V17 is the current version; reading it back must not migrate";
+  ASSERT_EQ(SUS_Updated, storage_fromFlash(&fresh, &reloaded, &flash[0]))
+      << "the last-shipped V17 record must migrate to V20";
 
   bool sca_hardened = reloaded.storage.pub.sca_hardened;
   bool v15_16_trans = reloaded.storage.pub.v15_16_trans;
   bool pin_kdf_v2 = reloaded.storage.pub.pin_kdf_v2;
 
-  EXPECT_EQ(PIN_WRONG,
-            storage_isPinCorrect_impl(
-                "9999", reloaded.storage.pub.wrapped_storage_key,
-                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
-                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
-                reloaded.storage.pub.random_salt));
+  EXPECT_EQ(PIN_WRONG, storage_isPinCorrect_impl(
+                           "9999", reloaded.storage.pub.wrapped_storage_key,
+                           reloaded.storage.pub.storage_key_fingerprint,
+                           &sca_hardened, &v15_16_trans, &pin_kdf_v2,
+                           fresh.storageKey, reloaded.storage.pub.random_salt));
 
-  ASSERT_EQ(PIN_GOOD,
-            storage_isPinCorrect_impl(
-                "1234", reloaded.storage.pub.wrapped_storage_key,
-                reloaded.storage.pub.storage_key_fingerprint, &sca_hardened,
-                &v15_16_trans, &pin_kdf_v2, fresh.storageKey,
-                reloaded.storage.pub.random_salt))
+  ASSERT_EQ(PIN_GOOD, storage_isPinCorrect_impl(
+                          "1234", reloaded.storage.pub.wrapped_storage_key,
+                          reloaded.storage.pub.storage_key_fingerprint,
+                          &sca_hardened, &v15_16_trans, &pin_kdf_v2,
+                          fresh.storageKey, reloaded.storage.pub.random_salt))
       << "the PIN set before the reboot no longer opens the wallet";
   EXPECT_EQ(0, memcmp(fresh.storageKey, key_before_reboot,
                       sizeof(key_before_reboot)));

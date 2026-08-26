@@ -236,8 +236,14 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
       }
       // We don't know what the exponent should be so just confirm raw
       // unformatted number
-      bn_format(&Amount, NULL, " unformatted", 0, 0, false, confStr,
-                sizeof(confStr));
+      /* bn_format() BLANKS its output buffer and returns 0 when the value
+       * does not fit -- ignoring the return renders an EMPTY amount on the
+       * confirmation screen, the one rendering a user cannot read as wrong.
+       * Never leave the caller a blank amount. */
+      if (bn_format(&Amount, NULL, " unformatted", 0, 0, false, confStr,
+                    sizeof(confStr)) == 0) {
+        strlcpy(confStr, "AMOUNT TOO LARGE TO DISPLAY", sizeof(confStr));
+      }
 
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    protocol_label, "amount %s", confStr)) {

@@ -525,21 +525,30 @@ static void clearDsVals(void) {
   dsverifyingContract = NULL;
 }
 
-void marshallDsVals(const char* value) {
+/* Returns false for any EIP712Domain field name outside the four this
+   device knows how to disclose on dsConfirm()'s screen. EIP-712 spec-legally
+   allows others (e.g. "salt") -- without this, such a field would still get
+   hashed into the domain separator via the ordinary per-field dispatch in
+   parseVals(), with nothing on any screen ever showing it. */
+bool marshallDsVals(const char* value) {
   if (0 == strncmp(nameForValue, "name", sizeof("name"))) {
     dsname = value;
+    return true;
   }
   if (0 == strncmp(nameForValue, "version", sizeof("version"))) {
     dsversion = value;
+    return true;
   }
   if (0 == strncmp(nameForValue, "chainId", sizeof("chainId"))) {
     dschainId = value;
+    return true;
   }
   if (0 ==
       strncmp(nameForValue, "verifyingContract", sizeof("verifyingContract"))) {
     dsverifyingContract = value;
+    return true;
   }
-  return;
+  return false;
 }
 
 /* Domain-separator values are marshalled and shown together on dsConfirm()'s
@@ -548,7 +557,7 @@ void marshallDsVals(const char* value) {
 static int confirmTypedValue(bool ds_vals, const char* value) {
   if (!value) return GENERAL_ERROR;
   if (ds_vals) {
-    marshallDsVals(value);
+    if (!marshallDsVals(value)) return GENERAL_ERROR;
     return SUCCESS;
   }
   return confirmValue(value);
@@ -655,6 +664,12 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
   if (0 ==
       strncmp(json_getName(jType), "EIP712Domain", sizeof("EIP712Domain"))) {
     ds_vals = true;
+    /* dsname/dsversion/dschainId/dsverifyingContract are only cleared inside
+     * dsConfirm(), reached only when this field loop completes without an
+     * early return. A malformed field or a user Cancel on an earlier
+     * request could otherwise leave stale pointers set here going into a
+     * later, unrelated domain parse. Start every domain parse clean. */
+    clearDsVals();
   }
 
   tarray = json_getChild(jType);

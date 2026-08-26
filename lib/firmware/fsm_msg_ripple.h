@@ -98,6 +98,21 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
     return;
   }
 
+  /* ripple_serializeAmount() forces bits 62-63 of the signed 64-bit amount to
+     fixed XRP/sign flags, so only values below 2^61 round-trip exactly
+     between what's displayed here and what's embedded in the signed bytes.
+     Auditor-caught unit error in an earlier version of this fix: XRPL's real
+     ceiling is 100,000,000,000 XRP = 1e17 DROPS (payment.amount is drops, not
+     XRP) -- 1e11 would have rejected any payment over 100,000 XRP. 1e17 is
+     comfortably under 2^61 (~2.3e18). Enforce the shared serializer/FSM
+     constant here so a violation is reported before confirmation. */
+  if (msg->payment.amount > RIPPLE_MAX_AMOUNT_DROPS) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Amount exceeds the maximum supported"));
+    return;
+  }
+
   char amount_string[20 + 4 + 1];
   ripple_formatAmount(amount_string, sizeof(amount_string),
                       msg->payment.amount);
@@ -145,6 +160,11 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
 
   ripple_signTx(node, msg, resp);
   memzero(node, sizeof(*node));
+  if (!resp->has_signature) {
+    fsm_sendFailure(FailureType_Failure_FirmwareError, _("Signing failed"));
+    layoutHome();
+    return;
+  }
   msg_write(MessageType_MessageType_RippleSignedTx, resp);
   layoutHome();
 }

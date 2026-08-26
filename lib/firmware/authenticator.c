@@ -43,6 +43,12 @@ static CONFIDENTIAL authType authData[AUTHDATA_SIZE] = {0};
 static bool localAuthdataUpdate =
     true; /* initialization trick, only need to fetch a local copy once
              successfully */
+
+void authenticator_clear_cache(void) {
+  memzero(authData, sizeof(authData));
+  localAuthdataUpdate = true;
+}
+
 static bool getAuthData(void) {
   if (localAuthdataUpdate) {
     if (storage_getAuthData(authData)) {
@@ -95,8 +101,7 @@ unsigned wipeAuthData(void) {
   // wipe storage and reset authdata encryption flag
   storage_wipeAuthData();
   // wipe local copy
-  memzero(authData, sizeof(authData));
-  localAuthdataUpdate = true;
+  authenticator_clear_cache();
   return NOERR;
 }
 

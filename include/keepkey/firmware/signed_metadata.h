@@ -16,9 +16,8 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
-/* Identity icon cap (1bpp mono RLE). Must equal the device-protocol
- * LoadClearsignSigner.icon max_size and storage.h CLEARSIGN_ICON_MAX
- * (static-asserted in signed_metadata.c). */
+/* Session identity icon cap (1bpp mono RLE). Must equal the device-protocol
+ * LoadClearsignSigner.icon max_size. Identities are never persisted. */
 #define METADATA_ICON_MAX 384
 /* hex(first 4 bytes of sha256(pubkey)) + NUL */
 #define METADATA_FINGERPRINT_LEN 9
@@ -47,6 +46,42 @@ typedef enum {
  */
 #define METADATA_VERSION_LEGACY 0x01
 #define METADATA_VERSION_SCHEMA 0x02
+
+/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][inner v2 payload].
+ * The certificate is verified and DISCARDED inside one message -- nothing about
+ * a delegation survives into the next transaction. */
+#define METADATA_VERSION_CERTIFIED 0x03
+
+/* The delegate is addressed by a sentinel that is >= METADATA_MAX_KEYS BY
+ * CONSTRUCTION, so it can never name a runtime slot.
+ *
+ * That is the whole promotion defence, and it is worth stating plainly: a host
+ * can write a public key into exactly one array, via exactly one message
+ * (LoadClearsignSigner -> signed_metadata_store_signer), and that function
+ * already rejects any key_id >= METADATA_MAX_KEYS. Promotion is prevented by
+ * the ABSENCE OF A WRITER, not by a check somebody could forget to add.
+ *
+ * metadata_pubkey_for() is deliberately left untouched by 7.16 for the same
+ * reason -- it is shared with Solana, and not modifying it means the KeepKey
+ * tier cannot leak there by call-graph accident. */
+#define METADATA_KEYID_DELEGATE 0x80
+
+typedef enum {
+  METADATA_TIER_NONE = 0,
+  METADATA_TIER_RUNTIME = 1, /* user loaded it this session; annotation only */
+  METADATA_TIER_KEEPKEY =
+      2, /* KeepKey-delegated; MAY suppress the raw review */
+} MetadataTier;
+
+/* The single suppression predicate. Positive and conjunctive: every clause must
+ * hold. Written this way rather than as an else-arm so that adding a trust tier
+ * later cannot silently widen it. */
+bool signed_metadata_may_suppress(uint32_t tx_chain_id);
+
+/* Display for the KeepKey tier. Empty unless the current message carried a
+ * verified certificate. */
+const char* signed_metadata_delegate_alias(void);
+bool signed_metadata_delegate_fingerprint(char out[METADATA_FINGERPRINT_LEN]);
 
 /*
  * Argument display formats. The goal of clear-signing is that the device

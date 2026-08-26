@@ -473,7 +473,7 @@ static size_t eos_hashAuthorization(Hasher* h, const EosAuthorization* auth) {
   }
 
   count += eos_hashUInt(h, auth->waits_count);
-  for (size_t i = 0; i < auth->accounts_count; i++) {
+  for (size_t i = 0; i < auth->waits_count; i++) {
     count += 4;
     if (h) hasher_Update(h, (const uint8_t*)&auth->waits[i].wait_sec, 4);
 
@@ -496,6 +496,13 @@ static bool isStandardAuthorization(const EosAuthorization* auth) {
   if (auth->keys[0].weight != 1) return false;
 
   if (auth->waits_count != 0) return false;
+
+  /* Without this check, a host can satisfy every field above while ALSO
+   * setting accounts_count>0 with attacker-chosen actor@permission
+   * delegations -- the abbreviated single-key confirm screen never shows
+   * them, but eos_hashAuthorization() hashes all of them into the signed
+   * authorization regardless of which confirm path ran. */
+  if (auth->accounts_count != 0) return false;
 
   return true;
 }
@@ -547,6 +554,16 @@ static bool confirmArbitraryAuthorization(const char* title,
     const EosAuthorizationKey* auth_key = &auth->keys[i];
 
     CHECK_PARAM_RET(auth_key->has_weight, "Required field missing", false);
+    /* key.size in [1,32] paired with a nonzero address_n_count satisfied
+     * this XOR without either disjunct being the case the rest of the
+     * function assumes: the display path below keys off `key.size != 0`
+     * (shows the raw key.bytes), while eos_hashAuthorization() keys off
+     * `address_n_count != 0` (hashes the device-derived key instead) --
+     * so the two could independently take different branches and bind a
+     * different key than the one shown. Require key.size to be exactly 0
+     * or exactly 33 so the two conditions can never both read as true. */
+    CHECK_PARAM_RET(auth_key->key.size == 0 || auth_key->key.size == 33,
+                    "Required field missing", false);
     CHECK_PARAM_RET(
         (auth_key->key.size == 33) ^ (auth_key->address_n_count != 0),
         "Required field missing", false);

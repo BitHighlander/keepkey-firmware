@@ -75,12 +75,10 @@ TEST(Coins, TableSanity) {
 
     if (!coin.has_contract_address) continue;
 
-    // Pre-existing (not 7.x-release related): these legacy coins[] entries are
-    // display-only leftovers whose ERC20 entries were dropped from the generated
-    // token table years ago (dead/migrated tokens). Named allowlist so a *new*
-    // missing token still fails this sanity check.
-    static const char *const kLegacyNoTokenEntry[] = {
-        "QTUM", "BNB", "ZIL", "GTO", "IOST", "CMT", "MCO", "ODEM"};
+    // Pre-existing (not 7.x-release related): ZIL is a display-only leftover
+    // whose ERC20 entry was dropped from the generated token table years ago.
+    // Keep this allowlist exact so a newly introduced mismatch cannot hide in it.
+    static const char *const kLegacyNoTokenEntry[] = {"ZIL"};
     bool legacy = false;
     for (const char *t : kLegacyNoTokenEntry)
       if (strcmp(coin.coin_shortcut, t) == 0) { legacy = true; break; }
@@ -95,6 +93,20 @@ TEST(Coins, TableSanity) {
     EXPECT_TRUE(memcmp(coin.contract_address.bytes, token->address,
                        coin.contract_address.size) == 0)
         << "Contract address mismatch for " << coin.coin_shortcut;
+  }
+}
+
+TEST(Coins, RetiredEthereumContractEntriesStayRemoved) {
+  static const char *const kRetired[] = {
+      "QTUM", "BNB", "GTO", "IOST", "CMT", "MCO", "ODEM"};
+
+  for (const char *shortcut : kRetired) {
+    for (int i = 0; i < COINS_COUNT; ++i) {
+      const auto &coin = coins[i];
+      EXPECT_FALSE(coin.has_contract_address &&
+                   strcmp(coin.coin_shortcut, shortcut) == 0)
+          << shortcut << " returned as an Ethereum contract entry";
+    }
   }
 }
 

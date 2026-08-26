@@ -91,6 +91,77 @@ TEST(Mayachain, MayachainSignTx) {
              64) == 0);
 }
 
+// A signature over two messages is proof the whole document was correctly
+// formed, not just any one message: a missing comma between msgs[0] and
+// msgs[1] changes every byte of the hash, so this only passes if the
+// sign-doc is byte-exact JSON.
+TEST(Mayachain, MayachainSignTxTwoMessages) {
+  // has_message/msgs_remaining are static file-scope state left behind by
+  // whichever test ran before this one in the same binary (the real FSM
+  // handler always calls mayachain_signAbort() between sessions -- this
+  // test must do the same to start from a clean slate).
+  mayachain_signAbort();
+
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  const MayachainSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},  // address_n
+      true, 6359,                    // account_number
+      true, "mayachain-mainnet-v1",  // chain_id
+      true, 3000,                    // fee_amount
+      true, 200000,                  // gas
+      true, "",                      // memo
+      true, 19,                      // sequence
+      true, 2                        // msg_count
+  };
+  ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(
+      100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(
+      200, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+
+  ASSERT_TRUE(mayachain_signTxFinalize(public_key, signature));
+
+  // Expected value recomputed independently (python-ecdsa, RFC6979/secp256k1,
+  // low-s), methodology cross-checked against the single-message vector
+  // above, over the exact two-message sign-doc JSON this fixture produces:
+  //   {"account_number":"6359","chain_id":"mayachain-mainnet-v1","fee":
+  //   {"amount":[{"amount":"3000","denom":"cacao"}],"gas":"200000"},"memo":
+  //   "","msgs":[{"type":"mayachain/MsgSend","value":{"amount":[{"amount":
+  //   "100","denom":"cacao"}],"from_address":
+  //   "maya1ls33ayg26kmltw7jjy55p32ghjna09zp7z4etj","to_address":
+  //   "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k"}},{"type":
+  //   "mayachain/MsgSend","value":{"amount":[{"amount":"200","denom":
+  //   "cacao"}],"from_address":
+  //   "maya1ls33ayg26kmltw7jjy55p32ghjna09zp7z4etj","to_address":
+  //   "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k"}}],"sequence":"19"}
+  EXPECT_TRUE(
+      memcmp(signature,
+             (uint8_t *)"\xce\xe7\x0b\xd1\x1b\x2a\xdb\x09\xf5\x56\xc1\x40\x1b"
+                        "\xa9\xfa\x29\x25\x55\x59\xac\x30\x11\xe6\x4c\xc8\x13"
+                        "\x7d\x8f\xf4\x13\xa3\x6a\x58\xf2\xab\x5f\x40\x70\x7d"
+                        "\x4c\xd8\x6f\x72\xb3\xf6\x87\xd1\xec\xa8\x61\xa5\x2e"
+                        "\xbf\x9e\xcb\x8a\xc1\x27\x43\x8b\x8e\xbb\x50\x8f",
+             64) == 0);
+}
+
 // Denom validation: only [a-z0-9./\-] is allowed; anything else is rejected
 TEST(Mayachain, MayachainDenomValidation) {
   EXPECT_TRUE(mayachain_isValidDenom("cacao"));

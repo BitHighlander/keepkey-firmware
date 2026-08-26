@@ -24,12 +24,18 @@
 #include "trezor/crypto/bip32.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/passkey.h"
 
+/* 20, not 18. 18 was the clear-sign identity block and 19 the PIN-KDF
+ * migration -- both ACTIVE in alpha builds before 6bebde7b2 reverted the format
+ * to V17, so devices carrying blobs stamped with either exist. Reusing a number
+ * would make this firmware PARSE one as passkey state instead of refusing it.
+ * See lib/firmware/storage_versions.inc. */
 #define STORAGE_VERSION \
-  17 /* Must add case fallthrough in storage_fromFlash after increment*/
+  20 /* Must add case fallthrough in storage_fromFlash after increment*/
 
 /* The highest storage version written by any firmware that has SHIPPED in a
- * signed release. v7.14.1 shipped storage V17.
+ * signed release.
  *
  * A signed UPGRADE MUST NEVER WIPE. An upgrading device arrives carrying a blob
  * written by the release it is leaving; if the incoming firmware does not
@@ -69,6 +75,12 @@
 /// \brief Validate storage content and copy data to shadow memory.
 void storage_init(void);
 
+/// \brief True iff flash holds storage written by bitcoin-only firmware that
+///        this (multi-chain) firmware refuses to load. The device must be
+///        wiped before it can be used; the seed stays intact in flash so
+///        reflashing bitcoin-only firmware recovers the wallet.
+bool storage_isBitcoinOnlyLocked(void);
+
 /// \brief Reset configuration UUID with random numbers.
 void storage_resetUuid(void);
 
@@ -77,23 +89,6 @@ void storage_reset(void);
 
 /// \brief Clear storage.
 void storage_wipe(void);
-
-/// \brief True when flash holds storage this build must refuse to load or
-/// overwrite -- a bitcoin-only wallet seen by multi-chain firmware, or a newer
-/// in-band wallet than this build understands.
-///
-/// Handlers that CREATE a seed must check this and refuse. The device looks
-/// uninitialized while locked (the RAM shadow was reset, so
-/// storage_isInitialized() is false), and storage_commit() silently declines to
-/// write, so a ceremony allowed to run would report success while persisting
-/// nothing -- and a seed the user funded would vanish on the next boot.
-///
-/// The seed itself stays intact in flash -- nothing is committed while locked
-/// -- so reflashing bitcoin-only firmware recovers the wallet. Using the device
-/// under multi-chain firmware requires an explicit wipe first.
-///
-/// Cleared only by storage_wipe().
-bool storage_isBitcoinOnlyLocked(void);
 
 /// \brief Clear storage key and storage key fingerprint.
 void storage_clearKeys(void);
@@ -124,7 +119,8 @@ bool storage_getU2FRoot(HDNode* node);
 /// \brief Increment and return the next value for the U2F counter.
 uint32_t storage_nextU2FCounter(void);
 
-/// \brief Assign a new value for the U2F Counter.
+/// \brief Assign a new value for the U2F Counter in shadow storage.
+/// The caller must commit after all related settings have been staged.
 void storage_setU2FCounter(uint32_t u2f_counter);
 
 /// \brief Set device label
@@ -210,6 +206,10 @@ void storage_setAutoLockDelayMs(uint32_t auto_lock_delay_ms);
 bool storage_getAuthData(authType* returnData);
 void storage_setAuthData(const authType* setData);
 void storage_wipeAuthData(void);
+
+/// Read or atomically replace CTAP2 PIN and discoverable-credential metadata.
+void storage_getPasskeyData(PasskeyStorage* data);
+void storage_setPasskeyData(const PasskeyStorage* data);
 
 #ifdef DEBUG_LINK
 typedef struct _HDNodeType HDNodeType;

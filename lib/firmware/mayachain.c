@@ -43,6 +43,7 @@ bool mayachain_isValidAsset(const char* asset) {
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static MayachainSignTx msg;
 static bool testnet;
@@ -140,6 +141,10 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   const char* const prelude = "{\"type\":\"mayachain/MsgSend\",\"value\":{";
@@ -162,6 +167,9 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -174,6 +182,10 @@ bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
   if (!mayachain_isValidAsset(depmsg->asset) ||
       !mayachain_isValidSigner(depmsg->signer)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -201,6 +213,9 @@ bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"signer\":\"%s\"}}", depmsg->signer);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -224,10 +239,13 @@ bool mayachain_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
 
 bool mayachain_signingIsInited(void) { return initialized; }
 
-bool mayachain_signingIsFinished(void) { return msgs_remaining == 0; }
+bool mayachain_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void mayachain_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));

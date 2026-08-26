@@ -4,13 +4,17 @@ WORKDIR /kkemu
 COPY ./ /kkemu
 
 ARG coinsupport=""
+
+# The emulator and unit suite exercise the same hardware-held alpha root as the
+# alpha ARM artifact. Production builds still default to no root.
 RUN cmake -C ./cmake/caches/emulator.cmake . \
     -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_COMPILER=clang \
     -DCMAKE_CXX_COMPILER=clang++ \
     -DCMAKE_BUILD_TYPE=Debug \
     ${coinsupport} \
-    -DCMAKE_COLOR_MAKEFILE=ON
+    -DCMAKE_COLOR_MAKEFILE=ON \
+    -DKK_CLEARSIGN_ALPHA_ROOT=ON
 
 RUN make -j
 

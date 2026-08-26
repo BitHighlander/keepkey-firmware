@@ -823,6 +823,16 @@ static bool is_segwit_input_script_type(const TxInputType* txinput) {
   return false;
 }
 
+bool signing_multisig_quorum_is_valid(
+    const MultisigRedeemScriptType* multisig) {
+  if (multisig == NULL || !multisig->has_m) {
+    return false;
+  }
+  const uint32_t m = multisig->m;
+  const uint32_t n = multisig->pubkeys_count;
+  return m >= 1 && m <= 15 && n >= 1 && n <= 15 && m <= n;
+}
+
 static bool signing_validate_input(const TxInputType* txinput) {
   if (txinput->prev_hash.size != 32) {
     fsm_sendFailure(FailureType_Failure_Other,
@@ -837,6 +847,17 @@ static bool signing_validate_input(const TxInputType* txinput) {
     return false;
   }
   if (txinput->has_multisig) {
+    /* Validate the quorum before tx_input_script_size() accounts for it.
+     * cryptoMultisigFingerprint() normally performs most of these checks, but
+     * the mixed single-sig/multisig path deliberately stops comparing a common
+     * fingerprint. That used to leave m as an unbounded host-controlled weight
+     * multiplier and could suppress the high-fee warning. */
+    if (!signing_multisig_quorum_is_valid(&txinput->multisig)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid multisig quorum"));
+      signing_abort();
+      return false;
+    }
     /* A DER-encoded ECDSA signature is at most 72 bytes: 0x30 len, then two
      * 0x02-tagged integers of at most 33 bytes each. The wire field is sized
      * max_size:73, so the decoder accepts 73 -- and the witness path writes
@@ -2164,7 +2185,19 @@ void signing_abort(void) {
     layoutHome();
     signing = false;
   }
+  /* root is a pointer into fsm.c's fsm_getDerivedNode()'s function-static
+   * master-key buffer (the raw, un-derived m root when address_n_count==0,
+   * as used for SignTx). memzero(&root, sizeof(root)) only clears the
+   * pointer variable -- it never touched the ~100+ byte HDNode it
+   * references, so the actual master private key bytes stayed resident in
+   * that buffer indefinitely: past this abort, past WipeDevice (which
+   * never touches fsm.c's static node either), for the rest of the
+   * device's power-on lifetime. Scrub what root actually points to. */
+  if (root) {
+    memzero((void*)root, sizeof(*root));
+  }
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
+  memzero(privkey, sizeof(privkey));
   taproot_transaction_confirmed = false;
 }

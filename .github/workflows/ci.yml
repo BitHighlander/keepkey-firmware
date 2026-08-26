@@ -48,6 +48,14 @@ env:
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
 
+# Least-privilege default: every job gets a read-only GITHUB_TOKEN unless it
+# declares its own `permissions:` override (publish-emulator-libs does, for
+# the `gh release` calls it needs `contents: write` for). Without this,
+# every job -- including ones that just checkout/build/test -- inherited
+# whatever the repo's default token scope was, with no explicit floor. #424.
+permissions:
+  contents: read
+
 jobs:
   # ═══════════════════════════════════════════════════════════
   # STAGE 1: GATE — kill bad PRs in seconds
@@ -97,42 +105,72 @@ jobs:
           fetch-depth: 0
 
       - name: Install gitleaks
+        # PINNED + checksum-verified. Tracking releases/latest means a new
+        # upstream ruleset can turn this gate red with no change to this
+        # repository -- which is exactly what happened: a newer
+        # generic-api-key rule began flagging published BIP32 test vectors
+        # in 2014/2018 history, and because every build job declares
+        # `needs: [.., secret-scan]`, the whole build and test graph was
+        # SKIPPED rather than failed. Bump deliberately, with the scan
+        # re-verified and a fresh sha256 recorded below. See #424.
+        #
+        # This used to install this checksummed build and then immediately
+        # overwrite it with a second, unverified `curl | tar` of a different
+        # (older) version -- so the binary actually executed was never the
+        # one the checksum covered, defeating the point of pinning at all.
+        # See #586.
         run: |
-          # PINNED to 8.30.0, deliberately, and VERIFIED.
-          #
-          # Two things this block has to get right at once, and a clean merge of
-          # two parents previously got exactly one of them:
-          #
-          #  - the VERSION is pinned because tracking releases/latest lets a new
-          #    upstream ruleset turn this gate red with no change to this
-          #    repository. That happened: a newer generic-api-key rule began
-          #    flagging published BIP32 test vectors in 2014/2018 history, and
-          #    because every build job declares `needs: [.., secret-scan]`, the
-          #    whole build and test graph was SKIPPED rather than failed (#424).
-          #  - the BINARY is checksummed, because a scan is only worth what the
-          #    executable running it is.
-          #
-          # The merged version downloaded 8.30.1 with a verified checksum and then
-          # overwrote it with an unverified 8.30.0 through `curl | tar`, so the
-          # checksum proved nothing about the binary that actually ran. One
-          # version, one archive, one verified digest. Bump deliberately, with the
-          # scan re-verified.
-          GITLEAKS_VERSION=8.30.0
-          GITLEAKS_SHA256=79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+          GITLEAKS_VERSION=8.30.1
+          GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
           GITLEAKS_ARCHIVE="${RUNNER_TEMP}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           curl -sSfL --retry 3 --retry-all-errors \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             -o "${GITLEAKS_ARCHIVE}"
           echo "${GITLEAKS_SHA256}  ${GITLEAKS_ARCHIVE}" | sha256sum --check --strict
           tar -xzf "${GITLEAKS_ARCHIVE}" -C /usr/local/bin gitleaks
-          gitleaks version
+          INSTALLED_VERSION=$(gitleaks version)
+          echo "gitleaks ${INSTALLED_VERSION}"
+          test "${INSTALLED_VERSION}" = "${GITLEAKS_VERSION}"
 
       - name: Run gitleaks
-        run: gitleaks detect --source . --verbose --redact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # actions/checkout fetch-depth: 0 makes every fork branch available.
+          # An unscoped gitleaks run therefore scans unrelated branch histories;
+          # one keepkey-stack branch in this fork made every firmware build and
+          # test skip even though its commits are not ancestors of this change.
+          # Scan exactly the commits introduced by the event instead.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            LOG_OPTS="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+          elif [ "$EVENT_NAME" = "push" ] &&
+               [[ ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            LOG_OPTS="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            # New branch: scan only the history reachable from its head, not
+            # every fetched ref in the repository.
+            LOG_OPTS="${GITHUB_SHA}"
+          else
+            # A manual run has no before/base pair. Scan the checked-out tree.
+            gitleaks detect --source . --no-git --verbose --redact
+            exit 0
+          fi
+
+          echo "Scanning revision range: ${LOG_OPTS}"
+          gitleaks detect --source . --log-opts="${LOG_OPTS}" --verbose --redact
 
   static-analysis:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Was 15. cppcheck alone has been observed running right up to (and past)
+    # that ceiling under normal runner load with an unchanged, clean diff --
+    # two consecutive PR #591 runs hit 15m10s and 14m59s, one of them killed
+    # mid-scan, forcing a manual rerun of an otherwise-passing check. #592.
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -429,7 +467,7 @@ jobs:
           - variant: full
             label: ""
             suffix: ""
-            cmake_flags: ""
+            cmake_flags: "-DKK_CLEARSIGN_ALPHA_ROOT=ON"
           - variant: bitcoin-only
             label: " (bitcoin-only)"
             suffix: "-bitcoin-only"
@@ -489,6 +527,10 @@ jobs:
               python3 /root/keepkey-firmware/tools/check_pallas_ct_disassembly.py \
                 --elf bin/firmware.keepkey.elf \
                 --variant '${{ matrix.variant }}' && \
+              python3 /root/keepkey-firmware/tools/check_bitcoin_only_identity.py \
+                --artifact bin/firmware.keepkey.bin \
+                --elf bin/firmware.keepkey.elf \
+                --variant '${{ matrix.variant }}' && \
               mkdir -p /root/keepkey-firmware/bin && \
               cp bin/*.bin /root/keepkey-firmware/bin/ && \
               cp bin/*.elf /root/keepkey-firmware/bin/ && \
@@ -496,6 +538,28 @@ jobs:
               arm-none-eabi-size -A bin/firmware.keepkey.elf > /root/keepkey-firmware/bin/firmware.keepkey.size.txt 2>/dev/null || true && \
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T - && \
               chmod -R a+rw /root/keepkey-firmware/bin"
+
+      - name: Assert alpha ClearSign root product boundary
+        run: |
+          # Full alpha must carry the hardware-held root that issued Vault's
+          # alpha certificates. Bitcoin-only excludes all non-Bitcoin signing
+          # code and must not carry it. Assert both sides using the CURRENT key;
+          # the prior gate still searched for the superseded 02be... root and
+          # could not detect the 02de... key this source actually compiled.
+          python3 - <<'EOF'
+          import sys
+          ALPHA_ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          blob = open("bin/firmware.keepkey.bin", "rb").read()
+          expected = "${{ matrix.variant }}" == "full"
+          present = ALPHA_ROOT in blob
+          if present != expected:
+              sys.exit("::error::alpha ClearSign root presence mismatch: "
+                       "variant=${{ matrix.variant }}, expected=%s, present=%s"
+                       % (expected, present))
+          print("Alpha root boundary verified: variant=${{ matrix.variant }}, "
+                "present=%s" % present)
+          EOF
 
       # SRAM budget gate — RC7's privacy-enabled build hard-faulted on boot
       # because static SRAM left an 11.2 KB gap while msg_write() carried a
@@ -605,9 +669,20 @@ jobs:
           retention-days: 30
 
   python-integration-tests:
+    name: python-integration-tests${{ matrix.label }}
     needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            label: ""
+            cmake_flags: ""
+          - variant: bitcoin-only
+            label: " (bitcoin-only)"
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -625,6 +700,9 @@ jobs:
 
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
+        env:
+          COINSUPPORT: ${{ matrix.cmake_flags }}
+          KK_TEST_BUILD_VARIANT: ${{ matrix.variant }}
         run: |
           # Run each test container — capture exit codes, always extract reports
           #
@@ -670,7 +748,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: python-test-results
+          name: python-test-results-${{ matrix.variant }}
           path: test-reports/python-keepkey/
           retention-days: 30
 
@@ -678,7 +756,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: oled-screenshots
+          name: oled-screenshots-${{ matrix.variant }}
           path: test-reports/screenshots/
           retention-days: 90
           if-no-files-found: warn
@@ -686,6 +764,8 @@ jobs:
       - name: Tear down
         if: always()
         working-directory: scripts/emulator
+        env:
+          COINSUPPORT: ${{ matrix.cmake_flags }}
         run: docker compose down -v || true
 
   # ═══════════════════════════════════════════════════════════
@@ -930,6 +1010,10 @@ jobs:
         env:
           KK_TRANSPORT: dylib
           KK_DYLIB: ${{ env.DYLIB_PATH }}
+          # PR jobs expose a synthetic merge SHA as GITHUB_SHA, while Checkout
+          # above intentionally builds the head SHA. Bind the assertion to the
+          # exact source revision that produced this dylib.
+          KK_EXPECTED_FIRMWARE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           # `keepkeylib/` on PYTHONPATH so the package's relative-style
           # imports inside generated *_pb2.py files resolve.
@@ -988,14 +1072,14 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
-          name: python-test-results
+          name: python-test-results-full
           path: test-reports/python-keepkey/
 
       - name: Download OLED screenshots
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
-          name: oled-screenshots
+          name: oled-screenshots-full
           path: test-reports/screenshots/
 
       - name: Extract firmware version
@@ -1077,7 +1161,7 @@ jobs:
           NOT_SUCCESS=$(echo "$NEEDS_JSON" \
             | jq -r 'to_entries[] | select(.value.result != "success") | .key')
           if [ -n "$NOT_SUCCESS" ]; then
-            echo "::error::Required jobs did not succeed: $(echo $NOT_SUCCESS | tr '\n' ' ')"
+            echo "::error::Required jobs did not succeed: $(printf '%s\n' "$NOT_SUCCESS" | tr '\n' ' ')"
             echo "A skipped or cancelled required job is NOT a pass. If a gate-stage"
             echo "job failed, everything downstream was skipped and produced no signal."
             exit 1

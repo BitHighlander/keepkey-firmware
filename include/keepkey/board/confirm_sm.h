@@ -97,6 +97,26 @@ typedef void (*layout_notification_t)(const char* str1, const char* str2,
 /// \returns true iff the whole body will be on screen.
 bool confirm_body_fits(const char* body, uint16_t body_width);
 
+/// Constant-power confirmation that pages locally inside ONE ButtonRequest.
+///
+/// Content grouped for BODY_WIDTH does not always fit the real constant-power
+/// width, but the grouping is the host protocol boundary -- one request per
+/// group, one word set read per request -- so extra screens must not become
+/// extra requests. Intermediate subpages take a short press; the last takes the
+/// hold. Cancelling any subpage cancels the group.
+bool confirm_constant_power_paged(ButtonRequestType type,
+                                  const char* request_title,
+                                  const char* request_body);
+
+/// How many bytes of `body` fit one constant-power screen, split only at row
+/// boundaries so a numbered word is never divided across screens.
+///
+/// Exposed for tests. The carried subpages inside a group are drawn but not
+/// waited on, so DebugLinkGetState cannot observe them individually -- a
+/// DebugLink screenshot sees a group's LAST subpage. Per-subpage content is
+/// proven here and on physical hardware instead.
+size_t confirm_constant_power_subpage_take(const char* body);
+
 /// Same, for constant-power screens, which draw from x = 128 + LEFT_MARGIN.
 ///
 /// Only KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) px exists past that origin,
