@@ -34,6 +34,8 @@ services:
     depends_on:
       kkemu:
         condition: service_healthy
+      firmware-unit:
+        condition: service_completed_successfully
   firmware-unit:
     build:
       context: '../../'
