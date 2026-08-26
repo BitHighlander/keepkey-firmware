@@ -38,6 +38,12 @@ env:
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
 
+# Least-privilege default. Jobs in this workflow only need repository reads;
+# publishing uses DockerHub credentials and does not need a write-capable
+# GITHUB_TOKEN.
+permissions:
+  contents: read
+
 jobs:
   # ═══════════════════════════════════════════════════════════
   # STAGE 1: GATE — kill bad PRs in seconds
@@ -87,20 +93,48 @@ jobs:
           fetch-depth: 0
 
       - name: Install gitleaks
+        # Pin and verify the only scanner binary that is installed/executed.
+        # Bumps require an independently recorded digest and ruleset review.
         run: |
-          # PINNED. Tracking releases/latest means a new upstream ruleset can turn
-          # this gate red with no change to this repository -- which is exactly what
-          # happened: a newer generic-api-key rule began flagging published BIP32 test
-          # vectors in 2014/2018 history, and because every build job declares
-          # `needs: [.., secret-scan]`, the whole build and test graph was SKIPPED
-          # rather than failed. Bump deliberately, with the scan re-verified. See #424.
-          GITLEAKS_VERSION=8.30.0
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
-          gitleaks version
+          GITLEAKS_VERSION=8.30.1
+          GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          GITLEAKS_ARCHIVE=/tmp/gitleaks.tar.gz
+          curl --fail --show-error --location \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o "${GITLEAKS_ARCHIVE}"
+          echo "${GITLEAKS_SHA256}  ${GITLEAKS_ARCHIVE}" | sha256sum --check --strict
+          tar -xzf "${GITLEAKS_ARCHIVE}" -C /usr/local/bin gitleaks
+          INSTALLED_VERSION=$(gitleaks version)
+          echo "gitleaks ${INSTALLED_VERSION}"
+          test "${INSTALLED_VERSION}" = "${GITLEAKS_VERSION}"
 
       - name: Run gitleaks
-        run: gitleaks detect --source . --verbose --redact
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # fetch-depth: 0 makes every fork ref available. An unscoped scan
+          # therefore walks disconnected keepkey-stack histories that are not
+          # ancestors of this firmware change (#544). Scan only the revisions
+          # introduced by the triggering event.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            LOG_OPTS="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+          elif [ "$EVENT_NAME" = "push" ] &&
+               [[ ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            LOG_OPTS="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            LOG_OPTS="${GITHUB_SHA}"
+          else
+            gitleaks detect --source . --no-git --verbose --redact
+            exit 0
+          fi
+
+          echo "Scanning revision range: ${LOG_OPTS}"
+          gitleaks detect --source . --log-opts="${LOG_OPTS}" --verbose --redact
 
   static-analysis:
     runs-on: ubuntu-latest
