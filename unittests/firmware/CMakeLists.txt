@@ -12,7 +12,9 @@ set(sources
     mayachain.cpp
     osmosis.cpp
     nano.cpp
+    dice.cpp
     recovery.cpp
+    rng_health.cpp
     setup_ceremony.cpp
     ripple.cpp
     signing.cpp
