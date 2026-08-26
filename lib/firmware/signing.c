@@ -717,6 +717,12 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   multisig_fp_mismatch = false;
   next_nonsegwit_input = 0xffffffff;
 
+  /* An OP_RETURN-only transaction never reaches the payment-output path that
+   * normally resets this context. Start each signing request with a fresh
+   * current digest while preserving the previous completed transaction used
+   * by the duplicate-output warning. */
+  txin_dgst_reset_current();
+
   curve = get_curve_by_name(coin->curve_name);
   if (!curve) curve = get_curve_by_name(SECP256K1_NAME);
 
@@ -835,6 +841,20 @@ static bool signing_validate_input(const TxInputType* txinput) {
                     _("Multisig field provided but not expected."));
     signing_abort();
     return false;
+  }
+  if (txinput->has_multisig) {
+    const uint32_t m = txinput->multisig.m;
+    const uint32_t n = txinput->multisig.pubkeys_count;
+    /* Validate before tx_input_script_size() uses m for fee accounting. The
+     * mixed single-sig/multisig path can stop comparing a common fingerprint,
+     * so the later fingerprint validation is not a sufficient boundary. */
+    if (!txinput->multisig.has_m || m < 1 || m > 15 || n < 1 || n > 15 ||
+        m > n) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid multisig quorum"));
+      signing_abort();
+      return false;
+    }
   }
   if (txinput->address_n_count > 0 && !is_internal_input_script_type(txinput)) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -1801,7 +1821,6 @@ void signing_txack(TransactionType* tx) {
       }
       return;
     case STAGE_REQUEST_3_OUTPUT:
-
       txin_dgst_final();
 
       if (!signing_validate_output(&tx->outputs[0]) ||

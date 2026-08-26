@@ -144,6 +144,12 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
   RESP_INIT(CoinTable);
 
+#if BITCOIN_ONLY
+  const size_t coin_table_count = COINS_COUNT;
+#else
+  const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
+#endif
+
   CHECK_PARAM(msg->has_start == msg->has_end,
               "Incorrect GetCoinTable parameters");
 
@@ -151,9 +157,8 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   resp->chunk_size = sizeof(resp->table) / sizeof(resp->table[0]);
 
   if (msg->has_start && msg->has_end) {
-    if (COINS_COUNT + TOKENS_COUNT <= msg->start ||
-        COINS_COUNT + TOKENS_COUNT < msg->end || msg->end < msg->start ||
-        resp->chunk_size < msg->end - msg->start) {
+    if (coin_table_count <= msg->start || coin_table_count < msg->end ||
+        msg->end < msg->start || resp->chunk_size < msg->end - msg->start) {
       fsm_sendFailure(FailureType_Failure_Other,
                       "Incorrect GetCoinTable parameters");
       layoutHome();
@@ -162,7 +167,7 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   }
 
   resp->has_num_coins = true;
-  resp->num_coins = COINS_COUNT + TOKENS_COUNT;
+  resp->num_coins = coin_table_count;
 
   if (msg->has_start && msg->has_end) {
     resp->table_count = msg->end - msg->start;

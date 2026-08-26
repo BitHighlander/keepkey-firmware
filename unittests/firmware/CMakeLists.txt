@@ -1,10 +1,12 @@
 set(sources
+    confirm_test_utils.cpp
     dice.cpp
     recovery.cpp
     rng_health.cpp
     setup_ceremony.cpp
     signing.cpp
     storage.cpp
+    test_board.cpp
     transaction.cpp
     usb_rx.cpp
     u2f.cpp)
