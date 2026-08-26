@@ -179,6 +179,37 @@ TEST(RngHealth, CheckedDrawRejectsNull) {
   EXPECT_FALSE(random_buffer_checked(nullptr, 32));
 }
 
+TEST(RngHealth, TransientHardwareFaultRemainsLatched) {
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
+  rng_test_observe_transient_error();
+
+  uint8_t buf[32];
+  memset(buf, 0xAB, sizeof(buf));
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)));
+  const uint8_t zeros[32] = {0};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+  EXPECT_TRUE(rng_seed_error_latched());
+}
+
+TEST(RngHealth, PersistentHardwareFaultLatchesBeforeReset) {
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
+  rng_test_observe_persistent_error();
+
+  uint8_t buf[32];
+  memset(buf, 0xAB, sizeof(buf));
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)))
+      << "a healthy-looking post-reset word escaped the boot fault latch";
+  const uint8_t zeros[32] = {0};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+  EXPECT_TRUE(rng_seed_error_latched());
+
+  // Leave the process in a fresh-boot state for later tests.
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
+}
+
 // THE CONTINUOUS TEST, ON THE DEFAULT PATH. The boot gate only says the source
 // was healthy once; the RCT and APT exist to notice one that goes degenerate
 // afterwards. An earlier revision folded bytes into the continuous state only

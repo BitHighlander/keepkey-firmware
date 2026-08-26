@@ -1,4 +1,5 @@
 set(sources
+    authenticator.cpp
     confirm_test_utils.cpp
     dice.cpp
     recovery.cpp
