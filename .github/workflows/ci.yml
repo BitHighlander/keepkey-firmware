@@ -426,6 +426,18 @@ jobs:
     needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            project: kkci-full
+            python_artifact: python-test-results
+            oled_artifact: oled-screenshots
+          - variant: bitcoin-only
+            project: kkci-bitcoin-only
+            python_artifact: python-test-results-bitcoin-only
+            oled_artifact: oled-screenshots-bitcoin-only
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -444,23 +456,31 @@ jobs:
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
         run: |
-          # Run each test container — capture exit codes, always extract reports
-          docker compose up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
-          docker compose up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+          COMPOSE_ARGS=(-f docker-compose.yml)
+          if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
+            COMPOSE_ARGS+=(-f docker-compose.bitcoin-only.yml)
+          fi
 
-          mkdir -p ${{ github.workspace }}/test-reports
+          # Run each test container — capture exit codes, always extract reports
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
+            up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
+            up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+
+          REPORT_ROOT=${{ github.workspace }}/test-reports/${{ matrix.variant }}
+          mkdir -p "$REPORT_ROOT"
 
           echo "=== Extracting test reports from Docker ==="
-          PY_CONTAINER=$(docker compose ps -a -q python-keepkey)
-          FW_CONTAINER=$(docker compose ps -a -q firmware-unit)
+          PY_CONTAINER=$(docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} ps -a -q python-keepkey)
+          FW_CONTAINER=$(docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} ps -a -q firmware-unit)
 
-          docker cp "$FW_CONTAINER":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ || echo "WARN: firmware-unit docker cp failed"
-          docker cp "$PY_CONTAINER":/kkemu/test-reports/. ${{ github.workspace }}/test-reports/ || echo "WARN: python-keepkey docker cp failed"
+          docker cp "$FW_CONTAINER":/kkemu/test-reports/. "$REPORT_ROOT/" || echo "WARN: firmware-unit docker cp failed"
+          docker cp "$PY_CONTAINER":/kkemu/test-reports/. "$REPORT_ROOT/" || echo "WARN: python-keepkey docker cp failed"
 
           echo "=== Extracted files ==="
-          find ${{ github.workspace }}/test-reports -type f | head -30
+          find "$REPORT_ROOT" -type f | head -30
           echo "=== Screenshot PNGs ==="
-          find ${{ github.workspace }}/test-reports/screenshots -name '*.png' 2>/dev/null | wc -l
+          find "$REPORT_ROOT/screenshots" -name '*.png' 2>/dev/null | wc -l
           echo "PNGs on host"
 
           echo "firmware-unit exit code: $FW_RC"
@@ -478,23 +498,36 @@ jobs:
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: python-test-results
-          path: test-reports/python-keepkey/
+          name: ${{ matrix.python_artifact }}
+          path: test-reports/${{ matrix.variant }}/python-keepkey/
+          retention-days: 30
+
+      - name: Upload native test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: firmware-unit-results-${{ matrix.variant }}
+          path: test-reports/${{ matrix.variant }}/firmware-unit/
           retention-days: 30
 
       - name: Upload OLED screenshots
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: oled-screenshots
-          path: test-reports/screenshots/
+          name: ${{ matrix.oled_artifact }}
+          path: test-reports/${{ matrix.variant }}/screenshots/
           retention-days: 90
           if-no-files-found: warn
 
       - name: Tear down
         if: always()
         working-directory: scripts/emulator
-        run: docker compose down -v || true
+        run: |
+          COMPOSE_ARGS=(-f docker-compose.yml)
+          if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
+            COMPOSE_ARGS+=(-f docker-compose.bitcoin-only.yml)
+          fi
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} down -v || true
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 3a-bis: DYLIB TESTS — libkkemu shared lib via python-keepkey
