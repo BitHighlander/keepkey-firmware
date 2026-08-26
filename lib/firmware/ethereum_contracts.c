@@ -76,9 +76,10 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
    * disclosure (AdvancedMode-gated). */
   if (data_total != msg->data_initial_chunk.size) return false;
 
-  /* 0x transformERC20 is pinned to the ExchangeProxy address and its outcome
-   * is bounded by the input amount and minimum output amount shown on screen,
-   * so it stays clear-signable at any calldata size that fits one chunk. */
+  /* 0x transformERC20 is pinned to the ExchangeProxy address, shows its input
+   * and minimum-output bounds, and discloses the complete transformations[]
+   * route, so it stays clear-signable at any calldata size that fits one
+   * chunk. */
   if (zx_isZxTransformERC20(msg)) return true;
 
   if (sa_isWithdrawFromSalary(msg)) return true;

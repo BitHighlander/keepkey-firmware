@@ -1,4 +1,6 @@
 extern "C" {
+#include "keepkey/board/layout.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
@@ -19,6 +21,7 @@ void setup(void);
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
@@ -355,12 +358,13 @@ static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
   msg->has_chain_id = true;
   msg->chain_id = 1;
   msg->has_data_initial_chunk = true;
-  msg->data_initial_chunk.size = 4 + 4 * 32;
+  msg->data_initial_chunk.size = ZX_TRANSFORM_ERC20_MIN_LEN;
   std::memcpy(msg->data_initial_chunk.bytes, "\x41\x55\x65\xb0", 4);
   if (in_token)
     std::memcpy(msg->data_initial_chunk.bytes + 4 + 12, in_token, 20);
   if (out_token)
     std::memcpy(msg->data_initial_chunk.bytes + 4 + 32 + 12, out_token, 20);
+  msg->data_initial_chunk.bytes[ZX_TRANSFORM_ERC20_HEAD_LEN - 1] = 0xa0;
 }
 
 TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
@@ -371,13 +375,23 @@ TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_FALSE(
       ethereum_contractHandled(msg.data_initial_chunk.size + 1, &msg, nullptr));
+
+  msg.data_initial_chunk.size = 4 + 4 * 32;
+  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
+                                        nullptr))
+      << "the fifth ABI head word and array length must be present";
+
+  MakeTransformErc20(&msg, kTUSD, kTGBP);
+  msg.data_initial_chunk.bytes[ZX_TRANSFORM_ERC20_HEAD_LEN - 1] = 0xc0;
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
+      << "the displayed static arguments must bind the canonical route tail";
 }
 
-// The decoder shows four values and hides the transformations[] body. That is
-// only defensible because the input amount and minimum output amount bound the
-// outcome — and ethereumFormatAmount() renders the literal "Unknown token
+// The structured screen shows four values and the route follows on raw-data
+// screens. ethereumFormatAmount() still renders the literal "Unknown token
 // value" whenever tokenByChainAddress() misses, so an unresolved token turns
-// the bound into nothing while the calldata still executes.
+// the displayed bound into nothing while the calldata still executes.
 //
 // Gating on the lookup rather than on a chain allowlist keeps this correct
 // however the tables change. It matters in practice: the generated table
@@ -390,6 +404,13 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
   MakeTransformErc20(&msg, kTUSD, kTGBP);
   EXPECT_TRUE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
+
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
+      << "native value is not shown by the transformERC20 confirmation";
 
   // Either side unknown -> refuse to claim it, so ethereum.c falls through to
   // the raw-calldata path (AdvancedMode-gated, bytes shown).
@@ -417,6 +438,29 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
         ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
         << "chain " << cid << " has no token entries; nothing is nameable";
   }
+}
+
+TEST(Ethereum, TransformErc20DisclosesCompleteRoute) {
+  std::vector<uint8_t> route(220, 0x00);
+  route[31] = 1;  // transformations[] length word
+  route.back() = 0xa5;
+
+  size_t pages = 0;
+  size_t offset = 0;
+  while (offset < route.size()) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(
+        route.data() + offset, route.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    offset += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1u)
+      << "fixture must prove the route is paginated rather than truncated";
+
+  ASSERT_TRUE(kkconfirm_preload(static_cast<int>(pages), 0));
+  EXPECT_TRUE(zx_confirmZxTransformRoute(route.data(), route.size()));
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Ethereum, Eip712ChainIdRequiresCanonicalUint32) {
