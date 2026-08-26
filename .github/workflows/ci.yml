@@ -128,22 +128,41 @@ jobs:
             -o "${GITLEAKS_ARCHIVE}"
           echo "${GITLEAKS_SHA256}  ${GITLEAKS_ARCHIVE}" | sha256sum --check --strict
           tar -xzf "${GITLEAKS_ARCHIVE}" -C /usr/local/bin gitleaks
-          gitleaks version
+          INSTALLED_VERSION=$(gitleaks version)
+          echo "gitleaks ${INSTALLED_VERSION}"
+          test "${INSTALLED_VERSION}" = "${GITLEAKS_VERSION}"
 
       - name: Run gitleaks
-        # --log-opts restricts the scan to HEAD's own ancestry. Without it,
-        # gitleaks defaults to walking every ref present in the local clone,
-        # and `fetch-depth: 0` above fetches ALL branches on the remote (its
-        # documented behavior), not just this ref's history. This repo has
-        # ~150 branches, one of which (67fa8e60/1e7ce4fd, orphaned, no common
-        # ancestor with alpha -- confirmed via the compare API) carries an
-        # unrelated vendored JS bundle whose minified libsodium export-name
-        # strings pattern-match generic-api-key. That branch has nothing to
-        # do with alpha or any PR into it, but every secret-scan run was
-        # scanning it anyway, always failing, and -- because every build/test
-        # job declares `needs: [.., secret-scan]` -- skipping the entire
-        # build and test graph on every single PR. See #583.
-        run: gitleaks detect --source . --verbose --redact --log-opts="HEAD"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # actions/checkout fetch-depth: 0 makes every fork branch available.
+          # An unscoped gitleaks run therefore scans unrelated branch histories;
+          # one keepkey-stack branch in this fork made every firmware build and
+          # test skip even though its commits are not ancestors of this change.
+          # Scan exactly the commits introduced by the event instead.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            LOG_OPTS="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+          elif [ "$EVENT_NAME" = "push" ] &&
+               [[ ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            LOG_OPTS="${PUSH_BEFORE_SHA}..${GITHUB_SHA}"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            # New branch: scan only the history reachable from its head, not
+            # every fetched ref in the repository.
+            LOG_OPTS="${GITHUB_SHA}"
+          else
+            # A manual run has no before/base pair. Scan the checked-out tree.
+            gitleaks detect --source . --no-git --verbose --redact
+            exit 0
+          fi
+
+          echo "Scanning revision range: ${LOG_OPTS}"
+          gitleaks detect --source . --log-opts="${LOG_OPTS}" --verbose --redact
 
   static-analysis:
     runs-on: ubuntu-latest
@@ -1136,7 +1155,7 @@ jobs:
           NOT_SUCCESS=$(echo "$NEEDS_JSON" \
             | jq -r 'to_entries[] | select(.value.result != "success") | .key')
           if [ -n "$NOT_SUCCESS" ]; then
-            echo "::error::Required jobs did not succeed: $(echo $NOT_SUCCESS | tr '\n' ' ')"
+            echo "::error::Required jobs did not succeed: $(printf '%s\n' "$NOT_SUCCESS" | tr '\n' ' ')"
             echo "A skipped or cancelled required job is NOT a pass. If a gate-stage"
             echo "job failed, everything downstream was skipped and produced no signal."
             exit 1

@@ -67,6 +67,29 @@ TEST(Ripple, SerializeAddress) {
                      22) == 0);
 }
 
+TEST(Ripple, AmountBoundaryMatchesProtocolAndFsmLimit) {
+  uint8_t buffer[9] = {0};
+  uint8_t *buf = buffer;
+  bool ok = true;
+  ripple_serializeAmount(&ok, &buf, buffer + sizeof(buffer), &RFM_amount,
+                         RIPPLE_MAX_AMOUNT_DROPS);
+  EXPECT_TRUE(ok);
+  EXPECT_EQ(buffer + sizeof(buffer), buf);
+
+  memset(buffer, 0, sizeof(buffer));
+  buf = buffer;
+  ok = true;
+  ripple_serializeAmount(&ok, &buf, buffer + sizeof(buffer), &RFM_amount,
+                         RIPPLE_MAX_AMOUNT_DROPS + 1);
+  EXPECT_FALSE(ok);
+  EXPECT_EQ(buffer, buf) << "an invalid amount must emit no partial field";
+
+  ok = true;
+  ripple_serializeAmount(&ok, &buf, buffer + sizeof(buffer), &RFM_amount, -1);
+  EXPECT_FALSE(ok);
+  EXPECT_EQ(buffer, buf);
+}
+
 TEST(Ripple, Serialize) {
   RippleSignTx tx;
   memset(&tx, 0, sizeof(tx));

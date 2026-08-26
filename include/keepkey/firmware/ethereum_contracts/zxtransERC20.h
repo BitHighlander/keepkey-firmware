@@ -22,6 +22,12 @@
 
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stddef.h>
+
+/* selector + five ABI head words (the fifth is transformations[]'s offset),
+ * followed by at least the dynamic array length word. */
+#define ZX_TRANSFORM_ERC20_HEAD_LEN (4u + 5u * 32u)
+#define ZX_TRANSFORM_ERC20_MIN_LEN (ZX_TRANSFORM_ERC20_HEAD_LEN + 32u)
 
 #define ZXSWAP_ADDRESS                                                       \
   "\xde\xf1\xc0\xde\xd9\xbe\xc7\xf1\xa1\x67\x08\x19\x83\x32\x40\xf0\x27\xb2" \
@@ -31,5 +37,6 @@ typedef struct _EthereumSignTx EthereumSignTx;
 
 bool zx_isZxTransformERC20(const EthereumSignTx* msg);
 bool zx_confirmZxTransERC20(uint32_t data_total, const EthereumSignTx* msg);
+bool zx_confirmZxTransformRoute(const uint8_t* data, size_t size);
 
 #endif

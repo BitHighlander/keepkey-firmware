@@ -23,9 +23,11 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/pin_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/memzero.h"
 
 #include <stdbool.h>
@@ -160,7 +162,12 @@ static bool pin_request(const char* prompt, PINInfo* pin_info) {
 
   /* Init and randomize pin matrix */
   strlcpy(pin_matrix, "123456789", PIN_BUF);
-  random_permute_char(pin_matrix, 9);
+  if (!random_permute_char_checked(pin_matrix, 9)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "RNG health check failed; PIN entry refused");
+    layoutHome();
+    return false;
+  }
 
   /* Show layout */
   layout_pin(prompt, pin_matrix);

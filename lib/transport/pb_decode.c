@@ -453,8 +453,7 @@ static bool checkreturn decode_static_field(pb_istream_t *stream,
 
     case PB_HTYPE_ONEOF:
       if (PB_LTYPE(type) == PB_LTYPE_SUBMESSAGE &&
-                *(pb_size_t*)iter->pSize != iter->pos->tag)
-      {
+          *(pb_size_t *)iter->pSize != iter->pos->tag) {
         /* We memset to zero so that any callbacks are set to NULL.
          * This is because the callbacks might otherwise have values
          * from some other union field. */
@@ -462,7 +461,7 @@ static bool checkreturn decode_static_field(pb_istream_t *stream,
         pb_message_set_to_defaults((const pb_field_t *)iter->pos->ptr,
                                    iter->pData);
       }
-      *(pb_size_t*)iter->pSize = iter->pos->tag;
+      *(pb_size_t *)iter->pSize = iter->pos->tag;
 
       return func(stream, iter->pos, iter->pData);
 
@@ -1319,7 +1318,11 @@ static bool checkreturn pb_dec_bytes(pb_istream_t *stream,
     bdest = *(pb_bytes_array_t **)dest;
 #endif
   } else {
-    if (alloc_size > field->data_size)
+    /* data_size is sizeof(PB_BYTES_ARRAY_T(N)), including trailing alignment
+     * padding. bytes_capacity is the schema's exact N; without this separate
+     * bound every odd N accepted one extra byte. Keep the alloc_size check as
+     * a second memory-safety invariant. */
+    if (size > field->bytes_capacity || alloc_size > field->data_size)
       PB_RETURN_ERROR(stream, "bytes overflow");
     bdest = (pb_bytes_array_t *)dest;
   }

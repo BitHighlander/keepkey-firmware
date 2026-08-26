@@ -46,3 +46,30 @@ TEST(Signing, LegacyChangeMayNotClaimTaprootScriptType) {
   EXPECT_TRUE(Forbidden(49, 49, OutputScriptType_PAYTOTAPROOT));
   EXPECT_TRUE(Forbidden(84, 84, OutputScriptType_PAYTOTAPROOT));
 }
+
+TEST(Signing, MultisigQuorumMustBeBoundedBeforeFeeAccounting) {
+  MultisigRedeemScriptType multisig = MultisigRedeemScriptType_init_zero;
+  multisig.has_m = true;
+  multisig.m = 2;
+  multisig.pubkeys_count = 3;
+  EXPECT_TRUE(signing_multisig_quorum_is_valid(&multisig));
+
+  multisig.has_m = false;
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  multisig.has_m = true;
+
+  multisig.m = 0;
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  multisig.m = UINT32_MAX;
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  multisig.m = 4;
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+
+  multisig.m = 1;
+  multisig.pubkeys_count = 0;
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+  multisig.pubkeys_count = 16;
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(&multisig));
+
+  EXPECT_FALSE(signing_multisig_quorum_is_valid(nullptr));
+}

@@ -31,6 +31,7 @@
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/bip39_english.h"
 #include "trezor/crypto/memzero.h"
@@ -368,7 +369,13 @@ void next_character(void) {
 
   /* Scramble cipher */
   strlcpy(cipher, english_alphabet, ENGLISH_ALPHABET_BUF);
-  random_permute_char(cipher, strlen(cipher));
+  if (!random_permute_char_checked(cipher, strlen(cipher))) {
+    recovery_cipher_abort();
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "RNG health check failed; recovery refused");
+    layoutHome();
+    return;
+  }
 
   static char CONFIDENTIAL current_word[CURRENT_WORD_BUF];
   get_current_word(current_word);
@@ -688,6 +695,10 @@ void recovery_cipher_finalize(void) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");
+    /* new_mnemonic is function-static CONFIDENTIAL storage, not part of the
+     * buffers recovery_cipher_reset() clears. A host-triggered early finalize
+     * can leave 23 expanded seed words here unless this exit scrubs it. */
+    memzero(new_mnemonic, sizeof(new_mnemonic));
     setup_abort();
     layoutHome();
     return;

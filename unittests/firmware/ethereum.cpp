@@ -1,4 +1,6 @@
 extern "C" {
+#include "keepkey/board/layout.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
@@ -7,15 +9,19 @@ extern "C" {
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
+#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
 #include "messages-ethereum.pb.h"
+
+void setup(void);
 }
 
 #include "gtest/gtest.h"
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
@@ -113,6 +119,15 @@ static EthereumSignTx liquidity_tx(
   return msg;
 }
 
+static void ensure_liquidity_signing_seed(void) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  session_clear(true);
+  storage_setMnemonic("all all all all all all all all all all all all");
+}
+
 static void set_word_u64(EthereumSignTx& msg, size_t word, uint64_t value) {
   uint8_t* out = msg.data_initial_chunk.bytes + 4 + word * 32;
   memset(out, 0, 32);
@@ -173,6 +188,24 @@ TEST(Ethereum, LiquidityCancellationFailsClosed) {
   EthereumSignTx msg = liquidity_tx(true);
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(Ethereum, AddLiquidityToThirdPartyCanCompleteAllConfirmations) {
+  ensure_liquidity_signing_seed();
+  EthereumSignTx msg = liquidity_tx(true, true);
+
+  ASSERT_TRUE(kkconfirm_preload(6, 0));
+  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(Ethereum, RemoveLiquidityToThirdPartyCanCompleteAllConfirmations) {
+  ensure_liquidity_signing_seed();
+  EthereumSignTx msg = liquidity_tx(true, false);
+
+  ASSERT_TRUE(kkconfirm_preload(5, 0));
+  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
@@ -273,9 +306,8 @@ TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
             encAddress("00112233445566778899aabbccddeeff00112233", encoded));
   EXPECT_NE(SUCCESS,
             encAddress("0x00112233445566778899aabbccddeeff0011223g", encoded));
-  EXPECT_NE(SUCCESS, encAddress(
-                         "0x00112233445566778899aabbccddeeff0011223344",
-                         encoded));
+  EXPECT_NE(SUCCESS, encAddress("0x00112233445566778899aabbccddeeff0011223344",
+                                encoded));
 }
 
 // Every EIP-712 field screen used to be a review(), which calls
@@ -326,11 +358,13 @@ static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
   msg->has_chain_id = true;
   msg->chain_id = 1;
   msg->has_data_initial_chunk = true;
-  msg->data_initial_chunk.size = 4 + 4 * 32;
+  msg->data_initial_chunk.size = ZX_TRANSFORM_ERC20_MIN_LEN;
   std::memcpy(msg->data_initial_chunk.bytes, "\x41\x55\x65\xb0", 4);
-  if (in_token) std::memcpy(msg->data_initial_chunk.bytes + 4 + 12, in_token, 20);
+  if (in_token)
+    std::memcpy(msg->data_initial_chunk.bytes + 4 + 12, in_token, 20);
   if (out_token)
     std::memcpy(msg->data_initial_chunk.bytes + 4 + 32 + 12, out_token, 20);
+  msg->data_initial_chunk.bytes[ZX_TRANSFORM_ERC20_HEAD_LEN - 1] = 0xa0;
 }
 
 TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
@@ -341,13 +375,23 @@ TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_FALSE(
       ethereum_contractHandled(msg.data_initial_chunk.size + 1, &msg, nullptr));
+
+  msg.data_initial_chunk.size = 4 + 4 * 32;
+  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
+                                        nullptr))
+      << "the fifth ABI head word and array length must be present";
+
+  MakeTransformErc20(&msg, kTUSD, kTGBP);
+  msg.data_initial_chunk.bytes[ZX_TRANSFORM_ERC20_HEAD_LEN - 1] = 0xc0;
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
+      << "the displayed static arguments must bind the canonical route tail";
 }
 
-// The decoder shows four values and hides the transformations[] body. That is
-// only defensible because the input amount and minimum output amount bound the
-// outcome — and ethereumFormatAmount() renders the literal "Unknown token
+// The structured screen shows four values and the route follows on raw-data
+// screens. ethereumFormatAmount() still renders the literal "Unknown token
 // value" whenever tokenByChainAddress() misses, so an unresolved token turns
-// the bound into nothing while the calldata still executes.
+// the displayed bound into nothing while the calldata still executes.
 //
 // Gating on the lookup rather than on a chain allowlist keeps this correct
 // however the tables change. It matters in practice: the generated table
@@ -358,24 +402,31 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
 
   // Both known -> the device can name what it is showing.
   MakeTransformErc20(&msg, kTUSD, kTGBP);
-  EXPECT_TRUE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                       nullptr));
+  EXPECT_TRUE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
+
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
+      << "native value is not shown by the transformERC20 confirmation";
 
   // Either side unknown -> refuse to claim it, so ethereum.c falls through to
   // the raw-calldata path (AdvancedMode-gated, bytes shown).
   MakeTransformErc20(&msg, nullptr, kTGBP);
-  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                        nullptr))
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
       << "unknown INPUT token must not clear-sign";
 
   MakeTransformErc20(&msg, kTUSD, nullptr);
-  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                        nullptr))
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
       << "unknown OUTPUT token must not clear-sign";
 
   MakeTransformErc20(&msg, nullptr, nullptr);
-  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                        nullptr));
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
 
   // A chain with no token table entries at all cannot name either asset, so it
   // must refuse even though 0x deploys the same proxy there. This is what the
@@ -383,10 +434,33 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
   for (uint32_t cid : {8453u, 42161u, 43114u}) {
     MakeTransformErc20(&msg, kTUSD, kTGBP);
     msg.chain_id = cid;
-    EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                          nullptr))
+    EXPECT_FALSE(
+        ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
         << "chain " << cid << " has no token entries; nothing is nameable";
   }
+}
+
+TEST(Ethereum, TransformErc20DisclosesCompleteRoute) {
+  std::vector<uint8_t> route(220, 0x00);
+  route[31] = 1;  // transformations[] length word
+  route.back() = 0xa5;
+
+  size_t pages = 0;
+  size_t offset = 0;
+  while (offset < route.size()) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(
+        route.data() + offset, route.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    offset += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1u)
+      << "fixture must prove the route is paginated rather than truncated";
+
+  ASSERT_TRUE(kkconfirm_preload(static_cast<int>(pages), 0));
+  EXPECT_TRUE(zx_confirmZxTransformRoute(route.data(), route.size()));
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Ethereum, Eip712ChainIdRequiresCanonicalUint32) {
@@ -410,8 +484,8 @@ extern "C" {
 }
 
 // The 0x Exchange Proxy lives at the same address on many chains, so the two 0x
-// decoders cannot be pinned to mainnet the way the Uniswap and Sablier ones are.
-// Optimism is the trap: 0x deploys a DIFFERENT proxy there
+// decoders cannot be pinned to mainnet the way the Uniswap and Sablier ones
+// are. Optimism is the trap: 0x deploys a DIFFERENT proxy there
 // (0xdef1abe32c034e558cdd535791643c58a13acc10), so allowing chain 10 for
 // ZXSWAP_ADDRESS would narrate an unrelated contract.
 TEST(Ethereum, ZxExchangeProxyChainAllowlist) {
@@ -422,7 +496,8 @@ TEST(Ethereum, ZxExchangeProxyChainAllowlist) {
   EXPECT_TRUE(zx_isExchangeProxyChain(42161));  // Arbitrum
   EXPECT_TRUE(zx_isExchangeProxyChain(43114));  // Avalanche
 
-  EXPECT_FALSE(zx_isExchangeProxyChain(10)) << "Optimism uses a different 0x proxy";
+  EXPECT_FALSE(zx_isExchangeProxyChain(10))
+      << "Optimism uses a different 0x proxy";
 
   // Default-deny: anything unlisted falls through to generic disclosure.
   EXPECT_FALSE(zx_isExchangeProxyChain(0));

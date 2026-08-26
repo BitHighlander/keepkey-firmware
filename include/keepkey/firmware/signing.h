@@ -33,6 +33,10 @@ bool isCrossAccountSegwitChangeForbidden(const uint32_t* lhs_address_n,
                                          size_t rhs_address_n_count,
                                          OutputScriptType rhs_script_type);
 
+/// Exposed for unit tests: validates the host-provided multisig weight inputs
+/// before transaction-size and fee calculations consume them.
+bool signing_multisig_quorum_is_valid(const MultisigRedeemScriptType* multisig);
+
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);
 void signing_abort(void);

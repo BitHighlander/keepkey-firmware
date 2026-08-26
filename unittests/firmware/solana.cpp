@@ -1,5 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/solana.h"
+#include "trezor/crypto/curves.h"
+#include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
 }
 
@@ -127,6 +129,33 @@ TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
   /* Zero really is zero, at any scale. */
   solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 18);
   EXPECT_STREQ(buf, "0.000000000 tokens");
+}
+
+TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
+  /* These messages end immediately after the count. A parser that correctly
+   * checks the count before reading accounts returns MALFORMED; the vulnerable
+   * OPAQUE path either stored 33 into an 8-bit loop bound (OOB past
+   * accounts[31]) or wrapped 256 to zero and skipped signer verification. */
+  const uint8_t legacy_33[] = {1, 0, 0, 33};
+  const uint8_t legacy_256[] = {1, 0, 0, 0x80, 0x02};
+  const uint8_t versioned_33[] = {0x80, 1, 0, 0, 33};
+  const uint8_t versioned_256[] = {0x80, 1, 0, 0, 0x80, 0x02};
+
+  const struct {
+    const uint8_t* raw;
+    size_t len;
+  } cases[] = {{legacy_33, sizeof(legacy_33)},
+               {legacy_256, sizeof(legacy_256)},
+               {versioned_33, sizeof(versioned_33)},
+               {versioned_256, sizeof(versioned_256)}};
+
+  for (const auto& test_case : cases) {
+    SolanaParsedTx tx;
+    memset(&tx, 0xa5, sizeof(tx));
+    EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+              solana_inspectTx(test_case.raw, test_case.len, &tx));
+    EXPECT_EQ(0, tx.num_accounts);
+  }
 }
 
 TEST(Solana, ParseSystemTransfer) {
@@ -1166,6 +1195,317 @@ static size_t build_single_instr_tx(uint8_t* raw, const uint8_t* program,
   memcpy(raw + pos, instr_data, data_len);
   pos += data_len;
   return pos;
+}
+
+static void expect_repeated_pubkey(const uint8_t key[SOL_PUBKEY_SIZE],
+                                   uint8_t byte) {
+  for (size_t i = 0; i < SOL_PUBKEY_SIZE; i++) EXPECT_EQ(byte, key[i]);
+}
+
+TEST(Solana, PrefixedMessageReviewAndSignatureUseIdenticalSlice) {
+  uint8_t transfer[12] = {SOL_SYS_TRANSFER};
+  transfer[4] = 42;
+  uint8_t prefixed[513] = {0};
+  const size_t message_len = build_single_instr_tx(
+      prefixed + 1, SOL_SYSTEM_PROGRAM, 2, transfer, sizeof(transfer));
+
+  SolanaParsedTx parsed;
+  ASSERT_EQ(SOL_TX_REVIEW_VERIFIED,
+            solana_inspectTx(prefixed, message_len + 1, &parsed));
+
+  uint8_t seed[32] = {1};
+  HDNode node = {0};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), ED25519_NAME, &node));
+  hdnode_fill_public_key(&node);
+
+  SolanaSignTx request = SolanaSignTx_init_zero;
+  request.has_raw_tx = true;
+  request.raw_tx.size = message_len + 1;
+  memcpy(request.raw_tx.bytes, prefixed, request.raw_tx.size);
+  SolanaSignedTx response = SolanaSignedTx_init_zero;
+  ASSERT_TRUE(solana_signTx(&node, &request, &response));
+  ASSERT_TRUE(response.has_signature);
+  ASSERT_EQ(SOL_SIG_SIZE, response.signature.size);
+
+  /* The optional 0x00 is an unsigned-transaction signature-count prefix, not
+   * part of the serialized message Solana signs. The reviewed slice verifies;
+   * the old, unsliced byte string must not. */
+  EXPECT_EQ(0, ed25519_sign_open(prefixed + 1, message_len, node.public_key + 1,
+                                 response.signature.bytes));
+  EXPECT_NE(0, ed25519_sign_open(prefixed, message_len + 1, node.public_key + 1,
+                                 response.signature.bytes));
+  memzero(&node, sizeof(node));
+}
+
+TEST(Solana, SplAffectedIdentitiesAreCanonicalReviewMaterial) {
+  struct Case {
+    uint8_t opcode;
+    uint8_t account_count;
+    SolanaInstrType type;
+    int from_account;
+    int to_account;
+    int mint_account;
+  };
+  const Case cases[] = {
+      {SOL_TOKEN_BURN_IX, 3, SOL_INSTR_TOKEN_BURN, 0, -1, 1},
+      {SOL_TOKEN_CLOSE_ACCOUNT_IX, 3, SOL_INSTR_TOKEN_CLOSE_ACCOUNT, 0, 1, -1},
+      {SOL_TOKEN_FREEZE_ACCOUNT_IX, 3, SOL_INSTR_TOKEN_FREEZE_ACCOUNT, 0, -1,
+       1},
+      {SOL_TOKEN_THAW_ACCOUNT_IX, 3, SOL_INSTR_TOKEN_THAW_ACCOUNT, 0, -1, 1},
+      {SOL_TOKEN_SYNC_NATIVE_IX, 1, SOL_INSTR_TOKEN_SYNC_NATIVE, 0, -1, -1},
+  };
+
+  for (const Case& test_case : cases) {
+    uint8_t data[9] = {test_case.opcode};
+    const uint8_t data_len = test_case.opcode == SOL_TOKEN_BURN_IX ? 9 : 1;
+    data[1] = 42;
+    uint8_t raw[512];
+    const size_t len = build_single_instr_tx(
+        raw, SOL_TOKEN_PROGRAM, test_case.account_count, data, data_len);
+    SolanaParsedTx tx;
+    ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+    ASSERT_EQ(1, tx.num_instructions);
+    const SolanaParsedInstruction& pi = tx.instructions[0];
+    EXPECT_EQ(test_case.type, pi.type);
+    if (test_case.from_account >= 0) {
+      expect_repeated_pubkey(pi.from, 0x11 + test_case.from_account);
+    }
+    if (test_case.to_account >= 0) {
+      expect_repeated_pubkey(pi.to, 0x11 + test_case.to_account);
+    }
+    if (test_case.mint_account >= 0) {
+      ASSERT_TRUE(pi.has_mint);
+      expect_repeated_pubkey(pi.mint, 0x11 + test_case.mint_account);
+    }
+
+    /* Removing the last required identity must never leave a VERIFIED
+     * instruction whose confirmation would display a zero-filled key. */
+    const size_t short_len = build_single_instr_tx(
+        raw, SOL_TOKEN_PROGRAM, test_case.account_count - 1, data, data_len);
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, short_len, &tx));
+  }
+}
+
+TEST(Solana, StakeAffectedIdentitiesAreCanonicalReviewMaterial) {
+  struct Case {
+    uint8_t opcode;
+    uint8_t account_count;
+    uint8_t data_len;
+    SolanaInstrType type;
+    int from_account;
+    int to_account;
+  };
+  const Case cases[] = {
+      {SOL_STAKE_DELEGATE_IX, 6, 4, SOL_INSTR_STAKE_DELEGATE, 0, 1},
+      {SOL_STAKE_SPLIT_IX, 3, 12, SOL_INSTR_STAKE_SPLIT, 0, 1},
+      {SOL_STAKE_DEACTIVATE_IX, 3, 4, SOL_INSTR_STAKE_DEACTIVATE, 0, -1},
+      {SOL_STAKE_MERGE_IX, 5, 4, SOL_INSTR_STAKE_MERGE, 1, 0},
+  };
+
+  for (const Case& test_case : cases) {
+    uint8_t data[12] = {test_case.opcode};
+    data[4] = 42; /* Split amount; ignored by the other cases. */
+    uint8_t raw[512];
+    const size_t len =
+        build_single_instr_tx(raw, SOL_STAKE_PROGRAM, test_case.account_count,
+                              data, test_case.data_len);
+    SolanaParsedTx tx;
+    ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+    const SolanaParsedInstruction& pi = tx.instructions[0];
+    EXPECT_EQ(test_case.type, pi.type);
+    expect_repeated_pubkey(pi.from, 0x11 + test_case.from_account);
+    if (test_case.to_account >= 0) {
+      expect_repeated_pubkey(pi.to, 0x11 + test_case.to_account);
+    }
+
+    const size_t short_len = build_single_instr_tx(raw, SOL_STAKE_PROGRAM,
+                                                   test_case.account_count - 1,
+                                                   data, test_case.data_len);
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, short_len, &tx));
+  }
+}
+
+TEST(Solana, CheckedMintAndBurnPreserveSignedDecimalsAndCanonicalShape) {
+  const uint8_t opcodes[] = {SOL_TOKEN_MINT_TO_CHECKED_IX,
+                             SOL_TOKEN_BURN_CHECKED_IX};
+  const uint8_t decimals[] = {0, 6, 18};
+  for (uint8_t opcode : opcodes) {
+    for (uint8_t decimal : decimals) {
+      uint8_t data[10] = {opcode, 0x00, 0xca, 0x9a, 0x3b};
+      data[9] = decimal;
+      uint8_t raw[512];
+      size_t len =
+          build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, data, sizeof(data));
+      SolanaParsedTx tx;
+      ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+      const SolanaParsedInstruction& pi = tx.instructions[0];
+      EXPECT_TRUE(pi.has_token_decimals);
+      EXPECT_EQ(decimal, pi.extra_u8);
+      EXPECT_EQ(UINT64_C(1000000000), pi.amount);
+
+      len =
+          build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, data, sizeof(data));
+      EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+    }
+  }
+
+  /* Checked forms without the signed decimals byte, or with trailing bytes,
+   * are not canonical and cannot borrow the checked review screen. */
+  uint8_t short_data[9] = {SOL_TOKEN_MINT_TO_CHECKED_IX};
+  uint8_t long_data[11] = {SOL_TOKEN_BURN_CHECKED_IX};
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+  size_t len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, short_data,
+                                     sizeof(short_data));
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, long_data,
+                              sizeof(long_data));
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+}
+
+TEST(Solana, UncheckedMintAndBurnDoNotFabricateDecimals) {
+  const uint8_t opcodes[] = {SOL_TOKEN_MINT_TO_IX, SOL_TOKEN_BURN_IX};
+  for (uint8_t opcode : opcodes) {
+    uint8_t data[9] = {opcode, 42};
+    uint8_t raw[512];
+    const size_t len =
+        build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, data, sizeof(data));
+    SolanaParsedTx tx;
+    ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+    EXPECT_FALSE(tx.instructions[0].has_token_decimals);
+    EXPECT_EQ(42, tx.instructions[0].amount);
+  }
+}
+
+TEST(Solana, SystemReviewRequiresAndPreservesAffectedAccounts) {
+  struct Case {
+    uint8_t opcode;
+    uint8_t account_count;
+    uint8_t data_len;
+    SolanaInstrType type;
+    int to_account;
+  };
+  const Case cases[] = {
+      {SOL_SYS_TRANSFER, 2, 12, SOL_INSTR_SYSTEM_TRANSFER, 1},
+      {SOL_SYS_ADVANCE_NONCE, 3, 4, SOL_INSTR_SYSTEM_ADVANCE_NONCE, -1},
+      {SOL_SYS_WITHDRAW_NONCE, 5, 12, SOL_INSTR_SYSTEM_WITHDRAW_NONCE, 1},
+      {SOL_SYS_INITIALIZE_NONCE, 3, 36, SOL_INSTR_SYSTEM_INITIALIZE_NONCE, -1},
+      {SOL_SYS_AUTHORIZE_NONCE, 2, 36, SOL_INSTR_SYSTEM_AUTHORIZE_NONCE, -1},
+      {SOL_SYS_ASSIGN, 1, 36, SOL_INSTR_SYSTEM_ASSIGN, -1},
+      {SOL_SYS_ALLOCATE, 1, 12, SOL_INSTR_SYSTEM_ALLOCATE, -1},
+  };
+
+  for (const Case& test_case : cases) {
+    uint8_t data[36] = {test_case.opcode};
+    memset(data + 4, 0x77, sizeof(data) - 4);
+    uint8_t raw[512];
+    size_t len =
+        build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, test_case.account_count,
+                              data, test_case.data_len);
+    SolanaParsedTx tx;
+    ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+    const SolanaParsedInstruction& pi = tx.instructions[0];
+    EXPECT_EQ(test_case.type, pi.type);
+    expect_repeated_pubkey(pi.from, 0x11);
+    if (test_case.to_account >= 0) {
+      expect_repeated_pubkey(pi.to, 0x11 + test_case.to_account);
+    }
+    if (test_case.type == SOL_INSTR_SYSTEM_INITIALIZE_NONCE) {
+      expect_repeated_pubkey(pi.authority, 0x77);
+    } else if (test_case.type == SOL_INSTR_SYSTEM_AUTHORIZE_NONCE ||
+               test_case.type == SOL_INSTR_SYSTEM_ASSIGN) {
+      expect_repeated_pubkey(pi.extra, 0x77);
+    }
+
+    len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM,
+                                test_case.account_count - 1, data,
+                                test_case.data_len);
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+  }
+}
+
+TEST(Solana, RemainingStakeAndVoteReviewsBindCanonicalAccounts) {
+  struct Case {
+    const uint8_t* program;
+    uint8_t opcode;
+    uint8_t account_count;
+    uint8_t data_len;
+    SolanaInstrType type;
+    int to_account;
+    bool authority_is_account_two;
+  };
+  const Case cases[] = {
+      {SOL_STAKE_PROGRAM, SOL_STAKE_WITHDRAW_IX, 5, 12,
+       SOL_INSTR_STAKE_WITHDRAW, 1, false},
+      {SOL_STAKE_PROGRAM, SOL_STAKE_AUTHORIZE_IX, 3, 40,
+       SOL_INSTR_STAKE_AUTHORIZE, -1, true},
+      {SOL_VOTE_PROGRAM, SOL_VOTE_AUTHORIZE_IX, 3, 40, SOL_INSTR_VOTE_AUTHORIZE,
+       -1, true},
+      {SOL_VOTE_PROGRAM, SOL_VOTE_WITHDRAW_IX, 3, 12, SOL_INSTR_VOTE_WITHDRAW,
+       1, false},
+      {SOL_VOTE_PROGRAM, SOL_VOTE_UPDATE_VALIDATOR_IX, 3, 4,
+       SOL_INSTR_VOTE_UPDATE_VALIDATOR, -1, true},
+      {SOL_VOTE_PROGRAM, SOL_VOTE_UPDATE_COMMISSION_IX, 2, 5,
+       SOL_INSTR_VOTE_UPDATE_COMMISSION, -1, false},
+  };
+
+  for (const Case& test_case : cases) {
+    uint8_t data[40] = {test_case.opcode};
+    if (test_case.data_len == 40) memset(data + 4, 0x77, 32);
+    uint8_t raw[512];
+    size_t len =
+        build_single_instr_tx(raw, test_case.program, test_case.account_count,
+                              data, test_case.data_len);
+    SolanaParsedTx tx;
+    ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+    const SolanaParsedInstruction& pi = tx.instructions[0];
+    EXPECT_EQ(test_case.type, pi.type);
+    expect_repeated_pubkey(pi.from, 0x11);
+    if (test_case.to_account >= 0) {
+      expect_repeated_pubkey(pi.to, 0x11 + test_case.to_account);
+    }
+    if (test_case.authority_is_account_two) {
+      expect_repeated_pubkey(pi.authority, 0x13);
+    }
+    if (test_case.type == SOL_INSTR_VOTE_UPDATE_VALIDATOR) {
+      expect_repeated_pubkey(pi.extra, 0x12);
+    }
+
+    len = build_single_instr_tx(raw, test_case.program,
+                                test_case.account_count - 1, data,
+                                test_case.data_len);
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+  }
+}
+
+TEST(Solana, RevokeAndAtaReviewsRequireEveryDisplayedIdentity) {
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+
+  const uint8_t revoke[] = {SOL_TOKEN_REVOKE_IX};
+  size_t len =
+      build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, revoke, sizeof(revoke));
+  ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+  EXPECT_EQ(SOL_INSTR_TOKEN_REVOKE, tx.instructions[0].type);
+  expect_repeated_pubkey(tx.instructions[0].from, 0x11);
+  len =
+      build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 1, revoke, sizeof(revoke));
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+
+  const uint8_t ata_create[] = {0};
+  len = build_single_instr_tx(raw, SOL_ATA_PROGRAM, 4, ata_create,
+                              sizeof(ata_create));
+  ASSERT_EQ(SOL_TX_REVIEW_VERIFIED, solana_inspectTx(raw, len, &tx));
+  const SolanaParsedInstruction& pi = tx.instructions[0];
+  EXPECT_EQ(SOL_INSTR_ATA_CREATE, pi.type);
+  expect_repeated_pubkey(pi.from, 0x11);
+  expect_repeated_pubkey(pi.to, 0x12);
+  expect_repeated_pubkey(pi.authority, 0x13);
+  ASSERT_TRUE(pi.has_mint);
+  expect_repeated_pubkey(pi.mint, 0x14);
+  len = build_single_instr_tx(raw, SOL_ATA_PROGRAM, 3, ata_create,
+                              sizeof(ata_create));
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
 }
 
 /* Legacy SPL TransferChecked with the canonical 10-byte data (opcode + amount

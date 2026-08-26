@@ -7,7 +7,9 @@
 set(sources
     ctap2.cpp
     ctap2_cbor.cpp
+    confirm_test_utils.cpp
     dice.cpp
+    nanopb_bounds.cpp
     recovery.cpp
     seed_display.cpp
     test_board.cpp

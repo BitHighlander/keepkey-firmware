@@ -104,12 +104,9 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
      Auditor-caught unit error in an earlier version of this fix: XRPL's real
      ceiling is 100,000,000,000 XRP = 1e17 DROPS (payment.amount is drops, not
      XRP) -- 1e11 would have rejected any payment over 100,000 XRP. 1e17 is
-     comfortably under 2^61 (~2.3e18). ripple_serializeAmount()'s own
-     assert(amount <= 100000000000) uses the same wrong (XRP-sized) ceiling in
-     a drops-denominated check, and is compiled out under -DNDEBUG in release
-     builds regardless -- enforce the correct bound here instead, where a
-     failure is reported rather than silently ignored. */
-  if (msg->payment.amount > 100000000000000000ULL) {
+     comfortably under 2^61 (~2.3e18). Enforce the shared serializer/FSM
+     constant here so a violation is reported before confirmation. */
+  if (msg->payment.amount > RIPPLE_MAX_AMOUNT_DROPS) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Amount exceeds the maximum supported"));

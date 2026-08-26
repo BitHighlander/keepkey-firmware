@@ -105,6 +105,11 @@
 #define _(X) (X)
 
 static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+static HDNode CONFIDENTIAL fsm_derived_node;
+
+void fsm_clearDerivedNode(void) {
+  memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+}
 
 #define CHECK_INITIALIZED                               \
   if (!storage_isInitialized()) {                       \
@@ -228,7 +233,6 @@ static const CoinType* fsm_getCoin(bool has_name, const char* name) {
 static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
                                   size_t address_n_count,
                                   uint32_t* fingerprint) {
-  static HDNode CONFIDENTIAL node;
   if (fingerprint) {
     *fingerprint = 0;
   }
@@ -239,7 +243,7 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
     return 0;
   }
 
-  if (!storage_getRootNode(curve, true, &node)) {
+  if (!storage_getRootNode(curve, true, &fsm_derived_node)) {
     fsm_sendFailure(FailureType_Failure_NotInitialized,
                     "Device not initialized or passphrase request cancelled");
     layoutHome();
@@ -247,17 +251,17 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
   }
 
   if (!address_n || address_n_count == 0) {
-    return &node;
+    return &fsm_derived_node;
   }
 
-  if (hdnode_private_ckd_cached(&node, address_n, address_n_count,
+  if (hdnode_private_ckd_cached(&fsm_derived_node, address_n, address_n_count,
                                 fingerprint) == 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Failed to derive private key");
     layoutHome();
     return 0;
   }
 
-  return &node;
+  return &fsm_derived_node;
 }
 
 #if DEBUG_LINK

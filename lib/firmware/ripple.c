@@ -110,13 +110,15 @@ void ripple_serializeInt32(bool* ok, uint8_t** buf, const uint8_t* end,
 
 void ripple_serializeAmount(bool* ok, uint8_t** buf, const uint8_t* end,
                             const RippleFieldMapping* m, int64_t amount) {
+  /* Enforce the same drops-denominated protocol ceiling as the FSM. An assert
+   * alone disappears under -DNDEBUG and lets bits 62-63 overwrite a value the
+   * user approved. Reject before emitting even the field tag. */
+  if (amount < 0 || (uint64_t)amount > RIPPLE_MAX_AMOUNT_DROPS) {
+    *ok = false;
+    return;
+  }
   ripple_serializeType(ok, buf, end, m);
 
-  assert(amount >= 0 && "amounts cannot be negative");
-  /* XRPL's real ceiling: 100,000,000,000 XRP = 1e17 drops (this function is
-     drops-denominated). The previous 1e11 literal used the XRP-sized figure
-     for a drops quantity, understating the true bound by 1e6x. */
-  assert(amount <= 100000000000000000LL && "larger amounts not supported");
   uint8_t msb = (amount >> (7 * 8)) & 0xff;
   msb &= 0x7f;  // Clear first bit, indicating XRP
   msb |= 0x40;  // Clear second bit, indicating value is positive

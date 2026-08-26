@@ -109,3 +109,26 @@ TEST(Authenticator, RejectsWeakAndDuplicateSecrets) {
   EXPECT_EQ(0, kkconfirm_drain());
   EXPECT_EQ(NOACC, getAuthAccount("0", account));
 }
+
+TEST(Authenticator, CacheClearReloadsPersistentAccounts) {
+  ensure_auth_storage_initialized();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_EQ(NOERR, wipeAuthData());
+  ASSERT_EQ(0, kkconfirm_drain());
+
+  char account_seed[] =
+      "example:alice:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  ASSERT_EQ(NOERR, addAuthAccount(account_seed));
+  ASSERT_EQ(0, kkconfirm_drain());
+
+  authenticator_clear_cache();
+
+  char account[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {0};
+  EXPECT_EQ(NOERR, getAuthAccount("0", account));
+  EXPECT_STREQ("example:alice", account);
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  EXPECT_EQ(NOERR, wipeAuthData());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
