@@ -42,7 +42,8 @@
  *   off  len  field
  *     0    1  cert_version, must be 0x01
  *     1    1  usage_flags; bit0 = MAY_SUPPRESS_RAW, all other bits MUST be 0
- *     2    4  chain_id, big endian, NONZERO, matched exactly against the tx
+ *     2    4  scope_id, big endian, NONZERO, matched exactly against the tx
+ *             network (EVM chain id, or SLIP-44 coin type for non-EVM)
  *     6    4  not_after, big endian unix seconds
  *    10   32  alias, NUL-padded ASCII
  *    42   33  delegate_pubkey, compressed secp256k1 (0x02 or 0x03)
@@ -56,7 +57,7 @@
 
 #define CLEARSIGN_CERT_OFF_VERSION 0
 #define CLEARSIGN_CERT_OFF_FLAGS 1
-#define CLEARSIGN_CERT_OFF_CHAIN 2
+#define CLEARSIGN_CERT_OFF_SCOPE 2
 #define CLEARSIGN_CERT_OFF_EXPIRY 6
 #define CLEARSIGN_CERT_OFF_ALIAS 10
 #define CLEARSIGN_CERT_OFF_PUBKEY 42
@@ -125,6 +126,22 @@
  *
  * THE ONLY FUNCTION THAT READS THE ROOT KEY. */
 bool clearsign_root_verify_cert(const uint8_t *cert, size_t cert_len);
+
+/* Verify a suppression-capable certificate and require its network scope. On
+ * success copies the authenticated delegate identity. Non-EVM networks use
+ * their SLIP-44 coin type; Solana is therefore scope 501. Certificates without
+ * MAY_SUPPRESS_RAW are deliberately ineligible for this authority path. */
+bool clearsign_root_cert_delegate(const uint8_t *cert, size_t cert_len,
+                                  uint32_t expected_scope,
+                                  uint8_t out_pubkey[CLEARSIGN_PUBKEY_LEN],
+                                  char out_alias[CLEARSIGN_ALIAS_LEN + 1]);
+
+/* Verify sha256(data) with the delegate authenticated by a root certificate
+ * for `expected_scope`. This is the non-EVM equivalent of the certified v3
+ * schema verification path and never consults runtime signer slots. */
+bool clearsign_root_verify_delegate_attestation(
+    const uint8_t *cert, size_t cert_len, uint32_t expected_scope,
+    const uint8_t *data, size_t data_len, const uint8_t *sig, size_t sig_len);
 
 /* True when the firmware carries no root key at all -- the mechanical 7.15
  * release gate, kept queryable so a test can assert it rather than a human

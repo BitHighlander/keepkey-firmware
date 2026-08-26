@@ -810,10 +810,10 @@ static MetadataClassification process_certified(const uint8_t* payload,
   memcpy(delegate_alias, cert + CLEARSIGN_CERT_OFF_ALIAS, CLEARSIGN_ALIAS_LEN);
   delegate_alias[CLEARSIGN_ALIAS_LEN] = '\0';
   signed_metadata_pubkey_fingerprint(delegate_pub, delegate_fp);
-  delegate_chain_id = ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN] << 24) |
-                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN + 1] << 16) |
-                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN + 2] << 8) |
-                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_CHAIN + 3]);
+  delegate_chain_id = ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE] << 24) |
+                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE + 1] << 16) |
+                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE + 2] << 8) |
+                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE + 3]);
   delegate_may_suppress =
       (cert[CLEARSIGN_CERT_OFF_FLAGS] & CLEARSIGN_USAGE_MAY_SUPPRESS_RAW) != 0;
 

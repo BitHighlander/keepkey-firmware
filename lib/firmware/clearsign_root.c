@@ -29,10 +29,11 @@
 /* ── The root public key ─────────────────────────────────────────────
  *
  * A RELEASE BUILD SHIPS NO ROOT. The array is all-zero unless the build
- * explicitly asks for a test key, which is the 7.15 posture carried forward:
- * with no root, no certificate can ever verify, so the suppression branch is
- * unreachable rather than merely unused. clearsign_root_is_present() exposes
- * that so a release test asserts it instead of a human grepping key bytes.
+ * explicitly asks for the alpha root, which is the 7.15 posture carried
+ * forward: with no root, no certificate can ever verify, so the suppression
+ * branch is unreachable rather than merely unused. clearsign_root_is_present()
+ * exposes that so a release test asserts it instead of a human grepping key
+ * bytes.
  *
  * The real root will be generated on a KeepKey, will never exist as a file,
  * and gets pasted in at the release cut as a reviewable one-line diff. Making
@@ -40,12 +41,11 @@
  * clear-signs nothing -- the safe failure -- rather than one that trusts a key
  * whose private half sits in a scratch directory.
  */
-#if defined(KK_CLEARSIGN_TEST_ROOT)
-/* TEST KEY, unit tests and bench only. Generated 2026-08-21 on a marked
- * KeepKey the way the production root will be -- seed generated on the device,
- * never exported -- so the only thing that changes for the real ceremony is
- * which device runs it. m/44'/60'/0'/0/0, device 393137350D4736341B003900,
- * reseeded 2026-08-21 for the second rehearsal. */
+#if defined(KK_CLEARSIGN_ALPHA_ROOT)
+/* ALPHA KEY. Generated 2026-08-21 on a marked KeepKey; its private half never
+ * left that device. This is the root that issued the public alpha delegate
+ * certificates used by Vault. Production must perform a separate ceremony.
+ * m/44'/60'/0'/0/0, device 393137350D4736341B003900, reseeded 2026-08-21. */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
     0x02, 0xde, 0x92, 0x31, 0xb2, 0x09, 0x44, 0x33, 0x23, 0x55, 0x32,
     0xfb, 0x19, 0x32, 0xe3, 0x24, 0xa2, 0xc7, 0x30, 0x41, 0x95, 0xe1,
@@ -79,9 +79,27 @@ bool clearsign_root_verify_cert(const uint8_t *cert, size_t cert_len) {
   const uint8_t flags = cert[CLEARSIGN_CERT_OFF_FLAGS];
   if ((flags & (uint8_t)~CLEARSIGN_USAGE_MAY_SUPPRESS_RAW) != 0) return false;
 
+  /* Alias is authenticated display text, so accept only the canonical format
+   * the ceremony signs: 1-31 printable ASCII bytes followed by NUL padding.
+   * A signed newline/control byte would otherwise let an issuer reshape the
+   * device's trust prompt even though callers use a safe "%s" format. */
+  bool alias_ended = false;
+  for (size_t i = 0; i < CLEARSIGN_ALIAS_LEN; i++) {
+    const uint8_t c = cert[CLEARSIGN_CERT_OFF_ALIAS + i];
+    if (alias_ended) {
+      if (c != 0) return false;
+    } else if (c == 0) {
+      if (i == 0) return false;
+      alias_ended = true;
+    } else if (c < 0x20 || c > 0x7e) {
+      return false;
+    }
+  }
+  if (!alias_ended) return false;
+
   /* Chain 0 is not a chain. Requiring nonzero means a certificate is always
    * bound to exactly one network and can never be wildcard by omission. */
-  if (be32(&cert[CLEARSIGN_CERT_OFF_CHAIN]) == 0) return false;
+  if (be32(&cert[CLEARSIGN_CERT_OFF_SCOPE]) == 0) return false;
 
   /* The device has no clock, so this is not "is it expired now" -- it is "was
    * this issued for a window this firmware still honours". The floor moves
@@ -114,4 +132,40 @@ bool clearsign_root_verify_cert(const uint8_t *cert, size_t cert_len) {
 
   return ecdsa_verify_digest(&secp256k1, kk_clearsign_root_pubkey,
                              &cert[CLEARSIGN_CERT_OFF_SIG], digest) == 0;
+}
+
+bool clearsign_root_cert_delegate(const uint8_t *cert, size_t cert_len,
+                                  uint32_t expected_scope,
+                                  uint8_t out_pubkey[CLEARSIGN_PUBKEY_LEN],
+                                  char out_alias[CLEARSIGN_ALIAS_LEN + 1]) {
+  if (!out_pubkey || !out_alias || expected_scope == 0 ||
+      !clearsign_root_verify_cert(cert, cert_len) ||
+      (cert[CLEARSIGN_CERT_OFF_FLAGS] & CLEARSIGN_USAGE_MAY_SUPPRESS_RAW) ==
+          0 ||
+      be32(&cert[CLEARSIGN_CERT_OFF_SCOPE]) != expected_scope) {
+    return false;
+  }
+  memcpy(out_pubkey, &cert[CLEARSIGN_CERT_OFF_PUBKEY], CLEARSIGN_PUBKEY_LEN);
+  memcpy(out_alias, &cert[CLEARSIGN_CERT_OFF_ALIAS], CLEARSIGN_ALIAS_LEN);
+  out_alias[CLEARSIGN_ALIAS_LEN] = '\0';
+  return true;
+}
+
+bool clearsign_root_verify_delegate_attestation(
+    const uint8_t *cert, size_t cert_len, uint32_t expected_scope,
+    const uint8_t *data, size_t data_len, const uint8_t *sig, size_t sig_len) {
+  if (!data || data_len == 0 || !sig || sig_len != 64) return false;
+  uint8_t delegate[CLEARSIGN_PUBKEY_LEN];
+  char alias[CLEARSIGN_ALIAS_LEN + 1];
+  if (!clearsign_root_cert_delegate(cert, cert_len, expected_scope, delegate,
+                                    alias)) {
+    return false;
+  }
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  sha256_Raw(data, data_len, digest);
+  const bool ok = ecdsa_verify_digest(&secp256k1, delegate, sig, digest) == 0;
+  memset(delegate, 0, sizeof(delegate));
+  memset(digest, 0, sizeof(digest));
+  memset(alias, 0, sizeof(alias));
+  return ok;
 }

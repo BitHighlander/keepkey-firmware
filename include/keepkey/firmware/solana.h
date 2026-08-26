@@ -173,9 +173,9 @@ typedef struct {
    * KKSOLSC1 schema's labelled accounts back to real pubkeys. */
   const uint8_t* acct_indices;
   uint8_t num_acct_indices;
-  /* True when this instruction reaches into an address-lookup table, so its
-   * accounts are NOT present in the signed message. A schema must never be
-   * applied to one: the pubkeys it would display are unknowable on-device. */
+  /* True when this instruction reaches into an unresolved address-lookup
+   * table. A certified parse appends the delegate-attested canonical lookup
+   * keys before decoding, so successfully resolved instructions are false. */
   bool external;
 } SolanaParsedInstruction;
 
@@ -187,6 +187,12 @@ typedef struct {
   uint8_t num_accounts;
   uint8_t accounts[SOL_MAX_ACCOUNTS][SOL_PUBKEY_SIZE];
   uint8_t recent_blockhash[SOL_PUBKEY_SIZE];
+  /* True when a v0 message contains at least one serialized address lookup
+   * table entry. This remains true after certified resolution and lets the
+   * policy layer distinguish an unknown self-contained program (schema-only
+   * certification is sufficient) from an externally-resolved transaction
+   * (a transaction-bound LUT proof is mandatory). */
+  bool has_address_lookups;
   uint8_t num_instructions;
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
 } SolanaParsedTx;
@@ -218,7 +224,8 @@ typedef struct {
  *   - discriminator + the declared arg widths must equal the instruction
  *     data length EXACTLY, so no unaccounted byte can carry a second effect;
  *   - every account index the schema displays must exist in the instruction;
- *   - the instruction must not reach into a lookup table (see `external`);
+ *   - every lookup-table account must be transaction-bound by a valid Solana
+ *     ClearSign certificate before an instruction may cease being `external`;
  *   - and every OTHER instruction in the transaction must be one firmware
  *     already recognises, so a schema can never green-light a message whose
  *     real effect sits in an instruction nobody described.
@@ -248,7 +255,8 @@ typedef enum {
   SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
   SOL_SCHEMA_ARG_U8 = 2,       /* 1 byte */
   SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
-  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown in full over pages */
+  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown as a short fingerprint */
+  SOL_SCHEMA_ARG_LAMPORTS = 5, /* 8 bytes, shown as decimal SOL */
 } SolanaSchemaArgType;
 
 typedef struct {
@@ -290,9 +298,27 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index);
 
+/* A certified request carries resolved LUT accounts if and only if the signed
+ * message contains address-lookup entries. Self-contained messages must not
+ * manufacture such a proof; ALT-backed messages must not omit it. */
+bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
+                                     size_t lut_account_count);
+
 /* Inspect a raw Solana transaction and classify it for signing UX */
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
                                 SolanaParsedTx* tx);
+
+/* Inspect a v0 message after appending the canonical lookup-table account list
+ * attested for this exact message. The account order is the Solana runtime
+ * order: all writable lookup keys followed by all readonly lookup keys, across
+ * the message's lookup entries. The parser proves the serialized lookup index
+ * count equals `num_lut_accounts`; it never accepts extra or missing keys.
+ * Trust verification is deliberately outside this parser and MUST happen
+ * before a caller uses the result to suppress Advanced Mode. */
+SolanaTxReview solana_inspectTxWithTrustedLut(
+    const uint8_t* raw, size_t raw_len,
+    const uint8_t (*lut_accounts)[SOL_PUBKEY_SIZE], size_t num_lut_accounts,
+    SolanaParsedTx* tx);
 
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
@@ -355,6 +381,16 @@ bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,
                                  const uint8_t* sig, size_t sig_len);
+
+/* Certified KKSOLSW1 verification. Unlike the runtime helper above, this uses
+ * the delegate carried by a KeepKey root certificate scoped to Solana (501),
+ * so it is independent of session signer slots and Advanced Mode. */
+bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
+                                   const uint8_t (*accounts)[32],
+                                   size_t num_accounts,
+                                   const uint8_t* certificate,
+                                   size_t certificate_len, const uint8_t* sig,
+                                   size_t sig_len);
 
 /* ceil(price * limit / 1,000,000) priority-fee lamports, overflow-safe. Returns
  * false (and leaves *out untouched) if the true value exceeds UINT64_MAX — the

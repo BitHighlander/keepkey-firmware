@@ -74,6 +74,8 @@ static const char* attestor_schemaArgTypeName(SolanaSchemaArgType type) {
       return "public key";
     case SOL_SCHEMA_ARG_OPAQUE32:
       return "bytes32 hex";
+    case SOL_SCHEMA_ARG_LAMPORTS:
+      return "lamports (u64 LE)";
   }
   return "invalid"; /* Parser rejects unknown values; defense in depth. */
 }
