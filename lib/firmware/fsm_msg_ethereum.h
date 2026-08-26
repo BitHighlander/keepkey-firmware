@@ -618,13 +618,13 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* Same gate the hashed path carries. Structured display is strictly more
-   * information than the blind path it replaces, but this is new parser
-   * surface reachable from a website, so it stays behind AdvancedMode until it
-   * has hardware evidence behind it. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+  /* This is the canonical device-driven stream, not the withdrawn whole-JSON
+   * parser and not the blind typed-hash endpoint. Every leaf is validated,
+   * rendered and hashed from the same bytes, so AdvancedMode is neither needed
+   * nor consulted. */
+  if (!ethereum_streamed_eip712_enabled()) {
     fsm_sendFailure(FailureType_Failure_Other,
-                    _("Enable AdvancedMode to sign typed data"));
+                    _("Structured EIP-712 is unavailable"));
     layout_home();
     return;
   }

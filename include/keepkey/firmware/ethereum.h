@@ -72,6 +72,9 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
                               const HDNode* node,
                               EthereumTypedDataSignature* resp);
 bool ethereum_typed_hash_policy_allows(bool advanced_mode);
+/* Canonical device-driven EIP-712 streaming is available without blind-sign
+   policy. The withdrawn whole-JSON parser remains separately disabled. */
+bool ethereum_streamed_eip712_enabled(void);
 bool ethereum_structured_eip712_enabled(void);
 /* True only for the exact string "EIP712Domain" -- the primaryType whose
    signature legitimately carries no message hash. Never a prefix match. */
