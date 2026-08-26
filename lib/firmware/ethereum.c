@@ -76,6 +76,12 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
 
 static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
+/* Arbitrary calldata can arrive over several EthereumTxAck messages.  Keep a
+ * second Keccak state for the user-visible commitment: the transaction hash
+ * state also includes RLP fields and therefore cannot identify calldata by
+ * itself. */
+static bool data_hash_pending = false;
+static struct SHA3_CTX data_keccak_ctx;
 static EthereumTxRequest msg_tx_request;
 static CONFIDENTIAL uint8_t privkey[32];
 static uint32_t chain_id;
@@ -535,37 +541,23 @@ static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   }
 }
 
-static void layoutEthereumData(const uint8_t* data, uint32_t len,
-                               uint32_t total_len, char* out_str,
-                               size_t out_str_len) {
-  char hexdata[3][17];
-  char summary[20];
-  uint32_t printed = 0;
-  for (int i = 0; i < 3; i++) {
-    uint32_t linelen = len - printed;
-    if (linelen > 8) {
-      linelen = 8;
-    }
-    data2hex(data, linelen, hexdata[i]);
-    data += linelen;
-    printed += linelen;
-  }
+static bool confirm_ethereum_data_hash(void) {
+  uint8_t digest[32];
+  char hex_digest[65];
 
-  strcpy(summary, "...          bytes");
-  char* p = summary + 11;
-  uint32_t number = total_len;
-  while (number > 0) {
-    *p-- = '0' + number % 10;
-    number = number / 10;
-  }
-  const char* summarystart = summary;
-  if (total_len == printed) summarystart = summary + 4;
+  keccak_Final(&data_keccak_ctx, digest);
+  data2hex(digest, sizeof(digest), hex_digest);
+  data_hash_pending = false;
 
-  if ((uint32_t)snprintf(out_str, out_str_len, "%s%s\n%s%s", hexdata[0],
-                         hexdata[1], hexdata[2], summarystart) >= out_str_len) {
-    /*error detected.  Clear the buffer */
-    memset(out_str, 0, out_str_len);
-  }
+  /* The hash is ASCII hex so a user can compare it directly with a host-side
+   * Keccak-256.  confirm_bytes() guarantees that all 64 characters are shown
+   * even if a future font/layout change makes them span multiple screens. */
+  const bool approved = confirm_bytes(
+      ButtonRequestType_ButtonRequest_ConfirmOutput, "Ethereum Data Hash",
+      (const uint8_t*)hex_digest, sizeof(hex_digest) - 1);
+  memzero(digest, sizeof(digest));
+  memzero(hex_digest, sizeof(hex_digest));
+  return approved;
 }
 
 static void formatEthereumFee(bignum256* fee, const uint8_t* gas_price,
@@ -692,6 +684,8 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   char confirm_body_message[176] = {0};
 
   ethereum_signing = true;
+  data_hash_pending = false;
+  memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
   sha3_256_Init(&keccak_ctx);
 
   memset(&msg_tx_request, 0, sizeof(EthereumTxRequest));
@@ -966,15 +960,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       return;
     }
 
-    layoutEthereumData(msg->data_initial_chunk.bytes,
-                       msg->data_initial_chunk.size, data_total,
-                       confirm_body_message, sizeof(confirm_body_message));
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Confirm Ethereum Data", "%s", confirm_body_message)) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-      ethereum_signing_abort();
-      return;
-    }
+    /* The initial protobuf carries at most 1024 bytes, while data_total may be
+     * much larger.  Showing that prefix as if it described the transaction
+     * let a hostile host hide executable calldata in later EthereumTxAck
+     * chunks.  Commit every chunk here and in ethereum_signing_txack(), then
+     * require approval of the complete Keccak-256 before signing. */
+    sha3_256_Init(&data_keccak_ctx);
+    sha3_Update(&data_keccak_ctx, msg->data_initial_chunk.bytes,
+                msg->data_initial_chunk.size);
+    data_hash_pending = true;
   }
 
   if (is_approve) {
@@ -1088,6 +1082,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   hash_data(msg->data_initial_chunk.bytes, msg->data_initial_chunk.size);
   data_left = data_total - msg->data_initial_chunk.size;
 
+  if (data_left == 0 && data_hash_pending && !confirm_ethereum_data_hash()) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Signing cancelled by user");
+    ethereum_signing_abort();
+    return;
+  }
+
   memcpy(privkey, node->private_key, 32);
 
   if (data_left > 0) {
@@ -1117,9 +1118,19 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
     return;
   }
 
+  if (data_hash_pending) {
+    sha3_Update(&data_keccak_ctx, tx->data_chunk.bytes, tx->data_chunk.size);
+  }
   hash_data(tx->data_chunk.bytes, tx->data_chunk.size);
 
   data_left -= tx->data_chunk.size;
+
+  if (data_left == 0 && data_hash_pending && !confirm_ethereum_data_hash()) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Signing cancelled by user");
+    ethereum_signing_abort();
+    return;
+  }
 
   if (data_left > 0) {
     send_request_chunk();
@@ -1132,6 +1143,8 @@ void ethereum_signing_abort(void) {
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     signed_metadata_clear();
+    data_hash_pending = false;
+    memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     layoutHome();
     ethereum_signing = false;
   }
