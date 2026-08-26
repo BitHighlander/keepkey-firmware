@@ -41,12 +41,15 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
+#include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bip32.h"
@@ -166,7 +169,10 @@ uint32_t storage_nextU2FCounter(void) {
 
 void storage_setU2FCounter(uint32_t u2f_counter) {
   shadow_config.storage.pub.u2f_counter = u2f_counter;
-  storage_commit();
+  /* This is a setter, not a persistence boundary. All callers finish a
+   * larger atomic update and call storage_commit() themselves. Committing
+   * here used to abort an armed reset/recovery ceremony halfway through
+   * setup_commit(), wiping its mnemonic before storage_setMnemonic(). */
 }
 
 static bool storage_isActiveSector(const char* flash) {
@@ -483,6 +489,27 @@ pintest_t storage_isWipeCodeCorrect_impl(const char* wipe_code,
   memzero(wrapping_key, 64);
   memzero(fp, 32);
   return ret;
+}
+
+/* The seed-time RNG gate, at the paths that CREATE or REWRAP key material.
+ *
+ * SCOPE, stated because an earlier revision of this work overclaimed it:
+ * this covers the draws below and nothing else. It is NOT wallet-wide
+ * enforcement -- ordinary random_buffer() callers still draw unchecked exactly
+ * as they do on develop. Making the default checked was tried and descoped
+ * from 7.15: it can hang or brick the bootloader when the generator has failed
+ * and there is no defined degraded-RNG recovery mode yet.
+ *
+ * These call sites are void and have no way to report a failure, so they halt
+ * -- the same disposition storage_secMigrate() takes when secrets fail to
+ * decrypt. The halt lives here rather than in kkrand because kkrand must not
+ * reference kkboard: GNU ld resolves static archives in one left-to-right
+ * pass and kkboard is listed first everywhere, so a UI call from that library
+ * fails to link in crypto-unit and board-unit. */
+static void storage_drawKeyMaterial(uint8_t* buf, size_t len) {
+  if (random_buffer_checked(buf, len)) return;
+  layout_warning_static("RNG self-test failed. Reboot device!");
+  shutdown();
 }
 
 void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
@@ -803,7 +830,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   _Static_assert(sizeof(storage->pub.storage_key_fingerprint) == 32,
                  "key fingerprint must be 32 bytes");
 
-  random_buffer(storage->pub.random_salt, 32);
+  storage_drawKeyMaterial(storage->pub.random_salt, 32);
 
   storage->has_sec = true;
 
@@ -1496,6 +1523,13 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+  /* Every session loss is an authorization boundary even when Initialize asks
+   * to preserve the cached PIN. Abort signing and discard all plaintext
+   * setup/authenticator state before the caller can report success. */
+  signing_abort();
+  setup_abort();
+  authenticator_clear_cache();
+  fsm_clearDerivedNode();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -1846,7 +1880,7 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
                             _("Encrypting Secrets"));
 
   // Derive a new storageKey.
-  random_buffer(ss->storageKey, 64);
+  storage_drawKeyMaterial(ss->storageKey, 64);
 
   // Wrap the new storageKey.
   storage_wrapStorageKey(wrapping_key, ss->storageKey,
@@ -1906,7 +1940,7 @@ void storage_setWipeCode_impl(SessionState* ss, Storage* storage,
                             _("Updating Wipe Code"));
 
   // Derive a new wipe code key .
-  random_buffer(scratch_key, 64);
+  storage_drawKeyMaterial(scratch_key, 64);
 
   // Wrap the new wipe code key.
   storage_wrapStorageKey(wrapping_key, scratch_key,

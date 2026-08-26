@@ -33,7 +33,9 @@
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
+#include "trezor/crypto/bip39.h"
 }
 
 namespace {
@@ -52,9 +54,7 @@ class SetupCeremony : public ::testing::Test {
     setup_abort();
   }
 
-  void TearDown() override {
-    setup_abort();
-  }
+  void TearDown() override { setup_abort(); }
 };
 
 // #429 step 2, directly: a second ceremony cannot start on top of an armed one.
@@ -68,8 +68,6 @@ TEST_F(SetupCeremony, StageRefusesWhileArmed) {
   EXPECT_TRUE(setup_isArmedAs(SETUP_RESET))
       << "the refused stage must leave the original ceremony intact";
 }
-
-
 
 // Every abort path shares one implementation, so it must tolerate being
 // reached from any state, including twice.
@@ -89,8 +87,6 @@ TEST_F(SetupCeremony, AbortIsIdempotent) {
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(setup_isArmedAs(SETUP_RECOVERY));
 }
-
-
 
 // setup_require() is the gate every continuation message uses. A mismatch must
 // abort rather than fall through.
@@ -143,9 +139,34 @@ TEST_F(SetupCeremony, MessagePermutationsLeaveNothingArmed) {
         setup_abort();
         EXPECT_FALSE(setup_isArmed());
       }
-
     }
   }
+}
+
+TEST_F(SetupCeremony, AbortWipesBip39MnemonicAndRecoveryFragments) {
+  const uint8_t entropy[16] = {0};
+  const char* mnemonic = mnemonic_from_data(entropy, sizeof(entropy));
+  ASSERT_NE(nullptr, mnemonic);
+  ASSERT_NE('\0', mnemonic[0]);
+  recovery_cipher_test_set_word_fragments();
+  ASSERT_FALSE(recovery_cipher_test_word_fragments_are_zero());
+
+  setup_abort();
+
+  EXPECT_EQ('\0', mnemonic[0]);
+  EXPECT_TRUE(recovery_cipher_test_word_fragments_are_zero());
+  EXPECT_FALSE(setup_isArmed());
+}
+
+TEST_F(SetupCeremony, InvalidRecoveryWordCountDisarmsCeremony) {
+  ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
+  setup_arm(SETUP_RECOVERY);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  recovery_cipher_finalize();
+
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_TRUE(recovery_cipher_test_word_fragments_are_zero());
 }
 
 }  // namespace
