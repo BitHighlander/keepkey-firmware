@@ -34,6 +34,7 @@ TEST(RngHealth, RejectsEmptyAndNull) {
 }
 
 TEST(RngHealth, PersistentHardwareErrorLatchesBeforeReset) {
+  rng_test_power_on_reset();
   uint32_t samples = 0;
   for (uint32_t i = 0; i < 99; ++i) {
     EXPECT_FALSE(rng_persistent_error_step(&samples));
@@ -42,6 +43,7 @@ TEST(RngHealth, PersistentHardwareErrorLatchesBeforeReset) {
   EXPECT_TRUE(rng_persistent_error_step(&samples));
   EXPECT_EQ(samples, 0U);
   EXPECT_TRUE(rng_seed_error_latched());
+  rng_test_power_on_reset();
 }
 
 TEST(RngHealth, AcceptsNonDegenerateSample) {
