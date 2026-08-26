@@ -190,6 +190,7 @@ static bool isValidModelNumber(const char* model) {
 
 bool checkPassphrase(void) {
   if (!passphrase_protect()) {
+    authenticator_clear_cache();
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "authenticator needs passphrase");
     layoutHome();
@@ -480,6 +481,7 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
 
   /* Wipe device */
   fsm_abort_workflows();
+  session_clear(/*clear_pin=*/true);
   storage_wipe();
   storage_reset();
   storage_resetUuid();

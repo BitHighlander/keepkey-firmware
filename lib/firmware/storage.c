@@ -41,10 +41,12 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
+#include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
@@ -1522,6 +1524,13 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+  /* Every session loss is an authorization boundary even when Initialize asks
+   * to preserve the cached PIN. Abort signing and discard all plaintext
+   * setup/authenticator state before the caller can report success. */
+  signing_abort();
+  setup_abort();
+  authenticator_clear_cache();
+  fsm_clearDerivedNode();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();

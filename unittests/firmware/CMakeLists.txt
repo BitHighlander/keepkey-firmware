@@ -1,28 +1,14 @@
-# Every .cpp in this directory belongs here. thorchain.cpp and mayachain.cpp
-# existed on disk since 2019/2021 but were never listed, so nothing in them
-# ever compiled -- including the memo-disclosure regression added by this
-# release. A test that is not built is not a test.
 set(sources
-    binance.cpp
-    coins.cpp
+    authenticator.cpp
     confirm_test_utils.cpp
-    cosmos.cpp
-    eos.cpp
-    ethereum.cpp
     fsm.cpp
-    mayachain.cpp
-    osmosis.cpp
-    nano.cpp
     dice.cpp
     recovery.cpp
     rng_health.cpp
     setup_ceremony.cpp
-    ripple.cpp
     signing.cpp
-    solana.cpp
     storage.cpp
     test_board.cpp
-    thorchain.cpp
     transaction.cpp
     usb_rx.cpp
     u2f.cpp)
@@ -39,9 +25,12 @@ if(NOT ${KK_BITCOIN_ONLY})
       cosmos.cpp
       eos.cpp
       ethereum.cpp
+      mayachain.cpp
       nano.cpp
+      osmosis.cpp
       ripple.cpp
-      solana.cpp)
+      solana.cpp
+      thorchain.cpp)
 endif()
 
 include_directories(

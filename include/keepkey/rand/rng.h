@@ -37,6 +37,14 @@ void reset_rng(void);
 /// cleared and is never cleared itself: recovery is a power cycle.
 bool rng_seed_error_latched(void);
 
+#ifdef EMULATOR
+/// Test seam for the STM32 seed/clock-error state machine. These helpers are
+/// absent from ARM firmware; reset models a fresh power-on between cases.
+void rng_test_power_on_reset(void);
+void rng_test_observe_transient_error(void);
+void rng_test_observe_persistent_error(void);
+#endif
+
 void random_permute_char(char* str, size_t len);
 void random_permute_u16(uint16_t* buf, size_t count);
 

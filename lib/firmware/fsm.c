@@ -101,6 +101,24 @@
 #define _(X) (X)
 
 static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+static HDNode CONFIDENTIAL fsm_derived_node;
+
+void fsm_clearDerivedNode(void) {
+  memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+}
+
+#if DEBUG_LINK
+void fsm_test_seedDerivedNode(void) {
+  memset(&fsm_derived_node, 0xA5, sizeof(fsm_derived_node));
+}
+
+bool fsm_test_derivedNodeIsZero(void) {
+  const uint8_t* bytes = (const uint8_t*)&fsm_derived_node;
+  uint8_t aggregate = 0;
+  for (size_t i = 0; i < sizeof(fsm_derived_node); i++) aggregate |= bytes[i];
+  return aggregate == 0;
+}
+#endif
 
 #define CHECK_INITIALIZED                               \
   if (!storage_isInitialized()) {                       \
