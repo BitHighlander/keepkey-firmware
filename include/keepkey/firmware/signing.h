@@ -33,6 +33,10 @@ bool isCrossAccountSegwitChangeForbidden(const uint32_t* lhs_address_n,
                                          size_t rhs_address_n_count,
                                          OutputScriptType rhs_script_type);
 
+/// Encode the protobuf enum in the fixed four-byte little-endian form used by
+/// the Bitcoin transaction-consistency checksum on every target ABI.
+void signing_encode_script_type(InputScriptType script_type, uint8_t out[4]);
+
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);
 void signing_abort(void);

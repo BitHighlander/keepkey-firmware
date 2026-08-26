@@ -625,15 +625,21 @@ uint32_t compile_script_sig(uint32_t address_type, const uint8_t* pubkeyhash,
   }
 }
 
+bool transaction_multisig_quorum_is_valid(
+    const MultisigRedeemScriptType* multisig) {
+  if (multisig == NULL || !multisig->has_m) return false;
+  const uint32_t m = multisig->m;
+  const uint32_t n = multisig->pubkeys_count;
+  return m >= 1 && m <= 15 && n >= 1 && n <= 15 && m <= n;
+}
+
 // if out == NULL just compute the length
 uint32_t compile_script_multisig(const CoinType* coin,
                                  const MultisigRedeemScriptType* multisig,
                                  uint8_t* out) {
-  if (!multisig->has_m) return 0;
+  if (!transaction_multisig_quorum_is_valid(multisig)) return 0;
   const uint32_t m = multisig->m;
   const uint32_t n = multisig->pubkeys_count;
-  if (m < 1 || m > 15) return 0;
-  if (n < 1 || n > 15) return 0;
   uint32_t r = 0;
   if (out) {
     out[r] = 0x50 + m;
@@ -660,11 +666,9 @@ uint32_t compile_script_multisig(const CoinType* coin,
 uint32_t compile_script_multisig_hash(const CoinType* coin,
                                       const MultisigRedeemScriptType* multisig,
                                       uint8_t* hash) {
-  if (!multisig->has_m) return 0;
+  if (!transaction_multisig_quorum_is_valid(multisig)) return 0;
   const uint32_t m = multisig->m;
   const uint32_t n = multisig->pubkeys_count;
-  if (m < 1 || m > 15) return 0;
-  if (n < 1 || n > 15) return 0;
 
   const curve_info* curve = get_curve_by_name(coin->curve_name);
   if (!curve) return 0;

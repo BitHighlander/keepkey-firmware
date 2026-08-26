@@ -64,6 +64,17 @@ static volatile bool rng_seed_error_seen = false;
 
 bool rng_seed_error_latched(void) { return rng_seed_error_seen; }
 
+bool rng_persistent_error_step(uint32_t* samples) {
+  if (samples == NULL) return false;
+  if (++(*samples) < 100) return false;
+
+  /* reset_rng() clears SEIS/CEIS. Preserve the fault before the caller takes
+   * that recovery action, exactly as the transient-error branch does. */
+  rng_seed_error_seen = true;
+  *samples = 0;
+  return true;
+}
+
 void reset_rng(void) {
 #ifndef EMULATOR
   /* disable RNG */
@@ -108,10 +119,9 @@ uint32_t random32(void) {
     } else {
       /* RNG is not ready.  Allow few more samples for RNG to come back alive
        * before resetting */
-      if (++rng_samples >= 100) {
+      if (rng_persistent_error_step(&rng_samples)) {
         /* RNG in hang state.  Reset RNG */
         reset_rng();
-        rng_samples = 0;
       }
     }
   }

@@ -33,6 +33,17 @@ TEST(RngHealth, RejectsEmptyAndNull) {
   EXPECT_FALSE(rng_health_analyze(&b, 0));
 }
 
+TEST(RngHealth, PersistentHardwareErrorLatchesBeforeReset) {
+  uint32_t samples = 0;
+  for (uint32_t i = 0; i < 99; ++i) {
+    EXPECT_FALSE(rng_persistent_error_step(&samples));
+  }
+  EXPECT_FALSE(rng_seed_error_latched());
+  EXPECT_TRUE(rng_persistent_error_step(&samples));
+  EXPECT_EQ(samples, 0U);
+  EXPECT_TRUE(rng_seed_error_latched());
+}
+
 TEST(RngHealth, AcceptsNonDegenerateSample) {
   auto v = pseudo(RNG_HEALTH_SAMPLE_BYTES);
   EXPECT_TRUE(rng_health_analyze(v.data(), v.size()));

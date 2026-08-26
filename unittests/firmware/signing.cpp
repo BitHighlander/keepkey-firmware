@@ -46,3 +46,14 @@ TEST(Signing, LegacyChangeMayNotClaimTaprootScriptType) {
   EXPECT_TRUE(Forbidden(49, 49, OutputScriptType_PAYTOTAPROOT));
   EXPECT_TRUE(Forbidden(84, 84, OutputScriptType_PAYTOTAPROOT));
 }
+
+TEST(Signing, ScriptTypeChecksumEncodingIsAbiIndependent) {
+  uint8_t encoded[4] = {0xff, 0xff, 0xff, 0xff};
+  signing_encode_script_type(InputScriptType_SPENDTAPROOT, encoded);
+  const uint32_t value = (uint32_t)InputScriptType_SPENDTAPROOT;
+  EXPECT_EQ(encoded[0], (uint8_t)value);
+  EXPECT_EQ(encoded[1], (uint8_t)(value >> 8));
+  EXPECT_EQ(encoded[2], (uint8_t)(value >> 16));
+  EXPECT_EQ(encoded[3], (uint8_t)(value >> 24));
+  EXPECT_EQ(sizeof(encoded), 4U);
+}
