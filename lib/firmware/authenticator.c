@@ -125,13 +125,14 @@ unsigned addAuthAccount(char* accountWithSeed) {
   char authSecret[AUTHSECRET_SIZE_MAX] = {
       0};  // 128-bit key len is the recommended minimum, this is room for
            // 160-bit
-  size_t authSecretLen;
+  size_t authSecretLen = 0;
   unsigned result = UNKERR;
 
   // accountWithSeed should be of the form "domain:account:seedStr"
   domain = strtok(accountWithSeed, ":");  // get the domain string token
   if (NULL == domain || !authDisplayFieldValid(domain, DOMAIN_SIZE - 1)) {
-    return TOKERR;
+    result = TOKERR;
+    goto cleanup;
   }
 
   account = strtok(NULL, ":");  // get the account string token
@@ -140,7 +141,8 @@ unsigned addAuthAccount(char* accountWithSeed) {
     goto cleanup;
   }
   if (!authDisplayFieldValid(account, ACCOUNT_SIZE - 1)) {
-    return TOKERR;
+    result = TOKERR;
+    goto cleanup;
   }
 
   seedStr = strtok(NULL, "");  // get the seed string string token
@@ -155,7 +157,8 @@ unsigned addAuthAccount(char* accountWithSeed) {
 
   authSecretLen = base32_decoded_length(strlen(seedStr));
   if (authSecretLen < AUTHSECRET_SIZE_MIN) {
-    return BADSECRET;
+    result = BADSECRET;
+    goto cleanup;
   }
   if (AUTHSECRET_SIZE_MAX < authSecretLen) {
     result = LARGESEED;
@@ -172,8 +175,10 @@ unsigned addAuthAccount(char* accountWithSeed) {
   for (unsigned i = 0; i < AUTHDATA_SIZE; i++) {
     if (authData[i].secretSize != 0 &&
         strncmp(authData[i].domain, domain, DOMAIN_SIZE) == 0 &&
-        strncmp(authData[i].account, account, ACCOUNT_SIZE) == 0)
-      return DUPLICATE;
+        strncmp(authData[i].account, account, ACCOUNT_SIZE) == 0) {
+      result = DUPLICATE;
+      goto cleanup;
+    }
     if (slot == AUTHDATA_SIZE && authData[i].secretSize == 0) slot = i;
   }
   if (slot == AUTHDATA_SIZE) {
