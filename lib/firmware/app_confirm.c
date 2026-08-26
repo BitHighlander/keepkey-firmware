@@ -502,12 +502,20 @@ cleanup:
 
 bool confirm_omni(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  uint32_t tx_type;
-  REVERSE32(*(const uint32_t*)(data + 4), tx_type);
-  if (tx_type == 0x00000000 && size == 20) {  // OMNI simple send
+  uint32_t tx_type_be = 0;
+  uint32_t tx_type = UINT32_MAX;
+  if (data && size == 20) {
+    /* The protobuf bytes array is size-delimited, not a typed/aligned word. */
+    memcpy(&tx_type_be, data + 4, sizeof(tx_type_be));
+    REVERSE32(tx_type_be, tx_type);
+  }
+
+  if (tx_type == 0x00000000) {  // OMNI simple send
     char str_out[32];
+    uint32_t currency_be;
     uint32_t currency;
-    REVERSE32(*(const uint32_t*)(data + 8), currency);
+    memcpy(&currency_be, data + 8, sizeof(currency_be));
+    REVERSE32(currency_be, currency);
     const char* suffix = "UNKN";
     switch (currency) {
       case 1:
@@ -530,9 +538,13 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
                      str_out, sizeof(str_out));
     return confirm(button_request, title, _("Do you want to send %s?"),
                    str_out);
-  } else {
-    return confirm(button_request, title, _("Unknown Transaction"));
   }
+
+  /* Unsupported Omni messages still carry asset-layer semantics. A generic
+   * "Unknown Transaction" screen hid the complete payload while allowing the
+   * host to obtain a Bitcoin signature. Fall back to the exact-length pager so
+   * the trusted display binds approval to every signed OP_RETURN byte. */
+  return confirm_bytes(button_request, title, data, size);
 }
 
 bool confirm_data(ButtonRequestType button_request, const char* title,
