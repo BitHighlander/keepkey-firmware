@@ -343,12 +343,11 @@ void next_character(void) {
   strlcpy(cipher, english_alphabet, ENGLISH_ALPHABET_BUF);
   random_permute_char(cipher, strlen(cipher));
 
-  static char CONFIDENTIAL current_word[CURRENT_WORD_BUF];
-  get_current_word(current_word);
+  get_current_word(current_word_scratch);
 
   /* Words should never be longer than 4 characters */
-  if (strlen(current_word) > 4) {
-    memzero(current_word, sizeof(current_word));
+  if (strlen(current_word_scratch) > 4) {
+    memzero(current_word_scratch, sizeof(current_word_scratch));
 
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -370,28 +369,28 @@ void next_character(void) {
   memset(&resp, 0, sizeof(CharacterRequest));
 
   resp.word_pos = word_pos;
-  resp.character_pos = strlen(current_word);
+  resp.character_pos = strlen(current_word_scratch);
 
   msg_write(MessageType_MessageType_CharacterRequest, &resp);
 
   /* Attempt to auto complete if we have at least 3 characters */
   bool auto_completed = false;
-  if (strlen(current_word) >= 3) {
-    auto_completed = attempt_auto_complete(current_word);
+  if (strlen(current_word_scratch) >= 3) {
+    auto_completed = attempt_auto_complete(current_word_scratch);
   }
 
 #if DEBUG_LINK
   if (auto_completed) {
-    strlcpy(auto_completed_word, current_word, CURRENT_WORD_BUF);
+    strlcpy(auto_completed_word, current_word_scratch, CURRENT_WORD_BUF);
   } else {
     auto_completed_word[0] = '\0';
   }
 #endif
 
   /* Format current word and display it along with cipher */
-  static char CONFIDENTIAL formatted_word[CURRENT_WORD_BUF + 10];
-  format_current_word(word_pos, current_word, auto_completed, &formatted_word);
-  memzero(current_word, sizeof(current_word));
+  format_current_word(word_pos, current_word_scratch, auto_completed,
+                      &formatted_word_scratch);
+  memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
   static char prev_info[32];
@@ -610,6 +609,7 @@ void recovery_cipher_finalize(void) {
     // Otherwise just enforce that the number of words entered is a standard
     // count:
     if (words_entered != 12 && words_entered != 18 && words_entered != 24) {
+      recovery_cipher_abort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Invalid word count (must be 12, 18 or 24)");
       layoutHome();
@@ -617,27 +617,25 @@ void recovery_cipher_finalize(void) {
     }
   }
 
-  static char CONFIDENTIAL new_mnemonic[MNEMONIC_BUF] = "";
-  static char CONFIDENTIAL temp_word[CURRENT_WORD_BUF];
   volatile bool auto_completed = true;
 
-  memzero(new_mnemonic, sizeof(new_mnemonic));
-  memzero(temp_word, sizeof(temp_word));
+  memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+  memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
   /* Attempt to autocomplete each word */
   char* tok = strtok(mnemonic, " ");
 
   while (tok) {
-    strlcpy(temp_word, tok, CURRENT_WORD_BUF);
+    strlcpy(temp_word_scratch, tok, CURRENT_WORD_BUF);
 
-    auto_completed &= attempt_auto_complete(temp_word);
+    auto_completed &= attempt_auto_complete(temp_word_scratch);
 
-    strlcat(new_mnemonic, temp_word, MNEMONIC_BUF);
-    strlcat(new_mnemonic, " ", MNEMONIC_BUF);
+    strlcat(final_mnemonic_scratch, temp_word_scratch, MNEMONIC_BUF);
+    strlcat(final_mnemonic_scratch, " ", MNEMONIC_BUF);
 
     tok = strtok(NULL, " ");
   }
-  memzero(temp_word, sizeof(temp_word));
+  memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
   /* Cipher recovery decodes to BIP-39 words, so every word must
    * auto-complete regardless of enforce_wordlist. Failing only when
@@ -657,23 +655,25 @@ void recovery_cipher_finalize(void) {
   }
 
   /* Truncate additional space at the end */
-  new_mnemonic[MAX(1u, strnlen(new_mnemonic, sizeof(new_mnemonic))) - 1u] =
-      '\0';
-  if (!dry_run && (!enforce_wordlist || mnemonic_check(new_mnemonic))) {
+  final_mnemonic_scratch[MAX(1u, strnlen(final_mnemonic_scratch,
+                                         sizeof(final_mnemonic_scratch))) -
+                         1u] = '\0';
+  if (!dry_run &&
+      (!enforce_wordlist || mnemonic_check(final_mnemonic_scratch))) {
     /* Commit point: the settings staged at the start of THIS ceremony and
      * the seed the user typed word by word land together, or neither lands.
      * setup_commit() disarms before it writes. */
-    setup_commit(new_mnemonic, /*imported=*/!enforce_wordlist);
-    memzero(new_mnemonic, sizeof(new_mnemonic));
+    setup_commit(final_mnemonic_scratch, /*imported=*/!enforce_wordlist);
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
     fsm_sendSuccess("Device recovered");
   } else if (dry_run) {
-    bool match =
-        storage_isInitialized() && storage_containsMnemonic(new_mnemonic);
+    bool match = storage_isInitialized() &&
+                 storage_containsMnemonic(final_mnemonic_scratch);
     if (match) {
       review(ButtonRequestType_ButtonRequest_Other, "Recovery Dry Run",
              "The seed is valid and MATCHES the one in the device.");
       fsm_sendSuccess("The seed is valid and matches the one in the device.");
-    } else if (mnemonic_check(new_mnemonic)) {
+    } else if (mnemonic_check(final_mnemonic_scratch)) {
       review(ButtonRequestType_ButtonRequest_Other, "Recovery Dry Run",
              "The seed is valid, but DOES NOT MATCH the one in the device.");
       fsm_sendFailure(
@@ -686,7 +686,7 @@ void recovery_cipher_finalize(void) {
           FailureType_Failure_Other,
           "The seed is invalid, and does not match the one in the device.");
     }
-    memzero(new_mnemonic, sizeof(new_mnemonic));
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
   } else {
     /* Nothing reached storage: the staged settings and the mnemonic are
      * still only in RAM, and the common cleanup below discards both. */
@@ -694,13 +694,47 @@ void recovery_cipher_finalize(void) {
                     "Invalid mnemonic, are words in correct order?");
   }
 
-  memzero(new_mnemonic, sizeof(new_mnemonic));
+  memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
   /* Idempotent: the success path already disarmed inside setup_commit(). */
   setup_abort();
   layoutHome();
 }
 
 #if DEBUG_LINK
+void recovery_cipher_test_set_word_fragments(void) {
+  memset(mnemonic, 0x3C, sizeof(mnemonic));
+  memset(coded_word, 0xA5, sizeof(coded_word));
+  memset(decoded_word, 0x5A, sizeof(decoded_word));
+  memset(current_word_scratch, 0xA5, sizeof(current_word_scratch));
+  memset(formatted_word_scratch, 0x5A, sizeof(formatted_word_scratch));
+  memset(final_mnemonic_scratch, 0xA5, sizeof(final_mnemonic_scratch));
+  memset(temp_word_scratch, 0x5A, sizeof(temp_word_scratch));
+  memset(auto_completed_word, 0xA5, sizeof(auto_completed_word));
+}
+
+bool recovery_cipher_test_word_fragments_are_zero(void) {
+  uint8_t aggregate = 0;
+  for (size_t i = 0; i < sizeof(mnemonic); i++) {
+    aggregate |= (uint8_t)mnemonic[i];
+  }
+  for (size_t i = 0; i < sizeof(coded_word); i++) {
+    aggregate |= (uint8_t)coded_word[i];
+    aggregate |= (uint8_t)decoded_word[i];
+  }
+  for (size_t i = 0; i < sizeof(current_word_scratch); i++) {
+    aggregate |= (uint8_t)current_word_scratch[i];
+    aggregate |= (uint8_t)temp_word_scratch[i];
+    aggregate |= (uint8_t)auto_completed_word[i];
+  }
+  for (size_t i = 0; i < sizeof(formatted_word_scratch); i++) {
+    aggregate |= (uint8_t)formatted_word_scratch[i];
+  }
+  for (size_t i = 0; i < sizeof(final_mnemonic_scratch); i++) {
+    aggregate |= (uint8_t)final_mnemonic_scratch[i];
+  }
+  return aggregate == 0;
+}
+
 /*
  * recovery_get_cipher() - Gets current cipher being show on display
  *

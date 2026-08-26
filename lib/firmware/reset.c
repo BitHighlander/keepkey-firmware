@@ -91,6 +91,7 @@ void setup_abort(void) {
   /* The recovery half owns its own word buffers. Clearing them is a memzero
    * too; like everything here it touches no storage. */
   recovery_cipher_reset();
+  mnemonic_clear();
 
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
@@ -386,7 +387,7 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
        * nothing to reset -- and a host-reachable wipe is not a rollback. */
       setup_abort();
       layoutHome();
-      return;
+      goto exit;
     }
   }
 

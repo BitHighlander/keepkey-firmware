@@ -149,6 +149,12 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
   RESP_INIT(CoinTable);
 
+#if BITCOIN_ONLY
+  const size_t coin_table_count = COINS_COUNT;
+#else
+  const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
+#endif
+
   CHECK_PARAM(msg->has_start == msg->has_end,
               "Incorrect GetCoinTable parameters");
 
@@ -156,9 +162,8 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   resp->chunk_size = sizeof(resp->table) / sizeof(resp->table[0]);
 
   if (msg->has_start && msg->has_end) {
-    if (COINS_COUNT + TOKENS_COUNT <= msg->start ||
-        COINS_COUNT + TOKENS_COUNT < msg->end || msg->end < msg->start ||
-        resp->chunk_size < msg->end - msg->start) {
+    if (coin_table_count <= msg->start || coin_table_count < msg->end ||
+        msg->end < msg->start || resp->chunk_size < msg->end - msg->start) {
       fsm_sendFailure(FailureType_Failure_Other,
                       "Incorrect GetCoinTable parameters");
       layoutHome();
@@ -167,7 +172,7 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   }
 
   resp->has_num_coins = true;
-  resp->num_coins = COINS_COUNT + TOKENS_COUNT;
+  resp->num_coins = coin_table_count;
 
   if (msg->has_start && msg->has_end) {
     resp->table_count = msg->end - msg->start;
@@ -198,13 +203,15 @@ static bool isValidModelNumber(const char* model) {
   return false;
 }
 
-void checkPassphrase(void) {
+bool checkPassphrase(void) {
   if (!passphrase_protect()) {
+    authenticator_clear_cache();
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "authenticator needs passphrase");
     layoutHome();
-    return;
+    return false;
   }
+  return true;
 }
 
 void fsm_msgPing(Ping* msg) {
@@ -271,7 +278,7 @@ void fsm_msgPing(Ping* msg) {
         0};  // allow room for domain + ":" + account
 
     CHECK_PIN
-    checkPassphrase();
+    if (!checkPassphrase()) return;
 
     switch (authMsg) {
       case INITAUTH:
@@ -514,6 +521,7 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   }
 
   /* Wipe device */
+  session_clear(/*clear_pin=*/true);
   storage_wipe();
   storage_reset();
   storage_resetUuid();
@@ -630,6 +638,7 @@ void fsm_msgCancel(Cancel* msg) {
   /* Cancellation rolls the ceremony back: one memzero, no storage touched. */
   setup_abort();
   signing_abort();
+  authenticator_clear_cache();
   ethereum_signing_abort();
   tendermint_signAbort();
   eos_signingAbort();

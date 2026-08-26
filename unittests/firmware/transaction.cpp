@@ -1,8 +1,16 @@
+#include "gtest/gtest.h"
+
+#include <cstring>
+#include <vector>
+
 extern "C" {
+#include "keepkey/board/confirm_sm.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/transaction.h"
 }
 
-#include "gtest/gtest.h"
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
 
 TEST(Transaction, TaprootInputWeightIncludesWitness) {
   CoinType coin = CoinType_init_zero;
