@@ -47,10 +47,25 @@ typedef enum {
 #define METADATA_VERSION_LEGACY 0x01
 #define METADATA_VERSION_SCHEMA 0x02
 
-/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][inner v2 payload].
+/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][device-decoded schema].
  * The certificate is verified and DISCARDED inside one message -- nothing about
  * a delegation survives into the next transaction. */
 #define METADATA_VERSION_CERTIFIED 0x03
+
+/* DYNAMIC_SCHEMA (v4): a certified, firmware-owned decoder selected by a
+ * signed one-byte decoder id.  Unlike v1, the signer supplies no displayed
+ * values; unlike v2, the calldata need not be a flat list of ABI words.  The
+ * device's named decoder validates and extracts every displayed value from the
+ * transaction it is signing.  v4 is initially used only for the exact Portals
+ * OrderPayload ABI, whose dynamic call array is larger than the 1024-byte
+ * initial protobuf chunk while its safety-defining outer order is wholly in
+ * that chunk. */
+#define METADATA_VERSION_DYNAMIC_SCHEMA 0x04
+
+typedef enum {
+  METADATA_DECODER_NONE = 0,
+  METADATA_DECODER_PORTALS_NATIVE_ORDER_V1 = 1,
+} MetadataDecoder;
 
 /* The delegate is addressed by a sentinel that is >= METADATA_MAX_KEYS BY
  * CONSTRUCTION, so it can never name a runtime slot.
@@ -114,6 +129,7 @@ typedef struct {
 
 typedef struct {
   uint8_t version;
+  uint8_t decoder_id;
   uint32_t chain_id;
   uint8_t contract_address[20];
   uint8_t selector[4];
