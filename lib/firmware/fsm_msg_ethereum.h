@@ -138,14 +138,27 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for clearsign metadata"));
+  CHECK_PARAM(!msg->has_key_id || msg->key_id <= 0xff,
+              _("clearsign metadata key_id out of range"));
+
+  /* Runtime/self-service signers remain behind AdvancedMode. A production v3
+   * envelope is allowed through only when it uses the reserved delegate key
+   * id and has enough bytes to contain a certificate plus inner payload. This
+   * shape check grants no trust: signed_metadata_process() still verifies the
+   * compiled root, certificate, delegate signature, and device-owned decode
+   * before the metadata can affect signing or suppress raw review. */
+  bool certified =
+      msg->has_signed_payload && msg->has_key_id &&
+      signed_metadata_is_certified_envelope(
+          msg->signed_payload.bytes, msg->signed_payload.size, msg->key_id);
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode") || certified,
+              _("AdvancedMode required for uncertified clearsign metadata"));
 
   RESP_INIT(EthereumMetadataAck);
 
   MetadataClassification result = signed_metadata_process(
       msg->signed_payload.bytes, msg->signed_payload.size,
-      msg->has_key_id ? msg->key_id : 0);
+      msg->has_key_id ? (uint8_t)msg->key_id : 0);
 
   resp->classification = (uint32_t)result;
   resp->has_display_summary = true;
