@@ -1010,6 +1010,10 @@ jobs:
         env:
           KK_TRANSPORT: dylib
           KK_DYLIB: ${{ env.DYLIB_PATH }}
+          # PR jobs expose a synthetic merge SHA as GITHUB_SHA, while Checkout
+          # above intentionally builds the head SHA. Bind the assertion to the
+          # exact source revision that produced this dylib.
+          KK_EXPECTED_FIRMWARE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           # `keepkeylib/` on PYTHONPATH so the package's relative-style
           # imports inside generated *_pb2.py files resolve.
