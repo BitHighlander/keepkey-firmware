@@ -5,6 +5,7 @@
 set(sources
     binance.cpp
     coins.cpp
+    confirm_test_utils.cpp
     cosmos.cpp
     eos.cpp
     ethereum.cpp
@@ -20,6 +21,7 @@ set(sources
     signing.cpp
     solana.cpp
     storage.cpp
+    test_board.cpp
     thorchain.cpp
     transaction.cpp
     usb_rx.cpp
