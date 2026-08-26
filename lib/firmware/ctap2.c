@@ -7,6 +7,7 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/hmac.h"
@@ -27,6 +28,8 @@ static const uint8_t KEEPKEY_AAGUID[16] = {
 typedef struct {
   uint8_t private_key[32];
   uint8_t public_key[65];
+  uint32_t deadline;
+  uint32_t channel;
   bool valid;
 } KeyAgreement;
 
@@ -59,11 +62,35 @@ static bool encode_authenticator_data(uint8_t* output, size_t capacity,
                                       const uint8_t* credential_id,
                                       const uint8_t public_key[65]);
 
+static void clear_key_agreement(void) {
+  memzero(&key_agreement, sizeof(key_agreement));
+}
+
+static void clear_pin_token(void) {
+  memzero(pin_token, sizeof(pin_token));
+  pin_token_valid = false;
+}
+
+#ifdef EMULATOR
+bool ctap2_key_agreement_is_clear(void) {
+  const KeyAgreement empty = {0};
+  return memcmp(&key_agreement, &empty, sizeof(empty)) == 0;
+}
+
+bool ctap2_key_agreement_private_is_valid(const uint8_t private_key[32]) {
+  uint8_t public_key[65] = {0};
+  const bool valid =
+      private_key != NULL &&
+      ecdsa_get_public_key65(&nist256p1, private_key, public_key) == 0;
+  memzero(public_key, sizeof(public_key));
+  return valid;
+}
+#endif
+
 void ctap2_init(void) {
   reset_deadline = getSysTime() + 10000;
-  memzero(pin_token, sizeof(pin_token));
-  memzero(&key_agreement, sizeof(key_agreement));
-  pin_token_valid = false;
+  clear_pin_token();
+  clear_key_agreement();
   pin_attempts_since_boot = 0;
   transport_channel = 0;
   memzero(&assertion_sequence, sizeof(assertion_sequence));
@@ -188,11 +215,24 @@ static bool encode_cose_public_key(CborEncoder* encoder,
          cbor_encode_bytes(encoder, public_key + 33, 32);
 }
 
-static void generate_key_agreement(void) {
-  random_buffer(key_agreement.private_key, sizeof(key_agreement.private_key));
-  ecdsa_get_public_key65(&nist256p1, key_agreement.private_key,
-                         key_agreement.public_key);
-  key_agreement.valid = true;
+static bool generate_key_agreement(void) {
+  clear_key_agreement();
+  for (uint32_t attempt = 0; attempt < 16; ++attempt) {
+    if (!random_buffer_checked(key_agreement.private_key,
+                               sizeof(key_agreement.private_key))) {
+      clear_key_agreement();
+      return false;
+    }
+    if (ecdsa_get_public_key65(&nist256p1, key_agreement.private_key,
+                               key_agreement.public_key) == 0) {
+      key_agreement.deadline = getSysTime() + 30000;
+      key_agreement.channel = transport_channel;
+      key_agreement.valid = true;
+      return true;
+    }
+  }
+  clear_key_agreement();
+  return false;
 }
 
 static bool decode_cose_public_key(const uint8_t* buffer, size_t length,
@@ -212,21 +252,29 @@ static bool decode_cose_public_key(const uint8_t* buffer, size_t length,
 static bool shared_secret_from_request(const uint8_t* buffer, size_t length,
                                        uint8_t shared_secret[32]) {
   CborValue value;
-  const uint8_t* key_slice;
-  size_t key_length;
-  uint8_t peer_key[65];
-  uint8_t session_key[65];
-  if (!key_agreement.valid ||
-      !map_find(buffer, length, 3, &value, &key_slice, &key_length) ||
-      value.type != CBOR_TYPE_MAP ||
-      !decode_cose_public_key(key_slice, key_length, peer_key) ||
+  const uint8_t* key_slice = NULL;
+  size_t key_length = 0;
+  uint8_t peer_key[65] = {0};
+  uint8_t session_key[65] = {0};
+  bool success = false;
+  const bool consume_key = key_agreement.valid;
+  const bool usable_key = consume_key &&
+                          key_agreement.channel == transport_channel &&
+                          (int32_t)(key_agreement.deadline - getSysTime()) > 0;
+  memzero(shared_secret, 32);
+  if (usable_key &&
+      map_find(buffer, length, 3, &value, &key_slice, &key_length) &&
+      value.type == CBOR_TYPE_MAP &&
+      decode_cose_public_key(key_slice, key_length, peer_key) &&
       ecdh_multiply(&nist256p1, key_agreement.private_key, peer_key,
-                    session_key) != 0)
-    return false;
-  sha256_Raw(session_key + 1, 32, shared_secret);
+                    session_key) == 0) {
+    sha256_Raw(session_key + 1, 32, shared_secret);
+    success = true;
+  }
+  if (consume_key) clear_key_agreement();
   memzero(peer_key, sizeof(peer_key));
   memzero(session_key, sizeof(session_key));
-  return true;
+  return success;
 }
 
 static void aes256_cbc(bool encrypt, const uint8_t key[32],
@@ -891,7 +939,10 @@ static void client_pin(const uint8_t* request, size_t request_length,
       return;
 
     case 2: /* getKeyAgreement */
-      generate_key_agreement();
+      if (!generate_key_agreement()) {
+        write_error(CTAP2_ERR_OTHER, response, length);
+        return;
+      }
       response[0] = CTAP2_OK;
       cbor_encoder_init(&encoder, response + 1, capacity - 1);
       cbor_encode_map(&encoder, 1);
@@ -902,17 +953,23 @@ static void client_pin(const uint8_t* request, size_t request_length,
 
     case 3: { /* setPIN */
       CborValue pin_auth, encrypted_pin;
-      uint8_t shared_secret[32], plaintext[64], digest[32];
+      uint8_t shared_secret[32] = {0};
+      uint8_t plaintext[64] = {0};
+      uint8_t digest[32] = {0};
       if (storage.pin_set) {
         write_error(CTAP2_ERR_NOT_ALLOWED, response, length);
         return;
       }
       if (!map_find(request, request_length, 4, &pin_auth, NULL, NULL) ||
           !map_find(request, request_length, 5, &encrypted_pin, NULL, NULL) ||
-          encrypted_pin.type != CBOR_TYPE_BYTES || encrypted_pin.length != 64 ||
-          !shared_secret_from_request(request, request_length, shared_secret) ||
+          encrypted_pin.type != CBOR_TYPE_BYTES || encrypted_pin.length != 64) {
+        write_error(CTAP2_ERR_PIN_AUTH_INVALID, response, length);
+        return;
+      }
+      if (!shared_secret_from_request(request, request_length, shared_secret) ||
           !valid_pin_auth(shared_secret, encrypted_pin.data,
                           encrypted_pin.length, &pin_auth)) {
+        memzero(shared_secret, sizeof(shared_secret));
         write_error(CTAP2_ERR_PIN_AUTH_INVALID, response, length);
         return;
       }
@@ -931,27 +988,36 @@ static void client_pin(const uint8_t* request, size_t request_length,
         return;
       }
       sha256_Raw(plaintext, pin_length, digest);
-      random_buffer(storage.pin_salt, sizeof(storage.pin_salt));
+      if (!random_buffer_checked(storage.pin_salt, sizeof(storage.pin_salt))) {
+        memzero(plaintext, sizeof(plaintext));
+        memzero(digest, sizeof(digest));
+        memzero(shared_secret, sizeof(shared_secret));
+        write_error(CTAP2_ERR_OTHER, response, length);
+        return;
+      }
       passkey_pin_digest(digest, 16, storage.pin_salt, digest);
       storage.pin_set = 1;
       storage.pin_retries = PASSKEY_PIN_RETRIES;
       memcpy(storage.pin_hash, digest, sizeof(storage.pin_hash));
       storage_setPasskeyData(&storage);
       pin_attempts_since_boot = 0;
-      pin_token_valid = false;
+      clear_pin_token();
       memzero(plaintext, sizeof(plaintext));
       memzero(digest, sizeof(digest));
       memzero(shared_secret, sizeof(shared_secret));
-      key_agreement.valid = false;
+      clear_key_agreement();
       write_error(CTAP2_OK, response, length);
       return;
     }
 
     case 4: { /* changePIN */
       CborValue pin_auth, encrypted_pin, encrypted_hash;
-      uint8_t shared_secret[32], plaintext[64], supplied_hash[16], digest[32];
-      uint8_t verifier[32];
-      uint8_t authenticated_message[80];
+      uint8_t shared_secret[32] = {0};
+      uint8_t plaintext[64] = {0};
+      uint8_t supplied_hash[16] = {0};
+      uint8_t digest[32] = {0};
+      uint8_t verifier[32] = {0};
+      uint8_t authenticated_message[80] = {0};
       if (!storage.pin_set) {
         write_error(CTAP2_ERR_PIN_NOT_SET, response, length);
         return;
@@ -971,6 +1037,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
           encrypted_hash.type != CBOR_TYPE_BYTES ||
           encrypted_hash.length != 16 ||
           !shared_secret_from_request(request, request_length, shared_secret)) {
+        memzero(shared_secret, sizeof(shared_secret));
         write_error(CTAP2_ERR_MISSING_PARAMETER, response, length);
         return;
       }
@@ -979,6 +1046,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
       if (!valid_pin_auth(shared_secret, authenticated_message,
                           sizeof(authenticated_message), &pin_auth)) {
         memzero(shared_secret, sizeof(shared_secret));
+        memzero(authenticated_message, sizeof(authenticated_message));
         write_error(CTAP2_ERR_PIN_AUTH_INVALID, response, length);
         return;
       }
@@ -993,6 +1061,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
         memzero(shared_secret, sizeof(shared_secret));
         memzero(supplied_hash, sizeof(supplied_hash));
         memzero(verifier, sizeof(verifier));
+        memzero(authenticated_message, sizeof(authenticated_message));
         write_error(storage.pin_retries == 0 ? CTAP2_ERR_PIN_BLOCKED
                                              : (pin_attempts_since_boot >= 3
                                                     ? CTAP2_ERR_PIN_AUTH_BLOCKED
@@ -1011,18 +1080,30 @@ static void client_pin(const uint8_t* request, size_t request_length,
       if (!padding_ok || pin_length < 4 || pin_length > 63) {
         memzero(plaintext, sizeof(plaintext));
         memzero(shared_secret, sizeof(shared_secret));
+        memzero(supplied_hash, sizeof(supplied_hash));
+        memzero(verifier, sizeof(verifier));
+        memzero(authenticated_message, sizeof(authenticated_message));
         write_error(CTAP2_ERR_PIN_POLICY_VIOLATION, response, length);
         return;
       }
       sha256_Raw(plaintext, pin_length, digest);
-      random_buffer(storage.pin_salt, sizeof(storage.pin_salt));
+      if (!random_buffer_checked(storage.pin_salt, sizeof(storage.pin_salt))) {
+        memzero(plaintext, sizeof(plaintext));
+        memzero(shared_secret, sizeof(shared_secret));
+        memzero(supplied_hash, sizeof(supplied_hash));
+        memzero(verifier, sizeof(verifier));
+        memzero(digest, sizeof(digest));
+        memzero(authenticated_message, sizeof(authenticated_message));
+        write_error(CTAP2_ERR_OTHER, response, length);
+        return;
+      }
       passkey_pin_digest(digest, 16, storage.pin_salt, digest);
       memcpy(storage.pin_hash, digest, sizeof(storage.pin_hash));
       storage.pin_retries = PASSKEY_PIN_RETRIES;
       storage_setPasskeyData(&storage);
-      pin_token_valid = false;
+      clear_pin_token();
       pin_attempts_since_boot = 0;
-      key_agreement.valid = false;
+      clear_key_agreement();
       memzero(plaintext, sizeof(plaintext));
       memzero(shared_secret, sizeof(shared_secret));
       memzero(supplied_hash, sizeof(supplied_hash));
@@ -1035,8 +1116,10 @@ static void client_pin(const uint8_t* request, size_t request_length,
 
     case 5: { /* getPINToken */
       CborValue encrypted_hash;
-      uint8_t shared_secret[32], supplied_hash[16], encrypted_token[32];
-      uint8_t verifier[32];
+      uint8_t shared_secret[32] = {0};
+      uint8_t supplied_hash[16] = {0};
+      uint8_t encrypted_token[32] = {0};
+      uint8_t verifier[32] = {0};
       if (!storage.pin_set) {
         write_error(CTAP2_ERR_PIN_NOT_SET, response, length);
         return;
@@ -1053,6 +1136,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
           encrypted_hash.type != CBOR_TYPE_BYTES ||
           encrypted_hash.length != 16 ||
           !shared_secret_from_request(request, request_length, shared_secret)) {
+        memzero(shared_secret, sizeof(shared_secret));
         write_error(CTAP2_ERR_MISSING_PARAMETER, response, length);
         return;
       }
@@ -1074,10 +1158,17 @@ static void client_pin(const uint8_t* request, size_t request_length,
                     response, length);
         return;
       }
+      if (!random_buffer_checked(pin_token, sizeof(pin_token))) {
+        clear_pin_token();
+        memzero(shared_secret, sizeof(shared_secret));
+        memzero(supplied_hash, sizeof(supplied_hash));
+        memzero(verifier, sizeof(verifier));
+        write_error(CTAP2_ERR_OTHER, response, length);
+        return;
+      }
       storage.pin_retries = PASSKEY_PIN_RETRIES;
       storage_setPasskeyData(&storage);
       pin_attempts_since_boot = 0;
-      random_buffer(pin_token, sizeof(pin_token));
       pin_token_valid = true;
       aes256_cbc(true, shared_secret, pin_token, encrypted_token,
                  sizeof(encrypted_token));
@@ -1091,7 +1182,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
       memzero(supplied_hash, sizeof(supplied_hash));
       memzero(verifier, sizeof(verifier));
       memzero(encrypted_token, sizeof(encrypted_token));
-      key_agreement.valid = false;
+      clear_key_agreement();
       return;
     }
 
@@ -1113,14 +1204,12 @@ static void reset_authenticator(uint8_t* response, size_t* response_length) {
                 response, response_length);
     return;
   }
-  PasskeyStorage storage;
-  memzero(&storage, sizeof(storage));
-  storage.version = 1;
-  storage.pin_retries = PASSKEY_PIN_RETRIES;
-  storage_setPasskeyData(&storage);
-  memzero(pin_token, sizeof(pin_token));
-  memzero(&key_agreement, sizeof(key_agreement));
-  pin_token_valid = false;
+  if (!storage_resetPasskeyData()) {
+    write_error(CTAP2_ERR_OTHER, response, response_length);
+    return;
+  }
+  clear_pin_token();
+  clear_key_agreement();
   pin_attempts_since_boot = 0;
   reset_deadline = 0;
   write_error(CTAP2_OK, response, response_length);

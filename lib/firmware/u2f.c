@@ -77,6 +77,8 @@ static uint8_t u2f_out_packets[U2F_OUT_PKT_BUFFER_LEN][HID_RPT_SIZE];
 #define U2F_PUBKEY_LEN 65
 #define KEY_PATH_LEN 32
 #define KEY_HANDLE_LEN (KEY_PATH_LEN + SHA256_DIGEST_LENGTH)
+#define KEY_HANDLE_GENERATION_BASE_LEN \
+  (U2F_APPID_SIZE + KEY_PATH_LEN + PASSKEY_CREDENTIAL_GENERATION_SIZE)
 
 // Derivation path is m/U2F'/r'/r'/r'/r'/r'/r'/r'/r'
 #define KEY_PATH_ENTRIES (KEY_PATH_LEN / sizeof(uint32_t))
@@ -564,10 +566,49 @@ static const HDNode* getDerivedNode(const uint32_t* address_n,
   return &node;
 }
 
+static void key_handle_hmac(
+    const uint8_t private_key[32], const uint8_t app_id[32],
+    const uint8_t key_path[KEY_PATH_LEN],
+    const uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
+    bool bind_generation, uint8_t output[SHA256_DIGEST_LENGTH]) {
+  uint8_t keybase[KEY_HANDLE_GENERATION_BASE_LEN];
+  memcpy(keybase, app_id, U2F_APPID_SIZE);
+  memcpy(keybase + U2F_APPID_SIZE, key_path, KEY_PATH_LEN);
+  size_t keybase_length = U2F_APPID_SIZE + KEY_PATH_LEN;
+  if (bind_generation) {
+    memcpy(keybase + keybase_length, generation,
+           PASSKEY_CREDENTIAL_GENERATION_SIZE);
+    keybase_length += PASSKEY_CREDENTIAL_GENERATION_SIZE;
+  }
+  hmac_sha256(private_key, 32, keybase, keybase_length, output);
+  memzero(keybase, sizeof(keybase));
+}
+
+bool u2f_key_handle_authenticator_is_valid(
+    const uint8_t private_key[32], const uint8_t app_id[32],
+    const uint8_t key_handle[64],
+    const uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
+    bool legacy_credentials_enabled) {
+  if (private_key == NULL || app_id == NULL || key_handle == NULL ||
+      generation == NULL)
+    return false;
+
+  uint8_t expected[SHA256_DIGEST_LENGTH];
+  key_handle_hmac(private_key, app_id, key_handle, generation, true, expected);
+  bool valid =
+      memcmp_s(key_handle + KEY_PATH_LEN, expected, sizeof(expected)) == 0;
+  if (!valid && legacy_credentials_enabled) {
+    key_handle_hmac(private_key, app_id, key_handle, generation, false,
+                    expected);
+    valid =
+        memcmp_s(key_handle + KEY_PATH_LEN, expected, sizeof(expected)) == 0;
+  }
+  memzero(expected, sizeof(expected));
+  return valid;
+}
+
 static const HDNode* generateKeyHandle(const uint8_t app_id[],
                                        uint8_t key_handle[]) {
-  uint8_t keybase[U2F_APPID_SIZE + KEY_PATH_LEN];
-
   // Derivation path is m/U2F'/r'/r'/r'/r'/r'/r'/r'/r'
   //
   // The path IS the secret here -- the key handle is public and an attacker who
@@ -577,6 +618,7 @@ static const HDNode* generateKeyHandle(const uint8_t app_id[],
   uint32_t key_path[KEY_PATH_ENTRIES];
   if (!random_buffer_checked((uint8_t*)key_path, sizeof(key_path))) {
     debugLog(0, "", "ERR: RNG self-test failed");
+    memzero(key_handle, KEY_HANDLE_LEN);
     return NULL;
   }
   for (uint32_t i = 0; i < KEY_PATH_ENTRIES; i++) {
@@ -588,14 +630,28 @@ static const HDNode* generateKeyHandle(const uint8_t app_id[],
 
   // prepare keypair from /random data
   const HDNode* node = getDerivedNode(key_path, KEY_PATH_ENTRIES);
-  if (!node) return NULL;
+  if (!node) {
+    memzero(key_path, sizeof(key_path));
+    memzero(key_handle, KEY_HANDLE_LEN);
+    return NULL;
+  }
 
-  // For second half of keyhandle
-  // Signature of app_id and random data
-  memcpy(&keybase[0], app_id, U2F_APPID_SIZE);
-  memcpy(&keybase[U2F_APPID_SIZE], key_handle, KEY_PATH_LEN);
-  hmac_sha256(node->private_key, sizeof(node->private_key), keybase,
-              sizeof(keybase), &key_handle[KEY_PATH_LEN]);
+  uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  bool legacy_credentials_enabled;
+  if (!storage_getPasskeyCredentialGeneration(generation,
+                                              &legacy_credentials_enabled)) {
+    debugLog(0, "", "ERR: Credential generation unavailable");
+    memzero(key_path, sizeof(key_path));
+    memzero(key_handle, KEY_HANDLE_LEN);
+    return NULL;
+  }
+  (void)legacy_credentials_enabled;
+
+  // Bind the public key handle to the active authenticator-reset generation.
+  key_handle_hmac(node->private_key, app_id, key_handle, generation, true,
+                  &key_handle[KEY_PATH_LEN]);
+  memzero(generation, sizeof(generation));
+  memzero(key_path, sizeof(key_path));
 
   // Done!
   return node;
@@ -615,16 +671,16 @@ static const HDNode* validateKeyHandle(const uint8_t app_id[],
   const HDNode* node = getDerivedNode(key_path, KEY_PATH_ENTRIES);
   if (!node) return NULL;
 
-  uint8_t keybase[U2F_APPID_SIZE + KEY_PATH_LEN];
-  memcpy(&keybase[0], app_id, U2F_APPID_SIZE);
-  memcpy(&keybase[U2F_APPID_SIZE], key_handle, KEY_PATH_LEN);
-
-  uint8_t hmac[SHA256_DIGEST_LENGTH];
-  hmac_sha256(node->private_key, sizeof(node->private_key), keybase,
-              sizeof(keybase), hmac);
-
-  if (memcmp_s(&key_handle[KEY_PATH_LEN], hmac, SHA256_DIGEST_LENGTH) != 0)
+  uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  bool legacy_credentials_enabled;
+  if (!storage_getPasskeyCredentialGeneration(generation,
+                                              &legacy_credentials_enabled))
     return NULL;
+  const bool valid = u2f_key_handle_authenticator_is_valid(
+      node->private_key, app_id, key_handle, generation,
+      legacy_credentials_enabled);
+  memzero(generation, sizeof(generation));
+  if (!valid) return NULL;
 
   // Done!
   return node;

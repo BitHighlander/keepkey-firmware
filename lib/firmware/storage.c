@@ -792,6 +792,60 @@ void storage_setPasskeyData(const PasskeyStorage* data) {
   storage_commit();
 }
 
+bool storage_getPasskeyCredentialGeneration(
+    uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
+    bool* legacy_credentials_enabled) {
+  if (generation == NULL || legacy_credentials_enabled == NULL) return false;
+
+  PasskeyStorage* passkeys = &shadow_config.storage.pub.passkeys;
+  bool generation_is_zero = true;
+  for (size_t i = 0; i < sizeof(passkeys->credential_generation); ++i) {
+    if (passkeys->credential_generation[i] != 0) {
+      generation_is_zero = false;
+      break;
+    }
+  }
+  if (passkeys->version != PASSKEY_STORAGE_VERSION || generation_is_zero) {
+    const bool migrate_legacy = passkeys->version != PASSKEY_STORAGE_VERSION ||
+                                passkeys->legacy_credentials_enabled != 0;
+    uint8_t new_generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+    if (!random_buffer_checked(new_generation, sizeof(new_generation))) {
+      memzero(generation, PASSKEY_CREDENTIAL_GENERATION_SIZE);
+      *legacy_credentials_enabled = false;
+      return false;
+    }
+    memzero(passkeys->credential_generation,
+            sizeof(passkeys->credential_generation));
+    memcpy(passkeys->credential_generation, new_generation,
+           sizeof(new_generation));
+    passkeys->legacy_credentials_enabled = migrate_legacy ? 1 : 0;
+    passkeys->version = PASSKEY_STORAGE_VERSION;
+    storage_commit();
+    memzero(new_generation, sizeof(new_generation));
+  }
+
+  memcpy(generation, passkeys->credential_generation,
+         PASSKEY_CREDENTIAL_GENERATION_SIZE);
+  *legacy_credentials_enabled = passkeys->legacy_credentials_enabled != 0;
+  return true;
+}
+
+bool storage_resetPasskeyData(void) {
+  PasskeyStorage reset;
+  memzero(&reset, sizeof(reset));
+  if (!random_buffer_checked(reset.credential_generation,
+                             sizeof(reset.credential_generation))) {
+    memzero(&reset, sizeof(reset));
+    return false;
+  }
+  reset.version = PASSKEY_STORAGE_VERSION;
+  reset.pin_retries = PASSKEY_PIN_RETRIES;
+  reset.legacy_credentials_enabled = 0;
+  storage_setPasskeyData(&reset);
+  memzero(&reset, sizeof(reset));
+  return true;
+}
+
 bool storage_getAuthData(authType* returnData) {
   uint8_t authdataKey[64] = {0};
   uint8_t testFp[32] = {0};
@@ -1301,16 +1355,29 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
 #define V20_STORAGE_LEN (1501 + V17_ENCSEC_SIZE)  // 2525
 #define PASSKEY_STORAGE_OFF 501
 
-static void storage_resetPasskeyData(PasskeyStorage* passkeys) {
+static void storage_defaultPasskeyData(PasskeyStorage* passkeys) {
   memzero(passkeys, sizeof(*passkeys));
   passkeys->version = 1;
   passkeys->pin_retries = PASSKEY_PIN_RETRIES;
 }
 
 static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
-  if (passkeys->version != 1 || passkeys->pin_set > 1 ||
-      passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
-    storage_resetPasskeyData(passkeys);
+  if ((passkeys->version != 1 &&
+       passkeys->version != PASSKEY_STORAGE_VERSION) ||
+      passkeys->pin_set > 1 || passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
+    storage_defaultPasskeyData(passkeys);
+    return;
+  }
+  if (passkeys->version == 1) {
+    /* Version 1 ended immediately after credentials[]. Bytes that now hold the
+     * generation belonged to V17's randomized reserved area, so never trust
+     * them as serialized state. The first credential operation migrates this
+     * record and temporarily enables legacy-handle validation. */
+    memzero(passkeys->credential_generation,
+            sizeof(passkeys->credential_generation));
+    passkeys->legacy_credentials_enabled = 0;
+  } else if (passkeys->legacy_credentials_enabled > 1) {
+    storage_defaultPasskeyData(passkeys);
     return;
   }
   for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
@@ -1453,7 +1520,7 @@ void storage_writeV19(char* flash, size_t len, const ConfigFlash* src) {
 StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
                                       const char* flash) {
   memzero(dst, sizeof(*dst));
-  storage_resetPasskeyData(&dst->storage.pub.passkeys);
+  storage_defaultPasskeyData(&dst->storage.pub.passkeys);
 
   // Load config values from active config node.
   uint32_t raw_version = read_u32_le(flash + 44);
