@@ -101,9 +101,13 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
 
   /* AdvancedMode gate: to_address, amount and memo are display-only fields
    * that are NOT derived from or checked against raw_tx, so this handler can
-   * only ever blind-sign opaque bytes. Same fence as fsm_msgTonSignMessage
-   * below, until the displayed fields are parsed out of raw_tx and verified
-   * against the bytes that actually get signed. */
+   * only ever blind-sign opaque bytes. Same fence as Solana/TRON opaque
+   * transaction signing, until the displayed fields are parsed out of raw_tx
+   * and verified against the bytes that actually get signed.
+   *
+   * Note this gate is NOT mirrored on fsm_msgTonSignMessage below: that path
+   * discloses every signed byte via confirm_bytes(), which is the stronger
+   * guarantee this gate is only standing in for. */
   if (!storage_isPolicyEnabled("AdvancedMode")) {
     (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
                  "TON transaction signing is blind-only. "
@@ -127,7 +131,7 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
     return;
   }
 
-  /* Never render to_address/amount here: they are unbound to the signed
+  /* Never render to_address/amount/memo here: they are unbound to the signed
    * bytes, so a hostile host can show one recipient on the OLED and get a
    * completely different transaction signed. Name only what the device can
    * actually verify -- how many bytes it is about to sign. */
@@ -193,43 +197,16 @@ void fsm_msgTonSignMessage(const TonSignMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* Always require on-device confirmation. Display message content if
-   * printable, hex preview otherwise. */
-  {
-    char msgBuf[129] = {0};
-    const char* typeLabel;
-    bool printable = true;
-    for (unsigned i = 0; i < msg->message.size; i++) {
-      if (msg->message.bytes[i] < 0x20 || msg->message.bytes[i] > 0x7e) {
-        printable = false;
-        break;
-      }
-    }
-    if (printable && msg->message.size <= sizeof(msgBuf) - 1) {
-      typeLabel = "Sign TON Message";
-      memcpy(msgBuf, msg->message.bytes, msg->message.size);
-      msgBuf[msg->message.size] = '\0';
-    } else {
-      typeLabel = "Sign TON Bytes";
-      unsigned show = msg->message.size;
-      if (show > 32) show = 32;
-      for (unsigned i = 0; i < show; i++) {
-        snprintf(&msgBuf[2 * i], 3, "%02x", msg->message.bytes[i]);
-      }
-      msgBuf[2 * show] = '\0';
-      if (msg->message.size > 32) {
-        snprintf(&msgBuf[64], sizeof(msgBuf) - 64, "... (%u bytes)",
-                 (unsigned)msg->message.size);
-      }
-    }
-    if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, _(typeLabel),
-                 "%s", msgBuf)) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Signing cancelled"));
-      layoutHome();
-      return;
-    }
+  /* AdvancedMode permits the opaque primitive, but never permits a hidden
+   * suffix: review every signed byte using renderer-measured pages. */
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                     _("Sign TON Message"), msg->message.bytes,
+                     msg->message.size)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    layoutHome();
+    return;
   }
 
   if (!ton_message_sign(node, msg, resp)) {

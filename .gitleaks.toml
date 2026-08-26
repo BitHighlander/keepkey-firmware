@@ -1,10 +1,47 @@
-title = "KeepKey firmware gitleaks configuration"
+title = "KeepKey firmware Gitleaks configuration"
 
-# Start from the upstream ruleset and only narrow it, never widen it.
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
+description = "Published AES test vectors in current and historical trezor-crypto layouts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^deps/crypto/trezor-firmware/crypto/aes/aestst\.c$''',
+  '''^deps/crypto/trezor-crypto/aes/aestst\.c$''',
+]
+regexes = ['''(?i)^[[:space:]]*//[[:space:]]*key[[:space:]]*=[[:space:]]*[0-9a-f]+[[:space:]]*$''']
+
+[[allowlists]]
+description = "Ed25519 C type names in current and historical trezor-crypto layouts"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^deps/crypto/trezor-firmware/crypto/ed25519-donna/ed25519-(blake2b|keccak|sha3)\.h$''',
+  '''^deps/crypto/trezor-firmware/crypto/ed25519-donna/ed25519\.[ch]$''',
+  '''^deps/crypto/trezor-crypto/ed25519-donna/ed25519-(blake2b|keccak|sha3)\.h$''',
+  '''^deps/crypto/trezor-crypto/ed25519-donna/ed25519\.[ch]$''',
+]
+regexes = ['''ed25519.*secret_key.*signature''']
+
+[[allowlists]]
+description = "RC21 release provenance names an exact public python-keepkey git commit"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+paths = ['''^docs/security/7\.15\.0-rc21-clearsign-release-control\.md$''']
+regexes = ['''^[[:space:]]*-[[:space:]]*python-keepkey:[[:space:]]*`c406a1ba9120da410c356dbff7f4d4bd1e1758fa`\.[[:space:]]*$''']
+
+# Converted from the deprecated singular [allowlist] to a fourth [[allowlists]]
+# entry. gitleaks refuses to load a config containing both forms ("[allowlist] is
+# deprecated, it cannot be used alongside [[allowlists]]"), which is what the
+# alpha<-develop merge produced: alpha carried three [[allowlists]] and develop
+# carried this one [allowlist]. The merge kept both and the scan died at config
+# load, taking the whole build graph with it. Content is unchanged.
+[[allowlists]]
 description = """
 Two U2F attestation artifacts are public by design and must not fail the scan.
 

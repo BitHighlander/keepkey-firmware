@@ -17,4 +17,3 @@ RUN make -j
 EXPOSE 11044/udp 11045/udp
 EXPOSE 5000
 CMD ["/kkemu/scripts/emulator/run.sh"]
-
