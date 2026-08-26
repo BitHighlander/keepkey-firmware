@@ -316,7 +316,7 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
   snprintf(otp_display, sizeof(otp_display), "%06u", otp);
   if (!review_immediate(ButtonRequestType_ButtonRequest_Other, "display OTP",
                         "Press button to display OTP")) {
-    result = CANCELED;
+    result = AUTH_CANCELLED;
     goto cleanup;
   }
 
@@ -326,7 +326,7 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
   if (tRemainVal < 4) {
     if (!review_immediate(ButtonRequestType_ButtonRequest_Other, "OTP Timeout",
                           "OTP time slice timed out, regenerate OTP")) {
-      result = CANCELED;
+      result = AUTH_CANCELLED;
       goto cleanup;
     }
   } else {
