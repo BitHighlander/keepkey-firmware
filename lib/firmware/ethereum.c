@@ -89,9 +89,9 @@ static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
 /* Arbitrary calldata can continue across EthereumTxAck messages.  This second
  * Keccak state commits the approval screen to every calldata byte, independent
- * of the transaction-signing preimage. */
+ * of the transaction-signing preimage. It borrows the cleared per-transaction
+ * metadata arena so the hardware SRAM reserve does not shrink. */
 static bool data_hash_pending = false;
-static struct SHA3_CTX data_keccak_ctx;
 static EthereumTxRequest msg_tx_request;
 static CONFIDENTIAL uint8_t privkey[32];
 static uint32_t chain_id;
@@ -617,10 +617,14 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
 }
 
 static bool confirm_ethereum_data_hash(void) {
+  struct SHA3_CTX* data_keccak_ctx = signed_metadata_keccak_scratch();
+  if (data_keccak_ctx == NULL) return false;
+
   uint8_t digest[32];
   char hex_digest[65];
 
-  keccak_Final(&data_keccak_ctx, digest);
+  keccak_Final(data_keccak_ctx, digest);
+  memzero(data_keccak_ctx, sizeof(*data_keccak_ctx));
   data2hex(digest, sizeof(digest), hex_digest);
   data_hash_pending = false;
 
@@ -768,7 +772,6 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   ethereum_signing = true;
   data_hash_pending = false;
-  memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
   sha3_256_Init(&keccak_ctx);
 
   memset(&msg_tx_request, 0, sizeof(EthereumTxRequest));
@@ -1051,8 +1054,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
     /* A prefix preview cannot bind executable bytes delivered in later
      * chunks.  Defer consent until the complete calldata hash is available. */
-    sha3_256_Init(&data_keccak_ctx);
-    sha3_Update(&data_keccak_ctx, msg->data_initial_chunk.bytes,
+    struct SHA3_CTX* data_keccak_ctx = signed_metadata_keccak_scratch();
+    if (data_keccak_ctx == NULL) {
+      fsm_sendFailure(FailureType_Failure_FirmwareError,
+                      _("Ethereum data review unavailable"));
+      ethereum_signing_abort();
+      return;
+    }
+    sha3_256_Init(data_keccak_ctx);
+    sha3_Update(data_keccak_ctx, msg->data_initial_chunk.bytes,
                 msg->data_initial_chunk.size);
     data_hash_pending = true;
   }
@@ -1210,7 +1220,14 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
   }
 
   if (data_hash_pending) {
-    sha3_Update(&data_keccak_ctx, tx->data_chunk.bytes, tx->data_chunk.size);
+    struct SHA3_CTX* data_keccak_ctx = signed_metadata_keccak_scratch();
+    if (data_keccak_ctx == NULL) {
+      fsm_sendFailure(FailureType_Failure_FirmwareError,
+                      _("Ethereum data review unavailable"));
+      ethereum_signing_abort();
+      return;
+    }
+    sha3_Update(data_keccak_ctx, tx->data_chunk.bytes, tx->data_chunk.size);
   }
   hash_data(tx->data_chunk.bytes, tx->data_chunk.size);
 
@@ -1234,7 +1251,6 @@ void ethereum_signing_abort(void) {
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     data_hash_pending = false;
-    memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     signed_metadata_clear();
     layoutHome();
     ethereum_signing = false;

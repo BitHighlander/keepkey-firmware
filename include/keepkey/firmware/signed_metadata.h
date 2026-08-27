@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 typedef struct _EthereumSignTx EthereumSignTx;
+struct SHA3_CTX;
 
 #define METADATA_MAX_ARGS 8
 #define METADATA_MAX_METHOD_LEN 64
@@ -108,6 +109,12 @@ bool signed_metadata_schema_decoded(void);
 bool signed_metadata_schema_moves_value(void);
 
 void signed_metadata_clear(void);
+
+/* Borrow the per-transaction metadata arena as a Keccak context after
+ * signed_metadata_clear(). Raw-calldata review and relied-on metadata are
+ * mutually exclusive; Ethereum signing also blocks new metadata messages
+ * until the borrowed context has been cleared on abort/completion. */
+struct SHA3_CTX* signed_metadata_keccak_scratch(void);
 
 /*
  * Runtime-loaded clearsign signers (phase 1: the ONLY verification path).

@@ -13,6 +13,7 @@
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+#include "trezor/crypto/sha3.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -30,7 +31,14 @@ static bool metadata_signer_loaded = false;
  * must NOT be suppressed even though the schema matched. */
 static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
-static SignedMetadata stored_metadata;
+typedef union {
+  SignedMetadata metadata;
+  struct SHA3_CTX keccak_scratch;
+} SignedMetadataStorage;
+static SignedMetadataStorage metadata_storage;
+#define stored_metadata metadata_storage.metadata
+_Static_assert(sizeof(SignedMetadata) >= sizeof(struct SHA3_CTX),
+               "metadata arena must hold a Keccak context without more SRAM");
 
 /* Phase 1 ships with NO built-in verification keys: every clearsign signer is
  * loaded at runtime via LoadClearsignSigner. Phase 2 restores the production
@@ -408,11 +416,15 @@ bool signed_metadata_schema_moves_value(void) {
 }
 
 void signed_metadata_clear(void) {
-  memzero(&stored_metadata, sizeof(stored_metadata));
+  memzero(&metadata_storage, sizeof(metadata_storage));
   metadata_available = false;
   relied_on_metadata = false;
   metadata_signer_loaded = false;
   metadata_schema_decoded = false;
+}
+
+struct SHA3_CTX* signed_metadata_keccak_scratch(void) {
+  return metadata_available ? NULL : &metadata_storage.keccak_scratch;
 }
 
 void signed_metadata_clear_signers(void) {
