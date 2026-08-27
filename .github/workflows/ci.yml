@@ -575,16 +575,62 @@ jobs:
           ls -lh
           echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} (${{ matrix.variant }}) built successfully"
 
+      - name: Bind ARM outputs to source commits and product
+        env:
+          ARM_VARIANT: ${{ matrix.variant }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import glob
+          import hashlib
+          import json
+          import os
+          import subprocess
+
+          def digest(path):
+              value = hashlib.sha256()
+              with open(path, "rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      value.update(chunk)
+              return value.hexdigest()
+
+          files = []
+          for path in sorted(glob.glob("bin/*.bin") + glob.glob("bin/*.elf")):
+              files.append({
+                  "name": os.path.basename(path),
+                  "sha256": digest(path),
+                  "size": os.path.getsize(path),
+              })
+          if not files:
+              raise SystemExit("no ARM outputs found")
+          manifest = {
+              "schema": 1,
+              "generated_at": datetime.datetime.now(
+                  datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+              "firmware_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True).strip(),
+              "python_sha": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD:deps/python-keepkey"],
+                  text=True).strip(),
+              "variant": os.environ["ARM_VARIANT"],
+              "files": files,
+          }
+          with open("bin/arm-build-manifest.json", "w", encoding="utf-8") as handle:
+              json.dump(manifest, handle, sort_keys=True, indent=2)
+              handle.write("\n")
+          PY
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}${{ matrix.suffix }}
+          name: firmware-v${{ steps.version.outputs.fw_version }}-${{ steps.version.outputs.git_short }}-${{ matrix.variant }}
           path: |
             bin/*.bin
             bin/*.elf
             bin/*.map
             bin/*.size.txt
             bin/stack-usage.tgz
+            bin/arm-build-manifest.json
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════
@@ -1030,7 +1076,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   generate-test-report:
-    needs: [unit-tests, python-integration-tests]
+    needs: [unit-tests, python-integration-tests, build-arm-firmware]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1062,6 +1108,13 @@ jobs:
         with:
           name: oled-screenshots
           path: test-reports/screenshots/
+
+      - name: Download both ARM products
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: firmware-v*
+          path: test-reports/arm/
+          merge-multiple: false
 
       - name: Extract firmware version
         id: version

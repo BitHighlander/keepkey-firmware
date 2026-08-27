@@ -11,16 +11,72 @@ This script finds the JUnit XML + screenshots from CI artifacts and calls throug
 import os
 import sys
 import glob
+import hashlib
+import json
 import subprocess
+from pathlib import Path
 
 REPORT_GENERATOR = os.path.join(
     os.path.dirname(__file__), '..', 'deps', 'python-keepkey', 'scripts', 'generate-test-report.py'
 )
 
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_arm_manifests(arm_dir, firmware_sha, python_sha):
+    required = {'full', 'bitcoin-only'}
+    found = set()
+    for manifest_path in sorted(arm_dir.glob('*/arm-build-manifest.json')):
+        artifact = manifest_path.parent.name
+        matches = [variant for variant in required
+                   if artifact.endswith('-' + variant)]
+        if len(matches) != 1:
+            raise RuntimeError('unrecognized ARM artifact directory: %s' % artifact)
+        variant = matches[0]
+        if variant in found:
+            raise RuntimeError('duplicate ARM manifest for %s' % variant)
+        with open(manifest_path, encoding='utf-8') as handle:
+            manifest = json.load(handle)
+        if manifest.get('variant') != variant:
+            raise RuntimeError('ARM manifest variant mismatch: %s' % artifact)
+        if manifest.get('firmware_sha') != firmware_sha:
+            raise RuntimeError('ARM manifest firmware SHA mismatch: %s' % artifact)
+        if manifest.get('python_sha') != python_sha:
+            raise RuntimeError('ARM manifest Python SHA mismatch: %s' % artifact)
+        files = manifest.get('files', [])
+        if not files:
+            raise RuntimeError('ARM manifest contains no binaries: %s' % artifact)
+        for item in files:
+            binary = manifest_path.parent / item.get('name', '')
+            if (not binary.is_file() or
+                    sha256_file(binary) != item.get('sha256')):
+                raise RuntimeError('ARM artifact hash mismatch: %s' % binary)
+        found.add(variant)
+    if found != required:
+        raise RuntimeError('expected full and bitcoin-only ARM manifests, found: %s' %
+                           ', '.join(sorted(found)))
+    print('Validated full and bitcoin-only ARM artifact manifests')
+
 def main():
     if not os.path.exists(REPORT_GENERATOR):
         print("ERROR: %s not found — is the python-keepkey submodule initialized?" % REPORT_GENERATOR,
               file=sys.stderr)
+        sys.exit(1)
+
+    firmware_sha = subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD'], text=True).strip()
+    python_sha = subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD:deps/python-keepkey'], text=True).strip()
+    try:
+        validate_arm_manifests(Path('test-reports/arm'), firmware_sha, python_sha)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print('ERROR: %s' % exc, file=sys.stderr)
         sys.exit(1)
 
     # The release report is evidence, not a best-effort decoration.  The
