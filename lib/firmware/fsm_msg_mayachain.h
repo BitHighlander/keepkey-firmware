@@ -187,6 +187,22 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
+        /* Validate the recipient BEFORE the screen, not in the serializer.
+           mayachain_signTxUpdateMsgSend() already refuses a
+           malformed or wrong-network address, but it runs after this
+           confirmation, so the owner approved a transfer that was then
+           rejected. This release line's rule is that an invalid signed value
+           fails before approval, so the same check moves ahead of the
+           screen. */
+        if (!tendermint_validateBech32Address(
+                msg->send.to_address,
+                sign_tx->has_testnet && sign_tx->testnet ? "smaya" : "maya")) {
+          mayachain_signAbort();
+          fsm_sendFailure(FailureType_Failure_SyntaxError,
+                          "Invalid MAYAChain recipient address");
+          layoutHome();
+          return;
+        }
         if (!confirm_transaction_output(
                 ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
                 msg->send.to_address)) {
@@ -216,10 +232,17 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     }
 
   } else if (msg->has_deposit) {
+    const char* const signer_prefix =
+        sign_tx->has_testnet && sign_tx->testnet ? "smaya" : "maya";
+    /* The signer must be this session's account, not merely a well-formed
+     * address on the right network. */
     // Validate before any display so untrusted strings never reach the UI
     // or the sign bytes.
     if (!mayachain_isValidAsset(msg->deposit.asset) ||
-        !mayachain_isValidSigner(msg->deposit.signer)) {
+        !mayachain_isValidSigner(msg->deposit.signer) ||
+        !tendermint_validateSafeText(msg->deposit.asset) ||
+        !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
+        !mayachain_addressIsSigner(msg->deposit.signer)) {
       mayachain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Invalid deposit asset or signer");

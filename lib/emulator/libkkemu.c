@@ -15,6 +15,7 @@
 #include "keepkey/board/usb.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
@@ -108,8 +109,8 @@ static int libkkemu_initialized = 0;
 #define KKEMU_POLL_INTERVAL_MS 16
 
 static uint8_t frame_ring[FRAME_RING_SIZE][FRAME_PACKED_SIZE];
-static uint8_t last_packed[FRAME_PACKED_SIZE];   /* producer-only (poll thread) */
-static int last_packed_valid = 0;                /* producer-only */
+static uint8_t last_packed[FRAME_PACKED_SIZE]; /* producer-only (poll thread) */
+static int last_packed_valid = 0;              /* producer-only */
 static uint8_t capture_scratch[FRAME_PACKED_SIZE]; /* producer-only pack buffer */
 static _Atomic uint32_t frame_write_idx = 0; /* written by producer ONLY */
 static _Atomic uint32_t frame_read_idx = 0;  /* written by consumer ONLY */
@@ -169,7 +170,7 @@ static void libkkemu_capture_frame(const uint8_t* canvas_buf) {
   memset(capture_scratch, 0, FRAME_PACKED_SIZE);
   for (int x = 0; x < 256; x++) {
     for (int y = 0; y < 64; y++) {
-      if (canvas_buf[y * 256 + x] > 0) {
+      if (display_mono_pixel_is_lit(canvas_buf[y * 256 + x], x, y)) {
         capture_scratch[x + (y / 8) * 256] |= (uint8_t)(1u << (y % 8));
       }
     }
@@ -180,7 +181,6 @@ static void libkkemu_capture_frame(const uint8_t* canvas_buf) {
       memcmp(capture_scratch, last_packed, FRAME_PACKED_SIZE) == 0) {
     return;
   }
-
   /* SPSC publish, drop-on-full (same discipline as ringbuf.c). The producer
    * writes only frame_write_idx; the consumer writes only frame_read_idx. When
    * not full, write%SIZE != read%SIZE (their distance is in [1, SIZE-1]), so
@@ -272,6 +272,22 @@ void kkemu_shutdown(void) {
    * while we commit storage and zero the rings below (idempotent if the host
    * never started the thread). */
   kkemu_stop();
+
+  /*
+   * End any workflow still in flight BEFORE anything else.
+   *
+   * The buffer scrubbing below covers the transport rings and the frame ring,
+   * but signing state and fsm_derived_node -- the shared derived private-key
+   * scratch -- live behind fsm_abort_workflows(), which nothing here was
+   * calling. In the dylib case this file is written for, the library sits in a
+   * long-running host process, so a shutdown/init cycle would carry an old
+   * workflow and its key material across into the next session. That is the
+   * same exposure the comment below describes, and it needs the same answer.
+   *
+   * Before storage_commit() so the committed image reflects the aborted state
+   * rather than a half-finished ceremony.
+   */
+  fsm_abort_workflows();
 
   /* Flush any pending storage to the flash buffer */
   storage_commit();

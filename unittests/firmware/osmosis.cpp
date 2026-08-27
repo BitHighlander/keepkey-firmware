@@ -157,3 +157,31 @@ TEST(Osmosis, MsgSendSignsCanonicalNonNativeDenomination) {
   EXPECT_TRUE(osmosis_signTxUpdateMsgSend(
       "7", "osmo1rs7fckgznkaxs4sq02pexwjgar43p5wnkx9s92", denom));
 }
+
+TEST(Osmosis, RequiredValuesRejectEmptyAndNonDecimalAmounts) {
+  EXPECT_FALSE(osmosis_validate_required_text(false, "uosmo"));
+  EXPECT_FALSE(osmosis_validate_required_text(true, ""));
+  EXPECT_TRUE(osmosis_validate_required_text(true, "uosmo"));
+  EXPECT_TRUE(osmosis_validate_required_text(true, "ibc/0123456789ABCDEF"));
+  EXPECT_FALSE(osmosis_validate_required_text(true, "u osmo"));
+  EXPECT_FALSE(osmosis_validate_required_text(true, "u\"osmo"));
+  EXPECT_FALSE(osmosis_validate_required_text(true, "u\\osmo"));
+  EXPECT_FALSE(osmosis_validate_required_text(true, "u\nosmo"));
+
+  EXPECT_FALSE(osmosis_validate_amount(false, "1"));
+  EXPECT_FALSE(osmosis_validate_amount(true, ""));
+  EXPECT_FALSE(osmosis_validate_amount(true, "1.0"));
+  EXPECT_FALSE(osmosis_validate_amount(true, "-1"));
+  EXPECT_FALSE(osmosis_validate_amount(true, "1e6"));
+  EXPECT_TRUE(osmosis_validate_amount(true, "0"));
+  EXPECT_TRUE(osmosis_validate_amount(true, "1000000"));
+
+  /* Noncanonical padding renders differently for the same value --
+     "00000001" reaches the screen as "00.000001 OSMO" -- so one amount would
+     have several spellings and the host would pick which one the owner sees. */
+  EXPECT_FALSE(osmosis_validate_amount(true, "01"));
+  EXPECT_FALSE(osmosis_validate_amount(true, "0000001"));
+  EXPECT_FALSE(osmosis_validate_amount(true, "00000001"));
+  EXPECT_FALSE(osmosis_validate_amount(true, "0001000000"));
+  EXPECT_FALSE(osmosis_validate_amount(true, "00"));
+}

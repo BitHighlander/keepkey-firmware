@@ -15,6 +15,109 @@ extern "C" {
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 
+TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
+  char rendered[96];
+
+  ASSERT_TRUE(mayachain_formatAmount(10000000000ULL, "cacao", rendered,
+                                     sizeof(rendered)));
+  EXPECT_STREQ("1 cacao", rendered);
+
+  ASSERT_TRUE(mayachain_formatAmount(10000000000ULL, "maya", rendered,
+                                     sizeof(rendered)));
+  EXPECT_STREQ("10000000000 maya", rendered);
+
+  ASSERT_TRUE(
+      mayachain_formatAmount(1, "future-denom", rendered, sizeof(rendered)));
+  EXPECT_STREQ("1 future-denom", rendered);
+  EXPECT_FALSE(mayachain_formatAmount(1, "", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      mayachain_formatAmount(1, "ETH.ETH\n", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      mayachain_formatAmount(1, "ETH.\\ETH", rendered, sizeof(rendered)));
+}
+
+TEST(Mayachain, MemoWithMisdeclaredLengthIsRefused) {
+  /* What this covers, stated exactly, because the THORChain wording does not
+     transfer: on Maya an embedded NUL hides nothing today. Both call sites
+     pass strnlen() (fsm_msg_mayachain.h) and the signer hashes strlen(memo)
+     (mayachain.c), so parsing and signing already stop at the same byte and
+     nothing past a zero is signed. THORChain differs because two of its
+     callers pass an externally declared length -- a BTC OP_RETURN script
+     length and an ABI length word -- and there the suffix really was signed
+     unseen; that case is covered in thorchain.cpp.
+
+     So this asserts the narrower property Maya actually has: a declared length
+     that does not describe its own content is refused rather than
+     clear-signed, and the parser stays safe by construction if Maya ever gains
+     a length-passing caller of its own. */
+  static const char kEmbeddedNul[] =
+      "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0\0:affiliate:75";
+  EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+            mayachain_parseConfirmMemo(kEmbeddedNul, sizeof(kEmbeddedNul) - 1));
+
+  /* A TRAILING NUL inside the declared length is refused on the same grounds:
+     the length still misdescribes its content, and the caller's UNPARSED path
+     discloses the raw bytes anyway. */
+  static const char kTrailingNul[] =
+      "ADD:ETH.ETH:0xc5b2608927ea95ed43f842f553e3a27b09c050e8:420\0";
+  EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+            mayachain_parseConfirmMemo(kTrailingNul, sizeof(kTrailingNul) - 1));
+
+  /* Over-long memos are refused rather than truncated. memoBuf is 256 bytes
+     and the copy needs room for the terminator the memzero'd tail supplies. */
+  static const char kOversize[257] = {'=', ':', 'E', 'T', 'H'};
+  EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+            mayachain_parseConfirmMemo(kOversize, sizeof(kOversize)));
+
+  /* A memo whose first three fields are missing is UNPARSED, not CANCELLED:
+     nothing was shown, so the caller must still disclose the raw bytes. This
+     is the distinction the bool return could not express. */
+  static const char kTooFewFields[] = "SWAP";
+  EXPECT_EQ(
+      MAYACHAIN_MEMO_UNPARSED,
+      mayachain_parseConfirmMemo(kTooFewFields, sizeof(kTooFewFields) - 1));
+
+  /* A colon where the chain/asset dot belongs shifts every later field. The
+     tokenizer splits on ":." interchangeably, so this yields the same three
+     tokens as "SWAP:ETH.USDT:dest:limit" and would be reviewed as asset USDT
+     on chain ETH -- while the protocol reads USDT as the DESTINATION. It has
+     to reach the raw-byte path instead. */
+  static const char kColonForDot[] = "SWAP:ETH:USDT:dest:limit";
+  EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+            mayachain_parseConfirmMemo(kColonForDot, sizeof(kColonForDot) - 1));
+
+  /* No dot at all is the same defect. */
+  static const char kNoDot[] = "SWAP:ETH:dest";
+  EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+            mayachain_parseConfirmMemo(kNoDot, sizeof(kNoDot) - 1));
+}
+
+TEST(Mayachain, StructuredMemoRequiresExactSafeTokensAndCanonicalBps) {
+  static const char* const kUnparsed[] = {
+      "SWAP-extra:ETH.ETH:destination:100",
+      "swap:ETH.ETH:destination:100",
+      "ADDITION:ETH.ETH:destination",
+      "WITHDRAWAL:ETH.ETH:100",
+      "WITHDRAW:ETH.ETH:01",
+      "WITHDRAW:ETH.ETH:100x",
+      "WITHDRAW:ETH.ETH:10001",
+      "WITHDRAW:ETH.ETH:4294967296",
+      "WITHDRAW:ETH.ETH:-1",
+      "SWAP:ETH.ETH:destination with space:100",
+      "SWAP:ETH.ETH:destination\nnext:100",
+  };
+
+  for (const char* memo : kUnparsed) {
+    EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+              mayachain_parseConfirmMemo(memo, std::strlen(memo)))
+        << memo;
+  }
+
+  static const char kNonAscii[] = "SWAP:ETH.ETH:dest\x80:100";
+  EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+            mayachain_parseConfirmMemo(kNonAscii, sizeof(kNonAscii) - 1));
+}
+
 TEST(Mayachain, MayachainGetAddress) {
   HDNode node = {
       0,
@@ -83,11 +186,11 @@ TEST(Mayachain, MayachainSignTx) {
   // validated, and it did not verify against this fixture's key/JSON.
   EXPECT_TRUE(
       memcmp(signature,
-             (uint8_t *)"\xdf\x2f\x66\x37\x03\x08\x32\xd2\xce\x87\xfe\x47\x8d"
-                        "\xdf\xe6\xd8\x21\xd2\x6b\x03\x8b\x44\xfa\xc8\x98\xe6"
-                        "\xdf\x79\xe3\xfd\x10\x5d\x40\x3f\x05\x0d\x00\xad\xf9"
-                        "\x7d\x3e\xd3\xa7\x3d\xa6\x9b\x19\x74\x0c\x6a\xbc\xf6"
-                        "\x94\x09\x57\x29\xa3\xf0\xc3\x62\xc9\xf0\xfa\x71",
+             (uint8_t*)"\xdf\x2f\x66\x37\x03\x08\x32\xd2\xce\x87\xfe\x47\x8d"
+                       "\xdf\xe6\xd8\x21\xd2\x6b\x03\x8b\x44\xfa\xc8\x98\xe6"
+                       "\xdf\x79\xe3\xfd\x10\x5d\x40\x3f\x05\x0d\x00\xad\xf9"
+                       "\x7d\x3e\xd3\xa7\x3d\xa6\x9b\x19\x74\x0c\x6a\xbc\xf6"
+                       "\x94\x09\x57\x29\xa3\xf0\xc3\x62\xc9\xf0\xfa\x71",
              64) == 0);
 }
 
@@ -99,9 +202,9 @@ TEST(Mayachain, MayachainDenomValidation) {
   EXPECT_TRUE(mayachain_isValidDenom("btc/btc"));
   EXPECT_TRUE(mayachain_isValidDenom("cross-chain"));
 
-  EXPECT_FALSE(mayachain_isValidDenom(""));         // empty → caller "cacao"
-  EXPECT_FALSE(mayachain_isValidDenom("CACAO"));    // uppercase rejected
-  EXPECT_FALSE(mayachain_isValidDenom("cacao\""));  // quote injection
+  EXPECT_FALSE(mayachain_isValidDenom(""));          // empty → caller "cacao"
+  EXPECT_FALSE(mayachain_isValidDenom("CACAO"));     // uppercase rejected
+  EXPECT_FALSE(mayachain_isValidDenom("cacao\""));   // quote injection
   EXPECT_FALSE(mayachain_isValidDenom("cacao\\n"));  // backslash injection
   EXPECT_FALSE(mayachain_isValidDenom(" cacao"));    // leading space
   EXPECT_FALSE(mayachain_isValidDenom("ca cao"));    // embedded space
@@ -150,12 +253,12 @@ TEST(Mayachain, MayachainSignTxUpdateMsgSendRejectsInvalidDenom) {
  *  Mirrors the thorchain.cpp memo tests; see kkconfirm_preload docs there.
  * ===================================================================== */
 
-static bool parseMayaMemo(const char *memo, size_t size) {
+static bool parseMayaMemo(const char* memo, size_t size) {
   return mayachain_parseConfirmMemo(memo, size) == MAYACHAIN_MEMO_CONFIRMED;
 }
 /* strlen(memo), NOT strlen(memo) + 1 -- see the same note in thorchain.cpp.
  * Maya inherited THORChain's memo grammar and its canonical-length refusal. */
-static bool parseMayaMemo(const char *memo) {
+static bool parseMayaMemo(const char* memo) {
   return parseMayaMemo(memo, strlen(memo));
 }
 
@@ -164,9 +267,9 @@ static bool parseMayaMemo(const char *memo) {
 // 1/2 + 2/2 = 5 presses. See thorchain.cpp for the same memo.
 TEST(Mayachain, MemoSwapFullFormShowsAffiliate) {
   ASSERT_TRUE(kkconfirm_preload(5, 0));
-  EXPECT_TRUE(parseMayaMemo(
-      "SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:"
-      "0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75"));
+  EXPECT_TRUE(
+      parseMayaMemo("SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:"
+                    "0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75"));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
@@ -223,10 +326,9 @@ TEST(Mayachain, MemoRawBytesNoNulKeepsLastChar) {
 // byte — this is the boundary the copy-length clamp missed.
 TEST(Mayachain, MemoExactBufferCapacityKeepsLastChar) {
   const std::string prefix = "=:ETH.ETH:0x";
-  const std::string suffix = ":420:k"; // 1-char affiliate as the last byte
-  std::string memo = prefix + std::string(256 - prefix.size() - suffix.size(),
-                                          'd') +
-                     suffix;
+  const std::string suffix = ":420:k";  // 1-char affiliate as the last byte
+  std::string memo =
+      prefix + std::string(256 - prefix.size() - suffix.size(), 'd') + suffix;
   ASSERT_EQ(memo.size(), 256u);
 
   /* 6 presses, not 4: the 240-char destination needs 8 rows, so its screen

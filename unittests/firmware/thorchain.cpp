@@ -25,6 +25,9 @@ void kk_board_init(void);
 #include <sys/socket.h>
 #include <unistd.h>
 
+// Mirrors the bound inside thorchain_parseConfirmMemo().
+static const size_t THORCHAIN_MEMO_MAX_FOR_TEST = 256;
+
 /*
  * confirm() auto-accept driver for unit tests.
  *
@@ -224,6 +227,60 @@ TEST(Thorchain, MemoWithEmbeddedNulIsNotParsed) {
   EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED,
             thorchain_parseConfirmMemo(kTrailingNul, sizeof(kTrailingNul) - 2));
   EXPECT_EQ(0, kkconfirm_drain());
+
+  /* Over-long memos are refused rather than truncated. */
+  static const char kOversize[THORCHAIN_MEMO_MAX_FOR_TEST + 1] = {'=', ':', 'E',
+                                                                  'T'};
+  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
+            thorchain_parseConfirmMemo(kOversize, sizeof(kOversize)));
+
+  /* Fewer than three tokens is UNPARSED, not CANCELLED: nothing was shown, so
+     the caller must still disclose the raw bytes itself. That distinction is
+     the whole point of the tri-state return. */
+  static const char kTooFewFields[] = "SWAP";
+  EXPECT_EQ(
+      THORCHAIN_MEMO_UNPARSED,
+      thorchain_parseConfirmMemo(kTooFewFields, sizeof(kTooFewFields) - 1));
+
+  /* A colon where the chain/asset dot belongs shifts every later field. The
+     tokenizer splits on ":." interchangeably, so this yields the same three
+     tokens as "SWAP:ETH.USDT:dest:limit" and would be reviewed as asset USDT
+     on chain ETH -- while the protocol reads USDT as the DESTINATION. It has
+     to reach the raw-byte path instead. */
+  static const char kColonForDot[] = "SWAP:ETH:USDT:dest:limit";
+  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
+            thorchain_parseConfirmMemo(kColonForDot, sizeof(kColonForDot) - 1));
+
+  /* No dot at all is the same defect. */
+  static const char kNoDot[] = "SWAP:ETH:dest";
+  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
+            thorchain_parseConfirmMemo(kNoDot, sizeof(kNoDot) - 1));
+}
+
+TEST(Thorchain, StructuredMemoRequiresExactSafeTokensAndCanonicalBps) {
+  static const char* const kUnparsed[] = {
+      "SWAP-extra:ETH.ETH:destination:100",
+      "swap:ETH.ETH:destination:100",
+      "ADDITION:ETH.ETH:destination",
+      "WITHDRAWAL:ETH.ETH:100",
+      "WITHDRAW:ETH.ETH:01",
+      "WITHDRAW:ETH.ETH:100x",
+      "WITHDRAW:ETH.ETH:10001",
+      "WITHDRAW:ETH.ETH:4294967296",
+      "WITHDRAW:ETH.ETH:-1",
+      "SWAP:ETH.ETH:destination with space:100",
+      "SWAP:ETH.ETH:destination\nnext:100",
+  };
+
+  for (const char* memo : kUnparsed) {
+    EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
+              thorchain_parseConfirmMemo(memo, std::strlen(memo)))
+        << memo;
+  }
+
+  static const char kNonAscii[] = "SWAP:ETH.ETH:dest\x80:100";
+  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
+            thorchain_parseConfirmMemo(kNonAscii, sizeof(kNonAscii) - 1));
 }
 
 TEST(Thorchain, ThorchainGetAddress) {

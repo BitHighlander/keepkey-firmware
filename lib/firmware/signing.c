@@ -58,7 +58,16 @@ static uint32_t inputs_count;
 static uint32_t outputs_count;
 static const CoinType* coin;
 static const curve_info* curve;
-static const HDNode* root;
+/* The signer's OWN copy of the signing root, not the caller's node.
+ *
+ * signing_init() takes `const HDNode *`, so the node it is handed belongs to
+ * the caller. signing_abort() has to scrub the master private key, and it
+ * cannot do that through that pointer: casting away const to write through a
+ * genuinely read-only node is undefined behavior, and a caller whose node was
+ * automatic -- as unittests/firmware/fsm.cpp's stack `root` is -- would be
+ * written through after its lifetime ended. Copy on the way in and scrub what
+ * we own on the way out; the caller's node stays the caller's business. */
+static CONFIDENTIAL HDNode root;
 static CONFIDENTIAL HDNode node;
 static bool signing = false;
 enum {
@@ -635,7 +644,7 @@ static bool prepare_input_node(TxInputType* tinput) {
       return false;
     }
   }
-  memcpy(&node, root, sizeof(HDNode));
+  memcpy(&node, &root, sizeof(HDNode));
   if (hdnode_private_ckd_cached(&node, tinput->address_n,
                                 tinput->address_n_count, NULL) == 0) {
     // Failed to derive private key
@@ -666,7 +675,8 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   inputs_count = msg->inputs_count;
   outputs_count = msg->outputs_count;
   coin = _coin;
-  root = _root;
+  memzero(&root, sizeof(root));
+  if (_root) memcpy(&root, _root, sizeof(root));
   version = msg->version;
   lock_time = msg->lock_time;
   expiry = msg->expiry;
@@ -1059,7 +1069,7 @@ static bool signing_check_input(TxInputType* txinput) {
     missing_bip341_input_amount |= !txinput->has_amount;
     uint8_t script_pubkey[64];
     size_t script_pubkey_len = 0;
-    if (!fill_input_script_pubkey(coin, root, txinput, script_pubkey,
+    if (!fill_input_script_pubkey(coin, &root, txinput, script_pubkey,
                                   &script_pubkey_len, sizeof(script_pubkey))) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Failed to derive input scriptPubKey"));
@@ -1163,7 +1173,7 @@ static bool signing_check_output(TxOutputType* txoutput) {
   }
   spending += txoutput->amount;
   int co =
-      run_policy_compile_output(coin, root, txoutput, &bin_output, !is_change);
+      run_policy_compile_output(coin, &root, txoutput, &bin_output, !is_change);
   if (!is_change) {
     layoutProgress(_("Signing transaction"), progress);
   }
@@ -1830,7 +1840,7 @@ void signing_txack(TransactionType* tx) {
           uint8_t expected_script[64];
           size_t expected_script_len = 0;
           if (input.amount != tx->bin_outputs[0].amount ||
-              !fill_input_script_pubkey(coin, root, &input, expected_script,
+              !fill_input_script_pubkey(coin, &root, &input, expected_script,
                                         &expected_script_len,
                                         sizeof(expected_script)) ||
               expected_script_len != tx->bin_outputs[0].script_pubkey.size ||
@@ -1949,7 +1959,7 @@ void signing_txack(TransactionType* tx) {
       progress = 500 + ((signatures * progress_step +
                          (inputs_count + idx2) * progress_meta_step) >>
                         PROGRESS_PRECISION);
-      int co = run_policy_compile_output(coin, root, tx->outputs, &bin_output,
+      int co = run_policy_compile_output(coin, &root, tx->outputs, &bin_output,
                                          false);
       if (co <= TXOUT_COMPILE_ERROR) {
         send_fsm_co_error_message(co);
@@ -2096,7 +2106,7 @@ void signing_txack(TransactionType* tx) {
       if (!signing_validate_output(&tx->outputs[0])) {
         return;
       }
-      co = run_policy_compile_output(coin, root, tx->outputs, &bin_output,
+      co = run_policy_compile_output(coin, &root, tx->outputs, &bin_output,
                                      false);
       if (co <= TXOUT_COMPILE_ERROR) {
         send_fsm_co_error_message(co);
@@ -2213,6 +2223,8 @@ void signing_abort(void) {
   memzero(&outputs_count, sizeof(outputs_count));
   memzero(&coin, sizeof(coin));
   memzero(&curve, sizeof(curve));
+  /* Scrub the signer's own copy of the master key, so it does not stay
+   * resident across cancellation, ClearSession, lock, or wipe. */
   memzero(&root, sizeof(root));
   memzero(&node, sizeof(node));
   memzero(&signing, sizeof(signing));
@@ -2278,8 +2290,6 @@ void signing_abort(void) {
 #if DEBUG_LINK
 static CoinType signing_test_coin;
 static curve_info signing_test_curve;
-static HDNode signing_test_root;
-
 static bool signing_test_bytes_are_zero(const void* ptr, size_t len) {
   const uint8_t* bytes = (const uint8_t*)ptr;
   uint8_t aggregate = 0;
@@ -2290,7 +2300,7 @@ static bool signing_test_bytes_are_zero(const void* ptr, size_t len) {
 void signing_test_seed_state(void) {
   coin = &signing_test_coin;
   curve = &signing_test_curve;
-  root = &signing_test_root;
+  memset(&root, 0xA5, sizeof(root));
   signing = true;
   signing_stage = STAGE_REQUEST_5_OUTPUT;
   memset(&node, 0xA5, sizeof(node));
@@ -2341,7 +2351,7 @@ bool signing_test_state_is_cleared(void) {
 #define IS_ZERO(V) signing_test_bytes_are_zero(&(V), sizeof(V))
   return IS_ZERO(node) && IS_ZERO(resp) && IS_ZERO(input) &&
          IS_ZERO(bin_output) && IS_ZERO(to) && IS_ZERO(tp) && IS_ZERO(ti) &&
-         coin == NULL && curve == NULL && root == NULL && !signing &&
+         coin == NULL && curve == NULL && IS_ZERO(root) && !signing &&
          signing_stage == 0 && IS_ZERO(hasher_prevouts) &&
          IS_ZERO(hasher_sequence) && IS_ZERO(hasher_outputs) &&
          IS_ZERO(hasher_check) && IS_ZERO(ctx_amounts) &&

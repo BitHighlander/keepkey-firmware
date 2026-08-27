@@ -942,7 +942,8 @@ bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
   if (!tx || !fee_out || !has_fee) return false;
 
   uint64_t price = 0;
-  uint64_t limit = 1400000u;
+  uint64_t limit = 0;
+  uint64_t non_budget_instructions = 0;
   bool seen_price = false;
   bool seen_limit = false;
   *fee_out = 0;
@@ -950,6 +951,12 @@ bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
 
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* instruction = &tx->instructions[i];
+    if (instruction->type != SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME &&
+        instruction->type != SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT &&
+        instruction->type != SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE &&
+        instruction->type != SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE) {
+      non_budget_instructions++;
+    }
     if (instruction->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE) {
       if (seen_price) return false;
       seen_price = true;
@@ -959,6 +966,14 @@ bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
       seen_limit = true;
       limit = instruction->extra_value;
     }
+  }
+
+  if (!seen_limit) {
+    /* Solana's runtime default is 200,000 compute units per non-budget
+     * instruction, capped at 1,400,000. Derive the actual implicit limit
+     * instead of overstating every transaction as though it used the cap. */
+    limit = non_budget_instructions * 200000u;
+    if (limit > 1400000u) limit = 1400000u;
   }
 
   if (!seen_price || price == 0) return true;

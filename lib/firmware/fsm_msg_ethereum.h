@@ -269,9 +269,21 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
                                     msg->address_n_count, NULL);
   if (!node) return;
 
-  resp->address.size = 20;
+  /* Build the whole answer in LOCALS and commit it to `resp` only after the
+   * confirmation.
+   *
+   * `resp` aliases fsm.c's single msg_resp buffer, and confirm_* below runs a
+   * message loop: every DebugLink request the emulator harness makes while a
+   * screen is up is dispatched from inside it, and those handlers RESP_INIT
+   * the same buffer. Anything staged in `resp` before the screen is therefore
+   * live across an arbitrary number of foreign writes to it -- which is how
+   * EthereumAddress.address_str reached the host as undecodable bytes.
+   *
+   * fsm_msgNanoGetAddress() already builds into a local and assigns after its
+   * confirm; this handler was the one that staged first. */
+  uint8_t pubkeyhash[20] = {0};
 
-  if (!hdnode_get_ethereum_pubkeyhash(node, resp->address.bytes)) {
+  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
     memzero(node, sizeof(*node));
     return;
   }
@@ -297,11 +309,7 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   }
 
   char address[43] = {'0', 'x'};
-  ethereum_address_checksum(resp->address.bytes, address + 2, rskip60,
-                            chain_id);
-
-  resp->has_address_str = true;
-  strlcpy(resp->address_str, address, sizeof(resp->address_str));
+  ethereum_address_checksum(pubkeyhash, address + 2, rskip60, chain_id);
 
   if (msg->has_show_display && msg->show_display) {
     char node_str[NODE_STRING_LENGTH];
@@ -325,6 +333,13 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   }
 
   memzero(node, sizeof(*node));
+
+  /* Only now, with no further message loop between here and the write. */
+  resp->address.size = sizeof(pubkeyhash);
+  memcpy(resp->address.bytes, pubkeyhash, sizeof(pubkeyhash));
+  resp->has_address_str = true;
+  strlcpy(resp->address_str, address, sizeof(resp->address_str));
+
   msg_write(MessageType_MessageType_EthereumAddress, resp);
   layoutHome();
 }
@@ -335,6 +350,18 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   CHECK_INITIALIZED
 
   CHECK_PIN
+
+  /* A zero-length message is not a message. confirm_bytes() renders size 0 as
+     the literal "(empty)" and returns whatever the owner pressed, so without
+     this the device would sign a payload no screen ever showed -- the same
+     hole already closed on the TON and Solana paths. (`message` is a required
+     field here, so nanopb rejects an omitted one during decode; only the empty
+     case reaches this far.) */
+  if (msg->message.size == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError, _("Missing message"));
+    layoutHome();
+    return;
+  }
 
   /* Merge note (#432 vs this branch): release/7.14.2 gated Ethereum message
    * signing behind AdvancedMode, which blocks every Sign-In-With-Ethereum flow
@@ -419,12 +446,20 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
     return;
   }
 
-  const HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
-                                          msg->address_n_count, NULL);
+  /* Not const: every exit past this point has to scrub the node.
+   *
+   * `node` is the shared fsm_derived_node scratch. A Cancel answered at any of
+   * the confirmations below is consumed by confirm_screen() and returned as a
+   * refusal -- it never reaches fsm_msgCancel(), so nothing else runs
+   * fsm_abort_workflows() on the way out. Each early return here was therefore
+   * leaving a derived private key resident, and so was the success path. */
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
   if (!node) return;
 
   uint8_t pubkeyhash[20] = {0};
   if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    memzero(node, sizeof(*node));
     layoutHome();
     return;
   }
@@ -440,6 +475,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
 
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Verify Address",
                "Confirm address: %s", resp->address)) {
+    memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
@@ -450,6 +486,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
   }
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Typed Data domain",
                "Confirm hash digest: %s", str)) {
+    memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
@@ -461,6 +498,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
     }
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Typed Data message",
                  "Confirm hash digest: %s", str)) {
+      memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
       return;
@@ -468,6 +506,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
   } else {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Typed Data message",
                  "Confirm: No message")) {
+      memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
       return;
@@ -475,6 +514,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
   }
 
   ethereum_typed_hash_sign(msg, node, resp);
+  memzero(node, sizeof(*node));
   layoutHome();
 }
 
@@ -499,12 +539,17 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
     return;
   }
 
-  const HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
-                                          msg->address_n_count, NULL);
+  /* Not const, for the same reason as fsm_msgEthereumSignTypedHash() above:
+   * this is the shared fsm_derived_node scratch and every exit has to scrub
+   * it. e712_types_values() runs its own confirmations, and a Cancel answered
+   * there never reaches fsm_msgCancel(). */
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
   if (!node) return;
 
   uint8_t pubkeyhash[20] = {0};
   if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    memzero(node, sizeof(*node));
     layoutHome();
     return;
   }
@@ -514,6 +559,7 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
   ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
 
   e712_types_values(msg, resp, node);
+  memzero(node, sizeof(*node));
 
   layoutHome();
 }

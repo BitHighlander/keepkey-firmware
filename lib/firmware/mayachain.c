@@ -125,20 +125,42 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
   const char mainnetp[] = "maya";
   const char testnetp[] = "smaya";
   const char* pfix;
-  char buffer[64 + 1];
+  /* Sized for the amount/denom segment below, which is the longest thing this
+     function formats:
 
-  size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
-  if (!bech32_decode(hrp, decoded, &decoded_len, to_address)) {
-    return false;
-  }
+       "amount":[{"amount":"   21
+       <uint64>                20
+       ","denom":"             11
+       <denom>                 68   (MayachainMsgSend.denom max_size 69)
+       "}]                      3   = 123, + NUL = 124
+
+     It was 65. tendermint_snprintf() fails closed when its output does not
+     fit, so nothing was ever mis-signed -- but the failure landed AFTER
+     fsm_msgMayachainMsgAck() had already shown the amount and taken the
+     owner's approval, so a long yet perfectly valid denomination was approved
+     and only then refused. This branch's rule is that anything unrenderable
+     fails BEFORE the confirmation, so make the segment fit its own documented
+     maximum. Unlike THORChain, which hardcodes "rune", this denom is
+     host-supplied, which is why only MAYAChain hits it. */
+  char buffer[128];
 
   char from_address[46];
 
   pfix = mainnetp;
   if (testnet) {
     pfix = testnetp;
+  }
+
+  /* Validate the recipient against THIS network's prefix and the 20-byte
+     account length, before it reaches the bare "%s" JSON serialization below.
+     This used to be a bare bech32_decode() into hrp[45]/decoded[38], which
+     both overflowed on host-chosen input and checked neither the network nor
+     the payload length -- so a wrong-chain address, a module or operator
+     address, or a punctuation-bearing HRP all passed straight into the signed
+     document. Select the prefix first so there is something to check against.
+   */
+  if (!tendermint_validateBech32Address(to_address, pfix)) {
+    return false;
   }
 
   if (!tendermint_getAddress(&node, pfix, from_address)) {
@@ -235,6 +257,22 @@ bool mayachain_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
                            NULL) == 0;
 }
 
+/* The account this session's key signs as.
+ *
+ * MsgDeposit's `signer` is serialized verbatim as the message authority, so a
+ * merely well-formed thor/maya address let the device sign a document for an
+ * account it cannot represent -- and the confirmation labels that address as
+ * though it were a destination. There is exactly one authority a session can
+ * act as; require the host to name it. */
+bool mayachain_addressIsSigner(const char* address) {
+  if (!initialized || !address) return false;
+
+  char expected[46] = {0};
+  if (!tendermint_getAddress(&node, testnet ? "smaya" : "maya", expected))
+    return false;
+  return strcmp(address, expected) == 0;
+}
+
 bool mayachain_signingIsInited(void) { return initialized; }
 
 bool mayachain_signingIsFinished(void) { return msgs_remaining == 0; }
@@ -244,6 +282,63 @@ void mayachain_signAbort(void) {
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));
+}
+
+/* Validate the chain/asset separator before the positional parser labels
+ * fields. Empty colon-delimited fields remain meaningful and supported. */
+static bool mayachain_memo_has_canonical_separators(const char* memo,
+                                                    size_t size) {
+  /* The grammar requires OP:CHAIN.ASSET. Dots in later positional fields are
+   * data, so they must not be confused with the one separator required in
+   * field 1. */
+  if (!memo || size == 0) return false;
+
+  size_t field = 0;
+  size_t dots_in_asset_field = 0;
+  bool has_chain = false;
+  bool has_asset = false;
+
+  for (size_t i = 0; i < size; i++) {
+    if (memo[i] == ':') {
+      field++;
+      continue;
+    }
+    if (field != 1) continue;
+    if (memo[i] == '.')
+      dots_in_asset_field++;
+    else if (dots_in_asset_field == 0)
+      has_chain = true;
+    else
+      has_asset = true;
+  }
+
+  return dots_in_asset_field == 1 && has_chain && has_asset;
+}
+
+static bool mayachain_memo_is_structured_text(const char* memo, size_t size) {
+  if (!memo || size == 0) return false;
+
+  for (size_t i = 0; i < size; i++) {
+    const unsigned char c = (unsigned char)memo[i];
+    if (c < 0x21 || c > 0x7e) return false;
+  }
+  return true;
+}
+
+static bool mayachain_parse_bps(const char* text, uint16_t* bps) {
+  if (!text || !bps || text[0] == '\0') return false;
+  if (text[0] == '0' && text[1] != '\0') return false;
+
+  uint32_t value = 0;
+  for (const char* p = text; *p; p++) {
+    if (*p < '0' || *p > '9') return false;
+    const uint32_t digit = (uint32_t)(*p - '0');
+    if (value > (10000u - digit) / 10u) return false;
+    value = value * 10u + digit;
+  }
+
+  *bps = (uint16_t)value;
+  return true;
 }
 
 MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
@@ -277,7 +372,13 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
 
   // check if memo data is recognized
 
-  if (size > MEMO_MAX) return MAYACHAIN_MEMO_UNPARSED;
+  /* One byte short of the buffer, so a full-length memo is still terminated by
+     the memzero below. */
+  if (size >= sizeof(memoBuf) ||
+      !mayachain_memo_is_structured_text(swapStr, size) ||
+      !mayachain_memo_has_canonical_separators(swapStr, size)) {
+    return MAYACHAIN_MEMO_UNPARSED;
+  }
   memzero(memoBuf, sizeof(memoBuf));
   /* size is a byte count, not necessarily including a NUL: the BTC
    * OP_RETURN caller passes raw memo bytes with no terminator. strlcpy
@@ -325,8 +426,8 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   asset++;
 
   // Check for swap
-  if (strncmp(fields[0], "SWAP", 4) == 0 || *fields[0] == 's' ||
-      *fields[0] == '=') {
+  if (strcmp(fields[0], "SWAP") == 0 || strcmp(fields[0], "s") == 0 ||
+      strcmp(fields[0], "=") == 0) {
     // This is a swap, set up destination and limit
     // The dest may be blank which means swap to self
     const char* dest =
@@ -335,8 +436,12 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
         (nfields > 3 && fields[3][0] != '\0') ? fields[3] : "none";
     const char* affiliate =
         (nfields > 4 && fields[4][0] != '\0') ? fields[4] : NULL;
-    const char* fee_bps =
-        (nfields > 5 && fields[5][0] != '\0') ? fields[5] : "unspecified";
+    const bool has_fee = nfields > 5 && fields[5][0] != '\0';
+    const char* fee_bps = has_fee ? fields[5] : "unspecified";
+    uint16_t parsed_fee_bps = 0;
+    if (has_fee && !mayachain_parse_bps(fee_bps, &parsed_fee_bps)) {
+      return MAYACHAIN_MEMO_UNPARSED;
+    }
 
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain swap", "Confirm swap asset %s\n on chain %s", asset,
@@ -352,10 +457,10 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
       return MAYACHAIN_MEMO_CANCELLED;
     }
     // Never hide the affiliate fee skim from the user
-    if (affiliate != NULL) {
+    if (affiliate != NULL || has_fee) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Mayachain swap", "Affiliate fee %s bps to %s", fee_bps,
-                   affiliate)) {
+                   affiliate ? affiliate : "(none given)")) {
         return MAYACHAIN_MEMO_CANCELLED;
       }
     }
@@ -363,8 +468,8 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for add liquidity
-  else if (strncmp(fields[0], "ADD", 3) == 0 || *fields[0] == 'a' ||
-           *fields[0] == '+') {
+  else if (strcmp(fields[0], "ADD") == 0 || strcmp(fields[0], "a") == 0 ||
+           strcmp(fields[0], "+") == 0) {
     // add liquidity pool address (optional)
     const char* pool = (nfields > 2 && fields[2][0] != '\0') ? fields[2] : NULL;
 
@@ -383,8 +488,8 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for withdraw liquidity
-  else if (strncmp(fields[0], "WITHDRAW", 8) == 0 ||
-           strncmp(fields[0], "wd", 2) == 0 || *fields[0] == '-') {
+  else if (strcmp(fields[0], "WITHDRAW") == 0 || strcmp(fields[0], "wd") == 0 ||
+           strcmp(fields[0], "-") == 0) {
     if (nfields < 3 || fields[2][0] == '\0') {
       return MAYACHAIN_MEMO_UNPARSED;  // malformed memo
     }
@@ -396,8 +501,8 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
 
     /* BPS rendered with integer math: snprintf is the integer-only sniprintf
      * on the device, so no float formats. Negative BPS is a malformed memo. */
-    int bps = atoi(fields[2]);
-    if (bps < 0) {
+    uint16_t bps = 0;
+    if (!mayachain_parse_bps(fields[2], &bps)) {
       return MAYACHAIN_MEMO_UNPARSED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
