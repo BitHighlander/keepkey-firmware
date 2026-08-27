@@ -32,6 +32,7 @@ TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   }
 }
 
+#if !BITCOIN_ONLY
 TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
   HDNode node = {};
   node.curve = &secp256k1_info;
@@ -102,6 +103,7 @@ TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
   EXPECT_FALSE(mayachain_signingIsInited());
   EXPECT_FALSE(eos_signingIsInited());
 }
+#endif
 
 TEST(Fsm, MissingBitcoinAckPayloadTerminatesSigning) {
   fsm_init();
@@ -186,6 +188,7 @@ TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
   EXPECT_FALSE(signing_is_active());
 }
 
+#if !BITCOIN_ONLY
 TEST(Fsm, MissingEosCommonTerminatesSigning) {
   fsm_init();
 
@@ -206,3 +209,4 @@ TEST(Fsm, MissingEosCommonTerminatesSigning) {
   fsm_msgEosTxActionAck(&stale);
   EXPECT_FALSE(eos_signingIsInited());
 }
+#endif

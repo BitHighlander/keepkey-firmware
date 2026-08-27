@@ -336,6 +336,7 @@ void fsm_sendFailure(FailureType code, const char* text) {
 void fsm_abort_workflows(void) {
   setup_abort();
   signing_abort();
+#if !BITCOIN_ONLY
   ethereum_signing_abort();
   nano_signingAbort();
   binance_signAbort();
@@ -344,6 +345,7 @@ void fsm_abort_workflows(void) {
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+#endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
 }
