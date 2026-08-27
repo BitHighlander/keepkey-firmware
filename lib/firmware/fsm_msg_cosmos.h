@@ -1,4 +1,10 @@
 
+static void cosmos_formatAmount(uint64_t amount, char* out, size_t out_len) {
+  if (!bn_format_uint64(amount, NULL, " ATOM", 6, 0, false, out, out_len)) {
+    strlcpy(out, "AMOUNT TOO LARGE TO DISPLAY", out_len);
+  }
+}
+
 void fsm_msgCosmosGetAddress(const CosmosGetAddress* msg) {
   RESP_INIT(CosmosAddress);
 
@@ -71,16 +77,18 @@ void fsm_msgCosmosGetAddress(const CosmosGetAddress* msg) {
 
 void fsm_msgCosmosSignTx(const CosmosSignTx* msg) {
   CHECK_INITIALIZED
-  CHECK_PIN
 
   if (!msg->has_account_number || !msg->has_chain_id || !msg->has_fee_amount ||
-      !msg->has_gas || !msg->has_sequence) {
+      !msg->has_gas || !msg->has_sequence || !msg->has_msg_count ||
+      msg->msg_count == 0 || !tendermint_validateSafeText(msg->chain_id)) {
     tendermint_signAbort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Missing Fields On Message");
+                    "Missing or Invalid Fields On Message");
     layoutHome();
     return;
   }
+
+  CHECK_PIN
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -131,8 +139,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
       case OutputAddressType_TRANSFER:
       default: {
         char amount_str[32];
-        bn_format_uint64(msg->send.amount, NULL, " ATOM", 6, 0, false,
-                         amount_str, sizeof(amount_str));
+        cosmos_formatAmount(msg->send.amount, amount_str, sizeof(amount_str));
         if (!confirm_transaction_output(
                 ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
                 msg->send.to_address)) {
@@ -166,8 +173,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
     }
     /** Confirm transaction parameters on-screen */
     char amount_str[32];
-    bn_format_uint64(msg->delegate.amount, NULL, " ATOM", 6, 0, false,
-                     amount_str, sizeof(amount_str));
+    cosmos_formatAmount(msg->delegate.amount, amount_str, sizeof(amount_str));
 
     if (!confirm_cosmos_address("Confirm delegator address",
                                 msg->delegate.delegator_address)) {
@@ -216,8 +222,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
     }
     /** Confirm transaction parameters on-screen */
     char amount_str[32];
-    bn_format_uint64(msg->undelegate.amount, NULL, " ATOM", 6, 0, false,
-                     amount_str, sizeof(amount_str));
+    cosmos_formatAmount(msg->undelegate.amount, amount_str, sizeof(amount_str));
 
     if (!confirm_cosmos_address("Confirm delegator address",
                                 msg->undelegate.delegator_address)) {
@@ -269,8 +274,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
     }
     /** Confirm transaction parameters on-screen */
     char amount_str[32];
-    bn_format_uint64(msg->redelegate.amount, NULL, " ATOM", 6, 0, false,
-                     amount_str, sizeof(amount_str));
+    cosmos_formatAmount(msg->redelegate.amount, amount_str, sizeof(amount_str));
 
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Redelegate",
                  "Redelegate %s?", amount_str)) {
@@ -329,8 +333,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
     if (msg->rewards.has_amount) {
       /** Confirm transaction parameters on-screen */
       char amount_str[32];
-      bn_format_uint64(msg->rewards.amount, NULL, " ATOM", 6, 0, false,
-                       amount_str, sizeof(amount_str));
+      cosmos_formatAmount(msg->rewards.amount, amount_str, sizeof(amount_str));
 
       if (!confirm(ButtonRequestType_ButtonRequest_Other, "Claim Rewards",
                    "Claim %s?", amount_str)) {
@@ -392,8 +395,8 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
     }
     /** Confirm transaction parameters on-screen */
     char amount_str[32];
-    bn_format_uint64(msg->ibc_transfer.amount, NULL, " ATOM", 6, 0, false,
-                     amount_str, sizeof(amount_str));
+    cosmos_formatAmount(msg->ibc_transfer.amount, amount_str,
+                        sizeof(amount_str));
 
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "IBC Transfer",
                  "Transfer %s via IBC?", amount_str)) {

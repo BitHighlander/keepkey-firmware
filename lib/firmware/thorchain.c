@@ -34,14 +34,31 @@
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static ThorchainSignTx msg;
 static bool testnet;
 
 const ThorchainSignTx* thorchain_getThorchainSignTx(void) { return &msg; }
 
+bool thorchain_formatAmount(uint64_t amount, const char* asset, char* out,
+                            size_t out_len) {
+  if (!tendermint_validateSafeText(asset) || !out || out_len == 0) return false;
+
+  char suffix[THORCHAIN_ASSET_SUFFIX_LEN + 2];
+  const int suffix_len = snprintf(suffix, sizeof(suffix), " %s", asset);
+  if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return false;
+
+  return bn_format_uint64(amount, NULL, suffix, 8, 0, false, out, out_len) != 0;
+}
+
 bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
-  initialized = true;
+  thorchain_signAbort();
+  if (!_node || !_msg || !_msg->has_msg_count || _msg->msg_count == 0 ||
+      !_msg->has_chain_id || !tendermint_validateSafeText(_msg->chain_id)) {
+    return false;
+  }
+
   msgs_remaining = _msg->msg_count;
   testnet = false;
 
@@ -91,11 +108,18 @@ bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
   // 10
   sha256_Update(&ctx, (uint8_t*)"\",\"msgs\":[", 10);
 
-  return success;
+  if (!success) {
+    thorchain_signAbort();
+    return false;
+  }
+  initialized = true;
+  return true;
 }
 
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
                                    const char* to_address) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "thor";
   const char testnetp[] = "tthor";
   const char* pfix;
@@ -119,6 +143,10 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
@@ -137,12 +165,26 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) has_message = true;
   msgs_remaining--;
   return success;
 }
 
 bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
+  if (!initialized || msgs_remaining == 0) return false;
+
+  const char* const signer_prefix = testnet ? "tthor" : "thor";
+  if (!depmsg || !depmsg->has_asset ||
+      !tendermint_validateSafeText(depmsg->asset) || !depmsg->has_signer ||
+      !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
+    return false;
+  }
+
   char buffer[64 + 1];
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -167,6 +209,7 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"signer\":\"%s\"}}", depmsg->signer);
 
+  if (success) has_message = true;
   msgs_remaining--;
   return success;
 }
@@ -190,13 +233,68 @@ bool thorchain_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
 
 bool thorchain_signingIsInited(void) { return initialized; }
 
-bool thorchain_signingIsFinished(void) { return msgs_remaining == 0; }
+bool thorchain_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void thorchain_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));
+}
+
+/* strtok() discards empty delimiter-separated components. Empty memo fields
+ * are positional and meaningful -- for example, an omitted swap limit before
+ * an affiliate is encoded as `::`. Structured review cannot use a tokenizer
+ * that turns that memo into the same token sequence as one with no empty
+ * position, because it can label the affiliate as the limit or otherwise
+ * shift every field that follows.
+ *
+ * Treat any empty `:` or `.` component as non-canonical for this legacy
+ * parser. Callers either disclose the raw memo (UTXO) or refuse the structured
+ * EVM path. This is deliberately fail-closed until the parser is replaced by
+ * one that preserves and understands every position in the current grammar. */
+static bool thorchain_memo_has_empty_component(const char* memo, size_t size) {
+  if (!memo || size == 0) return true;
+
+  for (size_t i = 0; i < size; i++) {
+    if (memo[i] != ':' && memo[i] != '.') continue;
+
+    if (i == 0 || i + 1 == size || memo[i - 1] == ':' || memo[i - 1] == '.' ||
+        memo[i + 1] == ':' || memo[i + 1] == '.') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static bool thorchain_memo_is_structured_text(const char* memo, size_t size) {
+  if (!memo || size == 0) return false;
+
+  for (size_t i = 0; i < size; i++) {
+    const unsigned char c = (unsigned char)memo[i];
+    if (c < 0x21 || c > 0x7e) return false;
+  }
+  return true;
+}
+
+static bool thorchain_parse_bps(const char* text, uint16_t* bps) {
+  if (!text || !bps || text[0] == '\0') return false;
+  if (text[0] == '0' && text[1] != '\0') return false;
+
+  uint32_t value = 0;
+  for (const char* p = text; *p; p++) {
+    if (*p < '0' || *p > '9') return false;
+    const uint32_t digit = (uint32_t)(*p - '0');
+    if (value > (10000u - digit) / 10u) return false;
+    value = value * 10u + digit;
+  }
+
+  *bps = (uint16_t)value;
+  return true;
 }
 
 ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
@@ -231,7 +329,11 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
 
   // check if memo data is recognized
 
-  if (size > THORCHAIN_MEMO_MAX) return THORCHAIN_MEMO_UNPARSED;
+  if (size > THORCHAIN_MEMO_MAX ||
+      thorchain_memo_has_empty_component(swapStr, size) ||
+      !thorchain_memo_is_structured_text(swapStr, size)) {
+    return THORCHAIN_MEMO_UNPARSED;
+  }
   memzero(memoBuf, sizeof(memoBuf));
   /* `size` is a byte count and swapStr is NOT guaranteed to be NUL
      terminated - the BTC OP_RETURN caller hands us raw script bytes. strlcpy
@@ -285,8 +387,8 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for swap
-  if (strncmp(parseTokPtrs[0], "SWAP", 4) == 0 || *parseTokPtrs[0] == 's' ||
-      *parseTokPtrs[0] == '=') {
+  if (strcmp(parseTokPtrs[0], "SWAP") == 0 ||
+      strcmp(parseTokPtrs[0], "s") == 0 || strcmp(parseTokPtrs[0], "=") == 0) {
     // This is a swap, set up destination and limit
     // This is the dest, may be blank which means swap to self
     parseTokPtrs[3] = "self";
@@ -329,8 +431,9 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for add liquidity
-  else if (strncmp(parseTokPtrs[0], "ADD", 3) == 0 || *parseTokPtrs[0] == 'a' ||
-           *parseTokPtrs[0] == '+') {
+  else if (strcmp(parseTokPtrs[0], "ADD") == 0 ||
+           strcmp(parseTokPtrs[0], "a") == 0 ||
+           strcmp(parseTokPtrs[0], "+") == 0) {
     if (tok != NULL) {
       // add liquidity pool address
       parseTokPtrs[3] = tok;
@@ -362,8 +465,9 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for withdraw liquidity
-  else if (strncmp(parseTokPtrs[0], "WITHDRAW", 8) == 0 ||
-           strncmp(parseTokPtrs[0], "wd", 2) == 0 || *parseTokPtrs[0] == '-') {
+  else if (strcmp(parseTokPtrs[0], "WITHDRAW") == 0 ||
+           strcmp(parseTokPtrs[0], "wd") == 0 ||
+           strcmp(parseTokPtrs[0], "-") == 0) {
     if (tok != NULL) {
       // add liquidity pool address
       parseTokPtrs[3] = tok;
@@ -371,10 +475,14 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
       return THORCHAIN_MEMO_UNPARSED;  // malformed memo
     }
 
-    float percent = (float)(atoi(parseTokPtrs[3])) / 100;
+    uint16_t bps = 0;
+    if (!thorchain_parse_bps(parseTokPtrs[3], &bps)) {
+      return THORCHAIN_MEMO_UNPARSED;
+    }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain withdraw liquidity",
-                 "Confirm withdraw %3.2f%% of asset %s on chain %s", percent,
+                 "Confirm withdraw %u.%02u%% of asset %s on chain %s",
+                 (unsigned)(bps / 100u), (unsigned)(bps % 100u),
                  parseTokPtrs[2], parseTokPtrs[1])) {
       return THORCHAIN_MEMO_CANCELLED;
     }

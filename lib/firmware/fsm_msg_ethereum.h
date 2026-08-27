@@ -29,29 +29,9 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
                             /*show_addridx=*/false))
     return TXOUT_COMPILE_ERROR;
 
-  if (!coin->has_forkid) return TXOUT_COMPILE_ERROR;
-
-  const uint32_t chain_id = coin->forkid;
-
-  const uint8_t* value_bytes;
-  size_t value_size;
-  const TokenType* token;
-
-  if (ethereum_isStandardERC20Transfer(msg)) {
-    value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
-    value_size = 32;
-    token = tokenByChainAddress(chain_id, msg->to.bytes);
-  } else {
-    value_bytes = msg->value.bytes;
-    value_size = msg->value.size;
-    token = NULL;
-  }
-
-  bignum256 value;
-  bn_from_bytes(value_bytes, value_size, &value);
-
   char amount_str[128 + sizeof(msg->token_shortcut) + 3];
-  ethereumFormatAmount(&value, token, chain_id, amount_str, sizeof(amount_str));
+  if (!ethereumFormatTransferAmount(msg, amount_str, sizeof(amount_str)))
+    return TXOUT_COMPILE_ERROR;
 
   if (!confirm_transfer_output(
           ButtonRequestType_ButtonRequest_ConfirmTransferToAccount, amount_str,
@@ -96,9 +76,23 @@ static int process_ethereum_msg(EthereumSignTx* msg, bool* needs_confirm) {
 }
 
 void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
+  /* A new start supersedes any old Ethereum stream before validation. */
+  ethereum_signing_abort();
+
   CHECK_INITIALIZED
 
   CHECK_PIN
+
+  /* Validate the replay-protection domain before any transaction-specific
+   * review. process_ethereum_msg() can draw a transfer-to-account screen, so
+   * leaving this to ethereum_signing_init() meant OutputAddressType_TRANSFER
+   * emitted a ButtonRequest before an omitted chain_id was refused. */
+  if (!ethereum_chainIdIsValid(msg)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Chain Id out of bounds"));
+    layoutHome();
+    return;
+  }
 
   bool needs_confirm = true;
   int msg_result = process_ethereum_msg(msg, &needs_confirm);
@@ -199,13 +193,13 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   CHECK_PIN
 
   /* Merge note (#432 vs this branch): release/7.14.2 gated Ethereum message
-   * signing behind AdvancedMode, which blocks every Sign-In-With-Ethereum
-   * flow on a default device and, because AdvancedMode is session state,
-   * does so again after each power cycle. confirm_bytes() paginates and
-   * displays EVERY signed byte, which is what that gate was standing in for.
-   * Full disclosure is both the stronger security property and the one that
-   * does not break default-configuration signing, so the gate is dropped
-   * here in favour of it. */
+   * signing behind AdvancedMode, which blocks every Sign-In-With-Ethereum flow
+   * on a default device until the user explicitly enables blind signing.
+   * AdvancedMode persists across power cycles until explicitly disabled.
+   * confirm_bytes() paginates and displays EVERY signed byte, which is what
+   * that gate was standing in for. Full disclosure is both the stronger
+   * security property and the one that does not break default-configuration
+   * signing, so the gate is dropped here in favour of it. */
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
                      _("Sign Ethereum Message"), msg->message.bytes,
                      msg->message.size)) {

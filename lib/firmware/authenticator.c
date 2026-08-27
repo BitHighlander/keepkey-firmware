@@ -77,6 +77,13 @@ static bool getAuthData(void) {
 
 static void setAuthData(void) { storage_setAuthData(authData); }
 
+static unsigned authenticator_cancel(void) {
+  /* A nested confirmation refusal does not pass through fsm_msgCancel(), so it
+   * must revoke the decrypted authenticator cache itself. */
+  authenticator_clear_cache();
+  return CANCELED;
+}
+
 #if DEBUG_LINK
 static unsigned _otpSlot = 0;
 void getAuthSlot(char* authSlotData) {
@@ -101,7 +108,7 @@ unsigned wipeAuthData(void) {
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Confirm Wipe Authdata",
                "Do you want to PERMANENTLY delete all authenticator "
                "accounts?")) {
-    return CANCELED;
+    return authenticator_cancel();
   }
 
   // wipe storage and reset authdata encryption flag
@@ -112,6 +119,13 @@ unsigned wipeAuthData(void) {
 }
 
 unsigned addAuthAccount(char* accountWithSeed) {
+  if (accountWithSeed == NULL) return TOKERR;
+
+  /* strtok() inserts NULs into the caller's protobuf string, so retain the
+   * original extent before parsing.  Every exit wipes that whole credential
+   * suffix, including the Base32 source, rather than leaving it in the static
+   * message decode buffer until another USB message arrives. */
+  const size_t sourceLen = strlen(accountWithSeed);
   char *domain, *account, *seedStr;
   unsigned slot = AUTHDATA_SIZE;
   char authSecret[AUTHSECRET_SIZE_MAX] = {0};
@@ -152,7 +166,7 @@ unsigned addAuthAccount(char* accountWithSeed) {
   }
 
   if (!getAuthData()) {
-    result = BADPASS;
+    result = BADPASS;  // fingerprint did not match, passphrase incorrect
     goto cleanup;
   }
 
@@ -163,7 +177,7 @@ unsigned addAuthAccount(char* accountWithSeed) {
     }
   }
   if (slot == AUTHDATA_SIZE) {
-    result = NOSLOT;
+    result = NOSLOT;  // no empty slots
     goto cleanup;
   }
 
@@ -191,6 +205,8 @@ unsigned addAuthAccount(char* accountWithSeed) {
 
 cleanup:
   memzero(authSecret, sizeof(authSecret));
+  memzero(accountWithSeed, sourceLen);
+  if (result == CANCELED) authenticator_clear_cache();
   return result;
 }
 
@@ -327,6 +343,7 @@ cleanup:
   memzero(otp_candidate, sizeof(otp_candidate));
   memzero(otp_display, sizeof(otp_display));
   memzero(account_display, sizeof(account_display));
+  if (result == CANCELED) authenticator_clear_cache();
   return result;
 }
 
@@ -387,7 +404,7 @@ unsigned removeAuthAccount(char* domAcc) {
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Confirm Delete Account",
                "Do you want to PERMANENTLY delete account %.*s:%.*s?",
                DOMAIN_SIZE - 1, domain, ACCOUNT_SIZE - 1, account)) {
-    return CANCELED;
+    return authenticator_cancel();
   }
 
   memzero((void*)&authData[slot], sizeof(authType));

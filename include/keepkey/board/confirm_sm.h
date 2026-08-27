@@ -25,6 +25,7 @@
 #include "keepkey/board/layout.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* implement a means to display debug information */
 #ifdef DEBUG_ON
@@ -96,6 +97,17 @@ typedef void (*layout_notification_t)(const char* str1, const char* str2,
 /// \param body_width  Wrap width: BODY_WIDTH, or BODY_WIDTH_WITH_ICON.
 /// \returns true iff the whole body will be on screen.
 bool confirm_body_fits(const char* body, uint16_t body_width);
+
+/// Same renderer-backed fit probe at the constant-power draw origin.
+bool confirm_body_fits_constant_power(const char* body, uint16_t body_width);
+
+/// Split a constant-power body at the last complete row that fits.
+size_t confirm_constant_power_subpage_take(const char* body);
+
+/// Page a constant-power body locally under exactly one ButtonRequest.
+bool confirm_constant_power_paged(ButtonRequestType type,
+                                  const char* request_title,
+                                  const char* request_body);
 
 /// User confirmation.
 /// \param type            The kind of button request to send to the host.
@@ -173,9 +185,17 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum,
                       const char* request_title, const char* request_body, ...)
     __attribute__((format(printf, 4, 5)));
 
-/// Like confirm, but always \returns true and immediately.
+/// Like confirm, but the hold is immediate: a short click confirms.
+///
+/// The screen is otherwise a confirmation, and the verdict is real -- a host
+/// Cancel (or Initialize) still \returns false, so callers that page a body
+/// across several screens can bail out of an intermediate page. Use it for
+/// screens that are shown rather than consented to; reserve confirm()'s full
+/// hold for the screen that actually approves something.
+/// \param type            The kind of button request to send to the host.
 /// \param request_title   Title of confirm message.
 /// \param request_body    Body of confirm message.
+/// \returns true iff the device confirmed.
 bool review_immediate(ButtonRequestType type, const char* request_title,
                       const char* request_body, ...)
     __attribute__((format(printf, 3, 4)));

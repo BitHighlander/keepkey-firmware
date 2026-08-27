@@ -1,6 +1,7 @@
 set(sources
     authenticator.cpp
     confirm_test_utils.cpp
+    fsm.cpp
     dice.cpp
     recovery.cpp
     rng_health.cpp
@@ -24,9 +25,12 @@ if(NOT ${KK_BITCOIN_ONLY})
       cosmos.cpp
       eos.cpp
       ethereum.cpp
+      mayachain.cpp
       nano.cpp
+      osmosis.cpp
       ripple.cpp
-      solana.cpp)
+      solana.cpp
+      thorchain.cpp)
 endif()
 
 include_directories(

@@ -1,4 +1,3 @@
-
 void fsm_msgThorchainGetAddress(const ThorchainGetAddress* msg) {
   RESP_INIT(ThorchainAddress);
 
@@ -80,16 +79,19 @@ void fsm_msgThorchainGetAddress(const ThorchainGetAddress* msg) {
 
 void fsm_msgThorchainSignTx(const ThorchainSignTx* msg) {
   CHECK_INITIALIZED
-  CHECK_PIN
 
   if (!msg->has_account_number || !msg->has_chain_id || !msg->has_fee_amount ||
-      !msg->has_gas || !msg->has_sequence) {
+      !msg->has_gas || !msg->has_sequence || !msg->has_msg_count ||
+      msg->msg_count == 0 || !tendermint_validateSafeText(msg->chain_id)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Missing Fields On Message");
+                    "Missing or Invalid Fields On Message");
     layoutHome();
     return;
   }
+
+  /* Reject malformed envelopes before authentication or key derivation. */
+  CHECK_PIN
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -145,8 +147,14 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
       case OutputAddressType_TRANSFER:
       default: {
         char amount_str[32];
-        bn_format_uint64(msg->send.amount, NULL, " RUNE", 8, 0, false,
-                         amount_str, sizeof(amount_str));
+        if (!thorchain_formatAmount(msg->send.amount, "RUNE", amount_str,
+                                    sizeof(amount_str))) {
+          thorchain_signAbort();
+          fsm_sendFailure(FailureType_Failure_SyntaxError,
+                          "Invalid THORChain send amount");
+          layoutHome();
+          return;
+        }
         if (!confirm_transaction_output(
                 ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
                 msg->send.to_address)) {
@@ -169,12 +177,32 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     }
 
   } else if (msg->has_deposit) {
-    char amount_str[32];
-    char asset_str[21];
-    asset_str[0] = ' ';
-    strlcpy(&(asset_str[1]), msg->deposit.asset, sizeof(asset_str) - 1);
-    bn_format_uint64(msg->deposit.amount, NULL, asset_str, 8, 0, false,
-                     amount_str, sizeof(amount_str));
+    const char* const signer_prefix =
+        sign_tx->has_testnet && sign_tx->testnet ? "tthor" : "thor";
+    if (!tendermint_validateSafeText(msg->deposit.asset) ||
+        !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix)) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid THORChain deposit fields");
+      layoutHome();
+      return;
+    }
+
+    /* ThorchainMsgDeposit.asset is max_size:20, so the suffix reaches 20
+     * characters while a uint64 at 8 decimals reaches 21: 21 + 20 + 1 = 42
+     * did not fit the old 32-byte amount_str. bn_format() zeroes its output
+     * and returns 0 on overflow, and the ignored return let an EMPTY amount
+     * reach the confirmation screen and be signed. Size for the maximum and
+     * fail closed, as fsm_msg_binance.h does. */
+    char amount_str[21 + THORCHAIN_ASSET_SUFFIX_LEN + 1];
+    if (!thorchain_formatAmount(msg->deposit.amount, msg->deposit.asset,
+                                amount_str, sizeof(amount_str))) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid THORChain deposit amount");
+      layoutHome();
+      return;
+    }
     if (!confirm_transaction_output(
             ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
             msg->deposit.signer)) {
@@ -271,9 +299,8 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   }
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this RUNE transaction on %s? "
-               "Additional network fees apply.",
-               sign_tx->chain_id)) {
+               "Sign RUNE on %s? Fee: %" PRIu32 " rune. Gas: %" PRIu32 ".",
+               sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

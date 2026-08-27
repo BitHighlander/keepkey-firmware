@@ -52,4 +52,3 @@ EthereumMetadataAck.display_summary               max_size:32
 LoadClearsignSigner.pubkey                        max_size:33
 LoadClearsignSigner.alias                         max_size:32
 LoadClearsignSigner.icon                          max_size:384
-

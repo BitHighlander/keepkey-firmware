@@ -136,6 +136,20 @@ bool binance_signTxUpdateTransfer(const BinanceTransferMsg* _msg) {
 
   bool success = true;
 
+  /* Separate this message from the previous one. binance_signTxInit() opens
+   * "msgs":[ and binance_signTxFinalize() closes it, but nothing put a comma
+   * BETWEEN elements: with msg_count == 2 the signed document read
+   * "msgs":[{...}{...}], which is not JSON, so the signature could not match
+   * the canonical Binance sign document and the transaction was unusable --
+   * after the user had approved both transfers on screen.
+   *
+   * msg_count is host-supplied and only checked non-zero in signTxInit(), and
+   * fsm_msgBinanceTransferMsg() confirms and serialises each message in turn,
+   * so this is reachable rather than theoretical. has_message is exactly the
+   * "something has already been written into msgs[]" flag; it is set below
+   * only after a message serialises, and cleared by binance_signAbort(). */
+  if (has_message) sha256_Update(&ctx, (const uint8_t*)",", 1);
+
   sha256_Update(&ctx, (const uint8_t*)"{\"inputs\":[", 11);
 
   for (int i = 0; i < _msg->inputs_count; i++) {

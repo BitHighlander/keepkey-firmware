@@ -1,11 +1,6 @@
 void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
-  /* Ends a setup ceremony of either kind, staged settings and all. */
-  setup_abort();
-  signing_abort();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
+  fsm_abort_workflows();
   session_clear(false);  // do not clear PIN
   layoutHome();
   fsm_msgGetFeatures(0);
@@ -485,6 +480,7 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   }
 
   /* Wipe device */
+  fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
   storage_wipe();
   storage_reset();
@@ -584,13 +580,7 @@ void fsm_msgEntropyAck(EntropyAck* msg) {
 
 void fsm_msgCancel(Cancel* msg) {
   (void)msg;
-  /* Cancellation rolls the ceremony back: one memzero, no storage touched. */
-  setup_abort();
-  signing_abort();
-  authenticator_clear_cache();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
+  fsm_abort_workflows();
   fsm_sendFailure(FailureType_Failure_ActionCancelled, "Aborted");
 }
 

@@ -96,6 +96,10 @@ void setup_abort(void) {
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
   memzero(current_words, sizeof(current_words));
+  /* reset_entropy() receives its generated sentence from bip39.c's static
+   * `mnemo` buffer.  A cancelled/error ceremony has no owner for that secret,
+   * so the common abort path must clear it along with the setup scratch. */
+  mnemonic_clear();
   /* The roll digest is ceremony state like the rest: it only describes the
    * reset that produced it, and leaving it live would keep serving it over
    * DebugLink for the rest of the boot. */
@@ -176,7 +180,7 @@ void setup_commit(const char* mnemonic, bool imported) {
   if (setup.has_language) storage_setLanguage(setup.language);
   if (setup.has_label) storage_setLabel(setup.label);
   storage_setAutoLockDelayMs(setup.auto_lock_delay_ms);
-  storage_setU2FCounter(setup.u2f_counter);
+  storage_stageU2FCounter(setup.u2f_counter);
   if (setup.no_backup) storage_setNoBackup();
 
   storage_setMnemonic(mnemonic);
@@ -255,6 +259,7 @@ void reset_init(bool display_random, uint32_t _strength,
         !confirm(ButtonRequestType_ButtonRequest_Other, _("WARNING"),
                  _("The 'No Backup' option was selected.\n\n"
                    "I understand, and accept the risks.\n"))) {
+      setup_abort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
       layoutHome();
@@ -491,9 +496,11 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
                current_page + 1, page_count);
     }
 
-    if (!confirm_constant_power(ButtonRequestType_ButtonRequest_ConfirmWord,
-                                title, "%s",
-                                formatted_mnemonic[current_page])) {
+    /* Keep the legacy one-request-per-group host protocol while paging the
+     * narrower physical OLED layout locally inside that request. */
+    if (!confirm_constant_power_paged(
+            ButtonRequestType_ButtonRequest_ConfirmWord, title,
+            formatted_mnemonic[current_page])) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
       setup_abort();

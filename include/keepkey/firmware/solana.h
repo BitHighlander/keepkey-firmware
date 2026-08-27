@@ -156,6 +156,10 @@ typedef struct {
   uint8_t mint[SOL_PUBKEY_SIZE];
   bool has_mint;
   uint8_t extra_u8;
+  /* Exact instruction bytes retained for variable-length verified fields
+   * such as Memo. The parser bounds this slice inside the signed message. */
+  const uint8_t* data;
+  size_t data_len;
 } SolanaParsedInstruction;
 
 /* Parsed transaction header */
@@ -186,6 +190,11 @@ bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 
 /* Format SOL amount */
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports);
+
+/* Maximum priority fee in lamports. Uses the 1.4M-CU protocol cap when no
+ * explicit limit is present. Returns false for duplicates or overflow. */
+bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
+                                 bool* has_fee);
 
 /* Format token amount with decimals */
 void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,

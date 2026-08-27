@@ -349,9 +349,41 @@ bool confirm_address(const char* desc, const char* address) {
  *     true/false of confirmation
  *
  */
-bool confirm_sign_identity(const IdentityType* identity,
-                           const char* challenge) {
+bool format_sign_identity_key_selection(const IdentityType* identity,
+                                        const char* curve, char* out,
+                                        size_t out_len) {
+  if (!identity || !curve || !out || out_len == 0) return false;
+  const int needed = snprintf(
+      out, out_len, "Index: %" PRIu32 "\nCurve: %s\nPath: %s", identity->index,
+      curve, (identity->has_path && identity->path[0]) ? "shown next" : "none");
+  return needed >= 0 && (size_t)needed < out_len;
+}
+
+bool confirm_sign_identity(const IdentityType* identity, const char* challenge,
+                           const char* curve) {
   char title[CONFIRM_SIGN_IDENTITY_TITLE], body[CONFIRM_SIGN_IDENTITY_BODY];
+
+  if (!identity || !curve) return false;
+
+  /* These values select the key and signing algorithm. Keep them out of the
+   * free-form identity body so the maximum-size path can be reviewed by the
+   * exact-byte pager instead of being shortened by a printf buffer. */
+  char key_selection[CONFIRM_SIGN_IDENTITY_KEY];
+  if (!format_sign_identity_key_selection(identity, curve, key_selection,
+                                          sizeof(key_selection)) ||
+      !confirm(ButtonRequestType_ButtonRequest_SignIdentity, "Identity Key",
+               "%s", key_selection)) {
+    memzero(key_selection, sizeof(key_selection));
+    return false;
+  }
+  memzero(key_selection, sizeof(key_selection));
+
+  if (identity->has_path && identity->path[0] &&
+      !confirm_bytes(ButtonRequestType_ButtonRequest_SignIdentity,
+                     "Identity Path", (const uint8_t*)identity->path,
+                     strlen(identity->path))) {
+    return false;
+  }
 
   /* Format protocol */
   if (identity->has_proto && identity->proto[0]) {
@@ -384,9 +416,26 @@ bool confirm_sign_identity(const IdentityType* identity,
     strlcat(body, "\n", sizeof(body));
   }
 
-  /* Format challenge */
-  if (challenge && strlen(challenge) != 0) {
-    strlcat(body, challenge, sizeof(body));
+  /* Preserve the established single identity/challenge screen when it can be
+   * formatted without loss. A maximum-size challenge does not fit the shared
+   * confirmation buffer after host and user metadata; in that case confirm the
+   * metadata first and page every challenge byte separately. */
+  if (challenge && challenge[0]) {
+    const size_t body_len = strlen(body);
+    const size_t challenge_len = strlen(challenge);
+    if (body_len + challenge_len < BODY_CHAR_MAX) {
+      strlcat(body, challenge, sizeof(body));
+      return confirm(ButtonRequestType_ButtonRequest_SignIdentity, title, "%s",
+                     body);
+    }
+
+    if (body_len != 0 && !confirm(ButtonRequestType_ButtonRequest_SignIdentity,
+                                  title, "%s", body)) {
+      return false;
+    }
+    return confirm_bytes(ButtonRequestType_ButtonRequest_SignIdentity,
+                         "Visual Challenge", (const uint8_t*)challenge,
+                         challenge_len);
   }
 
   return confirm(ButtonRequestType_ButtonRequest_SignIdentity, title, "%s",
@@ -402,6 +451,25 @@ static size_t confirm_byte_token(uint8_t byte, char token[5]) {
 
   snprintf(token, 5, "\\x%02X", byte);
   return 4;
+}
+
+bool confirm_bytes_escape(const uint8_t* data, size_t size, char* out,
+                          size_t out_len) {
+  if ((!data && size != 0) || !out || out_len == 0) return false;
+
+  out[0] = '\0';
+  size_t used = 0;
+  for (size_t i = 0; i < size; i++) {
+    char token[5];
+    const size_t token_len = confirm_byte_token(data[i], token);
+    if (token_len > (out_len - 1) - used) {
+      out[0] = '\0';
+      return false;
+    }
+    memcpy(out + used, token, token_len + 1);
+    used += token_len;
+  }
+  return true;
 }
 
 size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
@@ -463,7 +531,18 @@ bool confirm_bytes(ButtonRequestType button_request, const char* title,
     }
     if (title_len < 0 || (size_t)title_len >= sizeof(page_title)) goto cleanup;
 
-    if (!confirm(button_request, page_title, "%s", page_body)) goto cleanup;
+    const bool last = (page + 1 == pages);
+    if (last) {
+      /* Only the final page approves the signature, so it keeps the full hold.
+       */
+      if (!confirm(button_request, page_title, "%s", page_body)) goto cleanup;
+    } else {
+      /* Reading an intermediate page advances on a short click. Cancel and
+       * Initialize still return false from the underlying confirmation screen.
+       */
+      if (!review_immediate(button_request, page_title, "%s", page_body))
+        goto cleanup;
+    }
     offset += take;
   }
 
@@ -480,11 +559,10 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
   uint32_t tx_type_be = 0;
   uint32_t tx_type = UINT32_MAX;
   if (data && size == 20) {
-    /* The protobuf bytes array is size-delimited, not a typed/aligned word. */
+    /* Protobuf byte arrays are size-delimited, not necessarily aligned. */
     memcpy(&tx_type_be, data + 4, sizeof(tx_type_be));
     REVERSE32(tx_type_be, tx_type);
   }
-
   if (tx_type == 0x00000000) {  // OMNI simple send
     char str_out[32];
     uint32_t currency_be;
@@ -505,25 +583,32 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
       case 31:
         suffix = " USDT";
         break;
+      default:
+        /* Asset identity is signed semantics. A generic UNKN ticker makes
+         * every unsupported property ID look identical, so disclose the
+         * complete payload instead of pretending it was decoded. */
+        return confirm_bytes(button_request, title, data, size);
     }
     uint64_t amount_be, amount;
     memcpy(&amount_be, data + 12, sizeof(uint64_t));
     REVERSE64(amount_be, amount);
-    bn_format_uint64(amount, NULL, suffix, BITCOIN_DIVISIBILITY, 0, false,
-                     str_out, sizeof(str_out));
+    if (!bn_format_uint64(amount, NULL, suffix, BITCOIN_DIVISIBILITY, 0, false,
+                          str_out, sizeof(str_out))) {
+      strlcpy(str_out, "AMOUNT TOO LARGE TO DISPLAY", sizeof(str_out));
+    }
     return confirm(button_request, title, _("Do you want to send %s?"),
                    str_out);
   }
 
-  /* Unsupported Omni messages still carry asset-layer semantics. Bind user
-   * approval to every signed OP_RETURN byte instead of a generic warning. */
+  /* Unknown/malformed Omni messages must still bind approval to every signed
+   * OP_RETURN byte. */
   return confirm_bytes(button_request, title, data, size);
 }
 
 bool confirm_data(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  /* OP_RETURN is signed byte-for-byte, so disclose it byte-for-byte. This is
-   * length-aware for both binary and ASCII data and never assumes a trailing
-   * NUL in the protobuf bytes field. */
+  /* OP_RETURN bytes and EOS memo bytes are committed to in full. Route both
+   * through the length-delimited pager so embedded NULs, non-ASCII data, and
+   * tails beyond the first screen cannot disappear from the approval flow. */
   return confirm_bytes(button_request, title, data, size);
 }
