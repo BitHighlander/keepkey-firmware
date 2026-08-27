@@ -92,22 +92,30 @@ jobs:
               raise SystemExit('exact-commit CI has no test-report artifact')
           prefix = 'firmware-v%s-' % os.environ['FW_VERSION']
           arm = [name for name in names if name.startswith(prefix)]
-          if len(arm) != 1:
-              raise SystemExit('expected one exact ARM artifact, found %r' % arm)
+          variants = {
+              variant: [name for name in arm if name.endswith('-' + variant)]
+              for variant in ('full', 'bitcoin-only')
+          }
+          if any(len(found) != 1 for found in variants.values()):
+              raise SystemExit('expected exact full and bitcoin-only ARM artifacts, found %r' % arm)
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-              output.write('arm_artifact=%s\n' % arm[0])
+              output.write('arm_full_artifact=%s\n' % variants['full'][0])
+              output.write('arm_bitcoin_artifact=%s\n' % variants['bitcoin-only'][0])
           PY
 
       - name: Verify audited source and binary hashes
         env:
           GH_TOKEN: ${{ github.token }}
           CI_RUN_ID: ${{ steps.evidence.outputs.ci_run_id }}
-          ARM_ARTIFACT: ${{ steps.evidence.outputs.arm_artifact }}
+          ARM_FULL_ARTIFACT: ${{ steps.evidence.outputs.arm_full_artifact }}
+          ARM_BITCOIN_ARTIFACT: ${{ steps.evidence.outputs.arm_bitcoin_artifact }}
         run: |
           gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name test-report --dir audited-report
           gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name "$ARM_ARTIFACT" --dir audited-arm
+            --name "$ARM_FULL_ARTIFACT" --dir audited-arm/full
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$ARM_BITCOIN_ARTIFACT" --dir audited-arm/bitcoin-only
           python3 - <<'PY'
           import hashlib
           import json
@@ -140,17 +148,28 @@ jobs:
           pdf = report_dir / manifest['pdf']['path']
           if digest(pdf) != manifest['pdf']['sha256']:
               raise SystemExit('presign PDF hash mismatch')
-          arm_manifest = arm_dir / 'arm-build-manifest.json'
-          if digest(arm_manifest) != manifest['arm']['manifest_sha256']:
-              raise SystemExit('ARM manifest hash mismatch')
-          expected = {item['name']: item['sha256']
-                      for item in manifest['arm']['files']}
-          actual = {path.name: digest(path)
-                    for path in arm_dir.iterdir()
-                    if path.suffix in ('.bin', '.elf')}
-          if not expected or actual != expected:
-              raise SystemExit('audited ARM artifact set or hash mismatch')
-          print('exact presign evidence and ARM binaries verified')
+          variants = manifest.get('arm', {}).get('variants', {})
+          if set(variants) != {'full', 'bitcoin-only'}:
+              raise SystemExit('presign manifest does not bind both ARM products')
+          manifest_hashes = {}
+          for variant, evidence in variants.items():
+              variant_dir = arm_dir / variant
+              arm_manifest = variant_dir / 'arm-build-manifest.json'
+              manifest_hashes[variant] = digest(arm_manifest)
+              if manifest_hashes[variant] != evidence['manifest_sha256']:
+                  raise SystemExit('%s ARM manifest hash mismatch' % variant)
+              expected = {item['name']: item['sha256']
+                          for item in evidence['files']}
+              actual = {path.name: digest(path)
+                        for path in variant_dir.iterdir()
+                        if path.suffix in ('.bin', '.elf')}
+              if not expected or actual != expected:
+                  raise SystemExit('%s audited ARM artifact set or hash mismatch' % variant)
+          combined = hashlib.sha256(json.dumps(
+              manifest_hashes, sort_keys=True).encode('ascii')).hexdigest()
+          if combined != manifest['arm']['manifest_set_sha256']:
+              raise SystemExit('ARM manifest-set hash mismatch')
+          print('exact presign evidence and both ARM products verified')
           PY
 
   build-firmware:

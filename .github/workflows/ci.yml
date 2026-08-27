@@ -407,6 +407,8 @@ jobs:
           echo "::notice::Firmware v${{ steps.version.outputs.fw_version }} built successfully"
 
       - name: Bind ARM outputs to source commits
+        env:
+          ARM_VARIANT: ${{ matrix.variant }}
         run: |
           python3 - <<'PY'
           import datetime
@@ -441,6 +443,7 @@ jobs:
               "python_sha": subprocess.check_output(
                   ["git", "rev-parse", "HEAD:deps/python-keepkey"],
                   text=True).strip(),
+              "variant": os.environ["ARM_VARIANT"],
               "files": files,
           }
           with open("bin/arm-build-manifest.json", "w", encoding="utf-8") as handle:
@@ -859,7 +862,9 @@ jobs:
         with:
           pattern: firmware-v*
           path: test-reports/arm/
-          merge-multiple: true
+          # Preserve one directory per product. Full and bitcoin-only contain
+          # identically named outputs whose bytes intentionally differ.
+          merge-multiple: false
 
       - name: Extract firmware version
         id: version
