@@ -47,10 +47,25 @@ typedef enum {
 #define METADATA_VERSION_LEGACY 0x01
 #define METADATA_VERSION_SCHEMA 0x02
 
-/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][inner v2 payload].
+/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][device-decoded schema].
  * The certificate is verified and DISCARDED inside one message -- nothing about
  * a delegation survives into the next transaction. */
 #define METADATA_VERSION_CERTIFIED 0x03
+
+/* DYNAMIC_SCHEMA (v4): a certified, firmware-owned decoder selected by a
+ * signed one-byte decoder id.  Unlike v1, the signer supplies no displayed
+ * values; unlike v2, the calldata need not be a flat list of ABI words.  The
+ * device's named decoder validates and extracts every displayed value from the
+ * transaction it is signing.  v4 is initially used only for the exact Portals
+ * OrderPayload ABI, whose dynamic call array is larger than the 1024-byte
+ * initial protobuf chunk while its safety-defining outer order is wholly in
+ * that chunk. */
+#define METADATA_VERSION_DYNAMIC_SCHEMA 0x04
+
+typedef enum {
+  METADATA_DECODER_NONE = 0,
+  METADATA_DECODER_PORTALS_NATIVE_ORDER_V1 = 1,
+} MetadataDecoder;
 
 /* The delegate is addressed by a sentinel that is >= METADATA_MAX_KEYS BY
  * CONSTRUCTION, so it can never name a runtime slot.
@@ -114,6 +129,7 @@ typedef struct {
 
 typedef struct {
   uint8_t version;
+  uint8_t decoder_id;
   uint32_t chain_id;
   uint8_t contract_address[20];
   uint8_t selector[4];
@@ -130,6 +146,14 @@ typedef struct {
 
 bool signed_metadata_available(void);
 
+/* True only for the reserved KeepKey-certified envelope shape.  This is the
+ * narrow pre-verification predicate used by the FSM to let a v3 certificate
+ * reach signed_metadata_process() while AdvancedMode is off.  It grants no
+ * trust by itself: the compiled root, certificate, delegate signature, and
+ * device-decoded schema are still verified by signed_metadata_process(). */
+bool signed_metadata_is_certified_envelope(const uint8_t* payload,
+                                           size_t payload_len, uint32_t key_id);
+
 /* True when the stored v2 (schema) metadata was decoded from the current tx's
  * calldata by the most recent signed_metadata_matches_tx() call. Reset at the
  * top of every matches_tx() so it reflects only that call (never a stale prior
@@ -145,14 +169,14 @@ bool signed_metadata_schema_moves_value(void);
 void signed_metadata_clear(void);
 
 /*
- * Runtime-loaded clearsign signers (phase 1: the ONLY verification path).
+ * Runtime-loaded clearsign signers (the development/self-service path).
  *
  * A signer is a compressed secp256k1 pubkey + display alias loaded into a
  * key slot at the host's request, gated by a mandatory on-device confirm
  * (see fsm_msgLoadClearsignSigner). Loaded signers live in RAM only and are
  * gone on reboot. Metadata verified by a loaded signer always shows a
- * warning screen naming the alias before any clearsign page — only the
- * built-in (phase 2) keys sign warning-free.
+ * warning screen naming the alias before any clearsign page. The production
+ * path instead carries a root-certified delegate in each v3 envelope.
  */
 
 /* Pure validation: slot in range and not occupied by a built-in key, pubkey a

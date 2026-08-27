@@ -53,6 +53,11 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
   return advanced_mode;
 }
 
+/* The device-driven stream validates, renders and hashes each leaf from the
+ * same byte buffer. It is not blind signing and therefore does not inherit the
+ * AdvancedMode requirement of the precomputed-hash endpoint. */
+bool ethereum_streamed_eip712_enabled(void) { return true; }
+
 /* The legacy JSON parser cannot guarantee that every displayed value is the
  * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
  * but fail closed in the FSM until the complete parser hardening is backported.

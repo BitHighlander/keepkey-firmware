@@ -1,8 +1,8 @@
 /*
  * Unit tests for the EVM clear-signing ("Insight") signed-metadata module.
  *
- * Phase 1 ships with NO built-in verification keys: every signer is loaded
- * at runtime (signed_metadata_store_signer,
+ * The runtime-signer fixture loads a development key through
+ * signed_metadata_store_signer,
  * reached in production through the user-confirmed LoadClearsignSigner FSM
  * handler). The fixture loads the CI test key (02e3b3015c...ab5107) into
  * slot 3 with alias "CI Test"; all vectors are signed in-process with the
@@ -357,6 +357,28 @@ TEST_F(SignedMetadataTest, SignatureVerificationFails) {
   std::vector<uint8_t> blob = base_blob();
   blob[146] ^= 0x01;  // flip first signature byte (sig starts after 146B body)
   ExpectMalformed(blob, TEST_KEY_ID);
+}
+
+TEST(SignedMetadataEnvelope, OnlyReservedCompleteV3ShapeBypassesPolicyGate) {
+  std::vector<uint8_t> candidate(141, 0);
+  candidate[0] = METADATA_VERSION_CERTIFIED;
+
+  EXPECT_TRUE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), TEST_KEY_ID));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(candidate.data(),
+                                                     candidate.size(), 0x180));
+
+  candidate[0] = METADATA_VERSION_SCHEMA;
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  candidate[0] = METADATA_VERSION_CERTIFIED;
+  candidate.resize(140);
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(nullptr, 141,
+                                                     METADATA_KEYID_DELEGATE));
 }
 
 /* ===================================================================== *
@@ -1716,6 +1738,189 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
+}
+
+/* ===================================================================== *
+ *  v4 firmware-owned dynamic schemas
+ * ===================================================================== */
+
+const uint8_t PORTALS_ROUTER[20] = {0xbf, 0x5a, 0x7f, 0x36, 0x29, 0xfb, 0x32,
+                                    0x5e, 0x2a, 0x84, 0x53, 0xd5, 0x95, 0xab,
+                                    0x10, 0x34, 0x65, 0xf7, 0x5e, 0x62};
+const uint8_t PORTALS_SELECTOR[4] = {0xa2, 0xe4, 0x2c, 0x65};
+const uint8_t PORTALS_OUTPUT_TOKEN[20] = {
+    0x47, 0x0e, 0x8d, 0xe2, 0xeb, 0xae, 0xf5, 0x20, 0x14, 0xa4,
+    0x7c, 0xb5, 0xe6, 0xaf, 0x86, 0x88, 0x49, 0x47, 0xf0, 0x8c};
+
+void put_word_u32(std::vector<uint8_t>& data, size_t offset, uint32_t value) {
+  ASSERT_LE(offset + 32, data.size());
+  memset(data.data() + offset, 0, 32);
+  data[offset + 28] = (uint8_t)(value >> 24);
+  data[offset + 29] = (uint8_t)(value >> 16);
+  data[offset + 30] = (uint8_t)(value >> 8);
+  data[offset + 31] = (uint8_t)value;
+}
+
+void put_word_address(std::vector<uint8_t>& data, size_t offset,
+                      const uint8_t address[20]) {
+  ASSERT_LE(offset + 32, data.size());
+  memset(data.data() + offset, 0, 12);
+  memcpy(data.data() + offset + 12, address, 20);
+}
+
+std::vector<uint8_t> portals_v4_blob(
+    uint8_t decoder = METADATA_DECODER_PORTALS_NATIVE_ORDER_V1,
+    const uint8_t* contract = PORTALS_ROUTER) {
+  std::vector<uint8_t> body;
+  put_u8(body, METADATA_VERSION_DYNAMIC_SCHEMA);
+  put_be32(body, 1);
+  put_bytes(body, contract, sizeof(PORTALS_ROUTER));
+  put_bytes(body, PORTALS_SELECTOR, sizeof(PORTALS_SELECTOR));
+  const char* method = "Portals swap";
+  put_be16(body, (uint16_t)strlen(method));
+  put_bytes(body, (const uint8_t*)method, strlen(method));
+  put_u8(body, decoder);
+  put_u8(body, METADATA_VERIFIED);
+  put_be32(body, 0);
+  put_u8(body, TEST_KEY_ID);
+  return sign_body(body);
+}
+
+/* Canonical ABI head for portal(((address,uint256,address,uint256,address),
+ * (address,address,bytes,uint256)[]),address).  The synthetic call tails are
+ * irrelevant to the router's enforced outer order, but their offset table is
+ * canonical and wholly present in the initial chunk. */
+std::vector<uint8_t> portals_calldata() {
+  std::vector<uint8_t> data(1476, 0);
+  memcpy(data.data(), PORTALS_SELECTOR, sizeof(PORTALS_SELECTOR));
+  put_word_u32(data, 4, 0x40);
+  put_word_address(data, 36, CONTRACT_B);
+  /* OrderPayload starts at byte 68. inputToken stays address(0) = native. */
+  put_word_u32(data, 100, 0x010203);
+  put_word_address(data, 132, PORTALS_OUTPUT_TOKEN);
+  put_word_u32(data, 164, 0x0a0b0c);
+  put_word_address(data, 196, RECIPIENT);
+  put_word_u32(data, 228, 0xc0);
+  put_word_u32(data, 260, 4);
+  put_word_u32(data, 292, 0x80);
+  put_word_u32(data, 324, 0x140);
+  put_word_u32(data, 356, 0x200);
+  put_word_u32(data, 388, 0x2c0);
+  return data;
+}
+
+void make_portals_msg(EthereumSignTx* msg, const std::vector<uint8_t>& data) {
+  memset(msg, 0, sizeof(*msg));
+  msg->has_to = true;
+  msg->to.size = sizeof(PORTALS_ROUTER);
+  memcpy(msg->to.bytes, PORTALS_ROUTER, sizeof(PORTALS_ROUTER));
+  msg->has_data_initial_chunk = true;
+  msg->data_initial_chunk.size = 1024;
+  memcpy(msg->data_initial_chunk.bytes, data.data(), 1024);
+  msg->has_data_length = true;
+  msg->data_length = (uint32_t)data.size();
+  msg->has_chain_id = true;
+  msg->chain_id = 1;
+  msg->has_value = true;
+  msg->value.size = 3;
+  msg->value.bytes[0] = 0x01;
+  msg->value.bytes[1] = 0x02;
+  msg->value.bytes[2] = 0x03;
+}
+
+TEST_F(SignedMetadataTest, V4PortalsDecodesSafetyDefiningOuterOrder) {
+  std::vector<uint8_t> blob = portals_v4_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  EthereumSignTx msg;
+  std::vector<uint8_t> data = portals_calldata();
+  make_portals_msg(&msg, data);
+
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_decoded());
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+  const SignedMetadata* md = signed_metadata_get();
+  ASSERT_NE(md, nullptr);
+  EXPECT_EQ(md->version, METADATA_VERSION_DYNAMIC_SCHEMA);
+  EXPECT_EQ(md->decoder_id, METADATA_DECODER_PORTALS_NATIVE_ORDER_V1);
+  ASSERT_EQ(md->num_args, 3);
+  EXPECT_STREQ(md->args[0].name, "Output token");
+  EXPECT_EQ(md->args[0].format, ARG_FORMAT_ADDRESS);
+  EXPECT_EQ(memcmp(md->args[0].value, PORTALS_OUTPUT_TOKEN, 20), 0);
+  EXPECT_STREQ(md->args[1].name, "Minimum output");
+  EXPECT_EQ(md->args[1].format, ARG_FORMAT_TOKEN_AMOUNT);
+  EXPECT_EQ(md->args[1].value[0], 0);
+  EXPECT_EQ(md->args[1].value[1], 5);
+  EXPECT_EQ(memcmp(md->args[1].value + 2, "units", 5), 0);
+  EXPECT_STREQ(md->args[2].name, "Recipient");
+  EXPECT_EQ(memcmp(md->args[2].value, RECIPIENT, 20), 0);
+}
+
+TEST_F(SignedMetadataTest, V4RejectsUnknownDecoder) {
+  std::vector<uint8_t> blob = portals_v4_blob(0x7f);
+  ExpectMalformed(blob, TEST_KEY_ID);
+}
+
+TEST_F(SignedMetadataTest, V4PortalsDecoderCannotBeAssignedToAnotherContract) {
+  std::vector<uint8_t> blob =
+      portals_v4_blob(METADATA_DECODER_PORTALS_NATIVE_ORDER_V1, CONTRACT_A);
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  std::vector<uint8_t> data = portals_calldata();
+  EthereumSignTx msg;
+  make_portals_msg(&msg, data);
+  memcpy(msg.to.bytes, CONTRACT_A, 20);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+}
+
+TEST_F(SignedMetadataTest, V4PortalsRejectsValueAndOuterOrderTampering) {
+  std::vector<uint8_t> blob = portals_v4_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  std::vector<uint8_t> data = portals_calldata();
+  EthereumSignTx msg;
+  make_portals_msg(&msg, data);
+
+  msg.value.bytes[2] ^= 1;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  msg.data_initial_chunk.bytes[68 + 31] = 1;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  msg.data_initial_chunk.bytes[132] = 1;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  memset(msg.data_initial_chunk.bytes + 164, 0, 32);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  put_word_u32(data, 4, 0x60);
+  memcpy(msg.data_initial_chunk.bytes, data.data(), 1024);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+}
+
+TEST_F(SignedMetadataTest, V4PortalsRejectsMalformedCallArrayBoundaries) {
+  std::vector<uint8_t> blob = portals_v4_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  std::vector<uint8_t> data = portals_calldata();
+  EthereumSignTx msg;
+  make_portals_msg(&msg, data);
+
+  msg.data_length = 1477;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  msg.data_initial_chunk.size = 291;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  memset(msg.data_initial_chunk.bytes + 260, 0, 32);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  msg.data_initial_chunk.bytes[324 + 30] = 0x00;
+  msg.data_initial_chunk.bytes[324 + 31] = 0x80;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  make_portals_msg(&msg, data);
+  msg.data_initial_chunk.bytes[292 + 31] = 0x81;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
 }
 
 /* ===================================================================== *

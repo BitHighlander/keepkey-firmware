@@ -333,8 +333,9 @@ TEST(Ethereum, PrecomputedTypedHashesRequireAdvancedMode) {
   EXPECT_TRUE(tron_typed_hash_policy_allows(true));
 }
 
-TEST(Ethereum, StructuredEip712IsDisabledForPointRelease) {
+TEST(Ethereum, LegacyJsonEip712StaysDisabledWhileStructuredStreamIsEnabled) {
   EXPECT_FALSE(ethereum_structured_eip712_enabled());
+  EXPECT_TRUE(ethereum_streamed_eip712_enabled());
 }
 
 // Two real chain-1 table entries, so the decoder's token lookups resolve.

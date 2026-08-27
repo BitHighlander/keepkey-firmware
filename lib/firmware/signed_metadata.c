@@ -41,9 +41,9 @@ static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
 
-/* Phase 1 ships with NO built-in verification keys: every clearsign signer is
- * loaded at runtime via LoadClearsignSigner. Phase 2 restores the production
- * key. */
+/* Runtime signer slots remain a development/self-service lane. Production v3
+ * metadata carries a root-certified delegate in the message and never writes
+ * that delegate into this ring. */
 
 /* Runtime-loaded signers. RAM only — cleared on reboot by construction. RC18
  * deliberately rejects persistent trust anchors: the public storage section
@@ -331,6 +331,17 @@ static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
         !parse_v2_args(&cursor, end, out)) {
       return false;
     }
+  } else if (out->version == METADATA_VERSION_DYNAMIC_SCHEMA) {
+    /* Min: version(1)+chain_id(4)+contract(20)+selector(4)+method_len(2)+
+     * method(1)+decoder_id(1)+trailer(71) = 104.  The decoder owns the
+     * argument labels and formats so a delegate cannot change what the device
+     * claims to have parsed. */
+    if (payload_len < 104 || !parse_common_head(&cursor, end, out) ||
+        !read_string(&cursor, end, out->method_name, METADATA_MAX_METHOD_LEN) ||
+        !read_u8(&cursor, end, &out->decoder_id) ||
+        out->decoder_id != METADATA_DECODER_PORTALS_NATIVE_ORDER_V1) {
+      return false;
+    }
   } else {
     return false;
   }
@@ -394,6 +405,160 @@ static bool decode_v2_args(SignedMetadata* md, const EthereumSignTx* msg) {
         return false;
     }
   }
+  return true;
+}
+
+static bool word_is_zero(const uint8_t* word) {
+  for (size_t i = 0; i < 32; i++) {
+    if (word[i] != 0) return false;
+  }
+  return true;
+}
+
+static bool word_u32(const uint8_t* word, uint32_t* out) {
+  for (size_t i = 0; i < 28; i++) {
+    if (word[i] != 0) return false;
+  }
+  *out = ((uint32_t)word[28] << 24) | ((uint32_t)word[29] << 16) |
+         ((uint32_t)word[30] << 8) | word[31];
+  return true;
+}
+
+static bool word_address(const uint8_t* word, uint8_t out[20]) {
+  for (size_t i = 0; i < 12; i++) {
+    if (word[i] != 0) return false;
+  }
+  memcpy(out, word + 12, 20);
+  return true;
+}
+
+static bool bytes_nonzero(const uint8_t* bytes, size_t size) {
+  for (size_t i = 0; i < size; i++) {
+    if (bytes[i] != 0) return true;
+  }
+  return false;
+}
+
+static bool word_matches_value(const uint8_t word[32],
+                               const EthereumSignTx* msg) {
+  size_t value_len = msg->has_value ? msg->value.size : 0;
+  if (value_len > 32) return false;
+  size_t pad = 32 - value_len;
+  for (size_t i = 0; i < pad; i++) {
+    if (word[i] != 0) return false;
+  }
+  return value_len == 0 || memcmp(word + pad, msg->value.bytes, value_len) == 0;
+}
+
+static void set_dynamic_arg(MetadataArg* arg, const char* name,
+                            ArgFormat format, const uint8_t* value,
+                            uint16_t value_len) {
+  strlcpy(arg->name, name, sizeof(arg->name));
+  arg->format = format;
+  memcpy(arg->value, value, value_len);
+  arg->value_len = value_len;
+}
+
+/* PortalsRouter.portal((Order,Call[]),partner), selector 0xa2e42c65.
+ *
+ * The exact contract and selector are independently bound by matches_tx().
+ * PortalsRouter's verified implementation snapshots recipient's output-token
+ * balance, runs the dynamic calls, and reverts unless the received delta is at
+ * least minOutputAmount.  Consequently the safety-defining fields are the
+ * outer Order, all of which are in the first 260 bytes.  The calls may extend
+ * past the 1024-byte initial chunk; they can choose HOW the immutable router
+ * obtains the output, but cannot change WHAT token/recipient/minimum the router
+ * enforces or spend more native value than this transaction supplies.
+ *
+ * We still validate canonical outer offsets and the complete Call[] offset
+ * table.  Any ambiguity, dirty address word, non-native input, value mismatch,
+ * empty call set, or malformed boundary fails back to blind signing. */
+static bool decode_portals_native_order(SignedMetadata* md,
+                                        const EthereumSignTx* msg) {
+  enum {
+    PORTALS_MIN_INITIAL = 292,
+    PORTALS_MIN_TOTAL = 452,
+    PORTALS_MAX_TOTAL = 16388,
+    PORTALS_MAX_CALLS = 16,
+  };
+  static const uint8_t portals_router[20] = {
+      0xbf, 0x5a, 0x7f, 0x36, 0x29, 0xfb, 0x32, 0x5e, 0x2a, 0x84,
+      0x53, 0xd5, 0x95, 0xab, 0x10, 0x34, 0x65, 0xf7, 0x5e, 0x62};
+  static const uint8_t portals_selector[4] = {0xa2, 0xe4, 0x2c, 0x65};
+
+  /* This decoder relies on this immutable router's verified postcondition, so
+   * the hot delegate must not be able to assign it to an arbitrary contract
+   * with the same ABI. Pin all three identity dimensions in firmware in
+   * addition to the signed schema/transaction match performed by the caller. */
+  if (md->chain_id != 1 ||
+      memcmp(md->contract_address, portals_router, sizeof(portals_router)) !=
+          0 ||
+      memcmp(md->selector, portals_selector, sizeof(portals_selector)) != 0) {
+    return false;
+  }
+  uint32_t initsz = msg->data_initial_chunk.size;
+  uint32_t total = msg->has_data_length ? msg->data_length : initsz;
+  if (initsz < PORTALS_MIN_INITIAL || total < PORTALS_MIN_TOTAL ||
+      total > PORTALS_MAX_TOTAL || total < initsz || (total - 4u) % 32u != 0) {
+    return false;
+  }
+
+  const uint8_t* data = msg->data_initial_chunk.bytes;
+  uint32_t order_offset = 0, calls_offset = 0, call_count = 0;
+  if (!word_u32(data + 4, &order_offset) || order_offset != 0x40 ||
+      !word_u32(data + 228, &calls_offset) || calls_offset != 0xc0 ||
+      !word_u32(data + 260, &call_count) || call_count == 0 ||
+      call_count > PORTALS_MAX_CALLS) {
+    return false;
+  }
+
+  /* The complete element-offset table must be in the authenticated initial
+   * chunk.  Offsets are relative to the byte immediately after array length. */
+  uint32_t offset_table_end = 292u + call_count * 32u;
+  if (offset_table_end > initsz) return false;
+  uint32_t previous = 0;
+  for (uint32_t i = 0; i < call_count; i++) {
+    uint32_t offset = 0;
+    if (!word_u32(data + 292u + i * 32u, &offset) || offset % 32u != 0 ||
+        offset < call_count * 32u || (i == 0 && offset != call_count * 32u) ||
+        (i > 0 && offset <= previous) || offset > total - 292u - 128u) {
+      return false;
+    }
+    previous = offset;
+  }
+
+  const uint8_t* input_token = data + 68;
+  const uint8_t* input_amount = data + 100;
+  const uint8_t* output_token_word = data + 132;
+  const uint8_t* minimum_output = data + 164;
+  const uint8_t* recipient_word = data + 196;
+  const uint8_t* partner_word = data + 36;
+  uint8_t output_token[20], recipient[20], partner[20];
+  if (!word_is_zero(input_token) || !bytes_nonzero(input_amount, 32) ||
+      !word_matches_value(input_amount, msg) ||
+      !word_address(output_token_word, output_token) ||
+      !bytes_nonzero(output_token, sizeof(output_token)) ||
+      !bytes_nonzero(minimum_output, 32) ||
+      !word_address(recipient_word, recipient) ||
+      !bytes_nonzero(recipient, sizeof(recipient)) ||
+      !word_address(partner_word, partner)) {
+    return false;
+  }
+
+  md->num_args = 3;
+  strlcpy(md->method_name, "Portals swap", sizeof(md->method_name));
+  set_dynamic_arg(&md->args[0], "Output token", ARG_FORMAT_ADDRESS,
+                  output_token, sizeof(output_token));
+
+  /* TOKEN_AMOUNT with zero decimals and the literal unit label gives an
+   * honest decimal integer without incorrectly calling arbitrary ERC-20 base
+   * units "wei".  Token decimals are not part of this router calldata. */
+  uint8_t units_value[2 + 5 + 32] = {0, 5, 'u', 'n', 'i', 't', 's'};
+  memcpy(units_value + 7, minimum_output, 32);
+  set_dynamic_arg(&md->args[1], "Minimum output", ARG_FORMAT_TOKEN_AMOUNT,
+                  units_value, sizeof(units_value));
+  set_dynamic_arg(&md->args[2], "Recipient", ARG_FORMAT_ADDRESS, recipient,
+                  sizeof(recipient));
   return true;
 }
 
@@ -692,6 +857,14 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
 static MetadataClassification process_certified(const uint8_t* payload,
                                                 size_t payload_len);
 
+bool signed_metadata_is_certified_envelope(const uint8_t* payload,
+                                           size_t payload_len,
+                                           uint32_t key_id) {
+  return payload != NULL && payload_len > 1 + CLEARSIGN_CERT_LEN &&
+         payload[0] == METADATA_VERSION_CERTIFIED &&
+         key_id == METADATA_KEYID_DELEGATE;
+}
+
 MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                size_t payload_len,
                                                uint8_t key_id) {
@@ -707,12 +880,7 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
    * is consulted -- the delegate is not in that ring and must never be put
    * there. key_id is required to be the reserved sentinel so a certified
    * envelope can never be confused with a runtime slot. */
-  if (payload && payload_len > 1 + CLEARSIGN_CERT_LEN &&
-      payload[0] == METADATA_VERSION_CERTIFIED) {
-    if (key_id != METADATA_KEYID_DELEGATE) {
-      signed_metadata_clear();
-      return METADATA_MALFORMED;
-    }
+  if (signed_metadata_is_certified_envelope(payload, payload_len, key_id)) {
     MetadataClassification c = process_certified(payload, payload_len);
     if (c == METADATA_MALFORMED) signed_metadata_clear();
     return c;
@@ -746,10 +914,11 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
 
 /* ── The KeepKey tier ────────────────────────────────────────────────
  *
- * A certified envelope is [0x03][cert 139][inner v2 payload]. The certificate
- * is verified against the compiled-in root, its fields are copied out for the
- * screen, and the certificate itself is DISCARDED -- the inner payload is then
- * processed exactly as a v2 payload would be, against the delegate's key.
+ * A certified envelope is [0x03][cert 139][device-decoded schema]. The
+ * certificate is verified against the compiled-in root, its fields are copied
+ * out for the screen, and the certificate itself is DISCARDED -- the inner
+ * payload is then processed exactly as a v2 payload would be, against the
+ * delegate's key.
  *
  * Nothing about a delegation survives the message. There is no slot to
  * promote, nothing to revoke at runtime, and no state a later transaction can
@@ -776,7 +945,8 @@ static MetadataClassification process_certified(const uint8_t* payload,
   if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
     return METADATA_MALFORMED;
 
-  /* The inner payload MUST be v2. This is the load-bearing check of the whole
+  /* The inner payload MUST be a device-decoded schema. This is the load-bearing
+   * check of the whole
    * tier, not a format nicety.
    *
    * The reason a KeepKey-certified describer is allowed to suppress the raw
@@ -794,7 +964,8 @@ static MetadataClassification process_certified(const uint8_t* payload,
    *
    * Rejecting degrades to the additive 7.15 path, which is exactly where a v1
    * describer belongs. */
-  if (stored_metadata.version != METADATA_VERSION_SCHEMA) {
+  if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
+      stored_metadata.version != METADATA_VERSION_DYNAMIC_SCHEMA) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
@@ -884,7 +1055,8 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     return false;
   }
 
-  if (stored_metadata.version == METADATA_VERSION_SCHEMA) {
+  if (stored_metadata.version == METADATA_VERSION_SCHEMA ||
+      stored_metadata.version == METADATA_VERSION_DYNAMIC_SCHEMA) {
     /* v2 commits to calldata only — never to msg->value. A v2 match otherwise
      * suppresses the native-value confirm screen in ethereum.c, which would
      * let a payable method clear-sign an ETH transfer whose amount is never
@@ -908,7 +1080,10 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
      * through to the normal blind-sign path. Record the decode explicitly:
      * signed_metadata_enforce() requires it for v2, so a signature can never be
      * emitted for a v2 blob whose args were not decoded from this tx. */
-    metadata_schema_decoded = decode_v2_args(&stored_metadata, msg);
+    metadata_schema_decoded =
+        stored_metadata.version == METADATA_VERSION_SCHEMA
+            ? decode_v2_args(&stored_metadata, msg)
+            : decode_portals_native_order(&stored_metadata, msg);
     return metadata_schema_decoded;
   }
 
@@ -1228,7 +1403,8 @@ bool signed_metadata_enforce_schema_decision(bool relied, bool available,
 
 bool signed_metadata_enforce(const uint8_t hash[32]) {
   if (metadata_available &&
-      stored_metadata.version == METADATA_VERSION_SCHEMA) {
+      (stored_metadata.version == METADATA_VERSION_SCHEMA ||
+       stored_metadata.version == METADATA_VERSION_DYNAMIC_SCHEMA)) {
     return signed_metadata_enforce_schema_decision(
         relied_on_metadata, metadata_available, metadata_schema_decoded,
         stored_metadata.classification);
