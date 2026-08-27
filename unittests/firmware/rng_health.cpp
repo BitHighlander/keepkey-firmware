@@ -34,6 +34,7 @@ TEST(RngHealth, RejectsEmptyAndNull) {
 }
 
 TEST(RngHealth, PersistentHardwareErrorLatchesBeforeReset) {
+  rng_test_power_on_reset();
   uint32_t samples = 0;
   for (uint32_t i = 0; i < 99; ++i) {
     EXPECT_FALSE(rng_persistent_error_step(&samples));
@@ -42,6 +43,7 @@ TEST(RngHealth, PersistentHardwareErrorLatchesBeforeReset) {
   EXPECT_TRUE(rng_persistent_error_step(&samples));
   EXPECT_EQ(samples, 0U);
   EXPECT_TRUE(rng_seed_error_latched());
+  rng_test_power_on_reset();
 }
 
 TEST(RngHealth, AcceptsNonDegenerateSample) {
@@ -206,6 +208,36 @@ TEST(RngHealth, CheckedPermutationFailsClosedAndWipes) {
 
   const char zeros[sizeof(value) - 1] = {0};
   EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
+}
+
+TEST(RngHealth, TransientHardwareFaultRemainsLatched) {
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
+  rng_test_observe_transient_error();
+
+  uint8_t buf[32];
+  memset(buf, 0xAB, sizeof(buf));
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)));
+  const uint8_t zeros[32] = {0};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+  EXPECT_TRUE(rng_seed_error_latched());
+}
+
+TEST(RngHealth, PersistentHardwareFaultLatchesBeforeReset) {
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
+  rng_test_observe_persistent_error();
+
+  uint8_t buf[32];
+  memset(buf, 0xAB, sizeof(buf));
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)))
+      << "a healthy-looking post-reset word escaped the boot fault latch";
+  const uint8_t zeros[32] = {0};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+  EXPECT_TRUE(rng_seed_error_latched());
+
+  // Leave the process in a fresh-boot state for later tests.
+  rng_test_power_on_reset();
   rng_health_force_verdict(true);
 }
 

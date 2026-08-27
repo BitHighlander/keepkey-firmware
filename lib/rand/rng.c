@@ -64,6 +64,17 @@ static volatile bool rng_seed_error_seen = false;
 
 bool rng_seed_error_latched(void) { return rng_seed_error_seen; }
 
+#ifdef EMULATOR
+static void rng_latch_seed_error(void) { rng_seed_error_seen = true; }
+
+void rng_test_power_on_reset(void) { rng_seed_error_seen = false; }
+void rng_test_observe_transient_error(void) { rng_latch_seed_error(); }
+void rng_test_observe_persistent_error(void) {
+  rng_latch_seed_error();
+  reset_rng();
+}
+#endif
+
 bool rng_persistent_error_step(uint32_t* samples) {
   if (samples == NULL) return false;
   if (++(*samples) < 100) return false;

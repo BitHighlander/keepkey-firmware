@@ -5,6 +5,8 @@ extern "C" {
 
 #include "gtest/gtest.h"
 
+#include <cstring>
+
 namespace {
 
 constexpr uint32_t H(uint32_t i) { return 0x80000000 | i; }

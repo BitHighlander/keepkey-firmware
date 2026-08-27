@@ -661,6 +661,13 @@ bool transaction_multisig_quorum_is_valid(
 }
 
 // if out == NULL just compute the length
+bool multisig_quorum_is_valid(const MultisigRedeemScriptType* multisig) {
+  if (multisig == NULL || !multisig->has_m) return false;
+  const uint32_t m = multisig->m;
+  const uint32_t n = multisig->pubkeys_count;
+  return m >= 1 && m <= n && n <= 15;
+}
+
 uint32_t compile_script_multisig(const CoinType* coin,
                                  const MultisigRedeemScriptType* multisig,
                                  uint8_t* out) {

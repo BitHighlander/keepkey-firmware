@@ -18,6 +18,8 @@
 #ifndef __AUTHENTICATOR_H__
 #define __AUTHENTICATOR_H__
 
+#include <stdbool.h>
+
 // WARNING: Changing these defines changes the size of authStruct, which in turn
 // changes the secret storage size in saved in flash. These value must be
 // coordinated with the size of uint8_t encrypted_sec[] in in
@@ -77,5 +79,7 @@ unsigned wipeAuthData(void);
 void authenticator_clear_cache(void);
 #if DEBUG_LINK
 void getAuthSlot(char* authSlotData);
+bool authenticator_cache_is_empty(void);
+void authenticator_test_seed_cache(void);
 #endif
 #endif

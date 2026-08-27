@@ -169,6 +169,10 @@ uint32_t storage_nextU2FCounter(void) {
 
 void storage_setU2FCounter(uint32_t u2f_counter) {
   shadow_config.storage.pub.u2f_counter = u2f_counter;
+  /* This is a setter, not a persistence boundary. All callers finish a
+   * larger atomic update and call storage_commit() themselves. Committing
+   * here used to abort an armed reset/recovery ceremony halfway through
+   * setup_commit(), wiping its mnemonic before storage_setMnemonic(). */
 }
 
 static bool storage_isActiveSector(const char* flash) {
