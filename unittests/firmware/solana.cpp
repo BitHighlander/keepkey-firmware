@@ -241,6 +241,53 @@ TEST(Solana, ParseSystemTransfer) {
   EXPECT_TRUE(memcmp(tx.instructions[0].to, expected_to, 32) == 0);
 }
 
+static size_t BuildMemoTx(uint8_t* raw, const uint8_t* memo, size_t memo_len) {
+  size_t pos = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 2;
+  memset(raw + pos, 0x11, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  memcpy(raw + pos, SOL_MEMO_PROGRAM, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  memset(raw + pos, 0xbb, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  raw[pos++] = 1;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = (uint8_t)memo_len;
+  memcpy(raw + pos, memo, memo_len);
+  return pos + memo_len;
+}
+
+TEST(Solana, MemoRetainsEverySignedByteForReview) {
+  uint8_t memo_a[80];
+  uint8_t memo_b[80];
+  memset(memo_a, 'A', sizeof(memo_a));
+  memcpy(memo_b, memo_a, sizeof(memo_b));
+  memo_b[64] = 'B';
+
+  uint8_t raw_a[256];
+  uint8_t raw_b[256];
+  const size_t len_a = BuildMemoTx(raw_a, memo_a, sizeof(memo_a));
+  const size_t len_b = BuildMemoTx(raw_b, memo_b, sizeof(memo_b));
+  ASSERT_EQ(len_a, len_b);
+
+  SolanaParsedTx tx_a;
+  SolanaParsedTx tx_b;
+  ASSERT_EQ(solana_inspectTx(raw_a, len_a, &tx_a), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(solana_inspectTx(raw_b, len_b, &tx_b), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx_a.instructions[0].type, SOL_INSTR_MEMO);
+  ASSERT_EQ(tx_b.instructions[0].type, SOL_INSTR_MEMO);
+  ASSERT_EQ(tx_a.instructions[0].data_len, sizeof(memo_a));
+  ASSERT_EQ(tx_b.instructions[0].data_len, sizeof(memo_b));
+  EXPECT_EQ(0, memcmp(tx_a.instructions[0].data, memo_a, sizeof(memo_a)));
+  EXPECT_EQ(0, memcmp(tx_b.instructions[0].data, memo_b, sizeof(memo_b)));
+  EXPECT_NE(0, memcmp(tx_a.instructions[0].data, tx_b.instructions[0].data,
+                      sizeof(memo_a)));
+}
+
 TEST(Solana, ParseMultiInstruction) {
   /* Transaction with 2 system transfers */
   uint8_t raw[512];

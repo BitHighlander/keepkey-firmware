@@ -51,6 +51,44 @@ static bool solana_confirmPubkey(const char* title, const char* label,
                  label, key_str);
 }
 
+/* Compute-budget prices are micro-lamports per compute unit. Raw price/limit
+ * screens do not tell the user the SOL at risk, and the fee is charged even
+ * when execution fails. Show the fee payer and a non-understated maximum,
+ * using Solana's 1.4M-CU transaction cap when no explicit limit is present. */
+static bool solana_confirmPriorityFee(const SolanaParsedTx* tx) {
+  uint64_t price = 0;
+  uint64_t limit = 1400000u;
+  bool have_price = false;
+
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    const SolanaParsedInstruction* pi = &tx->instructions[i];
+    if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE) {
+      price = pi->extra_value;
+      have_price = true;
+    } else if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT) {
+      limit = pi->extra_value;
+    }
+  }
+  if (!have_price || price == 0) return true;
+
+  uint64_t lamports = 0;
+  if (!solana_priority_fee_lamports(price, limit, &lamports)) {
+    (void)confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee",
+                  "Priority fee too large to display. Refusing to sign.");
+    return false;
+  }
+
+  if (tx->num_accounts > 0 &&
+      !solana_confirmPubkey("Fee", "Fee payer", tx->accounts[0])) {
+    return false;
+  }
+
+  char fee_str[40];
+  solana_formatAmount(fee_str, sizeof(fee_str), lamports);
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee",
+                 "Max priority fee\n%s", fee_str);
+}
+
 /* Confirm a single parsed instruction.
  *
  * Takes no SolanaSignTx on purpose: every value on these screens is decoded
@@ -397,8 +435,10 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      (unsigned long long)pi->extra_value);
 
     case SOL_INSTR_MEMO:
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Memo attached");
+      /* The memo is signed instruction data. Page the exact retained slice so
+       * two memos with the same prefix cannot produce the same review. */
+      return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                           "Solana Memo", pi->data, pi->data_len);
 
     case SOL_INSTR_UNKNOWN:
     default: {
@@ -1045,6 +1085,18 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
+  /* Bind the raw compute-budget fields above to the actual SOL at risk. This
+   * is required for every fully verified path, including certified schemas. */
+  if (tx_review == SOL_TX_REVIEW_VERIFIED &&
+      !solana_confirmPriorityFee(&parsed)) {
+    memzero(node, sizeof(*node));
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    layoutHome();
+    return;
+  }
+
   /* Final confirmation */
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Solana",
                "Sign this Solana transaction?")) {
@@ -1112,44 +1164,18 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* Always require on-device confirmation (matches Ethereum behavior).
-   * Display message content if printable, hex preview otherwise. */
-  {
-    char msgBuf[129] = {0};
-    const char* typeLabel;
-    bool printable = true;
-    for (unsigned i = 0; i < msg->message.size; i++) {
-      if (msg->message.bytes[i] < 0x20 || msg->message.bytes[i] > 0x7e) {
-        printable = false;
-        break;
-      }
-    }
-    if (printable && msg->message.size <= sizeof(msgBuf) - 1) {
-      typeLabel = "Sign Message";
-      memcpy(msgBuf, msg->message.bytes, msg->message.size);
-      msgBuf[msg->message.size] = '\0';
-    } else {
-      typeLabel = "Sign Bytes";
-      /* Show hex preview (up to 64 hex chars = 32 bytes) */
-      unsigned show = msg->message.size;
-      if (show > 32) show = 32;
-      for (unsigned i = 0; i < show; i++) {
-        snprintf(&msgBuf[2 * i], 3, "%02x", msg->message.bytes[i]);
-      }
-      msgBuf[2 * show] = '\0';
-      if (msg->message.size > 32) {
-        snprintf(&msgBuf[64], sizeof(msgBuf) - 64, "... (%u bytes)",
-                 (unsigned)msg->message.size);
-      }
-    }
-    if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, _(typeLabel),
-                 "%s", msgBuf)) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Signing cancelled"));
-      layoutHome();
-      return;
-    }
+  /* Raw Ed25519 has no version or domain separator. Bind that fact to consent,
+   * then page every signed byte; a prefix-plus-length preview is insufficient.
+   */
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Message",
+               "Format: raw Ed25519. Version: none. Domain: none.") ||
+      !confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall, "Raw Message",
+                     msg->message.bytes, msg->message.size)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    layoutHome();
+    return;
   }
 
   /* Ed25519 sign */
@@ -1226,45 +1252,19 @@ void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* Confirm dialog. Format 0 (ASCII) is always renderable; format 1
-   * (UTF-8 limited) we render as printable bytes only — non-printable
-   * sequences fall through to a hex preview to avoid encoding
-   * surprises on the OLED. */
-  {
-    char msgBuf[129] = {0};
-    const char* typeLabel;
-    bool printable = true;
-    for (unsigned i = 0; i < msg->message.size; i++) {
-      if (msg->message.bytes[i] < 0x20 || msg->message.bytes[i] > 0x7e) {
-        printable = false;
-        break;
-      }
-    }
-    if (printable && msg->message.size <= sizeof(msgBuf) - 1) {
-      typeLabel = "Off-chain Message";
-      memcpy(msgBuf, msg->message.bytes, msg->message.size);
-      msgBuf[msg->message.size] = '\0';
-    } else {
-      typeLabel = "Off-chain Bytes";
-      unsigned show = msg->message.size;
-      if (show > 32) show = 32;
-      for (unsigned i = 0; i < show; i++) {
-        snprintf(&msgBuf[2 * i], 3, "%02x", msg->message.bytes[i]);
-      }
-      msgBuf[2 * show] = '\0';
-      if (msg->message.size > 32) {
-        snprintf(&msgBuf[64], sizeof(msgBuf) - 64, "... (%u bytes)",
-                 (unsigned)msg->message.size);
-      }
-    }
-    if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, _(typeLabel),
-                 "%s", msgBuf)) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Signing cancelled"));
-      layoutHome();
-      return;
-    }
+  /* The off-chain envelope signs its version, format, and every message byte.
+   * Show the envelope fields explicitly and page the complete payload. */
+  const char* format_label = format == 0 ? "ASCII" : "UTF-8 limited";
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Off-chain",
+               "Version: 0. Format: %s.", format_label) ||
+      !confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                     "Off-chain Message", msg->message.bytes,
+                     msg->message.size)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    layoutHome();
+    return;
   }
 
   if (!solana_offchain_message_sign(node, msg, resp)) {
