@@ -923,11 +923,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   if (needs_confirm) {
     if (token != NULL) {
-      if (!layoutEthereumConfirmTx(
-              msg->data_initial_chunk.bytes + 16, 20,
-              msg->data_initial_chunk.bytes + 36, 32, token,
-              confirm_body_message, sizeof(confirm_body_message),
-              /*approve=*/is_approve)) {
+      if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
+                                   msg->data_initial_chunk.bytes + 36, 32,
+                                   token, confirm_body_message,
+                                   sizeof(confirm_body_message),
+                                   /*approve=*/is_approve)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
