@@ -155,7 +155,7 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
   if (msg->has_send) {
     if (!osmosis_validate_account_address(msg->send.has_to_address,
                                           msg->send.to_address) ||
-        !osmosis_validate_amount(msg->send.has_amount, msg->send.amount) ||
+        !msg->send.has_amount ||
         !osmosis_validate_required_text(msg->send.has_denom, msg->send.denom)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_FirmwareError,

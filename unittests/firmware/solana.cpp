@@ -512,7 +512,7 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
   raw[pos++] = 0;
   raw[pos++] = 1;
 
-  raw[pos++] = 5;
+  raw[pos++] = 7;
   memset(raw + pos, 0x11, 32);
   pos += 32; /* funder */
   memset(raw + pos, 0x22, 32);
@@ -521,6 +521,10 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
   pos += 32; /* owner */
   memset(raw + pos, 0x44, 32);
   pos += 32; /* mint */
+  memcpy(raw + pos, SOL_SYSTEM_PROGRAM, 32);
+  pos += 32; /* system program */
+  memcpy(raw + pos, SOL_TOKEN_PROGRAM, 32);
+  pos += 32; /* token program */
   memcpy(raw + pos, SOL_ATA_PROGRAM, 32);
   pos += 32; /* program */
 
@@ -528,12 +532,9 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
   pos += 32;
 
   raw[pos++] = 1;
-  raw[pos++] = 4; /* ata program */
-  raw[pos++] = 4; /* 4 account indices */
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 2;
-  raw[pos++] = 3;
+  raw[pos++] = 6; /* ata program */
+  raw[pos++] = 6; /* 6 account indices */
+  for (int i = 0; i < 6; i++) raw[pos++] = (uint8_t)i;
   raw[pos++] = 0; /* empty data */
 
   SolanaParsedTx tx;
@@ -1474,30 +1475,33 @@ TEST(Solana, SchemaParsesSdkSerializedPayloadNative) {
  */
 static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
                                          bool include_ata_byte) {
-  /* accounts: 0..3 instruction accounts, 4 = ATA program, 5 = token program */
-  const int n_accounts = 4;
+  /* accounts: 0..3 transfer accounts, 4 = System, 5 = Token, 6 = ATA */
+  const int transfer_accounts = 4;
+  const int total_accounts = 7;
   size_t pos = 0;
   raw[pos++] = 1; /* num_required_sigs */
   raw[pos++] = 0;
-  raw[pos++] = 2;                         /* two readonly unsigned (programs) */
-  raw[pos++] = (uint8_t)(n_accounts + 2); /* total accounts */
-  for (int i = 0; i < n_accounts; i++) {
+  raw[pos++] = 3; /* System, Token and ATA programs are readonly unsigned */
+  raw[pos++] = (uint8_t)total_accounts;
+  for (int i = 0; i < transfer_accounts; i++) {
     memset(raw + pos, 0x11 + i, 32);
     pos += 32;
   }
-  memcpy(raw + pos, SOL_ATA_PROGRAM, 32);
+  memcpy(raw + pos, SOL_SYSTEM_PROGRAM, 32);
   pos += 32;
   memcpy(raw + pos, SOL_TOKEN_PROGRAM, 32);
+  pos += 32;
+  memcpy(raw + pos, SOL_ATA_PROGRAM, 32);
   pos += 32;
   memset(raw + pos, 0xBB, 32); /* recent blockhash */
   pos += 32;
 
   raw[pos++] = 2; /* two instructions */
 
-  /* 1) ATA create (idempotent or classic) — accounts 0..3 */
-  raw[pos++] = (uint8_t)n_accounts; /* ATA program index */
-  raw[pos++] = (uint8_t)n_accounts;
-  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  /* 1) ATA create (idempotent or classic) — canonical six accounts */
+  raw[pos++] = 6; /* ATA program index */
+  raw[pos++] = 6;
+  for (int i = 0; i < 6; i++) raw[pos++] = (uint8_t)i;
   if (include_ata_byte) {
     raw[pos++] = 1; /* data_len */
     raw[pos++] = ata_ix_byte;
@@ -1506,9 +1510,9 @@ static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
   }
 
   /* 2) TransferChecked: [12, amount u64 LE, decimals] over 4 accounts */
-  raw[pos++] = (uint8_t)(n_accounts + 1); /* token program index */
-  raw[pos++] = (uint8_t)n_accounts;
-  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  raw[pos++] = 5; /* token program index */
+  raw[pos++] = (uint8_t)transfer_accounts;
+  for (int i = 0; i < transfer_accounts; i++) raw[pos++] = (uint8_t)i;
   raw[pos++] = 10; /* data_len */
   raw[pos++] = SOL_TOKEN_TRANSFER_CHECKED_IX;
   for (int i = 0; i < 8; i++) raw[pos++] = (i == 0) ? 0x40 : 0x00; /* amount */
