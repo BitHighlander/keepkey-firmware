@@ -192,6 +192,24 @@ TEST(RngHealth, CheckedDrawRejectsNull) {
   EXPECT_FALSE(random_buffer_checked(nullptr, 32));
 }
 
+TEST(RngHealth, CheckedPermutationPreservesEverySymbol) {
+  rng_health_force_verdict(true);
+  char value[] = "123456789";
+  ASSERT_TRUE(random_permute_char_checked(value, sizeof(value) - 1));
+
+  std::sort(value, value + sizeof(value) - 1);
+  EXPECT_EQ(0, memcmp(value, "123456789", sizeof(value) - 1));
+}
+
+TEST(RngHealth, CheckedPermutationFailsClosedAndWipes) {
+  rng_health_force_verdict(false);
+  char value[] = "123456789";
+  EXPECT_FALSE(random_permute_char_checked(value, sizeof(value) - 1));
+
+  const char zeros[sizeof(value) - 1] = {0};
+  EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
+}
+
 TEST(RngHealth, TransientHardwareFaultRemainsLatched) {
   rng_test_power_on_reset();
   rng_health_force_verdict(true);

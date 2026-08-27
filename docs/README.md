@@ -7,3 +7,5 @@
 * [Host Communications](Host.md)
 * [Release Process](Release.md)
 * [Dice Entropy](DiceEntropy.md)
+* [7.15.0 RC18 Release Shape](security/7.15.0-rc18-release-shape.md)
+* [Passkeys / CTAP2 (firmware 7.16)](Passkeys.md)

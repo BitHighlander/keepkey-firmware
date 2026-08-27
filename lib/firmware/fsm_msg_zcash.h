@@ -22,6 +22,13 @@
 #include <limits.h>
 
 #include "keepkey/firmware/zcash.h"
+/* The is_spend path draws T through random_buffer_checked() behind
+ * rng_health_check(). Declared here, in the file that USES them, rather than
+ * relying on fsm.c's include order: alpha's fsm.c lacks the rng_health.h that
+ * release/7.15's carries, and the emulator and unit builds only compiled
+ * because a different ordering happened to supply the declarations. The full
+ * ARM and dylib builds did not. */
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/blake2b.h"
 #include "trezor/crypto/pallas.h"
 #include "trezor/crypto/redpallas.h"

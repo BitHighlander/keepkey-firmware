@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 extern "C" {
@@ -13,6 +14,8 @@ extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/layout.h"
+#include "keepkey/board/keepkey_flash.h"
+#include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_confirm.h"
@@ -110,6 +113,133 @@ TEST(Board, Crc32CoversTheFinalByteOfTheV17Record) {
   // gave 642 words = 2568 bytes, and byte 2568 changed nothing.
   EXPECT_EQ(clean642, calc_crc32(buf, 642));
 }
+
+namespace {
+
+class StorageSelection : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    flash.assign(FLASH_TOTAL_SIZE, 0xFF);
+    emulator_flash_base = flash.data();
+  }
+
+  void TearDown() override { emulator_flash_base = nullptr; }
+
+  uint8_t *Sector(Allocation allocation) {
+    return reinterpret_cast<uint8_t *>(flash_write_helper(allocation));
+  }
+
+  void WriteLegacy(Allocation allocation) {
+    uint8_t *record = Sector(allocation);
+    memcpy(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+  }
+
+  void WriteVerified(Allocation allocation, uint32_t generation) {
+    uint8_t *record = Sector(allocation);
+    memset(record, 0, STORAGE_RECORD_LEN);
+    memcpy(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+    record[STORAGE_GENERATION_OFFSET] = static_cast<uint8_t>(generation);
+    record[STORAGE_GENERATION_OFFSET + 1] =
+        static_cast<uint8_t>(generation >> 8);
+    record[STORAGE_GENERATION_OFFSET + 2] =
+        static_cast<uint8_t>(generation >> 16);
+    memcpy(record + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
+           STORAGE_RECORD_TRAILER_MAGIC_LEN);
+    const uint32_t crc =
+        calc_crc32(record, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
+    memcpy(record + STORAGE_RECORD_CRC_OFFSET, &crc, sizeof(crc));
+  }
+
+  void WritePending(Allocation allocation, uint32_t generation) {
+    WriteVerified(allocation, generation);
+    memset(Sector(allocation), 0xFF, STORAGE_MAGIC_LEN);
+  }
+
+  std::vector<uint8_t> flash;
+};
+
+TEST_F(StorageSelection, LegacyRecordRemainsReadable) {
+  WriteLegacy(FLASH_STORAGE2);
+  Allocation active = FLASH_INVALID;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(FLASH_STORAGE2, active);
+}
+
+TEST_F(StorageSelection, NewestVerifiedGenerationWinsAcrossSectors) {
+  WriteVerified(FLASH_STORAGE1, 7);
+  WriteVerified(FLASH_STORAGE3, 8);
+  Allocation active = FLASH_INVALID;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(FLASH_STORAGE3, active);
+}
+
+TEST_F(StorageSelection, VerifiedRecordWinsOverLegacyAfterInterruptedCommit) {
+  WriteLegacy(FLASH_STORAGE1);
+  WriteVerified(FLASH_STORAGE2, 1);
+  Allocation active = FLASH_INVALID;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(FLASH_STORAGE2, active);
+}
+
+TEST_F(StorageSelection, CorruptNewRecordFallsBackToPreservedLegacy) {
+  WriteLegacy(FLASH_STORAGE1);
+  WriteVerified(FLASH_STORAGE2, 1);
+  Sector(FLASH_STORAGE2)[100] ^= 1;
+  Allocation active = FLASH_INVALID;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(FLASH_STORAGE1, active);
+}
+
+TEST_F(StorageSelection, GenerationComparisonHandlesTwentyFourBitWrap) {
+  WriteVerified(FLASH_STORAGE1, 0x00FFFFFFu);
+  WriteVerified(FLASH_STORAGE2, 0);
+  Allocation active = FLASH_INVALID;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(FLASH_STORAGE2, active);
+}
+
+TEST_F(StorageSelection, PendingRecordIsInvisibleUntilMarkerIsInstalled) {
+  WritePending(FLASH_STORAGE3, 9);
+
+  Allocation active = FLASH_INVALID;
+  EXPECT_FALSE(find_active_storage(&active));
+
+  Allocation pending = FLASH_INVALID;
+  ASSERT_TRUE(find_pending_storage(&pending));
+  ASSERT_EQ(FLASH_STORAGE3, pending);
+  ASSERT_TRUE(recover_pending_storage(pending));
+
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(FLASH_STORAGE3, active);
+  EXPECT_EQ(0, memcmp(Sector(FLASH_STORAGE1), STORAGE_PROTECT_OFF_MAGIC,
+                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
+}
+
+TEST_F(StorageSelection, TornFinalMagicCanBeCompletedIdempotently) {
+  WritePending(FLASH_STORAGE2, 10);
+  Sector(FLASH_STORAGE2)[0] =
+      static_cast<uint8_t>(STORAGE_MAGIC_STR[0]) | 0x80u;
+
+  Allocation pending = FLASH_INVALID;
+  ASSERT_TRUE(find_pending_storage(&pending));
+  ASSERT_EQ(FLASH_STORAGE2, pending);
+  ASSERT_TRUE(recover_pending_storage(pending));
+  EXPECT_EQ(
+      0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
+}
+
+TEST_F(StorageSelection, CorruptPendingRecordIsNeverFinalized) {
+  WritePending(FLASH_STORAGE2, 11);
+  Sector(FLASH_STORAGE2)[100] ^= 1;
+
+  Allocation pending = FLASH_INVALID;
+  EXPECT_FALSE(find_pending_storage(&pending));
+  EXPECT_FALSE(recover_pending_storage(FLASH_STORAGE2));
+  EXPECT_NE(
+      0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
+}
+
+}  // namespace
 
 // confirm_body_fits() asks the real renderer whether the body will fit, so it
 // needs the canvas the renderer draws into. board_init() does this on the
@@ -260,12 +390,10 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
     if (fits) {
       EXPECT_TRUE(confirm_body_fits(("HEAD" + std::string(pad, ' ')).c_str(),
                                     BODY_WIDTH))
-          << "dropping the tail made a fitting body stop fitting, pad="
-          << pad;
+          << "dropping the tail made a fitting body stop fitting, pad=" << pad;
     } else {
       EXPECT_FALSE(confirm_body_fits(padded.c_str(), BODY_WIDTH_WITH_ICON))
-          << "less room turned a clipped body into a fitting one, pad="
-          << pad;
+          << "less room turned a clipped body into a fitting one, pad=" << pad;
     }
   }
 
@@ -346,25 +474,24 @@ TEST(Board, BaseToPrecisionKeepsEveryDigit) {
 
   // Fewer digits than the precision: zero-padded fraction, no digit lost.
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0,
-            base_to_precision(out, (const uint8_t *)"1", sizeof(out), 1, 6));
+  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"1", sizeof(out), 1, 6));
   EXPECT_EQ(std::string((char *)out), "0.000001");
 
   // Exactly at the boundary.
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"123456", sizeof(out),
-                                 6, 6));
+  ASSERT_EQ(
+      0, base_to_precision(out, (const uint8_t *)"123456", sizeof(out), 6, 6));
   EXPECT_EQ(std::string((char *)out), "0.123456");
 
   // One past the boundary: the last digit must survive.
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"1234567", sizeof(out),
-                                 7, 6));
+  ASSERT_EQ(
+      0, base_to_precision(out, (const uint8_t *)"1234567", sizeof(out), 7, 6));
   EXPECT_EQ(std::string((char *)out), "1.234567");
 
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"100000000",
-                                 sizeof(out), 9, 6));
+  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"100000000", sizeof(out),
+                                 9, 6));
   EXPECT_EQ(std::string((char *)out), "100.000000");
 }
 

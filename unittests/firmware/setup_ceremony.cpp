@@ -35,6 +35,7 @@ extern "C" {
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/bip39.h"
 }
 
@@ -108,6 +109,20 @@ TEST_F(SetupCeremony, StagedButNotArmedIsInert) {
 
   // A later ceremony may stage freely over an un-armed one.
   EXPECT_TRUE(setup_stage(false, "english", "second", 0, 0, false));
+}
+
+// #523: a setter used during setup_commit() must not persist on its own.
+// storage_commit() deliberately aborts any still-armed foreign ceremony, so
+// an implicit commit here used to wipe the staged no_backup flag before the
+// next line of setup_commit() could apply it.
+TEST_F(SetupCeremony, U2FCounterSetterDoesNotCommitMidCeremony) {
+  ASSERT_TRUE(setup_stage(false, "english", "no backup", 0, 123, true));
+  setup_arm(SETUP_RESET);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+
+  storage_setU2FCounter(123);
+
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
 }
 
 // The permutation coverage the release gate asks for: the orderings a host can

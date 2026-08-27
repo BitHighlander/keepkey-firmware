@@ -370,9 +370,7 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
           }
         }
 #else
-        // Bitcoin-only decodes no THORChain memo, so there is no friendly
-        // screen to show. Fall back to confirming the raw OP_RETURN payload:
-        // the bytes still have to be approved, they are just not interpreted.
+        // bitcoin-only: no THORChain memo decoding, confirm raw OP_RETURN
         if (!confirm_data(ButtonRequestType_ButtonRequest_ConfirmOutput,
                           _("Confirm OP_RETURN"), in->op_return_data.bytes,
                           in->op_return_data.size)) {
@@ -430,11 +428,15 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
     memcpy(&node, root, sizeof(HDNode));
     if (hdnode_private_ckd_cached(&node, in->address_n, in->address_n_count,
                                   NULL) == 0) {
+      memzero(&node, sizeof(node));
       return 0;  // failed to compile output
     }
     hdnode_fill_public_key(&node);
-    if (!compute_address(coin, input_script_type, &node, in->has_multisig,
-                         &in->multisig, in->address)) {
+    const bool address_ok =
+        compute_address(coin, input_script_type, &node, in->has_multisig,
+                        &in->multisig, in->address);
+    memzero(&node, sizeof(node));
+    if (!address_ok) {
       return 0;  // failed to compile output
     }
   } else if (!in->has_address) {
@@ -548,7 +550,13 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
       case OutputScriptType_PAYTOP2SHWITNESS:
       case OutputScriptType_PAYTOTAPROOT: {
         char amount_str[32];
-        char node_str[NODE_STRING_LENGTH];
+        // ADDR_STR_LEN, not NODE_STRING_LENGTH: this buffer is passed to
+        // txin_dgst_compare()/txin_dgst_save_and_reset(), which unconditionally
+        // memcpy/strncmp ADDR_STR_LEN (130) bytes -- their real contract, per
+        // the other call site below which passes a 130-byte protobuf address
+        // field. A 50-byte NODE_STRING_LENGTH buffer here was an 80-byte OOB
+        // stack read.
+        char node_str[ADDR_STR_LEN];
         coin_amnt_to_str(coin, in->amount, amount_str, sizeof(amount_str));
         memset(node_str, 0, sizeof(node_str));
         if (!bip32_node_to_string(node_str, sizeof(node_str), coin,
@@ -560,6 +568,25 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
                 ButtonRequestType_ButtonRequest_ConfirmTransferToAccount,
                 amount_str, node_str))
           return TXOUT_CANCEL;
+        /* Same digest-reset requirement as the OP_RETURN path above: signing.c
+           already called txin_dgst_final() for this output, and returning
+           without re-arming leaves txin_hash_ctx finalized-but-never-
+           reinitialized, corrupting the NEXT SignTx's duplicate-transaction
+           digest. Unlike OP_RETURN, this output has a real amount+destination
+           worth comparing, so run it through the same
+           compare-then-save-and-reset the generic needs_confirm path below
+           uses, rather than a bare reset. */
+        if (txin_dgst_compare(amount_str, node_str)) {
+          char prev[DIGEST_STR_LEN], cur[DIGEST_STR_LEN];
+          txin_dgst_getstrs(prev, cur, DIGEST_STR_LEN);
+          review(ButtonRequestType_ButtonRequest_Other,
+                 "WARNING: Duplicate Transaction!",
+                 "Already signed a tx with the same outputs\n"
+                 "To try again, unplug/replug KeepKey.");
+          txin_dgst_save_and_reset(amount_str, node_str);
+          return TXOUT_CANCEL;
+        }
+        txin_dgst_save_and_reset(amount_str, node_str);
         return out->script_pubkey.size;
       }
     }

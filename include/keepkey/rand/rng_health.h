@@ -92,20 +92,24 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 ///   - the device half of the seed        reset_init()
 ///   - the storage encryption key         storage_setPin_impl()
 ///   - the wipe-code key                  storage_setWipeCode_impl()
-///   - the PIN-KDF salt                   storage_readStorageV1(), the V1
-///                                        upgrade path that mints one
+///   - the PIN-KDF salt                   storage_readStorageV1() on migration;
+///                                        storage_reset()/storage_init() for a
+///                                        fresh or wiped record
 ///   - the U2F key-handle derivation path generateKeyHandle()
+///   - the CTAP credential-reset generation storage_resetPasskeyData()
+///   - CTAP ClientPIN ECDH keys, PIN salts, and PIN tokens
 ///   - the one-shot OTP randomness block  flash_collectHWEntropy()
 ///   - the RedPallas spend-auth T          fsm_msg_zcash.h, the is_spend path
+///   - PIN/recovery secret permutations   pin_sm.c, recovery_cipher.c
 ///
 /// NOT covered: everything else in the tree and in deps/, because plain
 /// random_buffer() and random32() are unchecked exactly as on develop.
 ///
 /// Adding a new key-material draw does NOT inherit this gate. You must route
 /// it through random_buffer_checked() deliberately. Inverting the default so
-/// that coverage was automatic was built for 7.15 and descoped: it can hang
-/// or brick the bootloader when the generator has failed and there is no
-/// defined degraded-RNG recovery mode yet.
+/// that coverage was automatic was built for 7.15 and descoped; the reasons
+/// and the follow-up project are in
+/// docs/security/rc28-open-findings-handoff.md.
 bool rng_health_check(void);
 
 /// Fold \p len bytes of freshly drawn output into the boot-lifetime continuous
@@ -132,6 +136,11 @@ bool rng_health_observe(const uint8_t* buf, size_t len);
 /// used to say the opposite; if you are reaching for entropy that must be
 /// gated, you have to call this function by name.
 bool random_buffer_checked(uint8_t* buf, size_t len);
+
+/// Fisher-Yates permutation whose random draws are all folded into the
+/// continuous RNG health test. Returns false without exposing a predictable
+/// partial permutation when the source fails.
+bool random_permute_char_checked(char* str, size_t len);
 
 #ifdef EMULATOR
 /// Test-only: force the latched verdict. `false` stands in for a generator

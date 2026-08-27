@@ -7,9 +7,18 @@
  * linked -- free_queue and active_queue become circular, and the
  * runnable_queue_get() walk inside post_periodic() never returns.
  *
- * That is a hang, not a failure. Keep the guard in this single translation unit
- * so every confirmation test shares one bootstrap. Nothing else in
- * unittests/firmware may call kk_board_init() or timer_init() directly.
+ * That is a hang, not a failure. seed_display.cpp arrived with its own
+ * timer_init() guard while thorchain.cpp's confirm driver already had one, so
+ * the full firmware unit binary bootstrapped twice: the unit-tests job burned
+ * its 10-minute timeout and reported "cancelled", which reads like
+ * infrastructure flake rather than a test bug. The bitcoin-only binary stayed
+ * green only because thorchain.cpp is not compiled into it -- which is exactly
+ * the shape the CI matrix showed.
+ *
+ * A per-file guard cannot fix this, because the problem IS that there is one
+ * guard per file. This is the single guard, in a single translation unit, for
+ * the whole binary. Nothing else in unittests/firmware may call kk_board_init()
+ * or timer_init() directly.
  *
  * No includes on purpose: keepkey_board.h declares shutdown(void), which
  * clashes with sys/socket.h, and this file has already cost one build on

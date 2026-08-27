@@ -156,3 +156,75 @@ TEST(Osmosis, MsgSendSignsCanonicalNonNativeDenomination) {
   EXPECT_TRUE(osmosis_signTxUpdateMsgSend(
       "7", "osmo1rs7fckgznkaxs4sq02pexwjgar43p5wnkx9s92", denom));
 }
+
+// A signature over two messages is proof the whole document was correctly
+// formed, not just any one message: a missing comma between msgs[0] and
+// msgs[1] changes every byte of the hash, so this only passes if the
+// sign-doc is byte-exact JSON. Same fixture key as
+// Mayachain.MayachainSignTxTwoMessages (unittests/firmware/mayachain.cpp),
+// whose "osmo"-prefixed address was independently cross-checked against that
+// test's already-verified "maya"-prefixed address for the same key.
+TEST(Osmosis, MsgSendSignsTwoMessages) {
+  // has_message/msgs_remaining are static file-scope state left behind by
+  // whichever test ran before this one in the same binary (the real FSM
+  // handler always calls osmosis_signAbort() between sessions -- this test
+  // must do the same to start from a clean slate).
+  osmosis_signAbort();
+
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  OsmosisSignTx msg = {};
+  msg.account_number = 6359;
+  msg.has_chain_id = true;
+  strlcpy(msg.chain_id, "osmosis-1", sizeof(msg.chain_id));
+  msg.fee_amount = 3000;
+  msg.gas = 200000;
+  msg.has_memo = true;
+  msg.sequence = 19;
+  msg.msg_count = 2;
+  ASSERT_TRUE(osmosis_signTxInit(&node, &msg));
+
+  const char *addr = "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770";
+  ASSERT_TRUE(osmosis_signTxUpdateMsgSend("100", addr, "uosmo"));
+  ASSERT_TRUE(osmosis_signTxUpdateMsgSend("200", addr, "uosmo"));
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(osmosis_signTxFinalize(public_key, signature));
+
+  // Expected value recomputed independently (python-ecdsa, RFC6979/secp256k1,
+  // low-s), methodology cross-checked against
+  // Mayachain.MayachainSignTx's known-good vector, over the exact
+  // two-message sign-doc JSON this fixture produces:
+  //   {"account_number":"6359","chain_id":"osmosis-1","fee":{"amount":
+  //   [{"amount":"3000","denom":"uosmo"}],"gas":"200000"},"memo":"","msgs":
+  //   [{"type":"cosmos-sdk/MsgSend","value":{"amount":[{"amount":"100",
+  //   "denom":"uosmo"}],"from_address":
+  //   "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770","to_address":
+  //   "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770"}},{"type":
+  //   "cosmos-sdk/MsgSend","value":{"amount":[{"amount":"200","denom":
+  //   "uosmo"}],"from_address":
+  //   "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770","to_address":
+  //   "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770"}}],"sequence":"19"}
+  EXPECT_TRUE(
+      memcmp(signature,
+             (uint8_t *)"\xc1\x8f\x92\x6a\xe2\x6e\x02\x7f\x1d\x36\x02\xb7\xf6"
+                        "\x64\x4a\x62\xca\xcc\x23\x88\xd0\x8a\x88\x3c\x8a\x24"
+                        "\xee\x8b\x37\x9b\xa5\x1a\x54\x4e\x7f\x66\x18\x49\xd5"
+                        "\xca\xdb\x5b\x1a\xea\x91\x77\x79\xb7\x7a\x0e\xf2\x88"
+                        "\x72\xfe\x6e\x6a\xa0\x82\xf0\x80\x10\xcb\xdd\x2f",
+             64) == 0);
+}

@@ -51,6 +51,9 @@ void recovery_cipher_test_set_word_fragments(void);
 bool recovery_cipher_test_word_fragments_are_zero(void);
 const char* recovery_get_cipher(void);
 const char* recovery_get_auto_completed_word(void);
+const char* recovery_get_decoded_mnemonic(void);
+const char* recovery_get_coded_mnemonic(void);
+void recovery_debugLinkStart(uint32_t _word_count);
 #endif
 
 /// Determine if two strings are exact matches for length passed

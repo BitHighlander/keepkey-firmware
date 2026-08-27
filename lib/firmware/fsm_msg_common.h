@@ -41,34 +41,18 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_model = true;
   strlcpy(resp->model, model(), sizeof(resp->model));
 
+  /* Variant Name */
+  resp->has_firmware_variant = true;
+  strlcpy(resp->firmware_variant, variant_getName(),
+          sizeof(resp->firmware_variant));
+
   /* Taproot capability. signing.c handles SPENDTAPROOT inputs and PAYTOTAPROOT
      outputs, and coins.def carries the BIP-86 entries, but the bit that tells a
      host so was never set -- so hosts could not detect support and six
      catalogued Bitcoin tests skipped with "Firmware does not report
-     supports_taproot", making a shipped feature invisible in the report.
-     Reported directly so a host does not have to infer P2TR support from a
-     firmware version -- that inference breaks whenever the feature is
-     retargeted to a different release. */
+     supports_taproot", making a shipped feature invisible in the report. */
   resp->has_supports_taproot = true;
   resp->supports_taproot = true;
-
-  /* Variant Name */
-  resp->has_firmware_variant = true;
-#if BITCOIN_ONLY
-  /* Report the established KeepKeyBTC / EmulatorBTC names rather than the
-     board variant, so that existing hosts recognise a bitcoin-only image and
-     skip multi-chain-only behaviour instead of offering it features this
-     firmware does not implement. */
-#ifdef EMULATOR
-  strlcpy(resp->firmware_variant, "EmulatorBTC",
-          sizeof(resp->firmware_variant));
-#else
-  strlcpy(resp->firmware_variant, "KeepKeyBTC", sizeof(resp->firmware_variant));
-#endif
-#else
-  strlcpy(resp->firmware_variant, variant_getName(),
-          sizeof(resp->firmware_variant));
-#endif
 
   /* Security settings */
   resp->has_pin_protection = true;

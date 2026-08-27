@@ -540,15 +540,19 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
                    str_out);
   }
 
-  /* Unsupported Omni messages still carry asset-layer semantics. Bind user
-   * approval to every signed OP_RETURN byte instead of a generic warning. */
+  /* Unsupported Omni messages still carry asset-layer semantics. A generic
+   * "Unknown Transaction" screen hid the complete payload while allowing the
+   * host to obtain a Bitcoin signature. Fall back to the exact-length pager so
+   * the trusted display binds approval to every signed OP_RETURN byte. */
   return confirm_bytes(button_request, title, data, size);
 }
 
 bool confirm_data(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  /* OP_RETURN is signed byte-for-byte, so disclose it byte-for-byte. This is
-   * length-aware for both binary and ASCII data and never assumes a trailing
-   * NUL in the protobuf bytes field. */
+  /* OP_RETURN is signed byte-for-byte, so disclose it byte-for-byte. The old
+   * non-ASCII path silently clamped at 50 bytes and then tested the already
+   * clamped length, making its ".." marker unreachable. The ASCII path also
+   * handed a size-delimited protobuf field to "%s", which assumes a trailing
+   * NUL that the wire format does not promise. */
   return confirm_bytes(button_request, title, data, size);
 }

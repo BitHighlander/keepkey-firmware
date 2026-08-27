@@ -1,18 +1,11 @@
 extern "C" {
-#include "keepkey/board/messages.h"
-#include "keepkey/board/usb.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
-#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tendermint.h"
 #include "messages-ethereum.pb.h"
 #include "trezor/crypto/secp256k1.h"
-
-// From keepkey_board.h, which we can't include here: its shutdown(void)
-// declaration clashes with sys/socket.h's shutdown(int, int).
-void kk_board_init(void);
 }
 
 #include "gtest/gtest.h"
@@ -20,151 +13,10 @@ void kk_board_init(void);
 #include <string>
 #include <vector>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-/*
- * confirm() auto-accept driver for unit tests.
- *
- * In the emulator/unittest build (always DEBUG_LINK), confirm_helper()
- * busy-polls the emulator's UDP "usb" port for tiny messages and returns
- * once it has seen a ButtonAck plus a DebugLinkDecision. Each confirm
- * screen therefore consumes exactly one ButtonAck + one DebugLinkDecision
- * from the socket queue. Preloading exactly N accept pairs before invoking
- * the code under test auto-accepts exactly N screens, and
- * kkconfirm_drain() == 0 afterwards proves exactly N screens were shown
- * (fewer screens leave packets queued; more screens HANG the test until the
- * CI job hits its timeout and reports "cancelled", which reads like flake
- * rather than a wrong expectation — so get the count right).
- *
- * Screen counts are value-dependent now that confirm() pages a body too long
- * for BODY_ROWS: the same format string is one screen for a 3-row body and
- * two for a 4-row one. Long test vectors are the ones to check.
- *
- * These helpers have external linkage so mayachain.cpp can share the
- * one-time board/usb initialization.
- */
-
-static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
-                               uint8_t len) {
-  static int fd = -1;
-  if (fd < 0) fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (fd < 0) return false;
-
-  uint8_t frame[64] = {0};
-  frame[0] = '?';
-  frame[1] = '#';
-  frame[2] = '#';
-  frame[3] = msgId >> 8;
-  frame[4] = msgId & 0xff;
-  frame[8] = len;  // bytes 5..7 are the high bits of the big-endian size
-  if (len) memcpy(&frame[9], payload, len);
-
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(11044);  // emulator main "usb" port
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  return sendto(fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
-                sizeof(addr)) == (ssize_t)sizeof(frame);
-}
-
-/* One ButtonAck + one DebugLinkDecision, i.e. what a single screen eats. */
-#define KKCONFIRM_MSGS_PER_SCREEN 2
-
-// Queue nYes accepted screens followed by nNo rejected screens, plus one
-// trailing rejection as a sentinel.
-//
-// The sentinel is what keeps a wrong count cheap. A screen the test did not
-// budget for consumes it, is rejected, and the code under test returns false
-// immediately, so the test FAILS in milliseconds. Without it that extra
-// screen blocks forever on an answer nobody queued and the only symptom is a
-// CI job burning its whole timeout and reporting "cancelled" — which reads
-// like infrastructure flake rather than a wrong expectation. confirm() paging
-// long bodies makes screen counts value-dependent, so this is a mistake worth
-// catching in the harness instead of in a 30-minute timeout.
-bool kkconfirm_preload(int nYes, int nNo) {
-  static bool initialized = false;
-  if (!initialized) {
-    kk_board_init();  // canvas + runnable queues for confirm's draw path
-    fsm_init();       // registers the usb rx callback + message maps
-    usbInit("");      // binds the emulator UDP ports
-    initialized = true;
-  }
-
-  // Start from a known-empty queue. The socket and its queue are process-wide
-  // and shared with every other file that uses this driver, so a test that
-  // never reached its kkconfirm_drain() — a fatal ASSERT between preload and
-  // drain, or a test that simply forgot to drain — would otherwise hand its
-  // leftovers to whichever test ran next, and the verdict for that test would
-  // depend on what preceded it. Anything still queued here was sent at least
-  // one test ago and has long since been delivered, so a non-blocking sweep is
-  // enough; the grace window in kkconfirm_drain() is what covers packets sent
-  // moments earlier.
-  {
-    uint8_t stale[MSG_TINY_BFR_SZ];
-    // volatile for the same reason as in kkconfirm_drain(): 0xFFFF is outside
-    // the MessageType enum, so the compiler may fold the comparison away.
-    volatile uint16_t id;
-    while ((id = (uint16_t)check_for_tiny_msg(stale)) != MSG_TINY_TYPE_ERROR) {
-    }
-  }
-
-  static const uint8_t yes[] = {0x08, 0x01};  // DebugLinkDecision.yes_no
-  static const uint8_t no[] = {0x08, 0x00};
-  for (int i = 0; i < nYes + nNo + 1; i++) {
-    if (!kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0))
-      return false;
-    const uint8_t* decision = (i < nYes) ? yes : no;
-    if (!kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, decision,
-                            2))
-      return false;
-  }
-  return true;
-}
-
-// Consume and count any tiny messages left in the queue, discounting the
-// sentinel kkconfirm_preload() always queues. 0 keeps meaning exactly what it
-// meant before — every preloaded screen was shown and no more. A NEGATIVE
-// count means the sentinel was consumed: more screens than the test expected.
-//
-// An empty read is NOT proof the queue is empty. The emulator reads its UDP
-// socket with MSG_DONTWAIT, and loopback delivery is asynchronous (the
-// datagram is handed to the network input thread by sendto(), not deposited
-// in the receiving socket's buffer by it). A test whose code under test shows
-// ZERO screens never blocks anywhere, so it can poll microseconds after
-// preload() and see nothing yet: the old "break on the first empty read"
-// counted 0 packets and reported -2 — "you showed one screen too many" — for
-// a refusal that in fact showed no screen at all. That misreads a harness
-// race as a disclosure bug, and pointed at the one direction this file must
-// never be edited in. So wait out a grace period after the last packet before
-// declaring the queue drained.
-//
-// This can only ever count MORE packets, never fewer, so it cannot hide an
-// extra screen: a screen that really ran consumed its two packets, and no
-// amount of waiting brings those back.
-#define KKCONFIRM_DRAIN_GRACE_US 200000 /* 200ms after the last packet seen */
-int kkconfirm_drain(void) {
-  uint8_t buf[MSG_TINY_BFR_SZ];
-  int n = 0;
-  int idle_us = 0;
-  while (idle_us < KKCONFIRM_DRAIN_GRACE_US) {
-    // volatile: 0xFFFF (MSG_TINY_TYPE_ERROR) is outside the MessageType
-    // enum range, so an unguarded comparison is a tautology the compiler
-    // may fold away.
-    volatile uint16_t id = (uint16_t)check_for_tiny_msg(buf);
-    if (id != MSG_TINY_TYPE_ERROR) {
-      n++;
-      idle_us = 0;  // restart the grace window after every packet
-      continue;
-    }
-    usleep(1000);
-    idle_us += 1000;
-  }
-  return n - KKCONFIRM_MSGS_PER_SCREEN;
-}
+// Shared by every confirmation regression, including unconditional suites in
+// the bitcoin-only binary. The implementation lives in confirm_test_utils.cpp.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
 
 // Vectors computed with the trezor-crypto library directly (see
 // unittests/firmware/thorchain.cpp notes). The test file was previously

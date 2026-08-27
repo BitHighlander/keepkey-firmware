@@ -866,6 +866,17 @@ static bool signing_validate_input(const TxInputType* txinput) {
     return false;
   }
   if (txinput->has_multisig) {
+    /* Validate the quorum before tx_input_script_size() accounts for it.
+     * cryptoMultisigFingerprint() normally performs most of these checks, but
+     * the mixed single-sig/multisig path deliberately stops comparing a common
+     * fingerprint. That used to leave m as an unbounded host-controlled weight
+     * multiplier and could suppress the high-fee warning. */
+    if (!transaction_multisig_quorum_is_valid(&txinput->multisig)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid multisig quorum"));
+      signing_abort();
+      return false;
+    }
     /* A DER-encoded ECDSA signature is at most 72 bytes: 0x30 len, then two
      * 0x02-tagged integers of at most 33 bytes each. The wire field is sized
      * max_size:73, so the decoder accepts 73 -- and the witness path writes

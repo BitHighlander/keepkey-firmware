@@ -38,13 +38,29 @@
  0x0000 |  4 bytes    |  magic = 'stor'
  0x0004 |  12 bytes   |  uuid
  0x0010 |  25 bytes   |  uuid_str
- 0x0029 |  ?          |  Storage structure
+ 0x0029 |  3 bytes    |  commit generation
+ 0x002c |  ?          |  Storage structure
  */
 
 #define STORAGE_SECTOR_LEN 0x00004000
 
 #define STORAGE_MAGIC_STR "stor"
 #define STORAGE_MAGIC_LEN 4
+
+/* Crash-safe storage record framing. The historical V20 payload occupies
+ * 2572 bytes. New records append a marker plus CRC without moving any legacy
+ * field; old firmware simply ignores the trailer. Bytes 41..43 were the
+ * alignment padding between Metadata and Storage and now carry a 24-bit
+ * generation counter, again without moving Storage's offset 44. */
+#define STORAGE_METADATA_LEN 44
+#define STORAGE_GENERATION_OFFSET 41
+#define STORAGE_GENERATION_LEN 3
+#define STORAGE_RECORD_DATA_LEN 2572
+#define STORAGE_RECORD_TRAILER_MAGIC "crc1"
+#define STORAGE_RECORD_TRAILER_MAGIC_LEN 4
+#define STORAGE_RECORD_CRC_OFFSET \
+  (STORAGE_RECORD_DATA_LEN + STORAGE_RECORD_TRAILER_MAGIC_LEN)
+#define STORAGE_RECORD_LEN (STORAGE_RECORD_CRC_OFFSET + sizeof(uint32_t))
 
 #define CACHE_EXISTS 0xCA
 
@@ -72,6 +88,7 @@ typedef struct _Metadata {
   char magic[STORAGE_MAGIC_LEN];
   uint8_t uuid[STORAGE_UUID_LEN];
   char uuid_str[STORAGE_UUID_STR_LEN];
+  uint8_t generation[STORAGE_GENERATION_LEN];
 } Metadata;
 
 /* Cache structure */
