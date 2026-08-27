@@ -54,6 +54,8 @@ static CONFIDENTIAL char mnemonic[MNEMONIC_BUF];
 static char english_alphabet[ENGLISH_ALPHABET_BUF] =
     "abcdefghijklmnopqrstuvwxyz";
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
+static int uncyphered_word_count = 0;
+static bool definitely_using_cipher = false;
 /* Accumulators for the word currently being entered. File-scope so
  * recovery_delete_character() can keep them in sync with backspaces —
  * otherwise stale bytes make a re-entered word fail validation and wipe a
@@ -71,6 +73,10 @@ static CONFIDENTIAL char last_completed_word[12];
  * any number of completed words, is then just "truncate like mnemonic and
  * re-derive the current word" -- see get_current_coded_word(). */
 static CONFIDENTIAL char coded_mnemonic[MNEMONIC_BUF];
+static CONFIDENTIAL char current_word_scratch[CURRENT_WORD_BUF];
+static CONFIDENTIAL char formatted_word_scratch[CURRENT_WORD_BUF + 10];
+static CONFIDENTIAL char final_mnemonic_scratch[MNEMONIC_BUF];
+static CONFIDENTIAL char temp_word_scratch[CURRENT_WORD_BUF];
 
 #if DEBUG_LINK
 static char auto_completed_word[CURRENT_WORD_BUF];
@@ -89,9 +95,18 @@ void recovery_cipher_reset(void) {
   memzero(mnemonic, sizeof(mnemonic));
   memzero(coded_mnemonic, sizeof(coded_mnemonic));
   memzero(cipher, sizeof(cipher));
+  uncyphered_word_count = 0;
+  definitely_using_cipher = false;
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
   memzero(last_completed_word, sizeof(last_completed_word));
+  memzero(current_word_scratch, sizeof(current_word_scratch));
+  memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
+  memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+  memzero(temp_word_scratch, sizeof(temp_word_scratch));
+#if DEBUG_LINK
+  memzero(auto_completed_word, sizeof(auto_completed_word));
+#endif
 }
 
 /* The `if (!dry_run) storage_reset();` that used to open this function is
@@ -377,12 +392,11 @@ void next_character(void) {
     return;
   }
 
-  static char CONFIDENTIAL current_word[CURRENT_WORD_BUF];
-  get_current_word(current_word);
+  get_current_word(current_word_scratch);
 
   /* Words should never be longer than 4 characters */
-  if (strlen(current_word) > 4) {
-    memzero(current_word, sizeof(current_word));
+  if (strlen(current_word_scratch) > 4) {
+    memzero(current_word_scratch, sizeof(current_word_scratch));
 
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -404,28 +418,28 @@ void next_character(void) {
   memset(&resp, 0, sizeof(CharacterRequest));
 
   resp.word_pos = word_pos;
-  resp.character_pos = strlen(current_word);
+  resp.character_pos = strlen(current_word_scratch);
 
   msg_write(MessageType_MessageType_CharacterRequest, &resp);
 
   /* Attempt to auto complete if we have at least 3 characters */
   bool auto_completed = false;
-  if (strlen(current_word) >= 3) {
-    auto_completed = attempt_auto_complete(current_word);
+  if (strlen(current_word_scratch) >= 3) {
+    auto_completed = attempt_auto_complete(current_word_scratch);
   }
 
 #if DEBUG_LINK
   if (auto_completed) {
-    strlcpy(auto_completed_word, current_word, CURRENT_WORD_BUF);
+    strlcpy(auto_completed_word, current_word_scratch, CURRENT_WORD_BUF);
   } else {
     auto_completed_word[0] = '\0';
   }
 #endif
 
   /* Format current word and display it along with cipher */
-  static char CONFIDENTIAL formatted_word[CURRENT_WORD_BUF + 10];
-  format_current_word(word_pos, current_word, auto_completed, &formatted_word);
-  memzero(current_word, sizeof(current_word));
+  format_current_word(word_pos, current_word_scratch, auto_completed,
+                      &formatted_word_scratch);
+  memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
   static char prev_info[32];
@@ -436,8 +450,8 @@ void next_character(void) {
   }
 
   /* Show cipher and partial word */
-  layout_cipher(formatted_word, cipher, prev_info);
-  memzero(formatted_word, sizeof(formatted_word));
+  layout_cipher(formatted_word_scratch, cipher, prev_info);
+  memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
 /*
@@ -475,10 +489,6 @@ void recovery_character(const char* character) {
     layoutHome();
     return;
   }
-
-  // Count of words we think the user has entered without using the cipher:
-  static int uncyphered_word_count = 0;
-  static bool definitely_using_cipher = false;
 
   if (!mnemonic[0]) {
     uncyphered_word_count = 0;
@@ -654,6 +664,7 @@ void recovery_cipher_finalize(void) {
     // Otherwise just enforce that the number of words entered is a standard
     // count:
     if (words_entered != 12 && words_entered != 18 && words_entered != 24) {
+      recovery_cipher_abort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Invalid word count (must be 12, 18 or 24)");
       layoutHome();
@@ -661,27 +672,25 @@ void recovery_cipher_finalize(void) {
     }
   }
 
-  static char CONFIDENTIAL new_mnemonic[MNEMONIC_BUF] = "";
-  static char CONFIDENTIAL temp_word[CURRENT_WORD_BUF];
   volatile bool auto_completed = true;
 
-  memzero(new_mnemonic, sizeof(new_mnemonic));
-  memzero(temp_word, sizeof(temp_word));
+  memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+  memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
   /* Attempt to autocomplete each word */
   char* tok = strtok(mnemonic, " ");
 
   while (tok) {
-    strlcpy(temp_word, tok, CURRENT_WORD_BUF);
+    strlcpy(temp_word_scratch, tok, CURRENT_WORD_BUF);
 
-    auto_completed &= attempt_auto_complete(temp_word);
+    auto_completed &= attempt_auto_complete(temp_word_scratch);
 
-    strlcat(new_mnemonic, temp_word, MNEMONIC_BUF);
-    strlcat(new_mnemonic, " ", MNEMONIC_BUF);
+    strlcat(final_mnemonic_scratch, temp_word_scratch, MNEMONIC_BUF);
+    strlcat(final_mnemonic_scratch, " ", MNEMONIC_BUF);
 
     tok = strtok(NULL, " ");
   }
-  memzero(temp_word, sizeof(temp_word));
+  memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
   /* Cipher recovery decodes to BIP-39 words, so every word must
    * auto-complete regardless of enforce_wordlist. Failing only when
@@ -695,33 +704,34 @@ void recovery_cipher_finalize(void) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");
-    /* new_mnemonic is function-static CONFIDENTIAL storage, not part of the
-     * buffers recovery_cipher_reset() clears. A host-triggered early finalize
-     * can leave 23 expanded seed words here unless this exit scrubs it. */
-    memzero(new_mnemonic, sizeof(new_mnemonic));
+    /* A host-triggered early finalize can leave 23 expanded seed words in the
+     * file-scope scratch buffer unless this exit scrubs it before aborting. */
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
     setup_abort();
     layoutHome();
     return;
   }
 
   /* Truncate additional space at the end */
-  new_mnemonic[MAX(1u, strnlen(new_mnemonic, sizeof(new_mnemonic))) - 1u] =
-      '\0';
-  if (!dry_run && (!enforce_wordlist || mnemonic_check(new_mnemonic))) {
+  final_mnemonic_scratch[MAX(1u, strnlen(final_mnemonic_scratch,
+                                         sizeof(final_mnemonic_scratch))) -
+                         1u] = '\0';
+  if (!dry_run &&
+      (!enforce_wordlist || mnemonic_check(final_mnemonic_scratch))) {
     /* Commit point: the settings staged at the start of THIS ceremony and
      * the seed the user typed word by word land together, or neither lands.
      * setup_commit() disarms before it writes. */
-    setup_commit(new_mnemonic, /*imported=*/!enforce_wordlist);
-    memzero(new_mnemonic, sizeof(new_mnemonic));
+    setup_commit(final_mnemonic_scratch, /*imported=*/!enforce_wordlist);
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
     fsm_sendSuccess("Device recovered");
   } else if (dry_run) {
-    bool match =
-        storage_isInitialized() && storage_containsMnemonic(new_mnemonic);
+    bool match = storage_isInitialized() &&
+                 storage_containsMnemonic(final_mnemonic_scratch);
     if (match) {
       review(ButtonRequestType_ButtonRequest_Other, "Recovery Dry Run",
              "The seed is valid and MATCHES the one in the device.");
       fsm_sendSuccess("The seed is valid and matches the one in the device.");
-    } else if (mnemonic_check(new_mnemonic)) {
+    } else if (mnemonic_check(final_mnemonic_scratch)) {
       review(ButtonRequestType_ButtonRequest_Other, "Recovery Dry Run",
              "The seed is valid, but DOES NOT MATCH the one in the device.");
       fsm_sendFailure(
@@ -734,7 +744,7 @@ void recovery_cipher_finalize(void) {
           FailureType_Failure_Other,
           "The seed is invalid, and does not match the one in the device.");
     }
-    memzero(new_mnemonic, sizeof(new_mnemonic));
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
   } else {
     /* Nothing reached storage: the staged settings and the mnemonic are
      * still only in RAM, and the common cleanup below discards both. */
@@ -742,13 +752,47 @@ void recovery_cipher_finalize(void) {
                     "Invalid mnemonic, are words in correct order?");
   }
 
-  memzero(new_mnemonic, sizeof(new_mnemonic));
+  memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
   /* Idempotent: the success path already disarmed inside setup_commit(). */
   setup_abort();
   layoutHome();
 }
 
 #if DEBUG_LINK
+void recovery_cipher_test_set_word_fragments(void) {
+  memset(mnemonic, 0x3C, sizeof(mnemonic));
+  memset(coded_word, 0xA5, sizeof(coded_word));
+  memset(decoded_word, 0x5A, sizeof(decoded_word));
+  memset(current_word_scratch, 0xA5, sizeof(current_word_scratch));
+  memset(formatted_word_scratch, 0x5A, sizeof(formatted_word_scratch));
+  memset(final_mnemonic_scratch, 0xA5, sizeof(final_mnemonic_scratch));
+  memset(temp_word_scratch, 0x5A, sizeof(temp_word_scratch));
+  memset(auto_completed_word, 0xA5, sizeof(auto_completed_word));
+}
+
+bool recovery_cipher_test_word_fragments_are_zero(void) {
+  uint8_t aggregate = 0;
+  for (size_t i = 0; i < sizeof(mnemonic); i++) {
+    aggregate |= (uint8_t)mnemonic[i];
+  }
+  for (size_t i = 0; i < sizeof(coded_word); i++) {
+    aggregate |= (uint8_t)coded_word[i];
+    aggregate |= (uint8_t)decoded_word[i];
+  }
+  for (size_t i = 0; i < sizeof(current_word_scratch); i++) {
+    aggregate |= (uint8_t)current_word_scratch[i];
+    aggregate |= (uint8_t)temp_word_scratch[i];
+    aggregate |= (uint8_t)auto_completed_word[i];
+  }
+  for (size_t i = 0; i < sizeof(formatted_word_scratch); i++) {
+    aggregate |= (uint8_t)formatted_word_scratch[i];
+  }
+  for (size_t i = 0; i < sizeof(final_mnemonic_scratch); i++) {
+    aggregate |= (uint8_t)final_mnemonic_scratch[i];
+  }
+  return aggregate == 0;
+}
+
 /*
  * recovery_get_cipher() - Gets current cipher being show on display
  *

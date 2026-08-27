@@ -17,6 +17,7 @@ set(sources
     signing.cpp
     setup_ceremony.cpp
     storage.cpp
+    test_board.cpp
     transaction.cpp
     usb_rx.cpp
     u2f.cpp)

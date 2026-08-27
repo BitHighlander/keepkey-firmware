@@ -399,6 +399,15 @@ jobs:
           - [ ] Built on multiple machines, payload hashes match
           - [ ] Signed on air-gapped machine (3/5 signers)
           - [ ] Storage upgrade tested on production device
+          - [ ] **Signatures VERIFIED on every signed variant, BEFORE upload:**
+                \`scripts/release/verify-signatures.py <image>\`
+                The real 3-of-5 ECDSA check -- the same one the device does --
+                parsing the keys from include/keepkey/board/pubkeys.h so a
+                rotation cannot leave it checking a stale set.
+                The \`--require-signed\` manifest step below is STRUCTURAL ONLY:
+                a signature region holding a single non-zero byte passes it, so
+                it cannot tell a signed image from an unsigned one. Run both,
+                and run this one first.
           - [ ] Signed .bin uploaded, replacing unsigned
           - [ ] \`HASHES*.txt\` regenerated from the signed binaries and re-uploaded:
                 \`scripts/release/hash-manifest.sh --require-signed <dir> ${VER} <variant> <suffix>\`

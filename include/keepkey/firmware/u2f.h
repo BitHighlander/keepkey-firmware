@@ -20,6 +20,7 @@
 #ifndef __U2F_H__
 #define __U2F_H__
 
+#include "keepkey/firmware/passkey.h"
 #include "keepkey/firmware/u2f/u2f_hid.h"
 
 #include <stdint.h>
@@ -56,6 +57,15 @@ bool u2f_generate_credential(const uint8_t app_id[32], uint8_t key_handle[64],
                              uint8_t private_key[32], uint8_t public_key[65]);
 bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
                          uint8_t private_key[32], uint8_t public_key[65]);
+
+/// Pure key-handle authenticator check shared by runtime validation and unit
+/// tests. Generation-bound handles always use the active generation; legacy
+/// handles are accepted only while the migration flag remains enabled.
+bool u2f_key_handle_authenticator_is_valid(
+    const uint8_t private_key[32], const uint8_t app_id[32],
+    const uint8_t key_handle[64],
+    const uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
+    bool legacy_credentials_enabled);
 
 void send_u2f_msg(const uint8_t* data, uint32_t len);
 void send_u2f_error(uint16_t err);
