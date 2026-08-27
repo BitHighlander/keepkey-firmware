@@ -1059,7 +1059,7 @@ static bool signing_check_input(TxInputType* txinput) {
     missing_bip341_input_amount |= !txinput->has_amount;
     uint8_t script_pubkey[64];
     size_t script_pubkey_len = 0;
-    if (!fill_input_script_pubkey(coin, root, txinput, script_pubkey,
+    if (!fill_input_script_pubkey(coin, &root, txinput, script_pubkey,
                                   &script_pubkey_len, sizeof(script_pubkey))) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Failed to derive input scriptPubKey"));
@@ -1838,7 +1838,7 @@ void signing_txack(TransactionType* tx) {
           uint8_t expected_script[64];
           size_t expected_script_len = 0;
           if (input.amount != tx->bin_outputs[0].amount ||
-              !fill_input_script_pubkey(coin, root, &input, expected_script,
+              !fill_input_script_pubkey(coin, &root, &input, expected_script,
                                         &expected_script_len,
                                         sizeof(expected_script)) ||
               expected_script_len != tx->bin_outputs[0].script_pubkey.size ||
@@ -2292,8 +2292,6 @@ bool signing_is_active(void) { return signing; }
 #if DEBUG_LINK
 static CoinType signing_test_coin;
 static curve_info signing_test_curve;
-static HDNode signing_test_root;
-
 static bool signing_test_bytes_are_zero(const void* ptr, size_t len) {
   const uint8_t* bytes = (const uint8_t*)ptr;
   uint8_t aggregate = 0;
@@ -2304,7 +2302,7 @@ static bool signing_test_bytes_are_zero(const void* ptr, size_t len) {
 void signing_test_seed_state(void) {
   coin = &signing_test_coin;
   curve = &signing_test_curve;
-  root = &signing_test_root;
+  memset(&root, 0xA5, sizeof(root));
   signing = true;
   signing_stage = STAGE_REQUEST_5_OUTPUT;
   memset(&node, 0xA5, sizeof(node));
@@ -2355,7 +2353,7 @@ bool signing_test_state_is_cleared(void) {
 #define IS_ZERO(V) signing_test_bytes_are_zero(&(V), sizeof(V))
   return IS_ZERO(node) && IS_ZERO(resp) && IS_ZERO(input) &&
          IS_ZERO(bin_output) && IS_ZERO(to) && IS_ZERO(tp) && IS_ZERO(ti) &&
-         coin == NULL && curve == NULL && root == NULL && !signing &&
+         coin == NULL && curve == NULL && IS_ZERO(root) && !signing &&
          signing_stage == 0 && IS_ZERO(hasher_prevouts) &&
          IS_ZERO(hasher_sequence) && IS_ZERO(hasher_outputs) &&
          IS_ZERO(hasher_check) && IS_ZERO(ctx_amounts) &&
