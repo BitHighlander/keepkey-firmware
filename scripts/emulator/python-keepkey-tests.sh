@@ -35,6 +35,11 @@ done
 
 cd deps/python-keepkey/tests
 
+# The tests run from this directory, while keepkeylib lives one level up.
+# Make that package root explicit so direct imports work consistently in the
+# standalone container (including tests collected before common.py is loaded).
+export PYTHONPATH="..${PYTHONPATH:+:$PYTHONPATH}"
+
 # Diagnostic: verify SCREENSHOT flag reaches Python
 echo "=== Pre-flight diagnostic ==="
 KEEPKEY_SCREENSHOT=1 python3 -c "
@@ -59,8 +64,14 @@ echo "=== End diagnostic ==="
 # expression for every test with non-empty screenshot expectations. Adding screenshots
 # to a test in SECTIONS automatically includes it here — no manual filter maintenance.
 echo "=== Phase 1: Report-driven screenshot capture ==="
-# Detect firmware version from CMakeLists if not set in env
+# Detect firmware version from CMakeLists if not set in env.
+# NOTE: grep -oE (POSIX ERE), NOT -oP — this runs in the Alpine/busybox
+# python-keepkey container where grep has no -P (PCRE). With -P grep errored
+# and the version silently fell back to 7.14.0, so every 7.15.0 section
+# (Hive, EVM clear-signing) was excluded from screenshot capture.
 if [ -z "$FW_VERSION" ]; then
+    FW_VERSION=$(sed -n '/^project/,/)/p' /kkemu/CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    [ -z "$FW_VERSION" ] && FW_VERSION="7.14.0"
     # grep -oP is a GNU extension. This container's grep is BusyBox, which has
     # no -P, so the old command ALWAYS failed and `|| echo "7.14.0"` silently
     # supplied a wrong version. Everything downstream keys off this: SECTIONS
@@ -90,6 +101,7 @@ fi
 echo "Filter: $SCREENSHOT_FILTER"
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
+KK_EXPECT_PERSIST_REJECTED=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
@@ -134,18 +146,76 @@ python3 ../scripts/generate-test-report.py \
 # Tests that skip via requires_message/requires_firmware are OK.
 # Tests that fail or are missing from JUnit = CI failure.
 echo "=== Phase 2: Full test suite ==="
+set +e
+KK_EXPECT_PERSIST_REJECTED=1 \
+KK_EXPECT_ENTROPY_BUDGET=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v $PYTEST_TIMEOUT_ARGS --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
+# Merge in the native firmware unit results before validating or rendering.
+# The test-reports volume is shared rw with the firmware-unit container, which
+# runs first, so its XMLs are already here. Validating against the Python JUnit
+# alone made every catalog entry naming a native unit test resolve to "missing",
+# which is why no native test could ever be catalogued and all 432 of them were
+# invisible to the report.
+#
+# If the native XMLs are absent this falls back to Python-only, and any native
+# catalog entry then fails as "missing" -- i.e. it still fails closed, it does
+# not quietly pass.
+echo "=== Phase 2: Merge JUnit evidence ==="
+MERGED=/kkemu/test-reports/junit-merged.xml
+python3 - <<'PY'
+import glob, os, xml.etree.ElementTree as ET
+files = sorted(glob.glob('/kkemu/test-reports/python-keepkey/junit*.xml'))
+native = sorted(glob.glob('/kkemu/test-reports/firmware-unit/*.xml'))
+root = ET.Element('testsuites')
+for f in files + native:
+    try:
+        for suite in ET.parse(f).iter('testsuite'):
+            root.append(suite)
+    except ET.ParseError:
+        print("WARN: skipping malformed %s" % f)
+ET.ElementTree(root).write('/kkemu/test-reports/junit-merged.xml',
+                           xml_declaration=True, encoding='unicode')
+print("Merged %d Python + %d native JUnit file(s)" % (len(files), len(native)))
+if not native:
+    print("WARN: no firmware-unit XMLs found; native catalog entries will "
+          "report as missing")
+PY
+[ -s "$MERGED" ] || MERGED=/kkemu/test-reports/python-keepkey/junit.xml
+
+echo "=== Phase 2: Validate report catalog ==="
+python3 ../scripts/generate-test-report.py \
+  --junit="$MERGED" \
+  ${FW_VERSION:+--fw-version=$FW_VERSION} \
+  --validate-junit
+CATALOG_RC=$?
+
 echo "=== Phase 2: Generate test report ==="
 python3 ../scripts/generate-test-report.py \
-  --junit=/kkemu/test-reports/python-keepkey/junit.xml \
-  ${FW_VERSION:+--fw-version=$FW_VERSION} || true
+  --junit="$MERGED" \
+  ${FW_VERSION:+--fw-version=$FW_VERSION} \
+  --screenshots=/kkemu/test-reports/screenshots \
+  --output=/kkemu/test-reports/test-report.pdf
+REPORT_RC=$?
+set -e
 
-echo "$PYTEST_RC" > /kkemu/test-reports/python-keepkey/status
+if [ "$PYTEST_RC" -eq 0 ] && [ "$CATALOG_RC" -eq 0 ] && [ "$REPORT_RC" -eq 0 ]; then
+    echo "0" > /kkemu/test-reports/python-keepkey/status
+else
+    echo "1" > /kkemu/test-reports/python-keepkey/status
+fi
 if [ "$PYTEST_RC" -ne 0 ]; then
     echo "pytest failed with exit code $PYTEST_RC"
     exit "$PYTEST_RC"
+fi
+if [ "$CATALOG_RC" -ne 0 ]; then
+    echo "report catalog validation failed with exit code $CATALOG_RC"
+    exit "$CATALOG_RC"
+fi
+if [ "$REPORT_RC" -ne 0 ]; then
+    echo "test report generation failed with exit code $REPORT_RC"
+    exit "$REPORT_RC"
 fi
