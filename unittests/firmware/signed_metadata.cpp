@@ -1,8 +1,8 @@
 /*
  * Unit tests for the EVM clear-signing ("Insight") signed-metadata module.
  *
- * Phase 1 ships with NO built-in verification keys: every signer is loaded
- * at runtime (signed_metadata_store_signer,
+ * The runtime-signer fixture loads a development key through
+ * signed_metadata_store_signer,
  * reached in production through the user-confirmed LoadClearsignSigner FSM
  * handler). The fixture loads the CI test key (02e3b3015c...ab5107) into
  * slot 3 with alias "CI Test"; all vectors are signed in-process with the
@@ -357,6 +357,28 @@ TEST_F(SignedMetadataTest, SignatureVerificationFails) {
   std::vector<uint8_t> blob = base_blob();
   blob[146] ^= 0x01;  // flip first signature byte (sig starts after 146B body)
   ExpectMalformed(blob, TEST_KEY_ID);
+}
+
+TEST(SignedMetadataEnvelope, OnlyReservedCompleteV3ShapeBypassesPolicyGate) {
+  std::vector<uint8_t> candidate(141, 0);
+  candidate[0] = METADATA_VERSION_CERTIFIED;
+
+  EXPECT_TRUE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), TEST_KEY_ID));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(candidate.data(),
+                                                     candidate.size(), 0x180));
+
+  candidate[0] = METADATA_VERSION_SCHEMA;
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  candidate[0] = METADATA_VERSION_CERTIFIED;
+  candidate.resize(140);
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(nullptr, 141,
+                                                     METADATA_KEYID_DELEGATE));
 }
 
 /* ===================================================================== *

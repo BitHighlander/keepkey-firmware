@@ -96,6 +96,8 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 ///                                        storage_reset()/storage_init() for a
 ///                                        fresh or wiped record
 ///   - the U2F key-handle derivation path generateKeyHandle()
+///   - the CTAP credential-reset generation storage_resetPasskeyData()
+///   - CTAP ClientPIN ECDH keys, PIN salts, and PIN tokens
 ///   - the one-shot OTP randomness block  flash_collectHWEntropy()
 ///   - the RedPallas spend-auth T          fsm_msg_zcash.h, the is_spend path
 ///   - PIN/recovery secret permutations   pin_sm.c, recovery_cipher.c

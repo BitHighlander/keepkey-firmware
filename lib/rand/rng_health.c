@@ -275,6 +275,12 @@ static enum { RNG_UNTESTED = 0, RNG_PASSED, RNG_FAILED } rng_verdict;
 static RngHealthCtx rng_continuous;
 
 bool rng_health_check(void) {
+  /* A hardware continuous-test fault is terminal for this boot. Check the
+   * one-way mirror even after the initial statistical verdict was cached. */
+  if (rng_seed_error_latched()) {
+    rng_verdict = RNG_FAILED;
+    return false;
+  }
   if (rng_verdict == RNG_UNTESTED) {
     if (rng_health_gate()) {
       rng_verdict = RNG_PASSED;

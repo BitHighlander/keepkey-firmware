@@ -48,4 +48,10 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
 bool ctap2_request_user_presence(const char* rp_id, bool registration);
 bool ctap2_user_presence_was_cancelled(void);
 
+#ifdef EMULATOR
+/// Test-only visibility into the confidential ClientPIN ECDH lifecycle.
+bool ctap2_key_agreement_is_clear(void);
+bool ctap2_key_agreement_private_is_valid(const uint8_t private_key[32]);
+#endif
+
 #endif

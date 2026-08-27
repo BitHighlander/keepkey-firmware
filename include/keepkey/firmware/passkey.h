@@ -10,6 +10,8 @@
 #define PASSKEY_USER_NAME_MAX 48
 #define PASSKEY_MAX_DISCOVERABLE_CREDENTIALS 4
 #define PASSKEY_PIN_RETRIES 8
+#define PASSKEY_STORAGE_VERSION 2
+#define PASSKEY_CREDENTIAL_GENERATION_SIZE 32
 
 typedef struct __attribute__((packed)) {
   uint8_t occupied;
@@ -29,6 +31,10 @@ typedef struct __attribute__((packed)) {
   uint8_t pin_salt[16];
   uint8_t pin_hash[16];
   PasskeyCredential credentials[PASSKEY_MAX_DISCOVERABLE_CREDENTIALS];
+  /* HMAC domain for stateless U2F/CTAP credential IDs. Reset rotates this
+   * value, invalidating every handle without retaining an enumerated copy. */
+  uint8_t credential_generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  uint8_t legacy_credentials_enabled;
 } PasskeyStorage;
 
 #endif

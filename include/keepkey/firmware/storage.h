@@ -211,6 +211,17 @@ void storage_wipeAuthData(void);
 void storage_getPasskeyData(PasskeyStorage* data);
 void storage_setPasskeyData(const PasskeyStorage* data);
 
+/// Return the active stateless-credential generation, creating and persisting
+/// one through the checked RNG path on first use. Version-1 U2F handles remain
+/// accepted until the first explicit authenticator reset.
+bool storage_getPasskeyCredentialGeneration(
+    uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
+    bool* legacy_credentials_enabled);
+
+/// Atomically clear CTAP state and rotate the stateless-credential generation.
+/// Returns false without changing storage if checked entropy is unavailable.
+bool storage_resetPasskeyData(void);
+
 #ifdef DEBUG_LINK
 typedef struct _HDNodeType HDNodeType;
 typedef struct _StorageHDNode StorageHDNode;

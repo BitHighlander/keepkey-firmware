@@ -27,6 +27,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/// Shared input/output/compiler invariant for Bitcoin multisig scripts.
+bool transaction_multisig_quorum_is_valid(
+    const MultisigRedeemScriptType* multisig);
+
 #define TX_OVERWINTERED 0x80000000
 
 /* Transaction output compilation errors */
@@ -66,6 +70,8 @@ uint32_t compile_script_sig(uint32_t address_type, const uint8_t* pubkeyhash,
 uint32_t compile_script_multisig(const CoinType* coin,
                                  const MultisigRedeemScriptType* multisig,
                                  uint8_t* out);
+/// Shared wire-boundary invariant for every Bitcoin multisig script.
+bool multisig_quorum_is_valid(const MultisigRedeemScriptType* multisig);
 uint32_t compile_script_multisig_hash(const CoinType* coin,
                                       const MultisigRedeemScriptType* multisig,
                                       uint8_t* hash);

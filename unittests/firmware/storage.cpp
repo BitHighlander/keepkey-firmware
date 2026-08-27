@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/aes/aes.h"
 #include "types.pb.h"
@@ -1011,13 +1012,16 @@ TEST(Storage, PasskeyMetadataV20RoundTrip) {
   memcpy(start.meta.magic, "stor", 4);
   start.storage.version = STORAGE_VERSION;
   start.storage.encrypted_sec_version = STORAGE_VERSION;
-  start.storage.pub.passkeys.version = 1;
+  start.storage.pub.passkeys.version = PASSKEY_STORAGE_VERSION;
   start.storage.pub.passkeys.pin_set = 1;
   start.storage.pub.passkeys.pin_retries = 6;
   memset(start.storage.pub.passkeys.pin_salt, 0x24,
          sizeof(start.storage.pub.passkeys.pin_salt));
   memset(start.storage.pub.passkeys.pin_hash, 0x42,
          sizeof(start.storage.pub.passkeys.pin_hash));
+  memset(start.storage.pub.passkeys.credential_generation, 0x66,
+         sizeof(start.storage.pub.passkeys.credential_generation));
+  start.storage.pub.passkeys.legacy_credentials_enabled = 1;
   PasskeyCredential *credential = &start.storage.pub.passkeys.credentials[0];
   credential->occupied = 1;
   credential->user_id_length = 4;
@@ -1039,6 +1043,40 @@ TEST(Storage, PasskeyMetadataV20RoundTrip) {
   EXPECT_EQ(0,
             memcmp(&restored.storage.pub.passkeys, &start.storage.pub.passkeys,
                    sizeof(start.storage.pub.passkeys)));
+}
+
+TEST(Storage, PasskeyResetRotatesGenerationAndClearsAllMetadata) {
+  rng_health_force_verdict(true);
+  PasskeyStorage original;
+  storage_getPasskeyData(&original);
+
+  PasskeyStorage populated;
+  memzero(&populated, sizeof(populated));
+  populated.version = 1;
+  populated.pin_set = 1;
+  populated.pin_retries = 3;
+  populated.credentials[0].occupied = 1;
+  populated.credentials[0].user_id_length = 1;
+  populated.credentials[0].user_id[0] = 0x42;
+  storage_setPasskeyData(&populated);
+
+  uint8_t before[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  bool legacy_enabled = false;
+  ASSERT_TRUE(
+      storage_getPasskeyCredentialGeneration(before, &legacy_enabled));
+  EXPECT_TRUE(legacy_enabled);
+
+  ASSERT_TRUE(storage_resetPasskeyData());
+  PasskeyStorage reset;
+  storage_getPasskeyData(&reset);
+  EXPECT_EQ(reset.version, PASSKEY_STORAGE_VERSION);
+  EXPECT_EQ(reset.pin_set, 0);
+  EXPECT_EQ(reset.pin_retries, PASSKEY_PIN_RETRIES);
+  EXPECT_EQ(reset.credentials[0].occupied, 0);
+  EXPECT_EQ(reset.legacy_credentials_enabled, 0);
+  EXPECT_NE(memcmp(before, reset.credential_generation, sizeof(before)), 0);
+
+  storage_setPasskeyData(&original);
 }
 
 TEST(Storage, NoopSecMigrate) {
