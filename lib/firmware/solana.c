@@ -937,6 +937,36 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   return true;
 }
 
+bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
+                                 bool* has_fee) {
+  if (!tx || !fee_out || !has_fee) return false;
+
+  uint64_t price = 0;
+  uint64_t limit = 1400000u;
+  bool seen_price = false;
+  bool seen_limit = false;
+  *fee_out = 0;
+  *has_fee = false;
+
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    const SolanaParsedInstruction* instruction = &tx->instructions[i];
+    if (instruction->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE) {
+      if (seen_price) return false;
+      seen_price = true;
+      price = instruction->extra_value;
+    } else if (instruction->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT) {
+      if (seen_limit) return false;
+      seen_limit = true;
+      limit = instruction->extra_value;
+    }
+  }
+
+  if (!seen_price || price == 0) return true;
+  if (!solana_priority_fee_lamports(price, limit, fee_out)) return false;
+  *has_fee = true;
+  return true;
+}
+
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports) {
   uint64_t whole = lamports / SOL_LAMPORTS_DIVISOR;
   uint64_t frac = lamports % SOL_LAMPORTS_DIVISOR;

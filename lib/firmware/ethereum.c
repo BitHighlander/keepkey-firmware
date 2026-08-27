@@ -84,6 +84,11 @@ static uint32_t
     ethereum_tx_type;  // Ethereum tx type (0=Legacy, 1=EIP-2930, 2=EIP-1559)
 struct SHA3_CTX keccak_ctx;
 
+bool ethereum_chainIdIsValid(const EthereumSignTx* msg) {
+  return msg && msg->has_chain_id && msg->chain_id >= 1 &&
+         msg->chain_id <= MAX_CHAIN_ID;
+}
+
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
       msg->data_initial_chunk.size == 68 &&
@@ -136,6 +141,31 @@ void bn_from_bytes(const uint8_t* value, size_t value_len, bignum256* val) {
   memcpy(pad_val + (32 - value_len), value, value_len);
   bn_read_be(pad_val, val);
   memzero(pad_val, sizeof(pad_val));
+}
+
+bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
+                                  int buflen) {
+  if (!msg || !buf || buflen <= 0 || !ethereum_chainIdIsValid(msg)) {
+    return false;
+  }
+
+  const uint8_t* value_bytes;
+  size_t value_size;
+  const TokenType* token;
+
+  if (ethereum_isStandardERC20Transfer(msg)) {
+    value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
+    value_size = 32;
+    token = tokenByChainAddress(msg->chain_id, msg->to.bytes);
+  } else {
+    value_bytes = msg->value.bytes;
+    value_size = msg->value.size;
+    token = NULL;
+  }
+
+  bignum256 value;
+  bn_from_bytes(value_bytes, value_size, &value);
+  return ethereumFormatAmount(&value, token, msg->chain_id, buf, buflen);
 }
 
 static inline void hash_data(const uint8_t* buf, size_t size) {
@@ -390,7 +420,7 @@ static void finalize_eip1559_and_send_signature(void) {
  * using standard ethereum units.
  * The buffer must be at least 25 bytes.
  */
-void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
+bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
                           uint32_t cid, char* buf, int buflen) {
   bignum256 bn1e9;
   bn_read_uint32(1000000000, &bn1e9);
@@ -398,7 +428,7 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
   int decimals = 18;
   if (token == UnknownToken) {
     strlcpy(buf, "Unknown token value", buflen);
-    return;
+    return true;
   } else if (token != NULL) {
     suffix = token->ticker;
     decimals = token->decimals;
@@ -468,10 +498,12 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
    * so the screen is refusable rather than silently empty. */
   if (bn_format(amnt, NULL, suffix, decimals, 0, false, buf, buflen) == 0) {
     strlcpy(buf, _("AMOUNT TOO LARGE TO DISPLAY"), buflen);
+    return false;
   }
+  return true;
 }
 
-static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
+static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
                                     size_t out_str_len, bool approve) {
@@ -490,10 +522,12 @@ static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
     if (bn_is_zero(&val)) {
       strcpy(amount, _("message"));
     } else {
-      ethereumFormatAmount(&val, NULL, chain_id, amount, sizeof(amount));
+      if (!ethereumFormatAmount(&val, NULL, chain_id, amount, sizeof(amount)))
+        return false;
     }
   } else {
-    ethereumFormatAmount(&val, token, chain_id, amount, sizeof(amount));
+    if (!ethereumFormatAmount(&val, token, chain_id, amount, sizeof(amount)))
+      return false;
   }
 
   char addr[43] = "0x";
@@ -532,7 +566,9 @@ static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   if (out_str_len <= (size_t)cx) {
     /*error detected. Clear the buffer */
     memset(out_str, 0, out_str_len);
+    return false;
   }
+  return true;
 }
 
 static void layoutEthereumData(const uint8_t* data, uint32_t len,
@@ -594,7 +630,7 @@ static void formatEthereumFeeEIP1559(bignum256* fee,
   bn_add(fee, &max_fee);
 }
 
-static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
+static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
                               char* out_str, size_t out_str_len) {
   bignum256 val, gas;
   char gas_value[32];
@@ -616,7 +652,8 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
          msg->gas_limit.size);
   bn_read_be(pad_val, &gas);
   bn_multiply(&val, &gas, &secp256k1.prime);
-  ethereumFormatAmount(&gas, NULL, chain_id, gas_value, sizeof(gas_value));
+  if (!ethereumFormatAmount(&gas, NULL, chain_id, gas_value, sizeof(gas_value)))
+    return false;
 
   memset(pad_val, 0, sizeof(pad_val));
   memcpy(pad_val + (32 - msg->value.size), msg->value.bytes, msg->value.size);
@@ -625,7 +662,8 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
   if (bn_is_zero(&val)) {
     strcpy(tx_value, is_token ? _("the tokens") : _("the message"));
   } else {
-    ethereumFormatAmount(&val, NULL, chain_id, tx_value, sizeof(tx_value));
+    if (!ethereumFormatAmount(&val, NULL, chain_id, tx_value, sizeof(tx_value)))
+      return false;
   }
 
   if ((uint32_t)snprintf(
@@ -634,7 +672,9 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
           gas_value) >= out_str_len) {
     /*error detected.  Clear the buffer */
     memset(out_str, 0, out_str_len);
+    return false;
   }
+  return true;
 }
 
 /*
@@ -883,14 +923,26 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   if (needs_confirm) {
     if (token != NULL) {
-      layoutEthereumConfirmTx(
-          msg->data_initial_chunk.bytes + 16, 20,
-          msg->data_initial_chunk.bytes + 36, 32, token, confirm_body_message,
-          sizeof(confirm_body_message), /*approve=*/is_approve);
+      if (!layoutEthereumConfirmTx(
+              msg->data_initial_chunk.bytes + 16, 20,
+              msg->data_initial_chunk.bytes + 36, 32, token,
+              confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/is_approve)) {
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Ethereum amount too large"));
+        ethereum_signing_abort();
+        return;
+      }
     } else {
-      layoutEthereumConfirmTx(msg->to.bytes, msg->to.size, msg->value.bytes,
-                              msg->value.size, NULL, confirm_body_message,
-                              sizeof(confirm_body_message), /*approve=*/false);
+      if (!layoutEthereumConfirmTx(
+              msg->to.bytes, msg->to.size, msg->value.bytes, msg->value.size,
+              NULL, confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/false)) {
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Ethereum amount too large"));
+        ethereum_signing_abort();
+        return;
+      }
     }
     bool is_transfer = msg->address_type == OutputAddressType_TRANSFER;
     const char* title;
@@ -955,8 +1007,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
-  layoutEthereumFee(msg, token != NULL, confirm_body_message,
-                    sizeof(confirm_body_message));
+  if (!layoutEthereumFee(msg, token != NULL, confirm_body_message,
+                         sizeof(confirm_body_message))) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Ethereum fee too large"));
+    ethereum_signing_abort();
+    return;
+  }
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction", "%s",
                confirm_body_message)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,

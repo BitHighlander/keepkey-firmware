@@ -300,6 +300,10 @@ void solana_formatAmount(char* buf, size_t len, uint64_t lamports);
 void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
                               const char* symbol, uint8_t decimals);
 
+/* Extract and safely calculate the transaction's compute-budget priority fee. */
+bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
+                                 bool* has_fee);
+
 /* Look up a firmware-owned token identity by its signed mint account. */
 const SolanaKnownToken* solana_findKnownToken(
     const uint8_t mint[SOL_PUBKEY_SIZE]);

@@ -65,6 +65,26 @@ bool tendermint_getAddress(const HDNode* node, const char* prefix,
                        BECH32_ENCODING_BECH32) == 1;
 }
 
+bool tendermint_validateSafeText(const char* value) {
+  if (!value || value[0] == '\0') return false;
+
+  for (const unsigned char* p = (const unsigned char*)value; *p; ++p) {
+    if (*p < 0x21 || *p > 0x7e || *p == '"' || *p == '\\') return false;
+  }
+  return true;
+}
+
+bool tendermint_validateBech32Address(const char* address,
+                                      const char* expected_prefix) {
+  if (!address || !expected_prefix || expected_prefix[0] == '\0') return false;
+
+  char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
+  uint8_t decoded[BECH32_DECODED_MAX + 1] = {0};
+  size_t decoded_len = 0;
+  return bech32_decode(hrp, decoded, &decoded_len, address) == 1 &&
+         strcmp(hrp, expected_prefix) == 0;
+}
+
 // Allow lowercase alpha, digits, and the punctuation used in Cosmos-style
 // asset identifiers (e.g. "eth.eth", "btc/btc", cross-chain synthetic
 // prefixes). Rejects anything that needs JSON escaping (backslash, quote).
@@ -98,7 +118,7 @@ bool tendermint_isValidAsset(const char* asset) {
 // expected HRP before it is displayed or signed.
 bool tendermint_isValidSigner(const char* signer, const char* hrp) {
   size_t decoded_len;
-  char decoded_hrp[45];
+  char decoded_hrp[BECH32_MAX_HRP_LEN + 1];
   uint8_t decoded[BECH32_DECODED_MAX];
   if (!signer || !bech32_decode(decoded_hrp, decoded, &decoded_len, signer)) {
     return false;

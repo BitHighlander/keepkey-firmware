@@ -1417,7 +1417,8 @@ static bool signing_sign_hash(TxInputType* txinput, const uint8_t* private_key,
     txinput->multisig.signatures[pubkey_idx].size =
         resp.serialized.signature.size;
     txinput->script_sig.size = serialize_script_multisig(
-        coin, &(txinput->multisig), sighash, txinput->script_sig.bytes);
+        coin, &(txinput->multisig), sighash, txinput->script_sig.bytes,
+        sizeof(txinput->script_sig.bytes));
     if (txinput->script_sig.size == 0) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Failed to serialize multisig script"));

@@ -106,6 +106,14 @@ bool confirm_body_fits(const char* body, uint16_t body_width);
 /// glyph -- including whole later lines.
 bool confirm_body_fits_constant_power(const char* body, uint16_t body_width);
 
+/// Split a constant-power body at the last complete row that fits.
+size_t confirm_constant_power_subpage_take(const char* body);
+
+/// Page a constant-power body locally under exactly one ButtonRequest.
+bool confirm_constant_power_paged(ButtonRequestType type,
+                                  const char* request_title,
+                                  const char* request_body);
+
 /// User confirmation.
 /// \param type            The kind of button request to send to the host.
 /// \param request_title   Title of confirm message.

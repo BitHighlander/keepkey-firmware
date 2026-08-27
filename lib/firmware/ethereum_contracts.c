@@ -21,10 +21,12 @@
 #include "keepkey/firmware/ethereum_contracts.h"
 
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/ethereum_contracts/saproxy.h"
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
+#include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/ethereum_contracts/zxswap.h"
 
 bool zx_isExchangeProxyChain(uint32_t chain_id) {
@@ -86,6 +88,10 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
    * guarantees the minimum, so establish it once here. */
   if (msg->data_initial_chunk.size < 4) return false;
 
+  /* transformERC20 is bounded by the two resolved token amounts shown by its
+   * decoder; unresolved assets fall through to raw calldata review. */
+  if (zx_isZxTransformERC20(msg)) return true;
+
   if (sa_isWithdrawFromSalary(msg)) return true;
   if (zx_isZxSwap(msg)) return true;
   if (zx_isZxLiquidTx(msg)) return true;
@@ -93,6 +99,8 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
 
   if (thor_isMayachainTx(msg)) return true;
   if (thor_isThorchainTx(msg)) return true;
+
+  if (makerdao_isMakerDAO(data_total, msg)) return true;
 
   return false;
 }
@@ -105,18 +113,24 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
    * disagree about which of them are safe to evaluate. */
   if (msg->data_initial_chunk.size < 4) return false;
 
+  if (zx_isZxTransformERC20(msg))
+    return zx_confirmZxTransERC20(data_total, msg);
+
   if (sa_isWithdrawFromSalary(msg))
     return sa_confirmWithdrawFromSalary(data_total, msg);
 
   if (zx_isZxSwap(msg)) return zx_confirmZxSwap(data_total, msg);
 
-  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg, node);
+  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg);
 
   if (zx_isZxApproveLiquid(msg))
     return zx_confirmApproveLiquidity(data_total, msg);
 
   if (thor_isMayachainTx(msg)) return thor_confirmMayaTx(data_total, msg);
   if (thor_isThorchainTx(msg)) return thor_confirmThorTx(data_total, msg);
+
+  if (makerdao_isMakerDAO(data_total, msg))
+    return makerdao_confirmMakerDAO(data_total, msg);
 
   return false;
 }

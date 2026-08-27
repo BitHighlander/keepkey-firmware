@@ -53,6 +53,19 @@ bool mayachain_isValidSigner(const char* signer) {
 
 const MayachainSignTx* mayachain_getMayachainSignTx(void) { return &msg; }
 
+bool mayachain_formatAmount(uint64_t amount, const char* denom, char* out,
+                            size_t out_len) {
+  if (!tendermint_validateSafeText(denom) || !out || out_len == 0) return false;
+
+  char suffix[MAYACHAIN_DENOM_SUFFIX_LEN + 2];
+  const int suffix_len = snprintf(suffix, sizeof(suffix), " %s", denom);
+  if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return false;
+
+  const int decimals = strcmp(denom, "cacao") == 0 ? 10 : 0;
+  return bn_format_uint64(amount, NULL, suffix, decimals, 0, false, out,
+                          out_len) != 0;
+}
+
 bool mayachain_signTxInit(const HDNode* _node, const MayachainSignTx* _msg) {
   initialized = true;
   msgs_remaining = _msg->msg_count;
@@ -233,7 +246,8 @@ void mayachain_signAbort(void) {
   memzero(&node, sizeof(node));
 }
 
-bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
+MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
+                                               size_t size) {
   /*
     Input: swapStr is candidate mayachain data
            size is the size of swapStr (<= 256)
@@ -263,7 +277,7 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
 
   // check if memo data is recognized
 
-  if (size > MEMO_MAX) return false;
+  if (size > MEMO_MAX) return MAYACHAIN_MEMO_UNPARSED;
   memzero(memoBuf, sizeof(memoBuf));
   /* size is a byte count, not necessarily including a NUL: the BTC
    * OP_RETURN caller passes raw memo bytes with no terminator. strlcpy
@@ -281,7 +295,7 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
      is a non-canonical encoding, so refuse it and let the caller disclose the
      raw bytes. Mirrors thorchain.c. */
   for (i = 0; i < size; i++) {
-    if (memoBuf[i] == '\0') return false;
+    if (memoBuf[i] == '\0') return MAYACHAIN_MEMO_UNPARSED;
   }
 
   // Split on ':', keeping empty fields
@@ -297,7 +311,7 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
   if (nfields < 2) {
     // Must have at least transaction and chain.asset. If not, just confirm
     // data
-    return false;
+    return MAYACHAIN_MEMO_UNPARSED;
   }
 
   // Split chain.asset at the first '.'
@@ -305,7 +319,7 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
   asset = strchr(chain, '.');
   if (asset == NULL) {
     // No chain.asset pair; not recognizable mayachain data, just confirm data
-    return false;
+    return MAYACHAIN_MEMO_UNPARSED;
   }
   *asset = '\0';
   asset++;
@@ -327,25 +341,25 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain swap", "Confirm swap asset %s\n on chain %s", asset,
                  chain)) {
-      return false;
+      return MAYACHAIN_MEMO_CANCELLED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain swap", "Confirm to %s", dest)) {
-      return false;
+      return MAYACHAIN_MEMO_CANCELLED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain swap", "Confirm limit %s", limit)) {
-      return false;
+      return MAYACHAIN_MEMO_CANCELLED;
     }
     // Never hide the affiliate fee skim from the user
     if (affiliate != NULL) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Mayachain swap", "Affiliate fee %s bps to %s", fee_bps,
                    affiliate)) {
-        return false;
+        return MAYACHAIN_MEMO_CANCELLED;
       }
     }
-    return true;
+    return MAYACHAIN_MEMO_CONFIRMED;
   }
 
   // Check for add liquidity
@@ -357,40 +371,40 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain add liquidity",
                  "Confirm add asset %s\n on chain %s pool", asset, chain)) {
-      return false;
+      return MAYACHAIN_MEMO_CANCELLED;
     }
     if (pool != NULL) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Mayachain add liquidity", "Confirm to %s", pool)) {
-        return false;
+        return MAYACHAIN_MEMO_CANCELLED;
       }
     }
-    return true;
+    return MAYACHAIN_MEMO_CONFIRMED;
   }
 
   // Check for withdraw liquidity
   else if (strncmp(fields[0], "WITHDRAW", 8) == 0 ||
            strncmp(fields[0], "wd", 2) == 0 || *fields[0] == '-') {
     if (nfields < 3 || fields[2][0] == '\0') {
-      return false;  // malformed memo
+      return MAYACHAIN_MEMO_UNPARSED;  // malformed memo
     }
     /* WD:POOL:BPS[:ASSET] — refuse only genuinely-unknown structure (>4
      * fields), mirroring thorchain.c. */
     if (nfields > 4) {
-      return false;
+      return MAYACHAIN_MEMO_UNPARSED;
     }
 
     /* BPS rendered with integer math: snprintf is the integer-only sniprintf
      * on the device, so no float formats. Negative BPS is a malformed memo. */
     int bps = atoi(fields[2]);
     if (bps < 0) {
-      return false;
+      return MAYACHAIN_MEMO_UNPARSED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain withdraw liquidity",
                  "Confirm withdraw %d.%02d%% of asset %s on chain %s",
                  bps / 100, bps % 100, asset, chain)) {
-      return false;
+      return MAYACHAIN_MEMO_CANCELLED;
     }
     /* Field 4 selects an ASYMMETRIC (single-sided) withdrawal payout asset —
      * it directs money and must never sign unseen (see thorchain.c). */
@@ -398,13 +412,13 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Mayachain withdraw liquidity",
                    "Withdraw single-sided as %s", fields[3])) {
-        return false;
+        return MAYACHAIN_MEMO_CANCELLED;
       }
     }
-    return true;
+    return MAYACHAIN_MEMO_CONFIRMED;
 
   } else {
     // Just confirm whatever coin data if no mayachain intention data parsable
-    return false;
+    return MAYACHAIN_MEMO_UNPARSED;
   }
 }

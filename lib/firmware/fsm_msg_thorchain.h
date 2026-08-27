@@ -204,11 +204,14 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   } else if (msg->has_deposit) {
     char amount_str[32];
-    char asset_str[21];
-    asset_str[0] = ' ';
-    strlcpy(&(asset_str[1]), msg->deposit.asset, sizeof(asset_str) - 1);
-    bn_format_uint64(msg->deposit.amount, NULL, asset_str, 8, 0, false,
-                     amount_str, sizeof(amount_str));
+    if (!thorchain_formatAmount(msg->deposit.amount, msg->deposit.asset,
+                                amount_str, sizeof(amount_str))) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid or undisplayable deposit amount");
+      layoutHome();
+      return;
+    }
     if (!confirm_transaction_output(
             ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
             msg->deposit.signer)) {

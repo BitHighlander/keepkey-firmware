@@ -54,6 +54,17 @@ bool thorchain_isValidSigner(const char* signer) {
 
 const ThorchainSignTx* thorchain_getThorchainSignTx(void) { return &msg; }
 
+bool thorchain_formatAmount(uint64_t amount, const char* asset, char* out,
+                            size_t out_len) {
+  if (!tendermint_validateSafeText(asset) || !out || out_len == 0) return false;
+
+  char suffix[THORCHAIN_ASSET_SUFFIX_LEN + 2];
+  const int suffix_len = snprintf(suffix, sizeof(suffix), " %s", asset);
+  if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return false;
+
+  return bn_format_uint64(amount, NULL, suffix, 8, 0, false, out, out_len) != 0;
+}
+
 bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
   initialized = true;
   msgs_remaining = _msg->msg_count;

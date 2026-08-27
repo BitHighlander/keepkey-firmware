@@ -229,12 +229,15 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     // Long-form assets (e.g.
     // ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7) are ~50 chars;
     // amount_str must fit amount + asset suffix or bn_format zeroes it out.
-    char amount_str[96];
-    char asset_str[64];
-    asset_str[0] = ' ';
-    strlcpy(&(asset_str[1]), msg->deposit.asset, sizeof(asset_str) - 1);
-    bn_format_uint64(msg->deposit.amount, NULL, asset_str, 10, 0, false,
-                     amount_str, sizeof(amount_str));
+    char amount_str[21 + MAYACHAIN_DENOM_SUFFIX_LEN + 1];
+    if (!mayachain_formatAmount(msg->deposit.amount, msg->deposit.asset,
+                                amount_str, sizeof(amount_str))) {
+      mayachain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid MAYAChain deposit amount");
+      layoutHome();
+      return;
+    }
     if (!confirm_transaction_output(
             ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
             msg->deposit.signer)) {
@@ -249,18 +252,15 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
          of the memo in it. Mirrors the THORChain path. */
       size_t memo_len = strnlen(msg->deposit.memo, sizeof(msg->deposit.memo));
       /* Page the COMPLETE raw memo as the sole, authoritative disclosure.
-         No structured pre-parse: mayachain_parseConfirmMemo() returns a bare
-         bool that conflates "not recognizable" with "the user refused a
-         screen", so a refusal at the affiliate-fee screen would fall through
-         to a second ask and then to signing.
+         No structured pre-parse: this path deliberately makes the complete
+         raw memo the authoritative disclosure, including fields beyond the
+         structured parser's current vocabulary.
          thorchain_confirm_full_memo() is confirm_bytes() over an explicit
          length (lib/firmware/thorchain.c), so an embedded NUL cannot hide the
          memo tail and every non-printable byte is escaped -- and that now
          holds for EVERY memo, not only unparsed ones. It also discloses the
          fields the structured parser never displays (aggregator, final token,
-         min-out). Layering the labeled structured screens back on top of this
-         page needs mayachain_parseConfirmMemo() to grow the tri-state result
-         THORChain already has. */
+         min-out). */
       if (!thorchain_confirm_full_memo(_("Memo"), msg->deposit.memo,
                                        memo_len)) {
         mayachain_signAbort();

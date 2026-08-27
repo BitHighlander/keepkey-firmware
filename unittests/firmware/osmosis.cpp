@@ -146,6 +146,7 @@ TEST(Osmosis, MsgSendSignsCanonicalNonNativeDenomination) {
   msg.gas = 290000;
   msg.has_memo = true;
   msg.sequence = 0;
+  msg.has_msg_count = true;
   msg.msg_count = 1;
   ASSERT_TRUE(osmosis_signTxInit(&node, &msg));
 

@@ -42,6 +42,12 @@
 /* Button request ack */
 static bool button_request_acked = false;
 
+#if DEBUG_LINK
+/* DebugLink supplies one decision per ButtonRequest. A multi-screen physical
+ * confirmation under one request must carry that decision across subpages. */
+static bool last_exit_was_debug_decision = false;
+#endif
+
 extern bool reset_msg_stack;
 
 static CONFIDENTIAL char strbuf[BODY_CHAR_MAX];
@@ -179,6 +185,9 @@ static bool confirm_screen(const char* request_title_param,
                            bool constant_power, IconType iconNum,
                            bool immediate) {
   bool ret_stat = false;
+#if DEBUG_LINK
+  last_exit_was_debug_decision = false;
+#endif
   volatile StateInfo state_info;
   ActiveLayout new_layout, cur_layout;
   DisplayState new_ds;
@@ -286,6 +295,7 @@ static bool confirm_screen(const char* request_title_param,
 #if DEBUG_LINK
 
     if (debug_decided && button_request_acked) {
+      last_exit_was_debug_decision = true;
       break; /* confirmation done via debug link.  Exiting function */
     }
 
@@ -644,6 +654,77 @@ bool confirm(ButtonRequestType type, const char* request_title,
                      false, NO_ICON, false);
   memzero(strbuf, sizeof(strbuf));
   return ret;
+}
+
+size_t confirm_constant_power_subpage_take(const char* body) {
+  const size_t len = strlen(body);
+  if (len == 0) return 0;
+
+  size_t best = 0;
+  for (size_t i = 0; i < len; i++) {
+    if (body[i] != '\n' && i + 1 != len) continue;
+    const size_t take = i + 1;
+    char probe[BODY_CHAR_MAX];
+    if (take >= sizeof(probe)) break;
+    memcpy(probe, body, take);
+    probe[take] = '\0';
+    if (confirm_body_fits_constant_power(probe, CONSTANT_POWER_BODY_WIDTH)) {
+      best = take;
+    } else {
+      break;
+    }
+  }
+  return best;
+}
+
+bool confirm_constant_power_paged(ButtonRequestType type,
+                                  const char* request_title,
+                                  const char* request_body) {
+  button_request_acked = false;
+
+  ButtonRequest resp;
+  memset(&resp, 0, sizeof(resp));
+  resp.has_code = true;
+  resp.code = type;
+  msg_write(MessageType_MessageType_ButtonRequest, &resp);
+
+  static CONFIDENTIAL char sub[BODY_CHAR_MAX];
+  const char* p = request_body ? request_body : "";
+  bool ok = true;
+#if DEBUG_LINK
+  bool decided_via_debug = false;
+#endif
+
+  while (*p && ok) {
+    const size_t take = confirm_constant_power_subpage_take(p);
+    if (take == 0 || take >= sizeof(sub)) {
+      ok = false;
+      break;
+    }
+    memcpy(sub, p, take);
+    sub[take] = '\0';
+    p += take;
+    const bool last = (*p == '\0');
+
+#if DEBUG_LINK
+    if (decided_via_debug) {
+      memset(&resp, 0, sizeof(resp));
+      resp.has_code = true;
+      resp.code = type;
+      msg_write(MessageType_MessageType_ButtonRequest, &resp);
+      decided_via_debug = false;
+    }
+#endif
+
+    ok = confirm_screen(request_title, sub, &layout_constant_power_notification,
+                        true, NO_ICON, /*immediate=*/!last);
+#if DEBUG_LINK
+    if (ok && last_exit_was_debug_decision) decided_via_debug = true;
+#endif
+  }
+
+  memzero(sub, sizeof(sub));
+  return ok;
 }
 
 bool confirm_constant_power(ButtonRequestType type, const char* request_title,

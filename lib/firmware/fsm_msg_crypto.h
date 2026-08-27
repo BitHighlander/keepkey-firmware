@@ -69,13 +69,15 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
       msg->identity.has_proto && strcmp(msg->identity.proto, "ssh") == 0;
   const bool sign_gpg =
       msg->identity.has_proto && strcmp(msg->identity.proto, "gpg") == 0;
+  const char* curve =
+      msg->has_ecdsa_curve_name ? msg->ecdsa_curve_name : SECP256K1_NAME;
 
   /* SSH/GPG sign only challenge_hidden. The legacy confirmation displayed
    * challenge_visual instead, allowing a host to show benign text while the
    * device signed unrelated bytes. Generic identity signatures bind both
    * challenges, so review both there; SSH/GPG review only the actual signed
    * payload and never present the unsigned visual field as authoritative. */
-  if (!confirm_sign_identity(&msg->identity, NULL) ||
+  if (!confirm_sign_identity(&msg->identity, NULL, curve) ||
       ((!sign_ssh && !sign_gpg) &&
        !confirm_bytes(
            ButtonRequestType_ButtonRequest_SignIdentity, "Visual Challenge",
@@ -114,10 +116,6 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
   address_n[4] = 0x80000000 | hash[12] | (hash[13] << 8) | (hash[14] << 16) |
                  ((uint32_t)hash[15] << 24);
 
-  const char* curve = SECP256K1_NAME;
-  if (msg->has_ecdsa_curve_name) {
-    curve = msg->ecdsa_curve_name;
-  }
   HDNode* node = fsm_getDerivedNode(curve, address_n, 5, NULL);
   if (!node) {
     return;
