@@ -25,6 +25,7 @@
 #include "keepkey/transport/interface.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /// Shared input/output/compiler invariant for Bitcoin multisig scripts.
@@ -80,13 +81,10 @@ uint32_t serialize_script_sig(const uint8_t* signature, uint32_t signature_len,
                               uint8_t sighash, uint8_t* out);
 uint32_t serialize_script_multisig(const CoinType* coin,
                                    const MultisigRedeemScriptType* multisig,
-                                   uint8_t sighash, uint8_t* out);
+                                   uint8_t sighash, uint8_t* out,
+                                   size_t out_len);
 int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
                    TxOutputBinType* out, bool needs_confirm);
-
-bool address_to_script_pubkey(const CoinType* coin, const char* address,
-                              uint8_t* script_pubkey, size_t* script_pubkey_len,
-                              size_t script_pubkey_size);
 
 bool fill_input_script_pubkey(const CoinType* coin, const HDNode* root,
                               const TxInputType* in, uint8_t* script_pubkey,

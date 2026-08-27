@@ -81,6 +81,11 @@ void fsm_msgGetPublicKey(GetPublicKey* msg) {
 }
 
 void fsm_msgSignTx(SignTx* msg) {
+  /* A new start supersedes any prior Bitcoin stream even when this request is
+   * malformed.  Otherwise its Failure can be followed by an ACK that resumes
+   * the old, already-approved transaction. */
+  signing_abort();
+
   CHECK_INITIALIZED
 
   CHECK_PARAM(msg->inputs_count > 0,
@@ -107,7 +112,12 @@ void fsm_msgSignTx(SignTx* msg) {
 }
 
 void fsm_msgTxAck(TxAck* msg) {
-  CHECK_PARAM(msg->has_tx, _("No transaction provided"));
+  if (!msg->has_tx) {
+    signing_abort();
+    fsm_sendFailure(FailureType_Failure_Other, _("No transaction provided"));
+    layoutHome();
+    return;
+  }
 
   signing_txack(&(msg->tx));
 }
@@ -285,22 +295,24 @@ void fsm_msgSignMessage(SignMessage* msg) {
 
   CHECK_INITIALIZED
 
+  const CoinType* coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
+  if (!coin) return;
+
+  CHECK_PIN
+
+  HDNode* node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage,
                      _("Sign Message"), msg->message.bytes,
                      msg->message.size)) {
+    memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign message cancelled");
     layoutHome();
     return;
   }
-
-  CHECK_PIN
-
-  const CoinType* coin = fsm_getCoin(msg->has_coin_name, msg->coin_name);
-  if (!coin) return;
-  HDNode* node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
-                                    msg->address_n_count, NULL);
-  if (!node) return;
 
   animating_progress_handler(_("Signing"), 0);
   if (cryptoMessageSign(coin, node, msg->script_type, msg->message.bytes,

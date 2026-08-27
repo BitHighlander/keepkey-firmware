@@ -257,10 +257,11 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
    *
    * The gate is dropped here for the same reason it was dropped from
    * fsm_msgEthereumSignMessage: full disclosure is the stronger guarantee, and
-   * AdvancedMode is session state that resets on power cycle, so keeping it
-   * would block a default device from signing after every replug. Leaving ETH
-   * ungated while TRON stayed gated would also be an inconsistency with no
-   * principled basis, since both now show the user every byte.
+   * keeping it would block a default device until the user explicitly enables
+   * blind signing. AdvancedMode persists across power cycles until explicitly
+   * disabled. Leaving ETH ungated while TRON stayed gated would also be an
+   * inconsistency with no principled basis, since both now show the user every
+   * byte.
    *
    * Note this is NOT the same call as the TRON SignTx fence (#405), which
    * stays: a TronSignTx payload that tron_parseRawTx() cannot fully decode is

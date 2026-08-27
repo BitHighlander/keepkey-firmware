@@ -95,4 +95,10 @@ bool osmosis_signingIsFinished(void);
 void osmosis_signAbort(void);
 const OsmosisSignTx* osmosis_getOsmosisSignTx(void);
 
+/// Required protobuf strings must be present and non-empty before any review.
+bool osmosis_validate_required_text(bool has_value, const char* value);
+
+/// Amino coin amounts are non-empty unsigned base-10 integer strings.
+bool osmosis_validate_amount(bool has_value, const char* value);
+
 #endif

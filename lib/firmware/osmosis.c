@@ -34,14 +34,32 @@
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static OsmosisSignTx msg;
 static bool testnet;
 
 const OsmosisSignTx* osmosis_getOsmosisSignTx(void) { return &msg; }
 
+bool osmosis_validate_required_text(bool has_value, const char* value) {
+  return has_value && tendermint_validateSafeText(value);
+}
+
+bool osmosis_validate_amount(bool has_value, const char* value) {
+  if (!osmosis_validate_required_text(has_value, value)) return false;
+  for (const char* p = value; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+  }
+  return true;
+}
+
 bool osmosis_signTxInit(const HDNode* _node, const OsmosisSignTx* _msg) {
-  initialized = true;
+  osmosis_signAbort();
+  if (!_node || !_msg || !_msg->has_msg_count || _msg->msg_count == 0 ||
+      !_msg->has_chain_id || !tendermint_validateSafeText(_msg->chain_id)) {
+    return false;
+  }
+
   msgs_remaining = _msg->msg_count;
   testnet = false;
 
@@ -93,7 +111,12 @@ bool osmosis_signTxInit(const HDNode* _node, const OsmosisSignTx* _msg) {
   // 10
   sha256_Update(&ctx, (uint8_t*)"\",\"msgs\":[", 10);
 
-  return success;
+  if (!success) {
+    osmosis_signAbort();
+    return false;
+  }
+  initialized = true;
+  return true;
 }
 
 static bool osmosis_isCanonicalAmount(const char* value) {
@@ -142,6 +165,8 @@ static bool osmosis_isValidDenom(const char* denom) {
 
 bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
                                  const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -164,6 +189,10 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
 
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -194,6 +223,9 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -202,6 +234,8 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
                                      const char* delegator_address,
                                      const char* validator_address,
                                      const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -225,6 +259,10 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
 
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -255,6 +293,9 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
                                  validator_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -263,6 +304,8 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
                                        const char* delegator_address,
                                        const char* validator_address,
                                        const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -285,6 +328,10 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
   }
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -315,6 +362,9 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
                                  validator_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -324,6 +374,8 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
                                        const char* validator_src_address,
                                        const char* validator_dst_address,
                                        const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -345,6 +397,10 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
   }
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -383,6 +439,9 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
                                  validator_src_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -393,7 +452,13 @@ bool osmosis_signTxUpdateMsgLPAdd(const uint64_t pool_id, const char* sender,
                                   const char* denom_in_max_a,
                                   const char* amount_in_max_b,
                                   const char* denom_in_max_b) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   char buffer[96 + 1] = {0};
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -430,6 +495,9 @@ bool osmosis_signTxUpdateMsgLPAdd(const uint64_t pool_id, const char* sender,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\"denom\":\"%s\"}]}}", denom_in_max_b);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -440,7 +508,13 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
                                      const char* denom_out_min_a,
                                      const char* amount_out_min_b,
                                      const char* denom_out_min_b) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   char buffer[96 + 1] = {0};
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -477,12 +551,17 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\"denom\":\"%s\"}]}}", denom_out_min_b);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
 
 bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
                                     const char* validator_address) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -505,6 +584,10 @@ bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
   char from_address[54] = {0};
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -530,6 +613,9 @@ bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"}}",
                                  validator_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -541,6 +627,8 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
                                         const char* revision_number,
                                         const char* revision_height,
                                         const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "osmo";
   const char testnetp[] = "tosmo";
   const char* pfix;
@@ -563,6 +651,10 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
   char from_address[54] = {0};
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
+  }
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -610,6 +702,9 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
       &ctx, buffer, sizeof(buffer),
       "\"token\":{\"amount\":\"%s\",\"denom\":\"%s\"}}}", amount, denom);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -620,9 +715,15 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
                                  const char* token_in_amount,
                                  const char* token_in_denom,
                                  const char* token_out_min_amount) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   char buffer[96 + 1] = {0};
 
   // TODO: add testnet support
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
 
   bool success = true;
 
@@ -652,6 +753,9 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
                                  "\"token_out_min_amount\":\"%s\"}}",
                                  token_out_min_amount);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -712,10 +816,13 @@ bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
 
 bool osmosis_signingIsInited(void) { return initialized; }
 
-bool osmosis_signingIsFinished(void) { return msgs_remaining == 0; }
+bool osmosis_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void osmosis_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));

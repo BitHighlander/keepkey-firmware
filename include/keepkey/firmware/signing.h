@@ -23,9 +23,10 @@
 #include "trezor/crypto/bip32.h"
 #include "keepkey/transport/interface.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
+
 /// Exposed for unit tests: pure predicate, no signing state involved.
 bool isCrossAccountSegwitChangeForbidden(const uint32_t* lhs_address_n,
                                          size_t lhs_address_n_count,
@@ -40,6 +41,7 @@ void signing_encode_script_type(InputScriptType script_type, uint8_t out[4]);
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);
 void signing_abort(void);
+bool signing_is_active(void);
 void signing_txack(TransactionType* tx);
 void send_fsm_co_error_message(int co_error);
 

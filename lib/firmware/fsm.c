@@ -49,6 +49,7 @@
 #include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/mayachain.h"
+#include "keepkey/firmware/nano.h"
 #include "keepkey/firmware/osmosis.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/pin_sm.h"
@@ -107,6 +108,9 @@
 #define _(X) (X)
 
 static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+/* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
+ * derived private key after any chain handler, so session revocation scrubs it
+ * centrally. */
 static HDNode CONFIDENTIAL fsm_derived_node;
 
 void fsm_clearDerivedNode(void) {
@@ -167,6 +171,19 @@ bool fsm_test_derivedNodeIsZero(void) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
     return;                                                                \
+  }
+
+/* Only the two ceremony STARTS use this. Every other message that persists
+ * anything is handled structurally instead: storage_commit() aborts an armed
+ * ceremony, so a handler that writes can never have its write consumed by
+ * one -- the worst it can do is end it. */
+#define CHECK_NO_CEREMONY                                     \
+  if (setup_isArmed()) {                                      \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
+                    "Device is in the middle of setup. Send " \
+                    "Initialize or Cancel first.");           \
+    layoutHome();                                             \
+    return;                                                   \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
@@ -340,8 +357,26 @@ void fsm_sendFailure(FailureType code, const char* text) {
   msg_write(MessageType_MessageType_Failure, resp);
 }
 
+void fsm_abort_workflows(void) {
+  setup_abort();
+  signing_abort();
+#if !BITCOIN_ONLY
+  ethereum_signing_abort();
+  nano_signingAbort();
+  binance_signAbort();
+  tendermint_signAbort();
+  osmosis_signAbort();
+  thorchain_signAbort();
+  mayachain_signAbort();
+  eos_signingAbort();
+#endif
+  authenticator_clear_cache();
+  memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+}
+
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
+  fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
   fsm_sendSuccess("Session cleared");
 }

@@ -25,9 +25,7 @@
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
-#include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/ethereum_contracts/zxswap.h"
-#include "keepkey/firmware/ethereum_contracts/makerdao.h"
 
 bool zx_isExchangeProxyChain(uint32_t chain_id) {
   /* Optimism is deliberately absent: 0x deploys a DIFFERENT Exchange Proxy
@@ -47,6 +45,11 @@ bool zx_isExchangeProxyChain(uint32_t chain_id) {
       /* Including chain_id 0 / absent, which callers treat as unknown. */
       return false;
   }
+}
+
+bool zx_tokenLabelsThisChain(uint32_t chain_id, const TokenType* token) {
+  if (token == NULL || token == UnknownToken) return false;
+  return token->chain_id == chain_id;
 }
 
 bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
@@ -76,10 +79,12 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
    * disclosure (AdvancedMode-gated). */
   if (data_total != msg->data_initial_chunk.size) return false;
 
-  /* 0x transformERC20 is pinned to the ExchangeProxy address and its outcome
-   * is bounded by the input amount and minimum output amount shown on screen,
-   * so it stays clear-signable at any calldata size that fits one chunk. */
-  if (zx_isZxTransformERC20(msg)) return true;
+  /* Every predicate below opens with a 4-byte selector memcmp.
+   * data_initial_chunk is a fixed-capacity buffer that is NOT cleared between
+   * messages, so on a calldata shorter than its own selector those reads
+   * compare bytes left over from an earlier transaction. Nothing downstream
+   * guarantees the minimum, so establish it once here. */
+  if (msg->data_initial_chunk.size < 4) return false;
 
   if (sa_isWithdrawFromSalary(msg)) return true;
   if (zx_isZxSwap(msg)) return true;
@@ -89,33 +94,29 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
   if (thor_isMayachainTx(msg)) return true;
   if (thor_isThorchainTx(msg)) return true;
 
-  if (makerdao_isMakerDAO(data_total, msg)) return true;
-
   return false;
 }
 
 bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
                                 const HDNode* node) {
-  (void)node;
+  /* Same selector bound as ethereum_contractHandled(). This function is only
+   * ever reached after that one returned true, so this is belt and braces --
+   * but the two dispatch on the same predicates and must not be able to
+   * disagree about which of them are safe to evaluate. */
+  if (msg->data_initial_chunk.size < 4) return false;
 
   if (sa_isWithdrawFromSalary(msg))
     return sa_confirmWithdrawFromSalary(data_total, msg);
 
-  if (zx_isZxTransformERC20(msg))
-    return zx_confirmZxTransERC20(data_total, msg);
-
   if (zx_isZxSwap(msg)) return zx_confirmZxSwap(data_total, msg);
 
-  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg);
+  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg, node);
 
   if (zx_isZxApproveLiquid(msg))
     return zx_confirmApproveLiquidity(data_total, msg);
 
   if (thor_isMayachainTx(msg)) return thor_confirmMayaTx(data_total, msg);
   if (thor_isThorchainTx(msg)) return thor_confirmThorTx(data_total, msg);
-
-  if (makerdao_isMakerDAO(data_total, msg))
-    return makerdao_confirmMakerDAO(data_total, msg);
 
   return false;
 }
