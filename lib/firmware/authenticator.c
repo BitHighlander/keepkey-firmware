@@ -77,11 +77,6 @@ static bool getAuthData(void) {
 
 static void setAuthData(void) { storage_setAuthData(authData); }
 
-void authenticator_clear_cache(void) {
-  memzero(authData, sizeof(authData));
-  localAuthdataUpdate = true;
-}
-
 static unsigned authenticator_cancel(void) {
   /* A nested confirmation refusal does not pass through fsm_msgCancel(), so it
    * must revoke the decrypted authenticator cache itself. */
