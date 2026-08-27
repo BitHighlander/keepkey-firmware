@@ -451,7 +451,7 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
           suffix = " UBQ";
           break;  // UBIQ
         case 10:
-          suffix = " OP";
+          suffix = " ETH";
           break;  // Optimism
         case 20:
           suffix = " EOSC";
@@ -480,6 +480,12 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         case 137:
           suffix = " MATIC";
           break;  //  Polygon Mainnet
+        case 8453:
+          suffix = " ETH";
+          break;  // Base
+        case 42161:
+          suffix = " ETH";
+          break;  // Arbitrum One
         case 43114:
           suffix = " AVAX";
           break;  //  Avalanche C-Chain

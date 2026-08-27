@@ -53,6 +53,81 @@ TEST(Ethereum, AddressChecksum) {
   test_checksum("D1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb");
 }
 
+TEST(Ethereum, ChainIdValidationCoversPresenceAndBounds) {
+  EthereumSignTx msg = EthereumSignTx{};
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
+  msg.has_chain_id = true;
+  msg.chain_id = 0;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
+  msg.chain_id = 1;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+
+  msg.chain_id = 2147483630u;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+
+  msg.chain_id = 2147483631u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+  EXPECT_FALSE(ethereum_chainIdIsValid(nullptr));
+}
+
+TEST(Ethereum, AmountFormattingNeverReturnsBlank) {
+  uint8_t max_bytes[32];
+  std::memset(max_bytes, 0xff, sizeof(max_bytes));
+  bignum256 amount;
+  bn_read_be(max_bytes, &amount);
+
+  const TokenType token = {nullptr, " TEST", 1, 18};
+  char rendered[32];
+  EXPECT_FALSE(
+      ethereumFormatAmount(&amount, &token, 1, rendered, sizeof(rendered)));
+  EXPECT_STREQ("AMOUNT TOO LARGE TO DISPLAY", rendered);
+}
+
+TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
+  bignum256 amount;
+  bn_read_uint64(1500000000000000000ULL, &amount);
+  char rendered[32];
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 43114, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 AVAX", rendered);
+
+  ASSERT_TRUE(
+      ethereumFormatAmount(&amount, nullptr, 10, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 8453, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 42161, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+}
+
+TEST(Ethereum, TransferAmountUsesTheRequestsSigningChain) {
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.has_value = true;
+  msg.value.size = 8;
+  const uint64_t amount = 1500000000000000000ULL;
+  for (size_t i = 0; i < msg.value.size; ++i) {
+    msg.value.bytes[msg.value.size - 1 - i] =
+        static_cast<uint8_t>(amount >> (8 * i));
+  }
+
+  char rendered[32];
+  msg.chain_id = 56;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 BNB", rendered);
+
+  msg.chain_id = 137;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 MATIC", rendered);
+}
+
 TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
   EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
