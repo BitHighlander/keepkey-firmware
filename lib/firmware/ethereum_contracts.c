@@ -107,6 +107,8 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
 
 bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
                                 const HDNode* node) {
+  (void)node;
+
   /* Same selector bound as ethereum_contractHandled(). This function is only
    * ever reached after that one returned true, so this is belt and braces --
    * but the two dispatch on the same predicates and must not be able to
