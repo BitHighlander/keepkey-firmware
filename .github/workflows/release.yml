@@ -222,27 +222,29 @@ jobs:
         working-directory: release
         run: |
           SUFFIX="${{ matrix.suffix }}"
-          echo "# KeepKey Firmware v${{ needs.validate.outputs.fw_version }} — Hash Manifest" > "HASHES${SUFFIX}.txt"
-          echo "" >> "HASHES${SUFFIX}.txt"
-          # Provenance: name the exact toolchain these bytes came out of. BASE_IMAGE
-          # is a sha256 manifest digest, not a tag, so this identifies one immutable
-          # image rather than whatever the tag pointed at on the day. Without it a
-          # green CI build and a locally reproduced binary cannot be shown to be the
-          # same toolchain product. See GH #425.
-          echo "builder image    ${BASE_IMAGE}" >> "HASHES${SUFFIX}.txt"
-          echo "source commit    ${GITHUB_SHA}" >> "HASHES${SUFFIX}.txt"
-          echo "" >> "HASHES${SUFFIX}.txt"
-          for f in *.bin; do
-            [ -f "$f" ] || continue
-            FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
-            echo "sha256 (full)    $f  $FULL_HASH" >> "HASHES${SUFFIX}.txt"
-            FILE_SIZE=$(stat -c%s "$f")
-            if [ "$FILE_SIZE" -gt 256 ]; then
-              PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
-              echo "sha256 (payload) $f  $PAYLOAD_HASH" >> "HASHES${SUFFIX}.txt"
-            fi
-            echo "" >> "HASHES${SUFFIX}.txt"
-          done
+          {
+            echo "# KeepKey Firmware v${{ needs.validate.outputs.fw_version }} — Hash Manifest"
+            echo ""
+            # Provenance: name the exact toolchain these bytes came out of. BASE_IMAGE
+            # is a sha256 manifest digest, not a tag, so this identifies one immutable
+            # image rather than whatever the tag pointed at on the day. Without it a
+            # green CI build and a locally reproduced binary cannot be shown to be the
+            # same toolchain product. See GH #425.
+            echo "builder image    ${BASE_IMAGE}"
+            echo "source commit    ${GITHUB_SHA}"
+            echo ""
+            for f in *.bin; do
+              [ -f "$f" ] || continue
+              FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
+              echo "sha256 (full)    $f  $FULL_HASH"
+              FILE_SIZE=$(stat -c%s "$f")
+              if [ "$FILE_SIZE" -gt 256 ]; then
+                PAYLOAD_HASH=$(tail -c +257 "$f" | sha256sum | awk '{print $1}')
+                echo "sha256 (payload) $f  $PAYLOAD_HASH"
+              fi
+              echo ""
+            done
+          } > "HASHES${SUFFIX}.txt"
           cat "HASHES${SUFFIX}.txt"
 
       - name: Rename artifacts

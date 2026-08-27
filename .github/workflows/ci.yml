@@ -966,7 +966,8 @@ jobs:
           NOT_SUCCESS=$(echo "$NEEDS_JSON" \
             | jq -r 'to_entries[] | select(.value.result != "success") | .key')
           if [ -n "$NOT_SUCCESS" ]; then
-            echo "::error::Required jobs did not succeed: $(echo $NOT_SUCCESS | tr '\n' ' ')"
+            NOT_SUCCESS_INLINE=$(printf '%s\n' "$NOT_SUCCESS" | tr '\n' ' ')
+            echo "::error::Required jobs did not succeed: ${NOT_SUCCESS_INLINE}"
             echo "A skipped or cancelled required job is NOT a pass. If a gate-stage"
             echo "job failed, everything downstream was skipped and produced no signal."
             exit 1
