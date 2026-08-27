@@ -60,9 +60,9 @@ echo "=== End diagnostic ==="
 
 # Phase 1: Screenshot captures driven by report SECTIONS (single source of truth)
 #
-# generate-test-report.py --screenshot-filter reads SECTIONS and emits a pytest -k
-# expression for every test with non-empty screenshot expectations. Adding screenshots
-# to a test in SECTIONS automatically includes it here — no manual filter maintenance.
+# Use exact module::method selectors rather than a pytest -k expression. The latter
+# can accidentally select unrelated tests whose names share common terms, weakening
+# the per-test screenshot audit and making collection behavior depend on test names.
 echo "=== Phase 1: Report-driven screenshot capture ==="
 # Detect firmware version from CMakeLists if not set in env.
 # NOTE: grep -oE (POSIX ERE), NOT -oP — this runs in the Alpine/busybox
@@ -93,20 +93,21 @@ if [ -z "$FW_VERSION" ]; then
     echo "Detected FW_VERSION=$FW_VERSION from CMakeLists.txt"
 fi
 export FW_VERSION
-SCREENSHOT_FILTER=$(python3 ../scripts/generate-test-report.py --screenshot-filter --fw-version=$FW_VERSION 2>/dev/null)
-if [ -z "$SCREENSHOT_FILTER" ]; then
-    echo "WARNING: --screenshot-filter returned empty, falling back to full suite"
-    SCREENSHOT_FILTER="test_"
+SCREENSHOT_TESTS=$(python3 ../scripts/generate-test-report.py \
+    --screenshot-test-list --fw-version="$FW_VERSION")
+if [ -z "$SCREENSHOT_TESTS" ]; then
+    echo "FATAL: screenshot test list is empty"
+    echo "1" > /kkemu/test-reports/python-keepkey/status
+    exit 1
 fi
-echo "Filter: $SCREENSHOT_FILTER"
 KEEPKEY_SCREENSHOT=1 \
 SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
+KEEPKEY_SCREENSHOT_TESTS="$SCREENSHOT_TESTS" \
 KK_EXPECT_PERSIST_REJECTED=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
   $PYTEST_TIMEOUT_ARGS \
-  -k "$SCREENSHOT_FILTER" \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
   -s 2>&1 || true
 # pytest exit code is NOT the gate — screenshot count below is.
