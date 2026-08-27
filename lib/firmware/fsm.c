@@ -101,6 +101,9 @@
 #define _(X) (X)
 
 static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+/* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
+ * derived private key after any chain handler, so session revocation scrubs it
+ * centrally. */
 static HDNode CONFIDENTIAL fsm_derived_node;
 
 void fsm_clearDerivedNode(void) {
@@ -216,11 +219,6 @@ static const MessagesMap_t MessagesMap[] = {
 #include "messagemap.def"
 
 extern bool reset_msg_stack;
-
-/* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
- * derived private key after any chain handler, not only the streaming Bitcoin
- * signer, so session revocation must scrub it centrally. */
-static HDNode CONFIDENTIAL fsm_derived_node;
 
 static const CoinType* fsm_getCoin(bool has_name, const char* name) {
   const CoinType* coin;
