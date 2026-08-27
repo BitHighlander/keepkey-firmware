@@ -41,9 +41,9 @@ static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
 
-/* Phase 1 ships with NO built-in verification keys: every clearsign signer is
- * loaded at runtime via LoadClearsignSigner. Phase 2 restores the production
- * key. */
+/* Runtime signer slots remain a development/self-service lane. Production v3
+ * metadata carries a root-certified delegate in the message and never writes
+ * that delegate into this ring. */
 
 /* Runtime-loaded signers. RAM only — cleared on reboot by construction. RC18
  * deliberately rejects persistent trust anchors: the public storage section
@@ -857,6 +857,14 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
 static MetadataClassification process_certified(const uint8_t* payload,
                                                 size_t payload_len);
 
+bool signed_metadata_is_certified_envelope(const uint8_t* payload,
+                                           size_t payload_len,
+                                           uint32_t key_id) {
+  return payload != NULL && payload_len > 1 + CLEARSIGN_CERT_LEN &&
+         payload[0] == METADATA_VERSION_CERTIFIED &&
+         key_id == METADATA_KEYID_DELEGATE;
+}
+
 MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                size_t payload_len,
                                                uint8_t key_id) {
@@ -872,12 +880,7 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
    * is consulted -- the delegate is not in that ring and must never be put
    * there. key_id is required to be the reserved sentinel so a certified
    * envelope can never be confused with a runtime slot. */
-  if (payload && payload_len > 1 + CLEARSIGN_CERT_LEN &&
-      payload[0] == METADATA_VERSION_CERTIFIED) {
-    if (key_id != METADATA_KEYID_DELEGATE) {
-      signed_metadata_clear();
-      return METADATA_MALFORMED;
-    }
+  if (signed_metadata_is_certified_envelope(payload, payload_len, key_id)) {
     MetadataClassification c = process_certified(payload, payload_len);
     if (c == METADATA_MALFORMED) signed_metadata_clear();
     return c;

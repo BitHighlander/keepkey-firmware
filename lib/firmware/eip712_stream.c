@@ -44,6 +44,25 @@
 typedef EthereumTypedDataStructAck_EthereumFieldType Eip712FieldType;
 typedef EthereumTypedDataStructAck_EthereumDataType Eip712DataType;
 
+bool eip712_identifier_ok(const char *name) {
+  if (!name) return false;
+  size_t len = strlen(name);
+  if (len == 0 || len + 1 > EIP712_MAX_STRUCT_NAME) return false;
+  char first = name[0];
+  if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') ||
+        first == '_' || first == '$')) {
+    return false;
+  }
+  for (size_t i = 1; i < len; i++) {
+    char c = name[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '_' || c == '$')) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /* ── encodeType spelling ─────────────────────────────────────────────
  *
  * The type string is hashed into typeHash, so getting a character wrong here
@@ -92,7 +111,7 @@ bool eip712_type_name(const Eip712FieldType *field, char *out, size_t out_len) {
       base = "address";
       break;
     case EthereumTypedDataStructAck_EthereumDataType_STRUCT:
-      if (!field->has_struct_name || field->struct_name[0] == '\0')
+      if (!field->has_struct_name || !eip712_identifier_ok(field->struct_name))
         return false;
       base = field->struct_name;
       break;
@@ -300,7 +319,7 @@ static bool closure_contains(const Eip712Closure *c, const char *name) {
 
 static bool closure_add(Eip712Closure *c, const char *name) {
   size_t len = strlen(name);
-  if (len == 0 || len + 1 > EIP712_MAX_STRUCT_NAME) return false;
+  if (!eip712_identifier_ok(name)) return false;
   if (closure_contains(c, name)) return true;
   if (c->count >= EIP712_MAX_STRUCTS) return false;
   memcpy(c->names[c->count], name, len + 1);
@@ -362,7 +381,7 @@ static bool closure_collect(const char *name, Eip712StructLookup lookup,
 static bool hash_segment_from_ack(const char *name,
                                   const EthereumTypedDataStructAck *def,
                                   SHA3_CTX *hash) {
-  if (!def) return false;
+  if (!def || !eip712_identifier_ok(name)) return false;
 
   keccak_Update(hash, (const uint8_t *)name, strlen(name));
   keccak_Update(hash, (const uint8_t *)"(", 1);
@@ -372,7 +391,10 @@ static bool hash_segment_from_ack(const char *name,
     if (!eip712_type_name(&def->members[m].type, type_name, sizeof(type_name)))
       return false;
     const char *member_name = def->members[m].name;
-    if (member_name[0] == '\0') return false;
+    if (!eip712_identifier_ok(member_name)) return false;
+    for (size_t prior = 0; prior < m; prior++) {
+      if (strcmp(member_name, def->members[prior].name) == 0) return false;
+    }
 
     if (m > 0) keccak_Update(hash, (const uint8_t *)",", 1);
     keccak_Update(hash, (const uint8_t *)type_name, strlen(type_name));
@@ -757,8 +779,7 @@ bool eip712_stream_begin(const EthereumSignTypedData *msg) {
   }
   /* primary_type is `required` on the wire, so nanopb emits no has_ flag --
    * an absent one cannot decode at all. Empty and over-long still can. */
-  if (msg->primary_type[0] == '\0' ||
-      strlen(msg->primary_type) + 1 > EIP712_MAX_STRUCT_NAME) {
+  if (!eip712_identifier_ok(msg->primary_type)) {
     fail("EIP-712 primary type missing or too long");
     return false;
   }
@@ -795,6 +816,27 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck *ack) {
   if (ack->members_count > EIP712_MAX_SLOTS) {
     fail("EIP-712 struct has too many members for this device");
     return false;
+  }
+
+  /* Names are both encodeType bytes and screen titles. Restrict them to the
+   * canonical ASCII identifier subset that fits pending_name exactly; a host
+   * cannot smuggle controls, Unicode lookalikes or a truncated label onto the
+   * review screen. Duplicate members are not a canonical struct definition. */
+  for (size_t i = 0; i < ack->members_count; i++) {
+    const char *member_name = ack->members[i].name;
+    char type_name[EIP712_MAX_TYPE_NAME];
+    if (!eip712_identifier_ok(member_name) ||
+        !eip712_type_name(&ack->members[i].type, type_name,
+                          sizeof(type_name))) {
+      fail("EIP-712 struct member is malformed");
+      return false;
+    }
+    for (size_t j = 0; j < i; j++) {
+      if (strcmp(member_name, ack->members[j].name) == 0) {
+        fail("EIP-712 struct has duplicate members");
+        return false;
+      }
+    }
   }
 
   switch (e712.phase) {

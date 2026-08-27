@@ -300,6 +300,31 @@ std::string keccakHex(const std::string &s) {
 
 }  // namespace
 
+TEST(Eip712Stream, ReviewIdentifiersAreCanonicalAndNeverTruncated) {
+  EXPECT_TRUE(eip712_identifier_ok("PermitSingle"));
+  EXPECT_TRUE(eip712_identifier_ok("sigDeadline"));
+  EXPECT_TRUE(eip712_identifier_ok("_value$2"));
+
+  EXPECT_FALSE(eip712_identifier_ok(""));
+  EXPECT_FALSE(eip712_identifier_ok("2value"));
+  EXPECT_FALSE(eip712_identifier_ok("line\nbreak"));
+  EXPECT_FALSE(eip712_identifier_ok("amount%08x"));
+  EXPECT_FALSE(eip712_identifier_ok("member-name"));
+  EXPECT_FALSE(eip712_identifier_ok(
+      "identifier_that_would_be_truncated"));
+}
+
+TEST(Eip712Stream, TypeHashRejectsDuplicateMemberNames) {
+  Fixture f;
+  auto &permit = f.defs["Permit"];
+  memset(&permit, 0, sizeof(permit));
+  addMember(permit, "value",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  addMember(permit, "value",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  EXPECT_EQ(typeHashHex(f, "Permit"), "<refused>");
+}
+
 TEST(Eip712Stream, TypeHashMatchesTheSpecExample) {
   // The canonical EIP-712 example. Note Person sorts AFTER Mail's own segment
   // and is appended, not interleaved.

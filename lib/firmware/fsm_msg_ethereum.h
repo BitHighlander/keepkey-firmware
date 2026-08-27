@@ -138,14 +138,27 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for clearsign metadata"));
+  CHECK_PARAM(!msg->has_key_id || msg->key_id <= 0xff,
+              _("clearsign metadata key_id out of range"));
+
+  /* Runtime/self-service signers remain behind AdvancedMode. A production v3
+   * envelope is allowed through only when it uses the reserved delegate key
+   * id and has enough bytes to contain a certificate plus inner payload. This
+   * shape check grants no trust: signed_metadata_process() still verifies the
+   * compiled root, certificate, delegate signature, and device-owned decode
+   * before the metadata can affect signing or suppress raw review. */
+  bool certified =
+      msg->has_signed_payload && msg->has_key_id &&
+      signed_metadata_is_certified_envelope(
+          msg->signed_payload.bytes, msg->signed_payload.size, msg->key_id);
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode") || certified,
+              _("AdvancedMode required for uncertified clearsign metadata"));
 
   RESP_INIT(EthereumMetadataAck);
 
   MetadataClassification result = signed_metadata_process(
       msg->signed_payload.bytes, msg->signed_payload.size,
-      msg->has_key_id ? msg->key_id : 0);
+      msg->has_key_id ? (uint8_t)msg->key_id : 0);
 
   resp->classification = (uint32_t)result;
   resp->has_display_summary = true;
@@ -618,13 +631,13 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* Same gate the hashed path carries. Structured display is strictly more
-   * information than the blind path it replaces, but this is new parser
-   * surface reachable from a website, so it stays behind AdvancedMode until it
-   * has hardware evidence behind it. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+  /* This is the canonical device-driven stream, not the withdrawn whole-JSON
+   * parser and not the blind typed-hash endpoint. Every leaf is validated,
+   * rendered and hashed from the same bytes, so AdvancedMode is neither needed
+   * nor consulted. */
+  if (!ethereum_streamed_eip712_enabled()) {
     fsm_sendFailure(FailureType_Failure_Other,
-                    _("Enable AdvancedMode to sign typed data"));
+                    _("Structured EIP-712 is unavailable"));
     layout_home();
     return;
   }

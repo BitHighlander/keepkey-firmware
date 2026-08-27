@@ -66,6 +66,11 @@
  * not occur in practice and every one costs EIP712_MAX_STRUCTS bytes. */
 #define EIP712_MAX_STRUCT_NAME 32
 
+/* Canonical ASCII Solidity identifier. Besides being part of encodeType, a
+ * member name is also the review-screen title, so this guarantees the exact
+ * bytes hashed are the exact bytes rendered (no truncation/control glyphs). */
+bool eip712_identifier_ok(const char *name);
+
 /* Fetch one struct's member list by name. Returns NULL if the host has not
  * supplied it. Firmware backs this with the streaming state machine; the unit
  * tests back it with a fixture table, which is what makes encodeType testable
