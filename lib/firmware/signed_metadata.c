@@ -40,6 +40,19 @@ static SignedMetadataStorage metadata_storage;
 _Static_assert(sizeof(SignedMetadata) >= sizeof(struct SHA3_CTX),
                "metadata arena must hold a Keccak context without more SRAM");
 
+/* Annotation-only metadata from a runtime-loaded signer still binds the final
+ * signature to the attested transaction/schema, but it must also be followed
+ * by the authoritative raw-calldata review. Preserve only the fields needed by
+ * signed_metadata_enforce() so the much larger rendered metadata arena can be
+ * reused for that review's streaming Keccak state. */
+typedef struct {
+  uint8_t tx_hash[32];
+  uint8_t version;
+  uint8_t classification;
+  bool available;
+} SignedMetadataBinding;
+static SignedMetadataBinding metadata_binding;
+
 /* Phase 1 ships with NO built-in verification keys: every clearsign signer is
  * loaded at runtime via LoadClearsignSigner. Phase 2 restores the production
  * key. */
@@ -417,14 +430,36 @@ bool signed_metadata_schema_moves_value(void) {
 
 void signed_metadata_clear(void) {
   memzero(&metadata_storage, sizeof(metadata_storage));
+  memzero(&metadata_binding, sizeof(metadata_binding));
   metadata_available = false;
   relied_on_metadata = false;
   metadata_signer_loaded = false;
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 }
 
 struct SHA3_CTX* signed_metadata_keccak_scratch(void) {
-  return metadata_available ? NULL : &metadata_storage.keccak_scratch;
+  if (metadata_available) {
+    /* Runtime-loaded identities are annotation-only: their screens have
+     * already rendered when Ethereum asks for this scratch space, and raw
+     * review remains authoritative. Keep the final binding fail-closed while
+     * releasing the display payload. A future firmware-pinned identity may
+     * suppress raw review and must never take this transition. */
+    if (!metadata_signer_loaded || !relied_on_metadata ||
+        stored_metadata.classification != METADATA_VERIFIED) {
+      return NULL;
+    }
+    memcpy(metadata_binding.tx_hash, stored_metadata.tx_hash,
+           sizeof(metadata_binding.tx_hash));
+    metadata_binding.version = stored_metadata.version;
+    metadata_binding.classification = (uint8_t)stored_metadata.classification;
+    metadata_binding.available = true;
+
+    memzero(&metadata_storage, sizeof(metadata_storage));
+    metadata_available = false;
+    metadata_signer_loaded = false;
+  }
+  return &metadata_storage.keccak_scratch;
 }
 
 void signed_metadata_clear_signers(void) {
@@ -1050,6 +1085,17 @@ bool signed_metadata_enforce_schema_decision(bool relied, bool available,
 }
 
 bool signed_metadata_enforce(const uint8_t hash[32]) {
+  if (metadata_binding.available) {
+    if (metadata_binding.version == METADATA_VERSION_SCHEMA) {
+      return signed_metadata_enforce_schema_decision(
+          relied_on_metadata, true, metadata_schema_decoded,
+          (MetadataClassification)metadata_binding.classification);
+    }
+    return signed_metadata_enforce_decision(
+        relied_on_metadata, true,
+        (MetadataClassification)metadata_binding.classification,
+        metadata_binding.tx_hash, hash);
+  }
   if (metadata_available &&
       stored_metadata.version == METADATA_VERSION_SCHEMA) {
     return signed_metadata_enforce_schema_decision(
