@@ -886,7 +886,7 @@ jobs:
           KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
           KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
-          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/219
+          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/197
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report
