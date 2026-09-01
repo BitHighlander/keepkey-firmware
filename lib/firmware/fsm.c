@@ -180,6 +180,19 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                                   \
   }
 
+/* Only the two ceremony STARTS use this. Every other message that persists
+ * anything is handled structurally instead: storage_commit() aborts an armed
+ * ceremony, so a handler that writes can never have its write consumed by
+ * one -- the worst it can do is end it. */
+#define CHECK_NO_CEREMONY                                     \
+  if (setup_isArmed()) {                                      \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
+                    "Device is in the middle of setup. Send " \
+                    "Initialize or Cancel first.");           \
+    layoutHome();                                             \
+    return;                                                   \
+  }
+
 #define CHECK_PIN              \
   if (!pin_protect_cached()) { \
     layoutHome();              \
