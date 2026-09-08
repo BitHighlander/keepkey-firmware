@@ -327,6 +327,8 @@ _Static_assert(sizeof(msg_tiny) >= sizeof(DebugLinkGetState),
 #endif
 
 static void msg_read_tiny(const uint8_t* msg, size_t len) {
+  msg_tiny_id = MSG_TINY_TYPE_ERROR;
+  memzero(msg_tiny, sizeof(msg_tiny));
   if (len != 64) return;
 
   uint8_t buf[64];
@@ -335,7 +337,7 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
   if (buf[0] != '?' || buf[1] != '#' || buf[2] != '#') {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage,
                    "Malformed tiny packet");
-    return;
+    goto cleanup;
   }
 
   uint16_t msgId = buf[4] | ((uint16_t)buf[3]) << 8;
@@ -345,7 +347,7 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
   if (msgSize > 64 - 9) {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage,
                    "Malformed tiny packet");
-    return;
+    goto cleanup;
   }
 
   const pb_field_t* fields = NULL;
@@ -383,12 +385,16 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
       msg_tiny_id = msgId;
     } else {
       (*msg_failure)(FailureType_Failure_SyntaxError, "Malformed tiny packet");
-      msg_tiny_id = 0xffff;
+      memzero(msg_tiny, sizeof(msg_tiny));
+      msg_tiny_id = MSG_TINY_TYPE_ERROR;
     }
   } else {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage, "Unknown message");
     msg_tiny_id = 0xffff;
   }
+
+cleanup:
+  memzero(buf, sizeof(buf));
 }
 
 void handle_usb_rx(const void* msg, size_t len) {
@@ -437,6 +443,7 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   if (msg_tiny_id != MSG_TINY_TYPE_ERROR) {
     memcpy(buf, msg_tiny, sizeof(msg_tiny));
   }
+  memzero(msg_tiny, sizeof(msg_tiny));
 
   return msg_tiny_id;
 }
