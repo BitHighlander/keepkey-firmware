@@ -547,6 +547,7 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
     aes_cbc_encrypt((const uint8_t*)scratch, storage->encrypted_sec,
                     sizeof(scratch), iv + 32, &ctx);
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
     storage->encrypted_sec_version = STORAGE_VERSION;
   } else {
     memzero(&storage->sec, sizeof(storage->sec));
@@ -564,6 +565,7 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
       aes_cbc_decrypt((const uint8_t*)storage->encrypted_sec,
                       (uint8_t*)&scratch[0], sizeof(scratch), iv + 32, &ctx);
     }
+    memzero(&ctx, sizeof(ctx));
     memzero(iv, sizeof(iv));
 
     // De-serialize from scratch.
@@ -647,6 +649,7 @@ static void storage_cipherBlock(bool encrypt, const uint8_t* key,
     aes_cbc_encrypt((const uint8_t*)plaintextBlock, ciphertextBlock, blockSize,
                     iv + 32, &ctx);
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
   } else {
     // decrypt
     memcpy(iv, key, sizeof(iv));
@@ -654,6 +657,7 @@ static void storage_cipherBlock(bool encrypt, const uint8_t* key,
     aes_decrypt_key256(key, &ctx);
     aes_cbc_decrypt((const uint8_t*)ciphertextBlock, plaintextBlock, blockSize,
                     iv + 32, &ctx);
+    memzero(&ctx, sizeof(ctx));
     memzero(iv, sizeof(iv));
   }
 
