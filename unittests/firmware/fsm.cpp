@@ -15,6 +15,7 @@ extern "C" {
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/storage.h"
+#include "storage.h"
 #include "keepkey/firmware/thorchain.h"
 #include "trezor/crypto/secp256k1.h"
 }
@@ -203,4 +204,42 @@ TEST(Fsm, MissingEosCommonTerminatesSigning) {
   stale.has_transfer = true;
   fsm_msgEosTxActionAck(&stale);
   EXPECT_FALSE(eos_signingIsInited());
+}
+
+TEST(Fsm, LowLevelPinRevocationTerminatesSigning) {
+  fsm_init();
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  SessionState session = {};
+  Storage storage = {};
+  storage.pub.has_pin = true;
+  session_clear_impl(&session, &storage, true);
+  EXPECT_FALSE(signing_is_active());
+  signing_abort();
+}
+
+TEST(Fsm, LowLevelSoftClearPreservesSigning) {
+  fsm_init();
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  SessionState session = {};
+  Storage storage = {};
+  storage.pub.has_pin = true;
+  session_clear_impl(&session, &storage, false);
+  EXPECT_TRUE(signing_is_active());
+  signing_abort();
 }
