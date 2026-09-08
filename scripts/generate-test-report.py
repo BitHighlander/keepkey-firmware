@@ -63,6 +63,27 @@ def validate_arm_manifests(arm_dir, firmware_sha, python_sha):
                            ', '.join(sorted(found)))
     print('Validated full and bitcoin-only ARM artifact manifests')
 
+def require_native_junit(root):
+    """Require each native suite before discovering any additional XML inputs."""
+    native_dir = Path(root) / "test-reports" / "firmware-unit"
+    required = ("firmware.xml", "board.xml", "crypto.xml", "pallas-ct.xml")
+    missing = [name for name in required
+               if not (native_dir / name).is_file()
+               or (native_dir / name).stat().st_size == 0]
+    if missing:
+        raise SystemExit("ERROR: required native JUnit inputs missing or empty: " +
+                         ", ".join(missing))
+    import xml.etree.ElementTree as ET
+    for name in required:
+        try:
+            parsed = ET.parse(native_dir / name)
+        except ET.ParseError as exc:
+            raise SystemExit("ERROR: malformed native JUnit %s: %s" % (name, exc))
+        if next(parsed.iter("testcase"), None) is None:
+            raise SystemExit("ERROR: native JUnit contains no test cases: " + name)
+    return sorted(native_dir.glob("*.xml"))
+
+
 def main():
     if not os.path.exists(REPORT_GENERATOR):
         print("ERROR: %s not found — is the python-keepkey submodule initialized?" % REPORT_GENERATOR,
@@ -91,7 +112,7 @@ def main():
     # Collect JUnit XMLs from CI artifacts
     junit_files = (
         glob.glob('test-reports/python-keepkey/junit*.xml') +
-        glob.glob('test-reports/firmware-unit/*.xml')
+        [str(path) for path in require_native_junit(Path.cwd())]
     )
 
     # Merge multiple JUnit XMLs into one for the report generator
@@ -104,8 +125,9 @@ def main():
                 tree = ET.parse(jf)
                 for suite in tree.iter('testsuite'):
                     root.append(suite)
-            except ET.ParseError:
-                print("WARN: skipping malformed %s" % jf, file=sys.stderr)
+            except ET.ParseError as exc:
+                print("ERROR: malformed JUnit %s: %s" % (jf, exc), file=sys.stderr)
+                sys.exit(1)
         ET.ElementTree(root).write(merged, xml_declaration=True, encoding='unicode')
         print("Merged %d JUnit files -> %s" % (len(junit_files), merged))
     else:
@@ -114,8 +136,10 @@ def main():
 
     # Find screenshots directory
     screenshot_dir = 'test-reports/screenshots'
-    if not os.path.isdir(screenshot_dir):
-        screenshot_dir = None
+    screenshot_junit = 'test-reports/python-keepkey/junit-screenshots.xml'
+    if not os.path.isdir(screenshot_dir) or not os.path.isfile(screenshot_junit):
+        print("ERROR: required screenshot artifact or selection JUnit missing", file=sys.stderr)
+        sys.exit(1)
 
     # Build command
     cmd = [sys.executable, REPORT_GENERATOR, '--output=test-report.pdf']
@@ -161,25 +185,21 @@ def main():
     # screens that nothing else checks -- the container gate has already
     # passed and gone.
     #
-    # Only when the screenshots artifact actually arrived: its download is
-    # continue-on-error, and a flaked upload must not be reported as a firmware
-    # that stopped drawing.
-    if screenshot_dir:
-        audit_cmd = [
-            sys.executable,
-            REPORT_GENERATOR,
-            '--screenshot-audit=%s' % screenshot_dir,
-            '--audit-junit=%s' % (merged or python_junit),
-        ]
-        if fw_version:
-            audit_cmd.append('--fw-version=%s' % fw_version)
-        print("Auditing screens: %s" % ' '.join(audit_cmd))
-        audit = subprocess.run(audit_cmd)
-        if audit.returncode != 0:
-            print("ERROR: declared OLED screens were not captured", file=sys.stderr)
-            sys.exit(audit.returncode)
-    else:
-        print("WARN: no screenshots artifact -- screen audit not run", file=sys.stderr)
+    # Audit the downloaded evidence against the screenshot-selection run.
+    # A missing download is an evidence failure, even if capture passed upstream.
+    audit_cmd = [
+        sys.executable,
+        REPORT_GENERATOR,
+        '--screenshot-audit=%s' % screenshot_dir,
+        '--audit-junit=%s' % screenshot_junit,
+    ]
+    if fw_version:
+        audit_cmd.append('--fw-version=%s' % fw_version)
+    print("Auditing screens: %s" % ' '.join(audit_cmd))
+    audit = subprocess.run(audit_cmd)
+    if audit.returncode != 0:
+        print("ERROR: declared OLED screens were not captured", file=sys.stderr)
+        sys.exit(audit.returncode)
 
     validate_cmd = [
         sys.executable,
