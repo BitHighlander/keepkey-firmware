@@ -262,6 +262,8 @@ jobs:
             # same toolchain product. See GH #425.
             echo "builder image    ${BASE_IMAGE}"
             echo "source commit    ${GITHUB_SHA}"
+            echo "# UNSIGNED presign artifacts; signing changes full-image hashes."
+            echo "# Regenerate this manifest from the final signed binaries before publication."
             echo ""
             for f in *.bin; do
               [ -f "$f" ] || continue
@@ -361,6 +363,11 @@ jobs:
           - [ ] Signed on air-gapped machine (3/5 signers)
           - [ ] Storage upgrade tested on production device
           - [ ] Signed .bin uploaded, replacing unsigned
+          - [ ] All three signatures verified on each final firmware image
+          - [ ] HASHES manifests regenerated from the final signed binaries,
+                using the attached versioned filenames, and re-uploaded.
+                Signing changes the full-image hash; the attached presign
+                hashes must not be presented as hashes of the signed image.
           - [ ] Release notes finalized
           EOF
 

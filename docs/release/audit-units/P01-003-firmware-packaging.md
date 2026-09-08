@@ -21,5 +21,7 @@ the fix only firmware/evidence assets are staged, every manifest filename exists
 and each whole-file SHA-256 matches its staged bytes. Both 7.14.3 variants and the
 7.14.2 full variant pass. Only GNU stat's filesize spelling is adapted when this
 rehearsal runs on Darwin. actionlint and diff checks pass. No tags, signing,
-publication or flashing were performed. Signed-image manifest regeneration is a
-separate review item; this unit proves the presign packaging contract only.
+publication or flashing were performed. The generated manifest explicitly labels its hashes as unsigned presign evidence;
+the release checklist requires signature verification and manifest regeneration
+from the final signed binaries. Those are manual release gates, not checks
+claimed as executed by this presign packaging rehearsal.
