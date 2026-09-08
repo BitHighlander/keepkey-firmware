@@ -111,8 +111,6 @@ void kk_board_init(void) {
   layout_init(display_canvas_init());
 }
 
-
-
 /* calc_crc32() - Calculate crc32 for block of memory
  *
  * INPUT
