@@ -24,7 +24,7 @@ manifest records the requested expanded objective without falsely completing it.
 | --- | --- | --- | --- |
 | 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `c72672f06b3bc568183280607d9c3bc8a6245176` | Accepted and advanced; ready for the later Copilot checkpoint |
 | 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `de0251bbdb286ccdc786a5513ebc94bddd890e3f` | Accepted and advanced; both source variants validated |
-| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a56fb3e88d7dbbe31a321179c10a8fd2023d8f0c` | Final combined candidate `af6c0bfcf` under validation; not yet advanced |
+| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a18317f8869bb905cac9322f0d76ca7aacbaf544` | Accepted and advanced; both variants validated, ready for the later Copilot checkpoint |
 
 Fork develop remains `da075b8cb717b56dc1023edb52c2ccdf171b8a08`. All three
 product PRs target it and remain unmerged. A product PR is the cumulative
@@ -43,18 +43,20 @@ They supersede status snapshots copied into a candidate before assembly.
   passed both ARM/integration variants and both aggregate gates. Local Bitcoin-only
   host suite: 307 passed, 445 variant/policy skips. SRAM reserve: full 21,312 bytes,
   Bitcoin-only 28,268 bytes. Final canonical commit adds documentation only.
-- 7.15: `rehearsal/715-combined-product` at `af6c0bfcf96234499a9412136fa59a4108b3d9c9`;
-  [final CI 34283763680](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34283763680)
-  is pending. PR #666 consolidated adjacent PIN conditions. The subsequent CI
-  exposed a debug backup subpage retaining the previous acknowledgement; PR #667
-  clears it for each new request and proves the fix with a deterministic
-  before/after regression. Complete native suites pass (498 full firmware tests), including restored
-  FSM registration, shared board bootstrap and D-01 positive duplicate-detector
-  evidence. Host pin `08e491c60fe36110598a3791b2441644fcf55f76` restores the actual
-  capability matrix: full suite 724 passed / 31 classified skips / 165 subtests;
-  Bitcoin-only 312 passed / 443 variant or policy skips / 104 subtests. Owned
-  emulator power-cycle and additive-review evidence includes 36 captured PNGs
-  across four passing scenarios. Canonical promotion still awaits CI and artifacts.
+- 7.15: validated code `af6c0bfcf96234499a9412136fa59a4108b3d9c9`,
+  [CI 34283763680](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34283763680)
+  passed every required job, both variants, shared-library integration, report
+  validation and CI gate. Canonical receipt `a18317f88` changes documentation only.
+  Native full: 498 firmware, 13 board, 18 crypto, 6 Pallas and 72 Zcash tests.
+  Native Bitcoin-only: 92 firmware, 13 board and 18 crypto tests. Local host:
+  724 full / 31 skips and 312 Bitcoin-only / 443 skips, including owned-process
+  lifetime and storage checks. CI host: 719 full / 36 skips and 307 Bitcoin-only /
+  448 skips; its extra five skips per variant are covered locally. CI screenshot
+  suites pass, with separate local lifetime/additive evidence in 36 PNGs. Both ARM
+  manifests and all 23 binary/ELF hashes per variant are verified. SRAM reserves:
+  full 16,392 bytes (only 8 above the floor), Bitcoin-only 31,424 bytes.
+  PR #666 consolidated adjacent PIN conditions. PR #667 closes the CI-exposed
+  debug backup acknowledgement race with a deterministic red/green regression.
 
 ## Frozen source identities
 
@@ -85,13 +87,14 @@ and closed after exact dependency initialization; no token behavior was altered
 for those failures. The older unknown-storage lockout was superseded by the
 current explicit downgrade-erasure policy, and the uncommitted replay was withdrawn.
 
-## Remaining program work
+## Internal program complete
 
-Finish 7.15 exact-candidate CI, inspect its full/Bitcoin-only artifacts and skips,
-record the receipt and advance its canonical branch normally. Then reconcile the
-final program table and product PR descriptions. No further broad discovery or
-feature import is planned. Only a concrete failed contract or missing required
-evidence can reopen a frozen candidate.
+All three canonical products contain their accepted assemblies and exact receipts.
+The product PR descriptions link the evidence and remain open into fork develop.
+No known unresolved in-scope finding remains under the frozen contracts. Internal
+rehearsal is finished; no further broad discovery or feature import is planned.
+Only a concrete failed contract or missing required evidence can reopen acceptance.
+The later upstream-shaped Copilot checkpoint has not been performed.
 
 Final physical OLED and signed-upgrade checks are not performed here. The external
 provider tooling's test-key disposition remains a release deliverable, not an
