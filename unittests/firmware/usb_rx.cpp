@@ -104,9 +104,17 @@ void kk_test_board_init(void);
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 
-TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
+static void init_test_usb() {
+  static bool initialized = false;
   fsm_init();
-  usbInit("");
+  if (!initialized) {
+    usbInit("");
+    initialized = true;
+  }
+}
+
+TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
+  init_test_usb();
   const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
@@ -151,4 +159,40 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   close(fd);
   ASSERT_EQ(MessageType_MessageType_ButtonAck, id);
   for (uint8_t byte : received) EXPECT_EQ(0, byte);
+}
+
+static const uint8_t *observed_packet;
+static size_t observed_length;
+static void observe_packet(const void *packet, size_t length) {
+  observed_packet = static_cast<const uint8_t *>(packet);
+  observed_length = length;
+  EXPECT_EQ(0x5a, observed_packet[20]);
+}
+
+TEST(USBRX, PacketStorageIsWipedAfterCallback) {
+  init_test_usb();
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  uint8_t frame[64];
+  memset(frame, 0x5a, sizeof(frame));
+  observed_packet = nullptr;
+  observed_length = 0;
+  usb_set_rx_callback(observe_packet);
+  EXPECT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
+                                  reinterpret_cast<struct sockaddr *>(&address),
+                                  sizeof(address)));
+  for (int attempt = 0; attempt < 1000 && !observed_packet; ++attempt) {
+    usbPoll();
+    if (!observed_packet) usleep(1000);
+  }
+  close(fd);
+  fsm_init();  // Restore the real callback before any fatal assertion.
+  ASSERT_NE(nullptr, observed_packet);
+  ASSERT_EQ(sizeof(frame), observed_length);
+  // The transport owns static storage; observe its lifetime after callback.
+  for (size_t i = 0; i < sizeof(frame); ++i) EXPECT_EQ(0, observed_packet[i]);
 }
