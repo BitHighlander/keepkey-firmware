@@ -24,7 +24,7 @@ manifest records the requested expanded objective without falsely completing it.
 | --- | --- | --- | --- |
 | 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `c72672f06b3bc568183280607d9c3bc8a6245176` | Accepted and advanced; ready for the later Copilot checkpoint |
 | 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `de0251bbdb286ccdc786a5513ebc94bddd890e3f` | Accepted and advanced; both source variants validated |
-| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a56fb3e88d7dbbe31a321179c10a8fd2023d8f0c` | Final combined candidate `8cfe5bcc5` under validation; not yet advanced |
+| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a56fb3e88d7dbbe31a321179c10a8fd2023d8f0c` | Final combined candidate `c8dd8717b` under validation; not yet advanced |
 
 Fork develop remains `da075b8cb717b56dc1023edb52c2ccdf171b8a08`. All three
 product PRs target it and remain unmerged. A product PR is the cumulative
@@ -43,10 +43,17 @@ They supersede status snapshots copied into a candidate before assembly.
   passed both ARM/integration variants and both aggregate gates. Local Bitcoin-only
   host suite: 307 passed, 445 variant/policy skips. SRAM reserve: full 21,312 bytes,
   Bitcoin-only 28,268 bytes. Final canonical commit adds documentation only.
-- 7.15: `rehearsal/715-combined-product` at `8cfe5bcc5`; final CI 34278979866 is
-  pending. Native suites pass, including restored FSM registration, shared board
-  bootstrap and D-01 positive duplicate-detector evidence. The latest host pin
-  `96a7572` restores the actual capability matrix; final full-suite receipt pending.
+- 7.15: `rehearsal/715-combined-product` at `c8dd8717bb30c5532a226a7cf5ed02ccd51a5973`;
+  [final CI 34281427504](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34281427504)
+  is pending. The preceding run found adjacent PIN-revocation conditions;
+  audit PR #666 combines them with unchanged ordering, clean focused cppcheck,
+  and 46 passing affected tests. Complete native suites pass, including restored
+  FSM registration, shared board bootstrap and D-01 positive duplicate-detector
+  evidence. Host pin `08e491c60fe36110598a3791b2441644fcf55f76` restores the actual
+  capability matrix: full suite 724 passed / 31 classified skips / 165 subtests;
+  Bitcoin-only 312 passed / 443 variant or policy skips / 104 subtests. Owned
+  emulator power-cycle and additive-review evidence includes 36 captured PNGs
+  across four passing scenarios. Canonical promotion still awaits CI and artifacts.
 
 ## Frozen source identities
 
