@@ -940,6 +940,11 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(memcmp(session.storageKey, new_storage_key, 64) == 0);
 }
 
+extern "C" {
+void storage_writeStorageV17(char *, size_t, const Storage *);
+void storage_readStorageV17(Storage *, const char *, size_t);
+}
+
 TEST(Storage, Version17RoundTripPreservesUnsignedFieldsAndAbsentSecrets) {
   Storage original = {};
   original.version = 17;
