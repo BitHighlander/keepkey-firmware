@@ -756,7 +756,6 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage->pub.u2f_counter = 0;
 
   if (storage->version == 1) {
-    storage_resetPolicies(storage);
     storage_resetCache(&storage->sec.cache);
   } else {
     storage_readCacheV1(&storage->sec.cache, ptr + 484, 75);
