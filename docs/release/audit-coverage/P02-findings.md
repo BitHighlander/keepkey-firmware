@@ -74,3 +74,23 @@ results are inspected. Green integration will not complete the remaining audit.
 | 7.14.2 | `bae119589956342fdf51914b1c463a1f4dc4acae` | [34291740100](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34291740100) | Running |
 | 7.14.3 | `97f970147fe23f5cfa95b3575ab8f5874c1ad140` | [34291741628](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34291741628) | Running |
 | 7.15 | `f20c2497a0990a6690c5bb804414c11cac74bf58` | [34291743075](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34291743075) | Queued |
+
+## P02-R02: current outgoing schemas fit packet-tail reads
+
+Reviewed normal/debug transmit loops against generated maximum wire sizes.
+The 63-byte packet copies can extend beyond the encoded payload into the
+zeroed arena. For every outgoing schema, including inactive/commented map
+rows as a conservative superset, maximum payload + 9-byte frame header +
+62-byte tail fits the device's 12,301-byte TrezorFrameBuffer.
+
+| Product / assembly | Schemas checked | Largest encoded payload |
+| --- | --- | --- |
+| 7.14.2 / bae119589 | 60 | CoinTable: 6,060 bytes |
+| 7.14.3 / 97f970147 | 60 | CoinTable: 6,060 bytes |
+| 7.15 / f20c2497a | 76 | Entropy: 8,195 bytes |
+
+Reproduce with rehearsals/transport_output_bounds.py against each checkout
+and its generated build-native/include headers. This is evidence for current
+schemas, not a proof for future additions or callback-sized messages. No
+current out-of-bounds defect was established; no speculative code fix added.
+The complete transport phase remains open.
