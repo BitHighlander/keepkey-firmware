@@ -19,6 +19,7 @@ set(sources
     # Observes cleanup in the real storage.c for the unit binary only.
     storage_cipher_probe.c
     storage.cpp
+    storage_passphrase.cpp
     thorchain.cpp
     usb_rx.cpp
     u2f.cpp)

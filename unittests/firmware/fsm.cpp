@@ -130,11 +130,9 @@ TEST(Fsm, AutoLockTerminatesSigningWhileWaitingAwayFromHome) {
   /* Production initializes the OLED before the main loop can auto-lock. The
    * firmware unit binary does not, so mirror that board precondition before
    * toggle_screensaver() draws its terminal state. */
-  static bool display_ready = false;
-  if (!display_ready) {
+  if (layout_get_canvas() == nullptr) {
     timer_init();
     layout_init(display_canvas_init());
-    display_ready = true;
   }
 
   fsm_init();
