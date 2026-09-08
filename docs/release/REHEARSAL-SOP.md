@@ -15,7 +15,7 @@ Selection does not claim that this head has passed final acceptance.
 Create a fresh rehearsal branch from that SHA. Do not merge alpha into it.
 Existing shared develop remains preserved until the replacement is proven.
 The intended new develop is the accepted 7.14.2 foundation plus accepted
-hardening units. Alpha feature staging begins only after foundation acceptance.
+hardening units. Alpha feature staging may proceed on the tested foundation PR before release acceptance; dependent units remain unmerged.
 Promotion of a shared branch is a distinct recorded operation; this procedure
 does not silently reset, force-push, merge upstream, or publish a release.
 
@@ -97,7 +97,7 @@ checks from the baseline and selected behaviors before implementation.
 
 Foundation acceptance requires all selected units accepted, complete candidate
 checks passing, and no unresolved release blockers. Record the accepted SHA.
-Only then stage alpha features in a new manifest using the same unit procedure.
+Alpha features may be staged earlier in a new manifest using the same unit procedure. Release acceptance remains distinct from internal staging.
 
 Reconstruct the accepted sequence from its recorded base and verify the expected
 tree and pins before promoting it as develop. Preserve the previous develop tip.
@@ -108,3 +108,18 @@ units in order rather than re-bundling them into a large upstream review.
 Rehearsal success does not imply upstream acceptance. Before upstream PRs, verify
 the live target base and public dependency availability. Reconcile any difference,
 refresh affected evidence, and satisfy upstream dependency/merge requirements.
+
+## Owner correction: unmerged fork stack (2026-09-08)
+
+Fork develop and alpha are agent-controlled staging surfaces. Do not wait for
+human approval to author, validate or stack internal PRs. Do not merge into
+develop: the foundation targets fork develop and each dependent PR targets its
+predecessor branch. Keep the new stack unmerged. A reviewer recommendation for
+human review is recorded for upstream/release consideration; it does not block
+internal staging. Specific unresolved defects still receive a disposition.
+
+The existing fork develop contains later integrations. Reconstruct the selected
+7.14.2 tree on an isolated descendant branch so its PR describes the proposed
+foundation replacement without rewriting develop. Record the original target
+SHA, exact source tree, intentional omissions and reconstruction checks.
+Do not mistake the large replacement diff for a newly authored feature bundle.
