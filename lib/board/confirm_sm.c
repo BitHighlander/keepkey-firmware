@@ -312,6 +312,7 @@ static bool confirm_screen(const char* request_title_param,
   }
 
 confirm_screen_exit:
+  memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
 
   keepkey_button_set_on_press_handler(NULL, NULL);
   keepkey_button_set_on_release_handler(NULL, NULL);
