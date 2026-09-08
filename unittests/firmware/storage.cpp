@@ -939,3 +939,26 @@ TEST(Storage, Reset) {
 
   ASSERT_TRUE(memcmp(session.storageKey, new_storage_key, 64) == 0);
 }
+
+extern "C" {
+void storage_writeStorageV17(char *, size_t, const Storage *);
+void storage_readStorageV17(Storage *, const char *, size_t);
+}
+
+TEST(Storage, Version17RoundTripPreservesUnsignedFieldsAndAbsentSecrets) {
+  Storage original = {};
+  original.version = 17;
+  original.pub.pin_failed_attempts = 0x1280ff80u;
+  original.pub.auto_lock_delay_ms = 0x1280ff80u;
+  char bytes[1501 + V17_ENCSEC_SIZE] = {};
+  storage_writeStorageV17(bytes, sizeof(bytes), &original);
+  Storage restored = {};
+  storage_readStorageV17(&restored, bytes, sizeof(bytes));
+  EXPECT_EQ(original.pub.pin_failed_attempts, restored.pub.pin_failed_attempts);
+  EXPECT_EQ(original.pub.auto_lock_delay_ms, restored.pub.auto_lock_delay_ms);
+  EXPECT_FALSE(restored.has_sec_fingerprint);
+  EXPECT_FALSE(restored.pub.has_mnemonic);
+  EXPECT_FALSE(restored.pub.has_pin);
+  EXPECT_FALSE(restored.pub.authdata_initialized);
+  EXPECT_FALSE(restored.pub.authdata_encrypted);
+}
