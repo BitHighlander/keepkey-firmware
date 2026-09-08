@@ -1771,13 +1771,6 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   */
   pintest_t ret = PIN_WRONG;
 
-  /* Direct callers bypass session_clear(), so revoke retained signing state
-   * here whenever PIN authorization is cleared. This writes no flash. */
-  if (clear_pin) {
-    fsm_abort_workflows();
-    signed_metadata_clear_signers();
-  }
-
   /* AdvancedMode belongs to the unlocked session, like the runtime ClearSign
    * signers session_clear() revokes -- fsm_msgApplyPolicies calls those signers
    * "an AdvancedMode capability", so revoking them while leaving the policy
@@ -1796,6 +1789,9 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
    * Shadow only -- writes no flash, so the "does not modify flash storage
    * config state" contract above holds. AdvancedMode is never persisted. */
   if (clear_pin) {
+    /* Direct callers bypass session_clear(); revoke all authorization here. */
+    fsm_abort_workflows();
+    signed_metadata_clear_signers();
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 
