@@ -112,3 +112,14 @@ products use a local permutation array, not this shared-scratch mechanism.
 This closes the scratch/transport interaction only; recovery state transitions,
 word policy, entropy quality and cumulative stack depth remain separate open
 audit obligations.
+
+### 7.14.2 ARM result inspected
+
+Run 34291740100's ARM job passed at bae119589956342fdf51914b1c463a1f4dc4acae.
+Downloaded artifact 10081622268 (firmware-v7.14.2-bae1195); all 23 file hashes
+match arm-build-manifest.json, whose firmware SHA matches the dispatched head.
+Application ELF SHA-256 is
+6bd596e68ff6c5b468f78b678329aaa967041831eda02eb9939bde8fe8a92808.
+ELF _stack minus _ebss is 22,508 bytes, unchanged from the prior measured
+reserve. This validates the new pinned-image ARM build; host integration
+remains running and canonical promotion remains pending.
