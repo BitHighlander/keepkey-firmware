@@ -1778,8 +1778,11 @@
       "added": "209",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-crypto-gates.md"
+      ],
+      "reviewed_blob": "3c7c6728aef3f51847cd1cc8930674253cafb11b"
     },
     {
       "path": "scripts/verify-token-def.py",
@@ -1830,24 +1833,33 @@
       "added": "238",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-crypto-gates.md"
+      ],
+      "reviewed_blob": "4ed99b8234dc2bd93b11fdd43579b0a3d00ff96a"
     },
     {
       "path": "tools/check_pallas_ct_disassembly.py",
       "added": "301",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_fix_staged",
+      "evidence": [
+        "P01-findings.md",
+        "P01-crypto-gates.md"
+      ]
     },
     {
       "path": "tools/check_sram_budget.py",
       "added": "124",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-sram-review.md"
+      ],
+      "reviewed_scope": "gate and configured threshold behavior; cumulative runtime call-chain review remains in interaction scope"
     },
     {
       "path": "tools/display_test/CMakeLists.txt",
@@ -1881,8 +1893,11 @@
       "added": "10",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-sram-review.md"
+      ],
+      "reviewed_scope": "gate and configured threshold behavior; cumulative runtime call-chain review remains in interaction scope"
     },
     {
       "path": "tools/merge-direction-adjudicated.txt",
@@ -1913,8 +1928,11 @@
       "added": "9",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-sram-review.md"
+      ],
+      "reviewed_scope": "gate and configured threshold behavior; cumulative runtime call-chain review remains in interaction scope"
     },
     {
       "path": "unittests/board/CMakeLists.txt",
