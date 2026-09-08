@@ -5,29 +5,38 @@
 #include "trezor/crypto/bip32.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+
+/* Suffix width for the deposit confirmation screen, from
+ * include/keepkey/transport/messages-thorchain.options:
+ * ThorchainMsgDeposit.asset max_size:20 -> 19 visible chars, plus the leading
+ * space. Named so the "<amount> <asset>" buffer is sized from the protocol
+ * maximum -- bn_format() zeroes its output and returns 0 if it does not fit. */
+#define THORCHAIN_ASSET_SUFFIX_LEN 20
 
 typedef struct _ThorchainSignTx ThorchainSignTx;
 typedef struct _ThorchainMsgDeposit ThorchainMsgDeposit;
 
-// Returns true iff denom contains only chars safe in JSON without escaping.
-// Valid: [a-z0-9./\-]. Rejects empty string, quotes, backslashes, whitespace.
-bool thorchain_isValidDenom(const char* denom);
-
-// Deposit asset grammar: as above but uppercase alpha also allowed.
-bool thorchain_isValidAsset(const char* asset);
-// Deposit signer must be bech32 with the active network's HRP.
-bool thorchain_isValidSigner(const char* signer);
-
 bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg);
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
-                                   const char* to_address, const char* denom);
+                                   const char* to_address);
 bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg);
 bool thorchain_signTxFinalize(uint8_t* public_key, uint8_t* signature);
 bool thorchain_signingIsInited(void);
+
+/// True iff `address` is the account this session's key signs as. Use for
+/// MsgDeposit's `signer`, which is serialized verbatim as the authority.
+bool thorchain_addressIsSigner(const char* address);
 bool thorchain_signingIsFinished(void);
 void thorchain_signAbort(void);
 const ThorchainSignTx* thorchain_getThorchainSignTx(void);
+
+/* Format exactly the amount text used by both THORChain confirmation paths.
+ * Returns false instead of allowing bn_format_uint64() to leave a blank
+ * confirmation when the caller's buffer cannot hold the protocol maximum. */
+bool thorchain_formatAmount(uint64_t amount, const char* asset, char* out,
+                            size_t out_len);
 
 // Result of thorchain_parseConfirmMemo(). A memo the device could not parse
 // and a refusal at a confirm screen are DIFFERENT outcomes and must never be
@@ -54,14 +63,5 @@ typedef enum {
 //          see ThorchainMemoResult
 ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                                                size_t size);
-
-// Pages the COMPLETE raw memo (ASCII as text pages, binary as hex pages) so no
-// byte is ever truncated behind confirm()'s body budget. Native THOR/MAYA
-// deposit/send handlers call this as the authoritative disclosure after their
-// best-effort structured summary, so a field the structured view omits (or a
-// long field that would truncate) can never be signed unseen. Returns false if
-// the user rejects any page. Shared by the MAYA path (same memo grammar).
-bool thorchain_confirm_full_memo(const char* title, const char* memo,
-                                 size_t len);
 
 #endif

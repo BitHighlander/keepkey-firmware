@@ -68,31 +68,27 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
                                  const char* token_in_denom,
                                  const char* token_out_min_amount);
 
-#define OSMOSIS_PRECISION 6
-#define OSMOSIS_MAX_AMOUNT_DIGITS 32
-#define OSMOSIS_MAX_DENOM_LEN 68
-
-// Longest amount a confirm screen renders: the digits, a point, a space and
-// the longest denom a message can carry.
-#define OSMOSIS_AMOUNT_STR_LEN 103
-
-/**
- * Render an integer base-unit amount for a confirm screen:
- * ("1500000", "uosmo") -> "1.500000 OSMO".
- *
- * Only uosmo is scaled — any other denom is shown exactly as the chain states
- * it, because the device does not know its precision. Returns false unless the
- * amount is a canonical, schema-bounded unsigned decimal and the denomination
- * is a schema-bounded Cosmos asset identifier. Native uosmo additionally must
- * fit uint64, which is the range accepted by the native-asset display policy.
- */
-bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
-                          const char* denom);
-
 bool osmosis_signTxFinalize(uint8_t* public_key, uint8_t* signature);
 bool osmosis_signingIsInited(void);
 bool osmosis_signingIsFinished(void);
 void osmosis_signAbort(void);
 const OsmosisSignTx* osmosis_getOsmosisSignTx(void);
+
+/// Required protobuf strings must be present and non-empty before any review.
+bool osmosis_validate_required_text(bool has_value, const char* value);
+
+/// Amino coin amounts are non-empty unsigned base-10 integer strings.
+bool osmosis_validate_amount(bool has_value, const char* value);
+
+/// Safe text AND a bech32 account address on this session's network.
+bool osmosis_validate_account_address(bool has_value, const char* value);
+
+/// Safe text AND a bech32 "<prefix>valoper" operator address on this session's
+/// network.
+bool osmosis_validate_validator_address(bool has_value, const char* value);
+
+/// True iff `address` is the account this session's key signs as. Use for
+/// `sender` fields, which are signed verbatim but never displayed.
+bool osmosis_address_is_signer(const char* address);
 
 #endif

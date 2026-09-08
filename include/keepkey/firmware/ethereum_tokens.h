@@ -25,9 +25,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#if BITCOIN_ONLY
-#define TOKENS_COUNT 0  // no ERC-20 tokens in the bitcoin-only image
-#else
 enum {
 #define X(CHAIN_ID, CONTRACT_ADDR, TICKER, DECIMALS) \
   CONCAT(TokenIndex, __COUNTER__),
@@ -38,7 +35,6 @@ enum {
 };
 
 #define TOKENS_COUNT ((int)TokenIndexLast - (int)TokenIndexFirst)
-#endif
 
 typedef struct _TokenType {
   const char* const address;
@@ -52,6 +48,13 @@ typedef struct _CoinType CoinType;
 extern const TokenType tokens[];
 
 extern const TokenType* UnknownToken;
+
+/* The Ethereum-mainnet 0xeeee..eeee pseudo-address used by 0x and several
+ * routers to mean ETH.  Ordinary lookup is strictly chain-scoped and returns
+ * this ETH-labelled entry only for chain 1.  A router that assigns native-
+ * asset meaning to the same bytes on another chain must resolve that meaning
+ * explicitly without borrowing this token metadata. */
+extern const TokenType* EthTestToken;
 
 const TokenType* tokenIter(int32_t* ctr);
 

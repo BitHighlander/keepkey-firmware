@@ -21,6 +21,7 @@
 
 #include "keepkey/firmware/ripple_base58.h"
 #include "trezor/crypto/base58.h"
+#include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
 
 #include <assert.h>
@@ -56,10 +57,44 @@ bool ripple_getAddress(const uint8_t public_key[33],
   return true;
 }
 
-void ripple_formatAmount(char* buf, size_t len, uint64_t amount) {
+/* An address the serializer will actually accept.
+ *
+ * ripple_serializeAddress() decodes and requires exactly 21 raw bytes, but that
+ * runs after both confirmations -- and it guards the length with assert(),
+ * which is compiled out of release builds. So a malformed destination was
+ * displayed and approved before anything checked it. Same check, available
+ * early. */
+bool ripple_validateAddress(const char* address) {
+  if (!address || address[0] == '\0') return false;
+  uint8_t addr_raw[MAX_ADDR_RAW_SIZE];
+  const uint32_t len =
+      ripple_decode_check(address, HASHER_SHA2D, addr_raw, MAX_ADDR_RAW_SIZE);
+  /* The version byte matters as much as the length. ripple_serializeAddress()
+     drops addr_raw[0] and signs only the 20 bytes after it, so an address with
+     a valid checksum but a NON-ZERO version would be displayed exactly as the
+     host supplied it while the signature committed to the account those 20
+     bytes name under version 0 -- a different destination from the one on the
+     screen. RIPPLE_ADDRESS_VERSION is what ripple_getAddress() itself encodes,
+     so this accepts exactly the classic account addresses the device can
+     produce. */
+  const bool ok = (len == 21) && (addr_raw[0] == RIPPLE_ADDRESS_VERSION);
+  memzero(addr_raw, sizeof(addr_raw));
+  return ok;
+}
+
+bool ripple_formatAmount(char* buf, size_t len, uint64_t amount) {
   bignum256 val;
   bn_read_uint64(amount, &val);
-  bn_format(&val, NULL, " XRP", RIPPLE_DECIMALS, 0, false, buf, len);
+  if (!bn_format(&val, NULL, " XRP", RIPPLE_DECIMALS, 0, false, buf, len)) {
+    /* Keep the sentinel for anything that still wants to draw something, but
+       report the failure: writing "AMOUNT TOO LARGE TO DISPLAY" into a void
+       function meant fsm_msgRippleSignTx() could not tell, so it showed that
+       string and signed the numeric amount anyway. An amount the device cannot
+       render is not an amount it can ask anyone to approve. */
+    strlcpy(buf, "AMOUNT TOO LARGE TO DISPLAY", len);
+    return false;
+  }
+  return true;
 }
 
 static void append_u8(bool* ok, uint8_t** buf, const uint8_t* end,
@@ -110,15 +145,10 @@ void ripple_serializeInt32(bool* ok, uint8_t** buf, const uint8_t* end,
 
 void ripple_serializeAmount(bool* ok, uint8_t** buf, const uint8_t* end,
                             const RippleFieldMapping* m, int64_t amount) {
-  /* Enforce the same drops-denominated protocol ceiling as the FSM. An assert
-   * alone disappears under -DNDEBUG and lets bits 62-63 overwrite a value the
-   * user approved. Reject before emitting even the field tag. */
-  if (amount < 0 || (uint64_t)amount > RIPPLE_MAX_AMOUNT_DROPS) {
-    *ok = false;
-    return;
-  }
   ripple_serializeType(ok, buf, end, m);
 
+  assert(amount >= 0 && "amounts cannot be negative");
+  assert(amount <= 100000000000 && "larger amounts not supported");
   uint8_t msb = (amount >> (7 * 8)) & 0xff;
   msb &= 0x7f;  // Clear first bit, indicating XRP
   msb |= 0x40;  // Clear second bit, indicating value is positive
@@ -228,31 +258,12 @@ bool ripple_serialize(uint8_t** buf, const uint8_t* end, const RippleSignTx* tx,
   if (tx->payment.has_destination)
     ripple_serializeAddress(&ok, buf, end, &RFM_destination,
                             tx->payment.destination);
-  // Memos array (ARRAY type=15 key=9) comes last per XRPL canonical ordering.
-  // Layout: 0xF9 [Memos start] 0xEA [Memo object start]
-  //         0x7D [MemoData VL] <varint len> <bytes>
-  //         0xE1 [object end] 0xF1 [array end]
-  if (tx->has_memo && tx->memo[0] != '\0') {
-    size_t memo_len = strlen(tx->memo);
-    append_u8(&ok, buf, end, 0xF9);  // STArray[9] = Memos
-    append_u8(&ok, buf, end, 0xEA);  // STObject[10] = Memo
-    append_u8(&ok, buf, end, 0x7D);  // VL[13] = MemoData
-    ripple_serializeVarint(&ok, buf, end, (int)memo_len);
-    if (ok && *buf + memo_len <= end) {
-      memcpy(*buf, tx->memo, memo_len);
-      *buf += memo_len;
-    } else {
-      ok = false;
-    }
-    append_u8(&ok, buf, end, 0xE1);  // end STObject
-    append_u8(&ok, buf, end, 0xF1);  // end STArray
-  }
   return ok;
 }
 
-void ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
+bool ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
   const curve_info* curve = get_curve_by_name("secp256k1");
-  if (!curve) return;
+  if (!curve) return false;
 
   // Set canonical flag, since trezor-crypto ECDSA implementation returns
   // fully-canonical signatures, thereby enforcing it in the transaction
@@ -271,13 +282,13 @@ void ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
   memcpy(resp->serialized_tx.bytes, "\x53\x54\x58\x00", 4);
 
   char source_address[MAX_ADDR_SIZE];
-  if (!ripple_getAddress(node->public_key, source_address)) return;
+  if (!ripple_getAddress(node->public_key, source_address)) return false;
 
   uint8_t* buf = resp->serialized_tx.bytes + 4;
   size_t len = sizeof(resp->serialized_tx.bytes) - 4;
   if (!ripple_serialize(&buf, buf + len, tx, source_address, node->public_key,
                         NULL, 0))
-    return;
+    return false;
 
   // Ripple uses the first half of SHA512
   uint8_t hash[64];
@@ -287,7 +298,7 @@ void ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
   if (ecdsa_sign_digest(&secp256k1, node->private_key, hash, sig, NULL, NULL) !=
       0) {
     // Failure
-    return;
+    return false;
   }
 
   resp->signature.size = ecdsa_sig_to_der(sig, resp->signature.bytes);
@@ -299,8 +310,9 @@ void ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
   len = sizeof(resp->serialized_tx);
   if (!ripple_serialize(&buf, buf + len, tx, source_address, node->public_key,
                         resp->signature.bytes, resp->signature.size))
-    return;
+    return false;
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = buf - resp->serialized_tx.bytes;
+  return true;
 }

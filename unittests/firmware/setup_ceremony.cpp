@@ -33,9 +33,7 @@
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/firmware/fsm.h"
-#include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
-#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/bip39.h"
 }
 
@@ -89,6 +87,21 @@ TEST_F(SetupCeremony, AbortIsIdempotent) {
   EXPECT_FALSE(setup_isArmedAs(SETUP_RECOVERY));
 }
 
+// BIP39 owns a static output buffer.  Once setup is abandoned, retaining the
+// generated sentence there is retaining an otherwise unowned device seed.
+TEST_F(SetupCeremony, AbortScrubsGeneratedMnemonic) {
+  const uint8_t entropy[16] = {};
+  const char* generated = mnemonic_from_data(entropy, sizeof(entropy));
+  ASSERT_NE(nullptr, generated);
+  ASSERT_NE('\0', generated[0]);
+
+  setup_abort();
+
+  for (size_t i = 0; i < 24u * 10u; ++i) {
+    EXPECT_EQ('\0', generated[i]);
+  }
+}
+
 // setup_require() is the gate every continuation message uses. A mismatch must
 // abort rather than fall through.
 TEST_F(SetupCeremony, RequireRejectsTheWrongKind) {
@@ -109,20 +122,6 @@ TEST_F(SetupCeremony, StagedButNotArmedIsInert) {
 
   // A later ceremony may stage freely over an un-armed one.
   EXPECT_TRUE(setup_stage(false, "english", "second", 0, 0, false));
-}
-
-// #523: a setter used during setup_commit() must not persist on its own.
-// storage_commit() deliberately aborts any still-armed foreign ceremony, so
-// an implicit commit here used to wipe the staged no_backup flag before the
-// next line of setup_commit() could apply it.
-TEST_F(SetupCeremony, U2FCounterSetterDoesNotCommitMidCeremony) {
-  ASSERT_TRUE(setup_stage(false, "english", "no backup", 0, 123, true));
-  setup_arm(SETUP_RESET);
-  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
-
-  storage_setU2FCounter(123);
-
-  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
 }
 
 // The permutation coverage the release gate asks for: the orderings a host can
@@ -156,32 +155,6 @@ TEST_F(SetupCeremony, MessagePermutationsLeaveNothingArmed) {
       }
     }
   }
-}
-
-TEST_F(SetupCeremony, AbortWipesBip39MnemonicAndRecoveryFragments) {
-  const uint8_t entropy[16] = {0};
-  const char* mnemonic = mnemonic_from_data(entropy, sizeof(entropy));
-  ASSERT_NE(nullptr, mnemonic);
-  ASSERT_NE('\0', mnemonic[0]);
-  recovery_cipher_test_set_word_fragments();
-  ASSERT_FALSE(recovery_cipher_test_word_fragments_are_zero());
-
-  setup_abort();
-
-  EXPECT_EQ('\0', mnemonic[0]);
-  EXPECT_TRUE(recovery_cipher_test_word_fragments_are_zero());
-  EXPECT_FALSE(setup_isArmed());
-}
-
-TEST_F(SetupCeremony, InvalidRecoveryWordCountDisarmsCeremony) {
-  ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
-  setup_arm(SETUP_RECOVERY);
-  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
-
-  recovery_cipher_finalize();
-
-  EXPECT_FALSE(setup_isArmed());
-  EXPECT_TRUE(recovery_cipher_test_word_fragments_are_zero());
 }
 
 }  // namespace

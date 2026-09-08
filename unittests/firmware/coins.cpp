@@ -75,15 +75,6 @@ TEST(Coins, TableSanity) {
 
     if (!coin.has_contract_address) continue;
 
-    // Pre-existing (not 7.x-release related): ZIL is a display-only leftover
-    // whose ERC20 entry was dropped from the generated token table years ago.
-    // Keep this allowlist exact so a newly introduced mismatch cannot hide in it.
-    static const char *const kLegacyNoTokenEntry[] = {"ZIL"};
-    bool legacy = false;
-    for (const char *t : kLegacyNoTokenEntry)
-      if (strcmp(coin.coin_shortcut, t) == 0) { legacy = true; break; }
-    if (legacy) continue;
-
     const TokenType *token;
     if (!tokenByTicker(1, coin.coin_shortcut, &token)) {
       EXPECT_TRUE(false) << "Can't uniquely find " << coin.coin_shortcut;
@@ -93,20 +84,6 @@ TEST(Coins, TableSanity) {
     EXPECT_TRUE(memcmp(coin.contract_address.bytes, token->address,
                        coin.contract_address.size) == 0)
         << "Contract address mismatch for " << coin.coin_shortcut;
-  }
-}
-
-TEST(Coins, RetiredEthereumContractEntriesStayRemoved) {
-  static const char *const kRetired[] = {
-      "QTUM", "BNB", "GTO", "IOST", "CMT", "MCO", "ODEM"};
-
-  for (const char *shortcut : kRetired) {
-    for (int i = 0; i < COINS_COUNT; ++i) {
-      const auto &coin = coins[i];
-      EXPECT_FALSE(coin.has_contract_address &&
-                   strcmp(coin.coin_shortcut, shortcut) == 0)
-          << shortcut << " returned as an Ethereum contract entry";
-    }
   }
 }
 
@@ -233,14 +210,29 @@ TEST(Coins, CoinByNameOrTicker) {
 }
 
 TEST(Coins, CoinByChainAddress) {
-  const CoinType *zrx = coinByChainAddress(1, (const uint8_t*)"\xE4\x1d\x24\x89\x57\x1d\x32\x21\x89\x24\x6D\xaF\xA5\xeb\xDe\x1F\x46\x99\xF4\x98");
+  static const uint8_t zrx_address[] =
+      "\xE4\x1d\x24\x89\x57\x1d\x32\x21\x89\x24\x6D\xaF\xA5\xeb\xDe\x1F"
+      "\x46\x99\xF4\x98";
+  const CoinType *zrx = coinByChainAddress(1, zrx_address);
   ASSERT_NE(zrx, nullptr);
   EXPECT_EQ(zrx->coin_name, std::string("0x"));
   EXPECT_EQ(zrx->coin_shortcut, std::string("ZRX"));
+
+  // A uint8_t chain-id parameter made 257 alias chain 1.
+  EXPECT_EQ(nullptr, coinByChainAddress(257, zrx_address));
 }
 
 TEST(Coins, TokenByChainAddress) {
-  const TokenType *zrx = tokenByChainAddress(1, (const uint8_t*)"\xE4\x1d\x24\x89\x57\x1d\x32\x21\x89\x24\x6D\xaF\xA5\xeb\xDe\x1F\x46\x99\xF4\x98");
+  static const uint8_t zrx_address[] =
+      "\xE4\x1d\x24\x89\x57\x1d\x32\x21\x89\x24\x6D\xaF\xA5\xeb\xDe\x1F"
+      "\x46\x99\xF4\x98";
+  const TokenType *zrx = tokenByChainAddress(1, zrx_address);
   ASSERT_NE(zrx, nullptr);
   EXPECT_EQ(zrx->ticker, std::string(" ZRX"));
+
+  EXPECT_EQ(UnknownToken, tokenByChainAddress(257, zrx_address));
+
+  const TokenType *by_ticker = nullptr;
+  EXPECT_FALSE(tokenByTicker(257, "ZRX", &by_ticker));
+  EXPECT_EQ(nullptr, by_ticker);
 }

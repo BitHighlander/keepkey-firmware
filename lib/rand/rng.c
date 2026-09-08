@@ -48,44 +48,6 @@
     "RAND_PLATFORM_INDEPENDENT must be defined; otherwise trezor-crypto compiles its insecure test LCG"
 #endif
 
-/* Software mirror of the hardware's sticky seed/clock error.
- *
- * RNG_SR_SEIS latches in hardware, but only until someone clears it -- and both
- * random32() below and reset_rng() do, as they must to keep drawing. random32()
- * runs constantly, so by the time a self-test reads RNG_SR the evidence of a
- * transient fault is usually gone, and rng_source_live() was documented as
- * catching exactly that case. Record it here instead, where it cannot be
- * cleared by the recovery path that observed it.
- *
- * Boot-lifetime and one-way on purpose: a noise source that failed its own
- * continuous test once is not trusted again until the device is power-cycled.
- */
-static volatile bool rng_seed_error_seen = false;
-
-bool rng_seed_error_latched(void) { return rng_seed_error_seen; }
-
-#ifdef EMULATOR
-static void rng_latch_seed_error(void) { rng_seed_error_seen = true; }
-
-void rng_test_power_on_reset(void) { rng_seed_error_seen = false; }
-void rng_test_observe_transient_error(void) { rng_latch_seed_error(); }
-void rng_test_observe_persistent_error(void) {
-  rng_latch_seed_error();
-  reset_rng();
-}
-#endif
-
-bool rng_persistent_error_step(uint32_t* samples) {
-  if (samples == NULL) return false;
-  if (++(*samples) < 100) return false;
-
-  /* reset_rng() clears SEIS/CEIS. Preserve the fault before the caller takes
-   * that recovery action, exactly as the transient-error branch does. */
-  rng_seed_error_seen = true;
-  *samples = 0;
-  return true;
-}
-
 void reset_rng(void) {
 #ifndef EMULATOR
   /* disable RNG */
@@ -122,17 +84,15 @@ uint32_t random32(void) {
         new = RNG_DR;
       }
     } else if ((rng_sr_img & (RNG_SR_SECS | RNG_SR_CECS)) == 0) {
-      /* Reset RNG interrupt status bits (SECS, CECS errors no longer
-       * exist). Record it FIRST: clearing the hardware latch is exactly
-       * what makes this fault invisible to a later self-test. */
-      rng_seed_error_seen = true;
+      /* Reset RNG interrupt status bits (SECS, CECS errors no longer exist) */
       RNG_SR &= ~(RNG_SR_SEIS | RNG_SR_CEIS);
     } else {
       /* RNG is not ready.  Allow few more samples for RNG to come back alive
        * before resetting */
-      if (rng_persistent_error_step(&rng_samples)) {
+      if (++rng_samples >= 100) {
         /* RNG in hang state.  Reset RNG */
         reset_rng();
+        rng_samples = 0;
       }
     }
   }
@@ -146,22 +106,6 @@ uint32_t random32(void) {
   return value;
 #endif
 }
-
-#if defined(EMULATOR) && !defined(__APPLE__)
-/* trezor-crypto declares random_buffer() as a weak symbol so platforms can
- * supply their own. GNU/MinGW ld will NOT extract a weak definition from a
- * static archive to satisfy a strong reference (fsm.c/reset.c/storage.c),
- * which breaks the Linux .so and Windows .dll links. Provide a strong
- * definition here — identical to trezor-crypto's, built on our random32().
- * macOS ld64 resolves the weak one fine, so it's left untouched there. */
-void random_buffer(uint8_t* buf, size_t len) {
-  uint32_t r = 0;
-  for (size_t i = 0; i < len; i++) {
-    if (i % 4 == 0) r = random32();
-    buf[i] = (r >> ((i % 4) * 8)) & 0xff;
-  }
-}
-#endif
 
 // I miss C++ templates sooo bad.
 #define RANDOM_PERMUTE(BUFF, COUNT)             \

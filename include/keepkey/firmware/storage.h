@@ -24,45 +24,12 @@
 #include "trezor/crypto/bip32.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/authenticator.h"
-#include "keepkey/firmware/passkey.h"
 
-/* 20, not 18. 18 was the clear-sign identity block and 19 the PIN-KDF
- * migration -- both ACTIVE in alpha builds before 6bebde7b2 reverted the format
- * to V17, so devices carrying blobs stamped with either exist. Reusing a number
- * would make this firmware PARSE one as passkey state instead of refusing it.
- * See lib/firmware/storage_versions.inc. */
+/* Versions 18 and 19 were used by alpha identity/PIN-KDF formats; version 20
+ * was used by passkey storage. These numbers remain reserved even though this
+ * audited foundation writes V17. Do not reuse them for a different layout. */
 #define STORAGE_VERSION \
-  20 /* Must add case fallthrough in storage_fromFlash after increment*/
-
-/* The highest storage version written by any firmware that has SHIPPED in a
- * signed release.
- *
- * A signed UPGRADE MUST NEVER WIPE. An upgrading device arrives carrying a blob
- * written by the release it is leaving; if the incoming firmware does not
- * recognise that version, version_from_int() returns StorageVersion_NONE,
- * storage_fromFlash() returns SUS_Invalid, and storage_init() calls
- * storage_reset() + storage_commit() -- the wallet is gone with no prompt. A
- * DOWNGRADE hitting that path is intended and normal: older firmware cannot be
- * expected to read a newer blob.
- *
- * So STORAGE_VERSION may only ever go UP. Bump this baseline when a release
- * ships, in the release commit, never to make a build compile: lowering it is
- * the exact edit that turns every upgrade in the field into a silent wipe, and
- * it must be an explicit, reviewed act rather than a side effect. See
- * docs/Release.md "Storage version gate". */
-#define STORAGE_VERSION_LAST_SHIPPED 17
-
-/* A seed CREATED under bitcoin-only firmware is stamped with a version in a
- * reserved band (base + the normal version). Multi-chain firmware that knows
- * the band refuses to load it and requires an explicit wipe; older multi-chain
- * firmware treats it as an unknown version and resets. Either way a seed born
- * on bitcoin-only firmware is never usable by multi-chain code. A pre-existing
- * multi-chain wallet keeps its normal version and stays portable (it was
- * already multi-chain-exposed). Multi-chain versions MUST stay below the band
- * forever (static-asserted in storage.c). */
-#define STORAGE_VERSION_BTC_ONLY_BASE 10000
-#define STORAGE_VERSION_BTC_ONLY \
-  (STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION)
+  17 /* Must add case fallthrough in storage_fromFlash after increment*/
 #define STORAGE_RETRIES 3
 
 #define RANDOM_SALT_LEN 32
@@ -74,12 +41,6 @@
 
 /// \brief Validate storage content and copy data to shadow memory.
 void storage_init(void);
-
-/// \brief True iff flash holds storage written by bitcoin-only firmware that
-///        this (multi-chain) firmware refuses to load. The device must be
-///        wiped before it can be used; the seed stays intact in flash so
-///        reflashing bitcoin-only firmware recovers the wallet.
-bool storage_isBitcoinOnlyLocked(void);
 
 /// \brief Reset configuration UUID with random numbers.
 void storage_resetUuid(void);
@@ -119,8 +80,10 @@ bool storage_getU2FRoot(HDNode* node);
 /// \brief Increment and return the next value for the U2F counter.
 uint32_t storage_nextU2FCounter(void);
 
-/// \brief Assign a new value for the U2F Counter in shadow storage.
-/// The caller must commit after all related settings have been staged.
+/// \brief Stage a new value for the U2F counter without writing flash.
+void storage_stageU2FCounter(uint32_t u2f_counter);
+
+/// \brief Assign and immediately persist a new value for the U2F counter.
 void storage_setU2FCounter(uint32_t u2f_counter);
 
 /// \brief Set device label
@@ -206,21 +169,6 @@ void storage_setAutoLockDelayMs(uint32_t auto_lock_delay_ms);
 bool storage_getAuthData(authType* returnData);
 void storage_setAuthData(const authType* setData);
 void storage_wipeAuthData(void);
-
-/// Read or atomically replace CTAP2 PIN and discoverable-credential metadata.
-void storage_getPasskeyData(PasskeyStorage* data);
-void storage_setPasskeyData(const PasskeyStorage* data);
-
-/// Return the active stateless-credential generation, creating and persisting
-/// one through the checked RNG path on first use. Version-1 U2F handles remain
-/// accepted until the first explicit authenticator reset.
-bool storage_getPasskeyCredentialGeneration(
-    uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
-    bool* legacy_credentials_enabled);
-
-/// Atomically clear CTAP state and rotate the stateless-credential generation.
-/// Returns false without changing storage if checked entropy is unavailable.
-bool storage_resetPasskeyData(void);
 
 #ifdef DEBUG_LINK
 typedef struct _HDNodeType HDNodeType;
