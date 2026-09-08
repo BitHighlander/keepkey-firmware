@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# This staged firmware requires consented RAM-only provider identities.
+export KEEPKEY_RUNTIME_PROVIDER=1
+
 mkdir -p /kkemu/test-reports/python-keepkey
 # This volume can survive retries. Stale frames would make the new report look
 # more complete than the exact run really was, so every capture starts empty.
@@ -54,5 +57,12 @@ echo "=== Full Python integration suite ==="
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
+
+echo "=== Staged firmware provider integration suite ==="
+PYTHONPATH="/kkemu/deps/python-keepkey/tests:/kkemu/deps/python-keepkey${PYTHONPATH:+:$PYTHONPATH}" \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v --tb=short /kkemu/tests/integration \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-provider.xml
 
 echo "0" > /kkemu/test-reports/python-keepkey/status

@@ -31,6 +31,7 @@
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/eip712.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/ethereum_tokens.h"
@@ -321,6 +322,12 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
+  if (!signed_metadata_enforce(hash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "Metadata does not match signed transaction");
+    ethereum_signing_abort();
+    return;
+  }
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
@@ -840,6 +847,21 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  /* Runtime provider context is additive. Keep the existing amount,
+   * contract and complete raw-calldata review decisions unchanged. */
+  if (data_needs_confirm && data_total > 0 && signed_metadata_available() &&
+      signed_metadata_matches_tx(msg)) {
+    if (!signed_metadata_confirm()) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Metadata review cancelled");
+      ethereum_signing_abort();
+      return;
+    }
+  }
+  /* Approved annotations must still bind to the final transaction digest,
+   * even though raw review remains mandatory. Discard unused metadata. */
+  if (!signed_metadata_relied()) signed_metadata_clear();
+
   // detect ERC-20 token
   if (data_total == 68 && ethereum_isStandardERC20Transfer(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
@@ -1096,8 +1118,11 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
   }
 }
 
+bool ethereum_signing_isInProgress(void) { return ethereum_signing; }
+
 void ethereum_signing_abort(void) {
   if (ethereum_signing) {
+    signed_metadata_clear();
     memzero(privkey, sizeof(privkey));
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));

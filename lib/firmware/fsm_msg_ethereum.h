@@ -114,6 +114,8 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
 
 void fsm_msgEthereumTxAck(EthereumTxAck* msg) { ethereum_signing_txack(msg); }
 
+#include "fsm_msg_ethereum_metadata.h"
+
 void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   RESP_INIT(EthereumAddress);
 
