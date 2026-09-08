@@ -745,12 +745,9 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  if (storage->version == 1) {
-    storage->pub.policies_count = 0;
-  } else {
-    storage->pub.policies_count = 1;
-    storage_readPolicyV1(&storage->pub.policies[0], ptr + 464, 17);
-  }
+  /* Legacy policy names are untrusted: a forged first entry named
+   * AdvancedMode would override the canonical session-only policy. */
+  storage_resetPolicies(storage);
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
@@ -760,7 +757,6 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage->pub.u2f_counter = 0;
 
   if (storage->version == 1) {
-    storage_resetPolicies(storage);
     storage_resetCache(&storage->sec.cache);
   } else {
     storage_readCacheV1(&storage->sec.cache, ptr + 484, 75);
@@ -797,24 +793,28 @@ void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
   if (len < 468 + sizeof(storage->encrypted_sec)) return;
   write_u32_le(ptr, storage->version);
 
-  uint32_t flags = (storage->pub.has_pin ? (1u << 0) : 0) |
-                   (storage->pub.has_language ? (1u << 1) : 0) |
-                   (storage->pub.has_label ? (1u << 2) : 0) |
-                   (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
-                   (storage->pub.imported ? (1u << 4) : 0) |
-                   (storage->pub.passphrase_protection ? (1u << 5) : 0) |
-                   (/* ShapeShift policy, enabled always */ (1u << 6)) |
-                   (/* Pin Caching policy, enabled always */ (1u << 7)) |
-                   (storage->pub.has_node ? (1u << 8) : 0) |
-                   (storage->pub.has_mnemonic ? (1u << 9) : 0) |
-                   (storage->pub.has_u2froot ? (1u << 10) : 0) |
-                   (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
-                   (storage->pub.no_backup ? (1u << 13) : 0) |
-                   (storage->has_sec_fingerprint ? (1u << 14) : 0) |
-                   // cppcheck-suppress badBitmaskCheck
-                   (storage->pub.sca_hardened ? (1u << 15) : 0) |
-                   /* reserved 31:16 */ 0;
+  uint32_t flags =
+      (storage->pub.has_pin ? (1u << 0) : 0) |
+      (storage->pub.has_language ? (1u << 1) : 0) |
+      (storage->pub.has_label ? (1u << 2) : 0) |
+      (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
+      (storage->pub.imported ? (1u << 4) : 0) |
+      (storage->pub.passphrase_protection ? (1u << 5) : 0) |
+      (/* ShapeShift policy, enabled always */ (1u << 6)) |
+      (/* Pin Caching policy, enabled always */ (1u << 7)) |
+      (storage->pub.has_node ? (1u << 8) : 0) |
+      (storage->pub.has_mnemonic ? (1u << 9) : 0) |
+      (storage->pub.has_u2froot ? (1u << 10) : 0) |
+      (storage_isPolicyEnabled_impl(storage->pub.policies, "Experimental")
+           ? (1u << 11)
+           : 0) |
+      /* Bit 12 is retired: AdvancedMode is session-only.
+       * Never write or reuse its legacy flash bit. */
+      (storage->pub.no_backup ? (1u << 13) : 0) |
+      (storage->has_sec_fingerprint ? (1u << 14) : 0) |
+      // cppcheck-suppress badBitmaskCheck
+      (storage->pub.sca_hardened ? (1u << 15) : 0) |
+      /* reserved 31:16 */ 0;
   write_u32_le(ptr + 4, flags);
 
   write_u32_le(ptr + 8, storage->pub.pin_failed_attempts);
@@ -868,8 +868,8 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  /* Ignore the retired AdvancedMode bit, including on upgrades. */
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -914,26 +914,30 @@ void storage_writeStorageV16Plaintext(char* ptr, size_t len,
   if (len < 852) return;
   write_u32_le(ptr, storage->version);
 
-  uint32_t flags = (storage->pub.has_pin ? (1u << 0) : 0) |
-                   (storage->pub.has_language ? (1u << 1) : 0) |
-                   (storage->pub.has_label ? (1u << 2) : 0) |
-                   (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
-                   (storage->pub.imported ? (1u << 4) : 0) |
-                   (storage->pub.passphrase_protection ? (1u << 5) : 0) |
-                   (/* ShapeShift policy, enabled always */ (1u << 6)) |
-                   (/* Pin Caching policy, enabled always */ (1u << 7)) |
-                   (storage->pub.has_node ? (1u << 8) : 0) |
-                   (storage->pub.has_mnemonic ? (1u << 9) : 0) |
-                   (storage->pub.has_u2froot ? (1u << 10) : 0) |
-                   (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
-                   (storage->pub.no_backup ? (1u << 13) : 0) |
-                   (storage->has_sec_fingerprint ? (1u << 14) : 0) |
-                   (storage->pub.sca_hardened ? (1u << 15) : 0) |
-                   (storage->pub.has_wipe_code ? (1u << 16) : 0) |
-                   // cppcheck-suppress badBitmaskCheck
-                   (storage->pub.v15_16_trans ? (1u << 17) : 0) |
-                   /* reserved 31:18 */ 0;
+  uint32_t flags =
+      (storage->pub.has_pin ? (1u << 0) : 0) |
+      (storage->pub.has_language ? (1u << 1) : 0) |
+      (storage->pub.has_label ? (1u << 2) : 0) |
+      (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
+      (storage->pub.imported ? (1u << 4) : 0) |
+      (storage->pub.passphrase_protection ? (1u << 5) : 0) |
+      (/* ShapeShift policy, enabled always */ (1u << 6)) |
+      (/* Pin Caching policy, enabled always */ (1u << 7)) |
+      (storage->pub.has_node ? (1u << 8) : 0) |
+      (storage->pub.has_mnemonic ? (1u << 9) : 0) |
+      (storage->pub.has_u2froot ? (1u << 10) : 0) |
+      (storage_isPolicyEnabled_impl(storage->pub.policies, "Experimental")
+           ? (1u << 11)
+           : 0) |
+      /* Bit 12 is retired: AdvancedMode is session-only.
+       * Never write or reuse its legacy flash bit. */
+      (storage->pub.no_backup ? (1u << 13) : 0) |
+      (storage->has_sec_fingerprint ? (1u << 14) : 0) |
+      (storage->pub.sca_hardened ? (1u << 15) : 0) |
+      (storage->pub.has_wipe_code ? (1u << 16) : 0) |
+      // cppcheck-suppress badBitmaskCheck
+      (storage->pub.v15_16_trans ? (1u << 17) : 0) |
+      /* reserved 31:18 */ 0;
   write_u32_le(ptr + 4, flags);
 
   write_u32_le(ptr + 8, storage->pub.pin_failed_attempts);
@@ -997,8 +1001,8 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  /* Ignore the retired AdvancedMode bit, including on upgrades. */
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -1436,6 +1440,12 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      calling function is required to update the flash with a storage_commit().
   */
   pintest_t ret = PIN_WRONG;
+
+  /* Locks revoke the opt-in. Soft Initialize keeps it, otherwise hosts that
+   * initialize before each operation would repeatedly require confirmation. */
+  if (clear_pin) {
+    storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
+  }
 
   ss->seedCached = false;
   memset(&ss->seed, 0, sizeof(ss->seed));

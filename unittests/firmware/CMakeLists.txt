@@ -23,6 +23,7 @@ set(sources
     storage_cipher_probe.c
     storage.cpp
     storage_passphrase.cpp
+    storage_policy.cpp
     thorchain.cpp
     usb_rx.cpp
     u2f.cpp)
