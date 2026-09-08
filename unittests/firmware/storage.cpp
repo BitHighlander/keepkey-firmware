@@ -7,6 +7,10 @@ extern "C" {
 #include "trezor/crypto/aes/aes.h"
 #include "types.pb.h"
 #include "storage.h"
+void storage_writeStorageV16(char*, size_t, const Storage*);
+void storage_writeStorageV17(char*, size_t, const Storage*);
+void storage_readStorageV16(Storage*, const char*, size_t);
+void storage_readStorageV17(Storage*, const char*, size_t);
 }
 
 #include "gtest/gtest.h"
@@ -367,6 +371,38 @@ TEST(Storage, SetPolicy) {
 
   storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true);
   EXPECT_EQ(storage.pub.policies[3].enabled, true);
+}
+
+TEST(Storage, VersionedWritersRejectShortBuffersWithoutWriting) {
+  Storage storage = {};
+  char bytes[3000];
+  const auto check = [&](void (*writer)(char*, size_t, const Storage*),
+                         size_t required) {
+    memset(bytes, 0x5a, sizeof(bytes));
+    writer(bytes, required - 1, &storage);
+    for (char byte : bytes) EXPECT_EQ(0x5a, byte);
+    writer(bytes, required, &storage);
+    for (size_t i = required; i < sizeof(bytes); ++i) EXPECT_EQ(0x5a, bytes[i]);
+  };
+  check(storage_writeStorageV11, 468 + sizeof(storage.encrypted_sec));
+  check(storage_writeStorageV16, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_writeStorageV17, 1501 + sizeof(storage.encrypted_sec));
+}
+
+TEST(Storage, VersionedReadersRejectShortBuffersWithoutChangingState) {
+  Storage storage;
+  Storage original;
+  memset(&original, 0x5a, sizeof(original));
+  char bytes[3000] = {};
+  const auto check = [&](void (*reader)(Storage*, const char*, size_t),
+                         size_t required) {
+    memcpy(&storage, &original, sizeof(storage));
+    reader(&storage, bytes, required - 1);
+    EXPECT_EQ(0, memcmp(&storage, &original, sizeof(storage)));
+  };
+  check(storage_readStorageV11, 468 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV16, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV17, 1501 + sizeof(storage.encrypted_sec));
 }
 
 TEST(Storage, ResetCache) {
