@@ -535,8 +535,9 @@ bool tendermint_signTxUpdateMsgIBCTransfer(
                                  "\",\"source_port\":\"");
   tendermint_sha256UpdateEscaped(&ctx, source_port, strlen(source_port));
 
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 "\",\"timeout_height\":{\"revision_height\":\"");
+  success &=
+      tendermint_snprintf(&ctx, buffer, sizeof(buffer),
+                          "\",\"timeout_height\":{\"revision_height\":\"");
   tendermint_sha256UpdateEscaped(&ctx, revision_height,
                                  strlen(revision_height));
 

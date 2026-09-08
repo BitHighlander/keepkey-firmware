@@ -436,8 +436,7 @@ bool osmosis_signTxUpdateMsgLPAdd(const uint64_t pool_id, const char* sender,
   // the address derived from the signing node (as MsgSend does) and refuse
   // anything else.
   char from_address[54] = {0};
-  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo",
-                             from_address) ||
+  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo", from_address) ||
       strcmp(sender, from_address) != 0) {
     return false;
   }
@@ -500,8 +499,7 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
   // the address derived from the signing node (as MsgSend does) and refuse
   // anything else.
   char from_address[54] = {0};
-  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo",
-                             from_address) ||
+  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo", from_address) ||
       strcmp(sender, from_address) != 0) {
     return false;
   }
@@ -720,8 +718,7 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
   // the address derived from the signing node (as MsgSend does) and refuse
   // anything else.
   char from_address[54] = {0};
-  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo",
-                             from_address) ||
+  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo", from_address) ||
       strcmp(sender, from_address) != 0) {
     return false;
   }
