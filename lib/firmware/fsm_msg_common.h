@@ -1,11 +1,7 @@
 void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
-  /* Ends a setup ceremony of either kind, staged settings and all. */
-  setup_abort();
-  signing_abort();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
+  /* Initialize ends every in-flight workflow while preserving cached PIN. */
+  fsm_abort_workflows();
   session_clear(false);  // do not clear PIN, and clears the Zcash session
   layoutHome();
   fsm_msgGetFeatures(0);

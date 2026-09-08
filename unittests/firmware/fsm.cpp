@@ -35,7 +35,7 @@ TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
 }
 
 #if !BITCOIN_ONLY
-TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
+static void expectSigningSessionsCleared(bool initialize) {
   HDNode node = {};
   node.curve = &secp256k1_info;
 
@@ -96,7 +96,13 @@ TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
   ASSERT_TRUE(mayachain_signingIsInited());
   ASSERT_TRUE(eos_signingIsInited());
 
-  fsm_abort_workflows();
+  if (initialize) {
+    kk_test_board_init();
+    fsm_init();
+    fsm_msgInitialize(nullptr);
+  } else {
+    fsm_abort_workflows();
+  }
 
   EXPECT_FALSE(binance_signingIsInited());
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
@@ -105,6 +111,15 @@ TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
   EXPECT_FALSE(mayachain_signingIsInited());
   EXPECT_FALSE(eos_signingIsInited());
 }
+
+TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
+  expectSigningSessionsCleared(false);
+}
+
+TEST(Fsm, InitializeClearsEveryObservableSigningSession) {
+  expectSigningSessionsCleared(true);
+}
+
 #endif
 
 TEST(Fsm, MissingBitcoinAckPayloadTerminatesSigning) {
