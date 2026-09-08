@@ -130,6 +130,13 @@ instruction to keep inventing improvements. Define the finish line before work.
    finding dispositions, exclusions and remaining release-only requirements.
    A passing candidate ends the internal loop. Advance to the next unit.
 
+Before dispatching the expensive combined CI matrix, finish the capability/skip
+inventory and pass the local native, host, and report-validator suites. A focused
+unit pass is not that preflight. Use small local checks while reconciliation is
+still changing the candidate; do not repeatedly launch a full matrix and cancel
+it for the next known unit. Receipt-only documentation changes may carry forward
+validated code/pin evidence when their non-documentation diff is proven empty.
+
 A review pass is not evidence of correctness by itself. Do not weaken tests,
 remove required coverage or redefine behavior merely to obtain a clean result.
 Confirmed release-critical defects still block release. Optional style preferences
