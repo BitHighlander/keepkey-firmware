@@ -1192,8 +1192,11 @@
       "added": "11",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_fix_staged",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "complete variant override and resolved image/compiler flag bindings; runtime integration pending"
     },
     {
       "path": "scripts/emulator/docker-compose.yml",

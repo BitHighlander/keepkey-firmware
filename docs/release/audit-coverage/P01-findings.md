@@ -11,6 +11,8 @@ P01 path or another phase has been reviewed.
 | P01-004 | All three | Fixed and rechecked; integration pending | Required native suites must exist, parse and contain cases; 40 negative mutations refused. 7.15 also requires screenshot evidence and selection JUnit. [#673](https://github.com/BitHighlander/keepkey-firmware/pull/673), `d271cb0ec`; [#674](https://github.com/BitHighlander/keepkey-firmware/pull/674), `a67b7f792`; [#675](https://github.com/BitHighlander/keepkey-firmware/pull/675), `e43daa81d` |
 | P01-005 | 7.14.2 | Static contract fixed; rebuilt validation pending | CI overrode the immutable Dockerfile base with mutable v15 tags. Pin every build consumer to the existing release digest. [#676](https://github.com/BitHighlander/keepkey-firmware/pull/676), `744dfe4e9`. |
 | P01-006 | 7.15 | Fixed and rechecked; integration pending | Empty Bitcoin-only disassembly falsely passed. Real full/BTC artifacts still pass; empty, garbage, symbol-only, wrong-variant and missing-multiplier fixtures fail. [#677](https://github.com/BitHighlander/keepkey-firmware/pull/677), `8126b57e7`. |
+| P01-007 | 7.15 | Fixed and rehearsed; integration pending | Preserve CMake argument boundaries through the local container shell. [#678](https://github.com/BitHighlander/keepkey-firmware/pull/678), `40490b028`; repeatable fake-tool rehearsal covers spaces and literal shell text. |
+| P01-008 | 7.14.3 / 7.15 | Fixed; resolved Compose configurations verified | Bitcoin-only unit service inherited the regular image tag. [#679](https://github.com/BitHighlander/keepkey-firmware/pull/679), `0f5283de1`; [#680](https://github.com/BitHighlander/keepkey-firmware/pull/680), `4101bf1f3`. |
 | P01-R02 | 7.15 | Rejected; experimental change withdrawn | Actual firmware.xml already contains all 72 Zcash cases. Standalone CTest repeats those cases in another linkage; missing standalone XML is not absent test coverage. Inspect emitted cases before asserting a gap. |
 | P01-R01 | 7.15 | Rejected as a current public-repository defect | Validate lacks actions:read, but GitHub expressly permits public workflow-run reads without that permission. The artifact-download job grants actions:read. Do not claim a reproduced permission failure or add a speculative blocker. |
 
@@ -34,6 +36,9 @@ create tags or publish releases. Darwin adapts only GNU stat's filesize spelling
 
 - `python3 /path/to/phase-scope/docs/release/rehearsals/native_report_inputs.py CHECKOUT CI_NATIVE_XML_DIRECTORY`
   accepts real native artifacts and rejects missing/empty/malformed/no-case mutations.
+
+- `python3 /path/to/phase-scope/docs/release/rehearsals/release_arguments.py CHECKOUT`
+  exercises the 7.15 wrapper/container shell with fake Docker/compiler tools.
 
 ## Remaining release-workflow review
 

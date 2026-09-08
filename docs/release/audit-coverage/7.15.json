@@ -1667,8 +1667,11 @@
       "added": "7",
       "deleted": "2",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_fix_staged",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "complete wrapper invocation; fake-tool shell rehearsal, actual phase rebuild pending"
     },
     {
       "path": "scripts/build/docker/emulator/debug.sh",
@@ -1715,8 +1718,11 @@
       "added": "15",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_fix_staged",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "complete variant override and resolved image/compiler flag bindings; runtime integration pending"
     },
     {
       "path": "scripts/emulator/docker-compose.yml",
