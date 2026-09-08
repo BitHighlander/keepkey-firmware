@@ -20,6 +20,7 @@ set(sources
     solana.cpp
     # Observes cleanup in the real storage.c for the unit binary only.
     storage_cipher_probe.c
+    signed_metadata.cpp
     storage.cpp
     storage_passphrase.cpp
     storage_policy.cpp

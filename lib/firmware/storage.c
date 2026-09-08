@@ -32,6 +32,7 @@
 
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/signed_metadata.h"
 
 #include "keepkey/board/common.h"
 #include "keepkey/board/supervise.h"
@@ -1372,7 +1373,10 @@ void storage_resetUuid_impl(ConfigFlash* cfg) {
   data2hex(cfg->meta.uuid, sizeof(cfg->meta.uuid), cfg->meta.uuid_str);
 }
 
-void storage_reset(void) { storage_reset_impl(&session, &shadow_config); }
+void storage_reset(void) {
+  signed_metadata_clear_signers();
+  storage_reset_impl(&session, &shadow_config);
+}
 
 void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
   memset(&cfg->storage, 0, sizeof(cfg->storage));
@@ -1396,6 +1400,7 @@ void storage_wipe(void) {
 }
 
 void storage_clearKeys(void) {
+  signed_metadata_clear_signers();
   session_clear_impl(&session, &shadow_config.storage, false);
   memzero(&session.storageKey, sizeof(session.storageKey));
   memzero(&shadow_config.storage.pub.wrapped_storage_key,
@@ -1408,6 +1413,7 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+  signed_metadata_clear_signers();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -1722,6 +1728,7 @@ bool storage_isPinCorrect(const char* pin) {
     case PIN_WRONG:
     default:
       session.pinCached = false;
+      signed_metadata_clear_signers();
       session_clear_impl(&session, &shadow_config.storage, /*clear_pin=*/true);
       memzero(session.storageKey, sizeof(session.storageKey));
       break;
@@ -1782,6 +1789,7 @@ bool storage_isWipeCodeCorrect(const char* wipe_code) {
       shadow_config.storage.pub.random_salt);
 
   if (ret == PIN_WRONG) {
+    signed_metadata_clear_signers();
     session_clear_impl(&session, &shadow_config.storage, /*clear_pin=*/true);
     memzero(session.storageKey, sizeof(session.storageKey));
   }
@@ -2092,8 +2100,12 @@ bool storage_hasNode(void) { return shadow_config.storage.pub.has_node; }
 Allocation storage_getLocation(void) { return storage_location; }
 
 bool storage_setPolicy(const char* policy_name, bool enabled) {
-  return storage_setPolicy_impl(shadow_config.storage.pub.policies, policy_name,
-                                enabled);
+  bool changed = storage_setPolicy_impl(shadow_config.storage.pub.policies,
+                                        policy_name, enabled);
+  if (changed && !enabled && strcmp(policy_name, "AdvancedMode") == 0) {
+    signed_metadata_clear_signers();
+  }
+  return changed;
 }
 
 bool storage_setPolicy_impl(PolicyType ps[POLICY_COUNT],
