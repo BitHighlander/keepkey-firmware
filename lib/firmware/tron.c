@@ -28,6 +28,7 @@
 #include "trezor/crypto/sha3.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define TRON_ADDRESS_PREFIX 0x41  // Mainnet addresses start with 'T'
@@ -437,6 +438,25 @@ unverified:
   memset(out, 0, sizeof(*out));
   out->type = TRON_TX_UNVERIFIED;
   return TRON_TX_UNVERIFIED;
+}
+
+/**
+ * Hex of sha256(raw_data): the exact digest tron_signTx signs. Shown on the
+ * blind-sign screen so the ceremony binds to content, not just byte count.
+ */
+void tron_formatRawTxDigest(const uint8_t* raw, size_t len, char* out,
+                            size_t out_len) {
+  uint8_t hash[32];
+  sha256_Raw(raw, len, hash);
+  if (out_len < 65) {
+    if (out_len) out[0] = '\0';
+    memzero(hash, sizeof(hash));
+    return;
+  }
+  for (int i = 0; i < 32; i++) {
+    snprintf(&out[2 * i], 3, "%02x", hash[i]);
+  }
+  memzero(hash, sizeof(hash));
 }
 
 /**

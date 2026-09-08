@@ -2,6 +2,8 @@ extern "C" {
 #include "keepkey/board/font.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/firmware/hive.h"
+#include "trezor/crypto/bip32.h"
+#include "trezor/crypto/curves.h"
 }
 
 #include "gtest/gtest.h"
@@ -980,4 +982,52 @@ TEST(Hive, SerializationMatchesHivedClaimRewardBalance) {
   HiveParsedTx parsed;
   ASSERT_EQ(nullptr, hive_parseOperations(tx.data(), tx.size(), &parsed));
   EXPECT_STREQ("VESTS", hive_assetSymbol(parsed.ops[0].assets[2]));
+}
+
+/* HiveSignTx used to serialize the display spellings "HIVE"/"HBD"; hived still
+ * encodes the rebranded tokens as "STEEM"/"SBD" (see the golden vectors
+ * above), so every such signature failed with "missing required active
+ * authority". The transfer serializer must write the wire symbol. */
+TEST(Hive, TransferSerializesWireSymbolNotDisplaySymbol) {
+  HDNode node;
+  const uint8_t seed[32] = {7};
+  ASSERT_EQ(hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node), 1);
+  hdnode_fill_public_key(&node);
+
+  HiveSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.has_from = true;
+  strcpy(msg.from, "alice");
+  msg.has_to = true;
+  strcpy(msg.to, "bob");
+  msg.has_amount = true;
+  msg.amount = 1000;
+  msg.has_ref_block_num = true;
+  msg.has_ref_block_prefix = true;
+  msg.has_expiration = true;
+
+  auto asset_bytes = [&](const char* symbol) {
+    if (symbol) {
+      msg.has_asset_symbol = true;
+      strcpy(msg.asset_symbol, symbol);
+    } else {
+      msg.has_asset_symbol = false;
+    }
+    HiveSignedTx resp;
+    memset(&resp, 0, sizeof(resp));
+    hive_signTx(&node, &msg, &resp);
+    EXPECT_TRUE(resp.has_serialized_tx);
+    return std::string(reinterpret_cast<const char*>(resp.serialized_tx.bytes),
+                       resp.serialized_tx.size);
+  };
+
+  // amount(8) + precision(1) + 7-byte NUL-padded symbol
+  const std::string hive_asset("\xe8\x03\x00\x00\x00\x00\x00\x00\x03"
+                               "STEEM\x00\x00", 16);
+  const std::string hbd_asset("\xe8\x03\x00\x00\x00\x00\x00\x00\x03"
+                              "SBD\x00\x00\x00\x00", 16);
+  EXPECT_NE(asset_bytes(nullptr).find(hive_asset), std::string::npos);
+  EXPECT_NE(asset_bytes("HIVE").find(hive_asset), std::string::npos);
+  EXPECT_NE(asset_bytes("HBD").find(hbd_asset), std::string::npos);
+  EXPECT_EQ(asset_bytes("HIVE").find("HIVE"), std::string::npos);
 }

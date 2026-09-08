@@ -914,7 +914,16 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
   append_string(&p, end, msg->has_from ? msg->from : "");
   append_string(&p, end, msg->has_to ? msg->to : "");
 
+  // The 2020 rebrand renamed the tokens but NOT their on-chain serialization:
+  // hived still encodes HIVE as "STEEM" and HBD as "SBD" (see cur_asset and
+  // the hived golden vectors in unittests/firmware/hive.cpp). Signing the
+  // display spelling produces bytes hived can never validate.
   const char* sym = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
+  if (strcmp(sym, "HIVE") == 0) {
+    sym = "STEEM";
+  } else if (strcmp(sym, "HBD") == 0) {
+    sym = "SBD";
+  }
   uint8_t prec = (uint8_t)(msg->has_decimals ? msg->decimals : HIVE_DECIMALS);
   append_asset(&p, end, msg->amount, prec, sym);
 
@@ -966,9 +975,9 @@ static size_t hive_serialize_account_create(const HiveSignAccountCreate* msg,
                    msg->ref_block_prefix, msg->expiration,
                    HIVE_OP_ACCOUNT_CREATE);
 
-  // fee (asset)
+  // fee (asset) -- wire symbol for HIVE is still "STEEM", see transfer above
   uint64_t fee = msg->has_fee_amount ? msg->fee_amount : 3000;
-  append_asset(&p, end, fee, HIVE_DECIMALS, "HIVE");
+  append_asset(&p, end, fee, HIVE_DECIMALS, "STEEM");
 
   // creator
   append_string(&p, end, msg->has_creator ? msg->creator : "");

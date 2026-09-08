@@ -98,6 +98,16 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
     return;
   }
 
+  /* Flags are signed (ripple_serialize) but no screen shows them. Only the
+   * device-forced FULLY_CANONICAL bit is supported; refuse anything else
+   * rather than sign undisclosed flag bits. */
+  if (msg->has_flags && (msg->flags & ~RIPPLE_FLAG_FULLY_CANONICAL)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Unsupported Ripple transaction flags"));
+    return;
+  }
+
   /* ripple_serializeAmount() forces bits 62-63 of the signed 64-bit amount to
      fixed XRP/sign flags, so only values below 2^61 round-trip exactly
      between what's displayed here and what's embedded in the signed bytes.

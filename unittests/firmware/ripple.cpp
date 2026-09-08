@@ -2,6 +2,8 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/ripple_base58.h"
+#include "trezor/crypto/bip32.h"
+#include "trezor/crypto/curves.h"
 #include "trezor/crypto/hasher.h"
 }
 
@@ -191,4 +193,68 @@ TEST(Ripple, SerializerAcceptsMaximumProtocolAmount) {
                                nullptr, 0))
       << "the protocol maximum must serialize, not trip "
          "ripple_serializeAmount()'s bound assert";
+}
+
+/* XRPL VariableLength prefix boundaries are inclusive: 0..192 is one byte,
+ * 193..12480 two, 12481..918744 three. A 192-byte memo is host-reachable
+ * (max_size 200) and used to fall into the two-byte branch, emitting a prefix
+ * that decodes to a different memo than the one the user approved. */
+TEST(Ripple, VarintBoundariesAreInclusive) {
+  uint8_t out[4];
+  uint8_t *buf = out;
+  bool ok = true;
+  ripple_serializeVarint(&ok, &buf, out + sizeof(out), 192);
+  ASSERT_TRUE(ok);
+  ASSERT_EQ(buf - out, 1);
+  EXPECT_EQ(out[0], 0xC0);
+
+  buf = out;
+  ripple_serializeVarint(&ok, &buf, out + sizeof(out), 193);
+  ASSERT_TRUE(ok);
+  ASSERT_EQ(buf - out, 2);
+  EXPECT_EQ(out[0], 0xC1);
+  EXPECT_EQ(out[1], 0x00);
+
+  buf = out;
+  ripple_serializeVarint(&ok, &buf, out + sizeof(out), 918744);
+  ASSERT_TRUE(ok);
+  ASSERT_EQ(buf - out, 3);
+  EXPECT_EQ(out[0], 0xFE);  // 241 + (906263 >> 16)
+  EXPECT_EQ(out[1], 0xD4);
+  EXPECT_EQ(out[2], 0x17);
+}
+
+/* Flags are serialized into the signed blob but never shown on the device, so
+ * the signer must refuse any bit other than the one it forces itself. */
+TEST(Ripple, SignerRefusesUndisclosedFlagBits) {
+  HDNode node;
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node), 1);
+  hdnode_fill_public_key(&node);
+
+  RippleSignTx tx;
+  memset(&tx, 0, sizeof(tx));
+  tx.has_fee = true;
+  tx.fee = 12;
+  tx.has_sequence = true;
+  tx.sequence = 1;
+  tx.has_payment = true;
+  tx.payment.has_amount = true;
+  tx.payment.amount = 1000000;
+  tx.payment.has_destination = true;
+  strcpy(tx.payment.destination, "rBKz5MC2iXdoS3XgnNSYmF69K1Yo4NS3Ws");
+
+  RippleSignedTx resp;
+  memset(&resp, 0, sizeof(resp));
+  tx.has_flags = true;
+  tx.flags = 0x00020000;  // tfPartialPayment
+  ripple_signTx(&node, &tx, &resp);
+  EXPECT_FALSE(resp.has_signature);
+  EXPECT_FALSE(resp.has_serialized_tx);
+
+  memset(&resp, 0, sizeof(resp));
+  tx.flags = RIPPLE_FLAG_FULLY_CANONICAL;
+  ripple_signTx(&node, &tx, &resp);
+  EXPECT_TRUE(resp.has_signature);
+  EXPECT_TRUE(resp.has_serialized_tx);
 }

@@ -152,6 +152,21 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
       layoutHome();
       return;
     }
+
+    /* Bind the ceremony to the payload: two same-length payloads must not
+     * produce identical screens. This is the digest tron_signTx signs, so
+     * the host can show the same hash for out-of-band comparison (mirrors
+     * the TIP-712 path). */
+    char digest_hex[64 + 1];
+    tron_formatRawTxDigest(msg->raw_data.bytes, msg->raw_data.size,
+                           digest_hex, sizeof(digest_hex));
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
+                 "Confirm hash digest: %s", digest_hex)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+      layoutHome();
+      return;
+    }
   } else {
     /* The parsed owner account is the one spending — it must be ours. */
     char derived_addr[TRON_ADDRESS_MAX_LEN];

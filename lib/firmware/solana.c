@@ -246,6 +246,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
            * a partial "amount only" screen is unsafe. Require AdvancedMode
            * until a full screen (destination + amount + owner + space) exists.
            */
+          pi->blind_only = true;
           *force_opaque = true;
         } else if (instr_type == SOL_SYS_ADVANCE_NONCE && data_len == 4 &&
                    num_acct_indices >= 3) {
@@ -310,6 +311,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
            * prove which token is moving — a host can pick any signer-controlled
            * account. Force the AdvancedMode blind-sign gate; only the *Checked
            * variant (mint signed + displayed) clear-signs. */
+          pi->blind_only = true;
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
                    data_len == 10 && num_acct_indices >= 4) {
@@ -342,6 +344,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           /* Token-2022 checked transfers may carry an undisclosed transfer hook
            * / fee — do not clear-sign them. */
           if (is_token2022) {
+            pi->blind_only = true;
             *force_opaque = true;
           }
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len >= 9) {
@@ -352,6 +355,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
           /* Unchecked Approve hides the mint (which token is being delegated),
            * same as unchecked Transfer — require AdvancedMode. */
+          pi->blind_only = true;
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_REVOKE_IX && data_len == 1 &&
                    num_acct_indices >= 2) {
@@ -371,6 +375,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
            * from an all-zero authority in the parsed struct. Require
            * AdvancedMode until a full screen (authority type + target +
            * new/None) exists. */
+          pi->blind_only = true;
           *force_opaque = true;
         } else if (((token_instr == SOL_TOKEN_MINT_TO_IX && data_len == 9) ||
                     (token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX &&
@@ -981,7 +986,11 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
    * no screen described. */
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     if (i == match) continue;
-    if (tx->instructions[i].external ||
+    /* blind_only: decoded, but the parser refused to clear-sign it (unchecked
+     * SPL transfer/approve, set-authority, create-account, token-2022). Its
+     * screen would be incomplete and the certified path shows no blind-sign
+     * warning, so it may not ride along with a schema. */
+    if (tx->instructions[i].external || tx->instructions[i].blind_only ||
         tx->instructions[i].type == SOL_INSTR_UNKNOWN) {
       return false;
     }

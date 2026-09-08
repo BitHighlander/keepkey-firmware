@@ -2032,6 +2032,95 @@ static size_t hex_to_bytes(const char* hex, uint8_t* out, size_t out_max) {
   return n;
 }
 
+/* A schema explains exactly ONE instruction; every other instruction must be
+ * one firmware would clear-sign on its own. An unchecked SPL Transfer is
+ * decoded (type != UNKNOWN, external == false) but the parser forces it opaque
+ * because the mint is unsigned -- it used to slip past solana_schemaApplies and
+ * be clear-signed via the certified path with no mint, wrong scale and no
+ * blind-sign warning. A TransferChecked in the same slot is fine. */
+static size_t build_relay_plus_spl_tx(uint8_t* raw, const uint8_t* program,
+                                      bool checked) {
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+  size_t pos = 0;
+  raw[pos++] = 1; /* num_required_sigs */
+  raw[pos++] = 0;
+  raw[pos++] = 2; /* two readonly unsigned (programs) */
+  raw[pos++] = 5; /* accounts: 0,1,2 instruction accounts, 3 relay, 4 token */
+  for (int i = 0; i < 3; i++) {
+    memset(raw + pos, 0x11 + i, 32);
+    pos += 32;
+  }
+  memcpy(raw + pos, program, 32);
+  pos += 32;
+  memcpy(raw + pos, SOL_TOKEN_PROGRAM, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* recent blockhash */
+  pos += 32;
+
+  raw[pos++] = 2; /* two instructions */
+
+  /* 1) schema-described Relay deposit over accounts 0,1 */
+  raw[pos++] = 3;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = sizeof(d);
+  memcpy(raw + pos, d, sizeof(d));
+  pos += sizeof(d);
+
+  /* 2) SPL Transfer (unchecked: 3 accounts, 9 bytes) or TransferChecked
+   *    (4 accounts, 10 bytes) */
+  raw[pos++] = 4;
+  if (checked) {
+    raw[pos++] = 4;
+    raw[pos++] = 0;
+    raw[pos++] = 2; /* mint slot (any static account) */
+    raw[pos++] = 1;
+    raw[pos++] = 2;
+    raw[pos++] = 10;
+    raw[pos++] = SOL_TOKEN_TRANSFER_CHECKED_IX;
+  } else {
+    raw[pos++] = 3;
+    raw[pos++] = 0;
+    raw[pos++] = 1;
+    raw[pos++] = 2;
+    raw[pos++] = 9;
+    raw[pos++] = SOL_TOKEN_TRANSFER_IX;
+  }
+  for (int i = 0; i < 8; i++) raw[pos++] = (i == 0) ? 0x40 : 0x00; /* amount */
+  if (checked) raw[pos++] = 6; /* decimals */
+  return pos;
+}
+
+TEST(Solana, SchemaRejectsBlindOnlyCompanionInstruction) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+
+  uint8_t raw[1024];
+  SolanaParsedTx tx;
+  uint8_t idx = 0xFF;
+
+  size_t pos = build_relay_plus_spl_tx(raw, program, /*checked=*/false);
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 2);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_TOKEN_TRANSFER);
+  EXPECT_TRUE(tx.instructions[1].blind_only);
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+
+  pos = build_relay_plus_spl_tx(raw, program, /*checked=*/true);
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 2);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+  EXPECT_FALSE(tx.instructions[1].blind_only);
+  EXPECT_TRUE(solana_schemaApplies(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0);
+}
+
 TEST(Solana, SchemaParsesSdkSerializedPayloadNative) {
   /* Verbatim output of the SDK serializer — do not hand-edit. */
   const char* kSdkHex =

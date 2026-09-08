@@ -177,6 +177,11 @@ typedef struct {
    * table. A certified parse appends the delegate-attested canonical lookup
    * keys before decoding, so successfully resolved instructions are false. */
   bool external;
+  /* True when the parser decoded this instruction but forced the transaction
+   * opaque because of it (unchecked transfer/approve, set-authority,
+   * create-account, token-2022 checked transfer). Such an instruction must
+   * never be clear-signed alongside a schema-described one. */
+  bool blind_only;
 } SolanaParsedInstruction;
 
 /* Parsed transaction header */
