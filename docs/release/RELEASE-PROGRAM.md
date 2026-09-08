@@ -20,9 +20,11 @@ The additional fork branch `release/7.15.0` was observed at
 as equivalent, overwrite either branch, or silently create a fourth product.
 
 Fork develop was observed at `da075b8cb717b56dc1023edb52c2ccdf171b8a08`.
-Product PRs target fork develop and remain unmerged. Creating or identifying those
-three product PRs is a tracked setup task; this document does not claim they
-already exist. Audit PRs target develop or their immediate dependency as specified
+Product PRs target fork develop and remain unmerged. Existing product PRs #627
+(7.14.3) and #629 (7.15) now target develop. The 7.14.2 source is already an
+ancestor of develop; its previous product PR #494 was merged historically. A new
+7.14.2 product PR requires a new validated candidate with a substantive delta;
+do not manufacture code changes just to open an empty product PR. Audit PRs target develop or their immediate dependency as specified
 in the SOP. Alpha is a source of selected work, not the product acceptance surface.
 
 ## Existing rehearsal evidence
@@ -67,3 +69,13 @@ New concrete evidence can reopen affected acceptance; unrelated improvements get
 separate units. The three-release program is not complete until all three products
 have their own passing receipts. Final upstream preparation then performs the
 Copilot checkpoint defined in the SOP before upstream PR creation.
+
+## First active unit
+
+R142-01, branch `audit/7142-storage-unsigned`, carries the existing unsigned-byte
+storage decoder fix from `ce21b4ac8` to the current 7.14.2 product baseline. The
+same decoder is present in all three product snapshots. Baseline/candidate C
+probes reproduce the signed-char failure and show the candidate passes both char
+modes. Firmware regression and assembled-product acceptance remain pending.
+The unit receipt lives on its audit branch at
+`docs/release/audit-units/R142-01-storage-unsigned.md`.
