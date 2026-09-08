@@ -57,7 +57,10 @@ def largest_frames(su_tar_path, top_n=15):
             if source is None:
                 sys.exit(f"ERROR: cannot read stack records: {member.name}")
             with source:
-                data = source.read().decode("utf-8", "strict")
+                try:
+                    data = source.read().decode("utf-8", "strict")
+                except UnicodeDecodeError:
+                    sys.exit(f"ERROR: non-UTF-8 stack records: {member.name}")
             for number, line in enumerate(data.splitlines(), 1):
                 if not line.strip():
                     continue
@@ -87,8 +90,11 @@ def main():
 
     with open(args.budgets) as source:
         budgets = json.load(source)
+    variants = budgets.get("variants", {})
+    if args.variant not in variants:
+        sys.exit(f"ERROR: unknown SRAM budget variant: {args.variant}")
     selected = dict(budgets)
-    selected.update(budgets.get("variants", {}).get(args.variant, {}))
+    selected.update(variants[args.variant])
     for key in ("reserve_min", "frame_margin"):
         value = selected.get(key)
         if type(value) is not int or value <= 0:

@@ -38,6 +38,11 @@ int ripple_encode_check(const uint8_t* data, int datalen,
 int ripple_decode_check(const char* str, HasherType hasher_type, uint8_t* data,
                         int datalen);
 
+/* Check-encoded payloads are limited to 128 bytes. Private conversion helpers
+ * accept that payload plus its four checksum bytes. */
+#define RIPPLE_BASE58_MAX_PAYLOAD 128
+#define RIPPLE_BASE58_MAX_BINARY (RIPPLE_BASE58_MAX_PAYLOAD + 4)
+
 // Private
 bool ripple_b58tobin(void* bin, size_t* binszp, const char* b58);
 int ripple_b58check(const void* bin, size_t binsz, HasherType hasher_type,

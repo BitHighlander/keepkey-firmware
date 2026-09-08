@@ -128,3 +128,27 @@ TEST(Ripple, Serialize) {
 
   ASSERT_TRUE(memcmp(serialized, expected, sizeof(serialized)) == 0);
 }
+
+TEST(Ripple, Base58PayloadBoundaryRoundTrips) {
+  uint8_t input[RIPPLE_BASE58_MAX_PAYLOAD];
+  uint8_t output[RIPPLE_BASE58_MAX_PAYLOAD];
+  char encoded[200];
+  for (size_t i = 0; i < sizeof(input); ++i) input[i] = (uint8_t)(i + 1);
+  for (int n = 1; n <= RIPPLE_BASE58_MAX_PAYLOAD; ++n) {
+    ASSERT_GT(
+        ripple_encode_check(input, n, HASHER_SHA2D, encoded, sizeof(encoded)),
+        0);
+    ASSERT_EQ(n, ripple_decode_check(encoded, HASHER_SHA2D, output, n));
+    EXPECT_EQ(0, memcmp(input, output, n));
+  }
+  EXPECT_EQ(0, ripple_encode_check(input, -1, HASHER_SHA2D, encoded,
+                                   sizeof(encoded)));
+  EXPECT_EQ(0, ripple_encode_check(input, 129, HASHER_SHA2D, encoded,
+                                   sizeof(encoded)));
+  EXPECT_EQ(0, ripple_decode_check(encoded, HASHER_SHA2D, output, -1));
+  EXPECT_EQ(0, ripple_decode_check(encoded, HASHER_SHA2D, output, 129));
+  size_t size = sizeof(encoded);
+  EXPECT_FALSE(ripple_b58enc(encoded, &size, input, 133));
+  size = 133;
+  EXPECT_FALSE(ripple_b58tobin(output, &size, "r"));
+}
