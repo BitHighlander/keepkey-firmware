@@ -29,9 +29,11 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
                             /*show_addridx=*/false))
     return TXOUT_COMPILE_ERROR;
 
-  if (!coin->has_forkid) return TXOUT_COMPILE_ERROR;
+  /* Label the amount with the chain the signature commits to (EIP-155
+   * msg->chain_id), not the ETHEREUM coin's hardcoded mainnet forkid. */
+  if (!msg->has_chain_id || msg->chain_id < 1) return TXOUT_COMPILE_ERROR;
 
-  const uint32_t chain_id = coin->forkid;
+  const uint32_t chain_id = msg->chain_id;
 
   const uint8_t* value_bytes;
   size_t value_size;
@@ -63,8 +65,9 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
   if (!node) return TXOUT_COMPILE_ERROR;
 
   uint8_t to_bytes[20];
-  if (!hdnode_get_ethereum_pubkeyhash(node, to_bytes))
-    return TXOUT_COMPILE_ERROR;
+  bool have_address = hdnode_get_ethereum_pubkeyhash(node, to_bytes);
+  fsm_clearDerivedNode();
+  if (!have_address) return TXOUT_COMPILE_ERROR;
 
   if (ethereum_isStandardERC20Transfer(msg)) {
     if (memcmp(msg->data_initial_chunk.bytes + 4 + (32 - 20), to_bytes, 20) !=
@@ -331,7 +334,11 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
                                /*show_addridx=*/false)) &&
         !bip32_path_to_string(node_str, sizeof(node_str), msg->address_n,
                               msg->address_n_count)) {
-      memset(node_str, 0, sizeof(node_str));
+      fsm_clearDerivedNode();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Can't create BIP32 path string"));
+      layoutHome();
+      return;
     }
 
     if (!confirm_ethereum_address(node_str, address)) {
@@ -444,6 +451,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
 
   uint8_t pubkeyhash[20] = {0};
   if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+    fsm_clearDerivedNode();
     layoutHome();
     return;
   }
@@ -460,6 +468,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Verify Address",
                "Confirm address: %s", resp->address)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    fsm_clearDerivedNode();
     layoutHome();
     return;
   }
@@ -470,6 +479,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Typed Data domain",
                "Confirm hash digest: %s", str)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    fsm_clearDerivedNode();
     layoutHome();
     return;
   }
@@ -481,6 +491,7 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Typed Data message",
                  "Confirm hash digest: %s", str)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      fsm_clearDerivedNode();
       layoutHome();
       return;
     }
@@ -488,52 +499,22 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Typed Data message",
                  "Confirm: No message")) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      fsm_clearDerivedNode();
       layoutHome();
       return;
     }
   }
 
   ethereum_typed_hash_sign(msg, node, resp);
+  fsm_clearDerivedNode();
   layoutHome();
 }
 
 void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
-  RESP_INIT(EthereumTypedDataSignature);
-
-  CHECK_INITIALIZED
-
-  CHECK_PIN
-
-  if (!ethereum_structured_eip712_enabled()) {
-    fsm_sendFailure(
-        FailureType_Failure_Other,
-        _("Structured EIP-712 disabled pending canonical display hardening"));
-    layoutHome();
-    return;
-  }
-
-  if (strlen(msg->eip712types) == 0) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Invalid EIP-712 types property string"));
-    return;
-  }
-
-  const HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
-                                          msg->address_n_count, NULL);
-  if (!node) return;
-
-  uint8_t pubkeyhash[20] = {0};
-  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-    layoutHome();
-    return;
-  }
-
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
-
-  e712_types_values(msg, resp, node);
-
+  (void)msg;
+  fsm_sendFailure(
+      FailureType_Failure_UnexpectedMessage,
+      _("Legacy JSON EIP-712 is unsupported. Use typed-data streaming."));
   layoutHome();
 }
 
@@ -579,6 +560,8 @@ static void eip712_pump(void) {
       RESP_INIT(EthereumTypedDataSignature);
       uint8_t pubkeyhash[20];
       if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
+        fsm_clearDerivedNode();
+        eip712_stream_abort();
         fsm_sendFailure(FailureType_Failure_Other,
                         _("Ethereum address derivation failed"));
         layout_home();
@@ -592,10 +575,13 @@ static void eip712_pump(void) {
       uint8_t v = 0;
       if (ecdsa_sign_digest(&secp256k1, node->private_key, sighash, sig, &v,
                             NULL) != 0) {
+        fsm_clearDerivedNode();
+        eip712_stream_abort();
         fsm_sendFailure(FailureType_Failure_Other, _("Signing failed"));
         layout_home();
         return;
       }
+      fsm_clearDerivedNode();
       resp->signature.size = 65;
       memcpy(resp->signature.bytes, sig, 64);
       resp->signature.bytes[64] = 27 + v;
@@ -606,6 +592,7 @@ static void eip712_pump(void) {
       resp->has_message_hash = true;
       resp->message_hash.size = 32;
       memcpy(resp->message_hash.bytes, next->message_hash, 32);
+      eip712_stream_abort();
       msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
       layout_home();
       return;
@@ -648,12 +635,14 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
 
 void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg) {
   CHECK_INITIALIZED
+  CHECK_PIN
   eip712_stream_on_struct(msg);
   eip712_pump();
 }
 
 void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
   CHECK_INITIALIZED
+  CHECK_PIN
   eip712_stream_on_value(msg);
   eip712_pump();
 }

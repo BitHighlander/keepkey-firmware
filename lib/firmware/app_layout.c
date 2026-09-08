@@ -376,19 +376,36 @@ void layout_notification_no_title_bold(const char* title, const char* body,
   layout_notification_no_title(title, body, type, true);
 }
 
-/*
- * layout_notification_no_title_no_bold() - Display notification without title
- * without bold
- *
- * INPUT
- *     - title
- *     - body
- * OUTPUT
- *     none
- */
-void layout_notification_no_title_no_bold(const char* title, const char* body,
-                                          NotificationType type) {
-  layout_notification_no_title(title, body, type, false);
+/* Replay the exact body placement used by the address layouts below. Unknown
+ * layouts fail closed so adding one requires an explicit geometry contract. */
+bool app_layout_address_text_fits(layout_notification_t layout,
+                                  const char* address) {
+  if (!address) return false;
+  DrawableParams sp = {0};
+  uint16_t width;
+  if (layout == &layout_cosmos_address_notification ||
+      layout == &layout_ethereum_address_notification ||
+      layout == &layout_osmosis_address_notification ||
+      layout == &layout_nano_address_notification) {
+    sp.x = LEFT_MARGIN + 65;
+    sp.y = TOP_MARGIN_FOR_TWO_LINES + TOP_MARGIN;
+    if (layout != &layout_nano_address_notification) sp.y += TOP_MARGIN;
+    width = layout == &layout_osmosis_address_notification ? 160 : 140;
+  } else if (layout == &layout_xpub_notification
+#if ZCASH_PRIVACY
+             || layout == &layout_zcash_address_text_notification
+#endif
+  ) {
+    sp.x = LEFT_MARGIN;
+    sp.y = TOP_MARGIN_FOR_THREE_LINES + ADDRESS_XPUB_TOP_MARGIN;
+    width = TRANSACTION_WIDTH - 25;
+  } else {
+    return false;
+  }
+  sp.color = BODY_COLOR;
+  const Font* font = get_body_font();
+  return draw_string_fits(layout_get_canvas(), font, address, &sp, width,
+                          font_height(font) + BODY_FONT_LINE_PADDING);
 }
 
 /*
@@ -880,13 +897,30 @@ void layout_address(const char* address, QRSize qr_size) {
   }
 }
 
+#ifdef EMULATOR
+/* Test seam: the last dialog put in front of the user, so a unit test can
+ * assert that what the screen says matches what the press commits to. */
+static char u2f_dialog_title[TITLE_CHAR_MAX];
+static char u2f_dialog_body[BODY_CHAR_MAX];
+const char* layoutU2FDialogLastTitle(void) { return u2f_dialog_title; }
+const char* layoutU2FDialogLastBody(void) { return u2f_dialog_body; }
+#endif
+
 bool layoutU2FDialog(bool request, const char* title, const char* body, ...) {
+  /* This path bypasses confirm_screen; select the same geometry as its probe
+   * even when the previous confirmation used an identity icon. */
+  layout_has_icon(false);
   char strbuf[BODY_CHAR_MAX];
 
   va_list vl;
   va_start(vl, body);
   int written = vsnprintf(strbuf, BODY_CHAR_MAX, body, vl);
   va_end(vl);
+
+#ifdef EMULATOR
+  snprintf(u2f_dialog_title, sizeof(u2f_dialog_title), "%s", title);
+  memcpy(u2f_dialog_body, strbuf, sizeof(u2f_dialog_body));
+#endif
 
   // Detect both SOURCE truncation (the formatted body did not fit strbuf)
   // and RENDER truncation (the body fit strbuf but not the OLED canvas), the

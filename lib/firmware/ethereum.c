@@ -30,14 +30,12 @@
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
-#include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
-#include "keepkey/firmware/tiny-json.h"
 #include "keepkey/firmware/transaction.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/ecdsa.h"
@@ -45,6 +43,7 @@
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha3.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 
 #define _(X) (X)
@@ -57,21 +56,6 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
  * same byte buffer. It is not blind signing and therefore does not inherit the
  * AdvancedMode requirement of the precomputed-hash endpoint. */
 bool ethereum_streamed_eip712_enabled(void) { return true; }
-
-/* The legacy JSON parser cannot guarantee that every displayed value is the
- * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
- * but fail closed in the FSM until the complete parser hardening is backported.
- */
-bool ethereum_structured_eip712_enabled(void) { return false; }
-
-/* Exact match, never a prefix. The legacy test was
- *   strncmp(primeType, "EIP712Domain", strlen(primeType))
- * whose length came from the HOST-supplied string, so every prefix -- "" and
- * "EIP" included -- compared equal and took the domain-only branch, emitting a
- * signature with no message hash for typed data the user was shown. */
-bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
-  return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
-}
 
 #define MAX_CHAIN_ID 2147483630
 
@@ -406,6 +390,7 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
   bignum256 bn1e9;
   bn_read_uint32(1000000000, &bn1e9);
   const char* suffix = NULL;
+  char chain_suffix[24];
   int decimals = 18;
   if (token == UnknownToken) {
     strlcpy(buf, "Unknown token value", buflen);
@@ -464,6 +449,15 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         case 43114:
           suffix = " AVAX";
           break;  //  Avalanche C-Chain
+        default:
+          /* The chain id is committed to the signature (EIP-155), and no
+           * other screen in the flow names the network. An unlisted chain
+           * must not render a bare, unitless number: name the chain so the
+           * user can see which network's native asset they are sending. */
+          snprintf(chain_suffix, sizeof(chain_suffix), " (chain %" PRIu32 ")",
+                   cid);
+          suffix = chain_suffix;
+          break;
       }
     }
   }
@@ -1314,232 +1308,6 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
   /* Populate response-only fields after every confirmation. Emulator debug
    * requests (including screenshot capture) share msg_resp and can clear data
    * prepared before the confirmation callbacks complete. */
-  uint8_t pubkeyhash[20] = {0};
-  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Ethereum address derivation failed"));
-    return;
-  }
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
-
-  msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
-}
-
-void failMessage(int err);
-
-const char* failMsgReturn[LAST_ERROR - 2] = {
-    "EIP-712 general error",  //  3
-    "EIP-712 user defined type name too long",
-    "EIP-712 too many user defined types",
-    "EIP-712 user defined type array name error",
-    "EIP-712 invalid address string",
-    "EIP-712 bytesN string overflow",
-    "EIP-712 bytesN size error",
-    "EIP-712 INT and UINT array parsing not implemented",
-    "EIP-712 bytesN array parsing not implemented",
-    "EIP-712 boolean array parsing not implemented",
-    "EIP-712 not enough memory to parse message",  // 13
-    "EIP-712 primaryType name error",
-    "EIP-712 primaryType value error",
-    "EIP-712 types property error",
-    "EIP-712 typeS (typestring) property error",
-    "EIP-712 domain property name error",
-    "EIP-712 domain seperator hash must be calculated first",
-    "EIP-712 message property name error",
-    "EIP-712 primary type object error",
-    "EIP-712 typeS not found in eip712types",
-    "EIP-712 typeS name missing",  // 23
-    "EIP-712 unused error 24",
-    "EIP-712 pairs are NULL",
-    "EIP-712 json pair type is not JSON_TEXT",
-    "EIP-712 pair does not have a sibling",
-    "EIP-712 typeType not encodable, possibly NULL",
-    "EIP-712 pair value is NULL",
-    "EIP-712 pair name is NULL",
-    "EIP-712 typeType has no name in parseVals",
-    "EIP-712 address string is NULL",
-    "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
-};
-
-void failMessage(int err) {
-  if (USER_CANCELLED == err) {
-    /* Not a parse failure: a typed-data review screen ended without a
-       completed button hold, which is what confirm_helper() reports when the
-       host sends Cancel or Initialize. Report it as a cancellation so the host
-       does not read a refusal as a malformed message.
-
-       USER_CANCELLED sits deliberately ABOVE LAST_ERROR and has no
-       failMsgReturn[] slot: the table is sized LAST_ERROR - 2 and indexed
-       err - 3, so giving a cancellation a row would shift every message
-       already in it. This branch is therefore the only thing that names the
-       code, and it also picks the FailureType. It must stay first. */
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("EIP-712 cancelled"));
-    return;
-  }
-  if (err < GENERAL_ERROR || err > LAST_ERROR) {
-    // unknown error number
-    fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 unknown failure"));
-  } else {
-    fsm_sendFailure(FailureType_Failure_Other, _(failMsgReturn[err - 3]));
-  }
-  return;
-}
-
-void e712_types_values(Ethereum712TypesValues* msg,
-                       EthereumTypedDataSignature* resp, const HDNode* node) {
-  int errRet = SUCCESS;
-  json_t memTypes[JSON_OBJ_POOL_SIZE] = {0};
-  json_t memVals[JSON_OBJ_POOL_SIZE] = {0};
-  json_t memPType[4] = {0};
-  json_t const* jsonT;
-  json_t const* jsonV;
-  json_t const* jsonPT;
-  char* typesJsonStr;
-  char* primaryTypeJsonStr;
-  char* valuesJsonStr;
-  json_t const* obTest;
-  static uint8_t domainSeparatorHash[32] = {0};
-  // cppcheck-suppress variableScope
-  static uint8_t messageHash[32] = {0};
-  static bool have_ds = false;
-
-  typesJsonStr = msg->eip712types;
-  primaryTypeJsonStr = msg->eip712primetype;
-  valuesJsonStr = msg->eip712data;
-
-  jsonT =
-      json_create(typesJsonStr, memTypes, sizeof memTypes / sizeof *memTypes);
-  jsonPT = json_create(primaryTypeJsonStr, memPType,
-                       sizeof memPType / sizeof *memPType);
-  jsonV = json_create(valuesJsonStr, memVals, sizeof memVals / sizeof *memVals);
-
-  if (!jsonT) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("EIP-712 type property data error"));
-    return;
-  }
-  if (!jsonPT) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("EIP-712 primaryType property data error"));
-    return;
-  }
-  if (!jsonV) {
-    fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 values data error"));
-    return;
-  }
-
-  if (msg->eip712typevals == 1) {
-    // Compute domain seperator hash
-    have_ds = false;
-    memzero(domainSeparatorHash, 32);
-    if ((int)SUCCESS != (errRet = encode(jsonT, jsonV, "EIP712Domain",
-                                         resp->domain_separator_hash.bytes))) {
-      failMessage(errRet);
-      return;
-    }
-    have_ds = true;
-    memcpy(domainSeparatorHash, resp->domain_separator_hash.bytes, 32);
-    resp->has_domain_separator_hash = true;
-    resp->domain_separator_hash.size = 32;
-    resp->has_msg_hash = false;
-
-  } else {
-    if (!have_ds) {
-      failMessage(MSG_NO_DS);
-      return;
-    }
-    if (NULL == (obTest = json_getProperty(jsonPT, "primaryType"))) {
-      failMessage(JSON_PTYPENAMEERR);
-      return;
-    }
-    if (json_getType(obTest) != JSON_TEXT) {
-      failMessage(JSON_PTYPEVALERR);
-      return;
-    }
-    const char* primeType;
-    if (0 == (primeType = json_getValue(obTest)) || primeType[0] == '\0') {
-      failMessage(JSON_PTYPEVALERR);
-      return;
-    }
-    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
-                       "EIP-712 Primary Type", (const uint8_t*)primeType,
-                       strlen(primeType))) {
-      failMessage(USER_CANCELLED);
-      return;
-    }
-    if (!ethereum_eip712_is_domain_primary_type(
-            primeType)) {  // domain-only signatures have no message hash
-      errRet = encode(jsonT, jsonV, primeType, resp->message_hash.bytes);
-      if (!(SUCCESS == errRet || NULL_MSG_HASH == errRet)) {
-        failMessage(errRet);
-        return;
-      }
-    } else {
-      errRet = NULL_MSG_HASH;
-    }
-
-    if (NULL_MSG_HASH == errRet) {
-      resp->has_message_hash = false;
-      resp->has_msg_hash = false;
-    } else {
-      memcpy(messageHash, resp->message_hash.bytes, 32);
-      resp->has_message_hash = true;
-      resp->message_hash.size = 32;
-      resp->has_msg_hash = true;
-    }
-    memcpy(resp->domain_separator_hash.bytes, domainSeparatorHash, 32);
-    resp->has_domain_separator_hash = true;
-    resp->domain_separator_hash.size = 32;
-
-    /* Derive the signer into a local for the confirmation text. resp->address
-     * is deliberately not written until after the last confirmation (debug-link
-     * reads reuse msg_resp and clear anything staged before the confirm
-     * callbacks finish), and RESP_INIT memset it to "" -- so naming
-     * resp->address here would render "Sign with address ?" and disclose
-     * nothing at the one screen that has to carry the disclosure. */
-    char signer_address[43] = "0x";
-    uint8_t signer_pubkeyhash[20] = {0};
-    if (!hdnode_get_ethereum_pubkeyhash(node, signer_pubkeyhash)) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Ethereum address derivation failed"));
-      return;
-    }
-    ethereum_address_checksum(signer_pubkeyhash, signer_address + 2, false, 0);
-
-    // Every screen shown while parsing the typed data is a review(), which
-    // cannot express refusal. Take one real confirmation before producing a
-    // signature so a host cannot obtain one without a button press.
-    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
-                 "Sign with address %s?", signer_address)) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      "Signing cancelled by user");
-      memzero(domainSeparatorHash, 32);
-      memzero(messageHash, 32);
-      have_ds = false;
-      return;
-    }
-
-    uint8_t v = 0;
-    if (0 != eip712_sign(domainSeparatorHash, messageHash, resp->has_msg_hash,
-                         node, &v, resp->signature.bytes)) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("EIP-712 typed hash signing failed"));
-      return;
-    }
-
-    resp->signature.bytes[64] = 27 + v;
-    resp->signature.size = 65;
-
-    memzero(domainSeparatorHash, 32);
-    memzero(messageHash, 32);
-    have_ds = false;
-  }
-
-  /* Debug-link reads during confirmation reuse msg_resp, so populate the
-   * returned address only after the final confirmation has completed. */
   uint8_t pubkeyhash[20] = {0};
   if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
     fsm_sendFailure(FailureType_Failure_Other,

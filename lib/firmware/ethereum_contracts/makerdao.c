@@ -169,40 +169,47 @@ static bool confirmSaiProxyCreateAndExecuteAddress(const uint8_t* address,
 }
 
 static bool isProxyCall(const EthereumSignTx* msg) {
+  const size_t header_size = 4 + 3 * 32;
+  if (msg->data_initial_chunk.size < header_size + 32 ||
+      msg->data_initial_chunk.size > sizeof(msg->data_initial_chunk.bytes))
+    return false;
   if (memcmp(msg->data_initial_chunk.bytes, "\x1c\xff\x79\xcd", 4) != 0)
     return false;
 
-  if (msg->data_initial_chunk.size < 4 + 32 + 32 + 32) return false;
-
+  // execute(address,bytes): the sole dynamic value follows both head words.
   bignum256 offset;
   bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 32, 32, &offset);
-
-  if (32 < bn_bitcount(&offset)) return false;
-
-  if (64 != bn_write_uint32(&offset)) return false;
+  if (bn_bitcount(&offset) > 32 || bn_write_uint32(&offset) != 64) return false;
 
   bignum256 length;
-  bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 32 + 32, 32, &length);
-
-  if (32 < bn_bitcount(&length)) return false;
-
-  if (msg->data_initial_chunk.size ==
-      4 + 3 * 32 + (bn_write_uint32(&length) - 4))
+  bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2 * 32, 32, &length);
+  if (bn_bitcount(&length) > 32) return false;
+  const uint32_t inner_size = bn_write_uint32(&length);
+  const size_t available = msg->data_initial_chunk.size - header_size;
+  if (inner_size < 4 || inner_size % 32 != 4 || inner_size > available)
     return false;
-
+  // Bounds above make the rounding safe, including for hostile uint256 input.
+  if (((inner_size + 31) / 32) * 32 != available) return false;
+  for (size_t i = inner_size; i < available; ++i) {
+    if (msg->data_initial_chunk.bytes[header_size + i] != 0) return false;
+  }
   return true;
 }
 
 static bool confirmProxyCall(const EthereumSignTx* msg) {
+  if (!msg->has_to || msg->to.size != 20) return false;
   if (memcmp(msg->data_initial_chunk.bytes + 4,
              "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", 12) != 0)
     return false;
 
-  if (!confirmSaiProxyCreateAndExecuteAddress(
-          msg->data_initial_chunk.bytes + 4 + 12, msg->chain_id))
+  char contract[43] = "0x";
+  ethereum_address_checksum(msg->to.bytes, contract + 2, false, msg->chain_id);
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Proxy Contract",
+               "Funds and call sent to:\n%s", contract))
     return false;
 
-  return true;
+  return confirmSaiProxyCreateAndExecuteAddress(
+      msg->data_initial_chunk.bytes + 4 + 12, msg->chain_id);
 }
 
 static inline bool hasParams(const EthereumSignTx* msg, size_t count) {
@@ -210,7 +217,11 @@ static inline bool hasParams(const EthereumSignTx* msg, size_t count) {
 }
 
 static inline bool hasProxiedParams(const EthereumSignTx* msg, size_t count) {
-  return msg->data_initial_chunk.size == 4 + 3 * 32 + 4 + count * 32 + (32 - 4);
+  bignum256 length;
+  bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2 * 32, 32, &length);
+  return bn_bitcount(&length) <= 32 &&
+         bn_write_uint32(&length) == 4 + count * 32 &&
+         msg->data_initial_chunk.size == 4 + 3 * 32 + 4 + count * 32 + (32 - 4);
 }
 
 static inline const uint8_t* getMethod(const EthereumSignTx* msg) {
@@ -296,8 +307,8 @@ bool makerdao_confirmClose(const EthereumSignTx* msg) {
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x79\x20\x37\xe3", 3)) {
-    if (confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
-                                  &otcProvider))
+    if (!confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
+                                   &otcProvider))
       return false;
   }
 
@@ -562,8 +573,8 @@ bool makerdao_confirmWipe(const EthereumSignTx* msg) {
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x8a\x9f\xc4\x75", 4)) {
-    if (confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
-                                  &otcProvider))
+    if (!confirmParamIsOTCProvider(getParam(msg, 3), msg->chain_id,
+                                   &otcProvider))
       return false;
   }
 
@@ -604,7 +615,7 @@ bool makerdao_confirmWipeAndFree(const EthereumSignTx* msg) {
                        sizeof(deposit));
 
   bignum256 withdraw_val;
-  bn_from_bytes(getParam(msg, 2), 32, &withdraw_val);
+  bn_from_bytes(getParam(msg, 3), 32, &withdraw_val);
 
   char withdraw[32];
   ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw,
@@ -623,7 +634,7 @@ bool makerdao_confirmWipeAndFree(const EthereumSignTx* msg) {
 }
 
 bool makerdao_isMakerDAO(uint32_t data_total, const EthereumSignTx* msg) {
-  if (!msg->has_chain_id) return false;
+  if (!msg->has_chain_id || !msg->has_to || msg->to.size != 20) return false;
 
   if (data_total != msg->data_initial_chunk.size) return false;
 
@@ -653,7 +664,7 @@ bool makerdao_isMakerDAO(uint32_t data_total, const EthereumSignTx* msg) {
 }
 
 bool makerdao_confirmMakerDAO(uint32_t data_total, const EthereumSignTx* msg) {
-  (void)data_total;
+  if (!makerdao_isMakerDAO(data_total, msg)) return false;
 
   if (isProxyCall(msg)) {
     if (!confirmProxyCall(msg)) {

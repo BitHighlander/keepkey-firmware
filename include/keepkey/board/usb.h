@@ -58,10 +58,18 @@
 typedef void (*usb_rx_callback_t)(const void* buf, size_t len);
 typedef void (*usb_u2f_rx_callback_t)(char tiny, const U2FHID_FRAME* buf);
 
+#ifdef EMULATOR
+/* The emulator has no HID endpoint. Unit tests use this callback to inspect
+ * the frames that the production U2F transport would have sent there. */
+typedef void (*usb_u2f_tx_callback_t)(const U2FHID_FRAME* buf);
+void usb_set_u2f_tx_callback(usb_u2f_tx_callback_t callback);
+#endif
+
 void usb_set_rx_callback(usb_rx_callback_t callback);
 void usb_set_u2f_rx_callback(usb_u2f_rx_callback_t callback);
 
 char usbTiny(char set);
+bool usbTinyActive(void);
 void usbInit(const char* origin_url);
 bool usbInitialized(void);
 void usbPoll(void);

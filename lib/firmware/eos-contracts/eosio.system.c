@@ -43,6 +43,12 @@
     CHECK_PARAM_RET(common->name == (ACTION), "Incorrect action name", false); \
   } while (0)
 
+#define EOS_AUTH_KEY_TYPE_K1 0
+
+static bool eos_authorizationKeyIsK1(const EosAuthorizationKey* auth_key) {
+  return auth_key->type == EOS_AUTH_KEY_TYPE_K1;
+}
+
 bool eos_compileActionDelegate(const EosActionCommon* common,
                                const EosActionDelegate* action) {
   CHECK_COMMON(EOS_DelegateBW);
@@ -68,11 +74,25 @@ bool eos_compileActionDelegate(const EosActionCommon* common,
   CHECK_PARAM_RET(eos_formatAsset(&action->net_quantity, net),
                   "Invalid asset format", false);
 
+  bool is_transfer = action->has_transfer && action->transfer;
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, "Delegate",
-               ((action->has_transfer && action->transfer)
-                    ? "Delegate %s CPU and %s RAM from %s to %s?"
-                    : "Transfer %s CPU and %s RAM from %s to %s?"),
+               (is_transfer ? "Transfer %s CPU and %s NET from %s to %s?"
+                            : "Delegate %s CPU and %s NET from %s to %s?"),
                cpu, net, sender, receiver)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
+    eos_signingAbort();
+    return false;
+  }
+
+  // transfer=true gives the receiver OWNERSHIP of the staked tokens: they can
+  // unstake and keep them. That is not a delegation, so say so on its own
+  // screen rather than hiding it behind the verb.
+  if (is_transfer &&
+      !confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction,
+               "Transfer Stake",
+               "%s will OWN the staked tokens and can unstake them. "
+               "This cannot be undone. Continue?",
+               receiver)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
     eos_signingAbort();
     return false;
@@ -93,8 +113,8 @@ bool eos_compileActionDelegate(const EosActionCommon* common,
   CHECK_PARAM_RET(eos_compileAsset(&action->cpu_quantity),
                   "Cannot compile asset: cpu_quantity", false);
 
-  uint8_t is_transfer = (action->has_transfer && action->transfer) ? 1 : 0;
-  hasher_Update(&hasher_preimage, &is_transfer, 1);
+  uint8_t transfer_byte = is_transfer ? 1 : 0;
+  hasher_Update(&hasher_preimage, &transfer_byte, 1);
 
   return true;
 }
@@ -125,7 +145,7 @@ bool eos_compileActionUndelegate(const EosActionCommon* common,
                   "Invalid asset format", false);
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, "Undelegate",
-               "Revoke delegation of %s CPU and %s RAM from %s to %s?\n", cpu,
+               "Revoke delegation of %s CPU and %s NET from %s to %s?\n", cpu,
                net, sender, receiver)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
     eos_signingAbort();
@@ -435,6 +455,7 @@ static size_t eos_hashAuthorization(Hasher* h, const EosAuthorization* auth) {
   count += eos_hashUInt(h, auth->keys_count);
   for (size_t i = 0; i < auth->keys_count; i++) {
     const EosAuthorizationKey* auth_key = &auth->keys[i];
+    if (!eos_authorizationKeyIsK1(auth_key)) return 0;
 
     count += eos_hashUInt(NULL, auth_key->type);
     if (h) eos_hashUInt(h, auth_key->type);
@@ -493,6 +514,8 @@ static bool isStandardAuthorization(const EosAuthorization* auth) {
 
   if (auth->keys[0].address_n_count == 0) return false;
 
+  if (!eos_authorizationKeyIsK1(&auth->keys[0])) return false;
+
   if (auth->keys[0].weight != 1) return false;
 
   if (auth->waits_count != 0) return false;
@@ -541,6 +564,11 @@ static bool confirmStandardAuthorization(const char* title,
 
 static bool confirmArbitraryAuthorization(const char* title,
                                           const EosAuthorization* auth) {
+  for (size_t i = 0; i < auth->keys_count; i++) {
+    CHECK_PARAM_RET(eos_authorizationKeyIsK1(&auth->keys[i]),
+                    "Unsupported EOS authorization key type", false);
+  }
+
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, title,
                "Require an authorization threshold of %" PRIu32 "?",
                auth->threshold)) {

@@ -77,17 +77,28 @@ void fsm_msgEosGetPublicKey(const EosGetPublicKey* msg) {
 }
 
 void fsm_msgEosSignTx(const EosSignTx* msg) {
-  CHECK_PARAM(msg->chain_id.size == 32, "Wrong chain_id size");
+  CHECK_PARAM(msg->has_chain_id && msg->chain_id.size == 32,
+              "Wrong chain_id size");
   CHECK_PARAM(msg->has_header, "Must have transaction header");
   CHECK_PARAM(msg->has_num_actions && 0 < msg->num_actions,
               "Eos transaction must have actions");
 
   CHECK_PARAM(msg->header.max_cpu_usage_ms <= UINT8_MAX, "Value overflow");
+  // The budget screen formats this as a uint16; anything larger would be
+  // signed in full but displayed truncated.
+  CHECK_PARAM(msg->header.max_net_usage_words <= UINT16_MAX, "Value overflow");
   CHECK_PARAM(msg->header.ref_block_num <= UINT16_MAX, "Value overflow");
 
   CHECK_INITIALIZED
 
   CHECK_PIN
+
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmEosAction,
+                     "EOS Chain ID", msg->chain_id.bytes, msg->chain_id.size)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
+    layoutHome();
+    return;
+  }
 
   HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, 0, 0, NULL);
   if (!root) return;

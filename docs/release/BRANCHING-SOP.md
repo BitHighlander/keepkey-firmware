@@ -1,3 +1,16 @@
+> **2026-09-07 owner decision — 7.14.2 foundation first.** The new develop
+> foundation is upstream firmware PR #458 head
+> `e519dc13ced6adbd77cc5ceb6207f3cc04e57492`, followed by bounded hardening
+> batches. Alpha feature staging waits for foundation acceptance. Whole-alpha
+> zero-finding loops are no longer a prerequisite for this staging process.
+> Canonical procedure and manifest live on firmware branch
+> `rehearsal/7.14.2-hardening-20260907` at
+> `docs/release/REHEARSAL-SOP.md` and
+> `docs/release/7.14.2-HARDENING-MANIFEST.md`.
+> Existing shared develop is preserved pending a proven replacement.
+> Conflicting staging/audit ordering below is historical; applicable technical
+> validation and upstream dependency requirements still apply.
+
 # Branch and submodule SOP
 
 Three branches, three jobs. Getting the submodule pins wrong is the main source

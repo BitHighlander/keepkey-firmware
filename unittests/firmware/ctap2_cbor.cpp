@@ -58,3 +58,10 @@ TEST(CTAP2CBOR, EncoderReportsOverflow) {
   ASSERT_FALSE(cbor_encode_text(&encoder, "passkey", 7));
   ASSERT_EQ(cbor_encoder_size(&encoder), 0u);
 }
+
+TEST(CTAP2CBOR, TextValidationRejectsTruncatedUtf8) {
+  const char valid[] = "valid \xc3\xa9";
+  const char truncated[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xc3";
+  EXPECT_TRUE(cbor_text_is_valid(valid, sizeof(valid) - 1));
+  EXPECT_FALSE(cbor_text_is_valid(truncated, sizeof(truncated) - 1));
+}

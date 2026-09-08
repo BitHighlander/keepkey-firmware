@@ -108,6 +108,7 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
+size_t msg_write_chunk_len(size_t frame_len, size_t pos);
 bool msg_write(MessageType msg_id, const void* msg);
 
 #if DEBUG_LINK

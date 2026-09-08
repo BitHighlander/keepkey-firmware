@@ -22,6 +22,7 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
 
   if ((encrypt && ask_on_encrypt) || (!encrypt && ask_on_decrypt)) {
     if (!confirm_cipher(encrypt, msg->key)) {
+      fsm_clearDerivedNode();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "CipherKeyValue cancelled");
       layoutHome();
@@ -35,6 +36,7 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
   strlcat((char*)data, ask_on_decrypt ? "D1" : "D0", sizeof(data));
 
   hmac_sha512(node->private_key, 32, data, strlen((char*)data), data);
+  fsm_clearDerivedNode();
 
   RESP_INIT(CipheredKeyValue);
 
@@ -165,8 +167,10 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     }
     resp->has_signature = true;
     resp->signature.size = 65;
+    fsm_clearDerivedNode();
     msg_write(MessageType_MessageType_SignedIdentity, resp);
   } else {
+    fsm_clearDerivedNode();
     fsm_sendFailure(FailureType_Failure_Other, "Error signing identity");
   }
 

@@ -50,12 +50,11 @@ bool ton_get_address(const ed25519_public_key public_key, bool bounceable,
                      size_t raw_address_len);
 
 /**
- * Format TON amount (nanoTON) for display
- * @param buf Output buffer
- * @param len Length of output buffer
- * @param amount Amount in nanoTON (1 TON = 1,000,000,000 nanoTON)
+ * Format sha256(raw_tx) as 64 hex chars for the blind-sign screen.
+ * @param out Output buffer (at least 65 bytes; emptied if smaller)
  */
-void ton_formatAmount(char* buf, size_t len, uint64_t amount);
+void ton_formatRawTxDigest(const uint8_t* raw, size_t len, char* out,
+                           size_t out_len);
 
 /**
  * Sign a TON transaction

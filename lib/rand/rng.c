@@ -75,6 +75,11 @@ void rng_test_observe_persistent_error(void) {
 }
 #endif
 
+bool rng_reset_budget_exhausted(uint32_t* resets) {
+  if (resets == NULL) return true;
+  return ++(*resets) > RNG_MAX_RESETS;
+}
+
 bool rng_persistent_error_step(uint32_t* samples) {
   if (samples == NULL) return false;
   if (++(*samples) < 100) return false;
@@ -85,6 +90,12 @@ bool rng_persistent_error_step(uint32_t* samples) {
   *samples = 0;
   return true;
 }
+
+#ifndef EMULATOR
+/* Set when reset_rng() could not discard the first post-RNGEN word itself;
+ * random32() then discards the next ready word before returning one. */
+static bool rng_discard_pending = false;
+#endif
 
 void reset_rng(void) {
 #ifndef EMULATOR
@@ -104,33 +115,65 @@ void reset_rng(void) {
 
   // to be extra careful and heed the STM32F205xx Reference manual,
   // Section 20.3.1 we don't use the first random number generated after setting
-  // the RNGEN bit in setup
-  random32();
+  // the RNGEN bit in setup. Discard it HERE, not via random32(): random32()
+  // calls reset_rng() on a persistent fault, so that discard recursed without
+  // bound while the peripheral stayed faulted. Bounded wait; if no word comes,
+  // random32()'s own error path deals with it.
+  {
+    uint32_t cnt = 100 /* microseconds */ * 20;
+    rng_discard_pending = true;
+    while (cnt--) {
+      if (RNG_SR & RNG_SR_DRDY) {
+        (void)RNG_DR;
+        rng_discard_pending = false;
+        break;
+      }
+    }
+  }
 #endif
 }
 
 uint32_t random32(void) {
 #ifndef EMULATOR
-  uint32_t rng_samples = 0, rng_sr_img;
+  uint32_t rng_samples = 0, rng_resets = 0, rng_sr_img;
   static uint32_t last = 0, new = 0;
 
   while (new == last) {
     /* Capture the RNG status register */
     rng_sr_img = RNG_SR;
-    if ((rng_sr_img & (RNG_SR_SEIS | RNG_SR_CEIS)) == 0) {
+    if ((rng_sr_img &
+         (RNG_SR_SEIS | RNG_SR_CEIS | RNG_SR_SECS | RNG_SR_CECS)) == 0) {
       if (rng_sr_img & RNG_SR_DRDY) {
-        new = RNG_DR;
+        if (rng_discard_pending) {
+          (void)RNG_DR;
+          rng_discard_pending = false;
+        } else {
+          new = RNG_DR;
+        }
       }
     } else if ((rng_sr_img & (RNG_SR_SECS | RNG_SR_CECS)) == 0) {
-      /* Reset RNG interrupt status bits (SECS, CECS errors no longer
-       * exist). Record it FIRST: clearing the hardware latch is exactly
-       * what makes this fault invisible to a later self-test. */
+      /* Even a transient seed error requires RNGEN reinitialization (RM0033,
+       * section 20.3.1). Merely clearing SEIS could return the buffered fault
+       * word. Preserve the fault, bound retries, then restart and discard. */
       rng_seed_error_seen = true;
-      RNG_SR &= ~(RNG_SR_SEIS | RNG_SR_CEIS);
+      if (rng_reset_budget_exhausted(&rng_resets)) {
+        for (;;) {
+          __asm__("wfi");
+        }
+      }
+      reset_rng();
     } else {
       /* RNG is not ready.  Allow few more samples for RNG to come back alive
        * before resetting */
       if (rng_persistent_error_step(&rng_samples)) {
+        if (rng_reset_budget_exhausted(&rng_resets)) {
+          /* The generator did not come back across RNG_MAX_RESETS resets.
+           * The fault is latched; never return a word from a dead source
+           * and never wait on it unboundedly. Fail closed: halt. */
+          for (;;) {
+            __asm__("wfi");
+          }
+        }
         /* RNG in hang state.  Reset RNG */
         reset_rng();
       }

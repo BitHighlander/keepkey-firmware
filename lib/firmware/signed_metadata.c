@@ -819,16 +819,11 @@ static const uint8_t* metadata_pubkey_for(uint8_t key_id, bool* is_loaded) {
   return NULL;
 }
 
-bool signed_metadata_signer_is_runtime(uint8_t key_id) {
-  bool is_loaded = false;
-  return metadata_pubkey_for(key_id, &is_loaded) != NULL && is_loaded;
-}
-
 bool signed_metadata_signer_fingerprint(uint8_t key_id,
                                         char out[METADATA_FINGERPRINT_LEN]) {
   bool is_loaded = false;
   const uint8_t* pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode"))) {
+  if (!pubkey || !is_loaded || !storage_isPolicyEnabled("AdvancedMode")) {
     return false;
   }
   signed_metadata_pubkey_fingerprint(pubkey, out);
@@ -843,7 +838,7 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
   }
   bool is_loaded = false;
   const uint8_t* pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode"))) {
+  if (!pubkey || !is_loaded || !storage_isPolicyEnabled("AdvancedMode")) {
     return false;
   }
   uint8_t digest[32];
@@ -887,7 +882,7 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   }
 
   pubkey = metadata_pubkey_for(key_id, &is_loaded);
-  if (!pubkey || (is_loaded && !storage_isPolicyEnabled("AdvancedMode")) ||
+  if (!pubkey || !is_loaded || !storage_isPolicyEnabled("AdvancedMode") ||
       !payload || payload_len < 65) {
     return METADATA_MALFORMED;
   }
@@ -908,7 +903,7 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   }
 
   metadata_available = true;
-  metadata_tier = is_loaded ? METADATA_TIER_RUNTIME : METADATA_TIER_NONE;
+  metadata_tier = METADATA_TIER_RUNTIME;
   return stored_metadata.classification;
 }
 
@@ -1094,6 +1089,44 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   return true;
 }
 
+bool signed_metadata_format_token_amount(const MetadataArg* arg, char* body,
+                                         size_t body_len) {
+  if (!body || body_len == 0) return false;
+  body[0] = '\0';
+  if (!arg || arg->format != ARG_FORMAT_TOKEN_AMOUNT ||
+      strnlen(arg->name, sizeof(arg->name)) > METADATA_MAX_ARG_NAME_LEN ||
+      !arg_value_ok(arg->format, arg->value, arg->value_len))
+    return false;
+  uint8_t decimals = arg->value[0], symlen = arg->value[1];
+  char suffix[METADATA_MAX_TOKEN_SYMBOL_LEN + 2];
+  suffix[0] = ' ';
+  memcpy(suffix + 1, arg->value + 2, symlen);
+  suffix[1 + symlen] = '\0';
+  const uint8_t* amt = arg->value + 2 + symlen;
+  uint16_t amt_len = arg->value_len - 2 - symlen;
+  bool is_max = amt_len == 32;
+  for (uint16_t j = 0; j < amt_len && is_max; ++j)
+    if (amt[j] != 0xff) is_max = false;
+  int written;
+  if (is_max) {
+    written = snprintf(body, body_len, "%s:\nUNLIMITED%s", arg->name, suffix);
+  } else {
+    bignum256 amount;
+    bn_from_metadata_bytes(amt, amt_len, &amount);
+    // Full uint256, decimal point and ten-character symbol fit in 96 bytes.
+    char formatted[96];
+    if (bn_format(&amount, NULL, suffix, decimals, 0, false, formatted,
+                  sizeof(formatted)) == 0)
+      return false;
+    written = snprintf(body, body_len, "%s:\n%s", arg->name, formatted);
+  }
+  if (written < 0 || (size_t)written >= body_len) {
+    body[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
 /* Renders the clearsign screens in sequence. When a signer with an icon is
  * loaded, its logo (the compass) is set as RUNTIME_ICON and STAYS set for the
  * whole flow, so every screen — identity, method, contract, each arg — carries
@@ -1103,8 +1136,10 @@ static bool signed_metadata_confirm_screens(void) {
   /* Sized so the widest argument cannot be silently truncated by snprintf:
    * name + ":\n" + every value byte as hex + NUL. A truncating snprintf here
    * would reintroduce exactly the concealment this renderer was fixed for. */
-  char body[METADATA_MAX_ARG_NAME_LEN + 2 + (METADATA_MAX_ARG_VALUE_LEN * 2) +
-            1];
+  char body[METADATA_MAX_ARG_NAME_LEN + 2 + 96];
+  _Static_assert(sizeof(body) >= METADATA_MAX_ARG_NAME_LEN + 2 +
+                                     METADATA_MAX_ARG_VALUE_LEN * 2 + 1,
+                 "Metadata body must also fit complete hex arguments");
   /* Compass shown on every screen once a signer with an icon is loaded. */
   IconType screen_icon = NO_ICON;
   Image icon_img;
@@ -1227,7 +1262,7 @@ static bool signed_metadata_confirm_screens(void) {
 
   /* Screen 3..N: Each decoded argument */
   for (uint8_t i = 0; i < stored_metadata.num_args; i++) {
-    MetadataArg* arg = &stored_metadata.args[i];
+    const MetadataArg* arg = &stored_metadata.args[i];
     memset(body, 0, sizeof(body));
 
     switch (arg->format) {
@@ -1264,8 +1299,7 @@ static bool signed_metadata_confirm_screens(void) {
           char formatted[96];
           if (bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
                         sizeof(formatted)) == 0) {
-            strlcpy(formatted, "AMOUNT TOO LARGE TO DISPLAY",
-                    sizeof(formatted));
+            return false;
           }
           snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
         }
@@ -1279,46 +1313,10 @@ static bool signed_metadata_confirm_screens(void) {
         snprintf(body, sizeof(body), "%s:\n%s", arg->name, text);
         break;
       }
-      case ARG_FORMAT_TOKEN_AMOUNT: {
-        /* decimals + symbol + big-endian amount, validated at parse.
-         * This is the "Amount: 1,000 USDC" the clear-signing plan calls for
-         * instead of a raw wei integer. */
-        uint8_t decimals = arg->value[0];
-        uint8_t symlen = arg->value[1];
-        char suffix[METADATA_MAX_TOKEN_SYMBOL_LEN + 2];
-        suffix[0] = ' ';
-        memcpy(suffix + 1, arg->value + 2, symlen);
-        suffix[1 + symlen] = '\0';
-
-        const uint8_t* amt = arg->value + 2 + symlen;
-        uint16_t amt_len = arg->value_len - 2 - symlen;
-        bool is_max = amt_len == 32;
-        for (uint16_t j = 0; j < amt_len && is_max; j++) {
-          if (amt[j] != 0xFF) {
-            is_max = false;
-          }
-        }
-        if (is_max) {
-          snprintf(body, sizeof(body), "%s:\nUNLIMITED%s", arg->name, suffix);
-        } else {
-          bignum256 amount;
-          bn_from_metadata_bytes(amt, amt_len, &amount);
-          /* bn_format() BLANKS its output buffer and returns 0 when the value
-           * does not fit, so 48 bytes rendered a 256-bit amount as an EMPTY
-           * string: the clear-sign screen showed the argument name and no
-           * value, which is the one rendering a user cannot read as wrong.
-           * Size it beyond the 78-digit worst case and refuse to render a
-           * blank if it ever overflows anyway. */
-          char formatted[96];
-          if (bn_format(&amount, NULL, suffix, decimals, 0, false, formatted,
-                        sizeof(formatted)) == 0) {
-            strlcpy(formatted, "AMOUNT TOO LARGE TO DISPLAY",
-                    sizeof(formatted));
-          }
-          snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
-        }
+      case ARG_FORMAT_TOKEN_AMOUNT:
+        if (!signed_metadata_format_token_amount(arg, body, sizeof(body)))
+          return false;
         break;
-      }
       case ARG_FORMAT_BYTES:
       case ARG_FORMAT_RAW:
       default: {

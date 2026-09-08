@@ -66,6 +66,15 @@
 
 // Initialise without a cid
 static uint32_t cid = 0;
+static bool command_in_flight;
+
+#ifdef EMULATOR
+static u2f_user_presence_hook_t user_presence_hook;
+
+void u2f_set_user_presence_hook(u2f_user_presence_hook_t hook) {
+  user_presence_hook = hook;
+}
+#endif
 
 #if 0
 // Circular Output buffer
@@ -118,10 +127,11 @@ static uint32_t dialog_timeout = 0;
 
 uint32_t next_cid(void) {
   // extremely unlikely but hey
+  uint32_t next;
   do {
-    cid = random32();
-  } while (cid == 0 || cid == CID_BROADCAST);
-  return cid;
+    next = random32();
+  } while (next == 0 || next == CID_BROADCAST);
+  return next;
 }
 
 // https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-hid-protocol-v1.2-ps-20170411.html#message--and-packet-structure
@@ -142,6 +152,10 @@ U2F_ReadBuffer* reader;
 void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
   // Always handle init packets directly
   if (f->init.cmd == U2FHID_INIT) {
+    if (tiny && command_in_flight) {
+      send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
+      return;
+    }
     u2fhid_init(f);
     if (tiny && reader && f->cid == cid) {
       // abort current channel
@@ -160,7 +174,7 @@ void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
     }
 
     if ((f->type & TYPE_INIT) && reader->seq == 255) {
-      if (reader->cmd == U2FHID_CBOR && f->init.cmd != U2FHID_CANCEL) {
+      if (command_in_flight && f->init.cmd != U2FHID_CANCEL) {
         send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
         return;
       }
@@ -275,7 +289,9 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
          * Invalidate any pending legacy request once a different command
          * type has interleaved. */
         last_req_state = INIT;
+        command_in_flight = true;
         u2fhid_cbor(reader->buf, reader->len);
+        command_in_flight = false;
         break;
       case U2FHID_CANCEL:
         /* Commands are currently synchronous. Accepting CANCEL is still
@@ -704,10 +720,32 @@ bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
   return true;
 }
 
-bool ctap2_request_user_presence(const char* rp_id, bool registration) {
-  bool fits = layoutU2FDialog(
-      true, registration ? "Create Passkey" : "Use Passkey",
-      registration ? "Create a passkey for %s?" : "Sign in to %s?", rp_id);
+typedef enum {
+  U2F_PROMPT_CREATE,
+  U2F_PROMPT_SIGN_IN,
+  U2F_PROMPT_RESET,
+} u2f_prompt_t;
+
+/* Every format below is a literal: the device build compiles with
+ * -Werror=format-nonliteral and layoutU2FDialog is printf-attributed. */
+static bool request_user_presence(u2f_prompt_t kind, const char* arg) {
+  const char* title;
+  bool fits;
+  switch (kind) {
+    case U2F_PROMPT_CREATE:
+      title = "Create Passkey";
+      fits = layoutU2FDialog(true, title, "Create a passkey for %s?", arg);
+      break;
+    case U2F_PROMPT_SIGN_IN:
+      title = "Use Passkey";
+      fits = layoutU2FDialog(true, title, "Sign in to %s?", arg);
+      break;
+    default:
+      title = "Erase Passkeys";
+      fits = layoutU2FDialog(
+          true, title, "Delete %s and the PIN? This cannot be undone.", arg);
+      break;
+  }
   if (!fits) {
     // rp_id is host-controlled and can run up to 253 chars; the credential
     // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
@@ -715,16 +753,22 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
     layoutHome();
     return false;
   }
+#ifdef EMULATOR
+  /* The emulator has no button. A test hook can inject an incoming HID frame
+   * at the same point hardware would service it while waiting for consent. */
+  if (user_presence_hook != NULL) user_presence_hook();
+  layoutHome();
+  return false;
+#else
   bool saw_button_up = false;
   for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
-    if (reader != NULL && reader->cmd == U2FHID_CANCEL) {
+    if (reader != NULL && reader->cmd != U2FHID_CBOR) {
       layoutHome();
       return false;
     }
     saw_button_up = saw_button_up || keepkey_button_up();
     if (saw_button_up && keepkey_button_down()) {
-      layoutU2FDialog(false, registration ? "Create Passkey" : "Use Passkey",
-                      "%s", rp_id);
+      layoutU2FDialog(false, title, "%s", arg);
       return true;
     }
     if ((remaining % (U2F_TIMEOUT / 4)) == 0) {
@@ -735,6 +779,19 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
   }
   layoutHome();
   return false;
+#endif
+}
+
+bool ctap2_request_user_presence(const char* rp_id, bool registration) {
+  return request_user_presence(
+      registration ? U2F_PROMPT_CREATE : U2F_PROMPT_SIGN_IN, rp_id);
+}
+
+/* authenticatorReset is an irreversible mass deletion, not a login: the screen
+ * must say what the press commits to. Reusing the "Sign in to %s?" dialog read
+ * as an ordinary assertion prompt. */
+bool ctap2_request_reset_confirmation(void) {
+  return request_user_presence(U2F_PROMPT_RESET, "ALL saved passkeys");
 }
 
 bool ctap2_user_presence_was_cancelled(void) {

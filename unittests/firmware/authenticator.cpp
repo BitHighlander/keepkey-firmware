@@ -116,8 +116,7 @@ TEST(Authenticator, CacheClearReloadsPersistentAccounts) {
   ASSERT_EQ(NOERR, wipeAuthData());
   ASSERT_EQ(0, kkconfirm_drain());
 
-  char account_seed[] =
-      "example:alice:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+  char account_seed[] = "example:alice:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
   ASSERT_TRUE(kkconfirm_preload(2, 0));
   ASSERT_EQ(NOERR, addAuthAccount(account_seed));
   ASSERT_EQ(0, kkconfirm_drain());
@@ -128,6 +127,60 @@ TEST(Authenticator, CacheClearReloadsPersistentAccounts) {
   EXPECT_EQ(NOERR, getAuthAccount("0", account));
   EXPECT_STREQ("example:alice", account);
 
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  EXPECT_EQ(NOERR, wipeAuthData());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(Authenticator, OtpRejectsMalformedOrUnboundedTimes) {
+  ensure_auth_storage_initialized();
+  const char* requests[] = {"example:missing:1:31",
+                            "example:missing:1:4294967295",
+                            "example:missing:1:-1",
+                            "example:missing:1:30junk",
+                            "example:missing:-1:0",
+                            "example:missing:1junk:0",
+                            "example:missing:18446744073709551616:0",
+                            "example:missing:1:18446744073709551616",
+                            "example::1:0",
+                            ":missing:1:0",
+                            "example:missing::0",
+                            "example:missing:1:",
+                            "example:missing:1:0:extra"};
+  for (const char* request : requests) {
+    SCOPED_TRACE(request);
+    char input[128];
+    snprintf(input, sizeof(input), "%s", request);
+    char otp[9] = "residue";
+    EXPECT_EQ(TOKERR, generateOTP(input, otp));
+    EXPECT_STREQ("", otp);
+  }
+  char account[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {};
+  for (const char* slot : {"-1", "256", "18446744073709551616", "0junk", ""})
+    EXPECT_EQ(NOSLOT, getAuthAccount(slot, account));
+}
+
+TEST(Authenticator, OtpUsesFull64BitCounter) {
+  ensure_auth_storage_initialized();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_EQ(NOERR, wipeAuthData());
+  ASSERT_EQ(0, kkconfirm_drain());
+  char added[] = "example:alice:GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  ASSERT_EQ(NOERR, addAuthAccount(added));
+  ASSERT_EQ(0, kkconfirm_drain());
+  // Independent HMAC-SHA1/HOTP vectors for the ASCII key 12345678901234567890.
+  const char* counters[] = {"0", "1", "4294967296", "18446744073709551615"};
+  const char* expected[] = {"755224", "287082", "999456", "094451"};
+  for (size_t i = 0; i < 4; ++i) {
+    char input[96], otp[9];
+    snprintf(input, sizeof(input), "example:alice:%s:0", counters[i]);
+    // A zero time remaining prompts expiry without a blocking countdown.
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    EXPECT_EQ(NOERR, generateOTP(input, otp));
+    EXPECT_STREQ(expected[i], otp);
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   EXPECT_EQ(NOERR, wipeAuthData());
   EXPECT_EQ(0, kkconfirm_drain());

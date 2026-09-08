@@ -192,15 +192,19 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   // Display precision MUST match the precision the serializer signs
   // (append_asset uses msg->decimals), otherwise the user approves an
   // amount that differs from what is signed. Reject implausible precision.
+  // Only the two transferable Hive assets exist, both at precision 3. The
+  // serializer maps these display spellings to the STEEM/SBD wire symbols;
+  // anything else would be shown as-is and signed as chain-invalid bytes.
   uint8_t prec = msg->has_decimals ? (uint8_t)msg->decimals : HIVE_DECIMALS;
-  if (prec > 18) {
+  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
+  if (prec != HIVE_DECIMALS ||
+      (strcmp(symbol, "HIVE") != 0 && strcmp(symbol, "HBD") != 0)) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive asset precision"));
+                    _("Hive asset must be HIVE or HBD with precision 3"));
     layoutHome();
     return;
   }
-  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
   char suffix[sizeof(msg->asset_symbol) + 2];  // leading space + symbol + NUL
   snprintf(suffix, sizeof(suffix), " %s", symbol);
   char amount_str[32];

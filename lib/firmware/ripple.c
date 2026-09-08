@@ -141,7 +141,11 @@ void ripple_serializeVarint(bool* ok, uint8_t** buf, const uint8_t* end,
     return;
   }
 
-  if (val < 192) {
+  /* XRPL VL prefix: one byte for 0..192 inclusive, two for 193..12480,
+   * three for 12481..918744. The branch below already assumes it starts at
+   * 193, so the boundaries here must be inclusive or 192 encodes as a bogus
+   * two-byte prefix that decodes to a different memo than the one shown. */
+  if (val <= 192) {
     append_u8(ok, buf, end, val);
     return;
   }
@@ -153,7 +157,7 @@ void ripple_serializeVarint(bool* ok, uint8_t** buf, const uint8_t* end,
     return;
   }
 
-  if (val < 918744) {
+  if (val <= 918744) {
     assert(*buf + 3 < end && "buffer not long enough");
     val -= 12481;
     append_u8(ok, buf, end, 241 + ((unsigned)val >> 16));
@@ -263,6 +267,9 @@ void ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
     tx->flags = 0;
     tx->has_flags = true;
   }
+  /* Flags are signed but never displayed: refuse any bit the firmware does
+   * not itself set rather than sign it unseen. */
+  if (tx->flags & ~RIPPLE_FLAG_FULLY_CANONICAL) return;
   tx->flags |= RIPPLE_FLAG_FULLY_CANONICAL;
 
   memset(resp->serialized_tx.bytes, 0, sizeof(resp->serialized_tx.bytes));
@@ -296,7 +303,7 @@ void ripple_signTx(const HDNode* node, RippleSignTx* tx, RippleSignedTx* resp) {
   memset(resp->serialized_tx.bytes, 0, sizeof(resp->serialized_tx.bytes));
 
   buf = resp->serialized_tx.bytes;
-  len = sizeof(resp->serialized_tx);
+  len = sizeof(resp->serialized_tx.bytes);
   if (!ripple_serialize(&buf, buf + len, tx, source_address, node->public_key,
                         resp->signature.bytes, resp->signature.size))
     return;

@@ -144,3 +144,16 @@ TEST(Nano, Bip32ToString) {
         << "Unexpected string result";
   }
 }
+
+TEST(Nano, AccountLabelsRetainAllUnhardenedIndexBits) {
+  const CoinType *coin = coinByName("Nano");
+  ASSERT_NE(coin, nullptr);
+  for (uint32_t index :
+       {0U, 0x08000000U, 0x10000000U, 0x40000000U, 0x7fffffffU}) {
+    const uint32_t path[] = {0x8000002c, coin->bip44_account_path,
+                             0x80000000 | index};
+    char label[80];
+    ASSERT_TRUE(nano_bip32_to_string(label, sizeof(label), coin, path, 3));
+    EXPECT_EQ(std::string("Nano Account #") + std::to_string(index), label);
+  }
+}

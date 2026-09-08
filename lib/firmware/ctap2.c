@@ -119,6 +119,8 @@ static bool map_find(const uint8_t* buffer, size_t length, int64_t wanted,
     else
       return false;
 
+    /* Capture the start before cbor_skip_value advances decoder.offset. */
+    // cppcheck-suppress variableScope
     size_t start = decoder.offset;
     if (!cbor_skip_value(&decoder)) return false;
     if (decoded_key == wanted) {
@@ -165,6 +167,8 @@ static bool map_find_text(const uint8_t* buffer, size_t length,
     CborValue key;
     if (!cbor_decode_value(&decoder, &key) || key.type != CBOR_TYPE_TEXT)
       return false;
+    /* Capture the start before cbor_skip_value advances decoder.offset. */
+    // cppcheck-suppress variableScope
     size_t start = decoder.offset;
     if (!cbor_skip_value(&decoder)) return false;
     if (key.length == wanted_length &&
@@ -425,6 +429,8 @@ static bool credential_list_contains(const uint8_t* buffer, size_t length,
   if (!cbor_decode_value(&decoder, &array) || array.type != CBOR_TYPE_ARRAY)
     return false;
   for (uint64_t i = 0; i < array.value; ++i) {
+    /* Capture the start before cbor_skip_value advances decoder.offset. */
+    // cppcheck-suppress variableScope
     size_t start = decoder.offset;
     if (!cbor_skip_value(&decoder)) return false;
     CborValue id, type;
@@ -540,14 +546,17 @@ static void encode_assertion_response(const PasskeyCredential* resident,
   cbor_encode_bytes(&encoder, auth_data, sizeof(auth_data));
   cbor_encode_uint(&encoder, 3);
   cbor_encode_bytes(&encoder, der, der_length);
+  const size_t user_name_length =
+      strnlen(resident->user_name, sizeof(resident->user_name));
+  const bool include_user_name =
+      uv_verified && cbor_text_is_valid(resident->user_name, user_name_length);
   cbor_encode_uint(&encoder, 4);
-  cbor_encode_map(&encoder, uv_verified ? 2 : 1);
+  cbor_encode_map(&encoder, include_user_name ? 2 : 1);
   cbor_encode_text(&encoder, "id", 2);
   cbor_encode_bytes(&encoder, resident->user_id, resident->user_id_length);
-  if (uv_verified) {
+  if (include_user_name) {
     cbor_encode_text(&encoder, "name", 4);
-    cbor_encode_text(&encoder, resident->user_name,
-                     strnlen(resident->user_name, sizeof(resident->user_name)));
+    cbor_encode_text(&encoder, resident->user_name, user_name_length);
   }
   if (number_of_credentials > 1) {
     cbor_encode_uint(&encoder, 5);
@@ -655,12 +664,11 @@ static void make_credential(const uint8_t* request, size_t request_length,
     return;
   }
   user_name[0] = 0;
-  if (map_find_text(user_slice, user_length, "name", &value, NULL, NULL) &&
-      value.type == CBOR_TYPE_TEXT) {
-    size_t copy = value.length < sizeof(user_name) - 1 ? value.length
-                                                       : sizeof(user_name) - 1;
-    memcpy(user_name, value.data, copy);
-    user_name[copy] = 0;
+  if (map_find_text(user_slice, user_length, "name", &value, NULL, NULL)) {
+    if (!copy_text(&value, user_name, sizeof(user_name))) {
+      write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
+      return;
+    }
   }
 
   bool resident = false, uv_requested = false, ignored_up;
@@ -736,6 +744,7 @@ static void make_credential(const uint8_t* request, size_t request_length,
                                  rp_id_hash,
                                  0x01 | 0x40 | (uv_verified ? 0x04 : 0), 0,
                                  credential_id, public_key)) {
+    memzero(private_key, sizeof(private_key));
     write_error(CTAP2_ERR_OTHER, response, response_length);
     return;
   }
@@ -892,14 +901,17 @@ static void get_assertion(const uint8_t* request, size_t request_length,
   cbor_encode_uint(&encoder, 3);
   cbor_encode_bytes(&encoder, der, der_length);
   if (resident_count > 0) {
+    const size_t user_name_length =
+        strnlen(resident.user_name, sizeof(resident.user_name));
+    const bool include_user_name =
+        uv_verified && cbor_text_is_valid(resident.user_name, user_name_length);
     cbor_encode_uint(&encoder, 4);
-    cbor_encode_map(&encoder, uv_verified ? 2 : 1);
+    cbor_encode_map(&encoder, include_user_name ? 2 : 1);
     cbor_encode_text(&encoder, "id", 2);
     cbor_encode_bytes(&encoder, resident.user_id, resident.user_id_length);
-    if (uv_verified) {
+    if (include_user_name) {
       cbor_encode_text(&encoder, "name", 4);
-      cbor_encode_text(&encoder, resident.user_name,
-                       strnlen(resident.user_name, sizeof(resident.user_name)));
+      cbor_encode_text(&encoder, resident.user_name, user_name_length);
     }
   }
   if (resident_count > 1) {
@@ -1197,7 +1209,7 @@ static void reset_authenticator(uint8_t* response, size_t* response_length) {
     write_error(CTAP2_ERR_NOT_ALLOWED, response, response_length);
     return;
   }
-  if (!ctap2_request_user_presence("all saved passkeys", false)) {
+  if (!ctap2_request_reset_confirmation()) {
     write_error(ctap2_user_presence_was_cancelled()
                     ? CTAP2_ERR_KEEPALIVE_CANCEL
                     : CTAP2_ERR_OPERATION_DENIED,

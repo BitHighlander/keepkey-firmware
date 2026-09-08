@@ -493,3 +493,19 @@ TEST(Tron, AddressFromBytes) {
   EXPECT_EQ(out[0], 'T'); /* mainnet addresses render as T... */
   EXPECT_GE(strlen(out), 33u);
 }
+
+/* The blind-sign screen shows sha256(raw_data) -- the exact digest
+ * tron_signTx signs -- so equal-length payload swaps are visible on-device. */
+TEST(Tron, BlindSignDigestIsSha256OfRawData) {
+  char hex[65];
+  tron_formatRawTxDigest(reinterpret_cast<const uint8_t*>("abc"), 3, hex,
+                         sizeof(hex));
+  EXPECT_STREQ(
+      hex,
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+
+  char small[8] = "xx";
+  tron_formatRawTxDigest(reinterpret_cast<const uint8_t*>("abc"), 3, small,
+                         sizeof(small));
+  EXPECT_STREQ(small, "");
+}

@@ -661,6 +661,46 @@ bool compile_input_script_sig(TxInputType* tinput) {
   return tinput->script_sig.size > 0;
 }
 
+/* Review transaction control fields before any signatures are released. */
+bool signing_confirm_transaction_fields(uint32_t tx_version,
+                                        uint32_t tx_lock_time,
+                                        uint32_t tx_expiry, bool has_expiry) {
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction fields",
+               "Version: %" PRIu32 "\nLock time: %" PRIu32, tx_version,
+               tx_lock_time))
+    return false;
+  if (has_expiry &&
+      !confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction expiry",
+               "Expiry height: %" PRIu32, tx_expiry))
+    return false;
+  if (tx_lock_time != 0 &&
+      !confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction lock",
+               "Lock time may delay mining until after %s %" PRIu32
+               ". All-final input sequences disable this lock.",
+               tx_lock_time < 500000000 ? "block" : "Unix time", tx_lock_time))
+    return false;
+  return true;
+}
+
+bool signing_confirm_input_sequence(uint32_t index, uint32_t sequence) {
+  return confirm(ButtonRequestType_ButtonRequest_SignTx, "Input sequence",
+                 "Input #%" PRIu32 "\nSequence: %" PRIu32 "%s", index + 1,
+                 sequence,
+                 sequence == UINT32_MAX
+                     ? ""
+                     : "\nNon-final: lock or replacement rules may apply.");
+}
+
+/* This is an internal consistency checksum, not a transaction sighash.
+ * Include the reviewed sequence so legacy phase two cannot change it. */
+void signing_hash_input_check(Hasher* hasher, const TxInputType* txinput) {
+  tx_prevout_hash(hasher, txinput);
+  tx_sequence_hash(hasher, txinput);
+  uint8_t script_type_bytes[4];
+  signing_encode_script_type(txinput->script_type, script_type_bytes);
+  hasher_Update(hasher, script_type_bytes, sizeof(script_type_bytes));
+}
+
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root) {
   inputs_count = msg->inputs_count;
@@ -1109,10 +1149,7 @@ static bool signing_check_input(TxInputType* txinput) {
   }
   // hash prevout and script type to check it later (relevant for fee
   // computation)
-  tx_prevout_hash(&hasher_check, txinput);
-  uint8_t script_type_bytes[4];
-  signing_encode_script_type(txinput->script_type, script_type_bytes);
-  hasher_Update(&hasher_check, script_type_bytes, sizeof(script_type_bytes));
+  signing_hash_input_check(&hasher_check, txinput);
   return true;
 }
 
@@ -1230,6 +1267,13 @@ static bool signing_check_fee(void) {
       signing_abort();
       return false;
     }
+  }
+  if (!signing_confirm_transaction_fields(version, lock_time, expiry,
+                                          coin->decred || overwintered)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Transaction fields rejected.");
+    signing_abort();
+    return false;
   }
   // last confirmation
   coin_amnt_to_str(coin, to_spend - change_spend, total_amount_str,
@@ -1657,6 +1701,13 @@ void signing_txack(TransactionType* tx) {
         return;
       }
 
+      if (!signing_confirm_input_sequence(idx1, tx->inputs[0].sequence)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        "Input sequence rejected.");
+        signing_abort();
+        return;
+      }
+
       tx_weight += tx_input_weight(coin, &tx->inputs[0]);
       if (coin->decred) {
         tx_weight += tx_decred_witness_weight(&tx->inputs[0]);
@@ -1906,11 +1957,7 @@ void signing_txack(TransactionType* tx) {
         hasher_Reset(&hasher_check);
       }
       // check prevouts and script type
-      tx_prevout_hash(&hasher_check, tx->inputs);
-      uint8_t script_type_bytes[4];
-      signing_encode_script_type(tx->inputs[0].script_type, script_type_bytes);
-      hasher_Update(&hasher_check, script_type_bytes,
-                    sizeof(script_type_bytes));
+      signing_hash_input_check(&hasher_check, tx->inputs);
       if (idx2 == idx1) {
         if (!compile_input_script_sig(&tx->inputs[0])) {
           fsm_sendFailure(FailureType_Failure_Other,

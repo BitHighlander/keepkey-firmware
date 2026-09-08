@@ -111,6 +111,21 @@ static HDNode CONFIDENTIAL fsm_derived_node;
 void fsm_clearDerivedNode(void) {
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
 }
+void fsm_abort_signing_sessions(void) {
+  signing_abort();
+  zcash_signing_abort();
+#if !BITCOIN_ONLY
+  ethereum_signing_abort();
+  tendermint_signAbort();
+  eos_signingAbort();
+  mayachain_signAbort();
+  thorchain_signAbort();
+  osmosis_signAbort();
+  eip712_stream_abort();
+#endif
+  fsm_clearDerivedNode();
+}
+
 #if DEBUG_LINK
 void fsm_test_seedDerivedNode(void) {
   memset(&fsm_derived_node, 0xA5, sizeof(fsm_derived_node));
@@ -165,19 +180,6 @@ bool fsm_test_derivedNodeIsZero(void) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
     return;                                                                \
-  }
-
-/* Only the two ceremony STARTS use this. Every other message that persists
- * anything is handled structurally instead: storage_commit() aborts an armed
- * ceremony, so a handler that writes can never have its write consumed by
- * one -- the worst it can do is end it. */
-#define CHECK_NO_CEREMONY                                     \
-  if (setup_isArmed()) {                                      \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
-                    "Device is in the middle of setup. Send " \
-                    "Initialize or Cancel first.");           \
-    layoutHome();                                             \
-    return;                                                   \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
@@ -259,6 +261,7 @@ static const CoinType* fsm_getCoin(bool has_name, const char* name) {
 static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
                                   size_t address_n_count,
                                   uint32_t* fingerprint) {
+  fsm_clearDerivedNode();
   if (fingerprint) {
     *fingerprint = 0;
   }
@@ -270,6 +273,7 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
   }
 
   if (!storage_getRootNode(curve, true, &fsm_derived_node)) {
+    fsm_clearDerivedNode();
     fsm_sendFailure(FailureType_Failure_NotInitialized,
                     "Device not initialized or passphrase request cancelled");
     layoutHome();
@@ -282,6 +286,7 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
 
   if (hdnode_private_ckd_cached(&fsm_derived_node, address_n, address_n_count,
                                 fingerprint) == 0) {
+    fsm_clearDerivedNode();
     fsm_sendFailure(FailureType_Failure_Other, "Failed to derive private key");
     layoutHome();
     return 0;

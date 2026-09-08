@@ -29,12 +29,4 @@ bool mayachain_signingIsFinished(void);
 void mayachain_signAbort(void);
 const MayachainSignTx* mayachain_getMayachainSignTx(void);
 
-// Mayachain swap data parse and confirm
-//      input:
-//          swapStr - string in mayachain swap format
-//          size - size of input string (must be <= 256)
-//      output:
-//          true if mayachain data parsed and confirmed by user, false otherwise
-bool mayachain_parseConfirmMemo(const char* swapStr, size_t size);
-
 #endif

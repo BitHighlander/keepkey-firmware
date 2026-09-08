@@ -104,6 +104,13 @@ bool tron_getAddress(const uint8_t public_key[33], char* address,
 void tron_formatAmount(char* buf, size_t len, uint64_t amount);
 
 /**
+ * Format sha256(raw_data) -- the digest tron_signTx signs -- as 64 hex chars.
+ * @param out Output buffer (at least 65 bytes; emptied if smaller)
+ */
+void tron_formatRawTxDigest(const uint8_t* raw, size_t len, char* out,
+                            size_t out_len);
+
+/**
  * Sign a TRON transaction
  * @param node HD node containing private key
  * @param msg TronSignTx request message

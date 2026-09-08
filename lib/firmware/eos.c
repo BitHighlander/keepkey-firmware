@@ -32,6 +32,7 @@
 #include "trezor/crypto/hasher.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
 
 #include "messages-eos.pb.h"
 
@@ -50,6 +51,7 @@ static EosTxHeader header;
 static uint32_t actions_remaining = 0;
 static uint32_t unknown_total = 0;
 static uint32_t unknown_remaining = 0;
+static uint8_t unknown_common_hash[SHA256_DIGEST_LENGTH];
 
 bool eos_formatAsset(const EosAsset* asset, char str[EOS_ASSET_STR_SIZE]) {
   memset(str, 0, EOS_ASSET_STR_SIZE);
@@ -62,13 +64,16 @@ bool eos_formatAsset(const EosAsset* asset, char str[EOS_ASSET_STR_SIZE]) {
     v = ~v + 1;
   }
 
-  // Value. Precision stored in low 8 bits
+  // Value. Precision stored in low 8 bits. EOSIO caps precision at 18; the
+  // ladder below only inserts a decimal point up to that, so a larger value
+  // would be displayed as a bare integer while its precision byte is signed.
   uint8_t p = asset->symbol & 0xff;
-  if (v >= 10000000000000000000ULL || p >= 19) {
-    *s++ = '0' + v / 10000000000000000000ULL % 10;
+  if (p > 18) {
+    memset(str, 0, EOS_ASSET_STR_SIZE);
+    return false;
   }
-  if (p == 19) {
-    *s++ = '.';
+  if (v >= 10000000000000000000ULL) {
+    *s++ = '0' + v / 10000000000000000000ULL % 10;
   }
   if (v >= 1000000000000000000ULL || p >= 18) {
     *s++ = '0' + v / 1000000000000000000ULL % 10;
@@ -181,14 +186,24 @@ bool eos_formatAsset(const EosAsset* asset, char str[EOS_ASSET_STR_SIZE]) {
   *s++ = '0' + v % 10;
   *s++ = ' ';
 
-  // Symbol
+  // Symbol. Canonical form is A-Z padded with trailing zeros only: once a
+  // zero byte is seen every higher byte must be zero, or the %s display would
+  // stop at the NUL while the full symbol is signed.
+  bool seen_zero = false;
   for (int i = 0; i < 7; i++) {
     char c = (char)((asset->symbol >> (i + 1) * 8) & 0xff);
     if (!('A' <= c && c <= 'Z') && c != 0) {
       memset(str, 0, EOS_ASSET_STR_SIZE);
       return false;  // Invalid symbol
     }
-    *s++ = c;
+    if (c == 0) {
+      seen_zero = true;
+    } else if (seen_zero) {
+      memset(str, 0, EOS_ASSET_STR_SIZE);
+      return false;  // Non-canonical symbol: letter after zero padding
+    } else {
+      *s++ = c;
+    }
   }
 
   return true;
@@ -306,6 +321,7 @@ void eos_signingInit(const uint8_t* chain_id, uint32_t num_actions,
 
   unknown_remaining = 0;
   unknown_total = 0;
+  memzero(unknown_common_hash, sizeof(unknown_common_hash));
   hasher_Init(&hasher_unknown, HASHER_SHA2);
 
   actions_remaining = num_actions;
@@ -332,6 +348,7 @@ void eos_signingAbort(void) {
   actions_remaining = 0;
   unknown_remaining = 0;
   unknown_total = 0;
+  memzero(unknown_common_hash, sizeof(unknown_common_hash));
 }
 
 bool eos_compileAsset(const EosAsset* asset) {
@@ -344,43 +361,61 @@ bool eos_compileAsset(const EosAsset* asset) {
   return true;
 }
 
-bool eos_compileString(const char* str) {
-  if (!str) return false;
-  uint32_t len = strlen(str);
-  eos_hashUInt(&hasher_preimage, len);
-  if (len) hasher_Update(&hasher_preimage, (const uint8_t*)str, len);
+static bool eos_hashPermissionLevelTo(Hasher* hasher,
+                                      const EosPermissionLevel* auth) {
+  if (!auth->has_actor) return false;
+
+  if (!auth->has_permission) return false;
+
+  hasher_Update(hasher, (const uint8_t*)&auth->actor, 8);
+  hasher_Update(hasher, (const uint8_t*)&auth->permission, 8);
+
   return true;
 }
 
-bool eos_compileActionCommon(const EosActionCommon* common) {
-  if (!(actions_remaining--)) return false;
-
+static bool eos_hashActionCommonTo(Hasher* hasher,
+                                   const EosActionCommon* common) {
   if (!common->has_account) return false;
 
   if (!common->has_name) return false;
 
   if (!common->authorization_count) return false;
 
-  hasher_Update(&hasher_preimage, (const uint8_t*)&common->account, 8);
-  hasher_Update(&hasher_preimage, (const uint8_t*)&common->name, 8);
+  hasher_Update(hasher, (const uint8_t*)&common->account, 8);
+  hasher_Update(hasher, (const uint8_t*)&common->name, 8);
 
-  eos_hashUInt(&hasher_preimage, common->authorization_count);
+  eos_hashUInt(hasher, common->authorization_count);
   for (size_t i = 0; i < common->authorization_count; i++) {
-    if (!eos_compilePermissionLevel(&common->authorization[i])) return false;
+    if (!eos_hashPermissionLevelTo(hasher, &common->authorization[i]))
+      return false;
   }
 
   return true;
 }
 
-bool eos_compilePermissionLevel(const EosPermissionLevel* auth) {
-  if (!auth->has_actor) return false;
+static bool eos_actionCommonDigest(const EosActionCommon* common,
+                                   uint8_t digest[SHA256_DIGEST_LENGTH]) {
+  Hasher hasher_common;
+  hasher_Init(&hasher_common, HASHER_SHA2);
+  if (!eos_hashActionCommonTo(&hasher_common, common)) {
+    memzero(&hasher_common, sizeof(hasher_common));
+    return false;
+  }
+  hasher_Final(&hasher_common, digest);
+  memzero(&hasher_common, sizeof(hasher_common));
+  return true;
+}
 
-  if (!auth->has_permission) return false;
+bool eos_compileActionCommon(const EosActionCommon* common) {
+  if (!(actions_remaining--)) return false;
 
-  hasher_Update(&hasher_preimage, (const uint8_t*)&auth->actor, 8);
-  hasher_Update(&hasher_preimage, (const uint8_t*)&auth->permission, 8);
+  if (!eos_hashActionCommonTo(&hasher_preimage, common)) return false;
 
   return true;
+}
+
+bool eos_compilePermissionLevel(const EosPermissionLevel* auth) {
+  return eos_hashPermissionLevelTo(&hasher_preimage, auth);
 }
 
 bool eos_hasActionUnknownDataRemaining(void) { return 0 < unknown_remaining; }
@@ -439,12 +474,28 @@ bool eos_compileActionUnknown(const EosActionCommon* common,
   if (unknown_remaining == 0) {
     CHECK_PARAM_RET(eos_compileActionCommon(common),
                     "Cannot compile ActionCommon", false);
+    CHECK_PARAM_RET(eos_actionCommonDigest(common, unknown_common_hash),
+                    "Cannot bind ActionCommon", false);
 
     hasher_Init(&hasher_unknown, HASHER_SHA2);
 
     unknown_total = unknown_remaining = action->data_size;
     eos_hashUInt(&hasher_preimage, action->data_size);
-  } else if (action->data_size != unknown_total) {
+  } else {
+    uint8_t common_hash[SHA256_DIGEST_LENGTH];
+    if (!eos_actionCommonDigest(common, common_hash) ||
+        memcmp(common_hash, unknown_common_hash, sizeof(common_hash)) != 0) {
+      memzero(common_hash, sizeof(common_hash));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "EosActionUnknown unexpected change in common fields");
+      eos_signingAbort();
+      layoutHome();
+      return false;
+    }
+    memzero(common_hash, sizeof(common_hash));
+  }
+
+  if (action->data_size != unknown_total) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "EosActionUnknown unexpected change in total length");
     eos_signingAbort();
@@ -477,7 +528,7 @@ bool eos_compileActionUnknown(const EosActionCommon* common,
     char title[MEDIUM_STR_BUF];
     snprintf(title, sizeof(title), "%s:%s", account, name);
 
-    static uint8_t hash[32];
+    uint8_t hash[SHA256_DIGEST_LENGTH];
     hasher_Final(&hasher_unknown, hash);
 
     char hex[2][16 * 2 + 1];
@@ -487,11 +538,13 @@ bool eos_compileActionUnknown(const EosActionCommon* common,
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, title,
                  "%" PRIu32 " bytes with fingerprint:\n%s\n%s", unknown_total,
                  hex[0], hex[1])) {
+      memzero(hash, sizeof(hash));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
       eos_signingAbort();
       layoutHome();
       return false;
     }
+    memzero(hash, sizeof(hash));
   }
 
   return true;
@@ -524,9 +577,11 @@ bool eos_signTx(EosSignedTx* tx) {
                   "\x00\x00\x00\x00\x00\x00\x00\x00"
                   "\x00\x00\x00\x00\x00\x00\x00\x00", 32);
 
-  char ram_limit[8 + 5 + 14 + 1] = "Unlimited RAM";
+  // max_net_usage_words is bounded to UINT16_MAX in fsm_msgEosSignTx, so the
+  // cast cannot truncate what was signed. The field is NET words, not RAM.
+  char ram_limit[8 + 5 + 14 + 1] = "Unlimited NET";
   if (header.max_net_usage_words) {
-    snprintf(ram_limit, sizeof(ram_limit), "At most %" PRIu16 " bytes RAM",
+    snprintf(ram_limit, sizeof(ram_limit), "At most %" PRIu16 " NET words",
              (uint16_t)header.max_net_usage_words);
   }
 

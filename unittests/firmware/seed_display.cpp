@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 extern "C" {
 #include "keepkey/board/confirm_sm.h"
@@ -22,6 +23,8 @@ extern "C" {
 #include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/app_layout.h"
 #include "trezor/crypto/bip39_english.h"
 }
 
@@ -239,7 +242,8 @@ TEST_F(SeedDisplayBodyFits, SubpagesCoverEveryRowExactlyOnceInOrder) {
     ASSERT_LE(take, strlen(p));
 
     std::string chunk(p, take);
-    // A subpage must never end mid-row: it ends at a newline or at the body end.
+    // A subpage must never end mid-row: it ends at a newline or at the body
+    // end.
     ASSERT_TRUE(chunk.back() == '\n' || take == strlen(p))
         << "subpage split inside a row: \"" << chunk << "\"";
     // And it must actually fit, measured by the renderer.
@@ -277,11 +281,149 @@ TEST_F(SeedDisplayBodyFits, UnsplittableRowIsRejectedRatherThanClipped) {
   // there is no row boundary inside it to split on.
   const std::string wide =
       "   1.mushroom   2.mushroom   3.mushroom   4.mushroom\n";
-  ASSERT_FALSE(confirm_body_fits_constant_power(wide.c_str(),
-                                                CONSTANT_POWER_BODY_WIDTH))
+  ASSERT_FALSE(
+      confirm_body_fits_constant_power(wide.c_str(), CONSTANT_POWER_BODY_WIDTH))
       << "precondition: this row must genuinely not fit";
 
   EXPECT_EQ(confirm_constant_power_subpage_take(wide.c_str()), 0u)
       << "a row that cannot be shown in full must be refused, not returned for "
          "display; the pager treats 0 as failure and declines to sign";
+}
+
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+
+namespace {
+std::vector<uint8_t> DisplayPixels() {
+  Canvas *canvas = layout_get_canvas();
+  return std::vector<uint8_t>(canvas->buffer,
+                              canvas->buffer + canvas->width * canvas->height);
+}
+}  // namespace
+
+TEST_F(SeedDisplayBodyFits, AddressLayoutsShowCompleteTextWhenQrTextWouldClip) {
+  struct Vector {
+    bool (*confirm_address)(const char *, const char *);
+    layout_notification_t layout;
+    std::string address;
+  };
+  const Vector vectors[] = {
+      {confirm_cosmos_address, layout_cosmos_address_notification,
+       "cosmosvaloper1" + std::string(39, 'w')},
+      {confirm_osmosis_address, layout_osmosis_address_notification,
+       "osmovaloper1" + std::string(39, 'w')},
+      {confirm_ethereum_address, layout_ethereum_address_notification,
+       "STM" + std::string(50, 'W')},
+      {confirm_ethereum_address, layout_ethereum_address_notification,
+       "EQ" + std::string(46, 'W')},
+      {confirm_nano_address, layout_nano_address_notification,
+       "nano_" + std::string(60, 'w')},
+      {confirm_xpub, layout_xpub_notification, "xpub" + std::string(107, 'W')},
+  };
+  for (const auto &v : vectors) {
+    SCOPED_TRACE(v.address);
+    ASSERT_FALSE(app_layout_address_text_fits(v.layout, v.address.c_str()));
+    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    ASSERT_TRUE(confirm(ButtonRequestType_ButtonRequest_Address, "Address",
+                        "%s", v.address.c_str()));
+    const auto expected = DisplayPixels();
+    const int remaining = kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    EXPECT_TRUE(v.confirm_address("Address", v.address.c_str()));
+    EXPECT_EQ(expected, DisplayPixels());
+    EXPECT_EQ(remaining, kkconfirm_drain());
+  }
+}
+
+TEST_F(SeedDisplayBodyFits, AddressSourceOverflowIsRefusedBeforeApproval) {
+  const std::string address(BODY_CHAR_MAX, 'w');
+  ASSERT_TRUE(kkconfirm_preload(3, 0));
+  EXPECT_FALSE(confirm_ethereum_address("Address", address.c_str()));
+  EXPECT_EQ(6, kkconfirm_drain());
+}
+
+#if ZCASH_PRIVACY
+TEST_F(SeedDisplayBodyFits, WideUnifiedAddressRequiresEveryTextPage) {
+  const std::string ua = "u1" + std::string(104, 'w');
+  ASSERT_FALSE(app_layout_address_text_fits(
+      layout_zcash_address_text_notification, ua.c_str()));
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  EXPECT_FALSE(confirm_zcash_address_text("Orchard recipient", ua.c_str()));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  ASSERT_TRUE(confirm(ButtonRequestType_ButtonRequest_Address,
+                      "Orchard recipient", "%s", ua.c_str()));
+  const auto expected = DisplayPixels();
+  const int remaining = kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  EXPECT_TRUE(confirm_zcash_address_text("Orchard recipient", ua.c_str()));
+  EXPECT_EQ(expected, DisplayPixels());
+  EXPECT_EQ(remaining, kkconfirm_drain());
+}
+#endif
+
+TEST_F(SeedDisplayBodyFits, U2fDrawGeometryDoesNotInheritPreviousConfirmIcon) {
+  std::string body;
+  for (size_t length = 1; length < 100; length++) {
+    body.assign(length, 'W');
+    if (confirm_body_fits(body.c_str(), BODY_WIDTH) &&
+        !confirm_body_fits(body.c_str(), BODY_WIDTH_WITH_ICON))
+      break;
+  }
+  ASSERT_TRUE(confirm_body_fits(body.c_str(), BODY_WIDTH));
+  ASSERT_FALSE(confirm_body_fits(body.c_str(), BODY_WIDTH_WITH_ICON));
+  layout_has_icon(false);
+  ASSERT_TRUE(layoutU2FDialog(true, "Authenticate", "%s", body.c_str()));
+  const auto expected = DisplayPixels();
+  layout_has_icon(true);
+  EXPECT_TRUE(layoutU2FDialog(true, "Authenticate", "%s", body.c_str()));
+  EXPECT_EQ(expected, DisplayPixels());
+  layout_has_icon(false);
+}
+
+TEST_F(SeedDisplayBodyFits, OmniShowsPropertyAndAmountWithoutInventingUnits) {
+  const struct {
+    uint32_t property;
+    uint64_t amount;
+    const char *expected;
+  } vectors[] = {
+      {1, 100000000, "Property #1\nSend 1 OMNI?"},
+      {2, 100000000, "Property #2\nSend 1 tOMNI?"},
+      {3, 100000000,
+       "Property #3\nRaw amount: 100000000\nDivisibility unknown"},
+      {31, 100000000,
+       "Property #31\nRaw amount: 100000000\nDivisibility unknown"},
+      {UINT32_MAX, UINT64_MAX,
+       "Property #4294967295\nRaw amount: 18446744073709551615\nDivisibility "
+       "unknown"},
+  };
+  for (const auto &v : vectors) {
+    SCOPED_TRACE(v.expected);
+    uint8_t payload[20] = {'o', 'm', 'n', 'i'};
+    for (size_t i = 0; i < 4; i++) payload[8 + i] = v.property >> (24 - i * 8);
+    for (size_t i = 0; i < 8; i++) payload[12 + i] = v.amount >> (56 - i * 8);
+    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    ASSERT_TRUE(confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Omni",
+                        "%s", v.expected));
+    const auto expected = DisplayPixels();
+    const int remaining = kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    EXPECT_TRUE(confirm_omni(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                             "Omni", payload, sizeof(payload)));
+    EXPECT_EQ(expected, DisplayPixels());
+    EXPECT_EQ(remaining, kkconfirm_drain());
+  }
+}
+
+TEST_F(SeedDisplayBodyFits, PagerRejectsACharacterThatCannotBeRendered) {
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  Canvas *canvas = layout_get_canvas();
+  const uint16_t width = canvas->width;
+  canvas->width = 1;  // No glyph fits past the standard left margin.
+  const bool accepted =
+      confirm(ButtonRequestType_ButtonRequest_Other, "Address", "%s", "W");
+  canvas->width = width;
+  EXPECT_FALSE(accepted);
+  EXPECT_EQ(2, kkconfirm_drain());
 }

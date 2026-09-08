@@ -1,5 +1,9 @@
+#include "gtest/gtest.h"
+#include <cstring>
+
 extern "C" {
 #include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/fsm.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/blake2b.h"
 #include "trezor/crypto/memzero.h"
@@ -9,9 +13,6 @@ extern "C" {
 #include "trezor/crypto/redpallas.h"
 #include "trezor/crypto/zcash_zip316.h"
 }
-
-#include "gtest/gtest.h"
-#include <cstring>
 
 /* ── Pallas curve constants ──────────────────────────────────────── */
 
@@ -498,7 +499,8 @@ TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
    * and compare against values from the orchard Rust crate.
    */
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   /* nk must match reference */
   EXPECT_TRUE(memcmp(keys.nk, EXPECTED_NK_ALL_0, 32) == 0)
@@ -549,12 +551,12 @@ TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
 
 TEST(Zcash, DeriveOrchardKeys_DifferentAccounts) {
   ZcashOrchardKeys keys0, keys1;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys0));
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 1, &keys1));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys0,
+                                                      nullptr, nullptr));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 1, &keys1,
+                                                      nullptr, nullptr));
 
   /* Different accounts must produce different spending keys */
-  EXPECT_TRUE(memcmp(keys0.sk, keys1.sk, 32) != 0)
-      << "Account 0 and 1 must have different sk";
   EXPECT_TRUE(memcmp(keys0.ask, keys1.ask, 32) != 0)
       << "Account 0 and 1 must have different ask";
   EXPECT_TRUE(memcmp(keys0.nk, keys1.nk, 32) != 0)
@@ -570,11 +572,13 @@ TEST(Zcash, DeriveOrchardKeys_DifferentSeeds) {
   memset(zero_seed, 0, sizeof(zero_seed));
 
   ZcashOrchardKeys keys_all, keys_zero;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys_all));
-  ASSERT_TRUE(zcash_derive_orchard_keys(zero_seed, 64, 0, &keys_zero));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(
+      SEED_ALL, 64, 0, &keys_all, nullptr, nullptr));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(
+      zero_seed, 64, 0, &keys_zero, nullptr, nullptr));
 
-  EXPECT_TRUE(memcmp(keys_all.sk, keys_zero.sk, 32) != 0)
-      << "Different seeds must produce different sk";
+  EXPECT_TRUE(memcmp(keys_all.ask, keys_zero.ask, 32) != 0)
+      << "Different seeds must produce different ask";
 
   memzero(&keys_all, sizeof(keys_all));
   memzero(&keys_zero, sizeof(keys_zero));
@@ -582,10 +586,11 @@ TEST(Zcash, DeriveOrchardKeys_DifferentSeeds) {
 
 TEST(Zcash, DeriveOrchardKeys_Deterministic) {
   ZcashOrchardKeys keys1, keys2;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys1));
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys2));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys1,
+                                                      nullptr, nullptr));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys2,
+                                                      nullptr, nullptr));
 
-  EXPECT_TRUE(memcmp(keys1.sk, keys2.sk, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.ask, keys2.ask, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.ak, keys2.ak, 32) == 0);
   EXPECT_TRUE(memcmp(keys1.nk, keys2.nk, 32) == 0);
@@ -598,8 +603,10 @@ TEST(Zcash, DeriveOrchardKeys_Deterministic) {
 
 TEST(Zcash, DeriveOrchardKeys_DerivesDiversifierKey) {
   ZcashOrchardKeys keys0, keys1;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys0));
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 1, &keys1));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys0,
+                                                      nullptr, nullptr));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 1, &keys1,
+                                                      nullptr, nullptr));
 
   uint8_t zero[32] = {0};
   EXPECT_TRUE(memcmp(keys0.dk, zero, 32) != 0)
@@ -888,7 +895,8 @@ TEST(Zcash, Zip316OrchardOnlyUnifiedAddress_RejectsInvalidInputs) {
 
 TEST(Zcash, OrchardUnifiedAddress_FromDerivedKeys) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   char address[ZCASH_ZIP316_ORCHARD_ONLY_MAX_ADDRESS_SIZE];
   const uint8_t index0[11] = {0};
@@ -916,7 +924,8 @@ TEST(Zcash, OrchardUnifiedAddress_FromDerivedKeys) {
 
 TEST(Zcash, OrchardUnifiedAddress_RejectsInvalidInputs) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   char address[ZCASH_ZIP316_ORCHARD_ONLY_MAX_ADDRESS_SIZE];
   char too_small[16];
@@ -990,7 +999,8 @@ TEST(Zcash, OrchardNoteCommitment_KnownVectorAndProgress) {
   uint8_t tampered[ZCASH_ORCHARD_RAW_RECEIVER_SIZE];
   memcpy(tampered, recipient, sizeof(tampered));
   tampered[0] ^= 0x01;
-  ASSERT_TRUE(zcash_orchard_compute_cmx(tampered, value, rho, rseed, cmx));
+  ASSERT_TRUE(zcash_orchard_compute_cmx_with_progress(
+      tampered, value, rho, rseed, cmx, nullptr, nullptr));
   EXPECT_TRUE(memcmp(cmx, expected_cmx, sizeof(cmx)) != 0);
 
   memzero(cmx, sizeof(cmx));
@@ -1003,25 +1013,22 @@ TEST(Zcash, IronwoodNoteCommitment_V3KnownVector) {
       0x28, 0x35, 0xf6, 0x9f, 0xeb, 0x30, 0x21, 0x93, 0xc9, 0x26, 0x60,
       0x44, 0x4f, 0x26, 0x62, 0x4f, 0xd1, 0x3e, 0x00, 0xea, 0x7a, 0xc7,
       0x74, 0xcd, 0x55, 0x07, 0x4d, 0x63, 0x67, 0xef, 0xef, 0x37};
-  const uint8_t rho[32] = {
-      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-      0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
-      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
-      0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00};
-  const uint8_t rseed[32] = {
-      0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef,
-      0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-      0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-      0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18};
+  const uint8_t rho[32] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                           0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00,
+                           0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+                           0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00};
+  const uint8_t rseed[32] = {0xca, 0xfe, 0xba, 0xbe, 0xde, 0xad, 0xbe, 0xef,
+                             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                             0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+                             0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18};
   const uint8_t expected_cmx[32] = {
-      0x89, 0x6e, 0xe3, 0x45, 0xd8, 0xb0, 0x40, 0x98,
-      0x72, 0x17, 0x25, 0x37, 0x66, 0x6a, 0x48, 0x24,
-      0x09, 0x66, 0x1a, 0x22, 0xad, 0x77, 0xc0, 0x98,
-      0x96, 0xa3, 0xe7, 0x17, 0x65, 0xf1, 0x86, 0x33};
+      0x89, 0x6e, 0xe3, 0x45, 0xd8, 0xb0, 0x40, 0x98, 0x72, 0x17, 0x25,
+      0x37, 0x66, 0x6a, 0x48, 0x24, 0x09, 0x66, 0x1a, 0x22, 0xad, 0x77,
+      0xc0, 0x98, 0x96, 0xa3, 0xe7, 0x17, 0x65, 0xf1, 0x86, 0x33};
 
   uint8_t cmx[32] = {0};
-  ASSERT_TRUE(
-      zcash_ironwood_compute_cmx(recipient, 12345678, rho, rseed, cmx));
+  ASSERT_TRUE(zcash_ironwood_compute_cmx_with_progress(
+      recipient, 12345678, rho, rseed, cmx, nullptr, nullptr));
   EXPECT_TRUE(memcmp(cmx, expected_cmx, sizeof(cmx)) == 0);
   memzero(cmx, sizeof(cmx));
 }
@@ -1046,12 +1053,14 @@ TEST(Zcash, OrchardReceiverToUnifiedAddress_KnownVector) {
 }
 
 TEST(Zcash, OrchardDiversifyHash_ReferenceVectors) {
-  uint8_t gd[32];
-  ASSERT_TRUE(zcash_orchard_diversify_hash(EXPECTED_DIVERSIFIER_ALL_0, gd));
+  uint8_t gd[32], pkd[32];
+  const uint8_t ivk[32] = {1};
+  ASSERT_TRUE(zcash_orchard_derive_transmission_key(
+      ivk, EXPECTED_DIVERSIFIER_ALL_0, gd, pkd));
   EXPECT_TRUE(memcmp(gd, ORCHARD_GD_ALL_ACCOUNT0_J0, sizeof(gd)) == 0);
 
-  ASSERT_TRUE(
-      zcash_orchard_diversify_hash(ORCHARD_FF1_VECTORS[0].diversifier, gd));
+  ASSERT_TRUE(zcash_orchard_derive_transmission_key(
+      ivk, ORCHARD_FF1_VECTORS[0].diversifier, gd, pkd));
   EXPECT_TRUE(memcmp(gd, ORCHARD_GD_FF1_ZERO_ZERO, sizeof(gd)) == 0);
 
   curve_point empty;
@@ -1145,7 +1154,8 @@ TEST(Zcash, DeriveOrchardKeys_FieldRanges) {
   /* Test multiple accounts to increase coverage of edge cases */
   for (uint32_t account = 0; account < 5; account++) {
     ZcashOrchardKeys keys;
-    ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, account, &keys));
+    ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(
+        SEED_ALL, 64, account, &keys, nullptr, nullptr));
 
     /* nk must be < Pallas base field prime p */
     EXPECT_LT(cmp_le256(keys.nk, PALLAS_P_LE), 0)
@@ -1172,11 +1182,12 @@ TEST(Zcash, AkSignBit_AlwaysClear) {
   /*
    * For every account, compute ak = [ask]*G and verify the sign bit
    * is always clear. This is the invariant that the ask negation
-   * in zcash_derive_orchard_keys() is supposed to enforce.
+   * in zcash_derive_orchard_keys_with_progress() is supposed to enforce.
    */
   for (uint32_t account = 0; account < 10; account++) {
     ZcashOrchardKeys keys;
-    ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, account, &keys));
+    ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(
+        SEED_ALL, 64, account, &keys, nullptr, nullptr));
 
     bignum256 ask_scalar;
     bn_read_le(keys.ask, &ask_scalar);
@@ -1223,7 +1234,8 @@ TEST(Zcash, PCZTSigningPolicy_AcceptsVerifiedShieldedOnlyRequest) {
 
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_OK);
-  EXPECT_TRUE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_TRUE((zcash_pczt_signing_request_status(&meta) ==
+               ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsMissingTransactionDigests) {
@@ -1232,13 +1244,15 @@ TEST(Zcash, PCZTSigningPolicy_RejectsMissingTransactionDigests) {
   meta.has_header_digest = false;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_TX_DIGESTS);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 
   meta = clear_pczt_meta();
   meta.orchard_digest_size = 31;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_INVALID_DIGEST_SIZE);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RequiresIronwoodDigestForV6Pool) {
@@ -1264,7 +1278,8 @@ TEST(Zcash, PCZTSigningPolicy_RejectsMissingPlaintextHeaderFields) {
   meta.has_header_fields = false;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_HEADER_FIELDS);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsMissingOrchardMetadata) {
@@ -1273,13 +1288,15 @@ TEST(Zcash, PCZTSigningPolicy_RejectsMissingOrchardMetadata) {
   meta.has_orchard_anchor = false;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_ORCHARD_METADATA);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 
   meta = clear_pczt_meta();
   meta.has_orchard_flags = false;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_ORCHARD_METADATA);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsInvalidOptionalDigests) {
@@ -1289,7 +1306,8 @@ TEST(Zcash, PCZTSigningPolicy_RejectsInvalidOptionalDigests) {
   meta.transparent_digest_size = 31;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_INVALID_DIGEST_SIZE);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsSaplingComponent) {
@@ -1299,7 +1317,8 @@ TEST(Zcash, PCZTSigningPolicy_RejectsSaplingComponent) {
   meta.sapling_digest_size = 32;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsTransparentComponentsWithoutDigest) {
@@ -1308,25 +1327,29 @@ TEST(Zcash, PCZTSigningPolicy_RejectsTransparentComponentsWithoutDigest) {
 
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_TRANSPARENT_DIGEST);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 
   meta.has_transparent_digest = true;
   meta.transparent_digest_size = 32;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_OK);
-  EXPECT_TRUE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_TRUE((zcash_pczt_signing_request_status(&meta) ==
+               ZCASH_PCZT_SIGNING_REQUEST_OK));
 
   meta = clear_pczt_meta();
   meta.n_transparent_outputs = 1;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_TRANSPARENT_DIGEST);
-  EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_FALSE((zcash_pczt_signing_request_status(&meta) ==
+                ZCASH_PCZT_SIGNING_REQUEST_OK));
 
   meta.has_transparent_digest = true;
   meta.transparent_digest_size = 32;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_OK);
-  EXPECT_TRUE(zcash_pczt_signing_request_is_clear(&meta));
+  EXPECT_TRUE((zcash_pczt_signing_request_status(&meta) ==
+               ZCASH_PCZT_SIGNING_REQUEST_OK));
 }
 
 static const uint8_t ZIP244_EXPECTED_HEADER_DIGEST[32] = {
@@ -1514,16 +1537,14 @@ TEST(Zcash, ComputeV6ShieldedSighash_KnownVector) {
   memset(sapling, 0x33, sizeof(sapling));
   memset(orchard, 0x44, sizeof(orchard));
   memset(ironwood, 0x55, sizeof(ironwood));
-  const uint8_t expected[32] = {
-      0xdc, 0x07, 0x66, 0x98, 0xdb, 0xe0, 0x8b, 0x6d,
-      0xcd, 0x23, 0xf5, 0xa1, 0xb6, 0xbb, 0xae, 0x41,
-      0xf7, 0xb1, 0x23, 0xd8, 0xb2, 0x47, 0xf3, 0x88,
-      0x7f, 0x7c, 0xa2, 0xbb, 0x68, 0xb5, 0xdc, 0xaa};
+  const uint8_t expected[32] = {0xdc, 0x07, 0x66, 0x98, 0xdb, 0xe0, 0x8b, 0x6d,
+                                0xcd, 0x23, 0xf5, 0xa1, 0xb6, 0xbb, 0xae, 0x41,
+                                0xf7, 0xb1, 0x23, 0xd8, 0xb2, 0x47, 0xf3, 0x88,
+                                0x7f, 0x7c, 0xa2, 0xbb, 0x68, 0xb5, 0xdc, 0xaa};
 
   uint8_t sighash[32] = {0};
   ASSERT_TRUE(zcash_compute_v6_shielded_sighash(
-      header, transparent, sapling, orchard, ironwood, 0x37a5165b,
-      sighash));
+      header, transparent, sapling, orchard, ironwood, 0x37a5165b, sighash));
   EXPECT_TRUE(memcmp(sighash, expected, sizeof(sighash)) == 0);
 }
 
@@ -1649,7 +1670,8 @@ TEST(Zcash, OrchardKeyDerivationReportsFixedProgress) {
 
 TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x01, sizeof(alpha));
@@ -1665,8 +1687,8 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   RedPallasProgressCapture progress;
   uint8_t signature[64];
   ASSERT_EQ(redpallas_sign_digest_with_ak(
-                keys.ask, keys.ak, alpha, public_rk, sighash, kRedPallasTestT, signature,
-                capture_redpallas_progress, &progress),
+                keys.ask, keys.ak, alpha, public_rk, sighash, kRedPallasTestT,
+                signature, capture_redpallas_progress, &progress),
             0);
   EXPECT_TRUE(progress.monotonic);
   EXPECT_EQ(257u, progress.calls);
@@ -1678,7 +1700,8 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
   memcpy(wrong_rk, public_rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   EXPECT_NE(redpallas_sign_digest_with_ak(keys.ask, keys.ak, alpha, wrong_rk,
-                                          sighash, kRedPallasTestT, signature, nullptr, nullptr),
+                                          sighash, kRedPallasTestT, signature,
+                                          nullptr, nullptr),
             0);
 
   memzero(&keys, sizeof(keys));
@@ -1686,7 +1709,8 @@ TEST(Zcash, RedPallasPublicRkPathMatchesAndReportsFixedProgress) {
 
 TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x31, sizeof(alpha));
@@ -1698,10 +1722,10 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
 
   RedPallasProgressCapture progress;
   uint8_t signature[64];
-  ASSERT_EQ(
-      redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash, kRedPallasTestT, signature,
-                                   capture_redpallas_progress, &progress),
-      0);
+  ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, rk, sighash,
+                                         kRedPallasTestT, signature,
+                                         capture_redpallas_progress, &progress),
+            0);
   EXPECT_TRUE(progress.monotonic);
   EXPECT_EQ(256u, progress.calls);
   EXPECT_EQ(1000u, progress.last);
@@ -1712,8 +1736,8 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
   memcpy(wrong_rk, rk, sizeof(wrong_rk));
   wrong_rk[0] ^= 1;
   ASSERT_EQ(redpallas_sign_digest_for_rk(keys.ask, alpha, wrong_rk, sighash,
-                                         kRedPallasTestT,
-                                         signature, nullptr, nullptr),
+                                         kRedPallasTestT, signature, nullptr,
+                                         nullptr),
             0);
   EXPECT_NE(redpallas_verify_digest(rk, sighash, signature), 0);
 
@@ -1722,7 +1746,8 @@ TEST(Zcash, RedPallasPcztPathUsesBoundRkAndReportsFixedProgress) {
 
 TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   /* Construct a fake sighash and alpha */
   uint8_t sighash[32];
@@ -1734,7 +1759,8 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   alpha[31] = 0x00;
 
   uint8_t signature[64];
-  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, signature);
+  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
+                                  signature);
   EXPECT_EQ(ret, 0) << "RedPallas signing must succeed";
 
   /* Signature must be nonzero */
@@ -1790,7 +1816,8 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
    * itself.
    */
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t sighash[32];
   memset(sighash, 0xCD, 32);
@@ -1801,7 +1828,9 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   uint8_t zero[64] = {0};
   for (int i = 0; i < 3; i++) {
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, sig), 0)
+    ASSERT_EQ(
+        redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, sig),
+        0)
         << "Signing must succeed on call " << i;
     EXPECT_TRUE(memcmp(sig, zero, 64) != 0)
         << "Signature must be nonzero on call " << i;
@@ -1812,7 +1841,8 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
 
 TEST(Zcash, RedPallasSign_DifferentSighash) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x01, 32);
@@ -1823,8 +1853,12 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
   memset(sighash_b, 0xBB, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT, sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT, sig_b), 0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT, sig_a),
+      0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT, sig_b),
+      0);
 
   EXPECT_TRUE(memcmp(sig_a, sig_b, 64) != 0)
       << "Different sighash must produce different signatures";
@@ -1907,7 +1941,8 @@ TEST(Zcash, EmptyBundleDigests_MatchZip244AndZip229) {
  * a replayed draw, a device signing two actions from one entropy pool. */
 TEST(Zcash, RedPallasNonce_RepeatedT_DifferentMessage_DifferentR) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x03, 32);
@@ -1918,10 +1953,12 @@ TEST(Zcash, RedPallasNonce_RepeatedT_DifferentMessage_DifferentR) {
   memset(sighash_b, 0x22, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT,
-                                  sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT,
-                                  sig_b), 0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT, sig_a),
+      0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT, sig_b),
+      0);
 
   EXPECT_NE(memcmp(sig_a, sig_b, 32), 0)
       << "Identical T over different messages reused the nonce commitment R. "
@@ -1934,7 +1971,8 @@ TEST(Zcash, RedPallasNonce_RepeatedT_DifferentMessage_DifferentR) {
  * or one entropy pool shared across accounts leaks across them. */
 TEST(Zcash, RedPallasNonce_RepeatedT_DifferentKey_DifferentR) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t sighash[32];
   memset(sighash, 0x44, 32);
@@ -1947,10 +1985,12 @@ TEST(Zcash, RedPallasNonce_RepeatedT_DifferentKey_DifferentR) {
   alpha_b[31] = 0x00;
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha_a, sighash, kRedPallasTestT,
-                                  sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha_b, sighash, kRedPallasTestT,
-                                  sig_b), 0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha_a, sighash, kRedPallasTestT, sig_a),
+      0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha_b, sighash, kRedPallasTestT, sig_b),
+      0);
 
   EXPECT_NE(memcmp(sig_a, sig_b, 32), 0)
       << "R did not bind the verification key: one T reused across two "
@@ -1965,7 +2005,8 @@ TEST(Zcash, RedPallasNonce_RepeatedT_DifferentKey_DifferentR) {
  * be satisfied by an unrelated source of variation. */
 TEST(Zcash, RedPallasNonce_SameInputs_Deterministic) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x07, 32);
@@ -1974,10 +2015,12 @@ TEST(Zcash, RedPallasNonce_SameInputs_Deterministic) {
   memset(sighash, 0x55, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
-                                  sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
-                                  sig_b), 0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, sig_a),
+      0);
+  ASSERT_EQ(
+      redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, sig_b),
+      0);
 
   EXPECT_EQ(memcmp(sig_a, sig_b, 64), 0)
       << "Identical (ask, alpha, M, T) must reproduce the signature exactly";
@@ -1991,7 +2034,8 @@ TEST(Zcash, RedPallasNonce_SameInputs_Deterministic) {
  * AND publicly known, which discloses the key from a SINGLE signature. */
 TEST(Zcash, RedPallasNonce_AllZeroT_Refused) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x08, 32);
@@ -2017,7 +2061,8 @@ TEST(Zcash, RedPallasNonce_AllZeroT_Refused) {
 
 TEST(Zcash, RedPallasNonce_NullT_Refused) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x09, 32);
@@ -2036,7 +2081,8 @@ TEST(Zcash, RedPallasNonce_NullT_Refused) {
  * changes which nonce is used, not whether the result verifies. */
 TEST(Zcash, RedPallasNonce_RepeatedT_StillVerifies) {
   ZcashOrchardKeys keys;
-  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys_with_progress(SEED_ALL, 64, 0, &keys,
+                                                      nullptr, nullptr));
 
   uint8_t alpha[32];
   memset(alpha, 0x0a, 32);
@@ -2050,8 +2096,9 @@ TEST(Zcash, RedPallasNonce_RepeatedT_StillVerifies) {
     uint8_t sighash[32];
     memset(sighash, fills[i], 32);
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
-                                    sig), 0);
+    ASSERT_EQ(
+        redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT, sig),
+        0);
     EXPECT_EQ(redpallas_verify_digest(rk, sighash, sig), 0)
         << "Signature " << i << " from a repeated T must still verify";
   }
@@ -2201,4 +2248,26 @@ TEST(Zcash, OrchardTransparentSigDigest_RejectsMalformedInfo) {
   uint8_t digest[32];
   EXPECT_FALSE(zcash_compute_orchard_transparent_sig_digest(nullptr, 0, &bad, 1,
                                                             digest));
+}
+
+void kk_test_board_init(void);
+
+TEST(Zcash, LegacyActionSighashAbortsWithExplicitSyntaxFailure) {
+  kk_test_board_init();
+  fsm_init();
+  for (size_t length : {0U, 32U}) {
+    zcash_test_begin_action_session();
+    ZcashPCZTAction action = ZcashPCZTAction_init_zero;
+    action.has_index = true;
+    action.index = 0;
+    action.has_alpha = true;
+    action.alpha.size = 32;
+    action.has_sighash = true;
+    action.sighash.size = length;
+    memset(action.sighash.bytes, 0xa5, sizeof(action.sighash.bytes));
+    fsm_msgZcashPCZTAction(&action);
+    EXPECT_TRUE(zcash_test_last_failure_is(FailureType_Failure_SyntaxError,
+                                           "Host action sighash rejected"));
+    EXPECT_FALSE(zcash_test_action_session_active());
+  }
 }

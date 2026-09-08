@@ -63,7 +63,11 @@ void fsm_msgGetPublicKey(GetPublicKey* msg) {
                               /*show_addridx=*/false) &&
         !bip32_path_to_string(node_str, sizeof(node_str), msg->address_n,
                               msg->address_n_count)) {
-      memset(node_str, 0, sizeof(node_str));
+      fsm_clearDerivedNode();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Can't create BIP32 path string"));
+      layoutHome();
+      return;
     }
 
     if (!confirm_xpub(node_str, resp->xpub)) {

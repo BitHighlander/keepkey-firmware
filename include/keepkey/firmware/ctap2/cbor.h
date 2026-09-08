@@ -48,6 +48,7 @@ bool cbor_encode_int(CborEncoder* encoder, int64_t value);
 bool cbor_encode_bytes(CborEncoder* encoder, const uint8_t* value,
                        size_t length);
 bool cbor_encode_text(CborEncoder* encoder, const char* value, size_t length);
+bool cbor_text_is_valid(const char* value, size_t length);
 bool cbor_encode_bool(CborEncoder* encoder, bool value);
 bool cbor_encode_array(CborEncoder* encoder, size_t count);
 bool cbor_encode_map(CborEncoder* encoder, size_t pairs);

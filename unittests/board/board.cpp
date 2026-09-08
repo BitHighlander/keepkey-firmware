@@ -2,6 +2,7 @@
 // standard library's declaration if the C++ headers are pulled in after it.
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <csignal>
 #include <cstring>
 #include <string>
@@ -237,6 +238,53 @@ TEST_F(StorageSelection, CorruptPendingRecordIsNeverFinalized) {
   EXPECT_FALSE(recover_pending_storage(FLASH_STORAGE2));
   EXPECT_NE(
       0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
+  EXPECT_TRUE(storage_has_record_evidence());
+}
+
+TEST_F(StorageSelection, ErasedAndMarkerSectorsHaveNoRecordEvidence) {
+  EXPECT_FALSE(storage_has_record_evidence());
+
+  memcpy(Sector(FLASH_STORAGE1), STORAGE_PROTECT_OFF_MAGIC,
+         sizeof(STORAGE_PROTECT_OFF_MAGIC));
+  EXPECT_FALSE(storage_has_record_evidence());
+}
+
+TEST_F(StorageSelection, RejectedFramedRecordsLeaveEvidenceInEverySector) {
+  for (int raw = FLASH_STORAGE1; raw <= FLASH_STORAGE3; raw++) {
+    const Allocation candidate = static_cast<Allocation>(raw);
+    std::fill(flash.begin(), flash.end(), 0xFF);
+    WriteVerified(candidate, 12);
+    Sector(candidate)[100] ^= 1;
+
+    Allocation active = FLASH_INVALID;
+    Allocation pending = FLASH_INVALID;
+    EXPECT_FALSE(find_active_storage(&active)) << candidate;
+    EXPECT_FALSE(find_pending_storage(&pending)) << candidate;
+    EXPECT_TRUE(storage_has_record_evidence()) << candidate;
+  }
+}
+
+TEST_F(StorageSelection, CorruptLeadingMagicStillLeavesFramedEvidence) {
+  WriteVerified(FLASH_STORAGE2, 13);
+  Sector(FLASH_STORAGE2)[0] = 0;
+
+  Allocation active = FLASH_INVALID;
+  Allocation pending = FLASH_INVALID;
+  EXPECT_FALSE(find_active_storage(&active));
+  EXPECT_FALSE(find_pending_storage(&pending));
+  EXPECT_TRUE(storage_has_record_evidence());
+}
+
+TEST_F(StorageSelection, CorruptLegacyMagicStillLeavesPayloadEvidence) {
+  WriteLegacy(FLASH_STORAGE3);
+  Sector(FLASH_STORAGE3)[100] = 0;
+  Sector(FLASH_STORAGE3)[0] = 0;
+
+  Allocation active = FLASH_INVALID;
+  Allocation pending = FLASH_INVALID;
+  EXPECT_FALSE(find_active_storage(&active));
+  EXPECT_FALSE(find_pending_storage(&pending));
+  EXPECT_TRUE(storage_has_record_evidence());
 }
 
 }  // namespace

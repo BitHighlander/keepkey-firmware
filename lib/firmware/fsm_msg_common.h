@@ -2,11 +2,7 @@ void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
   /* Ends a setup ceremony of either kind, staged settings and all. */
   setup_abort();
-  signing_abort();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
-  session_clear(false);  // do not clear PIN, and clears the Zcash session
+  session_clear(false);  // Keep PIN authorization; revoke wallet state.
   layoutHome();
   fsm_msgGetFeatures(0);
 }
@@ -59,7 +55,8 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->pin_protection = storage_hasPin();
   resp->has_passphrase_protection = true;
   resp->passphrase_protection = storage_getPassphraseProtected();
-  resp->has_wipe_code_protection = storage_hasWipeCode();
+  resp->has_wipe_code_protection = true;
+  resp->wipe_code_protection = storage_hasWipeCode();
 
 #ifdef SCM_REVISION
   // cppcheck-suppress sizeofwithnumericparameter
@@ -257,7 +254,6 @@ void fsm_msgPing(Ping* msg) {
   if (authMsg < NUM_AUTHMESSAGES) {
     // this is an authenticator message
     unsigned errcode;
-    char otp[9] = {0};  // allow room for an 8 digit otp
     char acc[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {
         0};  // allow room for domain + ":" + account
 
@@ -272,21 +268,26 @@ void fsm_msgPing(Ping* msg) {
         resp->has_message = false;
         break;
 
-      case GENOTP:
+      case GENOTP: {
         // DEBUG_DISPLAY("genotp %s",
         // &msg->message[strlen(authMesStr[authMsg])])
-        errcode = generateOTP(&msg->message[strlen(authMesStr[authMsg])], otp);
 #if DEBUG_LINK
+        char otp[9] = {0};
+        errcode = generateOTP(&msg->message[strlen(authMesStr[authMsg])], otp);
         char authSlot[128] = {0};  // debug link only
         getAuthSlot(authSlot);
         resp->has_message = true;
         strlcpy(resp->message, otp, 9);
         strcat(resp->message, ":");
         strcat(resp->message, authSlot);
+        memzero(otp, sizeof(otp));
+        memzero(authSlot, sizeof(authSlot));
 #else
+        errcode = generateOTP(&msg->message[strlen(authMesStr[authMsg])], NULL);
         resp->has_message = false;
 #endif
         break;
+      }
 
       case GETACC:
         errcode =
@@ -621,12 +622,8 @@ void fsm_msgCancel(Cancel* msg) {
   (void)msg;
   /* Cancellation rolls the ceremony back: one memzero, no storage touched. */
   setup_abort();
-  signing_abort();
+  fsm_abort_signing_sessions();
   authenticator_clear_cache();
-  ethereum_signing_abort();
-  tendermint_signAbort();
-  eos_signingAbort();
-  zcash_signing_abort();
   fsm_sendFailure(FailureType_Failure_ActionCancelled, "Aborted");
 }
 

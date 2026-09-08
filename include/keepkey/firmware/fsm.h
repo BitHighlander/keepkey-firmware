@@ -25,6 +25,8 @@
 
 /* Scrub the function-static HDNode used by synchronous FSM derivations. */
 void fsm_clearDerivedNode(void);
+/* Abort every asynchronous signer on cancellation or session teardown. */
+void fsm_abort_signing_sessions(void);
 #if DEBUG_LINK
 void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);

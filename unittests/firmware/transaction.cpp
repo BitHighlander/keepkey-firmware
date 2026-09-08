@@ -3,6 +3,9 @@
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <string>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <vector>
 
 extern "C" {
@@ -96,4 +99,52 @@ TEST(Transaction, MultisigCompilersRejectUnsatisfiableQuorums) {
     EXPECT_EQ(0u, compile_script_multisig(nullptr, &multisig, output));
     EXPECT_EQ(0u, compile_script_multisig_hash(nullptr, &multisig, hash));
   }
+}
+
+extern "C" {
+#include "keepkey/firmware/txin_check.h"
+}
+
+// compile_output() hands txin_dgst_save_and_reset() `prefix_len + in->address`
+// for cashaddr coins, a pointer INTO a 130-byte field. The save copied a fixed
+// ADDR_STR_LEN bytes from it, reading prefix_len bytes past the field. Place
+// the string flush against a PROT_NONE guard page: the old copy faults, a
+// string-bounded copy stops at the NUL.
+TEST(Transaction, DuplicateDigestSaveCopiesTheStringNotTheField) {
+  const long page = sysconf(_SC_PAGESIZE);
+  ASSERT_GT(page, 0);
+  uint8_t *region = static_cast<uint8_t *>(
+      mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE,
+           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  ASSERT_NE(region, MAP_FAILED);
+  ASSERT_EQ(mprotect(region + page, page, PROT_NONE), 0);
+
+  static const char addr[] = "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a";
+  char *at_edge = reinterpret_cast<char *>(region + page - sizeof(addr));
+  memcpy(at_edge, addr, sizeof(addr));
+
+  txin_dgst_initialize();
+  EXPECT_EXIT(
+      {
+        txin_dgst_save_and_reset("0.001 BCH", at_edge);
+        exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+  munmap(region, 2 * page);
+}
+
+// page_body_confirm() counts pages and stops counting at 100. It then rendered
+// exactly that many, called the 100th "last", and returned approval with body
+// bytes still unshown. A body that needs more pages than can be shown must be
+// refused, not approved in part.
+TEST(Confirm, PagerRefusesABodyItCannotShowInFull) {
+  // 351 newlines: BODY_CHAR_MAX - 1, the widest body confirm() accepts
+  // without source truncation, laid out one empty row per byte.
+  const std::string body(BODY_CHAR_MAX - 1, '\n');
+  ASSERT_TRUE(kkconfirm_preload(100, 0));
+  EXPECT_FALSE(confirm(ButtonRequestType_ButtonRequest_Other, "Sign Message",
+                       "%s", body.c_str()));
+  // Refused before any page was drawn: every preloaded approval is unspent
+  // (one ButtonAck + one DebugLinkDecision per screen).
+  EXPECT_EQ(2 * 100, kkconfirm_drain());
 }

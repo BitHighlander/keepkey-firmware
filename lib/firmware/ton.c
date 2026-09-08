@@ -174,6 +174,12 @@ bool ton_get_address(const ed25519_public_key public_key, bool bounceable,
       raw_address_len < TON_RAW_ADDRESS_MAX_LEN) {
     return false;
   }
+  // Only basechain (0) and masterchain (-1) exist. The base64 form encodes a
+  // single workchain byte while raw_address prints the full int32, so any
+  // other value would yield two disagreeing representations.
+  if (workchain != 0 && workchain != -1) {
+    return false;
+  }
 
   // Compute the v4r2 StateInit representation hash — this IS the address hash
   uint8_t hash[32];
@@ -215,13 +221,22 @@ bool ton_get_address(const ed25519_public_key public_key, bool bounceable,
 }
 
 /**
- * Format TON amount (nanoTON) for display
- * 1 TON = 1,000,000,000 nanoTON
+ * Hex of sha256(raw_tx): a content-bound identifier for the blind-sign screen,
+ * which the host can show alongside for out-of-band comparison.
  */
-void ton_formatAmount(char* buf, size_t len, uint64_t amount) {
-  bignum256 val;
-  bn_read_uint64(amount, &val);
-  bn_format(&val, NULL, " TON", TON_DECIMALS, 0, false, buf, len);
+void ton_formatRawTxDigest(const uint8_t* raw, size_t len, char* out,
+                           size_t out_len) {
+  uint8_t hash[32];
+  sha256_Raw(raw, len, hash);
+  if (out_len < 65) {
+    if (out_len) out[0] = '\0';
+    memzero(hash, sizeof(hash));
+    return;
+  }
+  for (int i = 0; i < 32; i++) {
+    snprintf(&out[2 * i], 3, "%02x", hash[i]);
+  }
+  memzero(hash, sizeof(hash));
 }
 
 /**

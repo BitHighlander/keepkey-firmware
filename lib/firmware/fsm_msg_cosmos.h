@@ -38,6 +38,7 @@ void fsm_msgCosmosGetAddress(const CosmosGetAddress* msg) {
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Can't create Bip32 Path String"));
       layoutHome();
+      return;
     }
 
     bool mismatch =
@@ -506,8 +507,10 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
                "Sign this Cosmos transaction on %s? "
-               "It includes a fee of %" PRIu32 " uATOM and %" PRIu32 " gas.",
-               sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas)) {
+               "It includes a fee of %" PRIu32 " uATOM and %" PRIu32 " gas. "
+               "Account %" PRIu64 ", sequence %" PRIu64 ".",
+               sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas,
+               sign_tx->account_number, sign_tx->sequence)) {
     tendermint_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

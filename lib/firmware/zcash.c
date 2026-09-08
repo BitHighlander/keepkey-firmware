@@ -336,20 +336,6 @@ static bool orchard_diversify_point(const uint8_t diversifier[11],
   return true;
 }
 
-bool zcash_orchard_diversify_hash(const uint8_t diversifier[11],
-                                  uint8_t gd_out[32]) {
-  if (!gd_out) return false;
-
-  curve_point gd;
-  if (!orchard_diversify_point(diversifier, &gd)) {
-    return false;
-  }
-
-  pallas_point_encode(&gd, gd_out);
-  memzero(&gd, sizeof(gd));
-  return true;
-}
-
 bool zcash_orchard_derive_transmission_key(const uint8_t ivk[32],
                                            const uint8_t diversifier[11],
                                            uint8_t gd_out[32],
@@ -589,26 +575,12 @@ bool zcash_orchard_compute_cmx_with_progress(
       receiver, value, rho, rseed, cmx_out, false, progress, progress_context);
 }
 
-bool zcash_orchard_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
-  return zcash_orchard_compute_cmx_with_progress(receiver, value, rho, rseed,
-                                                 cmx_out, NULL, NULL);
-}
-
 bool zcash_ironwood_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
     ZcashOrchardProgressCallback progress, void* progress_context) {
   return zcash_orchard_family_compute_cmx_with_progress(
       receiver, value, rho, rseed, cmx_out, true, progress, progress_context);
-}
-
-bool zcash_ironwood_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
-  return zcash_ironwood_compute_cmx_with_progress(receiver, value, rho, rseed,
-                                                  cmx_out, NULL, NULL);
 }
 
 bool zcash_derive_orchard_keys_with_progress(
@@ -661,7 +633,6 @@ bool zcash_derive_orchard_keys_with_progress(
   }
 
   /* Step 3: Derive subkeys from final spending key */
-  memcpy(keys->sk, sk, 32);
 
   uint8_t expanded[64];
 
@@ -733,12 +704,6 @@ bool zcash_derive_orchard_keys_with_progress(
   memzero(dk_input, sizeof(dk_input));
 
   return true;
-}
-
-bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
-                               uint32_t account, ZcashOrchardKeys* keys) {
-  return zcash_derive_orchard_keys_with_progress(seed, seed_len, account, keys,
-                                                 NULL, NULL);
 }
 
 static bool zcash_compute_shielded_sighash_inner(
@@ -1180,12 +1145,6 @@ ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
   }
 
   return ZCASH_PCZT_SIGNING_REQUEST_OK;
-}
-
-bool zcash_pczt_signing_request_is_clear(
-    const ZcashPCZTSigningRequestMeta* meta) {
-  return zcash_pczt_signing_request_status(meta) ==
-         ZCASH_PCZT_SIGNING_REQUEST_OK;
 }
 
 /*

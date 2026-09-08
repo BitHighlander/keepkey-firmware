@@ -244,3 +244,13 @@ TEST(Coins, TokenByChainAddress) {
   ASSERT_NE(zrx, nullptr);
   EXPECT_EQ(zrx->ticker, std::string(" ZRX"));
 }
+
+// Binance (BEP2) signing was removed (#468); the coin table and the
+// tendermint routing predicate must not advertise a chain the device cannot
+// derive addresses for or sign.
+extern "C" bool isTendermint(const char *coin_name);
+
+TEST(Coins, RetiredBinanceEntryStaysRemoved) {
+  EXPECT_EQ(coinByName("Binance"), nullptr);
+  EXPECT_FALSE(isTendermint("Binance"));
+}

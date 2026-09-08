@@ -464,6 +464,7 @@ static bool page_body_confirm(const char* request_title, const char* body,
   static CONFIDENTIAL char page_buf[BODY_CHAR_MAX];
   static char page_title[TITLE_CHAR_MAX];
 
+  bool ok = false;
   /* Pass 1: count. */
   size_t pages = 0;
   {
@@ -475,16 +476,22 @@ static bool page_body_confirm(const char* request_title, const char* body,
       p += take;
       while (*p == ' ') p++; /* a leading space is dropped at a line start */
       pages++;
-      if (pages > 99) break; /* title formats n/m; refuse to run away */
+      if (pages > 99 && *p) {
+        /* The title formats n/m, so the count is capped -- but a cap that
+         * drops the remainder and reports success would approve bytes the
+         * user never saw. Refuse instead, like every other pager here. */
+        goto done;
+      }
     }
   }
   if (pages <= 1) {
     /* Nothing gained by paging -- draw it as it was. */
-    return confirm_screen(request_title, body, layout_notification_func,
-                          constant_power, iconNum, immediate);
+    ok = fits(body, body_width) &&
+         confirm_screen(request_title, body, layout_notification_func,
+                        constant_power, iconNum, immediate);
+    goto done;
   }
 
-  bool ok = false;
   const char* p = body;
   for (size_t page = 0; page < pages && *p; page++) {
     const size_t take =
@@ -492,6 +499,7 @@ static bool page_body_confirm(const char* request_title, const char* body,
     if (take == 0) break;
     memcpy(page_buf, p, take);
     page_buf[take] = '\0';
+    if (!fits(page_buf, body_width)) goto done;
 
     const int title_len =
         snprintf(page_title, sizeof(page_title), "%s %u/%u", request_title,
@@ -677,10 +685,10 @@ size_t confirm_constant_power_subpage_take(const char* body) {
   if (len == 0) return 0;
 
   size_t best = 0;
+  char probe[BODY_CHAR_MAX];
   for (size_t i = 0; i < len; i++) {
     if (body[i] != '\n' && i + 1 != len) continue;
     const size_t take = i + 1;
-    char probe[BODY_CHAR_MAX];
     if (take >= sizeof(probe)) break;
     memcpy(probe, body, take);
     probe[take] = '\0';
@@ -690,6 +698,8 @@ size_t confirm_constant_power_subpage_take(const char* body) {
       break; /* longer prefixes only get taller */
     }
   }
+
+  memzero(probe, sizeof(probe));
 
   /* FAIL CLOSED. If even the first row does not fit, there is no split that
    * makes it fit, and showing it anyway would render CLIPPED content while the
@@ -787,29 +797,6 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 
   memzero(sub, sizeof(sub));
   return ok;
-}
-
-bool confirm_constant_power(ButtonRequestType type, const char* request_title,
-                            const char* request_body, ...) {
-  button_request_acked = false;
-
-  va_list vl;
-  va_start(vl, request_body);
-  format_body(request_body, vl);
-  va_end(vl);
-
-  /* Send button request */
-  ButtonRequest resp;
-  memset(&resp, 0, sizeof(ButtonRequest));
-  resp.has_code = true;
-  resp.code = type;
-  msg_write(MessageType_MessageType_ButtonRequest, &resp);
-
-  bool ret =
-      confirm_helper(request_title, strbuf, &layout_constant_power_notification,
-                     true, NO_ICON, false);
-  memzero(strbuf, sizeof(strbuf));
-  return ret;
 }
 
 bool confirm_with_custom_button_request(const ButtonRequest* button_request,

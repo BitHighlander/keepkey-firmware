@@ -43,6 +43,13 @@ void fsm_msgTonGetAddress(const TonGetAddress* msg) {
   bool bounceable = msg->has_bounceable ? msg->bounceable : true;
   bool testnet = msg->has_testnet ? msg->testnet : false;
   int32_t workchain = msg->has_workchain ? msg->workchain : 0;
+  if (workchain != 0 && workchain != -1) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid TON workchain (expected 0 or -1)"));
+    layoutHome();
+    return;
+  }
 
   // Get TON address from public key (Base64 URL-safe encoding)
   char address[MAX_ADDR_SIZE];
@@ -137,6 +144,20 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
    * actually verify -- how many bytes it is about to sign. */
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TON Blind Sign",
                "Sign %u-byte TON transaction?", (unsigned)msg->raw_tx.size)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+    layoutHome();
+    return;
+  }
+
+  /* Bind the ceremony to the payload: two same-length raw_tx blobs must not
+   * produce identical screens. The host can show the same sha256 for
+   * out-of-band comparison. */
+  char digest_hex[64 + 1];
+  ton_formatRawTxDigest(msg->raw_tx.bytes, msg->raw_tx.size, digest_hex,
+                        sizeof(digest_hex));
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TON Blind Sign",
+               "Confirm hash digest: %s", digest_hex)) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
     layoutHome();

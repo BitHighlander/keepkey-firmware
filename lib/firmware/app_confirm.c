@@ -38,8 +38,8 @@
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/coins.h"
 
-#include "trezor/crypto/bignum.h"
 #include "trezor/crypto/memzero.h"
+#include "trezor/crypto/bignum.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -48,9 +48,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-
-#define BITCOIN_DIVISIBILITY (8)
-#define _(X) (X)
 
 /*
  * confirm_cipher() - Show cipher confirmation
@@ -70,53 +67,6 @@ bool confirm_cipher(bool encrypt, const char* key) {
   } else {
     ret_stat = confirm(ButtonRequestType_ButtonRequest_Other,
                        "Decrypt Key Value", "%s", key);
-  }
-
-  return (ret_stat);
-}
-
-/*
- * confirm_encrypt_msg() - Show encrypt message confirmation
- *
- * INPUT
- *     - msg: message to encrypt
- *     - signing: true/false whether we are signing along with encryption
- * OUTPUT
- *     true/false of confirmation
- */
-bool confirm_encrypt_msg(const char* msg, bool signing) {
-  bool ret_stat;
-
-  if (signing) {
-    ret_stat = confirm(ButtonRequestType_ButtonRequest_EncryptAndSignMessage,
-                       "Encrypt and Sign Message", "%s", msg);
-  } else {
-    ret_stat = confirm(ButtonRequestType_ButtonRequest_EncryptMessage,
-                       "Encrypt Message", "%s", msg);
-  }
-
-  return (ret_stat);
-}
-
-/*
- * confirm_decrypt_msg() - Show decrypt message confirmation
- *
- * INPUT
- *      - msg: decrypted message
- *      - address: address used to sign message
- * OUTPUT
- *     true/false of confirmation
- *
- */
-bool confirm_decrypt_msg(const char* msg, const char* address) {
-  bool ret_stat;
-
-  if (address) {
-    ret_stat = confirm(ButtonRequestType_ButtonRequest_Other,
-                       "Decrypted Signed Message", "%s", msg);
-  } else {
-    ret_stat = confirm(ButtonRequestType_ButtonRequest_Other,
-                       "Decrypted Message", "%s", msg);
   }
 
   return (ret_stat);
@@ -154,43 +104,6 @@ bool confirm_transfer_output(ButtonRequestType button_request,
 bool confirm_transaction_output(ButtonRequestType button_request,
                                 const char* amount, const char* to) {
   return confirm_with_custom_layout(&layout_notification_no_title_bold,
-                                    button_request, "", "Send %s to\n%s",
-                                    amount, to);
-}
-
-/*
- * confirm_erc_token_transfer() - Show transaction output confirmation without
- * bold
- *
- * INPUT -
- *      - button_request: button request type
- *      - amount: amount to send
- *      - to: who to send to
- * OUTPUT -
- *     true/false of confirmation
- *
- */
-bool confirm_erc_token_transfer(ButtonRequestType button_request,
-                                const char* msg_body) {
-  return confirm_with_custom_layout(&layout_notification_no_title_no_bold,
-                                    button_request, "", "Send %s", msg_body);
-}
-
-/*
- * confirm_transaction_output_no_bold() - Show transaction output confirmation
- * without bold
- *
- * INPUT -
- *      - button_request: button request type
- *      - amount: amount to send
- *      - to: who to send to
- * OUTPUT -
- *     true/false of confirmation
- *
- */
-bool confirm_transaction_output_no_bold(ButtonRequestType button_request,
-                                        const char* amount, const char* to) {
-  return confirm_with_custom_layout(&layout_notification_no_title_no_bold,
                                     button_request, "", "Send %s to\n%s",
                                     amount, to);
 }
@@ -244,6 +157,20 @@ bool confirm_load_device(bool is_node) {
   return (ret_stat);
 }
 
+/* Use the custom address screen only when all text fits its real geometry.
+ * A long address gets the standard pager; QR codes must never encode fragments
+ * produced by paging a custom QR layout. */
+static bool confirm_address_layout(layout_notification_t layout,
+                                   const char* desc, const char* address) {
+  if (!desc || !address || strlen(address) >= BODY_CHAR_MAX) return false;
+  if (!app_layout_address_text_fits(layout, address)) {
+    return confirm(ButtonRequestType_ButtonRequest_Address, desc, "%s",
+                   address);
+  }
+  return confirm_with_custom_layout(
+      layout, ButtonRequestType_ButtonRequest_Address, desc, "%s", address);
+}
+
 /*
  * confirm_xpub() - Show extended public key confirmation
  *
@@ -254,9 +181,7 @@ bool confirm_load_device(bool is_node) {
  *
  */
 bool confirm_xpub(const char* node_str, const char* xpub) {
-  return confirm_with_custom_layout(&layout_xpub_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    node_str, "%s", xpub);
+  return confirm_address_layout(&layout_xpub_notification, node_str, xpub);
 }
 
 /*
@@ -270,9 +195,8 @@ bool confirm_xpub(const char* node_str, const char* xpub) {
  *
  */
 bool confirm_cosmos_address(const char* desc, const char* address) {
-  return confirm_with_custom_layout(&layout_cosmos_address_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    desc, "%s", address);
+  return confirm_address_layout(&layout_cosmos_address_notification, desc,
+                                address);
 }
 
 /*
@@ -286,9 +210,8 @@ bool confirm_cosmos_address(const char* desc, const char* address) {
  *
  */
 bool confirm_osmosis_address(const char* desc, const char* address) {
-  return confirm_with_custom_layout(&layout_osmosis_address_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    desc, "%s", address);
+  return confirm_address_layout(&layout_osmosis_address_notification, desc,
+                                address);
 }
 
 /*
@@ -302,9 +225,8 @@ bool confirm_osmosis_address(const char* desc, const char* address) {
  *
  */
 bool confirm_ethereum_address(const char* desc, const char* address) {
-  return confirm_with_custom_layout(&layout_ethereum_address_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    desc, "%s", address);
+  return confirm_address_layout(&layout_ethereum_address_notification, desc,
+                                address);
 }
 
 /*
@@ -318,9 +240,8 @@ bool confirm_ethereum_address(const char* desc, const char* address) {
  *
  */
 bool confirm_nano_address(const char* desc, const char* address) {
-  return confirm_with_custom_layout(&layout_nano_address_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    desc, "%s", address);
+  return confirm_address_layout(&layout_nano_address_notification, desc,
+                                address);
 }
 
 /*
@@ -335,10 +256,13 @@ bool confirm_nano_address(const char* desc, const char* address) {
  *
  */
 #if ZCASH_PRIVACY
+bool confirm_zcash_address_text(const char* desc, const char* address) {
+  return confirm_address_layout(&layout_zcash_address_text_notification, desc,
+                                address);
+}
+
 bool confirm_zcash_address(const char* desc, const char* address) {
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_Address, desc,
-                                  "%s", address)) {
+  if (!confirm_zcash_address_text(desc, address)) {
     return false;
   }
 
@@ -502,48 +426,31 @@ cleanup:
 
 bool confirm_omni(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  uint32_t tx_type_be = 0;
-  uint32_t tx_type = UINT32_MAX;
-  if (data && size == 20) {
-    /* The protobuf bytes array is size-delimited, not a typed/aligned word. */
-    memcpy(&tx_type_be, data + 4, sizeof(tx_type_be));
-    REVERSE32(tx_type_be, tx_type);
-  }
-
-  if (tx_type == 0x00000000) {  // OMNI simple send
-    char str_out[32];
-    uint32_t currency_be;
-    uint32_t currency;
-    memcpy(&currency_be, data + 8, sizeof(currency_be));
-    REVERSE32(currency_be, currency);
-    const char* suffix = "UNKN";
-    switch (currency) {
-      case 1:
-        suffix = " OMNI";
-        break;
-      case 2:
-        suffix = " tOMNI";
-        break;
-      case 3:
-        suffix = " MAID";
-        break;
-      case 31:
-        suffix = " USDT";
-        break;
-    }
+  if (data && size == 20 && memcmp(data, "omni\0\0\0\0", 8) == 0) {
+    uint32_t property_be, property;
     uint64_t amount_be, amount;
-    memcpy(&amount_be, data + 12, sizeof(uint64_t));
+    memcpy(&property_be, data + 8, sizeof(property_be));
+    memcpy(&amount_be, data + 12, sizeof(amount_be));
+    REVERSE32(property_be, property);
     REVERSE64(amount_be, amount);
-    bn_format_uint64(amount, NULL, suffix, BITCOIN_DIVISIBILITY, 0, false,
-                     str_out, sizeof(str_out));
-    return confirm(button_request, title, _("Do you want to send %s?"),
-                   str_out);
+    /* OMNI and Test OMNI are protocol-defined divisible currencies. Other
+     * properties need chain state to establish divisibility: disclose their
+     * ID and raw amount without claiming a ticker or decimal precision. */
+    if (property == 1 || property == 2) {
+      char formatted[32];
+      if (!bn_format_uint64(amount, NULL, property == 1 ? " OMNI" : " tOMNI", 8,
+                            0, false, formatted, sizeof(formatted))) {
+        return false;
+      }
+      return confirm(button_request, title, "Property #%" PRIu32 "\nSend %s?",
+                     property, formatted);
+    }
+    return confirm(button_request, title,
+                   "Property #%" PRIu32 "\nRaw amount: %" PRIu64
+                   "\nDivisibility unknown",
+                   property, amount);
   }
-
-  /* Unsupported Omni messages still carry asset-layer semantics. A generic
-   * "Unknown Transaction" screen hid the complete payload while allowing the
-   * host to obtain a Bitcoin signature. Fall back to the exact-length pager so
-   * the trusted display binds approval to every signed OP_RETURN byte. */
+  /* Unsupported Omni messages still disclose every signed payload byte. */
   return confirm_bytes(button_request, title, data, size);
 }
 

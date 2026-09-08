@@ -46,6 +46,7 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
                   size_t* response_length);
 
 bool ctap2_request_user_presence(const char* rp_id, bool registration);
+bool ctap2_request_reset_confirmation(void);
 bool ctap2_user_presence_was_cancelled(void);
 
 #ifdef EMULATOR

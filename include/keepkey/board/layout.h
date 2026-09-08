@@ -81,7 +81,6 @@
 #define WARNING_FONT_LINE_PADDING 0
 
 /* Default Layout */
-#define NO_WIDTH 0;
 
 typedef enum {
   NOTIFICATION_INFO,

@@ -99,7 +99,11 @@ void txin_dgst_reset_only(void) {
 void txin_dgst_save_and_reset(const char* amt_str, const char* addr_str) {
   memcpy(txin_last_digest, txin_current_digest, SHA256_DIGEST_LENGTH);
   memcpy(last_amount_str, amt_str, AMT_STR_LEN);
-  memcpy(last_addr_str, addr_str, ADDR_STR_LEN);
+  /* addr_str may point INTO a fixed field (transaction.c hands over
+     `prefix_len + in->address` for cashaddr coins), so a fixed-length copy
+     reads past its end. Copy the string, not the field. */
+  memzero(last_addr_str, ADDR_STR_LEN);
+  memcpy(last_addr_str, addr_str, strnlen(addr_str, ADDR_STR_LEN - 1));
   txin_dgst_reset_current();
   return;
 }
