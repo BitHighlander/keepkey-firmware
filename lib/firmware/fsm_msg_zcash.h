@@ -164,6 +164,65 @@ static void zcash_format_amount(uint64_t amount, char* out, size_t out_size) {
            (unsigned long long)(amount % 100000000ULL));
 }
 
+/* Determine account — require explicit account or strict ZIP-32 path
+ * m/32'/133'/account' (all hardened, exactly 3 elements). Shared by
+ * ZcashSignPCZT / ZcashGetOrchardFVK / ZcashDisplayAddress so a malformed
+ * host path cannot silently resolve to an unintended account. */
+static bool zcash_resolve_account(bool has_account, uint32_t account_field,
+                                  const uint32_t* address_n,
+                                  uint32_t address_n_count,
+                                  uint32_t* account_out) {
+  if (has_account) {
+    /* ZIP-32 hardens this index; accepting the high bit aliases account zero.
+     */
+    if (account_field & 0x80000000u) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Zcash account must be below 0x80000000"));
+      return false;
+    }
+    *account_out = account_field;
+    return true;
+  }
+  if (address_n_count == 3 && address_n[0] == (0x80000000 | 32) &&
+      address_n[1] == (0x80000000 | 133) && (address_n[2] & 0x80000000)) {
+    *account_out = address_n[2] & 0x7FFFFFFF;
+    return true;
+  }
+  fsm_sendFailure(
+      FailureType_Failure_SyntaxError,
+      _("Require account field or ZIP-32 path m/32'/133'/account'"));
+  return false;
+}
+
+/* Optional seed_fingerprint binding (ZIP-32 §6.1). If the host asserts a
+ * seed identity, verify it matches this device's seed before proceeding.
+ * Catches "wrong device" attacks where the host accidentally targets a
+ * different seed than the one it built the request against. */
+static bool zcash_check_seed_fingerprint(bool has_expected,
+                                         const uint8_t* expected,
+                                         size_t expected_size) {
+  if (!zcash_seed_fingerprint_request_valid(has_expected, expected_size)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Seed fingerprint must be 32 bytes"));
+    return false;
+  }
+  if (!has_expected) return true;
+
+  uint8_t actual_fp[32];
+  if (!storage_zcashSeedFingerprint(true, actual_fp)) {
+    fsm_sendFailure(FailureType_Failure_NotInitialized,
+                    _("Device not initialized or seed unavailable"));
+    return false;
+  }
+  bool match = memcmp(actual_fp, expected, 32) == 0;
+  memzero(actual_fp, sizeof(actual_fp));
+  if (!match) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Seed fingerprint mismatch — wrong device"));
+    return false;
+  }
+  return true;
+}
 static bool zcash_verify_and_confirm_orchard_output(
     const ZcashPCZTAction* msg) {
   if (!msg->has_value || !msg->has_recipient ||
@@ -758,17 +817,19 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
    * ZcashDisplayAddress / ZcashSignPCZT and prevents a malformed host
    * path from silently exporting an FVK for an unintended account. */
   uint32_t account;
-  if (msg->has_account) {
-    account = msg->account;
-  } else if (msg->address_n_count == 3 &&
-             msg->address_n[0] == (0x80000000 | 32) &&
-             msg->address_n[1] == (0x80000000 | 133) &&
-             (msg->address_n[2] & 0x80000000)) {
-    account = msg->address_n[2] & 0x7FFFFFFF;
-  } else {
-    fsm_sendFailure(
-        FailureType_Failure_SyntaxError,
-        _("Require account field or ZIP-32 path m/32'/133'/account'"));
+  if (!zcash_resolve_account(msg->has_account, msg->account, msg->address_n,
+                             msg->address_n_count, &account)) {
+    layoutHome();
+    return;
+  }
+
+  /* Viewing keys disclose wallet activity; the host cannot waive consent. */
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+               "Export Zcash View Key",
+               "Export Orchard viewing key for account %u?\nReveals Zcash "
+               "activity.",
+               (unsigned)account)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
     layoutHome();
     return;
   }
