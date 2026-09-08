@@ -105,3 +105,19 @@ current develop conflicts with the product-based patch. Its candidate is
 needed on 7.15. Its frozen SRS additionally requires both full and Bitcoin-only
 products, additive context, complete disclosure, storage compatibility and
 hardware evidence; preserve this scope when completing the feature matrix.
+
+## Current progress toward the active objective
+
+- R142-01 now passes all 80 firmware-unit tests with fully initialized pinned
+  token data. R142-02 was a local nested-dependency setup failure, closed without
+  changing firmware behavior or test expectations.
+- R142-03 isolates a generated-table dependency gap: declaring CMake byproducts
+  makes one Ninja invocation regenerate the table and test the updated executable.
+  The controlled empty-table regeneration experiment passed all 80 tests.
+- Source reconciliation: the previously audited `e519dc13c` is a descendant of
+  the canonical 7.14.2 snapshot, with 30 first-parent commits. Preserve and account
+  for that already-reviewed hardening when assembling the product; do not mistake
+  the older canonical branch for the most thoroughly audited candidate or redo
+  those fixes independently. Existing foundation receipts remain supporting evidence.
+- Full release acceptance is still pending exact assembled ARM/integration checks,
+  shared-fix applicability, complete feature inventories and required hardware evidence.
