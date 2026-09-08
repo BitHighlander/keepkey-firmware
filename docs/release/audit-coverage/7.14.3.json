@@ -47,8 +47,11 @@
       "added": "5",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "6a4df67a28904668876e2bfe1669a2f6d4337a44"
     },
     {
       "path": ".gitleaks.toml",
@@ -79,8 +82,11 @@
       "added": "1",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "2a9fbff97a03b790945f062d40cd1164b94a149c"
     },
     {
       "path": "deps/crypto/trezor-firmware",
@@ -1111,8 +1117,11 @@
       "added": "2",
       "deleted": "1",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "ebfd2ce4ecf61bd7ac2a03ec904a7e2e9db9685b"
     },
     {
       "path": "lib/rand/rng.c",
@@ -1234,16 +1243,22 @@
       "added": "36",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "cebe901cb04d21fb4fe7cd1e66bbc0f8e7226189"
     },
     {
       "path": "unittests/board/CMakeLists.txt",
       "added": "1",
       "deleted": "1",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "ddad5512d5054e1925e0256c9b6c76628d16f024"
     },
     {
       "path": "unittests/board/board.cpp",
@@ -1258,8 +1273,11 @@
       "added": "2",
       "deleted": "1",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "22821adc744b3af229462b1128efefd6c956deef"
     },
     {
       "path": "unittests/crypto/bip340.cpp",

@@ -20,8 +20,11 @@
       "added": "690",
       "deleted": "847",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "P01-005 immutable base-image consumer wiring fixed; full build/evidence workflow review pending"
     },
     {
       "path": ".github/workflows/mirror-base-image.yml",
@@ -47,8 +50,11 @@
       "added": "5",
       "deleted": "1",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P01-build-wiring.md"
+      ],
+      "reviewed_blob": "6a4df67a28904668876e2bfe1669a2f6d4337a44"
     },
     {
       "path": ".gitleaks.toml",
@@ -2255,8 +2261,11 @@
       "added": "14",
       "deleted": "6",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "P01-005 immutable base-image consumer wiring fixed; full build/evidence workflow review pending"
     },
     {
       "path": "scripts/emulator/capture-clearsign-attestor.py",
@@ -2311,8 +2320,11 @@
       "added": "13",
       "deleted": "6",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "P01-005 immutable base-image consumer wiring fixed; full build/evidence workflow review pending"
     },
     {
       "path": "scripts/generate-test-report.py",
