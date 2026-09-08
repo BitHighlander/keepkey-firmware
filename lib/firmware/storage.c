@@ -171,8 +171,9 @@ static uint8_t read_u8(const char* ptr) { return *ptr; }
 static void write_u8(char* ptr, uint8_t val) { *ptr = val; }
 
 static uint32_t read_u32_le(const char* ptr) {
-  return ((uint32_t)ptr[0]) | ((uint32_t)ptr[1]) << 8 |
-         ((uint32_t)ptr[2]) << 16 | ((uint32_t)ptr[3]) << 24;
+  const uint8_t* bytes = (const uint8_t*)ptr;
+  return ((uint32_t)bytes[0]) | ((uint32_t)bytes[1]) << 8 |
+         ((uint32_t)bytes[2]) << 16 | ((uint32_t)bytes[3]) << 24;
 }
 
 static void write_u32_le(char* ptr, uint32_t val) {
