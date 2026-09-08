@@ -6,6 +6,48 @@ It supersedes the alpha audit requirement for two whole-tree zero-finding
 passes as a prerequisite to staging. Historical rehearsal handoffs are
 evidence, not executable instructions or current branch identities.
 
+## Two fork PR types: products and audit units
+
+Owner clarification: 2026-09-08. The main products are the fork release branches
+for 7.14.2, 7.14.3 and 7.15. Small rehearsal branches are the workspace for
+hardening and feature extraction before accepted changes update those products.
+All internal PRs live in the fork. Neither PR type is merged into fork develop.
+
+| PR type | Head and target | Purpose and acceptance |
+| --- | --- | --- |
+| Release product | Main fork release branch → fork `develop` | Cumulative, buildable product candidate with a release manifest, exact pins, accepted-unit receipts and complete product checks. Its large diff is an integration view, not a request to rediscover every issue on every iteration. |
+| Audit unit | Isolated rehearsal branch → fork `develop` when independent; otherwise → its immediate predecessor | One bounded behavior or defect, reviewed and tested locally against its recorded base. Dependent units stay stacked and unmerged into develop. |
+
+Both types belong to the fork-develop staging program; a dependent audit PR
+must target its predecessor so its review diff stays small. Do not retarget all
+stack members directly to develop and recreate the cumulative review surface.
+The existing F00–F05 stack is rehearsal evidence, not the complete 7.15 product.
+
+For each release, record its canonical branch, frozen source SHA, intended
+variant and required features in `RELEASE-PROGRAM.md`. Branch naming alone does
+not establish that a source is accepted or that two release branches are equal.
+
+1. Select a named gap in the product manifest and freeze its source and base.
+2. Extract or harden it on small audit branches. Complete the local contract
+   below before recording a unit as accepted.
+3. Assemble accepted units on an isolated integration candidate based on the
+   recorded product head. Resolve interactions there, preserving existing product
+   content unless an omission is explicitly recorded. A conflicted replay or an
+   interaction defect returns to a named audit unit for local validation.
+4. Validate the assembled product, including required release variants and exact
+   dependency pins. Record the included unit SHAs and resulting tree in a receipt.
+5. Update the canonical fork release branch to the validated candidate, keeping
+   its product PR into develop open and unmerged. Check that the remote product
+   head still equals the recorded base; if it moved, reconcile and validate again.
+   Prefer a normal fast-forward update; do not silently reset or force-push it.
+6. Realign remaining rehearsal branches onto the accepted product or their updated
+   predecessor. Assess the changed diff and affected interactions, carrying forward
+   valid evidence for unchanged code. Repeat for the next named gap.
+
+Updating a fork release branch is internal product assembly, not a develop merge,
+an upstream submission, or release publication. A product is ready only when its
+entire declared scope passes; accepting individual units alone is insufficient.
+
 ## Foundation first
 
 Use the current audited 7.14.2 candidate as the selected foundation. The
@@ -95,9 +137,12 @@ or routine fork PR staging. Do not create a PR or push solely to trigger Copilot
 Quota exhaustion, missing delivery or a historical round ceiling does not block
 internal work or acceptance under the local contract above.
 
-Consider one Copilot review only after the candidate is frozen, all internal gates
-pass, and an upstream/release review is being prepared. Request it when explicitly
-authorized for that late checkpoint or required by the actual upstream process.
+The final upstream SOP includes Copilot audits on the frozen, upstream-shaped
+fork PRs before creating upstream PRs. This is the owner's selected late checkpoint;
+it does not authorize requests during the current internal rehearsal phase.
+Enter it only after the release and its proposed upstream units pass internal
+acceptance and the upstream submission phase begins. Audit the small final units
+and their affected interactions; do not substitute a broad product diff for them.
 Never automatically start a repeat-until-silent Copilot loop. If findings arrive,
 triage and fix them locally in a batch; a re-request needs a concrete reason tied
 to that external checkpoint. Preserve prior dispositions and review counts.
@@ -106,6 +151,27 @@ A failed, missing or quota-limited review is not a clean review. Report Copilot'
 actual status separately from internal readiness. Existing substantive findings
 must still be resolved or explicitly declined on technical grounds; deferring
 Copilot does not waive known defects or any upstream-required review gate.
+
+## Final upstream SOP
+
+1. Select an accepted release receipt and pin the live upstream target. Prepare
+   the final small PR sequence on fork branches, recording source units and public
+   dependency availability. Account for every intended product change or explicitly
+   record what is deferred from this upstream batch.
+2. Reconcile upstream-base differences locally and rerun affected checks plus the
+   required assembled-candidate checks. Freeze the exact proposed heads and bases.
+3. Perform final Copilot audits on these fork PRs before creating upstream PRs.
+   Batch actionable findings into local fixes and revalidate. Record review IDs,
+   head SHAs and technical dispositions. A quota failure is pending, not clean;
+   continue independent local work but do not claim this checkpoint passed.
+4. Record the final audit outcome honestly. The target is a delivered review with
+   no actionable findings on the final candidate; any declined finding retains its
+   rationale and must not be reported as a literal “no findings found” response.
+   Material changes after review require an impact assessment and refreshed audit
+   coverage before the checkpoint is considered complete.
+5. Create upstream PRs from the validated sequence with concise behavior, provenance
+   and test evidence. Upstream merging and release publication remain separate
+   operations. Never merge the fork product PR into develop as a prerequisite.
 
 ## Evidence and invalidation
 
