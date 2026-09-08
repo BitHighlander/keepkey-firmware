@@ -64,4 +64,8 @@ void draw_box_simple(Canvas* canvas, uint8_t color, uint16_t x, uint16_t y,
 bool draw_bitmap_mono_rle(Canvas* canvas, const AnimationFrame* frame,
                           bool erase);
 
+/* Validate the entire host-supplied icon stream before caching/rendering. */
+bool draw_bitmap_mono_rle_valid(const uint8_t* data, uint32_t length,
+                                uint16_t w, uint16_t h);
+
 #endif

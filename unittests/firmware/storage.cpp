@@ -500,6 +500,10 @@ TEST(Storage, StorageUpgrade_Normal) {
 }
 
 TEST(Storage, StorageRoundTrip) {
+  // The serializer reads session policy flags; make the golden vector's
+  // Experimental bit explicit instead of inheriting another fixture's state.
+  storage_reset();
+  EXPECT_TRUE(storage_setPolicy("Experimental", false));
   ConfigFlash start;
   memset(&start, 0xAB, sizeof(start));
   memcpy(start.meta.magic, "stor", 4);

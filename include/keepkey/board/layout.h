@@ -85,6 +85,8 @@ typedef enum {
 typedef enum {
   NO_ICON = 0,
   ETHEREUM_ICON,
+  VERIFIED_ICON,
+  RUNTIME_ICON,
 } IconType;
 
 typedef void (*AnimateCallback)(void* data, uint32_t duration,
@@ -139,4 +141,8 @@ void layout_clear_static(void);
 
 void kk_strupr(char* str);
 void kk_strlwr(char* str);
+/* Caller owns the frame and image through the synchronous confirmation. */
+struct AnimationFrame_;
+void layout_set_runtime_icon(const struct AnimationFrame_* frame);
+
 #endif
