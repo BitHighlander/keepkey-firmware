@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""SRAM budget gate for ARM firmware builds.
+
+Fails CI when the runtime stack/heap reserve — the gap between the end of
+static allocation (_ebss) and the top-of-RAM stack (_stack) — drops below the
+per-variant budget, or when the largest single stack frame (-fstack-usage)
+leaves less than the configured margin inside that reserve.
+
+Why this exists: RC7's privacy-enabled build shipped with an 11,232-byte gap
+while msg_write() carried a 12,416-byte automatic TrezorFrameBuffer — every
+USB response overwrote static memory, hard-faulting on boot. The linker also
+ASSERTs a 16 KiB floor (tools/firmware/keepkey.ld); this script is the
+observability + frame-margin half of that gate.
+
+Usage:
+  check_sram_budget.py --elf bin/...firmware.keepkey.elf \
+      --su-tar bin/stack-usage.tgz --budgets tools/sram-budgets.json \
+      --variant full
+"""
+
+import argparse
+import json
+import sys
+import tarfile
+
+def read_symbols(elf_path):
+    try:
+        from elftools.elf.elffile import ELFFile
+    except ImportError:
+        sys.exit("ERROR: install pyelftools==0.32 to read ARM ELF symbols")
+    from elftools.common.exceptions import ELFError
+    try:
+        with open(elf_path, "rb") as f:
+            elf = ELFFile(f)
+            symtab = elf.get_section_by_name(".symtab")
+            if symtab is None:
+                sys.exit(f"ERROR: {elf_path} has no .symtab")
+            wanted = {}
+            for sym in symtab.iter_symbols():
+                if sym.name in ("_ebss", "_stack"):
+                    wanted[sym.name] = sym["st_value"]
+            missing = {"_ebss", "_stack"} - set(wanted)
+            if missing:
+                sys.exit(f"ERROR: {elf_path} missing symbols: {sorted(missing)}")
+            return wanted
+    except (OSError, ELFError, ValueError) as error:
+        sys.exit(f"ERROR: cannot read ELF {elf_path}: {error}")
+
+
+def largest_frames(su_tar_path, top_n=15):
+    """Parse GCC -fstack-usage records from a tar of .su files.
+
+    Record format: "<file>:<line>:<col>:<function>\t<bytes>\t<qualifier>"
+    """
+    frames = []
+    try:
+        with tarfile.open(su_tar_path, "r:*") as tar:
+            for member in tar:
+                if not member.name.endswith(".su") or not member.isfile():
+                    continue
+                source = tar.extractfile(member)
+                if source is None:
+                    sys.exit(f"ERROR: cannot read stack records: {member.name}")
+                with source:
+                    try:
+                        data = source.read().decode("utf-8", "strict")
+                    except UnicodeDecodeError:
+                        sys.exit(f"ERROR: non-UTF-8 stack records: {member.name}")
+                for number, line in enumerate(data.splitlines(), 1):
+                    if not line.strip():
+                        continue
+                    parts = line.rsplit("\t", 2)
+                    if len(parts) != 3:
+                        sys.exit(f"ERROR: malformed stack record: {member.name}:{number}")
+                    loc, size, qual = parts
+                    try:
+                        size = int(size)
+                    except ValueError:
+                        sys.exit(f"ERROR: unknown frame size: {member.name}:{number}")
+                    if size < 0 or not loc or qual not in ("static", "dynamic,bounded"):
+                        sys.exit(f"ERROR: unbounded or invalid stack record: "
+                                 f"{member.name}:{number}: {line}")
+                    frames.append((size, loc.split("/")[-1], qual))
+    except (OSError, tarfile.TarError, EOFError) as error:
+        sys.exit(f"ERROR: cannot read stack archive {su_tar_path}: {error}")
+    frames.sort(reverse=True)
+    return frames[:top_n]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--elf", required=True)
+    ap.add_argument("--su-tar", required=True)
+    ap.add_argument("--budgets", required=True)
+    ap.add_argument("--variant", required=True)
+    args = ap.parse_args()
+
+    try:
+        with open(args.budgets) as source:
+            budgets = json.load(source)
+    except (OSError, ValueError) as error:
+        sys.exit(f"ERROR: cannot read budgets {args.budgets}: {error}")
+    if not isinstance(budgets, dict):
+        sys.exit("ERROR: budgets must be a JSON object")
+    variants = budgets.get("variants", {})
+    if not isinstance(variants, dict):
+        sys.exit("ERROR: budget variants must be a JSON object")
+    if args.variant not in variants:
+        sys.exit(f"ERROR: unknown SRAM budget variant: {args.variant}")
+    if not isinstance(variants[args.variant], dict):
+        sys.exit("ERROR: selected variant must be a JSON object")
+    selected = dict(budgets)
+    selected.update(variants[args.variant])
+    for key in ("reserve_min", "frame_margin"):
+        value = selected.get(key)
+        if type(value) is not int or value <= 0:
+            sys.exit(f"ERROR: budget {key} must be a positive integer")
+    reserve_min = selected["reserve_min"]
+    frame_margin = selected["frame_margin"]
+
+    syms = read_symbols(args.elf)
+    gap = syms["_stack"] - syms["_ebss"]
+
+    frames = largest_frames(args.su_tar)
+    if not frames:
+        # An empty .su archive means -fstack-usage generation broke (or the
+        # tar glob went stale). Treating it as "largest frame = 0" would let
+        # the margin check false-pass — fail loudly instead.
+        sys.exit("ERROR: no -fstack-usage records found in "
+                 f"{args.su_tar} — stack-usage generation is broken; "
+                 "refusing to pass the frame-margin gate without data")
+    largest = frames[0][0]
+
+    print(f"SRAM budget report — variant: {args.variant}")
+    print(f"  _ebss  = 0x{syms['_ebss']:08x}")
+    print(f"  _stack = 0x{syms['_stack']:08x}")
+    print(f"  stack/heap reserve (gap) = {gap:,} B "
+          f"(budget: >= {reserve_min:,} B)")
+    print(f"  largest stack frame      = {largest:,} B "
+          f"(gap - largest must be >= {frame_margin:,} B)")
+    print("  top stack frames (-fstack-usage):")
+    for size, loc, qual in frames:
+        print(f"    {size:7,} B  {qual:14s} {loc}")
+
+    failed = False
+    if gap < reserve_min:
+        print(f"::error::SRAM gate: reserve {gap:,} B < budget "
+              f"{reserve_min:,} B for {args.variant}")
+        failed = True
+    if gap - largest < frame_margin:
+        print(f"::error::SRAM gate: reserve minus largest frame "
+              f"({gap:,} - {largest:,} = {gap - largest:,} B) < margin "
+              f"{frame_margin:,} B for {args.variant}")
+        failed = True
+
+    if failed:
+        sys.exit(1)
+    print("SRAM budget gate: PASS")
+
+
+if __name__ == "__main__":
+    main()

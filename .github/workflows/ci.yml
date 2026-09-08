@@ -683,7 +683,18 @@ jobs:
               mkdir -p /root/keepkey-firmware/bin && \
               cp bin/*.bin /root/keepkey-firmware/bin/ && \
               cp bin/*.elf /root/keepkey-firmware/bin/ && \
+              find . -name '*.su' -print0 | tar --null -czf /root/keepkey-firmware/bin/stack-usage.tgz --files-from - && \
               chmod -R a+rw /root/keepkey-firmware/bin"
+
+      - name: Enforce SRAM budget
+        run: |
+          python3 -m pip install --quiet pyelftools==0.32
+          python3 tools/test_sram_budget.py
+          set -o pipefail
+          python3 tools/check_sram_budget.py \
+            --elf bin/firmware.keepkey.elf \
+            --su-tar bin/stack-usage.tgz \
+            --budgets tools/sram-budgets.json --variant full | tee bin/sram-budget.txt
 
       - name: Rename firmware artifacts
         run: |
@@ -752,6 +763,8 @@ jobs:
             bin/*.bin
             bin/*.elf
             bin/arm-build-manifest.json
+            bin/stack-usage.tgz
+            bin/sram-budget.txt
           retention-days: 90
 
   # ═══════════════════════════════════════════════════════════
