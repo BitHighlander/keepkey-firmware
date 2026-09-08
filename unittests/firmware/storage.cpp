@@ -939,3 +939,21 @@ TEST(Storage, Reset) {
 
   ASSERT_TRUE(memcmp(session.storageKey, new_storage_key, 64) == 0);
 }
+
+extern "C" unsigned storage_test_cipher_cleanup(bool migrate, bool encrypt);
+
+TEST(Storage, EncryptionClearsMigrationCipherSecrets) {
+  EXPECT_EQ(15u, storage_test_cipher_cleanup(true, true));
+}
+
+TEST(Storage, DecryptionClearsMigrationCipherSecrets) {
+  EXPECT_EQ(15u, storage_test_cipher_cleanup(true, false));
+}
+
+TEST(Storage, EncryptionClearsAuthdataCipherSecrets) {
+  EXPECT_EQ(15u, storage_test_cipher_cleanup(false, true));
+}
+
+TEST(Storage, DecryptionClearsAuthdataCipherSecrets) {
+  EXPECT_EQ(15u, storage_test_cipher_cleanup(false, false));
+}
