@@ -53,8 +53,12 @@ on:
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/*.md'
+  # Validate the assembled candidate before merging a release/rehearsal PR.
+  # github.sha is the synthetic merge commit for pull_request events; all
+  # checkouts and evidence below use it so a head-only build cannot masquerade
+  # as validation of the merge result. Push/dispatch still use their own SHA.
   pull_request:
-    branches: [master, develop]
+    branches: [master, develop, 'release/**', 'hotfix/**', 'rehearsal/**']
     paths-ignore: *docs_only
   workflow_dispatch:
     inputs:
@@ -105,7 +109,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       # Folded in from the former `check-submodules` job. It is a grep over
       # .gitmodules that ran for 3s but cost a whole runner spin-up, and it
@@ -190,7 +194,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Install gitleaks
@@ -220,7 +224,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           submodules: false
 
       - name: Install cppcheck
@@ -321,7 +325,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Init submodules
         run: |
@@ -608,7 +612,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Init submodules
         run: |
@@ -705,7 +709,7 @@ jobs:
       # the report's KK_FIRMWARE_SHA, so the three cannot disagree.
       - name: Write ARM build manifest
         env:
-          KK_FIRMWARE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          KK_FIRMWARE_SHA: ${{ github.sha }}
         run: |
           python3 - <<'PY'
           import hashlib, json, os, pathlib, subprocess
@@ -789,7 +793,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Init submodules
         run: |
@@ -996,7 +1000,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Download unit test results
         uses: actions/download-artifact@v8
@@ -1048,7 +1052,7 @@ jobs:
       - name: Generate test report PDF
         env:
           FW_VERSION: ${{ steps.version.outputs.fw_version }}
-          KK_FIRMWARE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          KK_FIRMWARE_SHA: ${{ github.sha }}
           KK_PYTHON_SHA: ${{ steps.python.outputs.sha }}
           KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
@@ -1124,7 +1128,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Download emulator image
         uses: actions/download-artifact@v8
