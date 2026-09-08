@@ -47,9 +47,6 @@ void fsm_msgRippleGetAddress(const RippleGetAddress* msg) {
     return;
   }
 
-  strlcpy(resp->address, ripple_addr, sizeof(resp->address));
-  resp->has_address = true;
-
   if (msg->has_show_display && msg->show_display) {
     char node_str[NODE_STRING_LENGTH];
     if (!(bip32_node_to_string(node_str, sizeof(node_str), coin, msg->address_n,
@@ -61,7 +58,7 @@ void fsm_msgRippleGetAddress(const RippleGetAddress* msg) {
       memset(node_str, 0, sizeof(node_str));
     }
 
-    if (!confirm_ethereum_address(node_str, resp->address)) {
+    if (!confirm_ethereum_address(node_str, ripple_addr)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Show address cancelled"));
@@ -70,6 +67,9 @@ void fsm_msgRippleGetAddress(const RippleGetAddress* msg) {
     }
   }
 
+  /* Debug state requests during confirmation reuse the response arena. */
+  strlcpy(resp->address, ripple_addr, sizeof(resp->address));
+  resp->has_address = true;
   memzero(node, sizeof(*node));
   msg_write(MessageType_MessageType_RippleAddress, resp);
   layoutHome();
