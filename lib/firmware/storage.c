@@ -789,7 +789,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
 }
 
 void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
-  if (len < 852) return;
+  if (len < 468 + sizeof(storage->encrypted_sec)) return;
   write_u32_le(ptr, storage->version);
 
   uint32_t flags =
@@ -849,7 +849,7 @@ void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
 }
 
 void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
-  if (len < 852) return;
+  if (len < 468 + sizeof(storage->encrypted_sec)) return;
 
   storage->version = read_u32_le(ptr);
 
@@ -962,6 +962,7 @@ void storage_writeStorageV16Plaintext(char* ptr, size_t len,
 }
 
 void storage_writeStorageV16(char* ptr, size_t len, const Storage* storage) {
+  if (len < 1501 + sizeof(storage->encrypted_sec)) return;
   // V16 shares the same non-secret storage format as V17
 
   storage_writeStorageV16Plaintext(ptr, len, storage);
@@ -1039,6 +1040,7 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
 }
 
 void storage_readStorageV16(Storage* storage, const char* ptr, size_t len) {
+  if (len < 1501 + sizeof(storage->encrypted_sec)) return;
   // V16 shares the same non-secret storage format as V17
   storage_readStorageV16Plaintext(storage, ptr, len);
 
@@ -1051,6 +1053,7 @@ void storage_readStorageV16(Storage* storage, const char* ptr, size_t len) {
 }
 
 void storage_writeStorageV17(char* ptr, size_t len, const Storage* storage) {
+  if (len < 1501 + sizeof(storage->encrypted_sec)) return;
   // V16 shares most of the same non-secret storage format as V17
   storage_writeStorageV16Plaintext(ptr, len, storage);
 
@@ -1076,6 +1079,7 @@ void storage_writeStorageV17(char* ptr, size_t len, const Storage* storage) {
 }
 
 void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
+  if (len < 1501 + sizeof(storage->encrypted_sec)) return;
   // V16 shares most of the same non-secret storage format as V17
   storage_readStorageV16Plaintext(storage, ptr, len);
 
@@ -1126,39 +1130,39 @@ void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
 }
 
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 1024) return;
+  if (len < 44 + 468 + sizeof(dst->storage.encrypted_sec)) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV11(&dst->storage, flash + 44, 852);
+  storage_readStorageV11(&dst->storage, flash + 44, len - 44);
 }
 
 void storage_writeV11(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 1024) return;
+  if (len < 44 + 468 + sizeof(src->storage.encrypted_sec)) return;
   storage_writeMeta(flash, 44, &src->meta);
-  storage_writeStorageV11(flash + 44, 852, &src->storage);
+  storage_writeStorageV11(flash + 44, len - 44, &src->storage);
 }
 
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 1024) return;
+  if (len < 44 + 1501 + sizeof(dst->storage.encrypted_sec)) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV16(&dst->storage, flash + 44, 852);
+  storage_readStorageV16(&dst->storage, flash + 44, len - 44);
 }
 
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 1024) return;
+  if (len < 44 + 1501 + sizeof(src->storage.encrypted_sec)) return;
   storage_writeMeta(flash, 44, &src->meta);
-  storage_writeStorageV16(flash + 44, 852, &src->storage);
+  storage_writeStorageV16(flash + 44, len - 44, &src->storage);
 }
 
 void storage_readV17(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 1024) return;
+  if (len < 44 + 1501 + sizeof(dst->storage.encrypted_sec)) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV17(&dst->storage, flash + 44, 852);
+  storage_readStorageV17(&dst->storage, flash + 44, len - 44);
 }
 
 void storage_writeV17(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 1024) return;
+  if (len < 44 + 1501 + sizeof(src->storage.encrypted_sec)) return;
   storage_writeMeta(flash, 44, &src->meta);
-  storage_writeStorageV17(flash + 44, 852, &src->storage);
+  storage_writeStorageV17(flash + 44, len - 44, &src->storage);
 }
 
 StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
