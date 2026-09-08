@@ -197,6 +197,13 @@ static bool zcash_resolve_account(bool has_account, uint32_t account_field,
                                   uint32_t address_n_count,
                                   uint32_t* account_out) {
   if (has_account) {
+    /* ZIP-32 hardens this index; accepting the high bit aliases account zero.
+     */
+    if (account_field & 0x80000000u) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Zcash account must be below 0x80000000"));
+      return false;
+    }
     *account_out = account_field;
     return true;
   }
@@ -949,8 +956,8 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
     return;
   }
 
-  if (msg->has_show_display && msg->show_display &&
-      !confirm(ButtonRequestType_ButtonRequest_ProtectCall,
+  /* Viewing keys disclose wallet activity; the host cannot waive consent. */
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
                "Export Zcash View Key",
                "Export Orchard viewing key for account %u?\nReveals Zcash "
                "activity.",
