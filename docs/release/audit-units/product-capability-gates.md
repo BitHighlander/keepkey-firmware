@@ -19,3 +19,9 @@ legacy error-policy variants, the emulator PIN-timeout limitation, and the absen
 burned-storage-version case. Full native and host runs, CI variant coverage and
 physical-release limitations must be recorded separately. Local owned-emulator
 power-cycle checks cover lifetime evidence unavailable to separate-container CI.
+
+The report's own regression previously asserted that 7.15 LUT skips were valid.
+It now rejects those skips from 7.15, preserves the older 7.14.3 exception, and
+retains the Bitcoin-only exception. All four validator regressions pass. This
+closes the one failure exposed by the expanded complete host run; no firmware
+behavior changed.
