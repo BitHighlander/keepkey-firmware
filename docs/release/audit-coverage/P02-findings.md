@@ -226,3 +226,18 @@ prove the implementation. Re-enable with appropriate version/product gating
 and validate serialization/review in P06; do not count the skip as acceptance.
 7.14.3 full-source handler/serializer lacks this memo path, so do not simply
 remove the skip across all products. The Bitcoin-only product omits Ripple.
+
+### Ripple memo reproduction on current 7.15
+
+Built kkemu at 041a23d5c, started it with isolated temporary storage and
+KK_FORCE_UDP=1, and invoked the original test_sign_with_thorchain_memo method
+without its unconditional unittest.skip wrapper. The original signed XRPL
+Memos suffix assertion passes (one test, zero skips); no assertion was changed.
+Pinned host checkout: 08e491c60fe36110598a3791b2441644fcf55f76.
+The process is terminated after the test. Reproduce with rehearsals/ripple_memo.py
+and the pinned host dependencies; the harness has a 60-second timeout.
+
+This proves the existing memo serialization case at this head. It does not
+close display/cancellation, maximum-length/UTF-8 policy, client API integration
+or the host suite's stale unconditional skip. A gated host-test change remains
+required; do not claim CI currently executes this case.
