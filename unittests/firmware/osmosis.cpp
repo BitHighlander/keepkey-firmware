@@ -5,6 +5,7 @@ extern "C" {
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/osmosis.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/secp256k1.h"
 }
 
@@ -265,21 +266,41 @@ TEST(Osmosis, HostSenderMustMatchSigningNode) {
   const char *self = "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770";
   const char *other = "osmo1rs7fckgznkaxs4sq02pexwjgar43p5wnkx9s92";
 
-  EXPECT_FALSE(osmosis_signTxUpdateMsgLPAdd(1, other, "1", "1", "uosmo", "1",
-                                            "uion"));
-  EXPECT_FALSE(osmosis_signTxUpdateMsgLPRemove(1, other, "1", "1", "uosmo",
-                                               "1", "uion"));
-  EXPECT_FALSE(osmosis_signTxUpdateMsgSwap(1, "uion", other, "1", "uosmo",
-                                           "1"));
+  EXPECT_FALSE(
+      osmosis_signTxUpdateMsgLPAdd(1, other, "1", "1", "uosmo", "1", "uion"));
+  EXPECT_FALSE(osmosis_signTxUpdateMsgLPRemove(1, other, "1", "1", "uosmo", "1",
+                                               "uion"));
+  EXPECT_FALSE(
+      osmosis_signTxUpdateMsgSwap(1, "uion", other, "1", "uosmo", "1"));
   EXPECT_FALSE(osmosis_signTxUpdateMsgIBCTransfer(
       "1", other, self, "channel-0", "transfer", "1", "1", "uosmo"));
+  // IBC identifiers and revision components become part of the sign-doc.
+  // Reject values that would require JSON escaping or are non-canonical.
+  EXPECT_FALSE(osmosis_signTxUpdateMsgIBCTransfer(
+      "1", self, self, "channel-\"0", "transfer", "1", "1", "uosmo"));
+  EXPECT_FALSE(osmosis_signTxUpdateMsgIBCTransfer(
+      "1", self, self, "channel-0", "transfer", "01", "1", "uosmo"));
 
-  EXPECT_TRUE(osmosis_signTxUpdateMsgLPAdd(1, self, "1", "1", "uosmo", "1",
-                                           "uion"));
-  EXPECT_TRUE(osmosis_signTxUpdateMsgLPRemove(1, self, "1", "1", "uosmo", "1",
-                                              "uion"));
+  EXPECT_TRUE(
+      osmosis_signTxUpdateMsgLPAdd(1, self, "1", "1", "uosmo", "1", "uion"));
+  EXPECT_TRUE(
+      osmosis_signTxUpdateMsgLPRemove(1, self, "1", "1", "uosmo", "1", "uion"));
   EXPECT_TRUE(osmosis_signTxUpdateMsgSwap(1, "uion", self, "1", "uosmo", "1"));
   EXPECT_TRUE(osmosis_signTxUpdateMsgIBCTransfer(
       "1", self, self, "channel-0", "transfer", "1", "1", "uosmo"));
   osmosis_signAbort();
+}
+
+TEST(Osmosis, SessionClearAbortsSigning) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  OsmosisSignTx msg = {};
+  msg.msg_count = 1;
+
+  for (bool clear_pin : {false, true}) {
+    ASSERT_TRUE(osmosis_signTxInit(&node, &msg));
+    ASSERT_TRUE(osmosis_signingIsInited());
+    session_clear(clear_pin);
+    EXPECT_FALSE(osmosis_signingIsInited());
+  }
 }

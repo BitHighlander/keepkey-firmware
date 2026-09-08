@@ -47,6 +47,7 @@ void fsm_msgThorchainGetAddress(const ThorchainGetAddress* msg) {
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Can't create Bip32 Path String"));
       layoutHome();
+      return;
     }
 
     bool mismatch =
@@ -326,11 +327,22 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     memset(node_str, 0, sizeof(node_str));
   }
 
+  char fee_str[32];
+  if (!bn_format_uint64(sign_tx->fee_amount, NULL, " RUNE", 8, 0, false,
+                        fee_str, sizeof(fee_str))) {
+    thorchain_signAbort();
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to format transaction fee"));
+    layoutHome();
+    return;
+  }
+
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this RUNE transaction on %s? "
-               "Additional network fees apply. "
-               "Account %" PRIu64 ", sequence %" PRIu64 ".",
-               sign_tx->chain_id, sign_tx->account_number, sign_tx->sequence)) {
+               "Sign this RUNE transaction on %s? It includes a fee of %s "
+               "and %" PRIu32 " gas. Account %" PRIu64 ", sequence %" PRIu64
+               ".",
+               sign_tx->chain_id, fee_str, sign_tx->gas,
+               sign_tx->account_number, sign_tx->sequence)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

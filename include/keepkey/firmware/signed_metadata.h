@@ -225,10 +225,6 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
 /* True when the currently stored metadata was verified by a runtime-loaded
  * signer (=> its confirm flow is warning-first, never "Insight Verified"). */
 bool signed_metadata_from_loaded_signer(void);
-/* True when key_id currently resolves to a runtime-loaded signer. This lets
- * non-EVM callers preserve their normal Advanced-mode review after showing an
- * additive schema decode. */
-bool signed_metadata_signer_is_runtime(uint8_t key_id);
 MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                size_t payload_len,
                                                uint8_t key_id);
@@ -284,6 +280,10 @@ bool signed_metadata_enforce_decision(bool relied, bool available,
  * METADATA_VERSION_SCHEMA. */
 bool signed_metadata_enforce_schema_decision(bool relied, bool available,
                                              bool decoded, int classification);
+
+/* Formats the complete attested amount, or refuses instead of truncating. */
+bool signed_metadata_format_token_amount(const MetadataArg* arg, char* body,
+                                         size_t body_len);
 
 const SignedMetadata* signed_metadata_get(void);
 

@@ -442,8 +442,7 @@ void next_character(void) {
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
-  static char prev_info[32];
-  prev_info[0] = '\0';
+  char prev_info[32] = {0};
   if (word_pos > 0 && last_completed_word[0]) {
     snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
              last_completed_word);
@@ -451,6 +450,7 @@ void next_character(void) {
 
   /* Show cipher and partial word */
   layout_cipher(formatted_word_scratch, cipher, prev_info);
+  memzero(prev_info, sizeof(prev_info));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
@@ -475,6 +475,15 @@ void recovery_character(const char* character) {
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     "Too many characters attempted during recovery");
+    layoutHome();
+    return;
+  }
+
+  if (!character || character[0] == '\0' || character[1] != '\0' ||
+      (character[0] == ' ' && decoded_word[0] == '\0')) {
+    recovery_cipher_abort();
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Expected one character or a completed word");
     layoutHome();
     return;
   }
@@ -646,6 +655,25 @@ void recovery_cipher_finalize(void) {
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     "Not in Recovery mode");
+    layoutHome();
+    return;
+  }
+
+  // words_entered also names the next slot after a space; an empty final
+  // slot must never count as a recovered word, including imported mnemonics.
+  uint32_t completed_words = 0;
+  bool in_word = false;
+  for (const char* p = mnemonic; *p; ++p) {
+    if (*p == ' ') {
+      in_word = false;
+    } else if (!in_word) {
+      in_word = true;
+      ++completed_words;
+    }
+  }
+  if (completed_words != words_entered) {
+    recovery_cipher_abort();
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Empty recovery word");
     layoutHome();
     return;
   }

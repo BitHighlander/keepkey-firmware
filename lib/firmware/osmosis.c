@@ -29,7 +29,6 @@
 #include "trezor/crypto/segwit_addr.h"
 
 #include <stdbool.h>
-#include <time.h>
 
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
@@ -210,28 +209,12 @@ bool osmosis_signTxUpdateMsgDelegate(const char* amount,
                                      const char* delegator_address,
                                      const char* validator_address,
                                      const char* denom) {
-  const char mainnetp[] = "osmo";
-  const char testnetp[] = "tosmo";
-  const char* pfix;
-
   char buffer[128] = {0};
   size_t decoded_len;
   char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
   uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
-    return false;
-  }
-
-  // ^14 + 39 + 1 = ^54
-  char from_address[54] = {0};
-
-  pfix = mainnetp;
-  if (testnet) {
-    pfix = testnetp;
-  }
-
-  if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
   }
 
@@ -281,27 +264,12 @@ bool osmosis_signTxUpdateMsgUndelegate(const char* amount,
                                        const char* delegator_address,
                                        const char* validator_address,
                                        const char* denom) {
-  const char mainnetp[] = "osmo";
-  const char testnetp[] = "tosmo";
-  const char* pfix;
-
   char buffer[128] = {0};
   size_t decoded_len;
   char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
   uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
-    return false;
-  }
-
-  // ^14 + 39 + 1 = ^54
-  char from_address[54] = {0};
-
-  pfix = mainnetp;
-  if (testnet) {
-    pfix = testnetp;
-  }
-  if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
   }
 
@@ -352,26 +320,12 @@ bool osmosis_signTxUpdateMsgRedelegate(const char* amount,
                                        const char* validator_src_address,
                                        const char* validator_dst_address,
                                        const char* denom) {
-  const char mainnetp[] = "osmo";
-  const char testnetp[] = "tosmo";
-  const char* pfix;
-
   char buffer[128] = {0};
   size_t decoded_len;
   char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
   uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
-    return false;
-  }
-
-  // ^14 + 39 + 1 = ^54
-  char from_address[54] = {0};
-  pfix = mainnetp;
-  if (testnet) {
-    pfix = testnetp;
-  }
-  if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
   }
 
@@ -552,27 +506,12 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
 
 bool osmosis_signTxUpdateMsgRewards(const char* delegator_address,
                                     const char* validator_address) {
-  const char mainnetp[] = "osmo";
-  const char testnetp[] = "tosmo";
-  const char* pfix;
-
   char buffer[128] = {0};
   size_t decoded_len;
   char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
   uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
   if (!bech32_decode(hrp, decoded, &decoded_len, delegator_address)) {
-    return false;
-  }
-
-  pfix = mainnetp;
-  if (testnet) {
-    pfix = testnetp;
-  }
-
-  // ^14 + 39 + 1 = ^54
-  char from_address[54] = {0};
-  if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
   }
 
@@ -629,6 +568,13 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
   char hrp[BECH32_MAX_HRP_LEN + 1] = {0};
   uint8_t decoded[BECH32_DECODED_MAX] = {0};
 
+  if (!osmosis_isValidDenom(source_channel) ||
+      !osmosis_isValidDenom(source_port) ||
+      !osmosis_isCanonicalUint64(revision_height) ||
+      !osmosis_isCanonicalUint64(revision_number)) {
+    return false;
+  }
+
   if (!bech32_decode(hrp, decoded, &decoded_len, receiver)) {
     return false;
   }
@@ -674,23 +620,25 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
   // ^53 + 1 = ^54
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"", sender);
 
-  // 19 + ^32 + 1 = ^52
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 ",\"source_channel\":\"%s\"", source_channel);
+                                 ",\"source_channel\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, source_channel, strlen(source_channel));
 
-  // 16 + ^32 + 2 = ^40
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 ",\"source_port\":\"%s\",", source_port);
+                                 "\",\"source_port\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, source_port, strlen(source_port));
 
-  // 37 + ^16 = ^53
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 "\"timeout_height\":{\"revision_height\":\"%s",
-                                 revision_height);
-
-  // 21 + ^9 + 3 = ^33
   success &=
       tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                          "\",\"revision_number\":\"%s\"},", revision_number);
+                          "\",\"timeout_height\":{\"revision_height\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, revision_height,
+                                 strlen(revision_height));
+
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
+                                 "\",\"revision_number\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, revision_number,
+                                 strlen(revision_number));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"},");
 
   // 20 + ^20 + 11 + ^9 + 3 = ^63
   success &= tendermint_snprintf(
@@ -711,8 +659,6 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
                                  const char* token_in_denom,
                                  const char* token_out_min_amount) {
   char buffer[96 + 1] = {0};
-
-  // TODO: add testnet support
 
   // sender is host-supplied, signed, and never shown on-screen: bind it to
   // the address derived from the signing node (as MsgSend does) and refuse

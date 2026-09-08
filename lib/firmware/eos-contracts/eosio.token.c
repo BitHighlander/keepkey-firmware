@@ -33,6 +33,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
 #define CHECK_COMMON(ACTION)                                                   \
   do {                                                                         \
@@ -50,9 +51,10 @@ bool eos_compileActionTransfer(const EosActionCommon* common,
   CHECK_PARAM_RET(action->has_receiver, "Required field missing", false);
   CHECK_PARAM_RET(action->has_memo, "Required field missing", false);
 
-  size_t memo_len = strlen(action->memo);
+  _Static_assert(sizeof(action->memo) == 256, "EOS memo field size changed");
+  size_t memo_len = strnlen(action->memo, sizeof(action->memo));
 
-  if (256 < memo_len) {
+  if (memo_len == sizeof(action->memo)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError, "Memo too long");
     eos_signingAbort();
     layoutHome();

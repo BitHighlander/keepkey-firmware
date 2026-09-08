@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tendermint.h"
@@ -154,6 +155,18 @@ TEST(Thorchain, ThorchainSignTxInvalidDenom) {
   thorchain_signAbort();
 }
 
+TEST(Thorchain, SessionClearAbortsSigning) {
+  HDNode node = kSignNode;
+  ThorchainSignTx msg = kSignTx;
+
+  for (bool clear_pin : {false, true}) {
+    ASSERT_TRUE(thorchain_signTxInit(&node, &msg));
+    ASSERT_TRUE(thorchain_signingIsInited());
+    session_clear(clear_pin);
+    EXPECT_FALSE(thorchain_signingIsInited());
+  }
+}
+
 /* ===================================================================== *
  *  thorchain_parseConfirmMemo — swap-memo clear-signing.
  *  Screen counts are asserted exactly: kkconfirm_preload(N, 0) accepts N
@@ -216,6 +229,17 @@ TEST(Thorchain, MemoSwapNoFeeIsThreeScreens) {
 TEST(Thorchain, MemoSwapNoChainAssetPair) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   EXPECT_FALSE(parseMemo("=:e:0xdest:0/1/0:kk:75"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// A lowercase unknown type must not be consumed by the one-character `s`
+// shorthand. The caller will page this raw memo instead of labelling a
+// secured-asset withdrawal as a swap.
+TEST(Thorchain, MemoUnknownLowercasePrefixIsUnparsed) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED,
+            thorchain_parseConfirmMemo("secure-:ETH.ETH:0xdest",
+                                       strlen("secure-:ETH.ETH:0xdest")));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 

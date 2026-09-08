@@ -47,6 +47,7 @@ void fsm_msgMayachainGetAddress(const MayachainGetAddress* msg) {
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Can't create Bip32 Path String"));
       layoutHome();
+      return;
     }
 
     bool mismatch =
@@ -248,19 +249,8 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
       /* strnlen, not sizeof: the capacity of a fixed array is not the length
          of the memo in it. Mirrors the THORChain path. */
       size_t memo_len = strnlen(msg->deposit.memo, sizeof(msg->deposit.memo));
-      /* Page the COMPLETE raw memo as the sole, authoritative disclosure.
-         No structured pre-parse: mayachain_parseConfirmMemo() returns a bare
-         bool that conflates "not recognizable" with "the user refused a
-         screen", so a refusal at the affiliate-fee screen would fall through
-         to a second ask and then to signing.
-         thorchain_confirm_full_memo() is confirm_bytes() over an explicit
-         length (lib/firmware/thorchain.c), so an embedded NUL cannot hide the
-         memo tail and every non-printable byte is escaped -- and that now
-         holds for EVERY memo, not only unparsed ones. It also discloses the
-         fields the structured parser never displays (aggregator, final token,
-         min-out). Layering the labeled structured screens back on top of this
-         page needs mayachain_parseConfirmMemo() to grow the tri-state result
-         THORChain already has. */
+      /* Page the complete raw memo as the authoritative disclosure for every
+         signed byte, including future router extensions. */
       if (!thorchain_confirm_full_memo(_("Memo"), msg->deposit.memo,
                                        memo_len)) {
         mayachain_signAbort();
@@ -308,12 +298,21 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     memset(node_str, 0, sizeof(node_str));
   }
 
+  char fee_str[32];
+  if (!bn_format_uint64(sign_tx->fee_amount, NULL, " CACAO", 10, 0, false,
+                        fee_str, sizeof(fee_str))) {
+    mayachain_signAbort();
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to format transaction fee"));
+    layoutHome();
+    return;
+  }
+
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this %s transaction on %s? "
-               "Additional network fees apply. "
-               "Account %" PRIu64 ", sequence %" PRIu64 ".",
-               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id,
-               sign_tx->account_number, sign_tx->sequence)) {
+               "Sign this %s transaction on %s? It includes a fee of %s and "
+               "%" PRIu32 " gas. Account %" PRIu64 ", sequence %" PRIu64 ".",
+               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id, fee_str,
+               sign_tx->gas, sign_tx->account_number, sign_tx->sequence)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

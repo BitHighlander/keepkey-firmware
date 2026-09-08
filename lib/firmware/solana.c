@@ -77,18 +77,6 @@ const uint8_t SOL_MEMO_PROGRAM[SOL_PUBKEY_SIZE] = {
     0x71, 0x60, 0xda, 0x38, 0x7c, 0x7c, 0x35, 0xb5, 0xdd, 0xbc, 0x92,
     0xbb, 0x81, 0xe4, 0x1f, 0xa8, 0x40, 0x41, 0x05, 0x44, 0x8d};
 
-/* Circle's mainnet SPL USDC mint:
- * EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v. */
-static const SolanaKnownToken SOL_KNOWN_TOKENS[] = {{
-    {0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
-     0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
-     0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61},
-    "USDC",
-    6,
-}};
-
-static const char SOL_PDA_MARKER[] = "ProgramDerivedAddress";
-
 /* ------------------------------------------------------------------ */
 /*  Compact-u16 decoder (Solana transaction format)                    */
 /* ------------------------------------------------------------------ */
@@ -1007,10 +995,6 @@ bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
                                  : lut_account_count == 0;
 }
 
-bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {
-  return solana_inspectTx(raw, raw_len, tx) == SOL_TX_REVIEW_VERIFIED;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Formatting                                                         */
 /* ------------------------------------------------------------------ */
@@ -1116,77 +1100,6 @@ void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
    * ("1.000000000" -> "1") hides the scale the signed base-unit count was
    * divided by, which is the one thing this screen exists to disclose. */
   snprintf(buf, len, "%llu.%s %s", (unsigned long long)whole, frac_str, symbol);
-}
-
-const SolanaKnownToken* solana_findKnownToken(
-    const uint8_t mint[SOL_PUBKEY_SIZE]) {
-  for (size_t i = 0; i < sizeof(SOL_KNOWN_TOKENS) / sizeof(SOL_KNOWN_TOKENS[0]);
-       i++) {
-    if (memcmp(SOL_KNOWN_TOKENS[i].mint, mint, SOL_PUBKEY_SIZE) == 0) {
-      return &SOL_KNOWN_TOKENS[i];
-    }
-  }
-  return NULL;
-}
-
-bool solana_deriveAssociatedTokenAddress(
-    const uint8_t owner[SOL_PUBKEY_SIZE],
-    const uint8_t token_program[SOL_PUBKEY_SIZE],
-    const uint8_t mint[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]) {
-  /* Solana find_program_address searches bump seeds from 255 down. A valid PDA
-   * is SHA256(seeds..., bump, program_id, "ProgramDerivedAddress") that does
-   * NOT decompress to an Ed25519 curve point. */
-  for (int bump = 255; bump >= 0; bump--) {
-    SHA256_CTX ctx = {0};
-    uint8_t candidate[SHA256_DIGEST_LENGTH];
-    uint8_t bump_seed = (uint8_t)bump;
-    sha256_Init(&ctx);
-    sha256_Update(&ctx, owner, SOL_PUBKEY_SIZE);
-    sha256_Update(&ctx, token_program, SOL_PUBKEY_SIZE);
-    sha256_Update(&ctx, mint, SOL_PUBKEY_SIZE);
-    sha256_Update(&ctx, &bump_seed, 1);
-    sha256_Update(&ctx, SOL_ATA_PROGRAM, SOL_PUBKEY_SIZE);
-    sha256_Update(&ctx, (const uint8_t*)SOL_PDA_MARKER,
-                  sizeof(SOL_PDA_MARKER) - 1);
-    sha256_Final(&ctx, candidate);
-
-    ge25519 point;
-    if (ge25519_unpack_vartime(&point, candidate) == 0) {
-      memcpy(out, candidate, SOL_PUBKEY_SIZE);
-      return true;
-    }
-  }
-  return false;
-}
-
-bool solana_findTokenRecipientOwner(
-    const SolanaSignTx* msg, const uint8_t token_program[SOL_PUBKEY_SIZE],
-    const uint8_t mint[SOL_PUBKEY_SIZE],
-    const uint8_t destination[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]) {
-  if (!msg) return false;
-  for (size_t i = 0; i < msg->token_recipient_owner_count; i++) {
-    if (msg->token_recipient_owner[i].size != SOL_PUBKEY_SIZE) continue;
-    uint8_t derived[SOL_PUBKEY_SIZE];
-    if (solana_deriveAssociatedTokenAddress(msg->token_recipient_owner[i].bytes,
-                                            token_program, mint, derived) &&
-        memcmp(derived, destination, SOL_PUBKEY_SIZE) == 0) {
-      memcpy(out, msg->token_recipient_owner[i].bytes, SOL_PUBKEY_SIZE);
-      return true;
-    }
-  }
-  return false;
-}
-
-const SolanaTokenInfo* solana_findTokenInfo(
-    const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE]) {
-  for (size_t i = 0; i < msg->token_info_count; i++) {
-    if (msg->token_info[i].has_mint &&
-        msg->token_info[i].mint.size == SOL_PUBKEY_SIZE &&
-        memcmp(msg->token_info[i].mint.bytes, mint, SOL_PUBKEY_SIZE) == 0) {
-      return &msg->token_info[i];
-    }
-  }
-  return NULL;
 }
 
 bool solana_token_info_trusted(const SolanaTokenInfo* ti) {

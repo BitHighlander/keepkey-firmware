@@ -5,6 +5,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include <unistd.h>
 
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
@@ -105,4 +106,106 @@ TEST(USBRX, FinalChunkNeverReadsPastTheFrame) {
   EXPECT_EQ(msg_write_chunk_len(9 + 12292, 12286), 15u);
   EXPECT_EQ(msg_write_chunk_len(10, 10), 0u);
   EXPECT_EQ(msg_write_chunk_len(10, 11), 0u);
+}
+
+namespace {
+
+int dispatch_count;
+
+void count_dispatch(void *) { ++dispatch_count; }
+
+void install_test_map(MessageMapType type) {
+  static MessagesMap_t map[MessageType_MessageType_Initialize + 1];
+  memset(map, 0, sizeof(map));
+  map[MessageType_MessageType_Initialize] = {
+      Initialize_fields,
+      count_dispatch,
+      PARSABLE,
+      type,
+      IN_MSG,
+      MessageType_MessageType_Initialize,
+  };
+  msg_map_init(map, sizeof(map) / sizeof(map[0]));
+}
+
+void initialize_packet(uint8_t packet[64]) {
+  memset(packet, 0, 64);
+  packet[0] = '?';
+  packet[1] = '#';
+  packet[2] = '#';
+  const uint16_t id = __builtin_bswap16(MessageType_MessageType_Initialize);
+  memcpy(packet + 3, &id, sizeof(id));
+}
+
+}  // namespace
+
+TEST(USBRX, MainPacketsStayTinyWhileU2fOwnsUserPresence) {
+  fsm_init();
+  setup();
+  install_test_map(NORMAL_MSG);
+
+  uint8_t packet[64];
+  initialize_packet(packet);
+  dispatch_count = 0;
+
+  usbTiny(0);
+  handle_usb_rx(packet, sizeof(packet));
+  ASSERT_EQ(dispatch_count, 1);
+
+  usbTiny(1);
+  handle_usb_rx(packet, sizeof(packet));
+  EXPECT_EQ(dispatch_count, 1);
+
+  // Tiny messages are read during an active poll, not queued for a later poll.
+  // This valid Initialize was accepted by the tiny decoder without dispatch.
+  EXPECT_EQ(failure_count, 0);
+  usbTiny(0);
+  fsm_init();
+}
+
+#if DEBUG_LINK
+TEST(USBRX, DebugPacketsStayTinyWhileU2fOwnsUserPresence) {
+  fsm_init();
+  setup();
+  install_test_map(DEBUG_MSG);
+
+  uint8_t packet[64];
+  initialize_packet(packet);
+  dispatch_count = 0;
+
+  usbTiny(0);
+  handle_debug_usb_rx(packet, sizeof(packet));
+  ASSERT_EQ(dispatch_count, 1);
+
+  usbTiny(1);
+  handle_debug_usb_rx(packet, sizeof(packet));
+  EXPECT_EQ(dispatch_count, 1);
+
+  // Tiny messages are read during an active poll, not queued for a later poll.
+  // This valid Initialize was accepted by the tiny decoder without dispatch.
+  EXPECT_EQ(failure_count, 0);
+  usbTiny(0);
+  fsm_init();
+}
+#endif
+
+extern bool kkconfirm_preload(int nYes, int nNo);
+
+TEST(USBRX, EmulatorPollConsumesTinyPacketsWhileU2fOwnsInterface) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  usbTiny(1);
+  auto poll = []() {
+    uint8_t tiny[MSG_TINY_BFR_SZ];
+    MessageType id = static_cast<MessageType>(MSG_TINY_TYPE_ERROR);
+    for (unsigned attempt = 0; attempt < 100; ++attempt) {
+      id = check_for_tiny_msg(tiny);
+      if (id != MSG_TINY_TYPE_ERROR) break;
+      usleep(1000);
+    }
+    return id;
+  };
+  EXPECT_EQ(poll(), MessageType_MessageType_ButtonAck);
+  EXPECT_EQ(poll(), MessageType_MessageType_DebugLinkDecision);
+  usbTiny(0);
+  fsm_init();
 }

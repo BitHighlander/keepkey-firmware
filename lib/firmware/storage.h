@@ -33,6 +33,16 @@
 #define V16_ENCSEC_SIZE 512  // for reading old encrypted sec size
 #define V17_ENCSEC_SIZE 1024
 
+/* Exact byte extents of the legacy serialized Storage payloads. Keep these
+ * next to the ciphertext sizes so every reader and its wrapper enforce the
+ * same contract. */
+#define STORAGE_V1_SERIALIZED_LEN 481
+#define STORAGE_V2_SERIALIZED_LEN (484 + 75)
+#define STORAGE_V11_SERIALIZED_LEN (468 + V17_ENCSEC_SIZE)
+#define STORAGE_V16_PLAINTEXT_LEN 469
+#define STORAGE_V16_SERIALIZED_LEN (1501 + V16_ENCSEC_SIZE)
+#define STORAGE_V17_SERIALIZED_LEN (1501 + V17_ENCSEC_SIZE)
+
 typedef struct _authBlockType {
   authType authData[AUTHDATA_SIZE];                          // 450
   uint8_t reserved[512 - sizeof(authType) * AUTHDATA_SIZE];  // 62
@@ -240,15 +250,9 @@ void storage_readV11(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV16(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV17(ConfigFlash* dst, const char* flash, size_t len);
 void storage_readV20(ConfigFlash* dst, const char* flash, size_t len);
-void storage_readV19(ConfigFlash* dst, const char* flash, size_t len);
-void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
-void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
-void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV20(char* flash, size_t len, const ConfigFlash* src);
-void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);
-void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len);
 void storage_readHDNode(HDNodeType* node, const char* ptr, size_t len);
 void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
                            size_t len);
@@ -257,9 +261,7 @@ void storage_readStorageV20(Storage* storage, const char* ptr, size_t len);
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len);
 
 void storage_writeMeta(char* ptr, size_t len, const Metadata* meta);
-void storage_writePolicyV1(char* ptr, size_t len, const PolicyType* policy);
 void storage_writeHDNode(char* ptr, size_t len, const HDNodeType* node);
-void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage);
 void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage);
 void storage_writeCacheV1(char* ptr, size_t len, const Cache* cache);
 
@@ -267,9 +269,5 @@ bool storage_setPolicy_impl(PolicyType ps[POLICY_COUNT],
                             const char* policy_name, bool enabled);
 bool storage_isPolicyEnabled_impl(const PolicyType ps[POLICY_COUNT],
                                   const char* policy_name);
-
-bool storageHasWipeCode(void);
-bool storageChangeWipeCode(uint32_t pin, const uint8_t* ext_salt,
-                           uint32_t wipe_code);
 
 #endif

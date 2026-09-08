@@ -21,6 +21,7 @@
 #define SIGNING_H
 
 #include "trezor/crypto/bip32.h"
+#include "trezor/crypto/hasher.h"
 #include "keepkey/transport/interface.h"
 
 #include <stddef.h>
@@ -36,6 +37,12 @@ bool isCrossAccountSegwitChangeForbidden(const uint32_t* lhs_address_n,
 /// Encode the protobuf enum in the fixed four-byte little-endian form used by
 /// the Bitcoin transaction-consistency checksum on every target ABI.
 void signing_encode_script_type(InputScriptType script_type, uint8_t out[4]);
+
+bool signing_confirm_transaction_fields(uint32_t tx_version,
+                                        uint32_t tx_lock_time,
+                                        uint32_t tx_expiry, bool has_expiry);
+bool signing_confirm_input_sequence(uint32_t index, uint32_t sequence);
+void signing_hash_input_check(Hasher* hasher, const TxInputType* txinput);
 
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);

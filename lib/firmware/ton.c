@@ -221,16 +221,6 @@ bool ton_get_address(const ed25519_public_key public_key, bool bounceable,
 }
 
 /**
- * Format TON amount (nanoTON) for display
- * 1 TON = 1,000,000,000 nanoTON
- */
-void ton_formatAmount(char* buf, size_t len, uint64_t amount) {
-  bignum256 val;
-  bn_read_uint64(amount, &val);
-  bn_format(&val, NULL, " TON", TON_DECIMALS, 0, false, buf, len);
-}
-
-/**
  * Hex of sha256(raw_tx): a content-bound identifier for the blind-sign screen,
  * which the host can show alongside for out-of-band comparison.
  */

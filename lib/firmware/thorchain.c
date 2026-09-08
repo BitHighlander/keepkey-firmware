@@ -30,6 +30,7 @@
 #include "trezor/crypto/segwit_addr.h"
 
 #include <stdbool.h>
+#include <strings.h>
 #include <string.h>
 #include <time.h>
 
@@ -353,8 +354,8 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
   asset++;
 
   // Check for swap
-  if (strncmp(fields[0], "SWAP", 4) == 0 || *fields[0] == 's' ||
-      *fields[0] == '=') {
+  if (strcasecmp(fields[0], "SWAP") == 0 || strcasecmp(fields[0], "S") == 0 ||
+      strcmp(fields[0], "=") == 0) {
     /* Aggregator outbound memo: field 8 is MinAmountOut|OUTBOUND_MEMO, and
      * everything after '|' is forwarded to the outbound contract. That suffix
      * can itself contain ':' which our ':'-split would scatter (or overflow
@@ -443,8 +444,8 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for add liquidity
-  else if (strncmp(fields[0], "ADD", 3) == 0 || *fields[0] == 'a' ||
-           *fields[0] == '+') {
+  else if (strcasecmp(fields[0], "ADD") == 0 ||
+           strcasecmp(fields[0], "A") == 0 || strcmp(fields[0], "+") == 0) {
     // ADD:POOL:PAIREDADDR:AFFILIATE:FEE — paired address, affiliate and fee are
     // all optional but router-executed, so none may be hidden.
     const char* pool = (nfields > 2 && fields[2][0] != '\0') ? fields[2] : NULL;
@@ -483,8 +484,8 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
   }
 
   // Check for withdraw liquidity
-  else if (strncmp(fields[0], "WITHDRAW", 8) == 0 ||
-           strncmp(fields[0], "wd", 2) == 0 || *fields[0] == '-') {
+  else if (strcasecmp(fields[0], "WITHDRAW") == 0 ||
+           strcasecmp(fields[0], "WD") == 0 || strcmp(fields[0], "-") == 0) {
     if (nfields < 3 || fields[2][0] == '\0') {
       return THORCHAIN_MEMO_UNPARSED;  // malformed memo
     }

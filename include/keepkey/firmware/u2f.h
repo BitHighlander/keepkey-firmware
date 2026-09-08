@@ -74,4 +74,10 @@ void send_u2fhid_msg(const uint8_t cmd, const uint8_t* data,
                      const uint32_t len);
 void send_u2fhid_error(uint32_t fcid, uint8_t err);
 
+#ifdef EMULATOR
+/* Invoked only by emulator tests from the live CTAP user-presence point. */
+typedef void (*u2f_user_presence_hook_t)(void);
+void u2f_set_user_presence_hook(u2f_user_presence_hook_t hook);
+#endif
+
 #endif

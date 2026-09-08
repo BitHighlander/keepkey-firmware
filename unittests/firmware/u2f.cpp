@@ -1,4 +1,6 @@
 extern "C" {
+#include "keepkey/board/usb.h"
+#include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/u2f.h"
 #include "trezor/crypto/hmac.h"
 #include "u2f.h"
@@ -8,6 +10,7 @@ extern "C" {
 #include "gtest/gtest.h"
 
 #include <string>
+#include <vector>
 
 TEST(U2F, WordsFromData) {
   const uint8_t buff1[32] = "123456789012345678901";
@@ -64,4 +67,66 @@ TEST(U2F, AuthenticatorResetGenerationInvalidatesNewAndLegacyHandles) {
                                                     generation_before, true));
   EXPECT_FALSE(u2f_key_handle_authenticator_is_valid(
       private_key, app_id, handle, generation_after, false));
+}
+
+namespace {
+
+constexpr uint32_t kActiveCid = 0x11223344;
+std::vector<U2FHID_FRAME> u2f_frames;
+
+void capture_u2f_frame(const U2FHID_FRAME* frame) {
+  u2f_frames.push_back(*frame);
+}
+
+void inject_competing_frames_during_user_presence(void) {
+  U2FHID_FRAME init{};
+  init.cid = CID_BROADCAST;
+  init.init.cmd = U2FHID_INIT;
+  init.init.bcntl = INIT_NONCE_SIZE;
+  u2fhid_read(1, &init);
+
+  U2FHID_FRAME foreign{};
+  foreign.cid = kActiveCid;
+  foreign.init.cmd = U2FHID_PING;
+  u2fhid_read(1, &foreign);
+}
+
+bool saw_u2f_error(uint32_t cid, uint8_t error) {
+  for (const U2FHID_FRAME& frame : u2f_frames) {
+    if (frame.cid == cid && frame.init.cmd == U2FHID_ERROR &&
+        frame.init.bcntl == 1 && frame.init.data[0] == error)
+      return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+TEST(U2F, UserPresenceRejectsInitAndForeignCommandsWithoutChangingChannel) {
+  ctap2_init();
+  u2f_frames.clear();
+  usb_set_u2f_tx_callback(capture_u2f_frame);
+  u2f_set_user_presence_hook(inject_competing_frames_during_user_presence);
+
+  U2FHID_FRAME request{};
+  request.cid = kActiveCid;
+  request.init.cmd = U2FHID_CBOR;
+  request.init.bcntl = 1;
+  request.init.data[0] = CTAP2_CMD_RESET;
+  u2fhid_read(0, &request);
+
+  u2f_set_user_presence_hook(nullptr);
+  usb_set_u2f_tx_callback(nullptr);
+  usbTiny(0);
+
+  EXPECT_TRUE(saw_u2f_error(CID_BROADCAST, ERR_CHANNEL_BUSY));
+  EXPECT_TRUE(saw_u2f_error(kActiveCid, ERR_CHANNEL_BUSY));
+
+  bool sent_response_on_active_channel = false;
+  for (const U2FHID_FRAME& frame : u2f_frames) {
+    sent_response_on_active_channel =
+        sent_response_on_active_channel ||
+        (frame.cid == kActiveCid && frame.init.cmd == U2FHID_CBOR);
+  }
+  EXPECT_TRUE(sent_response_on_active_channel);
 }

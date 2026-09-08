@@ -38,6 +38,7 @@ void fsm_msgCosmosGetAddress(const CosmosGetAddress* msg) {
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Can't create Bip32 Path String"));
       layoutHome();
+      return;
     }
 
     bool mismatch =

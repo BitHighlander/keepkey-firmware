@@ -21,6 +21,8 @@
 #define APP_LAYOUT_H
 
 #include "keepkey/board/canvas.h"
+#include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/draw.h"
 
@@ -99,13 +101,12 @@ typedef struct {
 
 void layout_screen_test(void);
 void layout_screensaver(void);
-void layout_tx_info(const char* address, uint64_t amount_in_satoshi);
 void layout_notification_no_title(const char* title, const char* body,
                                   NotificationType type, bool bold);
 void layout_notification_no_title_bold(const char* title, const char* body,
                                        NotificationType type);
-void layout_notification_no_title_no_bold(const char* title, const char* body,
-                                          NotificationType type);
+bool app_layout_address_text_fits(layout_notification_t layout,
+                                  const char* address);
 void layout_xpub_notification(const char* desc, const char* xpub,
                               NotificationType type);
 void layout_address_notification(const char* desc, const char* address,

@@ -43,6 +43,12 @@
     CHECK_PARAM_RET(common->name == (ACTION), "Incorrect action name", false); \
   } while (0)
 
+#define EOS_AUTH_KEY_TYPE_K1 0
+
+static bool eos_authorizationKeyIsK1(const EosAuthorizationKey* auth_key) {
+  return auth_key->type == EOS_AUTH_KEY_TYPE_K1;
+}
+
 bool eos_compileActionDelegate(const EosActionCommon* common,
                                const EosActionDelegate* action) {
   CHECK_COMMON(EOS_DelegateBW);
@@ -449,6 +455,7 @@ static size_t eos_hashAuthorization(Hasher* h, const EosAuthorization* auth) {
   count += eos_hashUInt(h, auth->keys_count);
   for (size_t i = 0; i < auth->keys_count; i++) {
     const EosAuthorizationKey* auth_key = &auth->keys[i];
+    if (!eos_authorizationKeyIsK1(auth_key)) return 0;
 
     count += eos_hashUInt(NULL, auth_key->type);
     if (h) eos_hashUInt(h, auth_key->type);
@@ -507,6 +514,8 @@ static bool isStandardAuthorization(const EosAuthorization* auth) {
 
   if (auth->keys[0].address_n_count == 0) return false;
 
+  if (!eos_authorizationKeyIsK1(&auth->keys[0])) return false;
+
   if (auth->keys[0].weight != 1) return false;
 
   if (auth->waits_count != 0) return false;
@@ -555,6 +564,11 @@ static bool confirmStandardAuthorization(const char* title,
 
 static bool confirmArbitraryAuthorization(const char* title,
                                           const EosAuthorization* auth) {
+  for (size_t i = 0; i < auth->keys_count; i++) {
+    CHECK_PARAM_RET(eos_authorizationKeyIsK1(&auth->keys[i]),
+                    "Unsupported EOS authorization key type", false);
+  }
+
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, title,
                "Require an authorization threshold of %" PRIu32 "?",
                auth->threshold)) {

@@ -10,6 +10,9 @@ void fsm_msgNanoGetAddress(NanoGetAddress* msg) {
   const char* coin_name = msg->has_coin_name ? msg->coin_name : "Nano";
   const CoinType* coin = fsm_getCoin(true, coin_name);
   if (!coin) return;
+  CHECK_PARAM(coin->has_nanoaddr_prefix &&
+                  strcmp(coin->curve_name, ED25519_BLAKE2B_NANO_NAME) == 0,
+              "Invalid coin for Nano request");
   HDNode* node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
@@ -31,7 +34,11 @@ void fsm_msgNanoGetAddress(NanoGetAddress* msg) {
                               msg->address_n_count) &&
         !bip32_path_to_string(node_str, sizeof(node_str), msg->address_n,
                               msg->address_n_count)) {
-      memset(node_str, 0, sizeof(node_str));
+      fsm_clearDerivedNode();
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Can't create BIP32 path string"));
+      layoutHome();
+      return;
     }
 
     bool mismatch =
@@ -72,6 +79,9 @@ void fsm_msgNanoSignTx(NanoSignTx* msg) {
   const char* coin_name = msg->has_coin_name ? msg->coin_name : "Nano";
   const CoinType* coin = fsm_getCoin(true, coin_name);
   if (!coin) return;
+  CHECK_PARAM(coin->has_nanoaddr_prefix &&
+                  strcmp(coin->curve_name, ED25519_BLAKE2B_NANO_NAME) == 0,
+              "Invalid coin for Nano request");
 
   HDNode* node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
                                     msg->address_n_count, NULL);

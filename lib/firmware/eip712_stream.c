@@ -433,12 +433,10 @@ bool eip712_type_hash(const char *name, Eip712StructLookup lookup, void *ctx,
 
 /* ── Session state ───────────────────────────────────────────────────
  *
- * Every byte here is .bss, and .bss is the only thing that counts against the
- * linker gap -- that gap IS the stack, so transients on it are free.
- *
- * Measured budget: _stack - _ebss is 17,716 B against a 16,384 B floor, so
- * there are 1,332 B to spend. The sizes in eip712_stream.h are chosen to fit
- * with margin, not chosen first and hoped for.
+ * Static session state reduces the linker gap available for runtime stack.
+ * Stack locals also consume that reserve while their handlers execute. The
+ * exact device layout and largest frames are checked by check_sram_budget.py
+ * on each ARM build; host sizeof measurements do not establish device margin.
  *
  * The single SHA3_CTX is shared. Only one hash is ever in progress: either an
  * encodeType stream (which spans round trips, so it must live here) or a frame
@@ -460,6 +458,7 @@ typedef struct {
     };
     struct {
       char elem_struct[EIP712_MAX_STRUCT_NAME];
+      uint32_t elem_dims[4];
       uint32_t elem_size;
       uint16_t array_len;
       uint8_t elem_data_type;
@@ -664,6 +663,10 @@ static bool fold_frame(uint8_t out[32]) {
 
 static void advance_after_slot(void);
 
+static uint32_t array_dim_for_level(const Eip712Frame *arr) {
+  return arr->elem_dims[arr->levels_total - 1 - arr->level_index];
+}
+
 /* A container finished. Give its digest to the parent, or finish the root. */
 static void complete_frame(void) {
   uint8_t digest[32];
@@ -727,9 +730,10 @@ static void drive_array_element(void) {
     inner->elem_has_size = arr->elem_has_size;
     inner->elem_size = arr->elem_size;
     strlcpy(inner->elem_struct, arr->elem_struct, EIP712_MAX_STRUCT_NAME);
+    memcpy(inner->elem_dims, arr->elem_dims, sizeof(inner->elem_dims));
     inner->levels_total = arr->levels_total;
     inner->level_index = arr->level_index + 1;
-    e712.pending_declared_dim = 0;
+    e712.pending_declared_dim = array_dim_for_level(inner);
     e712.want_array_len = true;
     request_value();
     return;
@@ -962,13 +966,15 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck *ack) {
         arr->elem_data_type = (uint8_t)m->type.data_type;
         arr->elem_has_size = m->type.has_size;
         arr->elem_size = m->type.size;
+        memcpy(arr->elem_dims, m->type.array_levels,
+               m->type.array_levels_count * sizeof(arr->elem_dims[0]));
         if (m->type.has_struct_name) {
           strlcpy(arr->elem_struct, m->type.struct_name,
                   EIP712_MAX_STRUCT_NAME);
         }
         arr->levels_total = (uint8_t)m->type.array_levels_count;
         arr->level_index = 0;
-        e712.pending_declared_dim = m->type.array_levels[0];
+        e712.pending_declared_dim = array_dim_for_level(arr);
         e712.want_array_len = true;
         request_value();
         return true;

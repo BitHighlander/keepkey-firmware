@@ -20,12 +20,6 @@ static const TokenType Unknown = {
     " UNKN", 1, 0};
 const TokenType* UnknownToken = (const TokenType*)&Unknown;
 
-static const TokenType Ethtest = {
-    "\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee"
-    "\xee\xee",
-    "  ETH", 1, 18};
-const TokenType* EthTestToken = (const TokenType*)&Ethtest;
-
 const TokenType* tokenIter(int32_t* ctr) {
   // return the next tok in the list.
   // input: *ctr = position of desired token (0 to TOKENS_COUNT)
@@ -51,10 +45,6 @@ const TokenType* tokenByChainAddress(uint32_t chain_id,
       return &(tokens[i]);
     }
   }
-  if (memcmp(address, Ethtest.address, 20) == 0) {
-    return EthTestToken;
-  }
-
   return UnknownToken;
 }
 

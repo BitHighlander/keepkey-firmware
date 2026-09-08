@@ -82,25 +82,6 @@ static void layout_animate_callback(void* context) {
 }
 
 /*
- * layout_remove_animation() - Remove animation node that contains the callback
- * function from the queue
- *
- * INPUT
- *     - callback: animation callback function to remove node for
- * OUTPUT
- *     none
- */
-#if defined(AGGRO_UNDEFINED_FN)
-static void layout_remove_animation(AnimateCallback callback) {
-  Animation* animation = animation_queue_get(&active_queue, callback);
-
-  if (animation != NULL) {
-    animation_queue_push(&free_queue, animation);
-  }
-}
-#endif
-
-/*
  * animation_queue_peek() - Get current animation node in head pointer
  *
  * INPUT

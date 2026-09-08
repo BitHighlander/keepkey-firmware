@@ -1,0 +1,26 @@
+{
+  "keepkey-cycle3-final-firmware623.log": {
+    "sha256": "5ca7af04a952de444e6ddc6c74798137436e9b4a7a1456e9b4804d7660659fd4",
+    "bytes": 79693
+  },
+  "keepkey-cycle3-final-board.log": {
+    "sha256": "2a73deca1944c6d47dd671652fe13f38442ce50da91d82097859c17b74041516",
+    "bytes": 3792
+  },
+  "keepkey-cycle3-maker-eip-before.log": {
+    "sha256": "b87500eef9972338eb8055741d843f0f406cd2167439d72c135605dbf35c7f00",
+    "bytes": 8286
+  },
+  "keepkey-rng-before.log": {
+    "sha256": "c99f7d6cb50763a53be8c5701c1500ef66bbb5126d756e4e83b0e58aff3b5502",
+    "bytes": 272
+  },
+  "keepkey-cycle3-final-batch-cppcheck.txt": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "keepkey-cycle3-final-transport-cppcheck.txt": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  }
+}

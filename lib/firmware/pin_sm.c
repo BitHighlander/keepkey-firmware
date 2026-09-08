@@ -83,6 +83,7 @@ static void check_for_pin_ack(PINInfo* pin_info) {
     default:
       break;
   }
+  memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
 }
 
 /// Request and receive PIN from user over USB port

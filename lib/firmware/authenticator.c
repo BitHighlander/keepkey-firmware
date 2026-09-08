@@ -218,57 +218,50 @@ cleanup:
   return result;
 }
 
+static bool authParseUint(const char* text, uint64_t max, uint64_t* value) {
+  if (!text || !text[0]) return false;
+  uint64_t parsed = 0;
+  for (const char* p = text; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+    uint64_t digit = (uint64_t)(*p - '0');
+    if (parsed > max / 10 || (parsed == max / 10 && digit > max % 10))
+      return false;
+    parsed = parsed * 10 + digit;
+  }
+  *value = parsed;
+  return true;
+}
+
 unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
-  const char *domain, *account, *tIntervalStr, *tRemainStr;
+  char* fields[4] = {accountWithMsg, NULL, NULL, NULL};
+  uint64_t interval = 0, remaining = 0;
   uint8_t hmac[SHA1_DIGEST_LENGTH] = {0};
   uint8_t tIntervalBytes[8] = {0};
-  char otp_candidate[9] = {0};
   char otp_display[10] = {0};
   char account_display[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {0};
   unsigned slot = AUTHDATA_SIZE;
   uint32_t t0 = getSysTime();
   unsigned result = TOKERR;
 
-  memzero(otpStr, 9);
+  if (otpStr) memzero(otpStr, 9);
 
-  // accountWithSeed should be of the form "domain:account:msgStr"
-
-  domain = strtok(accountWithMsg, ":");  // get the domain string token
-  if (NULL == domain) {
-    goto cleanup;
+  /* Preserve empty fields and reject extra separators instead of letting
+   * strtok silently shift the wallet account or time fields. */
+  if (!accountWithMsg) goto cleanup;
+  for (size_t i = 0; i < 3; ++i) {
+    char* separator = strchr(fields[i], ':');
+    if (!separator) goto cleanup;
+    *separator = '\0';
+    fields[i + 1] = separator + 1;
   }
-  account = strtok(NULL, ":");  // get the account string token
-  if (NULL == account) {
+  if (!authDisplayFieldValid(fields[0], DOMAIN_SIZE - 1) ||
+      !authDisplayFieldValid(fields[1], ACCOUNT_SIZE - 1) ||
+      !authParseUint(fields[2], UINT64_MAX, &interval) ||
+      !authParseUint(fields[3], 30, &remaining))
     goto cleanup;
-  }
-  if (0 == strlen(account)) {
-    goto cleanup;
-  }
-  tIntervalStr = strtok(NULL, ":");  // get the message string string token
-  if (NULL == tIntervalStr) {
-    goto cleanup;
-  }
-  if (0 == strlen(tIntervalStr)) {
-    goto cleanup;
-  }
-  tRemainStr = strtok(NULL, "");  // get the message string string token
-  if (NULL == tRemainStr) {
-    goto cleanup;
-  }
-  if (0 == (strlen(tRemainStr))) {
-    goto cleanup;
-  }
-
-  // convert time interval string to long int
-  long tIntervalVal = strtol(tIntervalStr, NULL, 10);
-  // get big endian representation
-  tIntervalBytes[4] = (tIntervalVal >> 24) & 0xff;
-  tIntervalBytes[5] = (tIntervalVal >> 16) & 0xff;
-  tIntervalBytes[6] = (tIntervalVal >> 8) & 0xff;
-  tIntervalBytes[7] = tIntervalVal & 0xff;
-
-  // convert time remaining to int
-  long tRemainVal = (strtol(tRemainStr, NULL, 10));
+  for (size_t i = 0; i < sizeof(tIntervalBytes); ++i)
+    tIntervalBytes[sizeof(tIntervalBytes) - 1 - i] =
+        (uint8_t)(interval >> (8 * i));
 
   if (!getAuthData()) {  // in theory an OTP could be requested on a dirty local
                          // copy
@@ -278,8 +271,8 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
 
   // look for account
   for (slot = 0; slot < AUTHDATA_SIZE; slot++) {
-    if ((0 == strncmp(authData[slot].domain, domain, DOMAIN_SIZE - 1)) &&
-        (0 == strncmp(authData[slot].account, account, ACCOUNT_SIZE - 1))) {
+    if ((0 == strncmp(authData[slot].domain, fields[0], DOMAIN_SIZE)) &&
+        (0 == strncmp(authData[slot].account, fields[1], ACCOUNT_SIZE))) {
       break;
     }
   }
@@ -312,7 +305,6 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
   }
   unsigned otp = bin_code % (unsigned long)modnum;
 
-  snprintf(otp_candidate, sizeof(otp_candidate), "%06u", otp);
   snprintf(otp_display, sizeof(otp_display), "%06u", otp);
   if (!review_immediate(ButtonRequestType_ButtonRequest_Other, "display OTP",
                         "Press button to display OTP")) {
@@ -321,9 +313,9 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
   }
 
   // Check to see if user needs to regenerate OTP
-  tRemainVal -=
-      (getSysTime() - t0) / 1000;  // time since kk received time value
-  if (tRemainVal < 4) {
+  uint32_t elapsed = (getSysTime() - t0) / 1000;
+  remaining = elapsed < remaining ? remaining - elapsed : 0;
+  if (remaining < 4) {
     if (!review_immediate(ButtonRequestType_ButtonRequest_Other, "OTP Timeout",
                           "OTP time slice timed out, regenerate OTP")) {
       result = AUTH_CANCELLED;
@@ -333,7 +325,8 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
     strncpy(account_display, authData[slot].domain, DOMAIN_SIZE);
     strcat(account_display, " ");
     strncat(account_display, authData[slot].account, ACCOUNT_SIZE);
-    unsigned remainingdmSec = tRemainVal * 10;  // how many 1/10 secs remaining
+    unsigned remainingdmSec =
+        (unsigned)remaining * 10;  // how many 1/10 secs remaining
     layoutProgressForAuth(otp_display, account_display,
                           (1000 * remainingdmSec) / 300);
     for (; remainingdmSec > 0; remainingdmSec--) {
@@ -342,28 +335,23 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
                             (1000 * remainingdmSec) / 300);
     }
   }
-  strlcpy(otpStr, otp_candidate, 9);
+  if (otpStr) strlcpy(otpStr, otp_display, 9);
   result = NOERR;
 
 cleanup:
   memzero(hmac, sizeof(hmac));
   memzero(tIntervalBytes, sizeof(tIntervalBytes));
-  memzero(otp_candidate, sizeof(otp_candidate));
   memzero(otp_display, sizeof(otp_display));
   memzero(account_display, sizeof(account_display));
   return result;
 }
 
 unsigned getAuthAccount(const char* slotStr, char acc[]) {
-  uint8_t val;
-  val = (uint8_t)(strtol(slotStr, NULL, 10));
+  uint64_t val;
+  if (!authParseUint(slotStr, AUTHDATA_SIZE - 1, &val)) return NOSLOT;
 
   if (!getAuthData()) {
     return BADPASS;  // fingerprint did not match, passphrase incorrect
-  }
-
-  if (val >= AUTHDATA_SIZE) {
-    return NOSLOT;  // slot index error, has to be less than size of struct
   }
 
   if (authData[val].secretSize == 0) {

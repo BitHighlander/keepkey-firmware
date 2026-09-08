@@ -20,15 +20,13 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#ifndef __CURVES_H__
-#define __CURVES_H__
+#ifndef KEEPKEY_CRYPTO_CURVES_H
+#define KEEPKEY_CRYPTO_CURVES_H
+
+#include "trezor/crypto/curves.h"
 
 #define SECP256K1_STRING "secp256k1"
 #define NIST256P1_STRING "nist256p1"
 #define ED25519_STRING "ed25519"
-
-extern const char SECP256K1_NAME[];
-extern const char NIST256P1_NAME[];
-extern const char ED25519_NAME[];
 
 #endif

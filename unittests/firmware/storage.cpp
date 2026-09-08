@@ -1,5 +1,9 @@
 extern "C" {
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/fsm.h"
+#include "trezor/crypto/bip39.h"
+#include "trezor/crypto/curves.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/rand/rng_health.h"
@@ -21,6 +25,31 @@ void setup(void);
 #include <vector>
 
 using ::testing::ElementsAreArray;
+
+namespace {
+
+// Legacy writers are intentionally not part of the production API. Build
+// migration fixtures from the current bounded writer, then clear fields that
+// did not exist in the historical layout.
+void write_v17_fixture(char *flash, size_t len, const ConfigFlash *src) {
+  ASSERT_GE(len, STORAGE_METADATA_LEN + STORAGE_V17_SERIALIZED_LEN);
+  storage_writeV20(flash, len, src);
+  memset(flash + STORAGE_GENERATION_OFFSET, 0,
+         STORAGE_GENERATION_LEN);  // metadata padding before framed V20
+  memset(flash + STORAGE_METADATA_LEN + 501, 0,
+         1497 - 501);  // V17 reserved area, before encrypted_sec_version
+}
+
+void write_v16_fixture(char *flash, size_t len, const ConfigFlash *src) {
+  write_v17_fixture(flash, len, src);
+  uint32_t flags = 0;
+  memcpy(&flags, flash + STORAGE_METADATA_LEN + 4, sizeof(flags));
+  flags &= ~((1u << 18) | (1u << 19));
+  memcpy(flash + STORAGE_METADATA_LEN + 4, &flags, sizeof(flags));
+  memset(flash + STORAGE_METADATA_LEN + 469, 0, 1497 - 469);
+}
+
+}  // namespace
 
 TEST(Storage, ReadMeta) {
   Metadata dst;
@@ -49,36 +78,6 @@ TEST(Storage, WriteMeta) {
   storage_writeMeta(&dst[0], sizeof(dst), &src);
 
   ASSERT_TRUE(memcmp(dst, "M1M\0u1u2u3u4u5u\0S1S2S3S4S5S6S7S8S9SASBS\0",
-                     sizeof(dst)) == 0);
-}
-
-TEST(Storage, ReadPolicyV1) {
-  PolicyType dst;
-  const char src[] = "\x01N1N2N3N4N5N6N7N\x01\x01";
-
-  storage_readPolicyV1(&dst, src, sizeof(src));
-
-  ASSERT_EQ(dst.has_policy_name, true);
-  ASSERT_TRUE(memcmp(dst.policy_name, "N1N2N3N4N5N6N7N8N", 15) == 0);
-  ASSERT_EQ(dst.has_enabled, true);
-  ASSERT_EQ(dst.enabled, true);
-}
-
-TEST(Storage, WritePolicyV1) {
-  PolicyType src;
-  src.has_policy_name = true;
-  memcpy(&src.policy_name[0], "0123456789ABCD", 15);
-  src.has_enabled = true;
-  src.enabled = true;
-
-  char dst[18];
-  memset(dst, 0, sizeof(dst));
-
-  storage_writePolicyV1(&dst[0], sizeof(dst), &src);
-
-  ASSERT_TRUE(memcmp(dst,
-                     "\x01"
-                     "0123456789ABCD\0\x01\x01",
                      sizeof(dst)) == 0);
 }
 
@@ -234,6 +233,153 @@ TEST(Storage, ReadStorageV1) {
   EXPECT_THAT(dst.encrypted_sec, ElementsAreArray(encrypted_sec));
 }
 
+TEST(Storage, LegacyV1ReaderRejectsTruncatedVersionTwoTransactionally) {
+  // Allocate the complete record so this remains a deterministic canary test
+  // without relying on an address sanitizer. Only the advertised length is
+  // shortened.
+  std::vector<char> serialized(STORAGE_V2_SERIALIZED_LEN, 0);
+  const uint32_t version = 2;
+  memcpy(serialized.data(), &version, sizeof(version));
+
+  const size_t short_lengths[] = {
+      0,
+      STORAGE_V1_SERIALIZED_LEN - 1,
+      STORAGE_V1_SERIALIZED_LEN,
+      STORAGE_V2_SERIALIZED_LEN - 1,
+  };
+  for (size_t advertised : short_lengths) {
+    Storage out;
+    Storage before;
+    SessionState session;
+    memset(&out, 0xA5, sizeof(out));
+    memcpy(&before, &out, sizeof(before));
+    memset(&session, 0, sizeof(session));
+
+    storage_readStorageV1(&session, &out, serialized.data(), advertised);
+    EXPECT_EQ(0, memcmp(&out, &before, sizeof(out))) << advertised;
+  }
+
+  Storage out;
+  SessionState session;
+  memset(&out, 0xA5, sizeof(out));
+  memset(&session, 0, sizeof(session));
+  storage_readStorageV1(&session, &out, serialized.data(), serialized.size());
+  EXPECT_EQ(version, out.version);
+}
+
+TEST(Storage, LegacyV1AndV2WrappersAcceptOnlyCompleteFormats) {
+  std::vector<char> flash(STORAGE_METADATA_LEN + STORAGE_V2_SERIALIZED_LEN, 0);
+  memcpy(flash.data(), "stor", 4);
+
+  struct ReaderCase {
+    void (*read)(SessionState *, ConfigFlash *, const char *, size_t);
+    uint32_t version;
+    size_t required;
+  };
+  const ReaderCase readers[] = {
+      {storage_readV1, 1, STORAGE_METADATA_LEN + STORAGE_V1_SERIALIZED_LEN},
+      {storage_readV2, 2, STORAGE_METADATA_LEN + STORAGE_V2_SERIALIZED_LEN},
+  };
+
+  for (const auto &reader : readers) {
+    memcpy(flash.data() + STORAGE_METADATA_LEN, &reader.version,
+           sizeof(reader.version));
+    ConfigFlash out;
+    ConfigFlash before;
+    SessionState session;
+    memset(&out, 0xA5, sizeof(out));
+    memcpy(&before, &out, sizeof(before));
+    memset(&session, 0, sizeof(session));
+    reader.read(&session, &out, flash.data(), reader.required - 1);
+    EXPECT_EQ(0, memcmp(&out, &before, sizeof(out))) << reader.version;
+
+    memset(&out, 0xA5, sizeof(out));
+    memset(&session, 0, sizeof(session));
+    reader.read(&session, &out, flash.data(), reader.required);
+    EXPECT_EQ(reader.version, out.storage.version);
+  }
+}
+
+TEST(Storage, LegacyWrapperReadersEnforceExactBoundsTransactionally) {
+  struct ReaderCase {
+    const char *name;
+    void (*read)(ConfigFlash *, const char *, size_t);
+    uint32_t version;
+    size_t required;
+  };
+  const ReaderCase readers[] = {
+      {"V11", storage_readV11, 11,
+       STORAGE_METADATA_LEN + STORAGE_V11_SERIALIZED_LEN},
+      {"V16", storage_readV16, 16,
+       STORAGE_METADATA_LEN + STORAGE_V16_SERIALIZED_LEN},
+      {"V17", storage_readV17, 17,
+       STORAGE_METADATA_LEN + STORAGE_V17_SERIALIZED_LEN},
+  };
+
+  std::vector<char> flash(STORAGE_METADATA_LEN + STORAGE_V17_SERIALIZED_LEN, 0);
+  memcpy(flash.data(), "stor", 4);
+
+  for (const auto &reader : readers) {
+    memcpy(flash.data() + STORAGE_METADATA_LEN, &reader.version,
+           sizeof(reader.version));
+    const size_t short_lengths[] = {
+        0,
+        STORAGE_METADATA_LEN - 1,
+        reader.required - 1,
+    };
+    for (size_t advertised : short_lengths) {
+      ConfigFlash out;
+      ConfigFlash before;
+      memset(&out, 0xA5, sizeof(out));
+      memcpy(&before, &out, sizeof(before));
+
+      reader.read(&out, flash.data(), advertised);
+      EXPECT_EQ(0, memcmp(&out, &before, sizeof(out)))
+          << reader.name << ": " << advertised;
+    }
+
+    ConfigFlash out;
+    memset(&out, 0xA5, sizeof(out));
+    reader.read(&out, flash.data(), reader.required);
+    EXPECT_EQ(reader.version, out.storage.version) << reader.name;
+  }
+}
+
+TEST(Storage, CurrentCodecRejectsShortBuffersWithoutPartialWrites) {
+  const size_t required = STORAGE_METADATA_LEN + STORAGE_V17_SERIALIZED_LEN;
+  ConfigFlash source;
+  memset(&source, 0, sizeof(source));
+  memcpy(source.meta.magic, "stor", 4);
+  source.storage.version = STORAGE_VERSION;
+  source.storage.encrypted_sec_version = STORAGE_VERSION;
+
+  const size_t short_lengths[] = {0, STORAGE_METADATA_LEN - 1, required - 1};
+  for (size_t advertised : short_lengths) {
+    std::vector<char> flash(required, static_cast<char>(0x5A));
+    const std::vector<char> before = flash;
+    storage_writeV20(flash.data(), advertised, &source);
+    EXPECT_EQ(before, flash) << advertised;
+  }
+
+  std::vector<char> flash(required, static_cast<char>(0x5A));
+  storage_writeV20(flash.data(), flash.size(), &source);
+  EXPECT_EQ(0, memcmp(flash.data(), "stor", 4));
+
+  for (size_t advertised : short_lengths) {
+    ConfigFlash out;
+    ConfigFlash before;
+    memset(&out, 0xA5, sizeof(out));
+    memcpy(&before, &out, sizeof(before));
+    storage_readV20(&out, flash.data(), advertised);
+    EXPECT_EQ(0, memcmp(&out, &before, sizeof(out))) << advertised;
+  }
+
+  ConfigFlash out;
+  memset(&out, 0xA5, sizeof(out));
+  storage_readV20(&out, flash.data(), flash.size());
+  EXPECT_EQ(STORAGE_VERSION, out.storage.version);
+}
+
 TEST(Storage, WriteCacheV1) {
   Cache src;
   src.root_seed_cache_status = 42;
@@ -286,6 +432,7 @@ TEST(Storage, ReadCacheV1) {
   }
 }
 
+#if DEBUG_LINK
 TEST(Storage, DumpNode) {
   HDNodeType dst;
   HDNode src;
@@ -303,19 +450,6 @@ TEST(Storage, DumpNode) {
   memset(&dst, 0, sizeof(dst));
   storage_dumpNode(&dst, &src);
 
-#if !DEBUG_LINK
-  EXPECT_EQ(dst.depth, 0);
-  EXPECT_EQ(dst.fingerprint, 0);
-  EXPECT_EQ(dst.child_num, 0);
-  EXPECT_EQ(dst.chain_code.size, 0);
-  EXPECT_EQ(dst.chain_code.bytes[0], 0);
-  EXPECT_EQ(dst.has_private_key, 0);
-  EXPECT_EQ(dst.private_key.size, 0);
-  EXPECT_EQ(dst.private_key.bytes[0], 0);
-  EXPECT_EQ(dst.has_public_key, 0);
-  EXPECT_EQ(dst.public_key.size, 0);
-  EXPECT_EQ(dst.public_key.bytes[0], 0);
-#else
   EXPECT_EQ(dst.depth, src.depth);
   EXPECT_EQ(dst.child_num, src.child_num);
   EXPECT_EQ(dst.chain_code.size, 32);
@@ -325,8 +459,8 @@ TEST(Storage, DumpNode) {
   EXPECT_THAT(dst.private_key.bytes, ElementsAreArray(src.private_key));
   EXPECT_EQ(dst.public_key.size, 33);
   EXPECT_THAT(dst.public_key.bytes, ElementsAreArray(src.public_key));
-#endif
 }
+#endif
 
 static void check_policyIsSame(const PolicyType *lhs, const PolicyType *rhs) {
   EXPECT_EQ(lhs->has_policy_name, rhs->has_policy_name);
@@ -418,7 +552,7 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
 
   std::vector<uint8_t> flash(2570);
   memset(&flash[0], 0, flash.size());
-  storage_writeV17((char *)&flash[0], flash.size(), &start);
+  write_v17_fixture((char *)&flash[0], flash.size(), &start);
 
   // 1. The writer must not persist it. Storage begins at +44, flags at +4.
   uint32_t flags = 0;
@@ -732,31 +866,37 @@ TEST(Storage, BitcoinOnlyBandRefused) {
 // STORAGE_VERSION bump) must still load and migrate — never be refused, which
 // would lock the user out of their own wallet. A NEWER in-band version is
 // refused (downgrade guard), never wiped.
-TEST(Storage, BitcoinOnlyBandMigrates) {
+TEST(Storage, BitcoinOnlyVersionLadderRejectsBurnedAndFabricatedFormats) {
   static char flash[STORAGE_SECTOR_LEN];
   SessionState session;
   ConfigFlash shadow;
 
-  // Older in-band version (underlying < STORAGE_VERSION): migrate, not refuse.
-  memset(flash, 0, sizeof(flash));
-  memcpy(flash, "stor", 4);
-  uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION - 1);
-  memcpy(flash + 44, &older,
-         4);  // test host is little-endian, matches read_u32_le
-  memset(&session, 0, sizeof(session));
-  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  auto status_for = [&](uint32_t underlying) {
+    memset(flash, 0, sizeof(flash));
+    memcpy(flash, "stor", 4);
+    const uint32_t version = STORAGE_VERSION_BTC_ONLY_BASE + underlying;
+    memcpy(flash + STORAGE_METADATA_LEN, &version, sizeof(version));
+    memset(&session, 0, sizeof(session));
+    return storage_fromFlash(&session, &shadow, flash);
+  };
 
-  // Our own current in-band version: loads (not refused).
-  uint32_t current = STORAGE_VERSION_BTC_ONLY;
-  memcpy(flash + 44, &current, 4);
-  memset(&session, 0, sizeof(session));
-  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  // Values below the earliest supported V11 bitcoin-only layout are fabricated
+  // and must never be interpreted through a coincidentally compatible reader.
+  EXPECT_EQ(SUS_BitcoinOnlyLocked, status_for(0));
+  EXPECT_EQ(SUS_BitcoinOnlyLocked, status_for(10));
 
-  // A newer in-band version than this firmware understands: refuse.
-  uint32_t newer = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION + 1);
-  memcpy(flash + 44, &newer, 4);
-  memset(&session, 0, sizeof(session));
-  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  EXPECT_EQ(SUS_Updated, status_for(11));
+  EXPECT_EQ(SUS_Updated, status_for(16));
+  EXPECT_EQ(SUS_Updated, status_for(17));
+
+  // V18 and V19 were burned alpha formats. In particular, V19 used flag bit 20
+  // for its PIN KDF. Parsing that image as V20 clears the selector and makes
+  // the wallet impossible to unlock after the automatic migration commit.
+  EXPECT_EQ(SUS_BitcoinOnlyLocked, status_for(18));
+  EXPECT_EQ(SUS_BitcoinOnlyLocked, status_for(19));
+
+  EXPECT_EQ(SUS_Valid, status_for(STORAGE_VERSION));
+  EXPECT_EQ(SUS_BitcoinOnlyLocked, status_for(STORAGE_VERSION + 1));
 }
 #endif
 
@@ -803,7 +943,7 @@ TEST(Storage, StorageV17MigrationRoundTrip) {
 
   std::vector<uint8_t> flash(2570);
 
-  storage_writeV16((char *)&flash[0], flash.size(), &start);
+  write_v16_fixture((char *)&flash[0], flash.size(), &start);
 
 #if 0
     printf("        ");
@@ -1062,8 +1202,7 @@ TEST(Storage, PasskeyResetRotatesGenerationAndClearsAllMetadata) {
 
   uint8_t before[PASSKEY_CREDENTIAL_GENERATION_SIZE];
   bool legacy_enabled = false;
-  ASSERT_TRUE(
-      storage_getPasskeyCredentialGeneration(before, &legacy_enabled));
+  ASSERT_TRUE(storage_getPasskeyCredentialGeneration(before, &legacy_enabled));
   EXPECT_TRUE(legacy_enabled);
 
   ASSERT_TRUE(storage_resetPasskeyData());
@@ -1386,26 +1525,6 @@ TEST(Storage, V20IgnoresRetiredClearsignIdentityBlock) {
   EXPECT_EQ(PASSKEY_PIN_RETRIES, end.storage.pub.passkeys.pin_retries);
 }
 
-TEST(Storage, PinKdfV2FlagIsVersionedInV19) {
-  ConfigFlash start;
-  memset(&start, 0, sizeof(start));
-  memcpy(start.meta.magic, "stor", 4);
-  start.storage.version = STORAGE_VERSION;
-  start.storage.pub.pin_kdf_v2 = true;
-
-  std::vector<uint8_t> flash(2572, 0);
-  storage_writeV19((char *)&flash[0], flash.size(), &start);
-
-  ConfigFlash end;
-  memset(&end, 0, sizeof(end));
-  storage_readV19(&end, (const char *)&flash[0], flash.size());
-  EXPECT_TRUE(end.storage.pub.pin_kdf_v2);
-
-  memset(&end, 0xCC, sizeof(end));
-  storage_readV20(&end, (const char *)&flash[0], flash.size());
-  EXPECT_FALSE(end.storage.pub.pin_kdf_v2);
-}
-
 // The wallet lockout this branch fixes lived on the serialize/reboot boundary:
 // storage_setPin_impl() produced a wrap the V17 record could not describe, and
 // nothing noticed until the next boot re-derived the wrapping key from the
@@ -1441,7 +1560,7 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
 
   // storage_fromFlash reads a full sector, just as it does on device.
   std::vector<char> flash(STORAGE_SECTOR_LEN, 0);
-  storage_writeV17(&flash[0], flash.size(), &cfg);
+  write_v17_fixture(&flash[0], flash.size(), &cfg);
 
   // Reboot: nothing carries over but the flash sector.
   ConfigFlash reloaded;
@@ -1477,4 +1596,66 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
                reloaded.storage.sec.mnemonic);
 
   memzero(key_before_reboot, sizeof(key_before_reboot));
+}
+
+static void prepare_session_wallet(void) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  session_clear(true);
+  storage_setMnemonic("all all all all all all all all all all all all");
+  storage_setPassphraseProtected(false);
+}
+
+TEST(Storage, SoftSessionClearScrubsWalletCaches) {
+  prepare_session_wallet();
+  authenticator_test_seed_cache();
+  fsm_test_seedDerivedNode();
+  ASSERT_FALSE(authenticator_cache_is_empty());
+  ASSERT_FALSE(fsm_test_derivedNodeIsZero());
+  session_clear(false);
+  EXPECT_TRUE(authenticator_cache_is_empty());
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+}
+
+TEST(Storage, PassphraseSettingChangeInvalidatesDerivedWallet) {
+  prepare_session_wallet();
+  storage_setPassphraseProtected(true);
+  session_cachePassphrase("hidden wallet");
+  HDNode hidden = {}, plain = {}, expected = {};
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &hidden));
+  authenticator_test_seed_cache();
+  storage_setPassphraseProtected(false);
+  EXPECT_FALSE(session_isPassphraseCached());
+  EXPECT_TRUE(authenticator_cache_is_empty());
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &plain));
+  uint8_t seed[64] = {};
+  mnemonic_to_seed("all all all all all all all all all all all all", "", seed,
+                   nullptr);
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &expected));
+  EXPECT_NE(0, memcmp(hidden.private_key, plain.private_key, 32));
+  EXPECT_EQ(0, memcmp(expected.private_key, plain.private_key, 32));
+  memzero(seed, sizeof(seed));
+  memzero(&hidden, sizeof(hidden));
+  memzero(&plain, sizeof(plain));
+  memzero(&expected, sizeof(expected));
+  session_clear(true);
+}
+
+TEST(Storage, RootNodeCacheRespectsPassphraseSelection) {
+  prepare_session_wallet();
+  storage_setPassphraseProtected(true);
+  session_cachePassphrase("hidden wallet");
+  HDNode hidden = {}, plain = {}, hidden_again = {};
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &hidden));
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, false, &plain));
+  EXPECT_NE(0, memcmp(hidden.private_key, plain.private_key, 32));
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &hidden_again));
+  EXPECT_EQ(0, memcmp(hidden.private_key, hidden_again.private_key, 32));
+  memzero(&hidden, sizeof(hidden));
+  memzero(&plain, sizeof(plain));
+  memzero(&hidden_again, sizeof(hidden_again));
+  storage_setPassphraseProtected(false);
+  session_clear(true);
 }

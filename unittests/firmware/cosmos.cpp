@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/cosmos.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
@@ -170,4 +171,44 @@ TEST(Cosmos, IBCTransferEscapesHostStrings) {
   uint8_t digest[SHA256_DIGEST_LENGTH];
   sha256_Raw((const uint8_t*)doc, sizeof(doc) - 1, digest);
   EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, public_key, signature, digest));
+}
+
+TEST(Cosmos, GenericTendermintRejectsInjectedDenomAndMessagePrefix) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  TendermintSignTx msg = {};
+  msg.has_account_number = true;
+  msg.has_chain_id = true;
+  strcpy(msg.chain_id, "chain-1");
+  msg.has_fee_amount = true;
+  msg.has_gas = true;
+  msg.has_sequence = true;
+  msg.has_msg_count = true;
+  msg.msg_count = 1;
+
+  EXPECT_FALSE(tendermint_signTxInit(&node, &msg, sizeof(msg), "uatom\"",
+                                     TENDERMINT_SIGNING_GENERIC));
+
+  ASSERT_TRUE(tendermint_signTxInit(&node, &msg, sizeof(msg), "uatom",
+                                    TENDERMINT_SIGNING_GENERIC));
+  EXPECT_FALSE(tendermint_signTxUpdateMsgSend(
+      1, "cosmos18vhdczjut44gpsy804crfhnd5nq003nz0nf20v", "cosmos", "uatom",
+      "cosmos-sdk\""));
+  tendermint_signAbort();
+}
+
+TEST(Cosmos, TendermintSessionClearAbortsSigning) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  TendermintSignTx msg = {};
+  msg.has_msg_count = true;
+  msg.msg_count = 1;
+
+  for (bool clear_pin : {false, true}) {
+    ASSERT_TRUE(tendermint_signTxInit(&node, &msg, sizeof(msg), "uatom",
+                                      TENDERMINT_SIGNING_GENERIC));
+    ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
+    session_clear(clear_pin);
+    EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
+  }
 }

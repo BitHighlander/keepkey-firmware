@@ -23,9 +23,9 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/emulator/emulator.h"
+#include "trezor/crypto/memzero.h"
 
 #include <stdint.h>
-#include <assert.h>
 
 extern usb_rx_callback_t user_rx_callback;
 
@@ -48,20 +48,17 @@ void usbPoll(void) {
 
   int iface = 0;
   if (0 < (len = emulatorSocketRead(&iface, buf, sizeof(buf)))) {
-    if (!tiny) {
-      if (iface == 0) {
-        user_rx_callback(&buf, len);
-      } else if (iface == 1) {
+    // The registered callbacks route tiny messages and scrub decoded data.
+    if (iface == 0) {
+      user_rx_callback(&buf, len);
+    } else if (iface == 1) {
 #if DEBUG_LINK
-        user_debug_rx_callback(&buf, len);
+      user_debug_rx_callback(&buf, len);
 #else
-        user_rx_callback(&buf, len);
+      user_rx_callback(&buf, len);
 #endif
-      }
-    } else {
-      assert(false && "not yet implemented");
-      // msg_read_tiny(msg.message, sizeof(msg.message));
     }
+    memzero(buf, sizeof(buf));
   }
 
   // Keep a queued progress animation moving while we block on host I/O (e.g.
@@ -85,5 +82,7 @@ char usbTiny(char set) {
   tiny = set;
   return old;
 }
+
+bool usbTinyActive(void) { return tiny != 0; }
 
 #endif

@@ -141,7 +141,8 @@ uint32_t random32(void) {
   while (new == last) {
     /* Capture the RNG status register */
     rng_sr_img = RNG_SR;
-    if ((rng_sr_img & (RNG_SR_SEIS | RNG_SR_CEIS)) == 0) {
+    if ((rng_sr_img &
+         (RNG_SR_SEIS | RNG_SR_CEIS | RNG_SR_SECS | RNG_SR_CECS)) == 0) {
       if (rng_sr_img & RNG_SR_DRDY) {
         if (rng_discard_pending) {
           (void)RNG_DR;
@@ -151,11 +152,16 @@ uint32_t random32(void) {
         }
       }
     } else if ((rng_sr_img & (RNG_SR_SECS | RNG_SR_CECS)) == 0) {
-      /* Reset RNG interrupt status bits (SECS, CECS errors no longer
-       * exist). Record it FIRST: clearing the hardware latch is exactly
-       * what makes this fault invisible to a later self-test. */
+      /* Even a transient seed error requires RNGEN reinitialization (RM0033,
+       * section 20.3.1). Merely clearing SEIS could return the buffered fault
+       * word. Preserve the fault, bound retries, then restart and discard. */
       rng_seed_error_seen = true;
-      RNG_SR &= ~(RNG_SR_SEIS | RNG_SR_CEIS);
+      if (rng_reset_budget_exhausted(&rng_resets)) {
+        for (;;) {
+          __asm__("wfi");
+        }
+      }
+      reset_rng();
     } else {
       /* RNG is not ready.  Allow few more samples for RNG to come back alive
        * before resetting */

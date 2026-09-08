@@ -40,6 +40,18 @@ static TendermintSigningType signing_type;
 static uint32_t msgs_remaining;
 static TendermintSignTx tmsg;
 
+static bool tendermint_isValidMessageTypePrefix(const char* prefix) {
+  if (!prefix || !prefix[0]) return false;
+  for (size_t i = 0; prefix[i]; i++) {
+    const char c = prefix[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
+          c == '/' || c == '-')) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const void* tendermint_getSignTx(void) { return (void*)&tmsg; }
 
 bool tendermint_signTxInit(const HDNode* _node, const void* _msg,
@@ -63,7 +75,7 @@ bool tendermint_signTxInit(const HDNode* _node, const void* _msg,
     return false;
   }
 
-  if (strnlen(denom, 10) > 9) {
+  if (strnlen(denom, 10) > 9 || !tendermint_isValidDenom(denom)) {
     return false;
   }
 
@@ -90,11 +102,12 @@ bool tendermint_signTxInit(const HDNode* _node, const void* _msg,
   sha256_Update(&ctx, (uint8_t*)chainid_prefix, strlen(chainid_prefix));
   tendermint_sha256UpdateEscaped(&ctx, tmsg.chain_id, strlen(tmsg.chain_id));
 
-  // 30 + ^10 + 11 + ^9 + 3 = ^63
   success &= tendermint_snprintf(
       &ctx, buffer, sizeof(buffer),
-      "\",\"fee\":{\"amount\":[{\"amount\":\"%" PRIu32 "\",\"denom\":\"%s\"}]",
-      tmsg.fee_amount, denom);
+      "\",\"fee\":{\"amount\":[{\"amount\":\"%" PRIu32 "\",\"denom\":\"",
+      tmsg.fee_amount);
+  tendermint_sha256UpdateEscaped(&ctx, denom, strlen(denom));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}]");
 
   // 8 + ^10 + 2 = ^20
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
@@ -138,7 +151,9 @@ bool tendermint_signTxUpdateMsgSend(const uint64_t amount,
   }
 
   if (strnlen(msgTypePrefix, 25) > 24 || strnlen(denom, 10) > 9 ||
-      strnlen(chainstr, 15) > 14) {
+      strnlen(chainstr, 15) > 14 ||
+      !tendermint_isValidMessageTypePrefix(msgTypePrefix) ||
+      !tendermint_isValidDenom(denom)) {
     return false;
   }
 
@@ -154,16 +169,16 @@ bool tendermint_signTxUpdateMsgSend(const uint64_t amount,
 
   bool success = true;
 
-  // 9 + ^24 + 19 = ^52
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "{\"type\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, msgTypePrefix, strlen(msgTypePrefix));
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 "{\"type\":\"%s/MsgSend\",\"value\":{",
-                                 msgTypePrefix);
+                                 "/MsgSend\",\"value\":{");
 
-  // 21 + ^20 + 11 + ^9 + 3 = ^64
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 "\"amount\":[{\"amount\":\"%" PRIu64
-                                 "\",\"denom\":\"%s\"}]",
-                                 amount, denom);
+  success &= tendermint_snprintf(
+      &ctx, buffer, sizeof(buffer),
+      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"", amount);
+  tendermint_sha256UpdateEscaped(&ctx, denom, strlen(denom));
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"}]");
 
   // 17
   success &=

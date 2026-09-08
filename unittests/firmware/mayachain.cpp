@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/mayachain.h"
+#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/secp256k1.h"
 }
@@ -170,9 +171,9 @@ TEST(Mayachain, MayachainDenomValidation) {
   EXPECT_TRUE(mayachain_isValidDenom("btc/btc"));
   EXPECT_TRUE(mayachain_isValidDenom("cross-chain"));
 
-  EXPECT_FALSE(mayachain_isValidDenom(""));         // empty → caller "cacao"
-  EXPECT_FALSE(mayachain_isValidDenom("CACAO"));    // uppercase rejected
-  EXPECT_FALSE(mayachain_isValidDenom("cacao\""));  // quote injection
+  EXPECT_FALSE(mayachain_isValidDenom(""));          // empty → caller "cacao"
+  EXPECT_FALSE(mayachain_isValidDenom("CACAO"));     // uppercase rejected
+  EXPECT_FALSE(mayachain_isValidDenom("cacao\""));   // quote injection
   EXPECT_FALSE(mayachain_isValidDenom("cacao\\n"));  // backslash injection
   EXPECT_FALSE(mayachain_isValidDenom(" cacao"));    // leading space
   EXPECT_FALSE(mayachain_isValidDenom("ca cao"));    // embedded space
@@ -216,112 +217,16 @@ TEST(Mayachain, MayachainSignTxUpdateMsgSendRejectsInvalidDenom) {
       100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", ""));
 }
 
-/* ===================================================================== *
- *  mayachain_parseConfirmMemo — swap-memo clear-signing.
- *  Mirrors the thorchain.cpp memo tests; see kkconfirm_preload docs there.
- * ===================================================================== */
+TEST(Mayachain, SessionClearAbortsSigning) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  MayachainSignTx msg = {};
+  msg.msg_count = 1;
 
-static bool parseMayaMemo(const char *memo, size_t size) {
-  return mayachain_parseConfirmMemo(memo, size);
-}
-/* strlen(memo), NOT strlen(memo) + 1 -- see the same note in thorchain.cpp.
- * Maya inherited THORChain's memo grammar and its canonical-length refusal. */
-static bool parseMayaMemo(const char *memo) {
-  return parseMayaMemo(memo, strlen(memo));
-}
-
-// Classic full-form swap memo = 4 screens (4th is the affiliate fee screen),
-// but the asset screen is 4 rows against a 3-row body, so it pages into
-// 1/2 + 2/2 = 5 presses. See thorchain.cpp for the same memo.
-TEST(Mayachain, MemoSwapFullFormShowsAffiliate) {
-  ASSERT_TRUE(kkconfirm_preload(5, 0));
-  EXPECT_TRUE(parseMayaMemo(
-      "SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:"
-      "0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75"));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// No '.' in the asset field (no chain.asset pair): raw-memo fallback
-TEST(Mayachain, MemoSwapNoChainAssetPair) {
-  ASSERT_TRUE(kkconfirm_preload(0, 0));
-  EXPECT_FALSE(parseMayaMemo("=:e:0xdest:0/1/0:kk:75"));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// Empty limit must NOT shift the affiliate into the limit slot: 4 screens
-TEST(Mayachain, MemoSwapEmptyLimitDoesNotShift) {
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
-  EXPECT_TRUE(parseMayaMemo("=:ETH.ETH:0xdest::kk:75"));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// No affiliate: exactly the 3 historical screens
-TEST(Mayachain, MemoSwapNoAffiliate) {
-  ASSERT_TRUE(kkconfirm_preload(3, 0));
-  EXPECT_TRUE(parseMayaMemo("SWAP:ETH.ETH:0xdest:420"));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// ADD with a pool address: 2 screens (unchanged behavior)
-TEST(Mayachain, MemoAddWithPool) {
-  ASSERT_TRUE(kkconfirm_preload(2, 0));
-  EXPECT_TRUE(
-      parseMayaMemo("ADD:BTC.BTC:maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k"));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// WITHDRAW with basis points: 1 screen; without: malformed
-TEST(Mayachain, MemoWithdraw) {
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
-  EXPECT_TRUE(parseMayaMemo("WITHDRAW:BTC.BTC:5000"));
-  EXPECT_FALSE(parseMayaMemo("wd:BTC.BTC"));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// Garbage / oversized memos fall back to raw-memo confirmation
-// BTC OP_RETURN passes RAW memo bytes with no NUL and size = byte count.
-// Every byte must survive the copy — the historical off-by-one dropped
-// the last char (1-char affiliate vanished: 3 screens instead of 4).
-TEST(Mayachain, MemoRawBytesNoNulKeepsLastChar) {
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
-  const char raw[] = "=:ETH.ETH:0xdest:420:k";
-  EXPECT_TRUE(parseMayaMemo(raw, sizeof(raw) - 1)); /* no NUL counted */
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// A raw memo that fills the internal buffer's entire documented capacity
-// (size == 256, the parser's own <=256 contract) must ALSO keep its last
-// byte — this is the boundary the copy-length clamp missed.
-TEST(Mayachain, MemoExactBufferCapacityKeepsLastChar) {
-  const std::string prefix = "=:ETH.ETH:0x";
-  const std::string suffix = ":420:k"; // 1-char affiliate as the last byte
-  std::string memo = prefix + std::string(256 - prefix.size() - suffix.size(),
-                                          'd') +
-                     suffix;
-  ASSERT_EQ(memo.size(), 256u);
-
-  /* 6 presses, not 4: the 240-char destination needs 8 rows, so its screen
-   * pages 3 ways (1 + 3 + 1 + 1). Every byte of the memo reaches the screen. */
-  ASSERT_TRUE(kkconfirm_preload(6, 0));
-  EXPECT_TRUE(parseMayaMemo(memo.c_str(), memo.size())); /* no NUL counted */
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Mayachain, MemoGarbageAndOversized) {
-  ASSERT_TRUE(kkconfirm_preload(0, 0));
-  EXPECT_FALSE(parseMayaMemo("hello world"));
-  EXPECT_FALSE(parseMayaMemo("SWAP:ETH.ETH:0xdest:420", 257));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-// A SWAP memo with fields past the affiliate fee (a DEX-aggregator tail that
-// directs funds) is not part of the grammar this parser confirms. It must be
-// refused with nothing displayed, so the caller pages the raw memo instead of
-// a `true` standing in for fields the user never saw. Mirrors thorchain.cpp.
-TEST(Mayachain, MemoSwapTooManyFieldsRejected) {
-  ASSERT_TRUE(kkconfirm_preload(0, 0));
-  EXPECT_FALSE(parseMayaMemo(
-      "SWAP:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75:"
-      "0xAGGREGATOR:0xFINALTOKEN:1"));
-  EXPECT_EQ(0, kkconfirm_drain());
+  for (bool clear_pin : {false, true}) {
+    ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+    ASSERT_TRUE(mayachain_signingIsInited());
+    session_clear(clear_pin);
+    EXPECT_FALSE(mayachain_signingIsInited());
+  }
 }

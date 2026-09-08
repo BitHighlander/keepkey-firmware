@@ -115,19 +115,11 @@ void mpu_config(int priv_level) {
   MPU_RASR = MPU_RASR_ENABLE | MPU_RASR_ATTR_PERIPH | MPU_RASR_SIZE_1KB |
              MPU_RASR_ATTR_AP_PRW_UNO | MPU_RASR_ATTR_XN;
 
-#ifdef USART_DEBUG_ON
-  // USART3 is open to unprivileged access for usart debug versions only
-  // (0x40004800 - 0x40004BFF)
-  MPU_RBAR = 0x40004800 | MPU_RBAR_VALID | (5 << MPU_RBAR_REGION_LSB);
-  MPU_RASR = MPU_RASR_ENABLE | MPU_RASR_ATTR_PERIPH | MPU_RASR_SIZE_1KB |
-             MPU_RASR_ATTR_AP_PRW_URW | MPU_RASR_ATTR_XN;
-#else
-  // If using release firmware, use this region to protect the sysconfig
-  // registers (0x40013800 - 0x40013BFF, read-only, execute never)
+  // Protect the sysconfig registers (0x40013800 - 0x40013BFF, read-only,
+  // execute never).
   MPU_RBAR = 0x40013800 | MPU_RBAR_VALID | (5 << MPU_RBAR_REGION_LSB);
   MPU_RASR = MPU_RASR_ENABLE | MPU_RASR_ATTR_PERIPH | MPU_RASR_SIZE_1KB |
              MPU_RASR_ATTR_AP_PRO_UNO | MPU_RASR_ATTR_XN;
-#endif
 
   // Allow access to the block from the USB FS periph up through the RNG to
   // capture these two periphs in one region (0x50000000 - 0x50080000)
@@ -329,6 +321,24 @@ bool find_active_storage(Allocation* storage_location) {
   }
 
   return found;
+}
+
+bool storage_has_record_evidence(void) {
+  for (Allocation candidate = FLASH_STORAGE1; candidate <= FLASH_STORAGE3;
+       candidate++) {
+    const uint8_t* record = (const uint8_t*)flash_write_helper(candidate);
+    if (memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0) return true;
+
+    /* Real records program bytes beyond the protection marker. Scan the full
+     * payload tail so this also catches a legacy record whose leading magic
+     * was corrupted; marker and spare sectors remain erased after this point.
+     */
+    for (size_t i = sizeof(STORAGE_PROTECT_OFF_MAGIC); i < STORAGE_RECORD_LEN;
+         i++) {
+      if (record[i] != 0xFF) return true;
+    }
+  }
+  return false;
 }
 
 /* Calculate the storage CRC as though the final "stor" word had been written.

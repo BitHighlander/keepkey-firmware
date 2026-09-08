@@ -278,6 +278,12 @@ int memory_firmware_hash(uint8_t* hash);
 int memory_storage_hash(uint8_t* hash, Allocation storage_location);
 bool find_active_storage(Allocation* storage_location);
 
+/// Return true when a sector still contains storage-shaped bytes even though no
+/// active or recoverable pending record was found. Call only after both finders
+/// fail; this distinguishes an erased factory device from corrupt storage that
+/// must be preserved rather than overwritten.
+bool storage_has_record_evidence(void);
+
 /// Find a complete crash-recovery record whose leading magic has not yet been
 /// committed. This is used only when no active storage record exists.
 bool find_pending_storage(Allocation* storage_location);

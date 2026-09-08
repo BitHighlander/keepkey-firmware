@@ -172,9 +172,6 @@ void storage_setMnemonicFromWords(const char (*words)[12],
 /// \brief Set config mnemonic from a recovery sentence.
 void storage_setMnemonic(const char* m);
 
-/// \brief Get mnemonic from shadow memory
-const char* storage_getShadowMnemonic(void);
-
 /// \returns true iff storage is unlocked, and contains the provided mnemonic.
 bool storage_containsMnemonic(const char* mnemonic);
 
@@ -222,7 +219,7 @@ bool storage_getPasskeyCredentialGeneration(
 /// Returns false without changing storage if checked entropy is unavailable.
 bool storage_resetPasskeyData(void);
 
-#ifdef DEBUG_LINK
+#if DEBUG_LINK
 typedef struct _HDNodeType HDNodeType;
 typedef struct _StorageHDNode StorageHDNode;
 

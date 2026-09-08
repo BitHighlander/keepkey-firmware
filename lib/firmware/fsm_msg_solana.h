@@ -112,13 +112,6 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Send %s to %s?", amount_str, to_str);
     }
 
-    case SOL_INSTR_SYSTEM_CREATE_ACCOUNT: {
-      char amount_str[32];
-      solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Create account with %s?", amount_str);
-    }
-
     case SOL_INSTR_SYSTEM_ADVANCE_NONCE:
       if (!solana_confirmPubkey(title, "Nonce account", pi->from)) return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -213,25 +206,10 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Send %s to %s?", amount_str, to_str);
     }
 
-    case SOL_INSTR_TOKEN_APPROVE: {
-      char to_str[45];
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Approve %llu tokens to %s?",
-                     (unsigned long long)pi->amount, to_str);
-    }
-
     case SOL_INSTR_TOKEN_REVOKE:
       if (!solana_confirmPubkey(title, "Token account", pi->from)) return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Revoke token approval?");
-
-    case SOL_INSTR_TOKEN_SET_AUTHORITY: {
-      char auth_str[45];
-      solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Set token authority to %s?", auth_str);
-    }
 
     case SOL_INSTR_TOKEN_MINT_TO: {
       /* Same disclosure requirement as TOKEN_TRANSFER above: the mint and
@@ -443,14 +421,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                            "Solana Memo", pi->data, pi->data_len);
 
     case SOL_INSTR_UNKNOWN:
-    default: {
-      char prog_str[45];
-      solana_pubkeyToStr(pi->program_id, prog_str, sizeof(prog_str));
-      return confirm(ButtonRequestType_ButtonRequest_SignTx, title,
-                     "Unknown instruction to program %s. "
-                     "Cannot verify contents.",
-                     prog_str);
-    }
+    default:
+      return false;
   }
 }
 
@@ -819,6 +791,28 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
+  if (runtime_schema && !storage_isPolicyEnabled("AdvancedMode")) {
+    memzero(node, sizeof(*node));
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    layoutHome();
+    return;
+  }
+
+  /* Bind raw compute-budget fields to the actual SOL at risk before any
+   * schema-described or native instruction review can make the transaction
+   * appear fully explained. */
+  if ((tx_review == SOL_TX_REVIEW_VERIFIED || certified || runtime_schema) &&
+      !solana_confirmPriorityFee(&parsed)) {
+    memzero(node, sizeof(*node));
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    layoutHome();
+    return;
+  }
+
   if (certified) {
     if (!solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
                                          signer_alias, signer_fp)) {
@@ -842,8 +836,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       }
     }
   } else if (runtime_schema) {
-    if (!storage_isPolicyEnabled("AdvancedMode") ||
-        !solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
+    if (!solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
                                          signer_alias, signer_fp) ||
         !confirm(ButtonRequestType_ButtonRequest_SignTx, "Advanced Mode",
                  "Sign provider-described Solana transaction?")) {
@@ -940,18 +933,6 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Malformed Solana transaction"));
-    layoutHome();
-    return;
-  }
-
-  /* Bind the raw compute-budget fields above to the actual SOL at risk. This
-   * is required for every fully verified path, including certified schemas. */
-  if (tx_review == SOL_TX_REVIEW_VERIFIED &&
-      !solana_confirmPriorityFee(&parsed)) {
-    memzero(node, sizeof(*node));
-    memzero(&schema, sizeof(schema));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Signing cancelled"));
     layoutHome();
     return;
   }

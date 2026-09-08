@@ -90,7 +90,6 @@ static struct {
   uint32_t account;
   uint32_t n_actions;
   uint32_t current_action;
-  uint64_t total_amount;
   uint64_t fee;
   uint32_t branch_id;
   ZcashOrchardKeys keys;
@@ -103,7 +102,6 @@ static struct {
   /* Phase 2a: on-device sighash computation */
   bool has_device_sighash;
   /* Phase 2b: incremental orchard digest verification */
-  bool verify_orchard_digest;
   uint8_t expected_orchard_digest[32];
   BLAKE2B_CTX compact_ctx;
   BLAKE2B_CTX memos_ctx;
@@ -140,6 +138,23 @@ void zcash_signing_abort(void) {
   layoutProgressTrickleStop();
   memzero(&zcash_signing, sizeof(zcash_signing));
 }
+
+#ifdef EMULATOR
+void zcash_test_begin_action_session(void) {
+  zcash_signing_abort();
+  zcash_signing.active = true;
+  zcash_signing.n_actions = 1;
+  zcash_signing.has_device_sighash = true;
+}
+
+bool zcash_test_action_session_active(void) { return zcash_signing.active; }
+
+bool zcash_test_last_failure_is(uint32_t code, const char* message) {
+  const Failure* failure = (const Failure*)msg_resp;
+  return failure->has_code && failure->code == code && failure->has_message &&
+         strcmp(failure->message, message) == 0;
+}
+#endif
 
 static bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size) {
   return script && script_size == 25 && script[0] == 0x76 &&
@@ -319,9 +334,7 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                  "Shielded recipient", "%s", address)) {
+  if (!confirm_zcash_address_text("Shielded recipient", address)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));
     memzero(address, sizeof(address));
@@ -829,7 +842,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   zcash_signing.account = account;
   zcash_signing.n_actions = msg->n_actions;
   zcash_signing.current_action = 0;
-  zcash_signing.total_amount = total;
   zcash_signing.fee = fee;
   zcash_signing.branch_id = branch_id;
   zcash_signing.transaction_v6 = msg->tx_version == 6;
@@ -846,7 +858,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
            32);
   }
   zcash_signing.has_device_sighash = false;
-  zcash_signing.verify_orchard_digest = false;
   zcash_signing.n_transparent_outputs =
       msg->has_n_transparent_outputs ? msg->n_transparent_outputs : 0;
   zcash_signing.current_transparent_output = 0;
@@ -924,7 +935,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   blake2b_InitPersonal(&zcash_signing.noncompact_ctx, 32,
                        is_ironwood ? "ZTxIdIrnActNH_v6" : "ZTxIdOrcActNHash",
                        16);
-  zcash_signing.verify_orchard_digest = true;
 
   /* Draw the initial static progress BEFORE requesting the first component:
    * for the actions-only path zcash_send_action_ack() arms the trickle, and a
@@ -1114,6 +1124,16 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
+  /* The legacy host digest is never authoritative. Reject it explicitly
+   * rather than silently accepting a host using an incompatible contract. */
+  if (msg->has_sighash) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Host action sighash rejected"));
+    zcash_signing_abort();
+    layoutHome();
+    return;
+  }
+
   /* Validate action index */
   if (!msg->has_index || msg->index != zcash_signing.current_action) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1142,12 +1162,11 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   }
 
   const bool has_orchard_action_data =
-      zcash_signing.verify_orchard_digest && msg->has_is_spend &&
-      msg->has_nullifier && msg->nullifier.size == 32 && msg->has_cmx &&
-      msg->cmx.size == 32 && msg->has_epk && msg->epk.size == 32 &&
-      msg->has_enc_compact && msg->enc_compact.size == 52 &&
-      msg->has_enc_memo && msg->enc_memo.size == 512 &&
-      msg->has_enc_noncompact &&
+      msg->has_is_spend && msg->has_nullifier && msg->nullifier.size == 32 &&
+      msg->has_cmx && msg->cmx.size == 32 && msg->has_epk &&
+      msg->epk.size == 32 && msg->has_enc_compact &&
+      msg->enc_compact.size == 52 && msg->has_enc_memo &&
+      msg->enc_memo.size == 512 && msg->has_enc_noncompact &&
       /* 580-byte enc_ciphertext = compact(52) + memo(512) + noncompact(16);
        * pin the exact size like every sibling field so a host serializer bug
        * fails fast per-action instead of as an end-of-flow digest mismatch. */
@@ -1282,7 +1301,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   /* Check if all actions are signed */
   if (zcash_signing.current_action >= zcash_signing.n_actions) {
     /* Phase 2b: verify orchard digest before returning signatures */
-    if (zcash_signing.verify_orchard_digest) {
+    {
       uint8_t compact_hash[32], memos_hash[32], noncompact_hash[32];
 
       blake2b_Final(&zcash_signing.compact_ctx, compact_hash, 32);

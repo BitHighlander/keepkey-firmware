@@ -41,58 +41,6 @@ TEST(Solana, FormatTokenAmountUsesSignedDecimals) {
   EXPECT_STREQ(buf, "20.00 tokens");
 }
 
-TEST(Solana, MainnetUsdcIsFirmwareKnown) {
-  const uint8_t usdc_mint[32] = {
-      0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
-      0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
-      0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61};
-  const SolanaKnownToken* token = solana_findKnownToken(usdc_mint);
-  ASSERT_NE(token, nullptr);
-  EXPECT_STREQ(token->symbol, "USDC");
-  EXPECT_EQ(token->decimals, 6);
-
-  uint8_t unknown[32] = {0};
-  EXPECT_EQ(solana_findKnownToken(unknown), nullptr);
-}
-
-TEST(Solana, DerivesAndMatchesAssociatedTokenRecipientOwner) {
-  /* Vector independently produced by @solana/web3.js
-   * PublicKey.findProgramAddressSync with bump 251. */
-  const uint8_t owner[32] = {0xea, 0x4a, 0x6c, 0x63, 0xe2, 0x9c, 0x52, 0x0a,
-                             0xbe, 0xf5, 0x50, 0x7b, 0x13, 0x2e, 0xc5, 0xf9,
-                             0x95, 0x47, 0x76, 0xae, 0xbe, 0xbe, 0x7b, 0x92,
-                             0x42, 0x1e, 0xea, 0x69, 0x14, 0x46, 0xd2, 0x2c};
-  const uint8_t mint[32] = {0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a,
-                            0x3d, 0x65, 0xf3, 0x6a, 0xab, 0xc9, 0x74, 0x31,
-                            0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6, 0xe0, 0xe4,
-                            0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61};
-  const uint8_t expected_ata[32] = {
-      0x67, 0x30, 0x2e, 0x49, 0x18, 0x94, 0xd7, 0x49, 0x2e, 0xa6, 0xbe,
-      0x4f, 0x91, 0x4e, 0xa4, 0xf4, 0x5f, 0xa1, 0x42, 0xe6, 0x45, 0x86,
-      0x7c, 0x91, 0x64, 0xa2, 0x76, 0xd5, 0xdd, 0x76, 0xf0, 0x76};
-
-  uint8_t derived[32] = {0};
-  ASSERT_TRUE(solana_deriveAssociatedTokenAddress(owner, SOL_TOKEN_PROGRAM,
-                                                  mint, derived));
-  EXPECT_EQ(memcmp(derived, expected_ata, sizeof(derived)), 0);
-
-  SolanaSignTx msg = SolanaSignTx_init_zero;
-  msg.token_recipient_owner_count = 1;
-  msg.token_recipient_owner[0].size = sizeof(owner);
-  memcpy(msg.token_recipient_owner[0].bytes, owner, sizeof(owner));
-  uint8_t matched[32] = {0};
-  ASSERT_TRUE(solana_findTokenRecipientOwner(&msg, SOL_TOKEN_PROGRAM, mint,
-                                             expected_ata, matched));
-  EXPECT_EQ(memcmp(matched, owner, sizeof(matched)), 0);
-
-  uint8_t wrong_destination[32];
-  memset(wrong_destination, 0x44, sizeof(wrong_destination));
-  memset(matched, 0xaa, sizeof(matched));
-  EXPECT_FALSE(solana_findTokenRecipientOwner(&msg, SOL_TOKEN_PROGRAM, mint,
-                                              wrong_destination, matched));
-  for (uint8_t byte : matched) EXPECT_EQ(byte, 0xaa);
-}
-
 TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
   char buf[64];
 
@@ -243,7 +191,6 @@ TEST(Solana, ParseSystemTransfer) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
   EXPECT_EQ(tx.num_accounts, 3);
   EXPECT_EQ(tx.num_instructions, 1);
@@ -373,7 +320,6 @@ TEST(Solana, ParseMultiInstruction) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
   EXPECT_EQ(tx.num_instructions, 2);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
@@ -596,7 +542,6 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_ATA_CREATE);
   EXPECT_TRUE(tx.instructions[0].has_mint);
 }
@@ -634,7 +579,6 @@ TEST(Solana, ParseComputeBudgetUnitPrice) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE);
   EXPECT_EQ(tx.instructions[0].extra_value, 1000000ULL);
 }
@@ -672,7 +616,6 @@ TEST(Solana, UnknownProgram) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
-  ASSERT_FALSE(solana_parseTx(raw, pos, &tx));
   EXPECT_EQ(tx.num_instructions, 1);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 }
@@ -681,7 +624,6 @@ TEST(Solana, ParseTxTooShort) {
   uint8_t raw[2] = {0, 0};
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, sizeof(raw), &tx), SOL_TX_REVIEW_MALFORMED);
-  EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
 }
 
 /* #550 boundary regressions, requested by independent review before PR #557
@@ -778,14 +720,12 @@ TEST(Solana, RejectsTrailingBytes) {
   /* Verify the base transaction parses OK */
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_TRUE(solana_parseTx(raw, pos, &tx));
 
   /* Append trailing garbage */
   raw[pos++] = 0xDE;
   raw[pos++] = 0xAD;
 
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
 TEST(Solana, RejectsOOBAccountIndex) {
@@ -833,7 +773,6 @@ TEST(Solana, RejectsOOBAccountIndex) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
 TEST(Solana, RejectsExcessInstructions) {
@@ -868,7 +807,6 @@ TEST(Solana, RejectsExcessInstructions) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
-  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 
   /* A claimed instruction count with truncated bodies is malformed */
   uint8_t truncated[256];
@@ -925,7 +863,6 @@ TEST(Solana, VersionedMessageNoLookupTablesIsVerified) {
   EXPECT_FALSE(tx.has_address_lookups);
   EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 0));
   EXPECT_FALSE(solana_certifiedLutShapeMatches(&tx, 1));
-  EXPECT_TRUE(solana_parseTx(raw, pos, &tx));
   ASSERT_EQ(tx.num_instructions, 1);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
   EXPECT_EQ(tx.instructions[0].lamports, 1000000000ULL);
@@ -1081,7 +1018,6 @@ TEST(Solana, VersionedMessageWithUnreferencedLookupTableIsOpaque) {
    * until the device can resolve and authenticate lookup-table state. */
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
-  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
 TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
@@ -1135,7 +1071,6 @@ TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
    * and NEVER verified. */
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
-  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 
   uint8_t resolved[1][SOL_PUBKEY_SIZE];
   memset(resolved[0], 0x44, SOL_PUBKEY_SIZE);
@@ -1239,7 +1174,6 @@ TEST(Solana, MalformedVersionedLookupTableRejects) {
 
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
 /* =====================================================================
@@ -1283,6 +1217,49 @@ static size_t build_single_instr_tx(uint8_t* raw, const uint8_t* program,
 static void expect_repeated_pubkey(const uint8_t key[SOL_PUBKEY_SIZE],
                                    uint8_t byte) {
   for (size_t i = 0; i < SOL_PUBKEY_SIZE; i++) EXPECT_EQ(byte, key[i]);
+}
+
+TEST(Solana, PartialInstructionScreensStayForcedOpaque) {
+  struct Case {
+    const uint8_t* program;
+    uint8_t account_count;
+    uint8_t data[52];
+    uint8_t data_len;
+    SolanaInstrType type;
+  };
+
+  Case cases[] = {
+      {SOL_SYSTEM_PROGRAM,
+       2,
+       {SOL_SYS_CREATE_ACCOUNT},
+       52,
+       SOL_INSTR_SYSTEM_CREATE_ACCOUNT},
+      {SOL_TOKEN_PROGRAM,
+       3,
+       {SOL_TOKEN_APPROVE_IX},
+       9,
+       SOL_INSTR_TOKEN_APPROVE},
+      {SOL_TOKEN_PROGRAM,
+       2,
+       {SOL_TOKEN_SET_AUTHORITY_IX},
+       35,
+       SOL_INSTR_TOKEN_SET_AUTHORITY},
+  };
+  cases[1].data[1] = 1;
+  cases[2].data[2] = 1;
+  memset(cases[2].data + 3, 0x77, SOL_PUBKEY_SIZE);
+
+  uint8_t raw[512];
+  for (const Case& test_case : cases) {
+    const size_t len =
+        build_single_instr_tx(raw, test_case.program, test_case.account_count,
+                              test_case.data, test_case.data_len);
+    SolanaParsedTx tx;
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+    ASSERT_EQ(1, tx.num_instructions);
+    EXPECT_EQ(test_case.type, tx.instructions[0].type);
+    EXPECT_TRUE(tx.instructions[0].blind_only);
+  }
 }
 
 TEST(Solana, PrefixedMessageReviewAndSignatureUseIdenticalSlice) {

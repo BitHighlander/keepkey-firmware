@@ -1,6 +1,8 @@
 extern "C" {
+#include "keepkey/board/layout.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts/eosio.system.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/storage.h"
 #include "messages-eos.pb.h"
@@ -15,6 +17,62 @@ void setup(void);
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+
+static void eos_ensureStorageReady(void) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  session_clear(true);
+  storage_setMnemonic("all all all all all all all all all all all all");
+}
+
+static size_t eos_confirmBytesPages(const uint8_t* data, size_t size) {
+  size_t pages = 0;
+  size_t offset = 0;
+  while (offset < size) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(data + offset, size - offset,
+                                                  page, sizeof(page));
+    EXPECT_GT(take, 0u);
+    if (take == 0) break;
+    offset += take;
+    pages++;
+  }
+  return pages;
+}
+
+static EosActionCommon eos_unknownCommon(uint64_t name) {
+  EosActionCommon common = EosActionCommon_init_zero;
+  common.has_account = true;
+  common.account = 0xb68d3cbb3e000000ULL;  // quantity
+  common.has_name = true;
+  common.name = name;
+  common.authorization_count = 1;
+  common.authorization[0].has_actor = true;
+  common.authorization[0].actor = EOS_eosio;
+  common.authorization[0].has_permission = true;
+  common.authorization[0].permission = EOS_Active;
+  return common;
+}
+
+static EosActionUnknown eos_unknownChunk(uint32_t total, uint8_t byte) {
+  EosActionUnknown action = EosActionUnknown_init_zero;
+  action.has_data_size = true;
+  action.data_size = total;
+  action.has_data_chunk = true;
+  action.data_chunk.size = 1;
+  action.data_chunk.bytes[0] = byte;
+  return action;
+}
+
+static void eos_initSigning(uint32_t num_actions = 1) {
+  uint8_t chain_id[32] = {0};
+  EosTxHeader header = EosTxHeader_init_zero;
+  HDNode root = {0};
+  uint32_t address_n[8] = {0};
+  eos_signingInit(chain_id, num_actions, &header, &root, address_n, 0);
+}
 
 TEST(EOS, UnknownActionsRequireAdvancedMode) {
   EXPECT_FALSE(eos_unknownActionPolicyAllows(false));
@@ -218,12 +276,7 @@ TEST(EOS, DelegateWithTransferDisclosesOwnershipTransfer) {
 // formats it through a uint16 cast, so 0x10000 showed as 0. It must be bounded
 // like max_cpu_usage_ms and ref_block_num.
 TEST(EOS, SignTxRejectsNetUsageWordsOverflow) {
-  if (storage_getLocation() == FLASH_INVALID) {
-    setup();
-    storage_init();
-  }
-  session_clear(true);
-  storage_setMnemonic("all all all all all all all all all all all all");
+  eos_ensureStorageReady();
 
   EosSignTx msg;
   memset(&msg, 0, sizeof(msg));
@@ -238,7 +291,72 @@ TEST(EOS, SignTxRejectsNetUsageWordsOverflow) {
   EXPECT_FALSE(eos_signingIsInited());
 
   msg.header.max_net_usage_words = UINT16_MAX;
+  ASSERT_TRUE(kkconfirm_preload(static_cast<int>(eos_confirmBytesPages(
+                                    msg.chain_id.bytes, msg.chain_id.size)),
+                                0));
   fsm_msgEosSignTx(&msg);
   EXPECT_TRUE(eos_signingIsInited());
+  EXPECT_EQ(0, kkconfirm_drain());
+  eos_signingAbort();
+}
+
+TEST(EOS, UnknownActionChunksRejectChangedCommonFields) {
+  eos_ensureStorageReady();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+
+  eos_initSigning();
+  EosActionCommon common = eos_unknownCommon(EOS_Transfer);
+  EosActionUnknown action = eos_unknownChunk(2, 0xaa);
+  ASSERT_TRUE(eos_compileActionUnknown(&common, &action));
+  EXPECT_TRUE(eos_hasActionUnknownDataRemaining());
+
+  common.name = EOS_Owner;
+  action = eos_unknownChunk(2, 0xbb);
+  EXPECT_FALSE(eos_compileActionUnknown(&common, &action));
+  EXPECT_FALSE(eos_signingIsInited());
+  EXPECT_EQ(0, kkconfirm_drain());
+  storage_setPolicy("AdvancedMode", false);
+}
+
+TEST(EOS, UnknownActionChunksAcceptSameCommonFields) {
+  eos_ensureStorageReady();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+
+  eos_initSigning();
+  EosActionCommon common = eos_unknownCommon(EOS_Transfer);
+  EosActionUnknown action = eos_unknownChunk(2, 0xaa);
+  ASSERT_TRUE(eos_compileActionUnknown(&common, &action));
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  action = eos_unknownChunk(2, 0xbb);
+  EXPECT_TRUE(eos_compileActionUnknown(&common, &action));
+  EXPECT_TRUE(eos_signingIsFinished());
+  EXPECT_EQ(0, kkconfirm_drain());
+  eos_signingAbort();
+  storage_setPolicy("AdvancedMode", false);
+}
+
+TEST(EOS, AuthorizationRejectsNonK1KeysBeforeDisplay) {
+  EosAuthorization auth = EosAuthorization_init_zero;
+  auth.has_threshold = true;
+  auth.threshold = 1;
+  auth.keys_count = 1;
+  auth.keys[0].has_type = true;
+  auth.keys[0].type = 1;  // EOSIO R1 key type; firmware signs only K1.
+  auth.keys[0].has_key = true;
+  auth.keys[0].key.size = 33;
+  auth.keys[0].has_weight = true;
+  auth.keys[0].weight = 1;
+
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(eos_compileAuthorization("Auth", &auth));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  auth.keys[0].type = 0;
+  eos_initSigning();
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  EXPECT_TRUE(eos_compileAuthorization("Auth", &auth));
+  EXPECT_EQ(0, kkconfirm_drain());
   eos_signingAbort();
 }

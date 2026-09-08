@@ -113,25 +113,6 @@ int gpgMessageSign(HDNode* node, const uint8_t* message, size_t message_len,
   }
 }
 
-int cryptoGetECDHSessionKey(const HDNode* node, const uint8_t* peer_public_key,
-                            uint8_t* session_key) {
-  curve_point point;
-  const ecdsa_curve* curve = node->curve->params;
-  if (!ecdsa_read_pubkey(curve, peer_public_key, &point)) {
-    return 1;
-  }
-  bignum256 k;
-  bn_read_be(node->private_key, &k);
-  point_multiply(curve, &k, &point, &point);
-  memzero(&k, sizeof(k));
-
-  session_key[0] = 0x04;
-  bn_write_be(&point.x, session_key + 1);
-  bn_write_be(&point.y, session_key + 33);
-  memzero(&point, sizeof(point));
-  return 0;
-}
-
 _Static_assert(sizeof(((CoinType*)0)->signed_message_header) < 256,
                "Message header too long");
 
@@ -162,7 +143,9 @@ int cryptoMessageSign(const CoinType* coin, HDNode* node,
   uint8_t hash[HASHER_DIGEST_LENGTH];
   cryptoMessageHash(coin, curve, message, message_len, hash);
 
-  uint8_t pby;
+  /* Ed25519 does not return an ECDSA recovery id. Keep its legacy message
+   * prefix deterministic rather than exposing an uninitialized stack byte. */
+  uint8_t pby = 0;
   int result = hdnode_sign_digest(node, hash, signature + 1, &pby, NULL);
   if (result == 0) {
     switch (script_type) {

@@ -78,9 +78,7 @@ class RecoveryCipher : public ::testing::Test {
 };
 
 // Looks up the raw cipher byte that currently decodes to `plain`.
-char CipherCharFor(char plain) {
-  return recovery_get_cipher()[plain - 'a'];
-}
+char CipherCharFor(char plain) { return recovery_get_cipher()[plain - 'a']; }
 
 // Types `word` (at most 4 chars -- recovery_character() rejects a longer
 // in-progress word) through the ACTIVE cipher, one character at a time, so
@@ -225,7 +223,8 @@ TEST_F(RecoveryCipher, BackspaceAcross23WordBoundariesRestoresRawBytes) {
 
   Backspace(deletes);
 
-  EXPECT_STREQ(recovery_get_decoded_mnemonic(), std::string(wordlist[0], 4).c_str());
+  EXPECT_STREQ(recovery_get_decoded_mnemonic(),
+               std::string(wordlist[0], 4).c_str());
   EXPECT_STREQ(recovery_get_coded_mnemonic(), word1_raw.c_str())
       << "raw coded history must survive backing up over 23 completed words";
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
@@ -249,13 +248,13 @@ TEST_F(RecoveryCipher, RepeatedDeleteRetypeStaysAligned) {
   Backspace(4);  // realize the mistake, delete all four letters
   ASSERT_STREQ(recovery_get_decoded_mnemonic(), "aban ");
   ASSERT_EQ(strlen(recovery_get_coded_mnemonic()),
-           strlen(recovery_get_decoded_mnemonic()));
+            strlen(recovery_get_decoded_mnemonic()));
 
   TypeViaCipher("abov");  // correct to "above" instead
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   EXPECT_STREQ(recovery_get_decoded_mnemonic(), "aban abov");
   EXPECT_EQ(strlen(recovery_get_coded_mnemonic()),
-           strlen(recovery_get_decoded_mnemonic()));
+            strlen(recovery_get_decoded_mnemonic()));
 
   TypeSpace();
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
@@ -276,7 +275,8 @@ TEST_F(RecoveryCipher, RawPrefixAfterMultiBoundaryBackspaceStillCaught) {
   TypeSpace();
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 
-  Backspace(6);  // back into the middle of word1, same as the boundary test above
+  Backspace(
+      6);  // back into the middle of word1, same as the boundary test above
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   ASSERT_STREQ(recovery_get_decoded_mnemonic(), "aban");
 
@@ -297,7 +297,8 @@ TEST_F(RecoveryCipher, RawPrefixAfterMultiBoundaryBackspaceStillCaught) {
     for (size_t i = 0; i < strlen(candidate); i++) {
       const char *pos = strchr(recovery_get_cipher(), candidate[i]);
       ASSERT_NE(pos, nullptr);
-      decoded_probe[i] = "abcdefghijklmnopqrstuvwxyz"[pos - recovery_get_cipher()];
+      decoded_probe[i] =
+          "abcdefghijklmnopqrstuvwxyz"[pos - recovery_get_cipher()];
     }
     if (attempt_auto_complete(decoded_probe)) {
       continue;  // this candidate's raw form also happens to decode validly
@@ -323,4 +324,38 @@ TEST_F(RecoveryCipher, RawPrefixAfterMultiBoundaryBackspaceStillCaught) {
   EXPECT_TRUE(caught) << "a raw, unenciphered real-word prefix must be "
                          "rejected, not silently accepted as if the cipher "
                          "had been used";
+}
+
+TEST_F(RecoveryCipher, EmptyCharacterAckAbortsWithoutAppending) {
+  recovery_debugLinkStart(0);
+  TypeViaCipher("aban");
+  recovery_character("");
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_STREQ("", recovery_get_decoded_mnemonic());
+  EXPECT_STREQ("", recovery_get_coded_mnemonic());
+}
+
+TEST_F(RecoveryCipher, LeadingAndConsecutiveSpacesCannotCountAsWords) {
+  recovery_debugLinkStart(0);
+  TypeSpace();
+  EXPECT_FALSE(setup_isArmed());
+  recovery_debugLinkStart(0);
+  TypeViaCipher("aban");
+  TypeSpace();
+  ASSERT_TRUE(setup_isArmed());
+  TypeSpace();
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_STREQ("", recovery_get_decoded_mnemonic());
+}
+
+TEST_F(RecoveryCipher, EmptyFinalSlotCannotSatisfyWordCount) {
+  recovery_debugLinkStart(12);
+  for (int i = 0; i < 11; ++i) {
+    TypeViaCipher("aban");
+    TypeSpace();
+    ASSERT_TRUE(setup_isArmed());
+  }
+  recovery_cipher_finalize();
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_STREQ("", recovery_get_decoded_mnemonic());
 }

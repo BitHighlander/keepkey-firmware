@@ -5,6 +5,7 @@
 # compiled them anyway and died on ethereum_address_checksum, which is compiled
 # out of that image. recovery.cpp was also listed twice.
 set(sources
+    crypto.cpp
     ctap2.cpp
     ctap2_cbor.cpp
     confirm_test_utils.cpp
@@ -31,7 +32,6 @@ if(NOT ${KK_BITCOIN_ONLY})
       authenticator.cpp
       coins.cpp
       cosmos.cpp
-      eip712.cpp
       eos.cpp
       clearsign_root.cpp
       ethereum.cpp

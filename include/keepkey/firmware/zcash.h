@@ -30,8 +30,6 @@
  * separately, so the struct members appear "unused" in this TU. */
 typedef struct {
   // cppcheck-suppress unusedStructMember
-  uint8_t sk[32]; /* Spending key (master secret at this level) */
-  // cppcheck-suppress unusedStructMember
   uint8_t ask[32]; /* Spend authorizing key (scalar) */
   // cppcheck-suppress unusedStructMember
   uint8_t ak[32]; /* Public spend validating key (compressed, even y) */
@@ -107,9 +105,6 @@ typedef struct {
 ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
     const ZcashPCZTSigningRequestMeta* meta);
 
-bool zcash_pczt_signing_request_is_clear(
-    const ZcashPCZTSigningRequestMeta* meta);
-
 /**
  * Derive Orchard spending keys from the device seed via ZIP-32.
  * Path: m_orchard / 32' / 133' / account'
@@ -121,11 +116,7 @@ bool zcash_pczt_signing_request_is_clear(
  * @param account    Account index (0-based, will be hardened)
  * @param keys       Output: derived Orchard keys
  * @return true on success
- */
-bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
-                               uint32_t account, ZcashOrchardKeys* keys);
-
-/**
+ *
  * Progress-reporting Orchard key derivation for interactive device flows.
  * Progress is driven by the fixed public scalar-multiplication schedule and
  * does not depend on the derived secret key.
@@ -225,26 +216,17 @@ bool zcash_orchard_receiver_to_unified_address(
  * where receiver = d || pk_d, rho is the action nullifier, and rseed is the
  * output note seed. This binds the user-displayed receiver/value to the action
  * commitment before any authorization signature is emitted.
- */
-bool zcash_orchard_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
-
-/** ZIP-2005 V3 note commitment used by the Ironwood pool. */
-bool zcash_ironwood_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
-
-bool zcash_ironwood_compute_cmx_with_progress(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
-    ZcashOrchardProgressCallback progress, void* progress_context);
-
-/**
+ *
  * Progress-reporting note-commitment verification for interactive PCZT flows.
  * The callback exposes only the public Sinsemilla word index and count.
  */
 bool zcash_orchard_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context);
+
+/** ZIP-2005 V3 note commitment used by the Ironwood pool. */
+bool zcash_ironwood_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
     ZcashOrchardProgressCallback progress, void* progress_context);
@@ -266,21 +248,6 @@ bool zcash_orchard_compute_cmx_with_progress(
 bool zcash_orchard_derive_diversifier(const uint8_t dk[32],
                                       const uint8_t index_le[11],
                                       uint8_t diversifier_out[11]);
-
-/**
- * Compute DiversifyHash^Orchard(d) as a serialized Pallas point.
- *
- *   g_d = GroupHash^Pallas("z.cash:Orchard-gd", d)
- *
- * If the group hash ever returns the identity, Orchard falls back to hashing
- * the empty message under the same domain.
- *
- * @param diversifier 11-byte Orchard diversifier
- * @param gd_out      32-byte compressed Pallas point
- * @return true on success
- */
-bool zcash_orchard_diversify_hash(const uint8_t diversifier[11],
-                                  uint8_t gd_out[32]);
 
 /**
  * Derive an Orchard diversified transmission key.
@@ -389,9 +356,8 @@ bool zcash_seed_fingerprint_request_valid(bool present, size_t size);
  * to the seed itself. This is the only sanctioned way for production
  * firmware code to consume seed-derived Zcash material.
  *
- * The bare zcash_derive_orchard_keys() / zcash_calculate_seed_fingerprint()
- * functions above remain in the header for unit tests, which feed them
- * known test vectors directly.
+ * The raw-seed functions above serve the storage implementation and
+ * known-vector unit tests.
  */
 
 /**
@@ -426,5 +392,10 @@ bool storage_zcashSeedFingerprint(bool usePassphrase,
  * session is active.
  */
 void zcash_signing_abort(void);
+#ifdef EMULATOR
+void zcash_test_begin_action_session(void);
+bool zcash_test_action_session_active(void);
+bool zcash_test_last_failure_is(uint32_t code, const char* message);
+#endif
 
 #endif

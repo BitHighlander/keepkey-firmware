@@ -6,7 +6,6 @@ extern "C" {
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
 #include "keepkey/firmware/ethereum_tokens.h"
-#include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
@@ -63,14 +62,6 @@ TEST(Ethereum, AddressChecksum) {
 TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
   EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
-}
-
-TEST(Ethereum, DomainOnlyPrimaryTypeRequiresExactMatch) {
-  EXPECT_TRUE(ethereum_eip712_is_domain_primary_type("EIP712Domain"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP712Domain[]"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type(""));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type(nullptr));
 }
 
 static const uint8_t DAI_MAINNET_ADDRESS[20] = {
@@ -293,50 +284,11 @@ TEST(Ethereum, LpApprovalRequiresMainnetDerivedPairAndCanonicalSpender) {
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
 }
 
-TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
-  uint8_t encoded[32] = {0};
-  ASSERT_EQ(SUCCESS,
-            encAddress("0x00112233445566778899aabbccddeeff00112233", encoded));
-  for (size_t i = 0; i < 12; i++) EXPECT_EQ(0, encoded[i]);
-  EXPECT_EQ(0x00, encoded[12]);
-  EXPECT_EQ(0x11, encoded[13]);
-  EXPECT_EQ(0x33, encoded[31]);
-
-  EXPECT_NE(SUCCESS, encAddress("0x112233", encoded));
-  EXPECT_NE(SUCCESS,
-            encAddress("00112233445566778899aabbccddeeff00112233", encoded));
-  EXPECT_NE(SUCCESS,
-            encAddress("0x00112233445566778899aabbccddeeff0011223g", encoded));
-  EXPECT_NE(SUCCESS, encAddress("0x00112233445566778899aabbccddeeff0011223344",
-                                encoded));
-}
-
-// Every EIP-712 field screen used to be a review(), which calls
-// confirm_helper() and then returns true unconditionally, so a host that
-// answered each screen with a protocol Cancel still got a hash back. The
-// screens are confirm() now and refusal reaches ethereum.c as USER_CANCELLED.
-//
-// That code has to stay outside failMsgReturn[]. ethereum.c sizes the table
-// LAST_ERROR - 2 and indexes it err - 3, so a cancellation code at or below
-// LAST_ERROR would shift every message already in the table and would make
-// failMessage() report a refusal as a parse error instead of an
-// ActionCancelled. It also must not collide with the two non-error codes.
-TEST(Ethereum, Eip712UserCancelledIsOutsideTheFailMessageTable) {
-  EXPECT_GT(USER_CANCELLED, LAST_ERROR);
-  EXPECT_NE(USER_CANCELLED, SUCCESS);
-  EXPECT_NE(USER_CANCELLED, NULL_MSG_HASH);
-}
-
 TEST(Ethereum, PrecomputedTypedHashesRequireAdvancedMode) {
   EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
   EXPECT_FALSE(tron_typed_hash_policy_allows(false));
   EXPECT_TRUE(tron_typed_hash_policy_allows(true));
-}
-
-TEST(Ethereum, LegacyJsonEip712StaysDisabledWhileStructuredStreamIsEnabled) {
-  EXPECT_FALSE(ethereum_structured_eip712_enabled());
-  EXPECT_TRUE(ethereum_streamed_eip712_enabled());
 }
 
 // Two real chain-1 table entries, so the decoder's token lookups resolve.
@@ -379,8 +331,8 @@ TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
       ethereum_contractHandled(msg.data_initial_chunk.size + 1, &msg, nullptr));
 
   msg.data_initial_chunk.size = 4 + 4 * 32;
-  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                        nullptr))
+  EXPECT_FALSE(
+      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
       << "the fifth ABI head word and array length must be present";
 
   MakeTransformErc20(&msg, kTUSD, kTGBP);
@@ -463,22 +415,6 @@ TEST(Ethereum, TransformErc20DisclosesCompleteRoute) {
   ASSERT_TRUE(kkconfirm_preload(static_cast<int>(pages), 0));
   EXPECT_TRUE(zx_confirmZxTransformRoute(route.data(), route.size()));
   EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Ethereum, Eip712ChainIdRequiresCanonicalUint32) {
-  uint32_t value = 0;
-  EXPECT_TRUE(eip712_parse_canonical_u32("0", &value));
-  EXPECT_EQ(0u, value);
-  EXPECT_TRUE(eip712_parse_canonical_u32("4294967295", &value));
-  EXPECT_EQ(UINT32_MAX, value);
-
-  EXPECT_FALSE(eip712_parse_canonical_u32("", &value));
-  EXPECT_FALSE(eip712_parse_canonical_u32("01", &value));
-  EXPECT_FALSE(eip712_parse_canonical_u32("-1", &value));
-  EXPECT_FALSE(eip712_parse_canonical_u32("1 ", &value));
-  EXPECT_FALSE(eip712_parse_canonical_u32("4294967296", &value));
-  EXPECT_FALSE(eip712_parse_canonical_u32(nullptr, &value));
-  EXPECT_FALSE(eip712_parse_canonical_u32("1", nullptr));
 }
 
 extern "C" {
@@ -614,5 +550,70 @@ TEST(Ethereum, MakerDaoWipeAndFreeConfirmsWithSingleScreen) {
 
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   EXPECT_TRUE(makerdao_confirmWipeAndFree(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(Ethereum, NativePlaceholderCannotMasqueradeAsAnErc20Token) {
+  uint8_t address[20];
+  memset(address, 0xee, sizeof(address));
+  EXPECT_EQ(UnknownToken, tokenByChainAddress(1, address));
+  EXPECT_EQ(UnknownToken, tokenByChainAddress(56, address));
+}
+
+static EthereumSignTx MakeMakerDaoProxyOpen() {
+  EthereumSignTx msg;
+  MakeMakerDaoCall(&msg, "\xc7\x40\x73\xa1", 1);
+  uint8_t inner[36];
+  memcpy(inner, msg.data_initial_chunk.bytes, sizeof(inner));
+  memset(msg.data_initial_chunk.bytes, 0, sizeof(msg.data_initial_chunk.bytes));
+  memcpy(msg.data_initial_chunk.bytes, "\x1c\xff\x79\xcd", 4);
+  const uint8_t known_proxy[20] = {0x52, 0x6a, 0xf3, 0x36, 0xd6, 0x14, 0xad,
+                                   0xe5, 0xcc, 0x25, 0x2a, 0x40, 0x70, 0x62,
+                                   0xb8, 0x86, 0x1a, 0xf9, 0x98, 0xf5};
+  memcpy(msg.data_initial_chunk.bytes + 16, known_proxy, sizeof(known_proxy));
+  msg.data_initial_chunk.bytes[67] = 64;
+  msg.data_initial_chunk.bytes[99] = sizeof(inner);
+  memcpy(msg.data_initial_chunk.bytes + 100, inner, sizeof(inner));
+  msg.data_initial_chunk.size = 164;
+  memset(msg.to.bytes, 0x12, 20);
+  return msg;
+}
+
+TEST(Ethereum, MakerDaoProxyRequiresCanonicalDynamicAbi) {
+  const auto valid = MakeMakerDaoProxyOpen();
+  ASSERT_TRUE(makerdao_isMakerDAO(valid.data_initial_chunk.size, &valid));
+  for (uint32_t length : {0u, 4u, 35u, 37u, 68u, UINT32_MAX}) {
+    auto msg = valid;
+    for (int i = 0; i < 4; ++i)
+      msg.data_initial_chunk.bytes[99 - i] = length >> (8 * i);
+    EXPECT_FALSE(makerdao_isMakerDAO(msg.data_initial_chunk.size, &msg))
+        << length;
+  }
+  auto msg = valid;
+  msg.data_initial_chunk.bytes[136] = 1;
+  EXPECT_FALSE(makerdao_isMakerDAO(msg.data_initial_chunk.size, &msg));
+  msg = valid;
+  --msg.data_initial_chunk.size;
+  EXPECT_FALSE(makerdao_isMakerDAO(msg.data_initial_chunk.size, &msg));
+  msg = valid;
+  msg.data_initial_chunk.bytes[67] = 32;
+  EXPECT_FALSE(makerdao_isMakerDAO(msg.data_initial_chunk.size, &msg));
+}
+
+TEST(Ethereum, MakerDaoProxyRequiresOuterRecipientApproval) {
+  auto msg = MakeMakerDaoProxyOpen();
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  EXPECT_TRUE(makerdao_confirmMakerDAO(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_FALSE(makerdao_confirmMakerDAO(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+  // Approving the recipient does not implicitly approve the operation.
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  EXPECT_FALSE(makerdao_confirmMakerDAO(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+  msg.has_to = false;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(makerdao_confirmMakerDAO(msg.data_initial_chunk.size, &msg));
   EXPECT_EQ(0, kkconfirm_drain());
 }

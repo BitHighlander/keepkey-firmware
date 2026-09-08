@@ -108,6 +108,10 @@ bool cbor_encode_text(CborEncoder* encoder, const char* value, size_t length) {
          encode_raw(encoder, (const uint8_t*)value, length);
 }
 
+bool cbor_text_is_valid(const char* value, size_t length) {
+  return value != NULL && valid_utf8((const uint8_t*)value, length);
+}
+
 bool cbor_encode_bool(CborEncoder* encoder, bool value) {
   const uint8_t byte = value ? 0xf5 : 0xf4;
   return encode_raw(encoder, &byte, 1);

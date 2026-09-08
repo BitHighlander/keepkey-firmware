@@ -81,6 +81,7 @@ static void wait_for_passphrase_ack(PassphraseInfo* passphrase_info) {
     default:
       break;
   }
+  memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
 }
 
 /*

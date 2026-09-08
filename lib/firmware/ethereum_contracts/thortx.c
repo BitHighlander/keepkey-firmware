@@ -169,15 +169,7 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
       (uint8_t*)(msg->data_initial_chunk.bytes + 4 + (is_expiry ? 6 : 5) * 32);
 
   // Start confirmations
-  thor_format_to_addr(msg, confStr);
-  const char* thor_router = thor_router_for_chain(msg);
-  if (thor_router && strncmp(confStr, thor_router, 40) == 0) {
-    conf = "Thorchain router";
-  } else if (strncmp(confStr, MAYA_ROUTER, 40) == 0) {
-    conf = router_label;
-  } else {
-    conf = confStr;
-  }
+  conf = router_label;
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
                "Routing through %s", conf)) {
     return false;

@@ -1983,3 +1983,26 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
 }
 
 }  // namespace
+
+TEST(SignedMetadataFormat, MaximumTokenAmountAndSymbolAreComplete) {
+  MetadataArg arg = {};
+  memset(arg.name, 'N', METADATA_MAX_ARG_NAME_LEN);
+  arg.format = ARG_FORMAT_TOKEN_AMOUNT;
+  arg.value[0] = 1;
+  arg.value[1] = 10;
+  memcpy(arg.value + 2, "ABCDEFGHIJ", 10);
+  memset(arg.value + 12, 0xff, 32);
+  arg.value[43] = 0xfe;
+  arg.value_len = 44;
+  const std::string expected = std::string(32, 'N') + ":\n" +
+                               "11579208923731619542357098500868790785326998466"
+                               "564056403945758400791312963993.4 ABCDEFGHIJ";
+  char body[130];
+  ASSERT_TRUE(signed_metadata_format_token_amount(&arg, body, sizeof(body)));
+  EXPECT_EQ(expected, body);
+  char short_body[124];
+  memset(short_body, 0xa5, sizeof(short_body));
+  EXPECT_FALSE(signed_metadata_format_token_amount(&arg, short_body,
+                                                   sizeof(short_body)));
+  EXPECT_STREQ("", short_body);
+}

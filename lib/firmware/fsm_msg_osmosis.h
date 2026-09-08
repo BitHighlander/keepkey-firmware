@@ -12,6 +12,35 @@ static bool osmosis_formatAmountOrFail(char* out, size_t out_len,
   return false;
 }
 
+static bool osmosis_isValidIbcIdentifier(const char* value) {
+  if (!value || !value[0]) return false;
+
+  for (size_t i = 0; value[i]; i++) {
+    const char c = value[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+          (c >= '0' && c <= '9') || c == '/' || c == ':' || c == '.' ||
+          c == '_' || c == '-')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool osmosis_isCanonicalIbcUint64(const char* value) {
+  if (!value || !value[0] || (value[0] == '0' && value[1] != '\0')) {
+    return false;
+  }
+
+  uint64_t parsed = 0;
+  for (size_t i = 0; value[i]; i++) {
+    if (value[i] < '0' || value[i] > '9') return false;
+    const uint8_t digit = (uint8_t)(value[i] - '0');
+    if (parsed > (UINT64_MAX - digit) / 10) return false;
+    parsed = parsed * 10 + digit;
+  }
+  return true;
+}
+
 void fsm_msgOsmosisGetAddress(const OsmosisGetAddress* msg) {
   RESP_INIT(OsmosisAddress);
 
@@ -60,6 +89,7 @@ void fsm_msgOsmosisGetAddress(const OsmosisGetAddress* msg) {
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Can't create Bip32 Path String"));
       layoutHome();
+      return;
     }
 
     bool mismatch =
@@ -647,6 +677,17 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Message is missing required parameters"));
+      layoutHome();
+      return;
+    }
+
+    if (!osmosis_isValidIbcIdentifier(msg->ibc_transfer.source_channel) ||
+        !osmosis_isValidIbcIdentifier(msg->ibc_transfer.source_port) ||
+        !osmosis_isCanonicalIbcUint64(msg->ibc_transfer.revision_height) ||
+        !osmosis_isCanonicalIbcUint64(msg->ibc_transfer.revision_number)) {
+      osmosis_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid IBC transfer parameters");
       layoutHome();
       return;
     }
