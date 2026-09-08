@@ -49,8 +49,13 @@ TEST_F(SessionPolicy, LegacyPolicyNameCannotRearmAdvancedMode) {
   bytes[0] = 10;
   bytes[464] = 1;
   std::memcpy(bytes + 465, "AdvancedMode", 13);
-  bytes[481] = 1;
-  bytes[482] = 1;
+  bytes[464 + 16] = 1;  // has_enabled
+  bytes[464 + 17] = 1;  // enabled
+  PolicyType legacy = {};
+  storage_readPolicyV1(&legacy, bytes + 464, sizeof(bytes) - 464);
+  ASSERT_TRUE(legacy.has_enabled);
+  ASSERT_TRUE(legacy.enabled);
+  ASSERT_STREQ("AdvancedMode", legacy.policy_name);
   SessionState session = {};
   Storage storage = {};
   storage_readStorageV1(&session, &storage, bytes, sizeof(bytes));
