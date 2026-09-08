@@ -53,39 +53,71 @@ defect. A confirmed critical defect in the shipping candidate blocks release
 even if outside the current unit. Other unrelated findings receive a separate
 disposition and batch assignment; they do not silently expand this batch.
 
-## Bounded hardening rounds
+## Local rehearsal to convergence
 
-1. Round 0: inventory known findings against the frozen baseline, deduplicate,
-   establish baseline checks, and select the first finite remediation batch.
-2. Round 1: implement the selected units in dependency order. Test and review
-   each against its intended predecessor, including affected callers, shared
-   state, failure paths, and dependencies.
-3. Round 2: review the remediation delta and affected interactions, then run
-   candidate acceptance. Do not automatically repeat an entire alpha audit.
+Owner revision: 2026-09-08. Continue using Codex for implementation and local
+review. Copilot is deferred to late upstream/release phases and is not an
+internal staging acceptance gate. This revision supersedes earlier mandatory
+per-PR clean-Copilot requirements and review-round ceiling blockers.
 
-Additional remediation rounds require a named unresolved defect and an explicit
-manifest update. They are not an instruction to invent another discovery pass.
-Unresolved blockers remain blockers when a round budget expires.
+“Perfect” means the frozen unit meets its written acceptance contract with no
+known unresolved in-scope defects. It is not a claim of zero possible bugs or an
+instruction to keep inventing improvements. Define the finish line before work.
 
-For each PR, investigate all review findings before batching scoped fixes.
-Request Copilot against the final head; inspect inline and actionable body-only
-findings and disposition earlier threads. Acceptance requires a completed clean
-review on the current head, zero unresolved threads, and passing required checks.
-An empty, failed, or undelivered review is not a clean review.
+1. Inventory existing findings, deduplicate root causes, and pin baseline/source
+   identities. Define the behavior, invariants, affected consumers and checks.
+2. Implement a coherent unit. Review its actual diff against its predecessor,
+   including dependency changes, bounds, failure paths, state lifetime and tests.
+3. Batch concrete findings into scoped fixes. Reproduce defects where practical;
+   add regression coverage that distinguishes incorrect from correct behavior.
+   Run format/build checks before review so mechanical nits do not consume rounds.
+4. Repeat local review of the remediation delta and affected interactions until
+   no actionable in-scope findings remain. Every additional iteration must name
+   the defect or missing evidence it resolves. Do not restart whole-alpha audits.
+5. Freeze the candidate. Run required unit, integration, ARM/resource and storage
+   compatibility checks; inspect skips, screenshots and artifacts where required.
+   Reconstruct the stack and verify its tree, dependency pins and source provenance.
+6. Record a candidate receipt: exact head/base, completed checks and local review,
+   finding dispositions, exclusions and remaining release-only requirements.
+   A passing candidate ends the internal loop. Advance to the next unit.
 
-Persist the Copilot round count across sessions. Five requested review rounds
-per unit is the ceiling. At the ceiling, stop requests and diagnose with the
-owner: split the unit, resolve a disputed claim, or revise its design. Do not
-reroll unchanged code to obtain silence. A clean accepted head ends the loop.
+A review pass is not evidence of correctness by itself. Do not weaken tests,
+remove required coverage or redefine behavior merely to obtain a clean result.
+Confirmed release-critical defects still block release. Optional style preferences
+and unrelated improvements go to a separate backlog rather than reopening a
+passing candidate. A recurring finding requires root-cause analysis or a smaller
+unit, not additional unchanged review prompts.
+
+## Copilot only at the late external checkpoint
+
+Do not request Copilot during authoring, local hardening, predecessor propagation,
+or routine fork PR staging. Do not create a PR or push solely to trigger Copilot.
+Quota exhaustion, missing delivery or a historical round ceiling does not block
+internal work or acceptance under the local contract above.
+
+Consider one Copilot review only after the candidate is frozen, all internal gates
+pass, and an upstream/release review is being prepared. Request it when explicitly
+authorized for that late checkpoint or required by the actual upstream process.
+Never automatically start a repeat-until-silent Copilot loop. If findings arrive,
+triage and fix them locally in a batch; a re-request needs a concrete reason tied
+to that external checkpoint. Preserve prior dispositions and review counts.
+
+A failed, missing or quota-limited review is not a clean review. Report Copilot's
+actual status separately from internal readiness. Existing substantive findings
+must still be resolved or explicitly declined on technical grounds; deferring
+Copilot does not waive known defects or any upstream-required review gate.
 
 ## Evidence and invalidation
 
 Record base/head SHAs, submodule IDs, check/artifact links, actual executed and
-skipped tests, Copilot review identity, dispositions, and acceptance status.
+skipped tests, local review scope/result, dispositions, and acceptance status.
+Record external review identities when available without making them implicit gates.
 Retain completed review reasoning for unchanged surfaces. Reopen it when code,
 dependencies, or new evidence invalidate that reasoning. A changed head needs
-fresh final-head review/check identity; earlier evidence remains supporting
-evidence rather than proof of the new candidate.
+an explicit impact assessment and current candidate/check identity. Recheck the
+changed behavior and affected interactions; preserve evidence for unchanged
+surfaces. This does not require another Copilot request. Earlier evidence remains
+supporting evidence rather than proof of the new candidate.
 
 Build and test each unit green in its turn. Run required complete integration,
 ARM/emulator, device/OLED, storage compatibility, and SRAM checks on the assembled
