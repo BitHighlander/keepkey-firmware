@@ -744,12 +744,9 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  if (storage->version == 1) {
-    storage->pub.policies_count = 0;
-  } else {
-    storage->pub.policies_count = 1;
-    storage_readPolicyV1(&storage->pub.policies[0], ptr + 464, 17);
-  }
+  /* Legacy policy names are untrusted: a forged first entry named
+   * AdvancedMode would override the canonical session-only policy. */
+  storage_resetPolicies(storage);
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
@@ -808,7 +805,8 @@ void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
                    (storage->pub.has_mnemonic ? (1u << 9) : 0) |
                    (storage->pub.has_u2froot ? (1u << 10) : 0) |
                    (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
+                   /* Bit 12 is retired: AdvancedMode is session-only.
+                    * Never write or reuse its legacy flash bit. */
                    (storage->pub.no_backup ? (1u << 13) : 0) |
                    (storage->has_sec_fingerprint ? (1u << 14) : 0) |
                    // cppcheck-suppress badBitmaskCheck
@@ -867,8 +865,8 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  /* Ignore the retired AdvancedMode bit, including on upgrades. */
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -925,7 +923,8 @@ void storage_writeStorageV16Plaintext(char* ptr, size_t len,
                    (storage->pub.has_mnemonic ? (1u << 9) : 0) |
                    (storage->pub.has_u2froot ? (1u << 10) : 0) |
                    (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
+                   /* Bit 12 is retired: AdvancedMode is session-only.
+                    * Never write or reuse its legacy flash bit. */
                    (storage->pub.no_backup ? (1u << 13) : 0) |
                    (storage->has_sec_fingerprint ? (1u << 14) : 0) |
                    (storage->pub.sca_hardened ? (1u << 15) : 0) |
@@ -995,8 +994,8 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  /* Ignore the retired AdvancedMode bit, including on upgrades. */
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -1431,6 +1430,12 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      calling function is required to update the flash with a storage_commit().
   */
   pintest_t ret = PIN_WRONG;
+
+  /* Locks revoke the opt-in. Soft Initialize keeps it, otherwise hosts that
+   * initialize before each operation would repeatedly require confirmation. */
+  if (clear_pin) {
+    storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
+  }
 
   ss->seedCached = false;
   memset(&ss->seed, 0, sizeof(ss->seed));

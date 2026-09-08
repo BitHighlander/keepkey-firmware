@@ -492,7 +492,8 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
-  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
+  // Legacy flash policy names are discarded in favor of canonical defaults.
+  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, false);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);

@@ -31,6 +31,7 @@ static const PolicyType policies[] = {
     {true, "ShapeShift", true, false},
     {true, "Pin Caching", true, true},
     {true, "Experimental", true, false},
+    // Session-only; legacy storage bit 12 is retired and must not be reused.
     {true, "AdvancedMode", true, false},
 };
 
