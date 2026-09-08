@@ -280,6 +280,22 @@ TEST_F(SignedMetadataTest, LoadDeviceRevokesSigner) {
   EXPECT_EQ(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
 }
 
+TEST_F(SignedMetadataTest, InvalidReplacementPreservesExistingSigner) {
+  EXPECT_FALSE(signed_metadata_store_signer(TEST_KEY_ID, nullptr, TEST_ALIAS,
+                                            nullptr, 0, 0, 0, false));
+  EXPECT_FALSE(signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB,
+                                            nullptr, nullptr, 0, 0, 0, false));
+  EXPECT_FALSE(signed_metadata_store_signer(
+      TEST_KEY_ID, EXPECTED_SLOT3_PUB, "bad%alias", nullptr, 0, 0, 0, false));
+  uint8_t invalid[33] = {};
+  EXPECT_FALSE(signed_metadata_store_signer(TEST_KEY_ID, invalid, TEST_ALIAS,
+                                            nullptr, 0, 0, 0, false));
+  EXPECT_STREQ(TEST_ALIAS, signed_metadata_signer_alias(TEST_KEY_ID));
+  auto blob = base_blob();
+  EXPECT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+}
+
 TEST_F(SignedMetadataTest, DerivedPubkeyMatchesSlot3) {
   uint8_t pub[33];
   ecdsa_get_public_key33(&secp256k1, TEST_PRIV, pub);
@@ -1290,6 +1306,11 @@ TEST_F(SignedMetadataTest, V2SchemaPayableKeepsValueScreen) {
   /* Clear-signs, AND flags that the amount screen must still run. */
   EXPECT_TRUE(signed_metadata_matches_tx(&msg));
   EXPECT_TRUE(signed_metadata_schema_moves_value());
+
+  msg.to.bytes[0] ^= 1;
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+  msg.to.bytes[0] ^= 1;
 
   /* Zero value: same match, but no extra screen is demanded — proving the
    * flag tracks the value rather than being always-on. */
