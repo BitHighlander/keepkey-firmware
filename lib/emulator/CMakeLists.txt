@@ -34,7 +34,7 @@ if(${KK_EMULATOR})
     target_include_directories(kkemulator_dylib PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/include
-        ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto)
+        ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
     set_target_properties(kkemulator_dylib PROPERTIES
         OUTPUT_NAME "kkemu"
         POSITION_INDEPENDENT_CODE ON)
