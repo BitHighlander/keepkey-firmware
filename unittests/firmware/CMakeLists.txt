@@ -1,4 +1,5 @@
 set(sources
+    nanopb_bounds.cpp
     authenticator.cpp
     confirm_test_utils.cpp
     fsm.cpp
