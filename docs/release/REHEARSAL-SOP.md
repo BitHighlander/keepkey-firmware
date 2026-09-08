@@ -77,6 +77,13 @@ Triage known audit findings before commissioning new broad discovery. A claim
 about alpha must be reproduced or traced on the selected 7.14.2 head before it
 becomes foundation work. Do not infer reachability from a shared filename.
 
+Before replaying a historical fix, compare it with the current product's explicit
+policy and later implementation. Record it as present, applicable and missing,
+superseded, or excluded with a technical reason. A historical commit calling
+something a vulnerability is evidence to investigate, not permission to reverse
+the current contract. Check test build registration and version-based skips against
+the actual candidate capabilities; a test in the tree is not evidence it ran.
+
 ## Findings and review units
 
 Each finding has a stable ID, affected SHA/configuration, concrete failure
