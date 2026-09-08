@@ -14,8 +14,8 @@ Selection does not claim that this head has passed final acceptance.
 
 Create a fresh rehearsal branch from that SHA. Do not merge alpha into it.
 Existing shared develop remains preserved until the replacement is proven.
-The intended new develop is the accepted 7.14.2 foundation plus accepted
-hardening units. Alpha feature staging may proceed on the tested foundation PR before release acceptance; dependent units remain unmerged.
+The proposed foundation is represented by an unmerged PR into fork develop.
+Do not merge or reset develop under this rehearsal authorization. Alpha feature staging may proceed on the tested foundation PR before release acceptance; dependent units remain unmerged.
 Promotion of a shared branch is a distinct recorded operation; this procedure
 does not silently reset, force-push, merge upstream, or publish a release.
 
@@ -100,10 +100,10 @@ checks passing, and no unresolved release blockers. Record the accepted SHA.
 Alpha features may be staged earlier in a new manifest using the same unit procedure. Release acceptance remains distinct from internal staging.
 
 Reconstruct the accepted sequence from its recorded base and verify the expected
-tree and pins before promoting it as develop. Preserve the previous develop tip.
+tree and pins before proposing any future promotion of develop. Preserve the previous develop tip.
 Final contents must match the selected manifest, not all of alpha; explicitly
-record intentional omissions. Prefer shallow dependency stacks and land accepted
-units in order rather than re-bundling them into a large upstream review.
+record intentional omissions. Keep dependent fork PRs stacked and unmerged. Future upstream submission
+should preserve the independently reviewable units and dependency order.
 
 Rehearsal success does not imply upstream acceptance. Before upstream PRs, verify
 the live target base and public dependency availability. Reconcile any difference,
