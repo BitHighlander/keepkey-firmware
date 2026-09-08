@@ -708,6 +708,8 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 
 #if DEBUG_LINK
     if (decided_via_debug) {
+      /* Each debug-driven subpage must consume its own host acknowledgement. */
+      button_request_acked = false;
       memset(&resp, 0, sizeof(resp));
       resp.has_code = true;
       resp.code = type;
