@@ -32,7 +32,6 @@
 
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/firmware/home_sm.h"
-#include "keepkey/firmware/authenticator.h"
 
 #include "keepkey/board/common.h"
 #include "keepkey/board/supervise.h"
