@@ -31,7 +31,8 @@ jobs:
     outputs:
       fw_version: ${{ steps.version.outputs.fw_version }}
       ci_run_id: ${{ steps.evidence.outputs.ci_run_id }}
-      arm_artifact: ${{ steps.evidence.outputs.arm_artifact }}
+      arm_full_artifact: ${{ steps.evidence.outputs.arm_full_artifact }}
+      arm_bitcoin_artifact: ${{ steps.evidence.outputs.arm_bitcoin_artifact }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -185,9 +186,11 @@ jobs:
           # firmware.keepkey.bin). Only bitcoin-only is qualified, because it is
           # the unusual one.
           - variant: full
+            arm_output: arm_full_artifact
             suffix: ""
             cmake_flags: ""
           - variant: bitcoin-only
+            arm_output: arm_bitcoin_artifact
             suffix: "-bitcoin-only"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     timeout-minutes: 20
@@ -198,7 +201,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CI_RUN_ID: ${{ needs.validate.outputs.ci_run_id }}
-          ARM_ARTIFACT: ${{ needs.validate.outputs.arm_artifact }}
+          ARM_ARTIFACT: ${{ needs.validate.outputs[matrix.arm_output] }}
         run: |
           gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name test-report --dir audited-report
