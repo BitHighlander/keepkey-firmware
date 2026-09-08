@@ -34,11 +34,10 @@
    different account than the screen showed. */
 #define RIPPLE_ADDRESS_VERSION 0x00
 
-/* The largest drop amount ripple_serializeAmount() can encode. Above this the
-   value collides with the bits that flag "XRP" and "positive", so the
-   serializer would emit a different amount than the one supplied. It guarded
-   this with assert(), which compiles out of release builds -- so the bound has
-   to be enforced by the message handler instead. */
+/* Preserve the serializer's existing supported maximum of 100,000 XRP.
+   This is an implementation limit, not the 62-bit wire-format capacity or
+   XRP's protocol maximum. Enforce it in the handler because the serializer's
+   assert() is disabled in release builds. */
 #define RIPPLE_MAX_DROPS 100000000000ULL
 
 #define RIPPLE_FLAG_FULLY_CANONICAL 0x80000000
