@@ -4,6 +4,20 @@ Owner direction: 2026-09-08. Harden and assemble 7.14.2, 7.14.3 and 7.15 through
 small local audit units. The canonical procedure is [REHEARSAL-SOP.md](REHEARSAL-SOP.md).
 Copilot belongs to final upstream preparation, after internal product acceptance.
 
+## Active objective and stop condition
+
+Owner instruction: continue until all three releases meet their written local
+acceptance contracts and are ready for final Copilot review. Completion requires
+three exact candidate receipts, full scope reconciliation, required checks passed,
+no known unresolved in-scope or release-critical defects, and validated assembly
+on the canonical fork product branches. Keep PRs into develop unmerged. Do not
+request Copilot during this work or claim that local acceptance proves no possible
+bugs. Required unavailable verification remains explicitly pending.
+
+The persistent goal tool rejected replacement because an older, usage-limited goal
+is unfinished. This manifest records the expanded objective without falsely marking
+that earlier goal complete.
+
 ## Product identities
 
 These are source snapshots observed on 2026-09-08, not acceptance receipts.
