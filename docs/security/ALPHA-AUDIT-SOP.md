@@ -69,6 +69,12 @@ Local build recipe: `docs/release/ALPHA-MERGE-HANDOFF.md`, plus
 `keepkeylib/eth/ethereum-lists` submodule for the token table; init it
 individually, not `--recursive`.
 
+Format gate: CI runs **clang-format 20** (`lint-format`). Homebrew's default
+clang-format is newer and disagrees on line breaks, so check touched files with
+`/opt/homebrew/opt/llvm@20/bin/clang-format --style=file --dry-run --Werror`
+before pushing. Ten files are already dirty on alpha under newer versions; only
+files you touched matter.
+
 ## 4. Re-audit
 
 Run step 1 again on the new tip. Also run a diff review of everything the
