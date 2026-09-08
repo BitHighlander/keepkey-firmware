@@ -241,3 +241,19 @@ This proves the existing memo serialization case at this head. It does not
 close display/cancellation, maximum-length/UTF-8 policy, client API integration
 or the host suite's stale unconditional skip. A gated host-test change remains
 required; do not claim CI currently executes this case.
+
+### P06-001 host test gate and firmware pin staged
+
+Host fork PR [python-keepkey #76](https://github.com/BitHighlander/python-keepkey/pull/76)
+at fb968836ba7ef354c55b89c9ba88bae19bc2c2ce removes the stale unconditional
+skip, requires 7.15.0 and preserves the full-feature guard and both original
+serialization assertions. All three Ripple tests pass against full kkemu at
+041a23d5c; all three correctly skip on Bitcoin-only. Exact host commit fetch
+through the configured upstream submodule URL succeeded (publication was to
+the fork only).
+
+Firmware fork PR [#688](https://github.com/BitHighlander/keepkey-firmware/pull/688),
+7a8a873c3, pins the host fix above frozen packet-lifetime PR #685. Combined CI
+is pending. Earlier run 34291743075 at f20c2497a has now passed static analysis
+and started downstream builds/host jobs; it does not validate these later units.
+Full P06 and release audits remain open.
