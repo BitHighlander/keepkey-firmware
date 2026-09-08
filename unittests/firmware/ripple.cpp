@@ -130,8 +130,8 @@ TEST(Ripple, Serialize) {
 }
 
 TEST(Ripple, Base58PayloadBoundaryRoundTrips) {
-  uint8_t input[RIPPLE_BASE58_MAX_PAYLOAD];
-  uint8_t output[RIPPLE_BASE58_MAX_PAYLOAD];
+  uint8_t input[RIPPLE_BASE58_MAX_BINARY + 1];
+  uint8_t output[RIPPLE_BASE58_MAX_BINARY + 1];
   char encoded[200];
   for (size_t i = 0; i < sizeof(input); ++i) input[i] = (uint8_t)(i + 1);
   for (int n = 1; n <= RIPPLE_BASE58_MAX_PAYLOAD; ++n) {

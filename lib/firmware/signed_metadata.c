@@ -818,20 +818,9 @@ static bool signed_metadata_confirm_screens(void) {
     uint16_t icon_len;
     if (signed_metadata_signer_icon(key_id, &icon_data, &icon_w, &icon_h,
                                     &icon_len)) {
-      icon_img.w = icon_w;
-      icon_img.h = icon_h;
-      icon_img.length = icon_len;
-      icon_img.data = icon_data;
-      icon_frame.x = 0;
-      icon_frame.y = (icon_h < 52) ? (uint16_t)((52 - icon_h) / 2 + 6) : 6;
-      icon_frame.duration = 0;
-      /* Decoder computes pixel = data * color / 100, so color=100 makes the
-       * icon's data bytes direct 0-255 intensities (matches the built-in
-       * icons). color=0xff would overflow uint8 and corrupt every pixel. */
-      icon_frame.color = 100;
-      icon_frame.image = &icon_img;
-      layout_set_runtime_icon(&icon_frame);
-      screen_icon = RUNTIME_ICON;
+      /* Use the same full-height, centered placement as load confirmation. */
+      screen_icon = stage_runtime_icon(&icon_img, &icon_frame, icon_data,
+                                       icon_w, icon_h, icon_len);
     }
 
     memset(body, 0, sizeof(body));
