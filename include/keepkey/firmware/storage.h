@@ -25,6 +25,9 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/authenticator.h"
 
+/* Versions 18 and 19 were used by alpha identity/PIN-KDF formats; version 20
+ * was used by passkey storage. These numbers remain reserved even though this
+ * audited foundation writes V17. Do not reuse them for a different layout. */
 #define STORAGE_VERSION \
   17 /* Must add case fallthrough in storage_fromFlash after increment*/
 #define STORAGE_RETRIES 3
