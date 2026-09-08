@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "sram_gate", Path(__file__).with_name("check_sram_budget.py"))
+if spec is None or spec.loader is None:
+    raise RuntimeError("Cannot load SRAM gate module for regression tests")
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
