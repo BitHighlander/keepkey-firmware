@@ -24,7 +24,7 @@ These are source snapshots observed on 2026-09-08, not acceptance receipts.
 
 | Product | Canonical fork product branch | Observed source SHA | Status |
 | --- | --- | --- | --- |
-| 7.14.2 | `release/7.14.2` | `cdde6888c2792cd9c673d0ff47f0cdb8069e08dc` | Source reconciliation and full product acceptance pending |
+| 7.14.2 | `release/7.14.2` | `1e8d43c12d963ffa9e45a333b00b22c16b043c26` | Foundation assembled; CI green; later revocation fix pending combined acceptance |
 | 7.14.3 | `release/7.14.3-bitcoin-only` | `abe29d1288638867dc64dfe04219b89f7a593133` | Bitcoin-only candidate; scope and acceptance pending |
 | 7.15 | `release/7.15` | `a56fb3e88d7dbbe31a321179c10a8fd2023d8f0c` | Full feature inventory and acceptance pending |
 
@@ -34,12 +34,37 @@ The additional fork branch `release/7.15.0` was observed at
 as equivalent, overwrite either branch, or silently create a fourth product.
 
 Fork develop was observed at `da075b8cb717b56dc1023edb52c2ccdf171b8a08`.
-Product PRs target fork develop and remain unmerged. Existing product PRs #627
-(7.14.3) and #629 (7.15) now target develop. The 7.14.2 source is already an
-ancestor of develop; its previous product PR #494 was merged historically. A new
-7.14.2 product PR requires a new validated candidate with a substantive delta;
-do not manufacture code changes just to open an empty product PR. Audit PRs target develop or their immediate dependency as specified
-in the SOP. Alpha is a source of selected work, not the product acceptance surface.
+Product PRs #650 (7.14.2), #627 (7.14.3), and #629 (7.15) target fork develop
+and remain unmerged. Canonical 7.14.2 advanced from `cdde6888c` to `1e8d43c12`
+after passing CI, including ARM SRAM reserve of 22,508 bytes and 433 host tests.
+Later source reconciliation reopened acceptance for a missing low-level signing
+revocation fix. The other two canonical refs still retain their frozen source
+heads until combined candidate acceptance; audit branches are substantive work,
+but are not yet accepted canonical products.
+
+## Current combined candidates
+
+- `rehearsal/7142-combined-product`: accepted foundation plus low-level signing
+  revocation (`91bdcf089`, audit PR #661).
+- `rehearsal/7143-combined-product`: unsigned decoding, nanopb transport bounds,
+  storage capacities, passphrase transitions, cipher scratch cleanup, EOS
+  authorization, low-level revocation, and token generation dependencies.
+  Audit PRs #645, #646, #649, #651, #653, #657, and #660.
+- `rehearsal/715-combined-product`: corresponding shared fixes plus provider icon
+  placement, restored FSM test coverage, authenticator credential source cleanup,
+  and Zcash teardown. Audit PRs #644, #647, #648, #652, #654–#656, #658–#659.
+
+The earlier 7.14.3 decode candidate passed all CI gates, both ARM variants and
+both integration variants (run 34275309652). The earlier 7.15 decode candidate
+passed 695 host tests, with 56 skips. These are predecessor evidence, not final
+combined candidate receipts. Three skipped Zcash checks apply to the canonical
+7.15 sources and are being enabled in the companion host audit.
+
+The older 7.15.0 unsupported-storage lockout conflicts with the current explicit
+storage downgrade policy. It is superseded rather than blindly replayed. The
+experimental uncommitted change was withdrawn. Native test concurrency also
+exposed shared emulator port use; run those full suites serially to avoid binding
+collisions. Neither issue is grounds for weakening the release checks.
 
 ## Existing rehearsal evidence
 
