@@ -191,6 +191,26 @@ def validate_arm_manifests(arm_dir, firmware_sha, python_sha):
     return manifests
 
 
+def require_native_junit(root):
+    """Require each native suite before discovering any additional XML inputs."""
+    native_dir = Path(root) / "test-reports" / "firmware-unit"
+    required = ("firmware.xml", "board.xml", "crypto.xml")
+    missing = [name for name in required
+               if not (native_dir / name).is_file()
+               or (native_dir / name).stat().st_size == 0]
+    if missing:
+        raise SystemExit("ERROR: required native JUnit inputs missing or empty: " +
+                         ", ".join(missing))
+    for name in required:
+        try:
+            parsed = ET.parse(native_dir / name)
+        except ET.ParseError as exc:
+            raise SystemExit("ERROR: malformed native JUnit %s: %s" % (name, exc))
+        if next(parsed.iter("testcase"), None) is None:
+            raise SystemExit("ERROR: native JUnit contains no test cases: " + name)
+    return sorted(native_dir.glob("*.xml"))
+
+
 def main():
     if not REPORT_GENERATOR.is_file():
         fail("report generator submodule is not initialized")
@@ -204,8 +224,7 @@ def main():
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     junit_paths = [ROOT / "test-reports" / "python-keepkey" / "junit.xml"]
-    junit_paths += [Path(path) for path in sorted(glob.glob(
-        str(ROOT / "test-reports" / "firmware-unit" / "*.xml")))]
+    junit_paths += require_native_junit(ROOT)
     junit_paths.append(ROOT / "test-reports" / "dylib-junit.xml")
     missing_junit = [str(path) for path in junit_paths if not path.is_file()]
     if missing_junit:
