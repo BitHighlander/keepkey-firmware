@@ -1490,8 +1490,11 @@
       "added": "198",
       "deleted": "91",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "Shared permutation scratch lifetime and transport interaction reviewed at f20c2497a; three Recovery tests pass. Remaining P03 recovery review pending."
     },
     {
       "path": "lib/firmware/reset.c",

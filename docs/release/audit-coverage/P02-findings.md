@@ -94,3 +94,21 @@ and its generated build-native/include headers. This is evidence for current
 schemas, not a proof for future additions or callback-sized messages. No
 current out-of-bounds defect was established; no speculative code fix added.
 The complete transport phase remains open.
+
+## Reviewed 7.15 recovery scratch interaction: no new finding
+
+At f20c2497a, attempt_auto_complete() is the sole consumer of
+frame_arena_scratch2049(). Its 2,049 uint16_t entries fit the arena; only the
+first 2,048 are permuted, retaining the wordlist sentinel at index 2,048.
+The overlong-input return precedes acquisition. All three exits after
+acquisition wipe the complete scratch table. The permutation/RNG and string
+operations do not poll USB or emit messages. Callers use independent word
+buffers and do not retain the scratch pointer. A CharacterRequest emitted
+before autocomplete finishes transmitting synchronously before acquisition.
+
+Existing Recovery.ExactStrMatch, Recovery.AutoComplete and
+Recovery.WordlistLengths pass in the current full native binary. The older
+products use a local permutation array, not this shared-scratch mechanism.
+This closes the scratch/transport interaction only; recovery state transitions,
+word policy, entropy quality and cumulative stack depth remain separate open
+audit obligations.
