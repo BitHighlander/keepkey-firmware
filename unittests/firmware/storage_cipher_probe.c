@@ -3,7 +3,7 @@
  * Firmware builds still compile storage.c normally, without these observers.
  * Observe wipes while objects are alive; never inspect abandoned stack memory.
  */
-#include <stdbool.h>
+#include "storage_cipher_probe.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -37,11 +37,11 @@ static void observe_memzero(void* p, size_t len) {
   if (!observing) return;
   unsigned bit = 0;
   if (p == observed_iv && len == 64) {
-    bit = 1;
+    bit = STORAGE_IV_WIPED;
     observed_iv = NULL;
   }
   if (p == observed_ctx && len == observed_ctx_size) {
-    bit = 2;
+    bit = STORAGE_CTX_WIPED;
     observed_ctx = NULL;
   }
   if (bit) {
@@ -58,7 +58,7 @@ static void observe_cipher(unsigned char* iv, const void* ctx, size_t size) {
   observed_iv = iv - 32; /* Both storage helpers use bytes 32..47 of iv[64]. */
   observed_ctx = ctx;
   observed_ctx_size = size;
-  observed |= 4;
+  observed |= STORAGE_CIPHER_CALLED;
 }
 
 static AES_RETURN observe_encrypt(const unsigned char* in, unsigned char* out,
@@ -75,8 +75,7 @@ static AES_RETURN observe_decrypt(const unsigned char* in, unsigned char* out,
   return aes_cbc_decrypt(in, out, len, iv, ctx);
 }
 
-/* Bits: 1 = complete IV wiped, 2 = complete AES context wiped,
- * 4 = actual cipher called, 8 = encrypted data round-trips unchanged. */
+/* Return named observations for complete wiping and cipher round trips. */
 unsigned storage_test_cipher_cleanup(bool migrate, bool encrypt) {
   observed = 0;
   observed_iv = NULL;
@@ -99,7 +98,7 @@ unsigned storage_test_cipher_cleanup(bool migrate, bool encrypt) {
     if (strcmp(data.sec.mnemonic, "storage cleanup compatibility control") ==
             0 &&
         ((uint8_t*)&data.sec.authBlock)[0] == 0x5A) {
-      observed |= 8;
+      observed |= STORAGE_ROUND_TRIP_OK;
     }
     memzero(&ss, sizeof(ss));
     memzero(&data, sizeof(data));
@@ -119,7 +118,8 @@ unsigned storage_test_cipher_cleanup(bool migrate, bool encrypt) {
       memset(plain, 0, sizeof(plain));
       storage_cipherBlock(false, key, plain, cipher, sizeof(plain));
     }
-    if (memcmp(plain, expected, sizeof(plain)) == 0) observed |= 8;
+    if (memcmp(plain, expected, sizeof(plain)) == 0)
+      observed |= STORAGE_ROUND_TRIP_OK;
     memzero(key, sizeof(key));
     memzero(plain, sizeof(plain));
   }
