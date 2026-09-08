@@ -76,8 +76,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job here only reads the repository: checkout, build, and run tests.
-# Artifacts move between jobs over the run-scoped artifact token, the GHCR
-# mirror read is anonymous with an explicit fallback, and the DockerHub push
+# Artifacts move between jobs over the run-scoped artifact token, and the DockerHub push
 # authenticates with its own credentials -- nothing needs a writable
 # GITHUB_TOKEN. Declaring the floor once at the workflow level applies it to
 # all jobs, so a new job cannot silently inherit write scope.
@@ -88,13 +87,8 @@ permissions:
   contents: read
 
 env:
-  BASE_IMAGE: kktech/firmware:v15
-  # Pulls of the 650 MB base image from Docker Hub cost ~34s per job. The
-  # same blob served from GHCR to a GitHub-hosted runner is markedly faster
-  # and is not subject to Docker Hub's anonymous pull limits. Populate it
-  # with the mirror-base-image workflow; CI falls back to Docker Hub
-  # automatically when the mirror is absent or unreadable.
-  BASE_IMAGE_MIRROR: ghcr.io/${{ github.repository_owner }}/firmware:v15
+  # Use the same immutable toolchain as the local release build and Dockerfiles.
+  BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
 
 jobs:
@@ -341,60 +335,16 @@ jobs:
             deps/sca-hardening/SecAESSTM32
           git submodule update --init --recursive --jobs 4 deps/python-keepkey
 
-      # continue-on-error because the mirror is optional by design. Without
-      # it a GHCR outage, a revoked package grant, or a token hiccup fails the
-      # job here -- before the Docker Hub fallback this login exists to enable
-      # ever gets a chance to run. A failed login simply means the subsequent
-      # mirror pull is unauthenticated, which takes the fallback path.
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        continue-on-error: true
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Pull base image
-        run: |
-          # Two consumers, resolved differently:
-          #
-          #  1. `docker build` for the emulator image uses the classic builder,
-          #     which reads the local daemon image store. Re-tagging the mirror
-          #     to the Docker Hub name satisfies the `FROM kktech/firmware:v15`
-          #     in scripts/emulator/Dockerfile with no registry round-trip.
-          #
-          #  2. buildx (docker/build-push-action) uses the docker-container
-          #     driver, which does NOT see daemon-local images and resolves
-          #     FROM against a registry. Re-tagging alone silently left it
-          #     pulling from Docker Hub -- confirmed in run 33046944618, which
-          #     logged `[auth] kktech/firmware:pull token for
-          #     registry-1.docker.io` during the buildx step. RESOLVED_BASE is
-          #     therefore exported and passed to that build as a build-arg.
-          #
-          # stderr is deliberately not suppressed: the fallback stops a mirror
-          # problem being fatal, but hiding the error makes auth vs missing tag
-          # vs transient network indistinguishable.
-          if docker pull "${{ env.BASE_IMAGE_MIRROR }}"; then
-            docker tag "${{ env.BASE_IMAGE_MIRROR }}" "${{ env.BASE_IMAGE }}"
-            echo "RESOLVED_BASE=${{ env.BASE_IMAGE_MIRROR }}" >> "$GITHUB_ENV"
-            echo "base image: GHCR mirror"
-          else
-            echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
-            docker pull "${{ env.BASE_IMAGE }}"
-            echo "RESOLVED_BASE=${{ env.BASE_IMAGE }}" >> "$GITHUB_ENV"
-            echo "base image: Docker Hub"
-          fi
+        run: docker pull "${{ env.BASE_IMAGE }}"
 
       - name: Build emulator image
         run: |
-          # Point FROM at whatever the mirror step resolved. Without this the
-          # Dockerfile's digest default is pulled straight from Docker Hub and
-          # the GHCR mirror above buys nothing on the heaviest job in the run.
           docker build \
-            --build-arg BASE_IMAGE="${RESOLVED_BASE:-${{ env.BASE_IMAGE }}}" \
+            --build-arg BASE_IMAGE="${{ env.BASE_IMAGE }}" \
             -t ${{ env.EMU_IMAGE }} \
             -f scripts/emulator/Dockerfile \
             .
@@ -471,7 +421,7 @@ jobs:
           load: true
           push: false
           build-args: |
-            BASE_IMAGE=${{ env.RESOLVED_BASE }}
+            BASE_IMAGE=${{ env.BASE_IMAGE }}
           cache-from: type=gha,scope=python-keepkey-deps
           cache-to: type=gha,mode=max,scope=python-keepkey-deps
 
@@ -487,7 +437,7 @@ jobs:
           load: true
           push: false
           build-args: |
-            BASE_IMAGE=${{ env.RESOLVED_BASE }}
+            BASE_IMAGE=${{ env.BASE_IMAGE }}
           cache-from: type=gha,scope=python-keepkey-deps
 
       - name: Run python-keepkey integration suite
@@ -628,38 +578,8 @@ jobs:
             deps/sca-hardening/SecAESSTM32
           git submodule update --init --recursive --jobs 4 deps/python-keepkey
 
-      # continue-on-error because the mirror is optional by design. Without
-      # it a GHCR outage, a revoked package grant, or a token hiccup fails the
-      # job here -- before the Docker Hub fallback this login exists to enable
-      # ever gets a chance to run. A failed login simply means the subsequent
-      # mirror pull is unauthenticated, which takes the fallback path.
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        continue-on-error: true
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Pull base image
-        run: |
-          # This job runs the toolchain with `docker run`, so it only needs the
-          # image present in the local daemon store under its Docker Hub name.
-          # No buildx here, and so no RESOLVED_BASE -- see build-and-test,
-          # which does need both because buildx resolves FROM against a
-          # registry rather than the daemon.
-          #
-          # stderr is deliberately not suppressed: the fallback stops a mirror
-          # problem being fatal, but hiding the error makes auth vs missing tag
-          # vs transient network indistinguishable.
-          if docker pull "${{ env.BASE_IMAGE_MIRROR }}"; then
-            docker tag "${{ env.BASE_IMAGE_MIRROR }}" "${{ env.BASE_IMAGE }}"
-            echo "base image: GHCR mirror"
-          else
-            echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
-            docker pull "${{ env.BASE_IMAGE }}"
-            echo "base image: Docker Hub"
-          fi
+        run: docker pull "${{ env.BASE_IMAGE }}"
 
       - name: Extract firmware version
         id: version
