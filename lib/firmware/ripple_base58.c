@@ -59,7 +59,8 @@ bool ripple_b58tobin(void* bin, size_t* binszp, const char* b58) {
   unsigned char* binu = bin;
   size_t outisz =
       (binsz + sizeof(b58_almostmaxint_t) - 1) / sizeof(b58_almostmaxint_t);
-  b58_almostmaxint_t outi[(RIPPLE_BASE58_MAX_BINARY + 3) / 4];
+  b58_almostmaxint_t outi[(RIPPLE_BASE58_MAX_BINARY + sizeof(b58_almostmaxint_t) - 1) /
+                        sizeof(b58_almostmaxint_t)];
   size_t i = 0, j = 0;
   uint8_t bytesleft = binsz % sizeof(b58_almostmaxint_t);
   b58_almostmaxint_t zeromask =
