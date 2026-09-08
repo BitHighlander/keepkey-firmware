@@ -201,6 +201,14 @@ void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
                               const char* symbol, uint8_t decimals);
 
 /* Sign transaction */
+#define SOL_MAX_LUT_ACCOUNTS 8
+/* Verify provider annotation bound to the exact raw transaction and ordered
+ * accounts. This does not replace unverified-transaction review. */
+bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
+                                 const uint8_t (*accounts)[32],
+                                 size_t num_accounts, uint32_t signer_key_id,
+                                 const uint8_t* sig, size_t sig_len);
+
 bool solana_signTx(const HDNode* node, const SolanaSignTx* msg,
                    SolanaSignedTx* resp);
 
