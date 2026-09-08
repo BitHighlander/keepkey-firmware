@@ -120,6 +120,8 @@ unsigned wipeAuthData(void) {
 }
 
 unsigned addAuthAccount(char* accountWithSeed) {
+  if (accountWithSeed == NULL) return TOKERR;
+  const size_t sourceLen = strlen(accountWithSeed);
   char *domain, *account, *seedStr;
   unsigned slot = AUTHDATA_SIZE;
   char authSecret[AUTHSECRET_SIZE_MAX] = {
@@ -215,6 +217,7 @@ unsigned addAuthAccount(char* accountWithSeed) {
 
 cleanup:
   memzero(authSecret, sizeof(authSecret));
+  memzero(accountWithSeed, sourceLen);
   return result;
 }
 
