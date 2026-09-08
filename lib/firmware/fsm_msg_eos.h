@@ -83,6 +83,9 @@ void fsm_msgEosSignTx(const EosSignTx* msg) {
               "Eos transaction must have actions");
 
   CHECK_PARAM(msg->header.max_cpu_usage_ms <= UINT8_MAX, "Value overflow");
+  // The budget screen formats this as a uint16; anything larger would be
+  // signed in full but displayed truncated.
+  CHECK_PARAM(msg->header.max_net_usage_words <= UINT16_MAX, "Value overflow");
   CHECK_PARAM(msg->header.ref_block_num <= UINT16_MAX, "Value overflow");
 
   CHECK_INITIALIZED

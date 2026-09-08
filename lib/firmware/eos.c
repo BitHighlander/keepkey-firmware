@@ -62,13 +62,16 @@ bool eos_formatAsset(const EosAsset* asset, char str[EOS_ASSET_STR_SIZE]) {
     v = ~v + 1;
   }
 
-  // Value. Precision stored in low 8 bits
+  // Value. Precision stored in low 8 bits. EOSIO caps precision at 18; the
+  // ladder below only inserts a decimal point up to that, so a larger value
+  // would be displayed as a bare integer while its precision byte is signed.
   uint8_t p = asset->symbol & 0xff;
-  if (v >= 10000000000000000000ULL || p >= 19) {
-    *s++ = '0' + v / 10000000000000000000ULL % 10;
+  if (p > 18) {
+    memset(str, 0, EOS_ASSET_STR_SIZE);
+    return false;
   }
-  if (p == 19) {
-    *s++ = '.';
+  if (v >= 10000000000000000000ULL) {
+    *s++ = '0' + v / 10000000000000000000ULL % 10;
   }
   if (v >= 1000000000000000000ULL || p >= 18) {
     *s++ = '0' + v / 1000000000000000000ULL % 10;
@@ -181,14 +184,24 @@ bool eos_formatAsset(const EosAsset* asset, char str[EOS_ASSET_STR_SIZE]) {
   *s++ = '0' + v % 10;
   *s++ = ' ';
 
-  // Symbol
+  // Symbol. Canonical form is A-Z padded with trailing zeros only: once a
+  // zero byte is seen every higher byte must be zero, or the %s display would
+  // stop at the NUL while the full symbol is signed.
+  bool seen_zero = false;
   for (int i = 0; i < 7; i++) {
     char c = (char)((asset->symbol >> (i + 1) * 8) & 0xff);
     if (!('A' <= c && c <= 'Z') && c != 0) {
       memset(str, 0, EOS_ASSET_STR_SIZE);
       return false;  // Invalid symbol
     }
-    *s++ = c;
+    if (c == 0) {
+      seen_zero = true;
+    } else if (seen_zero) {
+      memset(str, 0, EOS_ASSET_STR_SIZE);
+      return false;  // Non-canonical symbol: letter after zero padding
+    } else {
+      *s++ = c;
+    }
   }
 
   return true;
@@ -524,9 +537,11 @@ bool eos_signTx(EosSignedTx* tx) {
                   "\x00\x00\x00\x00\x00\x00\x00\x00"
                   "\x00\x00\x00\x00\x00\x00\x00\x00", 32);
 
-  char ram_limit[8 + 5 + 14 + 1] = "Unlimited RAM";
+  // max_net_usage_words is bounded to UINT16_MAX in fsm_msgEosSignTx, so the
+  // cast cannot truncate what was signed. The field is NET words, not RAM.
+  char ram_limit[8 + 5 + 14 + 1] = "Unlimited NET";
   if (header.max_net_usage_words) {
-    snprintf(ram_limit, sizeof(ram_limit), "At most %" PRIu16 " bytes RAM",
+    snprintf(ram_limit, sizeof(ram_limit), "At most %" PRIu16 " NET words",
              (uint16_t)header.max_net_usage_words);
   }
 

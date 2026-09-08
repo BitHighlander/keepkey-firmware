@@ -68,11 +68,25 @@ bool eos_compileActionDelegate(const EosActionCommon* common,
   CHECK_PARAM_RET(eos_formatAsset(&action->net_quantity, net),
                   "Invalid asset format", false);
 
+  bool is_transfer = action->has_transfer && action->transfer;
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, "Delegate",
-               ((action->has_transfer && action->transfer)
-                    ? "Delegate %s CPU and %s RAM from %s to %s?"
-                    : "Transfer %s CPU and %s RAM from %s to %s?"),
+               (is_transfer ? "Transfer %s CPU and %s NET from %s to %s?"
+                            : "Delegate %s CPU and %s NET from %s to %s?"),
                cpu, net, sender, receiver)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
+    eos_signingAbort();
+    return false;
+  }
+
+  // transfer=true gives the receiver OWNERSHIP of the staked tokens: they can
+  // unstake and keep them. That is not a delegation, so say so on its own
+  // screen rather than hiding it behind the verb.
+  if (is_transfer &&
+      !confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction,
+               "Transfer Stake",
+               "%s will OWN the staked tokens and can unstake them. "
+               "This cannot be undone. Continue?",
+               receiver)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
     eos_signingAbort();
     return false;
@@ -93,8 +107,8 @@ bool eos_compileActionDelegate(const EosActionCommon* common,
   CHECK_PARAM_RET(eos_compileAsset(&action->cpu_quantity),
                   "Cannot compile asset: cpu_quantity", false);
 
-  uint8_t is_transfer = (action->has_transfer && action->transfer) ? 1 : 0;
-  hasher_Update(&hasher_preimage, &is_transfer, 1);
+  uint8_t transfer_byte = is_transfer ? 1 : 0;
+  hasher_Update(&hasher_preimage, &transfer_byte, 1);
 
   return true;
 }
