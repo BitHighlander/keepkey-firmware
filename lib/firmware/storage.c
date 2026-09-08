@@ -2114,6 +2114,16 @@ bool storage_getPassphraseProtected(void) {
 }
 
 void storage_setPassphraseProtected(bool passphrase) {
+  if (shadow_config.storage.pub.passphrase_protection != passphrase) {
+    /* Invalidate wallet selection without re-unlocking storage or committing:
+     * setup_commit() also calls this while its settings are still staged. */
+    session.seedCached = false;
+    session.seedUsesPassphrase = false;
+    memzero(session.seed, sizeof(session.seed));
+    session.passphraseCached = false;
+    memzero(session.passphrase, sizeof(session.passphrase));
+    authenticator_clear_cache();
+  }
   shadow_config.storage.pub.passphrase_protection = passphrase;
 }
 
