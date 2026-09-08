@@ -149,3 +149,19 @@ head e546d9979, passes all 155 full firmware tests. 7.14.3 PR
 passes all 90 Bitcoin-only firmware tests. Each is based on its frozen
 tiny-message-fix predecessor. All three P02-003 units await ARM/host integration;
 the earlier running CI jobs do not include these later packet-buffer fixes.
+
+## 7.14.2 canonical assembly advanced after inspected integration
+
+CI 34291740100 completed successfully, including release-evidence-gate.
+Verified native artifacts: 154 firmware, 18 board and 4 crypto tests, all passing.
+Host artifact: 480 cases, 47 skipped, no failures/errors (433 passing); screenshot
+selection: 84 cases, 7 skipped, no failures/errors. Report provenance identifies
+bae119589956342fdf51914b1c463a1f4dc4acae; downloaded PDF hash matches its
+manifest (29e952b0c8bdce252d602c7c6edc668c260a0c1c836b3efd4655dbb973859098).
+
+Fast-forwarded fork release/7.14.2 from c72672f06 to that exact tested head.
+Product PR #650 remains open into unchanged develop da075b8cb. Its description
+now identifies the current evidence and explicitly lists pending packet-lifetime
+PR #686 and incomplete full-scope audit. The original coverage inventory remains
+anchored to its original head; it must be reconciled with accumulated fixes
+before final audit closure. No release completeness or Copilot readiness claim.
