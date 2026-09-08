@@ -492,7 +492,7 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
 // entry at index 3, re-enabling blind signing straight out of unauthenticated
 // flash. That defeats session-scoping entirely, so it is tested separately.
 TEST(Storage, LegacyPolicyRecordCannotNameAdvancedMode) {
-  std::vector<char> buf(852, 0);
+  std::vector<char> buf(468 + sizeof(Storage{}.encrypted_sec), 0);
 
   // version 2 selects the legacy reader (version 1 never read the record).
   buf[0] = 2;
@@ -1413,3 +1413,53 @@ TEST(Storage, PinUnlocksAfterRebootUnderV17) {
 
   memzero(key_before_reboot, sizeof(key_before_reboot));
 }
+
+extern "C" {
+void storage_writeStorageV16(char *, size_t, const Storage *);
+void storage_writeStorageV17(char *, size_t, const Storage *);
+void storage_readStorageV16(Storage *, const char *, size_t);
+void storage_readStorageV17(Storage *, const char *, size_t);
+void storage_writeStorageV18(char *, size_t, const Storage *);
+void storage_writeStorageV19(char *, size_t, const Storage *);
+void storage_readStorageV18(Storage *, const char *, size_t);
+void storage_readStorageV19(Storage *, const char *, size_t);
+}
+
+TEST(Storage, VersionedWritersRejectShortBuffersWithoutWriting) {
+  Storage storage = {};
+  char bytes[5000];
+  const auto check = [&](void (*writer)(char *, size_t, const Storage *),
+                         size_t required) {
+    memset(bytes, 0x5a, sizeof(bytes));
+    writer(bytes, required - 1, &storage);
+    for (char byte : bytes) EXPECT_EQ(0x5a, byte);
+    writer(bytes, required, &storage);
+    for (size_t i = required; i < sizeof(bytes); ++i) EXPECT_EQ(0x5a, bytes[i]);
+  };
+  check(storage_writeStorageV11, 468 + sizeof(storage.encrypted_sec));
+  check(storage_writeStorageV16, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_writeStorageV17, 1501 + sizeof(storage.encrypted_sec));
+  const size_t legacy_size = 1501 + V17_ENCSEC_SIZE +
+      PERSISTENT_IDENTITY_COUNT * (71 + CLEARSIGN_ICON_MAX);
+  check(storage_writeStorageV18, legacy_size);
+  check(storage_writeStorageV19, legacy_size);
+}
+
+TEST(Storage, VersionedReadersRejectShortBuffersWithoutChangingState) {
+  Storage storage;
+  Storage original;
+  memset(&original, 0x5a, sizeof(original));
+  char bytes[5000] = {};
+  const auto check = [&](void (*reader)(Storage *, const char *, size_t),
+                         size_t required) {
+    memcpy(&storage, &original, sizeof(storage));
+    reader(&storage, bytes, required - 1);
+    EXPECT_EQ(0, memcmp(&storage, &original, sizeof(storage)));
+  };
+  check(storage_readStorageV11, 468 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV16, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV17, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV18, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV19, 1501 + sizeof(storage.encrypted_sec));
+}
+
