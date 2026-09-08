@@ -12,6 +12,7 @@ set(sources
     signing.cpp
     setup_ceremony.cpp
     storage.cpp
+    storage_passphrase.cpp
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
