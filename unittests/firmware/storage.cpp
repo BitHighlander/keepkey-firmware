@@ -960,3 +960,42 @@ TEST(Storage, DecryptionClearsAuthdataCipherSecrets) {
   EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
             storage_test_cipher_cleanup(false, false));
 }
+
+extern "C" {
+void storage_writeStorageV16(char *, size_t, const Storage *);
+void storage_writeStorageV17(char *, size_t, const Storage *);
+void storage_readStorageV16(Storage *, const char *, size_t);
+void storage_readStorageV17(Storage *, const char *, size_t);
+}
+
+TEST(Storage, VersionedWritersRejectShortBuffersWithoutWriting) {
+  Storage storage = {};
+  char bytes[2600];
+  const auto check = [&](void (*writer)(char *, size_t, const Storage *),
+                         size_t required) {
+    memset(bytes, 0x5a, sizeof(bytes));
+    writer(bytes, required - 1, &storage);
+    for (char byte : bytes) EXPECT_EQ(0x5a, byte);
+    writer(bytes, required, &storage);
+    for (size_t i = required; i < sizeof(bytes); ++i) EXPECT_EQ(0x5a, bytes[i]);
+  };
+  check(storage_writeStorageV11, 468 + sizeof(storage.encrypted_sec));
+  check(storage_writeStorageV16, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_writeStorageV17, 1501 + sizeof(storage.encrypted_sec));
+}
+
+TEST(Storage, VersionedReadersRejectShortBuffersWithoutChangingState) {
+  Storage storage;
+  Storage original;
+  memset(&original, 0x5a, sizeof(original));
+  char bytes[2600] = {};
+  const auto check = [&](void (*reader)(Storage *, const char *, size_t),
+                         size_t required) {
+    memcpy(&storage, &original, sizeof(storage));
+    reader(&storage, bytes, required - 1);
+    EXPECT_EQ(0, memcmp(&storage, &original, sizeof(storage)));
+  };
+  check(storage_readStorageV11, 468 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV16, 1501 + sizeof(storage.encrypted_sec));
+  check(storage_readStorageV17, 1501 + sizeof(storage.encrypted_sec));
+}
