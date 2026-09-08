@@ -306,19 +306,18 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
   return &fsm_derived_node;
 }
 
-#if DEBUG_LINK
+/* A transport rejection never reaches the chain handler's abort path. Clear
+ * in-flight workflows before reporting it so a later packet cannot resume one.
+ */
 static void sendFailureWrapper(FailureType code, const char* text) {
+  fsm_abort_workflows();
+  layoutHome();
   fsm_sendFailure(code, text);
 }
-#endif
 
 void fsm_init(void) {
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
-#if DEBUG_LINK
   set_msg_failure_handler(&sendFailureWrapper);
-#else
-  set_msg_failure_handler(&fsm_sendFailure);
-#endif
 
   /* set leaving handler for layout to help with determine home state */
   set_leaving_handler(&leave_home);
