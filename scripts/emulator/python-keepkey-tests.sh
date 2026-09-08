@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# This staged firmware requires consented RAM-only provider identities.
+export KEEPKEY_RUNTIME_PROVIDER=1
+
 mkdir -p /kkemu/test-reports/python-keepkey
 # This volume can survive retries. Stale frames would make the new report look
 # more complete than the exact run really was, so every capture starts empty.
