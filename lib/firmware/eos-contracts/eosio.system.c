@@ -561,9 +561,8 @@ static bool confirmArbitraryAuthorization(const char* title,
     const EosAuthorizationKey* auth_key = &auth->keys[i];
 
     CHECK_PARAM_RET(auth_key->has_weight, "Required field missing", false);
-    CHECK_PARAM_RET(
-        eos_authorizationKeyValid(auth_key),
-        "Required field missing", false);
+    CHECK_PARAM_RET(eos_authorizationKeyValid(auth_key),
+                    "Required field missing", false);
 
     char pubkey[MAX(65, NODE_STRING_LENGTH)];
     if (auth_key->key.size != 0) {
