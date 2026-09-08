@@ -9,6 +9,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include "storage_cipher_probe.h"
 #include "gmock/gmock.h"
 
 #include <cstring>
@@ -938,4 +939,24 @@ TEST(Storage, Reset) {
       config.storage.pub.random_salt));
 
   ASSERT_TRUE(memcmp(session.storageKey, new_storage_key, 64) == 0);
+}
+
+TEST(Storage, EncryptionClearsMigrationCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(true, true));
+}
+
+TEST(Storage, DecryptionClearsMigrationCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(true, false));
+}
+
+TEST(Storage, EncryptionClearsAuthdataCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(false, true));
+}
+
+TEST(Storage, DecryptionClearsAuthdataCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(false, false));
 }

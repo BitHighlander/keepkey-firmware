@@ -16,6 +16,8 @@ set(sources
     setup_ceremony.cpp
     ripple.cpp
     solana.cpp
+    # Observes cleanup in the real storage.c for the unit binary only.
+    storage_cipher_probe.c
     storage.cpp
     thorchain.cpp
     usb_rx.cpp
