@@ -123,3 +123,19 @@ Application ELF SHA-256 is
 ELF _stack minus _ebss is 22,508 bytes, unchanged from the prior measured
 reserve. This validates the new pinned-image ARM build; host integration
 remains running and canonical promotion remains pending.
+
+## P02-003: lower-level receive packet storage survives consumption
+
+The 7.15 native callback reproduction observes all 64 bytes still present after
+UDP dispatch returns. The device main/debug/U2F callbacks also lack cleanup,
+including short-read exits. This is residual packet retention, not an established
+remote disclosure exploit. Wipe persistent packet storage after consumption.
+Reviewed normal decoding, U2F fragment copying and bootloader RAW consumption
+for pointer-lifetime compatibility.
+
+[#685](https://github.com/BitHighlander/keepkey-firmware/pull/685), 041a23d5c,
+is staged on the frozen Initialize-fix predecessor. The regression fails before
+and passes after; all 501 full native and 93 Bitcoin-only tests pass. Device
+callbacks require ARM validation. Older-release backports and host/ARM
+integration of this new unit are pending. The previously dispatched CI run
+34291743075 targets f20c2497a and therefore does not validate this later fix.
