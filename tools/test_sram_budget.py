@@ -16,6 +16,43 @@ spec.loader.exec_module(gate)
 
 
 class BudgetGate(unittest.TestCase):
+    def test_missing_and_corrupt_archive_report_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "frames.tar"
+            with self.assertRaisesRegex(SystemExit, "ERROR: cannot read stack archive"):
+                gate.largest_frames(path)
+            path.write_bytes(b"not a tar archive")
+            with self.assertRaisesRegex(SystemExit, "ERROR: cannot read stack archive"):
+                gate.largest_frames(path)
+
+    def test_missing_and_invalid_budgets_report_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "budgets.json"
+            args = ["gate", "--elf", "unused", "--su-tar", "unused",
+                    "--budgets", str(path), "--variant", "full"]
+            with patch("sys.argv", args):
+                with self.assertRaisesRegex(SystemExit, "ERROR: cannot read budgets"):
+                    gate.main()
+                path.write_text("{")
+                with self.assertRaisesRegex(SystemExit, "ERROR: cannot read budgets"):
+                    gate.main()
+                path.write_text("[]")
+                with self.assertRaisesRegex(SystemExit, "ERROR: budgets must"):
+                    gate.main()
+
+    def test_missing_and_invalid_elf_report_errors(self):
+        try:
+            import elftools
+        except ImportError:
+            self.skipTest("ELF parser dependency unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "firmware.elf"
+            with self.assertRaisesRegex(SystemExit, "ERROR: cannot read ELF"):
+                gate.read_symbols(path)
+            path.write_bytes(b"not an ELF")
+            with self.assertRaisesRegex(SystemExit, "ERROR: cannot read ELF"):
+                gate.read_symbols(path)
+
     def run_gate(self, reserve, frames, variant="full"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -16,20 +16,26 @@ class SessionPolicy : public ::testing::Test {
 };
 
 TEST_F(SessionPolicy, NeitherFlashWriterPersistsAdvancedMode) {
-  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
-  ASSERT_TRUE(storage_setPolicy("Experimental", true));
   Storage storage = {};
-  char bytes[852] = {};
-  storage_writeStorageV11(bytes, sizeof(bytes), &storage);
-  EXPECT_EQ(0, bytes[5] & 0x10);
-  EXPECT_NE(0, bytes[5] & 0x08);  // Experimental retains its existing policy.
-  storage_writeStorageV16Plaintext(bytes, sizeof(bytes), &storage);
-  EXPECT_EQ(0, bytes[5] & 0x10);
-  EXPECT_NE(0, bytes[5] & 0x08);
+  storage_resetPolicies(&storage);
+  ASSERT_TRUE(
+      storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  char bytes[468 + sizeof(storage.encrypted_sec)] = {};
+  for (bool enabled : {false, true}) {
+    ASSERT_TRUE(storage_setPolicy("Experimental", !enabled));
+    ASSERT_TRUE(
+        storage_setPolicy_impl(storage.pub.policies, "Experimental", enabled));
+    storage_writeStorageV11(bytes, sizeof(bytes), &storage);
+    EXPECT_EQ(0, bytes[5] & 0x10);
+    EXPECT_EQ(enabled ? 0x08 : 0, bytes[5] & 0x08);
+    storage_writeStorageV16Plaintext(bytes, sizeof(bytes), &storage);
+    EXPECT_EQ(0, bytes[5] & 0x10);
+    EXPECT_EQ(enabled ? 0x08 : 0, bytes[5] & 0x08);
+  }
 }
 
 TEST_F(SessionPolicy, BothFlashReadersIgnoreLegacyAdvancedModeBit) {
-  char bytes[852] = {};
+  char bytes[468 + V17_ENCSEC_SIZE] = {};
   bytes[5] = 0x18;  // Legacy AdvancedMode and Experimental bits.
   Storage storage = {};
   storage_readStorageV11(&storage, bytes, sizeof(bytes));
