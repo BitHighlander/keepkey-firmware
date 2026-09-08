@@ -171,3 +171,30 @@ P02-003 integration dispatched with publish_emulator=false for 7.14.2:
 head e546d99798a5e7dbc54ad5fe43b040a2806c8291, confirmed running. This
 validates the later packet-buffer unit separately from the completed earlier
 assembly run. Remaining older runs are not restarted merely because they run long.
+
+## 7.14.3 canonical assembly advanced after inspected integration
+
+CI 34291741628 completed successfully with both ARM variants, report, evidence
+and CI gates; publishing skipped. Downloaded native XMLs show full 189 firmware,
+16 board, 18 crypto tests and Bitcoin-only 89/16/18, all passing. Host full has
+530 passing/222 skipped cases; Bitcoin-only 303 passing/449 skipped. Screenshot
+selection has full 70 passing/14 skipped and Bitcoin-only 28 passing/56 skipped.
+No errors/failures. Skip reasons were inspected: four process-owned reboot
+cases cannot run in the host container, alongside variant/version exclusions
+and other declared applicability limits. These are not counted as passing.
+
+All 23 hashes match each ARM manifest; both identify 97f970147fe23f5cfa95b3575ab8f5874c1ad140.
+Full ELF SHA-256 5d01c9e70184a0b8e602d30023754eb7de90695aba8852d5431353fee0ce680a,
+reserve 21,312 bytes. Bitcoin-only ELF SHA-256
+6403f6923da84f3fd5306130d22d675e291b9ea7d77a3d8cc3c08083e3002339,
+reserve 28,268 bytes. Report firmware provenance matches; its PDF hash verifies
+as b9261e9348f93edc0d61472c28119482d3cb0a18309a508565fffe05bc61e59c.
+
+Fork release/7.14.3-bitcoin-only fast-forwarded from de0251bbd to 97f970147.
+PR #627 remains open into develop; its body now reports this evidence and the
+pending packet fix #687. Full audit remains incomplete. Original inventory
+head remains the historical inventory anchor until final reconciliation.
+
+Packet-fix integration dispatched separately with publish_emulator=false:
+[34292591562](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34292591562),
+head 47eae604e183ab1c6c69be7dae43eee60b58326c, confirmed queued.
