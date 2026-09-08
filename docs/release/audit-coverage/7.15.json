@@ -1246,8 +1246,11 @@
       "added": "174",
       "deleted": "18",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "central dispatch/revocation and Initialize mismatch P02-002 reviewed and fixed; retained-handler and other common-message interactions pending"
     },
     {
       "path": "lib/firmware/fsm_msg_binance.h",
@@ -1286,8 +1289,11 @@
       "added": "157",
       "deleted": "28",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "central dispatch/revocation and Initialize mismatch P02-002 reviewed and fixed; retained-handler and other common-message interactions pending"
     },
     {
       "path": "lib/firmware/fsm_msg_cosmos.h",
@@ -2096,8 +2102,11 @@
       "added": "247",
       "deleted": "0",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "central dispatch/revocation and Initialize mismatch P02-002 reviewed and fixed; retained-handler and other common-message interactions pending"
     },
     {
       "path": "unittests/firmware/hive.cpp",
