@@ -52,16 +52,26 @@ def largest_frames(su_tar_path, top_n=15):
         for member in tar:
             if not member.name.endswith(".su") or not member.isfile():
                 continue
-            data = tar.extractfile(member).read().decode("utf-8", "replace")
-            for line in data.splitlines():
+            source = tar.extractfile(member)
+            if source is None:
+                sys.exit(f"ERROR: cannot read stack records: {member.name}")
+            with source:
+                data = source.read().decode("utf-8", "strict")
+            for number, line in enumerate(data.splitlines(), 1):
+                if not line.strip():
+                    continue
                 parts = line.rsplit("\t", 2)
                 if len(parts) != 3:
-                    continue
+                    sys.exit(f"ERROR: malformed stack record: {member.name}:{number}")
                 loc, size, qual = parts
                 try:
-                    frames.append((int(size), loc.split("/")[-1], qual))
+                    size = int(size)
                 except ValueError:
-                    continue
+                    sys.exit(f"ERROR: unknown frame size: {member.name}:{number}")
+                if size < 0 or not loc or qual not in ("static", "dynamic,bounded"):
+                    sys.exit(f"ERROR: unbounded or invalid stack record: "
+                             f"{member.name}:{number}: {line}")
+                frames.append((size, loc.split("/")[-1], qual))
     frames.sort(reverse=True)
     return frames[:top_n]
 

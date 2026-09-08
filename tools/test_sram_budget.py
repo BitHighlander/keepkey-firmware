@@ -52,6 +52,18 @@ class BudgetGate(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_gate(32768, "")
 
+    def test_mixed_valid_and_malformed_records_fail(self):
+        with self.assertRaises(SystemExit):
+            self.run_gate(32768, "f.c:1:1:small\t16\tstatic\n"
+                          "f.c:2:1:large\tunknown\tdynamic\n")
+
+    def test_unbounded_dynamic_frame_fails(self):
+        with self.assertRaises(SystemExit):
+            self.run_gate(32768, "f.c:1:1:alloca\t16\tdynamic\n")
+
+    def test_bounded_dynamic_frame_passes(self):
+        self.run_gate(32768, "f.c:1:1:vla\t128\tdynamic,bounded\n")
+
     def test_malformed_records_do_not_false_pass(self):
         with self.assertRaises(SystemExit):
             self.run_gate(32768, "f.c:1:1:send\tunknown\tstatic\n")
