@@ -500,8 +500,8 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
       aes_cbc_decrypt((const uint8_t*)storage->encrypted_sec,
                       (uint8_t*)&scratch[0], sizeof(scratch), iv + 32, &ctx);
     }
-    memzero(iv, sizeof(iv));
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
 
     // De-serialize from scratch.
     storage_readHDNode(&storage->sec.node, &scratch[0], 129);
@@ -592,8 +592,8 @@ static void storage_cipherBlock(bool encrypt, const uint8_t* key,
     aes_decrypt_key256(key, &ctx);
     aes_cbc_decrypt((const uint8_t*)ciphertextBlock, plaintextBlock, blockSize,
                     iv + 32, &ctx);
-    memzero(iv, sizeof(iv));
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
   }
 
   return;
