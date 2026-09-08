@@ -1,3 +1,4 @@
+#include "storage_cipher_probe.h"
 extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/policy.h"
@@ -1000,4 +1001,24 @@ TEST(Storage, VersionedReadersRejectShortBuffersWithoutChangingState) {
   check(storage_readStorageV11, 468 + sizeof(storage.encrypted_sec));
   check(storage_readStorageV16, 1501 + sizeof(storage.encrypted_sec));
   check(storage_readStorageV17, 1501 + sizeof(storage.encrypted_sec));
+}
+
+TEST(Storage, EncryptionClearsMigrationCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(true, true));
+}
+
+TEST(Storage, DecryptionClearsMigrationCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(true, false));
+}
+
+TEST(Storage, EncryptionClearsAuthdataCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(false, true));
+}
+
+TEST(Storage, DecryptionClearsAuthdataCipherSecrets) {
+  EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
+            storage_test_cipher_cleanup(false, false));
 }

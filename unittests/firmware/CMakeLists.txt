@@ -9,6 +9,7 @@ set(sources
     setup_ceremony.cpp
     signing.cpp
     storage.cpp
+    storage_cipher_probe.c
     storage_passphrase.cpp
     test_board.cpp
     transaction.cpp
