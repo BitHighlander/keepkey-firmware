@@ -413,6 +413,7 @@ void signed_metadata_clear(void) {
   relied_on_metadata = false;
   metadata_signer_loaded = false;
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 }
 
 void signed_metadata_clear_signers(void) {

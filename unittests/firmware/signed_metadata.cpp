@@ -17,6 +17,10 @@
  */
 
 extern "C" {
+// The legacy protobuf schema uses the C++ keyword delete as a C field.
+#define delete delete_field
+#include "messages.pb.h"
+#undef delete
 #include "messages-ethereum.pb.h" /* full EthereumSignTx definition */
 #include "keepkey/board/draw.h"   /* draw_bitmap_mono_rle (icon decoder) */
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
@@ -219,7 +223,7 @@ void make_matching_msg(EthereumSignTx* msg) {
 
 const char* TEST_ALIAS = "CI Test";
 
-void set_advanced_mode_for_test(bool enabled) {
+bool set_advanced_mode_for_test(bool enabled) {
   /* The full xunit binary may already have initialized emulator flash in an
    * earlier fixture (notably Authenticator). Re-running storage_init() then
    * attempts to migrate/decrypt an already-live shadow store. The allocation
@@ -228,20 +232,20 @@ void set_advanced_mode_for_test(bool enabled) {
     setup();
     storage_init();
   }
-  ASSERT_TRUE(storage_setPolicy("AdvancedMode", enabled));
+  return storage_setPolicy("AdvancedMode", enabled);
 }
 
 class SignedMetadataTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    set_advanced_mode_for_test(true);
+    ASSERT_TRUE(set_advanced_mode_for_test(true));
     signed_metadata_clear_signers();
     signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                  NULL, 0, 0, 0, false);
   }
   void TearDown() override {
     signed_metadata_clear_signers();
-    set_advanced_mode_for_test(false);
+    ASSERT_TRUE(set_advanced_mode_for_test(false));
   }
 
   void ExpectMalformed(const std::vector<uint8_t>& blob, uint8_t key_id) {
@@ -258,14 +262,21 @@ class SignedMetadataTest : public ::testing::Test {
 
 TEST_F(SignedMetadataTest, DisablingPolicyRevokesSignerAcrossReenable) {
   ASSERT_NE(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
-  set_advanced_mode_for_test(false);
-  set_advanced_mode_for_test(true);
+  ASSERT_TRUE(set_advanced_mode_for_test(false));
+  ASSERT_TRUE(set_advanced_mode_for_test(true));
   EXPECT_EQ(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
 }
 
 TEST_F(SignedMetadataTest, SessionTeardownRevokesSigner) {
   ASSERT_NE(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
   session_clear(true);
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
+}
+
+TEST_F(SignedMetadataTest, LoadDeviceRevokesSigner) {
+  ASSERT_NE(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
+  LoadDevice msg = LoadDevice_init_zero;
+  storage_loadDevice(&msg);
   EXPECT_EQ(nullptr, signed_metadata_signer_alias(TEST_KEY_ID));
 }
 
@@ -295,7 +306,7 @@ TEST_F(SignedMetadataTest, ValidVerifiedSlot3) {
 
 TEST_F(SignedMetadataTest, RuntimeMetadataIsInertOutsideAdvancedMode) {
   std::vector<uint8_t> blob = base_blob();
-  set_advanced_mode_for_test(false);
+  ASSERT_TRUE(set_advanced_mode_for_test(false));
   ExpectMalformed(blob, TEST_KEY_ID);
 
   const uint8_t data[] = "advanced-mode-gate";
@@ -307,7 +318,7 @@ TEST_F(SignedMetadataTest, RuntimeMetadataIsInertOutsideAdvancedMode) {
   EXPECT_FALSE(signed_metadata_verify_attestation(
       TEST_KEY_ID, data, sizeof(data) - 1, sig, sizeof(sig)));
 
-  set_advanced_mode_for_test(true);
+  ASSERT_TRUE(set_advanced_mode_for_test(true));
 }
 
 TEST_F(SignedMetadataTest, ValidOpaqueClassification) {
@@ -1288,6 +1299,22 @@ TEST_F(SignedMetadataTest, V2SchemaPayableKeepsValueScreen) {
   EXPECT_FALSE(signed_metadata_schema_moves_value());
 }
 
+TEST_F(SignedMetadataTest, ClearResetsPayableSchemaFlag) {
+  auto blob = v2_base_blob();
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  EthereumSignTx msg;
+  auto data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, true, (uint32_t)data.size());
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  ASSERT_TRUE(signed_metadata_schema_moves_value());
+  signed_metadata_clear();
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+}
+
 /* A large, realistic value must set the flag too — not just a 1-wei probe. */
 TEST_F(SignedMetadataTest, V2SchemaPayableFlagsRealisticValue) {
   std::vector<uint8_t> blob = v2_base_blob();
@@ -1631,7 +1658,7 @@ TEST(SignedMetadataEnforceSchema, ReliedButUnavailableOrUnverifiedFails) {
 // path): a valid signature from a loaded signer verifies; tampering, an
 // unloaded key_id, or a wrong signature length are all rejected.
 TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
-  set_advanced_mode_for_test(true);
+  ASSERT_TRUE(set_advanced_mode_for_test(true));
   signed_metadata_clear_signers();
   signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                nullptr, 0, 0, 0, false);
@@ -1658,7 +1685,7 @@ TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
       signed_metadata_verify_attestation(TEST_KEY_ID, data, len, sig, 63));
 
   signed_metadata_clear_signers();
-  set_advanced_mode_for_test(false);
+  ASSERT_TRUE(set_advanced_mode_for_test(false));
 }
 
 }  // namespace

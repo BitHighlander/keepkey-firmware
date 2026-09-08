@@ -1318,7 +1318,7 @@ void storage_init(void) {
   const char* flash = (const char*)flash_write_helper(storage_location);
 
   // Reset shadow configuration in RAM
-  storage_reset_impl(&session, &shadow_config);
+  storage_reset();
 
   // If the storage partition is not already active
   if (!storage_isActiveSector(flash)) {
@@ -1615,7 +1615,7 @@ void storage_loadNode(HDNode* dst, const HDNodeType* src) {
 }
 
 void storage_loadDevice(LoadDevice* msg) {
-  storage_reset_impl(&session, &shadow_config);
+  storage_reset();
 
   shadow_config.storage.pub.imported = true;
 
@@ -2100,12 +2100,12 @@ bool storage_hasNode(void) { return shadow_config.storage.pub.has_node; }
 Allocation storage_getLocation(void) { return storage_location; }
 
 bool storage_setPolicy(const char* policy_name, bool enabled) {
-  bool changed = storage_setPolicy_impl(shadow_config.storage.pub.policies,
-                                        policy_name, enabled);
-  if (changed && !enabled && strcmp(policy_name, "AdvancedMode") == 0) {
+  bool found = storage_setPolicy_impl(shadow_config.storage.pub.policies,
+                                      policy_name, enabled);
+  if (found && !enabled && strcmp(policy_name, "AdvancedMode") == 0) {
     signed_metadata_clear_signers();
   }
-  return changed;
+  return found;
 }
 
 bool storage_setPolicy_impl(PolicyType ps[POLICY_COUNT],
