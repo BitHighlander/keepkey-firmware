@@ -1,0 +1,2779 @@
+{
+  "product": "7.14.2",
+  "branch": "release/7.14.2",
+  "product_pr": 650,
+  "develop_sha": "da075b8cb717b56dc1023edb52c2ccdf171b8a08",
+  "merge_base": "da075b8cb717b56dc1023edb52c2ccdf171b8a08",
+  "head_sha": "c72672f06b3bc568183280607d9c3bc8a6245176",
+  "comparison": "merge-base to head (GitHub PR surface), no rename collapsing",
+  "files": [
+    {
+      "path": ".github/copilot-instructions.md",
+      "added": "47",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "added": "690",
+      "deleted": "847",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": ".github/workflows/mirror-base-image.yml",
+      "added": "68",
+      "deleted": "0",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "added": "185",
+      "deleted": "288",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": ".gitignore",
+      "added": "5",
+      "deleted": "1",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": ".gitleaks.toml",
+      "added": "33",
+      "deleted": "125",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": ".gitmodules",
+      "added": "4",
+      "deleted": "5",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "CMakeLists.txt",
+      "added": "4",
+      "deleted": "75",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "Makefile",
+      "added": "0",
+      "deleted": "42",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "cmake/caches/device.cmake",
+      "added": "1",
+      "deleted": "8",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "cmake/toolchains/mingw-w64-x86_64.cmake",
+      "added": "0",
+      "deleted": "40",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "deps/crypto/CMakeLists.txt",
+      "added": "1",
+      "deleted": "13",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "deps/crypto/trezor-firmware",
+      "added": "1",
+      "deleted": "1",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "deps/device-protocol",
+      "added": "1",
+      "deleted": "1",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "deps/python-keepkey",
+      "added": "1",
+      "deleted": "1",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/Build.md",
+      "added": "2",
+      "deleted": "24",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/ClearsignRootCeremony.md",
+      "added": "0",
+      "deleted": "657",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/DiceEntropy.md",
+      "added": "0",
+      "deleted": "82",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/Passkeys.md",
+      "added": "0",
+      "deleted": "80",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/README.md",
+      "added": "0",
+      "deleted": "4",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/Release.md",
+      "added": "0",
+      "deleted": "6",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/ReproducibleBuilds.md",
+      "added": "0",
+      "deleted": "83",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/StorageVersionGate.md",
+      "added": "0",
+      "deleted": "107",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/coin-integration/README.md",
+      "added": "0",
+      "deleted": "305",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/coin-integration/zcash-clearsign-handoff.md",
+      "added": "0",
+      "deleted": "297",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/coin-integration/zcash-on-device-ua.md",
+      "added": "0",
+      "deleted": "425",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/coin-integration/zcash-pczt-clearsign.md",
+      "added": "0",
+      "deleted": "322",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.14.2-COMBINED-CANDIDATE.md",
+      "added": "65",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.14.2-HARDENING-MANIFEST.md",
+      "added": "79",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.14.2-PRODUCT-ASSEMBLY.md",
+      "added": "53",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.14.2-ROUND0.md",
+      "added": "53",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.14.2-rc30-hardware-plan.md",
+      "added": "0",
+      "deleted": "589",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.14.2.md",
+      "added": "0",
+      "deleted": "444",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.15-FOUNDATION-REVIEW.md",
+      "added": "135",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/7.15-STAGING-MANIFEST.md",
+      "added": "49",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/ALPHA-MERGE-HANDOFF.md",
+      "added": "0",
+      "deleted": "137",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/BRANCHING-SOP.md",
+      "added": "0",
+      "deleted": "88",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/DEFECTS-2026-08.md",
+      "added": "0",
+      "deleted": "226",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/REHEARSAL-SOP.md",
+      "added": "230",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/RELEASE-PROGRAM.md",
+      "added": "148",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/ROADMAP-715-717.md",
+      "added": "0",
+      "deleted": "65",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/SRS-7.15.md",
+      "added": "0",
+      "deleted": "300",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/SRS-7.16.md",
+      "added": "0",
+      "deleted": "257",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/SRS-7.17.md",
+      "added": "0",
+      "deleted": "98",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/TOKEN-TABLE-BUDGET.md",
+      "added": "0",
+      "deleted": "92",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/audit-units/R142-03-token-build-dependencies.md",
+      "added": "25",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/audit-units/R142-04-transport-rejection.md",
+      "added": "33",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/audit-units/source-storage-policy.md",
+      "added": "14",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/audit-units/storage-revocation.md",
+      "added": "11",
+      "deleted": "0",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T1-setup-ceremony.md",
+      "added": "0",
+      "deleted": "63",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T10-T11-0x-clearsign.md",
+      "added": "0",
+      "deleted": "74",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T12-altcoin-binding.md",
+      "added": "0",
+      "deleted": "70",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T13-pager-hardware.md",
+      "added": "0",
+      "deleted": "65",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T2-passphrase-cancel.md",
+      "added": "0",
+      "deleted": "45",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T3-uniswap-authenticator-cancel.md",
+      "added": "0",
+      "deleted": "68",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T4-thorchain-memo.md",
+      "added": "0",
+      "deleted": "51",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T5-cutoff-findings.md",
+      "added": "0",
+      "deleted": "75",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T6-T7-pager-chainid.md",
+      "added": "0",
+      "deleted": "53",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T8-advancedmode-gates.md",
+      "added": "0",
+      "deleted": "69",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/release/rc30-evidence/T9-eip712.md",
+      "added": "0",
+      "deleted": "58",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/7.14.2-signing-hardening.md",
+      "added": "0",
+      "deleted": "64",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/7.14.3-bitcoin-only-dice-audit-sop.md",
+      "added": "0",
+      "deleted": "159",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/7.15.0-dependency-review-map.md",
+      "added": "0",
+      "deleted": "26",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/7.15.0-rc17-hardening.md",
+      "added": "0",
+      "deleted": "294",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/7.15.0-rc18-release-shape.md",
+      "added": "0",
+      "deleted": "59",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/7.15.0-rc21-clearsign-release-control.md",
+      "added": "0",
+      "deleted": "99",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/DESIGN-716-reductive.md",
+      "added": "0",
+      "deleted": "144",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/anti-rollback-security-epoch-rfc.md",
+      "added": "0",
+      "deleted": "152",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/clearsign-key-delegation-roadmap.md",
+      "added": "0",
+      "deleted": "1602",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/clearsign-provider-tier.md",
+      "added": "0",
+      "deleted": "160",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/01-schema-identity.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/02-program-id-44chars.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/03-discriminator-8bytes.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/04-arg-u64-le-16char-label.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/05-arg-u8-16char-label.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/06-arg-public-key-16char-label.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/07-arg-bytes32-hex-16char-label.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/08-account-16char-label.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/README.md",
+      "added": "0",
+      "deleted": "32",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc21-clearsign-attestor/manifest.json",
+      "added": "0",
+      "deleted": "51",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/01-p2tr-address-full-62-chars.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/02-p2wsh-address-full.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/03-p2tr-spend-recipient.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/04-p2tr-spend-fee.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/05-p2tr-change-recipient.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/06-p2tr-change-fee.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/07-mixed-p2tr-legacy-recipient.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/08-mixed-p2tr-legacy-fee.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/README.md",
+      "added": "0",
+      "deleted": "69",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/7.15.0-rc26-taproot-witness-and-address/manifest.json",
+      "added": "0",
+      "deleted": "92",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/01-dice-screen-initial.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/02-after-three-rolls.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/03-after-undo.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/04-digest-confirm.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/05-postmix-internal-entropy.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/06-backup-explainer.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/dice-entropy-reset/README.md",
+      "added": "0",
+      "deleted": "37",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/rom-printf-integer-percent/01-thorchain-withdraw-25.05pct.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/rom-printf-integer-percent/02-thorchain-sending-eth.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/rom-printf-integer-percent/README.md",
+      "added": "0",
+      "deleted": "17",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/session-scoped-advanced-mode/01-enable-policy-confirm.png",
+      "added": "-",
+      "deleted": "-",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/session-scoped-advanced-mode/README.md",
+      "added": "0",
+      "deleted": "48",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/evidence/session-scoped-advanced-mode/capture.py",
+      "added": "0",
+      "deleted": "18",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/next-wave-hardening.md",
+      "added": "0",
+      "deleted": "153",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/pin-kdf-v19-migration.md",
+      "added": "0",
+      "deleted": "78",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/rc28-open-findings-handoff.md",
+      "added": "0",
+      "deleted": "499",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/storage-version-downgrade-policy.md",
+      "added": "0",
+      "deleted": "157",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/security/token-table-retirement.md",
+      "added": "0",
+      "deleted": "174",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/testing/ATLAS-GUIDE.md",
+      "added": "0",
+      "deleted": "157",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "docs/zoo/reports/zcash-report.md",
+      "added": "0",
+      "deleted": "146",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "fuzzer/firmware/CMakeLists.txt",
+      "added": "0",
+      "deleted": "3",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "fuzzer/firmware/ctap2_cbor.cpp",
+      "added": "0",
+      "deleted": "15",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/bsd_compat.h",
+      "added": "0",
+      "deleted": "28",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/confirm_sm.h",
+      "added": "34",
+      "deleted": "26",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/draw.h",
+      "added": "0",
+      "deleted": "25",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/font.h",
+      "added": "0",
+      "deleted": "5",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/keepkey_board.h",
+      "added": "1",
+      "deleted": "20",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/keepkey_display.h",
+      "added": "16",
+      "deleted": "0",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/layout.h",
+      "added": "4",
+      "deleted": "33",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/memory.h",
+      "added": "0",
+      "deleted": "7",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/messages.h",
+      "added": "0",
+      "deleted": "6",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/u2f_hid.h",
+      "added": "5",
+      "deleted": "10",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/board/util.h",
+      "added": "3",
+      "deleted": "2",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/emulator/libkkemu.h",
+      "added": "17",
+      "deleted": "61",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/app_confirm.h",
+      "added": "23",
+      "deleted": "4",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/app_layout.h",
+      "added": "2",
+      "deleted": "10",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/authenticator.h",
+      "added": "1",
+      "deleted": "9",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/binance.h",
+      "added": "38",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/bip85.h",
+      "added": "0",
+      "deleted": "22",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/clearsign_root.h",
+      "added": "0",
+      "deleted": "151",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/coins.def",
+      "added": "0",
+      "deleted": "2",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/coins.h",
+      "added": "1",
+      "deleted": "3",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ctap2.h",
+      "added": "0",
+      "deleted": "57",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ctap2/cbor.h",
+      "added": "0",
+      "deleted": "66",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/dice_input.h",
+      "added": "0",
+      "deleted": "49",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/eip712.h",
+      "added": "6",
+      "deleted": "15",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/eip712_stream.h",
+      "added": "0",
+      "deleted": "181",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/eos.h",
+      "added": "1",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum.h",
+      "added": "10",
+      "deleted": "9",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum_contracts.h",
+      "added": "12",
+      "deleted": "0",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum_contracts/saproxy.h",
+      "added": "3",
+      "deleted": "0",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum_contracts/thortx.h",
+      "added": "5",
+      "deleted": "30",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum_contracts/zxliquidtx.h",
+      "added": "4",
+      "deleted": "4",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum_contracts/zxtransERC20.h",
+      "added": "0",
+      "deleted": "7",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ethereum_tokens.h",
+      "added": "7",
+      "deleted": "4",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/fsm.h",
+      "added": "8",
+      "deleted": "34",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/hive.h",
+      "added": "0",
+      "deleted": "261",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/mayachain.h",
+      "added": "44",
+      "deleted": "13",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/osmosis.h",
+      "added": "17",
+      "deleted": "21",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/passkey.h",
+      "added": "0",
+      "deleted": "40",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/policy.h",
+      "added": "0",
+      "deleted": "6",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/recovery_cipher.h",
+      "added": "0",
+      "deleted": "5",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/reset.h",
+      "added": "4",
+      "deleted": "22",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/ripple.h",
+      "added": "21",
+      "deleted": "3",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/signed_metadata.h",
+      "added": "0",
+      "deleted": "290",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/signing.h",
+      "added": "1",
+      "deleted": "12",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/signtx_tendermint.h",
+      "added": "4",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/solana.h",
+      "added": "8",
+      "deleted": "206",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/storage.h",
+      "added": "8",
+      "deleted": "60",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/tendermint.h",
+      "added": "24",
+      "deleted": "18",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/thorchain.h",
+      "added": "19",
+      "deleted": "19",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/tiny-json.h",
+      "added": "1",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/transaction.h",
+      "added": "3",
+      "deleted": "16",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/tron.h",
+      "added": "0",
+      "deleted": "55",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/txin_check.h",
+      "added": "0",
+      "deleted": "7",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/u2f.h",
+      "added": "0",
+      "deleted": "15",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/u2f/u2f_hid.h",
+      "added": "5",
+      "deleted": "10",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/firmware/zcash.h",
+      "added": "0",
+      "deleted": "430",
+      "phase": "P08-zcash-cryptography",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/rand/rng.h",
+      "added": "0",
+      "deleted": "25",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/rand/rng_health.h",
+      "added": "0",
+      "deleted": "152",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/interface.h",
+      "added": "2",
+      "deleted": "26",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages-ethereum.options",
+      "added": "0",
+      "deleted": "16",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages-hive.options",
+      "added": "0",
+      "deleted": "58",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages-ripple.options",
+      "added": "0",
+      "deleted": "2",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages-solana.options",
+      "added": "0",
+      "deleted": "10",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages-thorchain.options",
+      "added": "0",
+      "deleted": "1",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages-zcash.options",
+      "added": "0",
+      "deleted": "54",
+      "phase": "P08-zcash-cryptography",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/keepkey/transport/messages.options",
+      "added": "1",
+      "deleted": "14",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "include/pb.h",
+      "added": "31",
+      "deleted": "36",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/confirm_sm.c",
+      "added": "182",
+      "deleted": "226",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/draw.c",
+      "added": "3",
+      "deleted": "82",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/font.c",
+      "added": "17",
+      "deleted": "45",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/keepkey_board.c",
+      "added": "2",
+      "deleted": "2",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/keepkey_flash.c",
+      "added": "4",
+      "deleted": "20",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/layout.c",
+      "added": "3",
+      "deleted": "167",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/memory.c",
+      "added": "7",
+      "deleted": "141",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/messages.c",
+      "added": "50",
+      "deleted": "93",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/resources.c",
+      "added": "33",
+      "deleted": "23",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/signatures.c",
+      "added": "9",
+      "deleted": "39",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/timer.c",
+      "added": "2",
+      "deleted": "28",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/udp.c",
+      "added": "0",
+      "deleted": "6",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/usb.c",
+      "added": "20",
+      "deleted": "29",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/util.c",
+      "added": "2",
+      "deleted": "17",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/board/variant.c",
+      "added": "0",
+      "deleted": "22",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/emulator/CMakeLists.txt",
+      "added": "1",
+      "deleted": "10",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/emulator/libkkemu.c",
+      "added": "70",
+      "deleted": "289",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/emulator/random.c",
+      "added": "0",
+      "deleted": "69",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/emulator/setup.c",
+      "added": "37",
+      "deleted": "16",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/emulator/udp.c",
+      "added": "2",
+      "deleted": "8",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/CMakeLists.txt",
+      "added": "28",
+      "deleted": "55",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/app_confirm.c",
+      "added": "162",
+      "deleted": "64",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/app_layout.c",
+      "added": "6",
+      "deleted": "132",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/authenticator.c",
+      "added": "85",
+      "deleted": "119",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/binance.c",
+      "added": "266",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/bip85.c",
+      "added": "0",
+      "deleted": "105",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/clearsign_root.c",
+      "added": "0",
+      "deleted": "171",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/coins.c",
+      "added": "1",
+      "deleted": "19",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ctap2.c",
+      "added": "0",
+      "deleted": "1347",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ctap2_cbor.c",
+      "added": "0",
+      "deleted": "282",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/dice_input.c",
+      "added": "0",
+      "deleted": "387",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/eip712.c",
+      "added": "215",
+      "deleted": "415",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/eip712_stream.c",
+      "added": "0",
+      "deleted": "1044",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/eos-contracts/eosio.system.c",
+      "added": "19",
+      "deleted": "23",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/eos.c",
+      "added": "102",
+      "deleted": "22",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum.c",
+      "added": "189",
+      "deleted": "295",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts.c",
+      "added": "17",
+      "deleted": "32",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/makerdao.c",
+      "added": "36",
+      "deleted": "24",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/saproxy.c",
+      "added": "49",
+      "deleted": "24",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/thortx.c",
+      "added": "170",
+      "deleted": "175",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/zxappliquid.c",
+      "added": "95",
+      "deleted": "125",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/zxliquidtx.c",
+      "added": "187",
+      "deleted": "167",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/zxswap.c",
+      "added": "98",
+      "deleted": "13",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_contracts/zxtransERC20.c",
+      "added": "25",
+      "deleted": "54",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ethereum_tokens.c",
+      "added": "18",
+      "deleted": "11",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm.c",
+      "added": "56",
+      "deleted": "93",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_binance.h",
+      "added": "243",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_bip85.h",
+      "added": "0",
+      "deleted": "151",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_clearsign_attestor.h",
+      "added": "0",
+      "deleted": "208",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_coin.h",
+      "added": "32",
+      "deleted": "23",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_common.h",
+      "added": "45",
+      "deleted": "117",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_cosmos.h",
+      "added": "89",
+      "deleted": "17",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_crypto.h",
+      "added": "32",
+      "deleted": "38",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_debug.h",
+      "added": "15",
+      "deleted": "10",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_eos.h",
+      "added": "16",
+      "deleted": "3",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_ethereum.h",
+      "added": "80",
+      "deleted": "318",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_hive.h",
+      "added": "0",
+      "deleted": "1028",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_mayachain.h",
+      "added": "121",
+      "deleted": "86",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_osmosis.h",
+      "added": "242",
+      "deleted": "179",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_ripple.h",
+      "added": "46",
+      "deleted": "44",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_solana.h",
+      "added": "181",
+      "deleted": "641",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_tendermint.h",
+      "added": "77",
+      "deleted": "7",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_thorchain.h",
+      "added": "73",
+      "deleted": "48",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_ton.h",
+      "added": "11",
+      "deleted": "13",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_tron.h",
+      "added": "38",
+      "deleted": "131",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/fsm_msg_zcash.h",
+      "added": "0",
+      "deleted": "1678",
+      "phase": "P08-zcash-cryptography",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/hive.c",
+      "added": "0",
+      "deleted": "1096",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/home_sm.c",
+      "added": "13",
+      "deleted": "6",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/mayachain.c",
+      "added": "323",
+      "deleted": "159",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/messagemap.def",
+      "added": "9",
+      "deleted": "57",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/nano.c",
+      "added": "5",
+      "deleted": "2",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/osmosis.c",
+      "added": "180",
+      "deleted": "135",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/passphrase_sm.c",
+      "added": "39",
+      "deleted": "3",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/pin_sm.c",
+      "added": "12",
+      "deleted": "25",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/recovery_cipher.c",
+      "added": "81",
+      "deleted": "251",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/reset.c",
+      "added": "29",
+      "deleted": "170",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ripple.c",
+      "added": "46",
+      "deleted": "34",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/signed_metadata.c",
+      "added": "0",
+      "deleted": "1419",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/signing.c",
+      "added": "99",
+      "deleted": "491",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/signtx_tendermint.c",
+      "added": "133",
+      "deleted": "69",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/solana.c",
+      "added": "235",
+      "deleted": "668",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/storage.c",
+      "added": "195",
+      "deleted": "783",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/storage.h",
+      "added": "2",
+      "deleted": "45",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/storage_versions.inc",
+      "added": "1",
+      "deleted": "10",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/tendermint.c",
+      "added": "141",
+      "deleted": "35",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/thorchain.c",
+      "added": "279",
+      "deleted": "247",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/tiny-json.c",
+      "added": "0",
+      "deleted": "2",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/ton.c",
+      "added": "5",
+      "deleted": "3",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/transaction.c",
+      "added": "36",
+      "deleted": "198",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/tron.c",
+      "added": "2",
+      "deleted": "359",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/txin_check.c",
+      "added": "4",
+      "deleted": "14",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/u2f.c",
+      "added": "24",
+      "deleted": "188",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/firmware/zcash.c",
+      "added": "0",
+      "deleted": "1236",
+      "phase": "P08-zcash-cryptography",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/rand/CMakeLists.txt",
+      "added": "1",
+      "deleted": "2",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/rand/rng.c",
+      "added": "3",
+      "deleted": "59",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/rand/rng_health.c",
+      "added": "0",
+      "deleted": "369",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/transport/CMakeLists.txt",
+      "added": "0",
+      "deleted": "18",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "lib/transport/pb_decode.c",
+      "added": "4",
+      "deleted": "6",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/build/docker/device/release.sh",
+      "added": "1",
+      "deleted": "6",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/build/docker/emulator/debug.sh",
+      "added": "1",
+      "deleted": "2",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/build/verify-repro.sh",
+      "added": "0",
+      "deleted": "130",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/Dockerfile",
+      "added": "14",
+      "deleted": "6",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/capture-clearsign-attestor.py",
+      "added": "0",
+      "deleted": "220",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/capture-dice-flow.py",
+      "added": "0",
+      "deleted": "101",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/capture-thor-percent.py",
+      "added": "0",
+      "deleted": "99",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/docker-compose.bitcoin-only.yml",
+      "added": "0",
+      "deleted": "15",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/docker-compose.yml",
+      "added": "17",
+      "deleted": "13",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/python-keepkey-tests.sh",
+      "added": "24",
+      "deleted": "201",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/emulator/python-keepkey.Dockerfile",
+      "added": "13",
+      "deleted": "6",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/generate-test-report.py",
+      "added": "298",
+      "deleted": "133",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/release/hash-manifest.sh",
+      "added": "0",
+      "deleted": "272",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/release/verify-signatures.py",
+      "added": "0",
+      "deleted": "209",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "scripts/verify-token-def.py",
+      "added": "0",
+      "deleted": "36",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/check_bitcoin_only_identity.py",
+      "added": "0",
+      "deleted": "86",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/check_pallas_api_boundary.py",
+      "added": "0",
+      "deleted": "238",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/check_pallas_ct_disassembly.py",
+      "added": "0",
+      "deleted": "301",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/check_sram_budget.py",
+      "added": "0",
+      "deleted": "124",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/emulator/CMakeLists.txt",
+      "added": "11",
+      "deleted": "33",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/firmware/CMakeLists.txt",
+      "added": "1",
+      "deleted": "3",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/merge-direction-adjudicated.txt",
+      "added": "0",
+      "deleted": "41",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/merge_direction_gate.py",
+      "added": "0",
+      "deleted": "79",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/merge_symbol_gate.py",
+      "added": "0",
+      "deleted": "79",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "tools/sram-budgets.json",
+      "added": "0",
+      "deleted": "9",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/board/board.cpp",
+      "added": "250",
+      "deleted": "289",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/crypto/CMakeLists.txt",
+      "added": "0",
+      "deleted": "38",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/crypto/bip340.cpp",
+      "added": "0",
+      "deleted": "516",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/crypto/pallas_ct.cpp",
+      "added": "0",
+      "deleted": "257",
+      "phase": "P08-zcash-cryptography",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/CMakeLists.txt",
+      "added": "21",
+      "deleted": "50",
+      "phase": "P01-build-dependencies-release",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/authenticator.cpp",
+      "added": "0",
+      "deleted": "134",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/binance.cpp",
+      "added": "151",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/bitcoin_only.cpp",
+      "added": "0",
+      "deleted": "29",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/clearsign_root.cpp",
+      "added": "0",
+      "deleted": "143",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/coins.cpp",
+      "added": "17",
+      "deleted": "25",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/confirm_test_utils.cpp",
+      "added": "0",
+      "deleted": "108",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/cosmos.cpp",
+      "added": "118",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/ctap2.cpp",
+      "added": "0",
+      "deleted": "116",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/ctap2_cbor.cpp",
+      "added": "0",
+      "deleted": "60",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/dice.cpp",
+      "added": "0",
+      "deleted": "64",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/eip712.cpp",
+      "added": "0",
+      "deleted": "108",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/eip712_stream.cpp",
+      "added": "0",
+      "deleted": "573",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/eos.cpp",
+      "added": "70",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/eos_authorization.cpp",
+      "added": "50",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/eos_authorization_probe.c",
+      "added": "16",
+      "deleted": "0",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/ethereum.cpp",
+      "added": "256",
+      "deleted": "320",
+      "phase": "P05-evm-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/fsm.cpp",
+      "added": "245",
+      "deleted": "0",
+      "phase": "P02-wire-dispatch-lifetime",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/hive.cpp",
+      "added": "0",
+      "deleted": "983",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/mayachain.cpp",
+      "added": "262",
+      "deleted": "181",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/nanopb_bounds.cpp",
+      "added": "0",
+      "deleted": "90",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/osmosis.cpp",
+      "added": "123",
+      "deleted": "200",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/recovery.cpp",
+      "added": "0",
+      "deleted": "282",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/ripple.cpp",
+      "added": "0",
+      "deleted": "64",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/rng_health.cpp",
+      "added": "0",
+      "deleted": "303",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/seed_display.cpp",
+      "added": "0",
+      "deleted": "287",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/setup_ceremony.cpp",
+      "added": "15",
+      "deleted": "42",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/signed_metadata.cpp",
+      "added": "0",
+      "deleted": "1985",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/signing.cpp",
+      "added": "0",
+      "deleted": "89",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/solana.cpp",
+      "added": "426",
+      "deleted": "1400",
+      "phase": "P07-provider-solana-trust",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/storage.cpp",
+      "added": "104",
+      "deleted": "565",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/storage_cipher_probe.c",
+      "added": "129",
+      "deleted": "0",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/storage_cipher_probe.h",
+      "added": "24",
+      "deleted": "0",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/storage_passphrase.cpp",
+      "added": "114",
+      "deleted": "0",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/test_board.cpp",
+      "added": "0",
+      "deleted": "37",
+      "phase": "P10-ui-platform",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/thorchain.cpp",
+      "added": "276",
+      "deleted": "622",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/transaction.cpp",
+      "added": "0",
+      "deleted": "99",
+      "phase": "P04-bitcoin-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/tron.cpp",
+      "added": "0",
+      "deleted": "495",
+      "phase": "P06-other-chain-signing",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/u2f.cpp",
+      "added": "0",
+      "deleted": "34",
+      "phase": "P09-entropy-authentication",
+      "review_status": "pending",
+      "evidence": []
+    },
+    {
+      "path": "unittests/firmware/zcash.cpp",
+      "added": "0",
+      "deleted": "2204",
+      "phase": "P08-zcash-cryptography",
+      "review_status": "pending",
+      "evidence": []
+    }
+  ]
+}
