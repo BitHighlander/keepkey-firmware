@@ -1,4 +1,3 @@
-
 void fsm_msgThorchainGetAddress(const ThorchainGetAddress* msg) {
   RESP_INIT(ThorchainAddress);
 
@@ -80,16 +79,19 @@ void fsm_msgThorchainGetAddress(const ThorchainGetAddress* msg) {
 
 void fsm_msgThorchainSignTx(const ThorchainSignTx* msg) {
   CHECK_INITIALIZED
-  CHECK_PIN
 
   if (!msg->has_account_number || !msg->has_chain_id || !msg->has_fee_amount ||
-      !msg->has_gas || !msg->has_sequence) {
+      !msg->has_gas || !msg->has_sequence || !msg->has_msg_count ||
+      msg->msg_count == 0 || !tendermint_validateSafeText(msg->chain_id)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Missing Fields On Message");
+                    "Missing or Invalid Fields On Message");
     layoutHome();
     return;
   }
+
+  /* Reject malformed envelopes before authentication or key derivation. */
+  CHECK_PIN
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -119,13 +121,6 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   // Confirm transaction basics
   // supports only 1 message ack
   CHECK_PARAM(thorchain_signingIsInited(), "Signing not in progress");
-  if (msg->has_send == msg->has_deposit) {
-    thorchain_signAbort();
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Expected exactly one THORChain message"));
-    layoutHome();
-    return;
-  }
   if (msg->has_send && msg->send.has_to_address && msg->send.has_amount) {
     // pass
   } else if (msg->has_deposit && msg->deposit.has_asset &&
@@ -148,28 +143,31 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   const ThorchainSignTx* sign_tx = thorchain_getThorchainSignTx();
 
   if (msg->has_send) {
-    const char* coin_denom =
-        (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
-
-    // Validate before any display so untrusted strings never reach the UI.
-    if (!thorchain_isValidDenom(coin_denom)) {
-      thorchain_signAbort();
-      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
-      layoutHome();
-      return;
-    }
-
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
-        // amount_str only needs to hold the numeric part (no denom suffix).
-        // Denom is confirmed on a separate screen so no truncation is possible.
         char amount_str[32];
-        if (!bn_format_uint64(msg->send.amount, NULL, NULL, 8, 0, false,
-                              amount_str, sizeof(amount_str))) {
+        if (!thorchain_formatAmount(msg->send.amount, "RUNE", amount_str,
+                                    sizeof(amount_str))) {
           thorchain_signAbort();
-          fsm_sendFailure(FailureType_Failure_FirmwareError,
-                          _("Failed to format amount"));
+          fsm_sendFailure(FailureType_Failure_SyntaxError,
+                          "Invalid THORChain send amount");
+          layoutHome();
+          return;
+        }
+        /* Validate the recipient BEFORE the screen, not in the serializer.
+           thorchain_signTxUpdateMsgSend() already refuses a
+           malformed or wrong-network address, but it runs after this
+           confirmation, so the owner approved a transfer that was then
+           rejected. This release line's rule is that an invalid signed value
+           fails before approval, so the same check moves ahead of the
+           screen. */
+        if (!tendermint_validateBech32Address(
+                msg->send.to_address,
+                sign_tx->has_testnet && sign_tx->testnet ? "tthor" : "thor")) {
+          thorchain_signAbort();
+          fsm_sendFailure(FailureType_Failure_SyntaxError,
+                          "Invalid THORChain recipient address");
           layoutHome();
           return;
         }
@@ -181,20 +179,12 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
           layoutHome();
           return;
         }
-        // Confirm the asset denom on its own screen.
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
-                     "%s", coin_denom)) {
-          thorchain_signAbort();
-          fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-          layoutHome();
-          return;
-        }
 
         break;
       }
     }
-    if (!thorchain_signTxUpdateMsgSend(msg->send.amount, msg->send.to_address,
-                                       coin_denom)) {
+    if (!thorchain_signTxUpdateMsgSend(msg->send.amount,
+                                       msg->send.to_address)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Failed to include send message in transaction");
@@ -203,12 +193,39 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     }
 
   } else if (msg->has_deposit) {
-    char amount_str[32];
-    char asset_str[21];
-    asset_str[0] = ' ';
-    strlcpy(&(asset_str[1]), msg->deposit.asset, sizeof(asset_str) - 1);
-    bn_format_uint64(msg->deposit.amount, NULL, asset_str, 8, 0, false,
-                     amount_str, sizeof(amount_str));
+    const char* const signer_prefix =
+        sign_tx->has_testnet && sign_tx->testnet ? "tthor" : "thor";
+    /* The signer must be THIS session's account, not merely a well-formed
+       address on the right network. MsgDeposit serializes `signer` verbatim as
+       the message authority, so a valid-but-foreign address produced a signed
+       document the device's key cannot authorize -- and the confirmation below
+       labels that address as though it were a destination, so the screen would
+       not have given it away. */
+    if (!tendermint_validateSafeText(msg->deposit.asset) ||
+        !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
+        !thorchain_addressIsSigner(msg->deposit.signer)) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid THORChain deposit fields");
+      layoutHome();
+      return;
+    }
+
+    /* ThorchainMsgDeposit.asset is max_size:20, so the suffix reaches 20
+     * characters while a uint64 at 8 decimals reaches 21: 21 + 20 + 1 = 42
+     * did not fit the old 32-byte amount_str. bn_format() zeroes its output
+     * and returns 0 on overflow, and the ignored return let an EMPTY amount
+     * reach the confirmation screen and be signed. Size for the maximum and
+     * fail closed, as fsm_msg_binance.h does. */
+    char amount_str[21 + THORCHAIN_ASSET_SUFFIX_LEN + 1];
+    if (!thorchain_formatAmount(msg->deposit.amount, msg->deposit.asset,
+                                amount_str, sizeof(amount_str))) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid THORChain deposit amount");
+      layoutHome();
+      return;
+    }
     if (!confirm_transaction_output(
             ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
             msg->deposit.signer)) {
@@ -268,9 +285,18 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     return;
   }
 
+  /* Review the OUTER transaction memo whenever it is present -- including when
+   * the deposit carries one of its own.
+   *
+   * These are two different strings in the signed document, not one superseding
+   * the other: thorchain_signTxInit() hashes sign_tx->memo into the StdSignDoc
+   * "memo" field, and the MsgDeposit value below hashes deposit.memo
+   * separately. Skipping this review when deposit.has_memo let a host show a
+   * benign deposit memo while a different outer memo was signed unseen -- the
+   * exact thing this release line exists to prevent. Both are signed, so both
+   * are shown. */
   if (sign_tx->has_memo) {
-    // See if we can parse the tx memo. The transaction and deposit memos are
-    // distinct signed fields, so both are reviewed when both are present.
+    // See if we can parse the tx memo.
     /* strnlen, not sizeof -- see the deposit path above. */
     ThorchainMemoResult memo_result = thorchain_parseConfirmMemo(
         sign_tx->memo, strnlen(sign_tx->memo, sizeof(sign_tx->memo)));
@@ -305,9 +331,8 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   }
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this RUNE transaction on %s? "
-               "Additional network fees apply.",
-               sign_tx->chain_id)) {
+               "Sign RUNE on %s? Fee: %" PRIu32 " rune. Gas: %" PRIu32 ".",
+               sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

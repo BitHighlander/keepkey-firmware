@@ -18,8 +18,6 @@
 #ifndef __AUTHENTICATOR_H__
 #define __AUTHENTICATOR_H__
 
-#include <stdbool.h>
-
 // WARNING: Changing these defines changes the size of authStruct, which in turn
 // changes the secret storage size in saved in flash. These value must be
 // coordinated with the size of uint8_t encrypted_sec[] in in
@@ -28,7 +26,6 @@
 #define ACCOUNT_SIZE 12  // allow 11 chars for account string
 #define AUTHSECRET_SIZE_MAX \
   20  // 128-bit key len is the recommended minimum, this is room for 160-bit
-#define AUTHSECRET_SIZE_MIN 16  // reject brute-forceable TOTP secrets
 #define AUTHDATA_SIZE \
   10  // WARNING: This value must be coordinated with the size of uint8_t
       // encrypted_sec[] in in lib/firmware/storage.h and the storage version
@@ -44,8 +41,7 @@ enum AUTH_ERR_TYPE {
   LARGESEED,
   BADPASS,
   UNKERR,
-  DUPLICATE,
-  AUTH_CANCELLED,
+  CANCELED,
   NUM_AUTHERRS
 };
 
@@ -74,12 +70,8 @@ unsigned addAuthAccount(char* accountWithSeed);
 unsigned getAuthAccount(const char* slotStr, char acc[]);
 unsigned removeAuthAccount(char* domAcc);
 unsigned wipeAuthData(void);
-/* Drop the plaintext TOTP cache without touching persistent authenticator
- * storage. The next operation reloads it only after wallet authorization. */
 void authenticator_clear_cache(void);
 #if DEBUG_LINK
 void getAuthSlot(char* authSlotData);
-bool authenticator_cache_is_empty(void);
-void authenticator_test_seed_cache(void);
 #endif
 #endif

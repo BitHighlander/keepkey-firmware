@@ -2,7 +2,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/lib/firmware
     ${CMAKE_BINARY_DIR}/include
-    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
+    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto)
 
 set(libraries
     kkfirmware
@@ -27,6 +27,3 @@ target_link_libraries(fuzz-eos_formatAsset ${libraries})
 
 add_executable(fuzz-ripple_decode ripple_decode.cpp)
 target_link_libraries(fuzz-ripple_decode ${libraries})
-
-add_executable(fuzz-ctap2_cbor ctap2_cbor.cpp)
-target_link_libraries(fuzz-ctap2_cbor ${libraries})

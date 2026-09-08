@@ -41,16 +41,12 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
-#include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
-#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
-#include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
-#include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bip32.h"
@@ -60,32 +56,27 @@
 #include "trezor/crypto/pbkdf2.h"
 #include "trezor/crypto/rand.h"
 
-#include <stddef.h>
 #include <string.h>
 #include <stdint.h>
 #include <assert.h>
 
 /*
- * PIN wrapping-key parameters are part of the persistent storage format.
- * Never change an existing set in place: old wallets must first unwrap with
- * their original parameters, then rewrap after a correct PIN. V19 restores a
- * meaningful offline-work factor after V16 reduced it to ten iterations.
- */
+The PIN_ITER defines below changed between storage version 15 and 16 to
+eliminate the unacceptable multi-second wait while the pin was being stretched
+for a dubious claim to better security. The defines help during upgrades from
+v15 to v16
+*/
 
 #if defined(EMULATOR) || defined(DEBUG_ON)
 #define PIN_ITER_COUNT_v15 1000
 #define PIN_ITER_CHUNK_v15 10
 #define PIN_ITER_COUNT_v16 10
 #define PIN_ITER_CHUNK_v16 1
-#define PIN_ITER_COUNT_v19 1000
-#define PIN_ITER_CHUNK_v19 10
 #else
 #define PIN_ITER_COUNT_v15 100000
 #define PIN_ITER_CHUNK_v15 1000
 #define PIN_ITER_COUNT_v16 10
 #define PIN_ITER_CHUNK_v16 1
-#define PIN_ITER_COUNT_v19 100000
-#define PIN_ITER_CHUNK_v19 1000
 #endif
 
 #define U2F_KEY_PATH 0x80553246
@@ -99,28 +90,6 @@ static Allocation storage_location = FLASH_INVALID;
 _Static_assert(sizeof(ConfigFlash) <= FLASH_STORAGE_LEN,
                "ConfigFlash struct is too large for storage partition");
 static ConfigFlash CONFIDENTIAL shadow_config;
-
-/* This firmware found storage in flash it must refuse to load or overwrite
- * until the user explicitly wipes: a bitcoin-only wallet seen by multi-chain
- * firmware, or (on bitcoin-only firmware) a newer in-band wallet than this
- * build understands. Set from the SUS_BitcoinOnlyLocked path in either build.
- */
-static bool btc_only_locked = false;
-
-bool storage_isBitcoinOnlyLocked(void) { return btc_only_locked; }
-
-// Stamp a newly-created seed into the reserved bitcoin-only version band so
-// multi-chain firmware refuses it (see storage_fromFlash). Called only from
-// seed-creation paths, so a pre-existing multi-chain wallet migrated under
-// bitcoin-only firmware keeps its normal, portable version. No-op (but still
-// referenced, so no -Wunused) in multi-chain builds.
-#if BITCOIN_ONLY
-static void storage_stampBitcoinOnlySeed(void) {
-  shadow_config.storage.version = STORAGE_VERSION_BTC_ONLY;
-}
-#else
-static void storage_stampBitcoinOnlySeed(void) {}
-#endif
 
 #if DEBUG_LINK
 // These won't survive resets like the stuff in flash would, but thats a
@@ -167,12 +136,13 @@ uint32_t storage_nextU2FCounter(void) {
   return shadow_config.storage.pub.u2f_counter;
 }
 
-void storage_setU2FCounter(uint32_t u2f_counter) {
+void storage_stageU2FCounter(uint32_t u2f_counter) {
   shadow_config.storage.pub.u2f_counter = u2f_counter;
-  /* This is a setter, not a persistence boundary. All callers finish a
-   * larger atomic update and call storage_commit() themselves. Committing
-   * here used to abort an armed reset/recovery ceremony halfway through
-   * setup_commit(), wiping its mnemonic before storage_setMnemonic(). */
+}
+
+void storage_setU2FCounter(uint32_t u2f_counter) {
+  storage_stageU2FCounter(u2f_counter);
+  storage_commit();
 }
 
 static bool storage_isActiveSector(const char* flash) {
@@ -200,17 +170,8 @@ static uint8_t read_u8(const char* ptr) { return *ptr; }
 static void write_u8(char* ptr, uint8_t val) { *ptr = val; }
 
 static uint32_t read_u32_le(const char* ptr) {
-  /* Read through unsigned char. `char` is signed on x86 (the emulator and the
-   * unit tests), so indexing it directly sign-extends any byte >= 0x80 and
-   * floods the upper bits: the flags word always has bit 7 set ("Pin Caching,
-   * enabled always"), so byte 0 is >= 0xC0 and read_u32_le returned
-   * 0xffffffc0. storage_writeStorageV17 read-modify-writes that same word,
-   * which wrote the corrupted value back. ARM defaults to unsigned char, so
-   * shipping firmware was unaffected -- but the signedness of plain `char` is
-   * implementation-defined and must not be relied on either way. */
-  const uint8_t* p = (const uint8_t*)ptr;
-  return ((uint32_t)p[0]) | ((uint32_t)p[1]) << 8 | ((uint32_t)p[2]) << 16 |
-         ((uint32_t)p[3]) << 24;
+  return ((uint32_t)ptr[0]) | ((uint32_t)ptr[1]) << 8 |
+         ((uint32_t)ptr[2]) << 16 | ((uint32_t)ptr[3]) << 24;
 }
 
 static void write_u32_le(char* ptr, uint32_t val) {
@@ -228,40 +189,7 @@ enum StorageVersion {
   StorageVersion_NONE,
 #define STORAGE_VERSION_ENTRY(VAL) StorageVersion_##VAL,
 #include "storage_versions.inc"
-  StorageVersion_BTC_ONLY,  // reserved band, never in storage_versions.inc
 };
-
-// The normal storage version must stay below the bitcoin-only band, or a
-// bitcoin-only wallet would become loadable by multi-chain firmware.
-_Static_assert(STORAGE_VERSION < STORAGE_VERSION_BTC_ONLY_BASE,
-               "storage version must stay below the bitcoin-only band");
-
-/* HARD CHECK 1 -- a signed upgrade must never wipe.
- * Lowering STORAGE_VERSION makes every device upgrading FROM a shipped release
- * unreadable (StorageVersion_NONE -> SUS_Invalid -> storage_reset). */
-_Static_assert(STORAGE_VERSION >= STORAGE_VERSION_LAST_SHIPPED,
-               "STORAGE_VERSION is below a version that has shipped: every "
-               "upgrading device would be wiped. Storage versions only go up.");
-
-/* HARD CHECK 2 -- no shipped version may stop being recognised.
- * The enum is emitted in .inc order after StorageVersion_NONE = 0, so a
- * contiguous 1..N list makes StorageVersion_N == N. Deleting, renumbering or
- * skipping an entry breaks that equality, and each one silently converts some
- * field device's upgrade into a wipe.
- *
- * Asserted on EVERY entry, not just the last. The last entry alone only pins
- * the entry COUNT: renumbering ENTRY(16) to ENTRY(99) leaves StorageVersion_17
- * at 17 and compiles clean, while version_from_int loses `case 16` and every
- * device carrying version 16 is wiped on upgrade.
- *
- * STORAGE_VERSION_LAST falls back to STORAGE_VERSION_ENTRY inside the .inc, so
- * defining ENTRY here covers the last entry too. */
-#define STORAGE_VERSION_ENTRY(VAL)                                       \
-  _Static_assert(StorageVersion_##VAL == (VAL),                          \
-                 "storage_versions.inc is not contiguous from 1: a "     \
-                 "shipped version was removed, renumbered, or skipped, " \
-                 "and devices carrying it would be wiped on upgrade.");
-#include "storage_versions.inc"
 
 static enum StorageVersion version_from_int(int version) {
 #define STORAGE_VERSION_LAST(VAL)        \
@@ -269,12 +197,6 @@ static enum StorageVersion version_from_int(int version) {
                  "need to update "       \
                  "storage_versions.inc");
 #include "storage_versions.inc"
-
-  // Any version in the reserved bitcoin-only band maps here regardless of
-  // build; storage_fromFlash decides load-vs-refuse from the exact value, so
-  // an in-band firmware downgrade refuses rather than silently wiping a newer
-  // bitcoin-only wallet.
-  if (version >= STORAGE_VERSION_BTC_ONLY_BASE) return StorageVersion_BTC_ONLY;
 
   switch (version) {
 #define STORAGE_VERSION_ENTRY(VAL) \
@@ -291,12 +213,6 @@ void storage_readMeta(Metadata* meta, const char* ptr, size_t len) {
   memcpy(meta->magic, ptr, STORAGE_MAGIC_LEN);
   memcpy(meta->uuid, ptr + 4, STORAGE_UUID_LEN);
   memcpy(meta->uuid_str, ptr + 16, STORAGE_UUID_STR_LEN);
-  if (len >= STORAGE_METADATA_LEN) {
-    memcpy(meta->generation, ptr + STORAGE_GENERATION_OFFSET,
-           STORAGE_GENERATION_LEN);
-  } else {
-    memzero(meta->generation, sizeof(meta->generation));
-  }
 }
 
 void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
@@ -306,20 +222,8 @@ void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
   memcpy(ptr + 16, meta->uuid_str, STORAGE_UUID_STR_LEN);
 }
 
-static uint32_t storage_generation(const Metadata* meta) {
-  return (uint32_t)meta->generation[0] | ((uint32_t)meta->generation[1] << 8) |
-         ((uint32_t)meta->generation[2] << 16);
-}
-
-static void storage_generation_increment(Metadata* meta) {
-  uint32_t next = (storage_generation(meta) + 1u) & 0x00FFFFFFu;
-  meta->generation[0] = (uint8_t)next;
-  meta->generation[1] = (uint8_t)(next >> 8);
-  meta->generation[2] = (uint8_t)(next >> 16);
-}
-
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len) {
-  if (len < 18) return;  // farthest access is ptr+17 (read_bool: 1 byte)
+  if (len < 17) return;
   policy->has_policy_name = read_bool(ptr);
   memset(policy->policy_name, 0, sizeof(policy->policy_name));
   memcpy(policy->policy_name, ptr + 1, 15);
@@ -337,7 +241,7 @@ void storage_readPolicyV2(PolicyType* policy, const char* policy_name,
 }
 
 void storage_writePolicyV1(char* ptr, size_t len, const PolicyType* policy) {
-  if (len < 18) return;  // farthest access is ptr+17 (write_bool: 1 byte)
+  if (len < 17) return;
   write_bool(ptr, policy->has_policy_name);
   memcpy(ptr + 1, policy->policy_name, 15);
   write_bool(ptr + 16, policy->has_enabled);
@@ -381,27 +285,20 @@ void storage_writeHDNode(char* ptr, size_t len, const HDNodeType* node) {
 }
 
 void storage_deriveWrappingKey(const char* pin, uint8_t wrapping_key[64],
-                               bool sca_hardened,
-                               pin_kdf_version_t pin_kdf_version,
+                               bool sca_hardened, bool v15_16_trans,
                                const uint8_t random_salt[RANDOM_SALT_LEN],
                                const char* message) {
   size_t pin_len = strlen(pin);
   if (sca_hardened && pin_len > 0) {
     uint8_t salt[HW_ENTROPY_LEN + RANDOM_SALT_LEN];
-    int iterCount = PIN_ITER_COUNT_v19;
-    int iterChunk = PIN_ITER_CHUNK_v19;
+    int iterCount, iterChunk;
 
-    switch (pin_kdf_version) {
-      case PIN_KDF_V15:
-        iterCount = PIN_ITER_COUNT_v15;
-        iterChunk = PIN_ITER_CHUNK_v15;
-        break;
-      case PIN_KDF_V16:
-        iterCount = PIN_ITER_COUNT_v16;
-        iterChunk = PIN_ITER_CHUNK_v16;
-        break;
-      case PIN_KDF_V19:
-        break;
+    if (v15_16_trans) {  // can use new counts
+      iterCount = PIN_ITER_COUNT_v16;
+      iterChunk = PIN_ITER_CHUNK_v16;
+    } else {  // need to use storage version 15 counts to derive wrap key
+      iterCount = PIN_ITER_COUNT_v15;
+      iterChunk = PIN_ITER_CHUNK_v15;
     }
 
     memset(salt, 0, sizeof(salt));
@@ -467,29 +364,10 @@ void storage_keyFingerprint(const uint8_t key[64], uint8_t fingerprint[32]) {
   sha256_Raw(key, 64, fingerprint);
 }
 
-pin_kdf_version_t storage_activePinKdfVersion(bool v15_16_trans,
-                                              bool pin_kdf_v2) {
-#if STORAGE_PIN_KDF_V19
-  if (pin_kdf_v2) return PIN_KDF_V19;
-#else
-  /* the flag cannot round-trip in V17; see STORAGE_PIN_KDF_V19 */
-  (void)pin_kdf_v2;
-#endif
-  return v15_16_trans ? PIN_KDF_V16 : PIN_KDF_V15;
-}
-
-pin_kdf_version_t storage_rewrapPinKdfVersion(void) {
-#if STORAGE_PIN_KDF_V19
-  return PIN_KDF_V19;
-#else
-  return PIN_KDF_V16;
-#endif
-}
-
 pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
                                     const uint8_t fingerprint[32],
                                     bool* sca_hardened, bool* v15_16_trans,
-                                    bool* pin_kdf_v2, uint8_t key[64],
+                                    uint8_t key[64],
                                     uint8_t random_salt[RANDOM_SALT_LEN]) {
   /*
       This function tests whether the PIN is correct. It will return
@@ -504,9 +382,7 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
      required to update the flash with a storage_commit().
   */
   uint8_t wrapping_key[64];
-  const pin_kdf_version_t pin_kdf_version =
-      storage_activePinKdfVersion(*v15_16_trans, *pin_kdf_v2);
-  storage_deriveWrappingKey(pin, wrapping_key, *sca_hardened, pin_kdf_version,
+  storage_deriveWrappingKey(pin, wrapping_key, *sca_hardened, *v15_16_trans,
                             random_salt, _("Verifying PIN"));
 
   // unwrap the storage key for fingerprint test
@@ -525,34 +401,16 @@ pintest_t storage_isPinCorrect_impl(const char* pin, uint8_t wrapped_key[64],
   if (memcmp_s(fp, fingerprint, 32) == 0) ret = PIN_GOOD;
 
   if (ret == PIN_GOOD) {
-    /* The v19 rewrap is gated because the flag that records it only survives a
-     * round trip in storage version 19, and this firmware writes version 17.
-     * Rewrapping without persisting the flag would wrap the key with v19
-     * parameters and then read it back as v15/v16 on the next boot -- a silent,
-     * permanent lockout of a wallet whose flash is otherwise intact. Whichever
-     * way STORAGE_PIN_KDF_V19 goes, the KDF version selected here must be the
-     * one the flag will still describe after storage_commit(). */
-#if STORAGE_PIN_KDF_V19
-    const bool needs_rewrap = !*sca_hardened || !*v15_16_trans || !*pin_kdf_v2;
-#else
-    const bool needs_rewrap = !*sca_hardened || !*v15_16_trans;
-    /* No v19 wrap was produced, so the in-RAM flag must not claim one. Also
-     * keeps this an out-parameter in both configurations. */
-    *pin_kdf_v2 = false;
-#endif
-    const pin_kdf_version_t rewrap_to = storage_rewrapPinKdfVersion();
-    if (needs_rewrap) {
+    if (!*sca_hardened || !*v15_16_trans) {
       // PIN is correct but:
       //   1. wrapping key needs to be regenerated using stretched key
       //   2. storage key needs a rewrap with new wrapping key and algorithm
       storage_deriveWrappingKey(pin, wrapping_key, true /* sca_hardened */,
-                                rewrap_to, random_salt, _("Verifying PIN"));
+                                true /* v15_16_trans */, random_salt,
+                                _("Verifying PIN"));
       storage_wrapStorageKey(wrapping_key, key, wrapped_key);
       *sca_hardened = true;
       *v15_16_trans = true;
-#if STORAGE_PIN_KDF_V19
-      *pin_kdf_v2 = true;
-#endif
       ret = PIN_REWRAP;
     }
   }
@@ -569,8 +427,8 @@ pintest_t storage_isWipeCodeCorrect_impl(const char* wipe_code,
                                          uint8_t key[64],
                                          uint8_t random_salt[RANDOM_SALT_LEN]) {
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey(wipe_code, wrapping_key, true, PIN_KDF_V16,
-                            random_salt, _("Verifying PIN"));
+  storage_deriveWrappingKey(wipe_code, wrapping_key, true, true, random_salt,
+                            _("Verifying PIN"));
 
   // unwrap the storage key for fingerprint test
   storage_unwrapStorageKey(wrapping_key, wrapped_key, key);
@@ -589,27 +447,6 @@ pintest_t storage_isWipeCodeCorrect_impl(const char* wipe_code,
   memzero(wrapping_key, 64);
   memzero(fp, 32);
   return ret;
-}
-
-/* The seed-time RNG gate, at the paths that CREATE or REWRAP key material.
- *
- * SCOPE, stated because the previous revision of this branch overclaimed it:
- * this covers the draws below and nothing else. It is NOT wallet-wide
- * enforcement -- ordinary random_buffer() callers, including the Orchard
- * RedPallas signing nonce in the crypto submodule, still draw unchecked
- * exactly as they do on develop. Making the default checked was tried and
- * descoped from 7.15; see docs/security/rc28-open-findings-handoff.md.
- *
- * These call sites are void and have no way to report a failure, so they halt
- * -- the same disposition storage_secMigrate() takes when secrets fail to
- * decrypt. The halt lives here rather than in kkrand because kkrand must not
- * reference kkboard: GNU ld resolves static archives in one left-to-right
- * pass and kkboard is listed first everywhere, so a UI call from that library
- * fails to link in crypto-unit and board-unit. */
-static void storage_drawKeyMaterial(uint8_t* buf, size_t len) {
-  if (random_buffer_checked(buf, len)) return;
-  layout_warning_static("RNG self-test failed. Reboot device!");
-  shutdown();
 }
 
 void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
@@ -663,8 +500,8 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
       aes_cbc_decrypt((const uint8_t*)storage->encrypted_sec,
                       (uint8_t*)&scratch[0], sizeof(scratch), iv + 32, &ctx);
     }
-    memzero(iv, sizeof(iv));
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
 
     // De-serialize from scratch.
     storage_readHDNode(&storage->sec.node, &scratch[0], 129);
@@ -729,7 +566,8 @@ void storage_secMigrate(SessionState* ss, Storage* storage, bool encrypt) {
 void storage_deriveAuthdataKey(const char* passphrase,
                                uint8_t authdataKey[64]) {
   storage_deriveWrappingKey(passphrase, authdataKey,
-                            /*sca_hardened*/ true, PIN_KDF_V16,
+                            /*sca_hardened*/ true,
+                            /*v15_16_trans*/ true,
                             shadow_config.storage.pub.random_salt,
                             "deriving authdata key");
   return;
@@ -754,8 +592,8 @@ static void storage_cipherBlock(bool encrypt, const uint8_t* key,
     aes_decrypt_key256(key, &ctx);
     aes_cbc_decrypt((const uint8_t*)ciphertextBlock, plaintextBlock, blockSize,
                     iv + 32, &ctx);
-    memzero(iv, sizeof(iv));
     memzero(&ctx, sizeof(ctx));
+    memzero(iv, sizeof(iv));
   }
 
   return;
@@ -783,71 +621,6 @@ void storage_wipeAuthData() {
 
   memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
   return;
-}
-
-void storage_getPasskeyData(PasskeyStorage* data) {
-  if (data == NULL) return;
-  memcpy(data, &shadow_config.storage.pub.passkeys, sizeof(*data));
-}
-
-void storage_setPasskeyData(const PasskeyStorage* data) {
-  if (data == NULL) return;
-  memcpy(&shadow_config.storage.pub.passkeys, data, sizeof(*data));
-  storage_commit();
-}
-
-bool storage_getPasskeyCredentialGeneration(
-    uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
-    bool* legacy_credentials_enabled) {
-  if (generation == NULL || legacy_credentials_enabled == NULL) return false;
-
-  PasskeyStorage* passkeys = &shadow_config.storage.pub.passkeys;
-  bool generation_is_zero = true;
-  for (size_t i = 0; i < sizeof(passkeys->credential_generation); ++i) {
-    if (passkeys->credential_generation[i] != 0) {
-      generation_is_zero = false;
-      break;
-    }
-  }
-  if (passkeys->version != PASSKEY_STORAGE_VERSION || generation_is_zero) {
-    const bool migrate_legacy = passkeys->version != PASSKEY_STORAGE_VERSION ||
-                                passkeys->legacy_credentials_enabled != 0;
-    uint8_t new_generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
-    if (!random_buffer_checked(new_generation, sizeof(new_generation))) {
-      memzero(generation, PASSKEY_CREDENTIAL_GENERATION_SIZE);
-      *legacy_credentials_enabled = false;
-      return false;
-    }
-    memzero(passkeys->credential_generation,
-            sizeof(passkeys->credential_generation));
-    memcpy(passkeys->credential_generation, new_generation,
-           sizeof(new_generation));
-    passkeys->legacy_credentials_enabled = migrate_legacy ? 1 : 0;
-    passkeys->version = PASSKEY_STORAGE_VERSION;
-    storage_commit();
-    memzero(new_generation, sizeof(new_generation));
-  }
-
-  memcpy(generation, passkeys->credential_generation,
-         PASSKEY_CREDENTIAL_GENERATION_SIZE);
-  *legacy_credentials_enabled = passkeys->legacy_credentials_enabled != 0;
-  return true;
-}
-
-bool storage_resetPasskeyData(void) {
-  PasskeyStorage reset;
-  memzero(&reset, sizeof(reset));
-  if (!random_buffer_checked(reset.credential_generation,
-                             sizeof(reset.credential_generation))) {
-    memzero(&reset, sizeof(reset));
-    return false;
-  }
-  reset.version = PASSKEY_STORAGE_VERSION;
-  reset.pin_retries = PASSKEY_PIN_RETRIES;
-  reset.legacy_credentials_enabled = 0;
-  storage_setPasskeyData(&reset);
-  memzero(&reset, sizeof(reset));
-  return true;
 }
 
 bool storage_getAuthData(authType* returnData) {
@@ -892,8 +665,6 @@ bool storage_getAuthData(authType* returnData) {
                           sizeof(shadow_config.storage.sec.authBlock));
     } else {
       // encrypted, passphrase not available
-      memzero(authdataKey, sizeof(authdataKey));
-      memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
       return false;
     }
   } else {
@@ -908,15 +679,11 @@ bool storage_getAuthData(authType* returnData) {
   // authdata
   if (0 != memcmp(shadow_config.storage.pub.authdata_fingerprint, testFp,
                   sizeof(shadow_config.storage.pub.authdata_fingerprint))) {
-    memzero(authdataKey, sizeof(authdataKey));
-    memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
     return false;
   }
 
   memcpy(returnData, plaintextAuthBlock.authData,
          sizeof(plaintextAuthBlock.authData));
-  memzero(authdataKey, sizeof(authdataKey));
-  memzero((void*)&plaintextAuthBlock, sizeof(plaintextAuthBlock));
   return true;
 }
 
@@ -943,7 +710,6 @@ void storage_setAuthData(const authType* setData) {
                         (uint8_t*)&shadow_config.storage.sec.authBlock,
                         sizeof(shadow_config.storage.sec.authBlock));
     shadow_config.storage.pub.authdata_encrypted = true;
-    memzero(authdataKey, sizeof(authdataKey));
   } else {
     // not encrypted
     memcpy((void*)&shadow_config.storage.sec.authBlock,
@@ -978,18 +744,12 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  /* Policy state is NEVER trusted from flash, at any version. Reading the
-   * legacy record put a FLASH-CONTROLLED NAME into policies[0]: because
-   * storage_upgradePolicies only fills indices from policies_count upward, and
-   * storage_isPolicyEnabled_impl returns on the FIRST name match scanning from
-   * index 0, a crafted record naming itself "AdvancedMode" with enabled=1 was
-   * answered before the real entry at index 3 was ever reached -- re-enabling
-   * blind signing from unauthenticated storage.
-   *
-   * Nothing is lost by discarding it: the only policy this record could name
-   * legitimately is ShapeShift, which every V11+ reader already forces to
-   * false, and which has no storage_isPolicyEnabled consumer anywhere. */
-  storage_resetPolicies(storage);
+  if (storage->version == 1) {
+    storage->pub.policies_count = 0;
+  } else {
+    storage->pub.policies_count = 1;
+    storage_readPolicyV1(&storage->pub.policies[0], ptr + 464, 17);
+  }
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
@@ -999,7 +759,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage->pub.u2f_counter = 0;
 
   if (storage->version == 1) {
-    /* policies were reset unconditionally above */
+    storage_resetPolicies(storage);
     storage_resetCache(&storage->sec.cache);
   } else {
     storage_readCacheV1(&storage->sec.cache, ptr + 484, 75);
@@ -1011,9 +771,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   _Static_assert(sizeof(storage->pub.storage_key_fingerprint) == 32,
                  "key fingerprint must be 32 bytes");
 
-  /* PIN-KDF salt: unpredictability here is what stops a precomputed
-   * wrapping-key table, so it is key material. */
-  storage_drawKeyMaterial(storage->pub.random_salt, 32);
+  random_buffer(storage->pub.random_salt, 32);
 
   storage->has_sec = true;
 
@@ -1038,30 +796,24 @@ void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
   if (len < 852) return;
   write_u32_le(ptr, storage->version);
 
-  uint32_t flags =
-      (storage->pub.has_pin ? (1u << 0) : 0) |
-      (storage->pub.has_language ? (1u << 1) : 0) |
-      (storage->pub.has_label ? (1u << 2) : 0) |
-      (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
-      (storage->pub.imported ? (1u << 4) : 0) |
-      (storage->pub.passphrase_protection ? (1u << 5) : 0) |
-      (/* ShapeShift policy, enabled always */ (1u << 6)) |
-      (/* Pin Caching policy, enabled always */ (1u << 7)) |
-      (storage->pub.has_node ? (1u << 8) : 0) |
-      (storage->pub.has_mnemonic ? (1u << 9) : 0) |
-      (storage->pub.has_u2froot ? (1u << 10) : 0) |
-      (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-      /* bit 12 was AdvancedMode. It is session-scoped now and
-       * MUST NOT be persisted: this section has no authenticated
-       * integrity, so a physical attacker who sets the bit in
-       * flash would silently re-enable blind signing. Written as
-       * zero, ignored on read. Do not reuse the bit -- a device
-       * downgraded to older firmware would read it as the policy. */
-      (storage->pub.no_backup ? (1u << 13) : 0) |
-      (storage->has_sec_fingerprint ? (1u << 14) : 0) |
-      // cppcheck-suppress badBitmaskCheck
-      (storage->pub.sca_hardened ? (1u << 15) : 0) |
-      /* reserved 31:16 */ 0;
+  uint32_t flags = (storage->pub.has_pin ? (1u << 0) : 0) |
+                   (storage->pub.has_language ? (1u << 1) : 0) |
+                   (storage->pub.has_label ? (1u << 2) : 0) |
+                   (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
+                   (storage->pub.imported ? (1u << 4) : 0) |
+                   (storage->pub.passphrase_protection ? (1u << 5) : 0) |
+                   (/* ShapeShift policy, enabled always */ (1u << 6)) |
+                   (/* Pin Caching policy, enabled always */ (1u << 7)) |
+                   (storage->pub.has_node ? (1u << 8) : 0) |
+                   (storage->pub.has_mnemonic ? (1u << 9) : 0) |
+                   (storage->pub.has_u2froot ? (1u << 10) : 0) |
+                   (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
+                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
+                   (storage->pub.no_backup ? (1u << 13) : 0) |
+                   (storage->has_sec_fingerprint ? (1u << 14) : 0) |
+                   // cppcheck-suppress badBitmaskCheck
+                   (storage->pub.sca_hardened ? (1u << 15) : 0) |
+                   /* reserved 31:16 */ 0;
   write_u32_le(ptr + 4, flags);
 
   write_u32_le(ptr + 8, storage->pub.pin_failed_attempts);
@@ -1115,11 +867,8 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  /* Ignore whatever bit 12 holds: AdvancedMode is session-scoped and every
-   * boot starts with it OFF. A device upgrading with the bit already set in
-   * flash must not inherit the policy, and neither must one where an attacker
-   * set it. See storage_writeStorageV16Plaintext. */
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
+                       flags & (1u << 12));
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -1164,32 +913,26 @@ void storage_writeStorageV16Plaintext(char* ptr, size_t len,
   if (len < 852) return;
   write_u32_le(ptr, storage->version);
 
-  uint32_t flags =
-      (storage->pub.has_pin ? (1u << 0) : 0) |
-      (storage->pub.has_language ? (1u << 1) : 0) |
-      (storage->pub.has_label ? (1u << 2) : 0) |
-      (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
-      (storage->pub.imported ? (1u << 4) : 0) |
-      (storage->pub.passphrase_protection ? (1u << 5) : 0) |
-      (/* ShapeShift policy, enabled always */ (1u << 6)) |
-      (/* Pin Caching policy, enabled always */ (1u << 7)) |
-      (storage->pub.has_node ? (1u << 8) : 0) |
-      (storage->pub.has_mnemonic ? (1u << 9) : 0) |
-      (storage->pub.has_u2froot ? (1u << 10) : 0) |
-      (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-      /* bit 12 was AdvancedMode. It is session-scoped now and
-       * MUST NOT be persisted: this section has no authenticated
-       * integrity, so a physical attacker who sets the bit in
-       * flash would silently re-enable blind signing. Written as
-       * zero, ignored on read. Do not reuse the bit -- a device
-       * downgraded to older firmware would read it as the policy. */
-      (storage->pub.no_backup ? (1u << 13) : 0) |
-      (storage->has_sec_fingerprint ? (1u << 14) : 0) |
-      (storage->pub.sca_hardened ? (1u << 15) : 0) |
-      (storage->pub.has_wipe_code ? (1u << 16) : 0) |
-      // cppcheck-suppress badBitmaskCheck
-      (storage->pub.v15_16_trans ? (1u << 17) : 0) |
-      /* reserved 31:18 */ 0;
+  uint32_t flags = (storage->pub.has_pin ? (1u << 0) : 0) |
+                   (storage->pub.has_language ? (1u << 1) : 0) |
+                   (storage->pub.has_label ? (1u << 2) : 0) |
+                   (storage->pub.has_auto_lock_delay_ms ? (1u << 3) : 0) |
+                   (storage->pub.imported ? (1u << 4) : 0) |
+                   (storage->pub.passphrase_protection ? (1u << 5) : 0) |
+                   (/* ShapeShift policy, enabled always */ (1u << 6)) |
+                   (/* Pin Caching policy, enabled always */ (1u << 7)) |
+                   (storage->pub.has_node ? (1u << 8) : 0) |
+                   (storage->pub.has_mnemonic ? (1u << 9) : 0) |
+                   (storage->pub.has_u2froot ? (1u << 10) : 0) |
+                   (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
+                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
+                   (storage->pub.no_backup ? (1u << 13) : 0) |
+                   (storage->has_sec_fingerprint ? (1u << 14) : 0) |
+                   (storage->pub.sca_hardened ? (1u << 15) : 0) |
+                   (storage->pub.has_wipe_code ? (1u << 16) : 0) |
+                   // cppcheck-suppress badBitmaskCheck
+                   (storage->pub.v15_16_trans ? (1u << 17) : 0) |
+                   /* reserved 31:18 */ 0;
   write_u32_le(ptr + 4, flags);
 
   write_u32_le(ptr + 8, storage->pub.pin_failed_attempts);
@@ -1252,17 +995,13 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  /* Ignore whatever bit 12 holds: AdvancedMode is session-scoped and every
-   * boot starts with it OFF. A device upgrading with the bit already set in
-   * flash must not inherit the policy, and neither must one where an attacker
-   * set it. See storage_writeStorageV16Plaintext. */
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
+                       flags & (1u << 12));
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
   storage->pub.has_wipe_code = flags & (1u << 16);
   storage->pub.v15_16_trans = flags & (1u << 17);
-  storage->pub.pin_kdf_v2 = false;
 
   storage->pub.policies_count = POLICY_COUNT;
 
@@ -1350,81 +1089,6 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
   memcpy(storage->encrypted_sec, ptr + 1501, sizeof(storage->encrypted_sec));
 }
 
-// V20 stores passkey state inside V17's 996-byte reserved plaintext area. An
-// unshipped 7.15 RC appended clear-sign identities after encrypted_sec; those
-// unauthenticated records are retired and deliberately outside this record.
-// Readers ignore trailing bytes, and storage_commit erases the destination
-// sector before writing this bounded record, so legacy identities never carry
-// forward into the next active sector.
-#define V20_STORAGE_LEN (1501 + V17_ENCSEC_SIZE)  // 2525
-#define PASSKEY_STORAGE_OFF 501
-
-static void storage_defaultPasskeyData(PasskeyStorage* passkeys) {
-  memzero(passkeys, sizeof(*passkeys));
-  passkeys->version = 1;
-  passkeys->pin_retries = PASSKEY_PIN_RETRIES;
-}
-
-static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
-  if ((passkeys->version != 1 &&
-       passkeys->version != PASSKEY_STORAGE_VERSION) ||
-      passkeys->pin_set > 1 || passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
-    storage_defaultPasskeyData(passkeys);
-    return;
-  }
-  if (passkeys->version == 1) {
-    /* Version 1 ended immediately after credentials[]. Bytes that now hold the
-     * generation belonged to V17's randomized reserved area, so never trust
-     * them as serialized state. The first credential operation migrates this
-     * record and temporarily enables legacy-handle validation. */
-    memzero(passkeys->credential_generation,
-            sizeof(passkeys->credential_generation));
-    passkeys->legacy_credentials_enabled = 0;
-  } else if (passkeys->legacy_credentials_enabled > 1) {
-    storage_defaultPasskeyData(passkeys);
-    return;
-  }
-  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
-    PasskeyCredential* credential = &passkeys->credentials[i];
-    if (credential->occupied > 1 ||
-        credential->user_id_length > PASSKEY_USER_ID_MAX) {
-      memzero(credential, sizeof(*credential));
-      continue;
-    }
-    credential->user_name[PASSKEY_USER_NAME_MAX - 1] = 0;
-  }
-}
-
-void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage) {
-  if (len < V20_STORAGE_LEN) return;
-  storage_writeStorageV17(ptr, len, storage);
-  _Static_assert(sizeof(PasskeyStorage) <= 996,
-                 "passkey metadata exceeds the V17 reserved area");
-  memcpy(ptr + PASSKEY_STORAGE_OFF, &storage->pub.passkeys,
-         sizeof(storage->pub.passkeys));
-}
-
-void storage_readStorageV20(Storage* storage, const char* ptr, size_t len) {
-  if (len < V20_STORAGE_LEN) return;
-  storage_readStorageV17(storage, ptr, len);
-  memcpy(&storage->pub.passkeys, ptr + PASSKEY_STORAGE_OFF,
-         sizeof(storage->pub.passkeys));
-  storage_validatePasskeyData(&storage->pub.passkeys);
-}
-
-void storage_writeStorageV19(char* ptr, size_t len, const Storage* storage) {
-  storage_writeStorageV20(ptr, len, storage);
-  uint32_t flags = read_u32_le(ptr + 4);
-  flags |= storage->pub.pin_kdf_v2 ? (1u << 20) : 0;
-  write_u32_le(ptr + 4, flags);
-}
-
-void storage_readStorageV19(Storage* storage, const char* ptr, size_t len) {
-  storage_readStorageV20(storage, ptr, len);
-  uint32_t flags = read_u32_le(ptr + 4);
-  storage->pub.pin_kdf_v2 = flags & (1u << 20);
-}
-
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len) {
   if (len < 65 + 10) return;
   cache->root_seed_cache_status = read_u8(ptr);
@@ -1493,42 +1157,12 @@ void storage_writeV17(char* flash, size_t len, const ConfigFlash* src) {
   storage_writeStorageV17(flash + 44, 852, &src->storage);
 }
 
-void storage_readV20(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 44 + V20_STORAGE_LEN) return;
-  storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV20(&dst->storage, flash + 44, len - 44);
-}
-
-void storage_writeV20(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 44 + V20_STORAGE_LEN) return;
-  storage_writeMeta(flash, 44, &src->meta);
-  /* Bytes 41..43 were padding in every legacy writer. Only the framed V20
-   * format gives them generation semantics; keeping this out of
-   * storage_writeMeta() preserves byte-exact V16/V17/V19 serialization. */
-  memcpy(flash + STORAGE_GENERATION_OFFSET, src->meta.generation,
-         STORAGE_GENERATION_LEN);
-  storage_writeStorageV20(flash + 44, len - 44, &src->storage);
-}
-
-void storage_readV19(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 44 + V20_STORAGE_LEN) return;
-  storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV19(&dst->storage, flash + 44, len - 44);
-}
-
-void storage_writeV19(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 44 + V20_STORAGE_LEN) return;
-  storage_writeMeta(flash, 44, &src->meta);
-  storage_writeStorageV19(flash + 44, len - 44, &src->storage);
-}
 StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
                                       const char* flash) {
   memzero(dst, sizeof(*dst));
-  storage_defaultPasskeyData(&dst->storage.pub.passkeys);
 
   // Load config values from active config node.
-  uint32_t raw_version = read_u32_le(flash + 44);
-  enum StorageVersion version = version_from_int(raw_version);
+  enum StorageVersion version = version_from_int(read_u32_le(flash + 44));
 
   switch (version) {
     case StorageVersion_1:
@@ -1576,59 +1210,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
     case StorageVersion_17:
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
-      return SUS_Updated;
-    /* 18 and 19 are BURNED formats -- see storage_versions.inc. A blob stamped
-     * with either came from an alpha build whose layout has nothing to do with
-     * passkeys, so there is deliberately NO reader. Listed explicitly and NOT
-     * left to a default, because this switch has no default on purpose: that
-     * is what makes the compiler name any version we forget. Returning
-     * SUS_Invalid wipes, which is the documented behaviour for a format we do
-     * not recognise and strictly better than misparsing one. */
-    case StorageVersion_18:
-    case StorageVersion_19:
-      return SUS_Invalid;
-
-    case StorageVersion_20:
-      storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
-      dst->storage.version = STORAGE_VERSION;
-      return SUS_Valid;
-
-    case StorageVersion_BTC_ONLY:
-#if BITCOIN_ONLY
-    {
-      // Our own bitcoin-only wallet. The stored wire version is the multi-chain
-      // storage version plus the band base, so recover the underlying layout
-      // version and load it through the normal migration chain. Exact-matching
-      // STORAGE_VERSION_BTC_ONLY here would lock every existing bitcoin-only
-      // wallet out of its own firmware on the next STORAGE_VERSION bump.
-      uint32_t underlying = raw_version - STORAGE_VERSION_BTC_ONLY_BASE;
-      if (underlying > (uint32_t)STORAGE_VERSION) {
-        // A newer bitcoin-only wallet than this firmware understands: refuse
-        // rather than wipe, so a firmware downgrade never destroys it.
-        return SUS_BitcoinOnlyLocked;
-      }
-      // Read via the reader matching the underlying version (same mapping as
-      // the multi-chain path above), then keep the band stamp so multi-chain
-      // firmware still refuses it.
-      if (underlying <= 15) {
-        storage_readV11(dst, flash, STORAGE_SECTOR_LEN);
-      } else if (underlying == 16) {
-        storage_readV16(dst, flash, STORAGE_SECTOR_LEN);
-      } else if (underlying == 17) {
-        storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
-      } else {
-        storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
-      }
-      dst->storage.version = STORAGE_VERSION_BTC_ONLY;
-      return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
-                                                       : SUS_Updated;
-    }
-#else
-      // Written by bitcoin-only firmware: refuse to load. The wallet stays
-      // intact in flash (reflash bitcoin-only firmware to recover it); using
-      // multi-chain firmware requires an explicit wipe.
-      return SUS_BitcoinOnlyLocked;
-#endif
+      return dst->storage.version == version ? SUS_Valid : SUS_Updated;
 
     case StorageVersion_NONE:
       return SUS_Invalid;
@@ -1645,6 +1227,32 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
 #endif
 
   return SUS_Invalid;
+}
+
+/// \brief Shifts sector for config storage
+static void wear_leveling_shift(void) {
+  switch (storage_location) {
+    case FLASH_STORAGE1: {
+      storage_location = FLASH_STORAGE2;
+      break;
+    }
+
+    case FLASH_STORAGE2: {
+      storage_location = FLASH_STORAGE3;
+      break;
+    }
+
+    /* wraps around */
+    case FLASH_STORAGE3: {
+      storage_location = FLASH_STORAGE1;
+      break;
+    }
+
+    default: {
+      storage_location = STORAGE_SECT_DEFAULT;
+      break;
+    }
+  }
 }
 
 /// \brief Set root session seed in storage.
@@ -1705,22 +1313,8 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 void storage_init(void) {
   // Find storage sector with valid data and set storage_location variable.
   if (!find_active_storage(&storage_location)) {
-    /* A power cut may have landed after the old sector was retired but before
-     * the replacement's final magic word was programmed. Its trailer and CRC
-     * prove the replacement is complete; install its marker first, then make
-     * it visible to this firmware and to already-installed bootloaders. */
-    if (find_pending_storage(&storage_location)) {
-      if (!recover_pending_storage(storage_location)) {
-        /* Do not reinterpret a verified wallet record as factory-fresh merely
-         * because its marker/final-word recovery encountered a flash fault. */
-        layout_warning_static("Storage Recovery Failed. Reboot Device!");
-        shutdown();
-        return;
-      }
-    } else {
-      // Otherwise initialize it to the default sector.
-      storage_location = STORAGE_SECT_DEFAULT;
-    }
+    // Otherwise initialize it to the default sector.
+    storage_location = STORAGE_SECT_DEFAULT;
   }
   const char* flash = (const char*)flash_write_helper(storage_location);
 
@@ -1755,13 +1349,6 @@ void storage_init(void) {
       // that it's available on next boot without conversion.
       storage_commit();
       break;
-    case SUS_BitcoinOnlyLocked:
-      // Bitcoin-only wallet in flash: act as an uninitialized, locked device.
-      // Do NOT commit -- flash stays untouched so reflashing bitcoin-only
-      // firmware recovers the wallet; leaving requires an explicit wipe.
-      btc_only_locked = true;
-      storage_reset();
-      break;
   }
 
   if (!storage_hasPin()) {
@@ -1787,32 +1374,16 @@ void storage_resetUuid_impl(ConfigFlash* cfg) {
   data2hex(cfg->meta.uuid, sizeof(cfg->meta.uuid), cfg->meta.uuid_str);
 }
 
-void storage_reset(void) {
-  authenticator_clear_cache();
-  fsm_clearDerivedNode();
-  storage_reset_impl(&session, &shadow_config);
-}
+void storage_reset(void) { storage_reset_impl(&session, &shadow_config); }
 
 void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
-  bip32_cache_clear();
-  bip39_cache_clear();
-
   memset(&cfg->storage, 0, sizeof(cfg->storage));
 
   storage_resetPolicies(&cfg->storage);
 
-  /* Every fresh/wiped record needs a new per-installation PIN-KDF salt. The
-   * legacy migration path already minted one, but records created after V2
-   * otherwise persisted zeroes for the device's lifetime. Keep the draw in
-   * the common reset implementation so factory init, WipeDevice, invalid
-   * storage recovery, and LoadDevice cannot diverge again. */
-  storage_drawKeyMaterial(cfg->storage.pub.random_salt, RANDOM_SALT_LEN);
-
   storage_setPin_impl(ss, &cfg->storage, "");
 
   cfg->storage.version = STORAGE_VERSION;
-  cfg->storage.pub.passkeys.version = 1;
-  cfg->storage.pub.passkeys.pin_retries = PASSKEY_PIN_RETRIES;
 
   memzero(ss, sizeof(*ss));
 
@@ -1824,18 +1395,10 @@ void storage_wipe(void) {
   flash_erase_word(FLASH_STORAGE1);
   flash_erase_word(FLASH_STORAGE2);
   flash_erase_word(FLASH_STORAGE3);
-
-  // The bitcoin-only wallet (if any) is gone; the device may be used freely.
-  btc_only_locked = false;
 }
 
 void storage_clearKeys(void) {
-  /* A wipe code is a real authorization loss, not a soft Initialize. Clear the
-   * decrypted storage section and every plaintext cache before destroying the
-   * wrapping material. */
-  authenticator_clear_cache();
-  fsm_clearDerivedNode();
-  session_clear_impl(&session, &shadow_config.storage, true);
+  session_clear_impl(&session, &shadow_config.storage, false);
   memzero(&session.storageKey, sizeof(session.storageKey));
   memzero(&shadow_config.storage.pub.wrapped_storage_key,
           sizeof(shadow_config.storage.pub.wrapped_storage_key));
@@ -1847,20 +1410,6 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
-  if (clear_pin) {
-    authenticator_clear_cache();
-    fsm_clearDerivedNode();
-  }
-  /* Runtime ClearSign trust belongs to the unlocked device session. Any path
-   * that tears that session down must also revoke its RAM-only signer slots. */
-  signed_metadata_clear_signers();
-  /* The Orchard spend AUTHORIZING key lives in the Zcash signing session, so it
-   * belongs to the unlocked session for exactly the same reason. Clearing it
-   * here rather than at each caller is what makes the guarantee hold on paths
-   * nobody enumerated: the screensaver auto-lock (home_sm.c toggle_screensaver)
-   * and the PIN-failure path (pin_sm.c) both tear the session down without
-   * going through Initialize or ClearSession, and both left the key live. */
-  zcash_signing_abort();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -1883,30 +1432,6 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   */
   pintest_t ret = PIN_WRONG;
 
-  /* AdvancedMode belongs to the unlocked session, like the runtime ClearSign
-   * signers session_clear() revokes -- fsm_msgApplyPolicies calls those signers
-   * "an AdvancedMode capability", so revoking them while leaving the policy
-   * that authorized them armed is the inconsistent half. Re-arming costs
-   * another on-device confirmation.
-   *
-   * Gated on clear_pin, and that gate is load-bearing. clear_pin distinguishes
-   * a LOCK (screensaver home_sm.c, ClearSession fsm.c, recovery) from a soft
-   * re-init: fsm_msgInitialize calls session_clear(false), and hosts send
-   * Initialize routinely -- often before every operation. Disarming there would
-   * demand a fresh button press after each one, which does not make blind
-   * signing session-scoped, it makes it unusable. Signers survive that only
-   * because the host can silently reload them; a physical confirmation cannot
-   * be reloaded.
-   *
-   * Shadow only -- writes no flash, so the "does not modify flash storage
-   * config state" contract above holds. AdvancedMode is never persisted. */
-  if (clear_pin) {
-    storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
-  }
-
-  bip32_cache_clear();
-  bip39_cache_clear();
-
   ss->seedCached = false;
   memset(&ss->seed, 0, sizeof(ss->seed));
 
@@ -1914,11 +1439,11 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   memset(&ss->passphrase, 0, sizeof(ss->passphrase));
 
   if (!storage_hasPin_impl(storage)) {
-    ret = storage_isPinCorrect_impl(
-        "", storage->pub.wrapped_storage_key,
-        storage->pub.storage_key_fingerprint, &storage->pub.sca_hardened,
-        &storage->pub.v15_16_trans, &storage->pub.pin_kdf_v2, ss->storageKey,
-        shadow_config.storage.pub.random_salt);
+    ret = storage_isPinCorrect_impl("", storage->pub.wrapped_storage_key,
+                                    storage->pub.storage_key_fingerprint,
+                                    &storage->pub.sca_hardened,
+                                    &storage->pub.v15_16_trans, ss->storageKey,
+                                    shadow_config.storage.pub.random_salt);
 
     if (ret == PIN_WRONG) {
       ss->pinCached = false;
@@ -1949,41 +1474,12 @@ void storage_commit(void) {
    * calls us, so anything still armed here is a DIFFERENT operation
    * persisting: end the ceremony rather than let its staged settings, or its
    * arming, outlive a write it did not make. setup_abort() touches no
-   * storage, so this cannot recurse.
-   *
-   * Ordered BEFORE the bitcoin-only backstop deliberately: a refused commit
-   * must still not leave a foreign ceremony armed and consumable. */
+   * storage, so this cannot recurse. */
   if (setup_isArmed()) setup_abort();
 
-  // Never overwrite a bitcoin-only wallet from multi-chain firmware; the
-  // only way out is storage_wipe() (which clears the lock). This is the
-  // backstop behind the per-handler checks.
-  if (btc_only_locked) return;
-
   // Temporary storage for marshalling secrets in & out of flash.
-  //
-  // V20 reuses V17's reserved bytes, so meta (44) + storage (2525) = 2569
-  // meaningful bytes. STORAGE_RECORD_DATA_LEN rounds that payload to a whole
-  // number of words for CRC, then STORAGE_RECORD_LEN appends a marker+CRC
-  // trailer that legacy firmware safely ignores.
-  //
-  // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
-  // says the buffer is a whole number of words, not that it starts on one.
-  // __attribute__((aligned)) rather than C11 _Alignas -- the ARM toolchain
-  // rejects _Alignas here, and this is the form the rest of the tree already
-  // uses (fsm.c msg_resp, usb.c buffers).
-  static char flash_temp[STORAGE_RECORD_LEN] __attribute__((aligned(4)));
-  _Static_assert(
-      STORAGE_RECORD_DATA_LEN % sizeof(uint32_t) == 0,
-      "storage payload must be word-sized or the CRC drops its tail");
-  _Static_assert(STORAGE_RECORD_DATA_LEN >= 2569,
-                 "flash_temp must cover the whole V20 record");
-  _Static_assert(STORAGE_RECORD_LEN <= STORAGE_SECTOR_LEN,
-                 "storage record must fit in one sector");
-  _Static_assert(sizeof(Metadata) == STORAGE_METADATA_LEN,
-                 "generation must occupy only Metadata's former padding");
-  _Static_assert(offsetof(ConfigFlash, storage) == STORAGE_METADATA_LEN,
-                 "generation must not move the serialized Storage payload");
+  // Size of v17 storage layout (2525 bytes) + size of meta (44 bytes) + 1
+  static char flash_temp[2570];
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -1993,50 +1489,29 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  /* Stamp the magic BEFORE serialising, not after. storage_writeV20() copies
-     shadow_config.meta -- magic included -- into flash_temp, so setting it
-     afterwards left the RECORD WE ARE ABOUT TO WRITE carrying whatever the
-     magic held, which on a device whose storage has never been written is
-     zeroes. find_active_storage()/storage_isActiveSector() then did not
-     recognise the sector we had just committed, so the next boot took the
-     not-an-active-sector path again: storage_resetUuid() + storage_commit(),
-     every boot, until the first storage-changing operation happened to write
-     it correctly. That is a redundant flash erase+write on every boot and a
-     window in which no sector is valid. The CRC below is computed over
-     flash_temp after this call, so the magic is now covered by it too. */
+  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
+
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-  storage_generation_increment(&shadow_config.meta);
 
-  storage_writeV20(flash_temp, STORAGE_RECORD_DATA_LEN, &shadow_config);
-
-  const uint32_t shadow_ram_crc32 =
-      calc_crc32(flash_temp, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
-  memcpy(flash_temp + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
-         STORAGE_RECORD_TRAILER_MAGIC_LEN);
-  memcpy(flash_temp + STORAGE_RECORD_CRC_OFFSET, &shadow_ram_crc32,
-         sizeof(shadow_ram_crc32));
-
-  const Allocation previous_storage_location = storage_location;
-  /* Commit into the spare sector, not the sector immediately following the
-   * active one: that following sector holds the boot-protection marker. The
-   * spare is the predecessor of the active sector, so after finalization its
-   * marker naturally occupies the retired old-active sector. */
-  const Allocation replacement_storage_location =
-      next_storage(next_storage(previous_storage_location));
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
+    /* Capture CRC for verification at restore */
+    uint32_t shadow_ram_crc32 =
+        calc_crc32(flash_temp, sizeof(flash_temp) / sizeof(uint32_t));
+
+    if (shadow_ram_crc32 == 0) {
+      continue; /* Retry */
+    }
+
     /* Make sure storage sector is valid before proceeding */
-    if (previous_storage_location < FLASH_STORAGE1 ||
-        previous_storage_location > FLASH_STORAGE3) {
+    if (storage_location < FLASH_STORAGE1 ||
+        storage_location > FLASH_STORAGE3) {
       /* Let it exhaust the retries and error out */
       continue;
     }
 
-    /* Preserve both the active record and its boot marker until a complete
-     * replacement is present in the spare sector. Leave the replacement's
-     * leading magic erased: old bootloaders must not select it before its own
-     * marker exists. */
-    storage_location = replacement_storage_location;
+    flash_erase_word(storage_location);
+    wear_leveling_shift();
     flash_erase_word(storage_location);
 
     /* Write storage data first before writing storage magic  */
@@ -2044,46 +1519,31 @@ void storage_commit(void) {
                           sizeof(flash_temp) - STORAGE_MAGIC_LEN,
                           (uint8_t*)flash_temp + STORAGE_MAGIC_LEN)) {
       flash_erase_word(storage_location);
-      storage_location = previous_storage_location;
       continue;  // Retry
     }
 
-    /* Verify every programmed byte before retiring anything. The stored CRC
-     * describes the final record (including "stor"), so byte comparison is
-     * the direct proof while the leading word intentionally remains erased. */
-    const uint8_t* flash_record =
-        (const uint8_t*)flash_write_helper(storage_location);
-    if (memcmp(flash_record + STORAGE_MAGIC_LEN, flash_temp + STORAGE_MAGIC_LEN,
-               sizeof(flash_temp) - STORAGE_MAGIC_LEN) == 0) {
-      /* The replacement is durable. Retire the previous record, install the
-       * replacement's marker in that now-erased sector, and program its magic
-       * last. recover_pending_storage() is deliberately reboot-idempotent if
-       * power fails anywhere in this three-step handoff. */
-      flash_erase_word(previous_storage_location);
-      if (recover_pending_storage(replacement_storage_location)) {
-        storage_location = replacement_storage_location;
-        /* The old marker is now the spare sector. */
-        flash_erase_word(next_storage(previous_storage_location));
-        break;
-      }
-
-      /* No active record may be visible here, but the verified pending record
-       * remains recoverable on reboot. Never erase or cycle it on this path. */
-      storage_location = replacement_storage_location;
-      retries = STORAGE_RETRIES;
-      break;
+    if (!flash_write_word(storage_location, 0, STORAGE_MAGIC_LEN,
+                          (uint8_t*)flash_temp)) {
+      flash_erase_word(storage_location);
+      continue;  // Retry
     }
 
-    flash_erase_word(storage_location);
-    storage_location = previous_storage_location;
+    /* Flash write completed successfully.  Verify CRC */
+    uint32_t shadow_flash_crc32 =
+        calc_crc32((const void*)flash_write_helper(storage_location),
+                   sizeof(flash_temp) / sizeof(uint32_t));
+
+    if (shadow_flash_crc32 == shadow_ram_crc32) {
+      storage_protect_off();
+      /* Commit successful, break to exit */
+      break;
+    }
   }
 
   memzero(flash_temp, sizeof(flash_temp));
 
   if (retries >= STORAGE_RETRIES) {
-    /* Before the handoff the old record+marker remain intact. After it begins,
-     * the pending replacement remains recoverable. In neither case should a
-     * write failure be converted into a wallet wipe. */
+    storage_wipe();
     layout_warning_static("Error Detected.  Reboot Device!");
     shutdown();
   }
@@ -2181,10 +1641,6 @@ void storage_loadDevice(LoadDevice* msg) {
     memset(&session.seed, 0, sizeof(session.seed));
   }
 
-  if (msg->has_node || msg->has_mnemonic) {
-    storage_stampBitcoinOnlySeed();
-  }
-
   if (msg->has_language) {
     storage_setLanguage(msg->language);
   }
@@ -2246,8 +1702,7 @@ bool storage_isPinCorrect(const char* pin) {
       pin, shadow_config.storage.pub.wrapped_storage_key,
       shadow_config.storage.pub.storage_key_fingerprint,
       &shadow_config.storage.pub.sca_hardened,
-      &shadow_config.storage.pub.v15_16_trans,
-      &shadow_config.storage.pub.pin_kdf_v2, session.storageKey,
+      &shadow_config.storage.pub.v15_16_trans, session.storageKey,
       shadow_config.storage.pub.random_salt);
 
   switch (ret) {
@@ -2291,42 +1746,19 @@ void storage_setPin(const char* pin) {
 
 void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
   // Derive the wrapping key for the new pin
-  /* THIS is the function that creates the wrap, so it -- not just the rewrap
-   * path in storage_isPinCorrect_impl -- must honour STORAGE_PIN_KDF_V19.
-   * Hardcoding v19 here while the record is written as V17 wraps the storage
-   * key with parameters the persisted flag cannot describe, and the next boot
-   * derives v15/v16 and fails every PIN: an intact but permanently unopenable
-   * wallet. Every path that CREATES or REWRAPS a wrap must agree with
-   * storage_activePinKdfVersion(). */
-  /* One value, captured once, used for both the derivation and the flag that
-   * describes it. Calling storage_rewrapPinKdfVersion() twice would couple the
-   * persisted description to a second invocation rather than to the wrap
-   * actually produced -- fine today because the helper is pure, and exactly
-   * the kind of gap that reopens this lockout the day it is not. */
-  const pin_kdf_version_t rewrap_to = storage_rewrapPinKdfVersion();
-
   uint8_t wrapping_key[64];
-  storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true, rewrap_to,
-                            storage->pub.random_salt, _("Encrypting Secrets"));
+  storage_deriveWrappingKey(pin, wrapping_key, /*sca_hardened=*/true,
+                            /*v15_16_trans=*/true, storage->pub.random_salt,
+                            _("Encrypting Secrets"));
 
   // Derive a new storageKey.
-  storage_drawKeyMaterial(ss->storageKey, 64);
+  random_buffer(ss->storageKey, 64);
 
   // Wrap the new storageKey.
   storage_wrapStorageKey(wrapping_key, ss->storageKey,
                          storage->pub.wrapped_storage_key);
   storage->pub.sca_hardened = true;
   storage->pub.v15_16_trans = true;
-  /* Describes the wrap actually produced above, because it tests the same
-   * captured value that produced it.
-   *
-   * Always false while STORAGE_PIN_KDF_V19 is 0, and cppcheck is right to say
-   * so — but the comparison is the point. Writing `false` here would leave the
-   * flag agreeing with the KDF only by coincidence, and the next person to flip
-   * the gate would ship a v19 wrap described as v16: the exact lockout this
-   * branch exists to fix. Keep it derived. */
-  // cppcheck-suppress knownConditionTrueFalse
-  storage->pub.pin_kdf_v2 = (rewrap_to == PIN_KDF_V19);
 
   // Fingerprint the storageKey.
   storage_keyFingerprint(ss->storageKey, storage->pub.storage_key_fingerprint);
@@ -2376,11 +1808,11 @@ void storage_setWipeCode_impl(SessionState* ss, Storage* storage,
   // Derive the wrapping key for the new wipe code
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(wipe_code, wrapping_key, /*sca_hardened=*/true,
-                            PIN_KDF_V16, storage->pub.random_salt,
+                            /*v15_16_trans=*/true, storage->pub.random_salt,
                             _("Updating Wipe Code"));
 
   // Derive a new wipe code key .
-  storage_drawKeyMaterial(scratch_key, 64);
+  random_buffer(scratch_key, 64);
 
   // Wrap the new wipe code key.
   storage_wrapStorageKey(wrapping_key, scratch_key,
@@ -2451,43 +1883,6 @@ const uint8_t* storage_getSeed(const ConfigFlash* cfg, bool usePassphrase) {
   return NULL;
 }
 
-/* ── Zcash storage-scoped wrappers ───────────────────────────────────
- *
- * ZIP-32 Orchard derives keys directly from the raw 64-byte BIP-39 seed
- * (not the BIP-32 master node). Rather than expose a generic
- * "give me the seed" function, storage owns the seed access and only
- * returns derived material — Orchard keys or the 32-byte fingerprint.
- * The seed pointer never leaves this translation unit.
- */
-
-#if ZCASH_PRIVACY
-static void storage_zcash_orchard_progress(uint32_t completed, uint32_t total,
-                                           void* context) {
-  (void)context;
-  if (total == 0) return;
-  animating_progress_handler(_("Deriving Zcash"),
-                             (int)((completed * 1000u) / total));
-}
-
-bool storage_zcashOrchardKeys(uint32_t account, bool usePassphrase,
-                              ZcashOrchardKeys* keys_out) {
-  if (!keys_out) return false;
-  const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
-  if (!seed) return false;
-  animating_progress_handler(_("Deriving Zcash"), 0);
-  return zcash_derive_orchard_keys_with_progress(
-      seed, 64, account, keys_out, storage_zcash_orchard_progress, NULL);
-}
-
-bool storage_zcashSeedFingerprint(bool usePassphrase,
-                                  uint8_t fingerprint_out[32]) {
-  if (!fingerprint_out) return false;
-  const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
-  if (!seed) return false;
-  return zcash_calculate_seed_fingerprint(seed, 64, fingerprint_out);
-}
-#endif
-
 bool storage_getRootNode(const char* curve, bool usePassphrase, HDNode* node) {
   // if storage has node, decrypt and use it
   if (shadow_config.storage.pub.has_node &&
@@ -2531,10 +1926,6 @@ bool storage_getRootNode(const char* curve, bool usePassphrase, HDNode* node) {
                       &ctx);
       memzero(&ctx, sizeof(ctx));
       memzero(secret, sizeof(secret));
-      /* pctx is keyed by the passphrase and its state derives `secret`, the
-       * AES key that just decrypted the private key and chain code. Both of
-       * those are wiped above; the context that produced them was not. */
-      memzero(&pctx, sizeof(pctx));
     }
 
     return true;
@@ -2589,6 +1980,16 @@ bool storage_getPassphraseProtected(void) {
 }
 
 void storage_setPassphraseProtected(bool passphrase) {
+  if (shadow_config.storage.pub.passphrase_protection != passphrase) {
+    /* Invalidate wallet selection without re-unlocking storage or committing:
+     * setup_commit() also calls this while its settings are still staged. */
+    session.seedCached = false;
+    session.seedUsesPassphrase = false;
+    memzero(session.seed, sizeof(session.seed));
+    session.passphraseCached = false;
+    memzero(session.passphrase, sizeof(session.passphrase));
+    authenticator_clear_cache();
+  }
   shadow_config.storage.pub.passphrase_protection = passphrase;
 }
 
@@ -2620,7 +2021,6 @@ void storage_setMnemonicFromWords(const char (*words)[12],
 
   shadow_config.storage.pub.has_mnemonic = true;
   shadow_config.storage.has_sec = true;
-  storage_stampBitcoinOnlySeed();
 
   storage_compute_u2froot(&session, shadow_config.storage.sec.mnemonic,
                           &shadow_config.storage.pub.u2froot);
@@ -2638,7 +2038,6 @@ void storage_setMnemonic(const char* m) {
 #endif
   shadow_config.storage.pub.has_mnemonic = true;
   shadow_config.storage.has_sec = true;
-  storage_stampBitcoinOnlySeed();
 
   storage_compute_u2froot(&session, shadow_config.storage.sec.mnemonic,
                           &shadow_config.storage.pub.u2froot);
