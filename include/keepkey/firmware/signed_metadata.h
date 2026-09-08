@@ -121,8 +121,8 @@ void signed_metadata_clear(void);
  */
 
 /* Pure validation: slot in range and not occupied by a built-in key, pubkey a
- * valid compressed secp256k1 point, alias non-empty printable ASCII within
- * METADATA_ALIAS_MAX_LEN. No state, no I/O. */
+ * valid compressed secp256k1 point, alias non-empty (letters, digits, space,
+ * hyphen, underscore) within METADATA_ALIAS_MAX_LEN. No state, no I/O. */
 bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t* pubkey,
                                   size_t pubkey_len, const char* alias);
 

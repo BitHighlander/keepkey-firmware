@@ -473,7 +473,7 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
   /* Fail before changing the RAM slot. A caller asking for persistence must
    * never receive a session-only downgrade it could mistake for durable trust.
    * Persistence can return only after authenticated storage binding exists. */
-  if (persist || key_id >= METADATA_MAX_KEYS) {
+  if (persist || !signed_metadata_signer_valid(key_id, pubkey, 33, alias)) {
     return false;
   }
   memcpy(loaded_pubkeys[key_id], pubkey, sizeof(loaded_pubkeys[key_id]));
@@ -719,6 +719,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
    * signed_metadata_enforce() pass for a v2 blob that did not decode this tx.
    */
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 
   if (!metadata_available || !msg ||
       stored_metadata.classification != METADATA_VERIFIED ||

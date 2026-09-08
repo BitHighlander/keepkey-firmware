@@ -28,19 +28,23 @@ def read_symbols(elf_path):
         from elftools.elf.elffile import ELFFile
     except ImportError:
         sys.exit("ERROR: install pyelftools==0.32 to read ARM ELF symbols")
-    with open(elf_path, "rb") as f:
-        elf = ELFFile(f)
-        symtab = elf.get_section_by_name(".symtab")
-        if symtab is None:
-            sys.exit(f"ERROR: {elf_path} has no .symtab")
-        wanted = {}
-        for sym in symtab.iter_symbols():
-            if sym.name in ("_ebss", "_stack"):
-                wanted[sym.name] = sym["st_value"]
-        missing = {"_ebss", "_stack"} - set(wanted)
-        if missing:
-            sys.exit(f"ERROR: {elf_path} missing symbols: {sorted(missing)}")
-        return wanted
+    from elftools.common.exceptions import ELFError
+    try:
+        with open(elf_path, "rb") as f:
+            elf = ELFFile(f)
+            symtab = elf.get_section_by_name(".symtab")
+            if symtab is None:
+                sys.exit(f"ERROR: {elf_path} has no .symtab")
+            wanted = {}
+            for sym in symtab.iter_symbols():
+                if sym.name in ("_ebss", "_stack"):
+                    wanted[sym.name] = sym["st_value"]
+            missing = {"_ebss", "_stack"} - set(wanted)
+            if missing:
+                sys.exit(f"ERROR: {elf_path} missing symbols: {sorted(missing)}")
+            return wanted
+    except (OSError, ELFError, ValueError) as error:
+        sys.exit(f"ERROR: cannot read ELF {elf_path}: {error}")
 
 
 def largest_frames(su_tar_path, top_n=15):
@@ -49,33 +53,36 @@ def largest_frames(su_tar_path, top_n=15):
     Record format: "<file>:<line>:<col>:<function>\t<bytes>\t<qualifier>"
     """
     frames = []
-    with tarfile.open(su_tar_path, "r:*") as tar:
-        for member in tar:
-            if not member.name.endswith(".su") or not member.isfile():
-                continue
-            source = tar.extractfile(member)
-            if source is None:
-                sys.exit(f"ERROR: cannot read stack records: {member.name}")
-            with source:
-                try:
-                    data = source.read().decode("utf-8", "strict")
-                except UnicodeDecodeError:
-                    sys.exit(f"ERROR: non-UTF-8 stack records: {member.name}")
-            for number, line in enumerate(data.splitlines(), 1):
-                if not line.strip():
+    try:
+        with tarfile.open(su_tar_path, "r:*") as tar:
+            for member in tar:
+                if not member.name.endswith(".su") or not member.isfile():
                     continue
-                parts = line.rsplit("\t", 2)
-                if len(parts) != 3:
-                    sys.exit(f"ERROR: malformed stack record: {member.name}:{number}")
-                loc, size, qual = parts
-                try:
-                    size = int(size)
-                except ValueError:
-                    sys.exit(f"ERROR: unknown frame size: {member.name}:{number}")
-                if size < 0 or not loc or qual not in ("static", "dynamic,bounded"):
-                    sys.exit(f"ERROR: unbounded or invalid stack record: "
-                             f"{member.name}:{number}: {line}")
-                frames.append((size, loc.split("/")[-1], qual))
+                source = tar.extractfile(member)
+                if source is None:
+                    sys.exit(f"ERROR: cannot read stack records: {member.name}")
+                with source:
+                    try:
+                        data = source.read().decode("utf-8", "strict")
+                    except UnicodeDecodeError:
+                        sys.exit(f"ERROR: non-UTF-8 stack records: {member.name}")
+                for number, line in enumerate(data.splitlines(), 1):
+                    if not line.strip():
+                        continue
+                    parts = line.rsplit("\t", 2)
+                    if len(parts) != 3:
+                        sys.exit(f"ERROR: malformed stack record: {member.name}:{number}")
+                    loc, size, qual = parts
+                    try:
+                        size = int(size)
+                    except ValueError:
+                        sys.exit(f"ERROR: unknown frame size: {member.name}:{number}")
+                    if size < 0 or not loc or qual not in ("static", "dynamic,bounded"):
+                        sys.exit(f"ERROR: unbounded or invalid stack record: "
+                                 f"{member.name}:{number}: {line}")
+                    frames.append((size, loc.split("/")[-1], qual))
+    except (OSError, tarfile.TarError, EOFError) as error:
+        sys.exit(f"ERROR: cannot read stack archive {su_tar_path}: {error}")
     frames.sort(reverse=True)
     return frames[:top_n]
 
@@ -88,11 +95,20 @@ def main():
     ap.add_argument("--variant", required=True)
     args = ap.parse_args()
 
-    with open(args.budgets) as source:
-        budgets = json.load(source)
+    try:
+        with open(args.budgets) as source:
+            budgets = json.load(source)
+    except (OSError, ValueError) as error:
+        sys.exit(f"ERROR: cannot read budgets {args.budgets}: {error}")
+    if not isinstance(budgets, dict):
+        sys.exit("ERROR: budgets must be a JSON object")
     variants = budgets.get("variants", {})
+    if not isinstance(variants, dict):
+        sys.exit("ERROR: budget variants must be a JSON object")
     if args.variant not in variants:
         sys.exit(f"ERROR: unknown SRAM budget variant: {args.variant}")
+    if not isinstance(variants[args.variant], dict):
+        sys.exit("ERROR: selected variant must be a JSON object")
     selected = dict(budgets)
     selected.update(variants[args.variant])
     for key in ("reserve_min", "frame_margin"):
