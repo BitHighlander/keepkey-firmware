@@ -43,6 +43,7 @@
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
@@ -1847,6 +1848,9 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+#if !BITCOIN_ONLY
+  eip712_stream_abort();
+#endif
   if (clear_pin) {
     authenticator_clear_cache();
     fsm_clearDerivedNode();

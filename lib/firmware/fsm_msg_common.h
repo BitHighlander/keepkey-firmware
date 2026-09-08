@@ -627,6 +627,9 @@ void fsm_msgCancel(Cancel* msg) {
   tendermint_signAbort();
   eos_signingAbort();
   zcash_signing_abort();
+#if !BITCOIN_ONLY
+  eip712_stream_abort();
+#endif
   fsm_sendFailure(FailureType_Failure_ActionCancelled, "Aborted");
 }
 

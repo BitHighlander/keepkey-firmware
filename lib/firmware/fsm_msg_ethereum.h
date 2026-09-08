@@ -650,12 +650,14 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
 
 void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg) {
   CHECK_INITIALIZED
+  CHECK_PIN
   eip712_stream_on_struct(msg);
   eip712_pump();
 }
 
 void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
   CHECK_INITIALIZED
+  CHECK_PIN
   eip712_stream_on_value(msg);
   eip712_pump();
 }

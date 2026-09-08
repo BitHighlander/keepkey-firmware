@@ -53,8 +53,9 @@
  * finished container. */
 #define EIP712_MAX_SLOTS 12
 
-/* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
- * hashed, not stored, so this bounds one chunk rather than the whole value. */
+/* Wire bound for a single leaf. Each Ack carries the whole value. The live
+ * signing walk also refuses a leaf whose formatted review would exceed
+ * confirm()'s source buffer (currently 351 text bytes or 171 dynamic bytes). */
 #define EIP712_MAX_LEAF 1024
 
 /* Distinct struct types one document may reference, including EIP712Domain
@@ -152,14 +153,21 @@ typedef enum {
 
 typedef struct {
   Eip712ReqKind kind;
-  char struct_name[EIP712_MAX_STRUCT_NAME];
-  uint32_t member_path[EIP712_MAX_DEPTH + 2];
-  uint8_t member_path_len;
-  const char *error;
-  uint8_t domain_separator[32];
-  uint8_t message_hash[32];
-  uint32_t address_n[6];
-  size_t address_n_count;
+  /* A request, failure or completed result is live at any one time. */
+  union {
+    char struct_name[EIP712_MAX_STRUCT_NAME];
+    struct {
+      uint32_t member_path[EIP712_MAX_DEPTH + 2];
+      uint8_t member_path_len;
+    };
+    const char *error;
+    struct {
+      uint8_t domain_separator[32];
+      uint8_t message_hash[32];
+      uint32_t address_n[6];
+      size_t address_n_count;
+    };
+  };
 } Eip712Next;
 
 const Eip712Next *eip712_stream_next(void);

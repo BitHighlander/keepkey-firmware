@@ -446,20 +446,28 @@ bool eip712_type_hash(const char *name, Eip712StructLookup lookup, void *ctx,
  * context serves both because they never overlap.
  */
 typedef struct {
-  char name[EIP712_MAX_STRUCT_NAME];
   uint8_t slot_base;    /* first slot in the pool belonging to this frame */
   uint8_t member_count; /* members declared by the struct */
   uint8_t member_index; /* next member to absorb */
   bool is_array;
-  uint8_t elem_data_type;
-  bool elem_has_size;
-  uint32_t elem_size;
-  char elem_struct[EIP712_MAX_STRUCT_NAME];
-  uint8_t levels_total;
-  uint8_t level_index;
-  bool have_type_hash;
-  uint8_t type_hash[32]; /* lives exactly as long as the frame that needs it */
-  uint16_t array_len;
+  /* Only the descriptor selected by is_array is live. Sharing their storage
+   * reserves SRAM for the schema commitments instead of unused frame fields. */
+  union {
+    struct {
+      char name[EIP712_MAX_STRUCT_NAME];
+      uint8_t type_hash[32];
+      bool have_type_hash;
+    };
+    struct {
+      char elem_struct[EIP712_MAX_STRUCT_NAME];
+      uint32_t elem_size;
+      uint16_t array_len;
+      uint8_t elem_data_type;
+      bool elem_has_size;
+      uint8_t levels_total;
+      uint8_t level_index;
+    };
+  };
 } Eip712Frame;
 
 static struct {
@@ -469,19 +477,16 @@ static struct {
   uint32_t address_n[6];
   uint8_t address_n_count;
   char primary_type[EIP712_MAX_STRUCT_NAME];
-  bool metamask_v4_compat;
 
   /* Root 0 is the domain, root 1 the message; the domain separator is kept
    * while the message is walked. */
   uint8_t root;
   uint8_t domain_separator[32];
-  bool have_domain_separator;
 
   Eip712Frame stack[EIP712_MAX_DEPTH];
   uint8_t depth;
 
   uint8_t pool[EIP712_MAX_SLOTS][32];
-  uint8_t slots_used;
 
   SHA3_CTX hash;
 
@@ -508,6 +513,16 @@ static struct {
   uint8_t phase;
   Eip712Closure closure;
   uint8_t closure_index;
+
+  /* Pin every type's canonical segment on its first request. The domain and
+   * message each have at most EIP712_MAX_STRUCTS types. Keep these commitments
+   * across frame pops: a child must match the definition already hashed into
+   * its parent's typeHash, as well as its own later member requests. */
+  struct {
+    char name[EIP712_MAX_STRUCT_NAME];
+    uint8_t digest[32];
+  } definitions[2 * EIP712_MAX_STRUCTS];
+  uint8_t definitions_count;
 } e712;
 
 /* What the next StructAck is for. */
@@ -521,7 +536,12 @@ Eip712Wait eip712_stream_waiting(void) {
   return e712.active ? e712.waiting : EIP712_IDLE;
 }
 
-void eip712_stream_abort(void) { memzero(&e712, sizeof(e712)); }
+static Eip712Next next_step;
+
+void eip712_stream_abort(void) {
+  memzero(&e712, sizeof(e712));
+  memzero(&next_step, sizeof(next_step));
+}
 
 /* ── Display ─────────────────────────────────────────────────────────
  *
@@ -542,8 +562,8 @@ static bool eip712_confirm_leaf(const char *name, const Eip712FieldType *field,
 
   if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_STRING) {
     /* Already validated as printable UTF-8, so it can be shown as text. */
-    char text[EIP712_MAX_LEAF + 1];
-    if (len > EIP712_MAX_LEAF) return false;
+    char text[BODY_CHAR_MAX];
+    if (len >= sizeof(text)) return false;
     memcpy(text, value, len);
     text[len] = '\0';
     return confirm(ButtonRequestType_ButtonRequest_Other, name, "%s", text);
@@ -554,16 +574,10 @@ static bool eip712_confirm_leaf(const char *name, const Eip712FieldType *field,
                    value[0] ? "true" : "false");
   }
 
-  /* Everything else as 0x hex. confirm_helper paginates, so a long dynamic
-   * bytes value is disclosed across screens rather than truncated -- the
-   * exact-byte disclosure rule 7.14.2 established. */
-  /* Sized for a WHOLE leaf, so nothing signed is ever cut off the screen.
-   * confirm_helper paginates a long body across screens, which is the
-   * exact-byte disclosure rule 7.14.2 established -- a cap here would either
-   * truncate a signed value or refuse a valid one. This is ~2 KB of stack
-   * inside a 16 KB stack, and stack is not what the linker gate measures. */
-  char hex[2 + 2 * EIP712_MAX_LEAF + 1];
-  if (len > EIP712_MAX_LEAF) return false;
+  /* Everything else as 0x hex. The caller checks the complete formatted body
+   * against confirm()'s source buffer before reaching this renderer. */
+  char hex[BODY_CHAR_MAX];
+  if (strlen(type_name) + 4 + 2 * (size_t)len >= BODY_CHAR_MAX) return false;
   hex[0] = '0';
   hex[1] = 'x';
   for (uint16_t i = 0; i < len; i++) {
@@ -582,8 +596,6 @@ static bool eip712_confirm_leaf(const char *name, const Eip712FieldType *field,
  * finishes the signature. Nothing blocks: KeepKey has no full-message
  * request/response primitive, so the machine is resumed by the next Ack.
  */
-
-static Eip712Next next_step;
 
 const Eip712Next *eip712_stream_next(void) { return &next_step; }
 
@@ -646,7 +658,6 @@ static bool fold_frame(uint8_t out[32]) {
     keccak_Update(&e712.hash, e712.pool[f->slot_base + i], 32);
   }
   keccak_Final(&e712.hash, out);
-  e712.slots_used = f->slot_base;
   e712.depth--;
   return true;
 }
@@ -672,10 +683,8 @@ static void complete_frame(void) {
   if (e712.root == 0) {
     /* The domain is hashed. Now the message, under the same session. */
     memcpy(e712.domain_separator, digest, 32);
-    e712.have_domain_separator = true;
     e712.root = 1;
     e712.depth = 1;
-    e712.slots_used = 0;
     memzero(&e712.stack[0], sizeof(e712.stack[0]));
     strlcpy(e712.stack[0].name, e712.primary_type, EIP712_MAX_STRUCT_NAME);
     begin_type_hash();
@@ -692,7 +701,9 @@ static void complete_frame(void) {
   memcpy(next_step.address_n, e712.address_n,
          e712.address_n_count * sizeof(uint32_t));
   next_step.address_n_count = e712.address_n_count;
-  eip712_stream_abort();
+  /* Keep the completed result until the FSM consumes it, but clear every
+   * live-walk field. External aborts also clear the pending result. */
+  memzero(&e712, sizeof(e712));
 }
 
 /* Point the machine at element member_index of the array frame on top.
@@ -791,7 +802,6 @@ bool eip712_stream_begin(const EthereumSignTypedData *msg) {
   }
 
   e712.active = true;
-  e712.metamask_v4_compat = true;
   e712.address_n_count = (uint8_t)msg->address_n_count;
   memcpy(e712.address_n, msg->address_n,
          msg->address_n_count * sizeof(uint32_t));
@@ -803,6 +813,26 @@ bool eip712_stream_begin(const EthereumSignTypedData *msg) {
   e712.depth = 1;
   strlcpy(e712.stack[0].name, "EIP712Domain", EIP712_MAX_STRUCT_NAME);
   begin_type_hash();
+  return true;
+}
+
+static bool bind_struct_definition(const char *name,
+                                   const EthereumTypedDataStructAck *ack) {
+  SHA3_CTX hash;
+  uint8_t digest[32];
+  keccak_256_Init(&hash);
+  if (!hash_segment_from_ack(name, ack, &hash)) return false;
+  keccak_Final(&hash, digest);
+
+  for (uint8_t i = 0; i < e712.definitions_count; i++) {
+    if (strcmp(e712.definitions[i].name, name) == 0) {
+      return memcmp(e712.definitions[i].digest, digest, sizeof(digest)) == 0;
+    }
+  }
+  if (e712.definitions_count >= 2 * EIP712_MAX_STRUCTS) return false;
+  uint8_t i = e712.definitions_count++;
+  strlcpy(e712.definitions[i].name, name, sizeof(e712.definitions[i].name));
+  memcpy(e712.definitions[i].digest, digest, sizeof(digest));
   return true;
 }
 
@@ -837,6 +867,15 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck *ack) {
         return false;
       }
     }
+  }
+
+  /* Bind discovery, type hashing and every value-walk request to the same
+   * definition, including dependencies re-fetched while descending. A frame-
+   * local check alone would still let a host replace a child's schema after
+   * committing to it in the parent's typeHash. */
+  if (!bind_struct_definition(next_step.struct_name, ack)) {
+    fail("EIP-712 struct definition changed");
+    return false;
   }
 
   switch (e712.phase) {
@@ -1022,6 +1061,17 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck *ack) {
     return false;
   }
 
+  /* confirm() can paginate rendering, but its formatted source buffer is
+   * bounded. Refuse before showing a value whose tail would be discarded. */
+  char type_name[EIP712_MAX_TYPE_NAME];
+  if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
+      (field->data_type == EthereumTypedDataStructAck_EthereumDataType_STRING
+           ? len >= BODY_CHAR_MAX
+           : strlen(type_name) + 4 + 2 * (size_t)len >= BODY_CHAR_MAX)) {
+    fail("EIP-712 value too long to review");
+    return false;
+  }
+
   /* Display and absorb from the SAME buffer in the same call. This is the
    * property the old JSON parser could not offer and the reason it was
    * withdrawn: there is no second read that could return something else. */
@@ -1029,6 +1079,11 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck *ack) {
     eip712_stream_abort();
     memzero(&next_step, sizeof(next_step));
     next_step.kind = EIP712_REQ_CANCELLED;
+    return false;
+  }
+
+  if (!e712.active) {
+    fail("EIP-712 session ended");
     return false;
   }
 

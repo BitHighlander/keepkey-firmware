@@ -1,5 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/storage.h"
 #include "messages-ethereum.pb.h"
 #include "sha3.h"
 }
@@ -310,8 +312,7 @@ TEST(Eip712Stream, ReviewIdentifiersAreCanonicalAndNeverTruncated) {
   EXPECT_FALSE(eip712_identifier_ok("line\nbreak"));
   EXPECT_FALSE(eip712_identifier_ok("amount%08x"));
   EXPECT_FALSE(eip712_identifier_ok("member-name"));
-  EXPECT_FALSE(eip712_identifier_ok(
-      "identifier_that_would_be_truncated"));
+  EXPECT_FALSE(eip712_identifier_ok("identifier_that_would_be_truncated"));
 }
 
 TEST(Eip712Stream, TypeHashRejectsDuplicateMemberNames) {
@@ -570,4 +571,241 @@ TEST(Eip712Stream, TypeHashTerminatesOnACycle) {
   // Terminates. The value is not the interesting part; not hanging is.
   std::string h = typeHashHex(f, "A");
   EXPECT_EQ(h, keccakHex("A(B b)B(A a)"));
+}
+
+namespace {
+
+class Eip712StreamBinding : public ::testing::Test {
+ protected:
+  void SetUp() override { eip712_stream_abort(); }
+  void TearDown() override { eip712_stream_abort(); }
+
+  void beginMessage() {
+    EthereumSignTypedData msg = EthereumSignTypedData_init_zero;
+    strcpy(msg.primary_type, "Message");
+    ASSERT_TRUE(eip712_stream_begin(&msg));
+    // Empty domain: discover, hash, walk. No confirmation is needed.
+    EthereumTypedDataStructAck domain = EthereumTypedDataStructAck_init_zero;
+    for (int i = 0; i < 3; i++) {
+      ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_STRUCT);
+      ASSERT_STREQ(eip712_stream_next()->struct_name, "EIP712Domain");
+      ASSERT_TRUE(eip712_stream_on_struct(&domain));
+    }
+    ASSERT_STREQ(eip712_stream_next()->struct_name, "Message");
+  }
+
+  void expectDefinitionRejected(const EthereumTypedDataStructAck &changed) {
+    EXPECT_FALSE(eip712_stream_on_struct(&changed));
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+    EXPECT_STREQ(eip712_stream_next()->error,
+                 "EIP-712 struct definition changed");
+  }
+};
+
+}  // namespace
+
+TEST_F(Eip712StreamBinding, RejectsChangeBetweenDiscoveryAndTypeHash) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  addMember(def, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  strcpy(def.members[0].name, "nonce");
+  expectDefinitionRejected(def);
+}
+
+TEST_F(Eip712StreamBinding, RejectsRenamingAfterTypeHash) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  addMember(def, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  strcpy(def.members[0].name, "nonce");
+  expectDefinitionRejected(def);
+}
+
+TEST_F(Eip712StreamBinding, RejectsRemovingMembersAfterTypeHash) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  addMember(def, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  def.members_count = 0;
+  expectDefinitionRejected(def);
+}
+
+TEST_F(Eip712StreamBinding, RejectsReplacingStructArrayWithOpaqueHash) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  Field items = structField("Item");
+  items.array_levels_count = 1;
+  items.array_levels[0] = 0;
+  addMember(def, "offer", items);
+  EthereumTypedDataStructAck item = EthereumTypedDataStructAck_init_zero;
+  addMember(item, "recipient",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_STREQ(eip712_stream_next()->struct_name, "Item");
+  ASSERT_TRUE(eip712_stream_on_struct(&item));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_TRUE(eip712_stream_on_struct(&item));
+  ASSERT_STREQ(eip712_stream_next()->struct_name, "Message");
+  def.members[0].type =
+      mkSized(EthereumTypedDataStructAck_EthereumDataType_BYTES, 32);
+  expectDefinitionRejected(def);
+}
+
+TEST_F(Eip712StreamBinding, RejectsChangingChildDefinitionWhenDescending) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  addMember(def, "offer", structField("Item"));
+  EthereumTypedDataStructAck item = EthereumTypedDataStructAck_init_zero;
+  addMember(item, "recipient",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_TRUE(eip712_stream_on_struct(&item));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_TRUE(eip712_stream_on_struct(&item));
+  ASSERT_TRUE(eip712_stream_on_struct(&def));
+  ASSERT_STREQ(eip712_stream_next()->struct_name, "Item");
+  strcpy(item.members[0].name, "sender");
+  expectDefinitionRejected(item);
+}
+
+TEST_F(Eip712StreamBinding, UnchangedNestedDefinitionsComplete) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  addMember(def, "item", structField("Item"));
+  EthereumTypedDataStructAck item = EthereumTypedDataStructAck_init_zero;
+  for (int i = 0; i < 8; i++) {
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_STRUCT);
+    const auto *ack = strcmp(eip712_stream_next()->struct_name, "Message") == 0
+                          ? &def
+                          : &item;
+    ASSERT_TRUE(eip712_stream_on_struct(ack));
+  }
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  uint8_t item_type[32], item_hash[32], message_type[32], expected[32];
+  keccak_256(reinterpret_cast<const uint8_t *>("Item()"), 6, item_type);
+  keccak_256(item_type, sizeof(item_type), item_hash);
+  const char spelling[] = "Message(Item item)Item()";
+  keccak_256(reinterpret_cast<const uint8_t *>(spelling), sizeof(spelling) - 1,
+             message_type);
+  uint8_t encoded[64];
+  memcpy(encoded, message_type, 32);
+  memcpy(encoded + 32, item_hash, 32);
+  keccak_256(encoded, sizeof(encoded), expected);
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32), hexOf(expected, 32));
+}
+
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+
+TEST_F(Eip712StreamBinding, RejectsLeavesThatCannotBeReviewedInFull) {
+  const auto types = {EthereumTypedDataStructAck_EthereumDataType_STRING,
+                      EthereumTypedDataStructAck_EthereumDataType_BYTES};
+  for (auto type : types) {
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    beginMessage();
+    EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+    addMember(def, "data", mk(type));
+    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&def));
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_VALUE);
+    EthereumTypedDataValueAck value = EthereumTypedDataValueAck_init_zero;
+    value.value.size =
+        type == EthereumTypedDataStructAck_EthereumDataType_STRING ? 352 : 172;
+    memset(value.value.bytes, 'A', value.value.size);
+    EXPECT_FALSE(eip712_stream_on_value(&value));
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+    EXPECT_EQ(kkconfirm_drain(), 0);  // refuse before any incomplete review
+  }
+}
+
+TEST_F(Eip712StreamBinding, ReviewableBoundaryLeavesStillComplete) {
+  const auto types = {EthereumTypedDataStructAck_EthereumDataType_STRING,
+                      EthereumTypedDataStructAck_EthereumDataType_BYTES};
+  for (auto type : types) {
+    ASSERT_TRUE(kkconfirm_preload(40, 0));
+    beginMessage();
+    EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+    addMember(def, "data", mk(type));
+    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&def));
+    EthereumTypedDataValueAck value = EthereumTypedDataValueAck_init_zero;
+    value.value.size =
+        type == EthereumTypedDataStructAck_EthereumDataType_STRING ? 351 : 171;
+    memset(value.value.bytes, 'A', value.value.size);
+    EXPECT_TRUE(eip712_stream_on_value(&value));
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    const int remaining = kkconfirm_drain();
+    EXPECT_GE(remaining, 0);
+    EXPECT_LT(remaining, 80);  // at least one approval was required
+  }
+}
+
+TEST_F(Eip712StreamBinding, SessionClearDiscardsPendingDocument) {
+  for (bool clear_pin : {false, true}) {
+    beginMessage();
+    ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+    session_clear(clear_pin);
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_NONE);
+    EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+    EXPECT_FALSE(eip712_stream_on_struct(&def));
+  }
+}
+
+TEST_F(Eip712StreamBinding, CancelDiscardsPendingDocument) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  beginMessage();
+  Cancel cancel = Cancel_init_zero;
+  fsm_msgCancel(&cancel);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_NONE);
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  EXPECT_FALSE(eip712_stream_on_struct(&def));
+  kkconfirm_drain();
+}
+
+TEST_F(Eip712StreamBinding, RepeatedStructArrayElementsKeepTheirDefinition) {
+  beginMessage();
+  EthereumTypedDataStructAck def = EthereumTypedDataStructAck_init_zero;
+  Field items = structField("Item");
+  items.array_levels_count = 1;
+  items.array_levels[0] = 2;
+  addMember(def, "items", items);
+  EthereumTypedDataStructAck item = EthereumTypedDataStructAck_init_zero;
+  for (int i = 0; i < 5; i++) {
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_STRUCT);
+    const auto *ack = strcmp(eip712_stream_next()->struct_name, "Message") == 0
+                          ? &def
+                          : &item;
+    ASSERT_TRUE(eip712_stream_on_struct(ack));
+  }
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_VALUE);
+  EthereumTypedDataValueAck length = EthereumTypedDataValueAck_init_zero;
+  length.value.size = 2;
+  length.value.bytes[1] = 2;
+  ASSERT_TRUE(eip712_stream_on_value(&length));
+  for (int i = 0; i < 6; i++) {
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_STRUCT);
+    ASSERT_STREQ(eip712_stream_next()->struct_name, "Item");
+    ASSERT_TRUE(eip712_stream_on_struct(&item));
+  }
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  uint8_t item_type[32], item_hash[32], array_hash[32], expected[32];
+  keccak_256(reinterpret_cast<const uint8_t *>("Item()"), 6, item_type);
+  keccak_256(item_type, sizeof(item_type), item_hash);
+  uint8_t encoded[64];
+  memcpy(encoded, item_hash, 32);
+  memcpy(encoded + 32, item_hash, 32);
+  keccak_256(encoded, sizeof(encoded), array_hash);
+  const char spelling[] = "Message(Item[2] items)Item()";
+  keccak_256(reinterpret_cast<const uint8_t *>(spelling), sizeof(spelling) - 1,
+             encoded);
+  memcpy(encoded + 32, array_hash, 32);
+  keccak_256(encoded, sizeof(encoded), expected);
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32), hexOf(expected, 32));
 }
