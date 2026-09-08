@@ -74,8 +74,20 @@ Copilot checkpoint defined in the SOP before upstream PR creation.
 
 R142-01, branch `audit/7142-storage-unsigned`, carries the existing unsigned-byte
 storage decoder fix from `ce21b4ac8` to the current 7.14.2 product baseline. The
-same decoder is present in all three product snapshots. Baseline/candidate C
+defect is present in 7.14.2 and 7.14.3; exact inspection confirmed 7.15 already
+contains an equivalent unsigned-byte implementation. Baseline/candidate C
 probes reproduce the signed-char failure and show the candidate passes both char
-modes. Firmware regression and assembled-product acceptance remain pending.
+modes. All 20 storage tests pass and the V17 regression fails with the old decoder.
+Full firmware-unit has 77 passes and three token-table/EVM failures, reproduced
+with the original decoder and tracked separately as R142-02. Assembled-product
+acceptance remains pending.
 The unit receipt lives on its audit branch at
 `docs/release/audit-units/R142-01-storage-unsigned.md`.
+
+R142-01 is fork PR #641 against `release/7.14.2`, its actual predecessor;
+current develop conflicts with the product-based patch. Its candidate is
+`20c1f07bb`. A corresponding 7.14.3 replay is isolated on
+`audit/7143-storage-unsigned`, pending variant validation. No decoder change is
+needed on 7.15. Its frozen SRS additionally requires both full and Bitcoin-only
+products, additive context, complete disclosure, storage compatibility and
+hardware evidence; preserve this scope when completing the feature matrix.
