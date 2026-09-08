@@ -55,4 +55,11 @@ KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 
+echo "=== Staged firmware provider integration suite ==="
+PYTHONPATH="/kkemu/deps/python-keepkey/tests:/kkemu/deps/python-keepkey${PYTHONPATH:+:$PYTHONPATH}" \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v --tb=short /kkemu/tests/integration \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-provider.xml
+
 echo "0" > /kkemu/test-reports/python-keepkey/status
