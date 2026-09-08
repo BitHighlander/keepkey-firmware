@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tendermint.h"
@@ -690,4 +691,36 @@ TEST(Thorchain, ConfirmThorTxRejectsOverlongDeclaredMemo) {
   ASSERT_TRUE(kkconfirm_preload(12, 0));
   EXPECT_FALSE(thor_confirmThorTx((uint32_t)data.size(), &msg));
   kkconfirm_drain();
+}
+
+/* MsgDeposit used to render the amount WITH " <asset>" appended into a 32-byte
+ * buffer and ignored bn_format's return. A long asset plus a fractional
+ * amount overflowed, bn_format blanked the whole string, and the device showed
+ * "Send  to <signer>" -- no amount, no asset -- while signing the real amount.
+ * The amount is now rendered alone (return value checked) and the asset gets
+ * its own screen: amount, asset, deposit memo, final sign = 4 screens. */
+TEST(Thorchain, DepositLongAssetFractionalAmountIsDisclosed) {
+  thorchain_signAbort();
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+  ThorchainSignTx tx = kSignTx;
+  tx.has_memo = false;
+  ASSERT_TRUE(thorchain_signTxInit(&node, &tx));
+
+  ThorchainMsgAck ack = {};
+  ack.has_deposit = true;
+  ack.deposit.has_asset = true;
+  strlcpy(ack.deposit.asset, "ETH.USDT-0XDAC17F9", sizeof(ack.deposit.asset));
+  ack.deposit.has_amount = true;
+  ack.deposit.amount = 123412345678;  // "1234.12345678": 13 chars
+  ack.deposit.has_memo = true;
+  strlcpy(ack.deposit.memo, "noop", sizeof(ack.deposit.memo));
+  ack.deposit.has_signer = true;
+  strlcpy(ack.deposit.signer, "thor1am058pdux3hyulcmfgj4m3hhrlfn8nzmpq9u6l",
+          sizeof(ack.deposit.signer));
+
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  fsm_msgThorchainMsgAck(&ack);
+  EXPECT_EQ(0, kkconfirm_drain());
+  thorchain_signAbort();
 }

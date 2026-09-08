@@ -44,6 +44,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       signed_metadata.cpp
       solana.cpp
       thorchain.cpp
+      ton.cpp
       tron.cpp)
 else()
   list(APPEND sources bitcoin_only.cpp)

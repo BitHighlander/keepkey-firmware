@@ -203,15 +203,37 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     }
 
   } else if (msg->has_deposit) {
+    // Validate before any display so untrusted strings never reach the UI.
+    if (!thorchain_isValidAsset(msg->deposit.asset)) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid asset");
+      layoutHome();
+      return;
+    }
+    // amount_str only needs to hold the numeric part (no asset suffix). With
+    // the suffix appended, a long asset plus a fractional amount overflowed
+    // bn_format's buffer, which blanks the whole string -- and the blank was
+    // displayed while the real amount was signed. The asset is confirmed on
+    // its own screen instead, as the send path does with the denom.
     char amount_str[32];
-    char asset_str[21];
-    asset_str[0] = ' ';
-    strlcpy(&(asset_str[1]), msg->deposit.asset, sizeof(asset_str) - 1);
-    bn_format_uint64(msg->deposit.amount, NULL, asset_str, 8, 0, false,
-                     amount_str, sizeof(amount_str));
+    if (!bn_format_uint64(msg->deposit.amount, NULL, NULL, 8, 0, false,
+                          amount_str, sizeof(amount_str))) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_FirmwareError,
+                      _("Failed to format amount"));
+      layoutHome();
+      return;
+    }
     if (!confirm_transaction_output(
             ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
             msg->deposit.signer)) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      layoutHome();
+      return;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset", "%s",
+                 msg->deposit.asset)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();

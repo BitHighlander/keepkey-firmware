@@ -432,6 +432,16 @@ bool osmosis_signTxUpdateMsgLPAdd(const uint64_t pool_id, const char* sender,
                                   const char* denom_in_max_b) {
   char buffer[96 + 1] = {0};
 
+  // sender is host-supplied, signed, and never shown on-screen: bind it to
+  // the address derived from the signing node (as MsgSend does) and refuse
+  // anything else.
+  char from_address[54] = {0};
+  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo",
+                             from_address) ||
+      strcmp(sender, from_address) != 0) {
+    return false;
+  }
+
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);
   }
@@ -485,6 +495,16 @@ bool osmosis_signTxUpdateMsgLPRemove(const uint64_t pool_id, const char* sender,
                                      const char* amount_out_min_b,
                                      const char* denom_out_min_b) {
   char buffer[96 + 1] = {0};
+
+  // sender is host-supplied, signed, and never shown on-screen: bind it to
+  // the address derived from the signing node (as MsgSend does) and refuse
+  // anything else.
+  char from_address[54] = {0};
+  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo",
+                             from_address) ||
+      strcmp(sender, from_address) != 0) {
+    return false;
+  }
 
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);
@@ -625,6 +645,10 @@ bool osmosis_signTxUpdateMsgIBCTransfer(const char* amount, const char* sender,
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
   }
+  // sender is host-supplied and signed: bind it to the derived address.
+  if (strcmp(sender, from_address) != 0) {
+    return false;
+  }
 
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);
@@ -691,6 +715,16 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
   char buffer[96 + 1] = {0};
 
   // TODO: add testnet support
+
+  // sender is host-supplied, signed, and never shown on-screen: bind it to
+  // the address derived from the signing node (as MsgSend does) and refuse
+  // anything else.
+  char from_address[54] = {0};
+  if (!tendermint_getAddress(&node, testnet ? "tosmo" : "osmo",
+                             from_address) ||
+      strcmp(sender, from_address) != 0) {
+    return false;
+  }
 
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);

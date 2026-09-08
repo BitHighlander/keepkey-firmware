@@ -522,26 +522,30 @@ bool tendermint_signTxUpdateMsgIBCTransfer(
   success &=
       tendermint_snprintf(&ctx, buffer, sizeof(buffer), ",\"sender\":\"");
 
-  // ^53 + 1 = ^54
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "%s\"", sender);
+  // sender, source_channel, source_port, revision_height and revision_number
+  // are host-supplied and never format-validated: escape as defense-in-depth,
+  // same as validator_address elsewhere in this file.
+  tendermint_sha256UpdateEscaped(&ctx, sender, strlen(sender));
 
-  // 19 + ^32 + 1 = ^52
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 ",\"source_channel\":\"%s\"", source_channel);
+                                 "\",\"source_channel\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, source_channel, strlen(source_channel));
 
-  // 16 + ^32 + 2 = ^40
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 ",\"source_port\":\"%s\",", source_port);
+                                 "\",\"source_port\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, source_port, strlen(source_port));
 
-  // 37 + ^16 = ^53
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 "\"timeout_height\":{\"revision_height\":\"%s",
-                                 revision_height);
+                                 "\",\"timeout_height\":{\"revision_height\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, revision_height,
+                                 strlen(revision_height));
 
-  // 21 + ^9 + 3 = ^33
-  success &=
-      tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                          "\",\"revision_number\":\"%s\"},", revision_number);
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
+                                 "\",\"revision_number\":\"");
+  tendermint_sha256UpdateEscaped(&ctx, revision_number,
+                                 strlen(revision_number));
+
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer), "\"},");
 
   // 20 + ^20 + 11 + ^9 + 3 = ^63
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),

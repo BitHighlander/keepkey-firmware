@@ -5,6 +5,8 @@ extern "C" {
 #include "keepkey/firmware/tendermint.h"
 #include "messages-tendermint.pb.h"
 #include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/sha2.h"
 }
 
 #include "gtest/gtest.h"
@@ -111,4 +113,61 @@ TEST(Cosmos, TendermintSessionBindsProtocolAndAssetConfiguration) {
   EXPECT_FALSE(
       tendermint_signingConfigMatches("Cosmos", "uatom", "other-prefix"));
   tendermint_signAbort();
+}
+
+// The IBC sender/channel/port/revision strings are host-supplied and were
+// streamed into the amino sign-doc raw. A '"' in any of them produced a
+// signature over a structurally injected document. They are now escaped like
+// chain_id/memo/validator_address, so the signature must verify against the
+// canonical (escaped) JSON.
+TEST(Cosmos, IBCTransferEscapesHostStrings) {
+  tendermint_signAbort();
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0x04, 0xde, 0xc0, 0xcc, 0x01, 0x3c, 0xd8, 0xab, 0x70, 0x87, 0xca,
+       0x14, 0x96, 0x0b, 0x76, 0x8c, 0x3d, 0x83, 0x45, 0x24, 0x48, 0xaa,
+       0x00, 0x64, 0xda, 0xe6, 0xfb, 0x04, 0xb5, 0xd9, 0x34, 0x76},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  const CosmosSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 118, 0x80000000, 0, 0},
+      true, 0,
+      true, "cosmoshub-2",
+      true, 5000,
+      true, 200000,
+      true, "",
+      true, 0,
+      true, 1};
+  ASSERT_TRUE(tendermint_signTxInit(&node, &msg, sizeof(CosmosSignTx), "uatom",
+                                    TENDERMINT_SIGNING_COSMOS));
+  ASSERT_TRUE(tendermint_signTxUpdateMsgIBCTransfer(
+      1, "cosmos18vhdczjut44gpsy804crfhnd5nq003nz0nf20v",
+      "cosmos18vhdczjut44gpsy804crfhnd5nq003nz0nf20v", "channel-\"0",
+      "tra\\nsfer", "1", "2\"", "cosmos", "uatom", "cosmos-sdk"));
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(tendermint_signTxFinalize(public_key, signature));
+
+  static const char doc[] =
+      "{\"account_number\":\"0\",\"chain_id\":\"cosmoshub-2\",\"fee\":{"
+      "\"amount\":[{\"amount\":\"5000\",\"denom\":\"uatom\"}],\"gas\":"
+      "\"200000\"},\"memo\":\"\",\"msgs\":[{\"type\":\"cosmos-sdk/"
+      "MsgTransfer\",\"value\":{\"receiver\":"
+      "\"cosmos18vhdczjut44gpsy804crfhnd5nq003nz0nf20v\",\"sender\":"
+      "\"cosmos18vhdczjut44gpsy804crfhnd5nq003nz0nf20v\",\"source_channel\":"
+      "\"channel-\\\"0\",\"source_port\":\"tra\\\\nsfer\",\"timeout_height\":{"
+      "\"revision_height\":\"2\\\"\",\"revision_number\":\"1\"},\"token\":{"
+      "\"amount\":\"1\",\"denom\":\"uatom\"}}}],\"sequence\":\"0\"}";
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc, sizeof(doc) - 1, digest);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, public_key, signature, digest));
 }

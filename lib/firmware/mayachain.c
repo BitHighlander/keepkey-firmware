@@ -331,6 +331,13 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
   // Check for swap
   if (strncmp(fields[0], "SWAP", 4) == 0 || *fields[0] == 's' ||
       *fields[0] == '=') {
+    /* SWAP:ASSET:DEST:LIMIT:AFFILIATE:FEE is the whole grammar this branch
+     * confirms. Anything past field 6 (e.g. a DEX-aggregator tail, which
+     * directs funds) would be signed unseen behind a true result, so refuse
+     * it -- mirrors the WITHDRAW branch below and thorchain.c. */
+    if (nfields > 6) {
+      return false;
+    }
     // This is a swap, set up destination and limit
     // The dest may be blank which means swap to self
     const char* dest =

@@ -228,3 +228,58 @@ TEST(Osmosis, MsgSendSignsTwoMessages) {
                         "\x72\xfe\x6e\x6a\xa0\x82\xf0\x80\x10\xcb\xdd\x2f",
              64) == 0);
 }
+
+// LP-Add/LP-Remove/Swap/IBC-Transfer sign the host-supplied `sender` without
+// ever showing it. It must be the address derived from the signing node
+// (as MsgSend's from_address is); any other sender is refused.
+TEST(Osmosis, HostSenderMustMatchSigningNode) {
+  osmosis_signAbort();
+
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  OsmosisSignTx msg = {};
+  msg.account_number = 6359;
+  msg.has_chain_id = true;
+  strlcpy(msg.chain_id, "osmosis-1", sizeof(msg.chain_id));
+  msg.fee_amount = 3000;
+  msg.gas = 200000;
+  msg.has_memo = true;
+  msg.sequence = 19;
+  msg.msg_count = 4;
+  ASSERT_TRUE(osmosis_signTxInit(&node, &msg));
+
+  // Derived from `node` (see MsgSendSignsTwoMessages) vs. some other account.
+  const char *self = "osmo1ls33ayg26kmltw7jjy55p32ghjna09zpsfp770";
+  const char *other = "osmo1rs7fckgznkaxs4sq02pexwjgar43p5wnkx9s92";
+
+  EXPECT_FALSE(osmosis_signTxUpdateMsgLPAdd(1, other, "1", "1", "uosmo", "1",
+                                            "uion"));
+  EXPECT_FALSE(osmosis_signTxUpdateMsgLPRemove(1, other, "1", "1", "uosmo",
+                                               "1", "uion"));
+  EXPECT_FALSE(osmosis_signTxUpdateMsgSwap(1, "uion", other, "1", "uosmo",
+                                           "1"));
+  EXPECT_FALSE(osmosis_signTxUpdateMsgIBCTransfer(
+      "1", other, self, "channel-0", "transfer", "1", "1", "uosmo"));
+
+  EXPECT_TRUE(osmosis_signTxUpdateMsgLPAdd(1, self, "1", "1", "uosmo", "1",
+                                           "uion"));
+  EXPECT_TRUE(osmosis_signTxUpdateMsgLPRemove(1, self, "1", "1", "uosmo", "1",
+                                              "uion"));
+  EXPECT_TRUE(osmosis_signTxUpdateMsgSwap(1, "uion", self, "1", "uosmo", "1"));
+  EXPECT_TRUE(osmosis_signTxUpdateMsgIBCTransfer(
+      "1", self, self, "channel-0", "transfer", "1", "1", "uosmo"));
+  osmosis_signAbort();
+}

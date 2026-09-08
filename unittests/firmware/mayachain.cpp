@@ -313,3 +313,15 @@ TEST(Mayachain, MemoGarbageAndOversized) {
   EXPECT_FALSE(parseMayaMemo("SWAP:ETH.ETH:0xdest:420", 257));
   EXPECT_EQ(0, kkconfirm_drain());
 }
+
+// A SWAP memo with fields past the affiliate fee (a DEX-aggregator tail that
+// directs funds) is not part of the grammar this parser confirms. It must be
+// refused with nothing displayed, so the caller pages the raw memo instead of
+// a `true` standing in for fields the user never saw. Mirrors thorchain.cpp.
+TEST(Mayachain, MemoSwapTooManyFieldsRejected) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(parseMayaMemo(
+      "SWAP:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75:"
+      "0xAGGREGATOR:0xFINALTOKEN:1"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}

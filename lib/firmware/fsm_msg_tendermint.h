@@ -223,8 +223,10 @@ void fsm_msgTendermintMsgAck(const TendermintMsgAck* msg) {
   }
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign transaction? Fee: %" PRIu32 " %s. Gas: %" PRIu32 ".",
-               sign_tx->fee_amount, sign_tx->denom, sign_tx->gas)) {
+               "Sign transaction? Fee: %" PRIu32 " %s. Gas: %" PRIu32 ". "
+               "Account %" PRIu64 ", sequence %" PRIu64 ".",
+               sign_tx->fee_amount, sign_tx->denom, sign_tx->gas,
+               sign_tx->account_number, sign_tx->sequence)) {
     tendermint_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
