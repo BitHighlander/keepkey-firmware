@@ -1001,4 +1001,3 @@ TEST(Storage, VersionedReadersRejectShortBuffersWithoutChangingState) {
   check(storage_readStorageV16, 1501 + sizeof(storage.encrypted_sec));
   check(storage_readStorageV17, 1501 + sizeof(storage.encrypted_sec));
 }
-
