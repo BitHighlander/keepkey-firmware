@@ -435,6 +435,14 @@ char usbTiny(char set) {
 
 #endif  // EMULATOR
 
+/* Payload bytes the packet at `pos` carries: what is left of the frame, at
+ * most one packet. The tail of the last packet stays at tmp_buffer's zero
+ * fill; a fixed 63-byte copy read up to 62 bytes past the frame arena. */
+size_t msg_write_chunk_len(size_t frame_len, size_t pos) {
+  const size_t remaining = pos < frame_len ? frame_len - pos : 0;
+  return remaining < 64 - 1 ? remaining : 64 - 1;
+}
+
 bool msg_write(MessageType msg_id, const void* msg) {
   const pb_field_t* fields = message_fields(NORMAL_MSG, msg_id, OUT_MSG);
 
@@ -458,13 +466,14 @@ bool msg_write(MessageType msg_id, const void* msg) {
   framebuf->frame.header.len = __builtin_bswap32(os.bytes_written);
 
   // Chunk out data
-  for (uint32_t pos = 1; pos < sizeof(framebuf->frame) + os.bytes_written;
-       pos += 64 - 1) {
+  const size_t frame_len = sizeof(framebuf->frame) + os.bytes_written;
+  for (uint32_t pos = 1; pos < frame_len; pos += 64 - 1) {
     uint8_t tmp_buffer[64] = {0};
 
     tmp_buffer[0] = '?';
 
-    memcpy(tmp_buffer + 1, ((const uint8_t*)framebuf) + pos, 64 - 1);
+    memcpy(tmp_buffer + 1, ((const uint8_t*)framebuf) + pos,
+           msg_write_chunk_len(frame_len, pos));
 
 #ifndef EMULATOR
     while (usbd_ep_write_packet(usbd_dev, ENDPOINT_ADDRESS_IN, tmp_buffer,
@@ -500,13 +509,14 @@ bool msg_debug_write(MessageType msg_id, const void* msg) {
   framebuf->frame.header.len = __builtin_bswap32(os.bytes_written);
 
   // Chunk out data
-  for (uint32_t pos = 1; pos < sizeof(framebuf->frame) + os.bytes_written;
-       pos += 64 - 1) {
+  const size_t frame_len = sizeof(framebuf->frame) + os.bytes_written;
+  for (uint32_t pos = 1; pos < frame_len; pos += 64 - 1) {
     uint8_t tmp_buffer[64] = {0};
 
     tmp_buffer[0] = '?';
 
-    memcpy(tmp_buffer + 1, ((const uint8_t*)framebuf) + pos, 64 - 1);
+    memcpy(tmp_buffer + 1, ((const uint8_t*)framebuf) + pos,
+           msg_write_chunk_len(frame_len, pos));
 
 #ifndef EMULATOR
     while (usbd_ep_write_packet(usbd_dev, ENDPOINT_ADDRESS_DEBUG_IN, tmp_buffer,

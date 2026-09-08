@@ -704,10 +704,9 @@ bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
   return true;
 }
 
-bool ctap2_request_user_presence(const char* rp_id, bool registration) {
-  bool fits = layoutU2FDialog(
-      true, registration ? "Create Passkey" : "Use Passkey",
-      registration ? "Create a passkey for %s?" : "Sign in to %s?", rp_id);
+static bool request_user_presence(const char* title, const char* body_fmt,
+                                  const char* arg) {
+  bool fits = layoutU2FDialog(true, title, body_fmt, arg);
   if (!fits) {
     // rp_id is host-controlled and can run up to 253 chars; the credential
     // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
@@ -715,6 +714,13 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
     layoutHome();
     return false;
   }
+#ifdef EMULATOR
+  /* The emulator has no button, and queue_u2f_pkt() asserts on the keepalive
+   * the loop below sends, so a request here can only be denied. The dialog
+   * is drawn first so a test can check what the user would have been asked. */
+  layoutHome();
+  return false;
+#else
   bool saw_button_up = false;
   for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
     if (reader != NULL && reader->cmd == U2FHID_CANCEL) {
@@ -723,8 +729,7 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
     }
     saw_button_up = saw_button_up || keepkey_button_up();
     if (saw_button_up && keepkey_button_down()) {
-      layoutU2FDialog(false, registration ? "Create Passkey" : "Use Passkey",
-                      "%s", rp_id);
+      layoutU2FDialog(false, title, "%s", arg);
       return true;
     }
     if ((remaining % (U2F_TIMEOUT / 4)) == 0) {
@@ -735,6 +740,22 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
   }
   layoutHome();
   return false;
+#endif
+}
+
+bool ctap2_request_user_presence(const char* rp_id, bool registration) {
+  return request_user_presence(
+      registration ? "Create Passkey" : "Use Passkey",
+      registration ? "Create a passkey for %s?" : "Sign in to %s?", rp_id);
+}
+
+/* authenticatorReset is an irreversible mass deletion, not a login: the screen
+ * must say what the press commits to. Reusing the "Sign in to %s?" dialog read
+ * as an ordinary assertion prompt. */
+bool ctap2_request_reset_confirmation(void) {
+  return request_user_presence("Erase Passkeys",
+                               "Delete %s and the PIN? This cannot be undone.",
+                               "ALL saved passkeys");
 }
 
 bool ctap2_user_presence_was_cancelled(void) {

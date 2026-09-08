@@ -133,5 +133,9 @@ void set_leaving_handler(leaving_handler_t leaving_func);
 
 bool layoutU2FDialog(bool request, const char* title, const char* body, ...)
     __attribute__((format(printf, 3, 4)));
+#ifdef EMULATOR
+const char* layoutU2FDialogLastTitle(void);
+const char* layoutU2FDialogLastBody(void);
+#endif
 
 #endif

@@ -301,3 +301,17 @@ TEST(RngHealth, TrippingBytesAreWipedNotReturned) {
 }
 
 }  // namespace
+
+// random32() resets the peripheral after 100 not-ready samples, and
+// reset_rng() discarded its first word by calling random32() again: on a
+// persistently faulted RNG that was unbounded mutual recursion. The reset
+// budget is now finite and its exhaustion is the fail-closed halt.
+TEST(RngHealth, ResetBudgetIsBoundedAndFailsClosed) {
+  uint32_t resets = 0;
+  for (int i = 0; i < RNG_MAX_RESETS; i++) {
+    EXPECT_FALSE(rng_reset_budget_exhausted(&resets)) << "reset " << i;
+  }
+  EXPECT_TRUE(rng_reset_budget_exhausted(&resets));
+  EXPECT_TRUE(rng_reset_budget_exhausted(&resets)) << "one-way";
+  EXPECT_TRUE(rng_reset_budget_exhausted(nullptr));
+}

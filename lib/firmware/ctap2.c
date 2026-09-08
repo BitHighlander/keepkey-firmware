@@ -1197,7 +1197,7 @@ static void reset_authenticator(uint8_t* response, size_t* response_length) {
     write_error(CTAP2_ERR_NOT_ALLOWED, response, response_length);
     return;
   }
-  if (!ctap2_request_user_presence("all saved passkeys", false)) {
+  if (!ctap2_request_reset_confirmation()) {
     write_error(ctap2_user_presence_was_cancelled()
                     ? CTAP2_ERR_KEEPALIVE_CANCEL
                     : CTAP2_ERR_OPERATION_DENIED,

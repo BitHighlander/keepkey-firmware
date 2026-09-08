@@ -43,6 +43,12 @@ bool rng_seed_error_latched(void);
 /// Exposed so the register-independent recovery policy is unit-testable.
 bool rng_persistent_error_step(uint32_t* samples);
 
+/// Peripheral resets one random32() call may attempt before the generator is
+/// declared dead. Returns true once the budget is exceeded (or on NULL); the
+/// caller must then fail closed rather than reset or wait again.
+#define RNG_MAX_RESETS 3
+bool rng_reset_budget_exhausted(uint32_t* resets);
+
 #ifdef EMULATOR
 /// Test seam for the STM32 seed/clock-error state machine. These helpers are
 /// absent from ARM firmware; reset models a fresh power-on between cases.

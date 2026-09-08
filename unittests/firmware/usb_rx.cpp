@@ -94,3 +94,15 @@ TEST(USBRX, ErrorHandling) {
   ASSERT_EQ(failure_count, 4);
   ASSERT_EQ(message, "Unknown message");
 }
+
+// msg_write() copied a fixed 63 bytes into every packet, so the last packet of
+// a near-maximal frame read up to 62 bytes past the frame arena and sent them
+// on the wire. The copy must stop at the end of the frame.
+TEST(USBRX, FinalChunkNeverReadsPastTheFrame) {
+  EXPECT_EQ(msg_write_chunk_len(9 + 12292, 1), 63u);
+  EXPECT_EQ(msg_write_chunk_len(100, 64), 36u);
+  EXPECT_EQ(msg_write_chunk_len(64, 1), 63u);
+  EXPECT_EQ(msg_write_chunk_len(9 + 12292, 12286), 15u);
+  EXPECT_EQ(msg_write_chunk_len(10, 10), 0u);
+  EXPECT_EQ(msg_write_chunk_len(10, 11), 0u);
+}

@@ -880,6 +880,15 @@ void layout_address(const char* address, QRSize qr_size) {
   }
 }
 
+#ifdef EMULATOR
+/* Test seam: the last dialog put in front of the user, so a unit test can
+ * assert that what the screen says matches what the press commits to. */
+static char u2f_dialog_title[TITLE_CHAR_MAX];
+static char u2f_dialog_body[BODY_CHAR_MAX];
+const char* layoutU2FDialogLastTitle(void) { return u2f_dialog_title; }
+const char* layoutU2FDialogLastBody(void) { return u2f_dialog_body; }
+#endif
+
 bool layoutU2FDialog(bool request, const char* title, const char* body, ...) {
   char strbuf[BODY_CHAR_MAX];
 
@@ -887,6 +896,11 @@ bool layoutU2FDialog(bool request, const char* title, const char* body, ...) {
   va_start(vl, body);
   int written = vsnprintf(strbuf, BODY_CHAR_MAX, body, vl);
   va_end(vl);
+
+#ifdef EMULATOR
+  snprintf(u2f_dialog_title, sizeof(u2f_dialog_title), "%s", title);
+  memcpy(u2f_dialog_body, strbuf, sizeof(u2f_dialog_body));
+#endif
 
   // Detect both SOURCE truncation (the formatted body did not fit strbuf)
   // and RENDER truncation (the body fit strbuf but not the OLED canvas), the

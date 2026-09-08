@@ -475,7 +475,13 @@ static bool page_body_confirm(const char* request_title, const char* body,
       p += take;
       while (*p == ' ') p++; /* a leading space is dropped at a line start */
       pages++;
-      if (pages > 99) break; /* title formats n/m; refuse to run away */
+      if (pages > 99 && *p) {
+        /* The title formats n/m, so the count is capped -- but a cap that
+         * drops the remainder and reports success would approve bytes the
+         * user never saw. Refuse instead, like every other pager here. */
+        memzero(page_buf, sizeof(page_buf));
+        return false;
+      }
     }
   }
   if (pages <= 1) {

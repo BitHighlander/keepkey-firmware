@@ -7,6 +7,7 @@ extern "C" {
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 TEST(CTAP2, GetInfoAdvertisesSafeInitialCapabilities) {
@@ -113,4 +114,40 @@ TEST(CTAP2, ClientPinConsumesAndWipesKeyAgreementOnFirstUse) {
                &response_length);
   EXPECT_EQ(response[0], CTAP2_ERR_PIN_AUTH_INVALID);
   EXPECT_TRUE(ctap2_key_agreement_is_clear());
+}
+
+// confirm() auto-accept driver (confirm_test_utils.cpp); used here only for
+// its one-time board bootstrap, which the dialog's draw path needs.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+
+extern "C" {
+#include "keepkey/board/layout.h"
+#include "keepkey/firmware/app_layout.h"
+}
+
+// authenticatorReset erases every stored passkey and the PIN. The prompt in
+// front of that press used to be the generic assertion dialog, "Use Passkey /
+// Sign in to all saved passkeys?" -- a login, not a deletion. The screen has to
+// say what the press commits to.
+TEST(CTAP2, ResetPromptSaysItErasesEverything) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  kkconfirm_drain();
+  ctap2_init();  // opens the 10 s reset window
+
+  const uint8_t request[] = {CTAP2_CMD_RESET};
+  uint8_t response[8];
+  size_t response_length = 0;
+  ctap2_handle(request, sizeof(request), response, sizeof(response),
+               &response_length);
+  // No button in the emulator: the prompt times out and reset is denied.
+  ASSERT_EQ(response_length, 1u);
+  ASSERT_EQ(response[0], CTAP2_ERR_OPERATION_DENIED);
+
+  const std::string title(layoutU2FDialogLastTitle());
+  const std::string body(layoutU2FDialogLastBody());
+  EXPECT_EQ(title, "Erase Passkeys");
+  EXPECT_NE(body.find("Delete ALL saved passkeys"), std::string::npos) << body;
+  EXPECT_NE(body.find("PIN"), std::string::npos) << body;
+  EXPECT_EQ(body.find("Sign in"), std::string::npos) << body;
 }

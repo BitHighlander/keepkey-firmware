@@ -75,6 +75,11 @@ void rng_test_observe_persistent_error(void) {
 }
 #endif
 
+bool rng_reset_budget_exhausted(uint32_t* resets) {
+  if (resets == NULL) return true;
+  return ++(*resets) > RNG_MAX_RESETS;
+}
+
 bool rng_persistent_error_step(uint32_t* samples) {
   if (samples == NULL) return false;
   if (++(*samples) < 100) return false;
@@ -104,14 +109,25 @@ void reset_rng(void) {
 
   // to be extra careful and heed the STM32F205xx Reference manual,
   // Section 20.3.1 we don't use the first random number generated after setting
-  // the RNGEN bit in setup
-  random32();
+  // the RNGEN bit in setup. Discard it HERE, not via random32(): random32()
+  // calls reset_rng() on a persistent fault, so that discard recursed without
+  // bound while the peripheral stayed faulted. Bounded wait; if no word comes,
+  // random32()'s own error path deals with it.
+  {
+    uint32_t cnt = 100 /* microseconds */ * 20;
+    while (cnt--) {
+      if (RNG_SR & RNG_SR_DRDY) {
+        (void)RNG_DR;
+        break;
+      }
+    }
+  }
 #endif
 }
 
 uint32_t random32(void) {
 #ifndef EMULATOR
-  uint32_t rng_samples = 0, rng_sr_img;
+  uint32_t rng_samples = 0, rng_resets = 0, rng_sr_img;
   static uint32_t last = 0, new = 0;
 
   while (new == last) {
@@ -131,6 +147,14 @@ uint32_t random32(void) {
       /* RNG is not ready.  Allow few more samples for RNG to come back alive
        * before resetting */
       if (rng_persistent_error_step(&rng_samples)) {
+        if (rng_reset_budget_exhausted(&rng_resets)) {
+          /* The generator did not come back across RNG_MAX_RESETS resets.
+           * The fault is latched; never return a word from a dead source
+           * and never wait on it unboundedly. Fail closed: halt. */
+          for (;;) {
+            __asm__("wfi");
+          }
+        }
         /* RNG in hang state.  Reset RNG */
         reset_rng();
       }
