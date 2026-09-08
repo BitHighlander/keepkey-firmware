@@ -6,6 +6,7 @@
 # out of that image. recovery.cpp was also listed twice.
 set(sources
     nanopb_bounds.cpp
+    fsm.cpp
     dice.cpp
     recovery.cpp
     rng_health.cpp

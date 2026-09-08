@@ -2213,6 +2213,8 @@ void signing_txack(TransactionType* tx) {
   signing_abort();
 }
 
+bool signing_is_active(void) { return signing; }
+
 void signing_abort(void) {
   if (signing) {
     layoutHome();
