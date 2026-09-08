@@ -158,8 +158,8 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
      * the host can show the same hash for out-of-band comparison (mirrors
      * the TIP-712 path). */
     char digest_hex[64 + 1];
-    tron_formatRawTxDigest(msg->raw_data.bytes, msg->raw_data.size,
-                           digest_hex, sizeof(digest_hex));
+    tron_formatRawTxDigest(msg->raw_data.bytes, msg->raw_data.size, digest_hex,
+                           sizeof(digest_hex));
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
                  "Confirm hash digest: %s", digest_hex)) {
       memzero(node, sizeof(*node));
