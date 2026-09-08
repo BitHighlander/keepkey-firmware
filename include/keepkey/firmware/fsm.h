@@ -85,6 +85,8 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg);
 void fsm_msgEthereumGetAddress(EthereumGetAddress* msg);
 void fsm_msgEthereumSignTx(EthereumSignTx* msg);
 void fsm_msgEthereumTxAck(EthereumTxAck* msg);
+void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg);
+void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg);
 void fsm_msgEthereumSignMessage(EthereumSignMessage* msg);
 void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg);
 void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg);

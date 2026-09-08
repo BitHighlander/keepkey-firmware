@@ -31,6 +31,7 @@
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/eip712.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/ethereum_tokens.h"
@@ -840,6 +841,21 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  /* Runtime provider context is additive. Keep the existing amount,
+   * contract and complete raw-calldata review decisions unchanged. */
+  if (data_needs_confirm && data_total > 0 && signed_metadata_available() &&
+      signed_metadata_matches_tx(msg)) {
+    if (!signed_metadata_confirm()) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Metadata review cancelled");
+      ethereum_signing_abort();
+      return;
+    }
+  }
+  /* No annotation replaces raw approval, so no provider state is retained
+   * across the subsequent streaming transaction. */
+  signed_metadata_clear();
+
   // detect ERC-20 token
   if (data_total == 68 && ethereum_isStandardERC20Transfer(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
@@ -1096,7 +1112,10 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
   }
 }
 
+bool ethereum_signing_isInProgress(void) { return ethereum_signing; }
+
 void ethereum_signing_abort(void) {
+  signed_metadata_clear();
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     data_hash_pending = false;

@@ -36,6 +36,9 @@
     MSG_IN(MessageType_MessageType_EthereumGetAddress,              EthereumGetAddress,          fsm_msgEthereumGetAddress)
     MSG_IN(MessageType_MessageType_EthereumSignTx,                  EthereumSignTx,              fsm_msgEthereumSignTx)
     MSG_IN(MessageType_MessageType_EthereumTxAck,                   EthereumTxAck,               fsm_msgEthereumTxAck)
+    MSG_IN(MessageType_MessageType_EthereumTxMetadata, EthereumTxMetadata, fsm_msgEthereumTxMetadata)
+    MSG_OUT(MessageType_MessageType_EthereumMetadataAck, EthereumMetadataAck, 0)
+    MSG_IN(MessageType_MessageType_LoadClearsignSigner, LoadClearsignSigner, fsm_msgLoadClearsignSigner)
     MSG_IN(MessageType_MessageType_EthereumSignMessage,             EthereumSignMessage,         fsm_msgEthereumSignMessage)
     MSG_IN(MessageType_MessageType_EthereumVerifyMessage,           EthereumVerifyMessage,       fsm_msgEthereumVerifyMessage)
 
