@@ -35,7 +35,7 @@ TEST_F(SessionPolicy, NeitherFlashWriterPersistsAdvancedMode) {
 }
 
 TEST_F(SessionPolicy, BothFlashReadersIgnoreLegacyAdvancedModeBit) {
-  char bytes[852] = {};
+  char bytes[468 + V17_ENCSEC_SIZE] = {};
   bytes[5] = 0x18;  // Legacy AdvancedMode and Experimental bits.
   Storage storage = {};
   storage_readStorageV11(&storage, bytes, sizeof(bytes));
