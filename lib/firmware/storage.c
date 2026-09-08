@@ -1512,6 +1512,7 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
 }
 
 void storage_wipe(void) {
+  fsm_abort_workflows();
   flash_erase_word(FLASH_STORAGE1);
   flash_erase_word(FLASH_STORAGE2);
   flash_erase_word(FLASH_STORAGE3);
@@ -1521,6 +1522,7 @@ void storage_wipe(void) {
 }
 
 void storage_clearKeys(void) {
+  fsm_abort_workflows();
   session_clear_impl(&session, &shadow_config.storage, false);
   memzero(&session.storageKey, sizeof(session.storageKey));
   memzero(&shadow_config.storage.pub.wrapped_storage_key,
@@ -1561,6 +1563,12 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      calling function is required to update the flash with a storage_commit().
   */
   pintest_t ret = PIN_WRONG;
+
+  /* Direct callers bypass session_clear(), so revoke retained signing state
+   * here whenever PIN authorization is cleared. This writes no flash. */
+  if (clear_pin) {
+    fsm_abort_workflows();
+  }
 
   ss->seedCached = false;
   memset(&ss->seed, 0, sizeof(ss->seed));
