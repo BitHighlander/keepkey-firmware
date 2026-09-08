@@ -198,3 +198,31 @@ head remains the historical inventory anchor until final reconciliation.
 Packet-fix integration dispatched separately with publish_emulator=false:
 [34292591562](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34292591562),
 head 47eae604e183ab1c6c69be7dae43eee60b58326c, confirmed queued.
+
+## Shared-arena declarations and dispatch boundary review
+
+Reviewed the complete messages.h delta for 7.14.2 and 7.15. The older release
+removes the two shared-arena declarations alongside the absent arena consumers;
+7.15 adds matching TX and scratch declarations. The return types and packed
+frame layout agree with their definitions. No actionable header finding.
+7.14.3 has no changed messages.h path in its inventory.
+
+Re-read the 7.15 reassembly delta at 041a23d5c: wire IDs are assembled from
+two bytes before indexed lookup; map size, stored ID, direction and channel
+are checked before selecting a schema. Decoded input capacity is compile-time
+asserted per mapped input type in fsm.c. Decode failures, missing handlers and
+normal returns clear decoded storage. Tiny input uses a separate arena with
+per-type capacity assertions and a 55-byte wire-payload limit. Existing full
+and Bitcoin-only builds exercise these compile-time assertions. These checks
+do not close message-map product gating or handler-retention review.
+
+## P06 follow-up: stale Ripple host-test skip
+
+The pinned 7.15 host suite unconditionally skips test_sign_with_thorchain_memo
+with a claim that RippleSignTx has no memo field. The pinned device protocol
+has field 7, generated storage is memo[200], and 7.15's handler reviews the
+memo before ripple.c serializes the XRPL Memos array. This skipped test cannot
+prove the implementation. Re-enable with appropriate version/product gating
+and validate serialization/review in P06; do not count the skip as acceptance.
+7.14.3 full-source handler/serializer lacks this memo path, so do not simply
+remove the skip across all products. The Bitcoin-only product omits Ripple.
