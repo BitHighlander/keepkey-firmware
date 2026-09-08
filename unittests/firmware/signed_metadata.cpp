@@ -26,6 +26,7 @@ extern "C" {
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/solana.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
@@ -1707,6 +1708,48 @@ TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
 
   signed_metadata_clear_signers();
   ASSERT_TRUE(set_advanced_mode_for_test(false));
+}
+
+TEST_F(SignedMetadataTest, SolanaAccountsBoundToTransactionAndOrder) {
+  uint8_t raw[] = {0x80, 1, 2, 3};
+  uint8_t accounts[2][32] = {};
+  memset(accounts[0], 0x11, 32);
+  memset(accounts[1], 0x22, 32);
+  const char tag[] = "KeepKeySolanaTxAccounts/1";
+  std::vector<uint8_t> pre(tag, tag + strlen(tag));
+  uint8_t hash[32];
+  sha256_Raw(raw, sizeof(raw), hash);
+  pre.insert(pre.end(), hash, hash + 32);
+  pre.insert(pre.end(), {2, 0, 0, 0});
+  pre.insert(pre.end(), accounts[0], accounts[0] + 32);
+  pre.insert(pre.end(), accounts[1], accounts[1] + 32);
+  sha256_Raw(pre.data(), pre.size(), hash);
+  uint8_t sig[64];
+  ASSERT_EQ(
+      0, ecdsa_sign_digest(&secp256k1, TEST_PRIV, hash, sig, nullptr, nullptr));
+  auto verifies = [&]() {
+    return solana_lut_accounts_trusted(raw, sizeof(raw), accounts, 2,
+                                       TEST_KEY_ID, sig, sizeof(sig));
+  };
+  ASSERT_TRUE(verifies());
+  raw[3] ^= 1;
+  EXPECT_FALSE(verifies());
+  raw[3] ^= 1;
+  accounts[0][0] ^= 1;
+  EXPECT_FALSE(verifies());
+  accounts[0][0] ^= 1;
+  for (size_t i = 0; i < 32; ++i) std::swap(accounts[0][i], accounts[1][i]);
+  EXPECT_FALSE(verifies());
+  for (size_t i = 0; i < 32; ++i) std::swap(accounts[0][i], accounts[1][i]);
+  EXPECT_TRUE(verifies());
+  EXPECT_FALSE(solana_lut_accounts_trusted(raw, sizeof(raw), accounts, 1,
+                                           TEST_KEY_ID, sig, sizeof(sig)));
+  EXPECT_FALSE(solana_lut_accounts_trusted(raw, sizeof(raw), accounts, 2, 256,
+                                           sig, sizeof(sig)));
+  EXPECT_FALSE(solana_lut_accounts_trusted(raw, sizeof(raw), accounts, 9,
+                                           TEST_KEY_ID, sig, sizeof(sig)));
+  signed_metadata_clear_signers();
+  EXPECT_FALSE(verifies());
 }
 
 }  // namespace

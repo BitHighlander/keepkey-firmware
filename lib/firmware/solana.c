@@ -20,6 +20,8 @@
 #include "keepkey/firmware/solana.h"
 
 #include "trezor/crypto/memzero.h"
+#include "trezor/crypto/sha2.h"
+#include "keepkey/firmware/signed_metadata.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -125,7 +127,8 @@ static void copy_account(uint8_t out[SOL_PUBKEY_SIZE], const SolanaParsedTx* tx,
 static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                                      size_t* pos_io, SolanaParsedTx* tx,
                                      uint16_t num_accounts, bool* has_unknown,
-                                     bool* force_opaque) {
+                                     bool* force_opaque,
+                                     uint16_t* required_accounts) {
   size_t pos = *pos_io;
   uint16_t num_instructions;
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_instructions);
@@ -135,9 +138,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
   if (num_instructions > SOL_MAX_INSTRUCTIONS) {
     *force_opaque = true;
     tx->num_instructions = 0;
-    /* Don't attempt to parse instruction data — treat as opaque. */
-    *pos_io = raw_len;
-    return 0;
+    /* Still walk all instructions so trailing lookup data is validated. */
   } else {
     tx->num_instructions = (uint8_t)num_instructions;
   }
@@ -145,7 +146,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
   for (uint16_t i = 0; i < num_instructions; i++) {
     if (pos >= raw_len) return -1;
     uint8_t program_idx = raw[pos++];
-    if (program_idx >= num_accounts) return -1;
+    bool external = program_idx >= num_accounts;
+    if (external && !required_accounts) return -1;
+    if (required_accounts && *required_accounts <= program_idx)
+      *required_accounts = (uint16_t)program_idx + 1;
 
     uint16_t num_acct_indices;
     n = read_compact_u16(raw + pos, raw_len - pos, &num_acct_indices);
@@ -157,7 +161,12 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     pos += num_acct_indices;
 
     for (uint16_t j = 0; j < num_acct_indices; j++) {
-      if (acct_indices[j] >= num_accounts) return -1;
+      if (acct_indices[j] >= num_accounts) {
+        if (!required_accounts) return -1;
+        external = true;
+      }
+      if (required_accounts && *required_accounts <= acct_indices[j])
+        *required_accounts = (uint16_t)acct_indices[j] + 1;
     }
 
     uint16_t data_len;
@@ -174,6 +183,14 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     }
 
     SolanaParsedInstruction* pi = &tx->instructions[i];
+    if (external) {
+      /* Lookup accounts are not in the signed static list. Never index that
+       * list or classify this instruction using an unresolved account. */
+      pi->type = SOL_INSTR_UNKNOWN;
+      *has_unknown = true;
+      *force_opaque = true;
+      continue;
+    }
     memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
 
     /* Classify and decode */
@@ -608,7 +625,7 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   pos += SOL_PUBKEY_SIZE;
 
   n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
-                                &has_unknown, &force_opaque);
+                                &has_unknown, &force_opaque, NULL);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
   /* Reject if there are unconsumed bytes — prevents hidden trailing data */
@@ -656,8 +673,10 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
   pos += SOL_PUBKEY_SIZE;
 
+  uint16_t required_accounts = num_accounts;
   n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
-                                &has_unknown, &force_opaque);
+                                &has_unknown, &force_opaque,
+                                &required_accounts);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
   uint16_t lookup_table_count;
@@ -665,6 +684,7 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
 
+  uint32_t total_accounts = num_accounts;
   for (uint16_t i = 0; i < lookup_table_count; i++) {
     uint16_t writable_count, readonly_count;
     if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
@@ -681,9 +701,12 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
     pos += n;
     if (pos + readonly_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
     pos += readonly_count;
+    total_accounts += (uint32_t)writable_count + readonly_count;
+    if (total_accounts > 256) return SOL_TX_REVIEW_MALFORMED;
   }
 
-  if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
+  if (pos != raw_len || required_accounts > total_accounts)
+    return SOL_TX_REVIEW_MALFORMED;
   return SOL_TX_REVIEW_OPAQUE;
 }
 
@@ -973,4 +996,48 @@ bool solana_offchain_message_sign(const HDNode* node,
   memzero(envelope, sizeof(envelope));
   memzero(sig, sizeof(sig));
   return true;
+}
+
+bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
+                                 const uint8_t (*accounts)[32],
+                                 size_t num_accounts, uint32_t signer_key_id,
+                                 const uint8_t* sig, size_t sig_len) {
+  if (!raw_tx || !accounts || !sig || num_accounts == 0) return false;
+  if (num_accounts > SOL_MAX_LUT_ACCOUNTS) return false;
+  /* uint32 field: reject out-of-range slots BEFORE narrowing to the uint8 the
+   * keyring uses, so key_id 256 cannot alias slot 0. Same reasoning as
+   * solana_token_info_trusted(). */
+  if (signer_key_id >= METADATA_MAX_KEYS) return false;
+
+  /* Bind to the transaction by hashing the exact bytes being signed. Solana
+     signs the message directly, so a sha256 over it is ours alone and never
+     collides with the ed25519 signature the device is about to produce. */
+  uint8_t msg_hash[SHA256_DIGEST_LENGTH];
+  sha256_Raw(raw_tx, raw_len, msg_hash);
+
+  /* Build the preimage in full and hand it over RAW: verify_attestation()
+     hashes what it is given, so passing a digest here would verify over
+     sha256(sha256(preimage)) and no honest signer could ever match it. Same
+     shape as solana_token_info_trusted(). Bounded by SOL_MAX_LUT_ACCOUNTS, so
+     the worst case is 25 + 32 + 4 + 8*32 = 317 bytes. */
+  static const char kTag[] = "KeepKeySolanaTxAccounts/1";
+  uint8_t blob[sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
+               SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
+  size_t n = 0;
+  memcpy(blob + n, kTag, sizeof(kTag) - 1);
+  n += sizeof(kTag) - 1;
+  memcpy(blob + n, msg_hash, sizeof(msg_hash));
+  n += sizeof(msg_hash);
+  uint32_t count = (uint32_t)num_accounts;
+  blob[n++] = (uint8_t)count;
+  blob[n++] = (uint8_t)(count >> 8);
+  blob[n++] = (uint8_t)(count >> 16);
+  blob[n++] = (uint8_t)(count >> 24);
+  for (size_t i = 0; i < num_accounts; i++) {
+    memcpy(blob + n, accounts[i], SOL_PUBKEY_SIZE);
+    n += SOL_PUBKEY_SIZE;
+  }
+
+  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
+                                            sig, sig_len);
 }
