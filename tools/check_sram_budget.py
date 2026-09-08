@@ -23,10 +23,11 @@ import json
 import sys
 import tarfile
 
-from elftools.elf.elffile import ELFFile  # pip install pyelftools
-
-
 def read_symbols(elf_path):
+    try:
+        from elftools.elf.elffile import ELFFile
+    except ImportError:
+        sys.exit("ERROR: install pyelftools==0.32 to read ARM ELF symbols")
     with open(elf_path, "rb") as f:
         elf = ELFFile(f)
         symtab = elf.get_section_by_name(".symtab")
@@ -86,10 +87,14 @@ def main():
 
     with open(args.budgets) as source:
         budgets = json.load(source)
-    reserve_min = budgets.get("variants", {}).get(args.variant, {}).get(
-        "reserve_min", budgets["reserve_min"])
-    frame_margin = budgets.get("variants", {}).get(args.variant, {}).get(
-        "frame_margin", budgets["frame_margin"])
+    selected = dict(budgets)
+    selected.update(budgets.get("variants", {}).get(args.variant, {}))
+    for key in ("reserve_min", "frame_margin"):
+        value = selected.get(key)
+        if type(value) is not int or value <= 0:
+            sys.exit(f"ERROR: budget {key} must be a positive integer")
+    reserve_min = selected["reserve_min"]
+    frame_margin = selected["frame_margin"]
 
     syms = read_symbols(args.elf)
     gap = syms["_stack"] - syms["_ebss"]
