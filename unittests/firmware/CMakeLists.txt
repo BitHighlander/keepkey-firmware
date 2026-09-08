@@ -10,6 +10,7 @@ set(sources
     eos_authorization.cpp
     eos.cpp
     ethereum.cpp
+    ethereum_metadata_handlers.cpp
     fsm.cpp
     mayachain.cpp
     osmosis.cpp
