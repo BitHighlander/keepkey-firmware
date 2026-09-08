@@ -376,6 +376,9 @@ bool mayachain_parseConfirmMemo(const char* swapStr, size_t size) {
   // Check for add liquidity
   else if (strncmp(fields[0], "ADD", 3) == 0 || *fields[0] == 'a' ||
            *fields[0] == '+') {
+    if (nfields > 5) {
+      return false;
+    }
     // add liquidity pool address (optional)
     const char* pool = (nfields > 2 && fields[2][0] != '\0') ? fields[2] : NULL;
 

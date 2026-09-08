@@ -328,8 +328,9 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
                "Sign this RUNE transaction on %s? "
-               "Additional network fees apply.",
-               sign_tx->chain_id)) {
+               "Additional network fees apply. "
+               "Account %" PRIu64 ", sequence %" PRIu64 ".",
+               sign_tx->chain_id, sign_tx->account_number, sign_tx->sequence)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

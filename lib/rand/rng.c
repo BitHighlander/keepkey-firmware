@@ -91,6 +91,12 @@ bool rng_persistent_error_step(uint32_t* samples) {
   return true;
 }
 
+#ifndef EMULATOR
+/* Set when reset_rng() could not discard the first post-RNGEN word itself;
+ * random32() then discards the next ready word before returning one. */
+static bool rng_discard_pending = false;
+#endif
+
 void reset_rng(void) {
 #ifndef EMULATOR
   /* disable RNG */
@@ -115,9 +121,11 @@ void reset_rng(void) {
   // random32()'s own error path deals with it.
   {
     uint32_t cnt = 100 /* microseconds */ * 20;
+    rng_discard_pending = true;
     while (cnt--) {
       if (RNG_SR & RNG_SR_DRDY) {
         (void)RNG_DR;
+        rng_discard_pending = false;
         break;
       }
     }
@@ -135,7 +143,12 @@ uint32_t random32(void) {
     rng_sr_img = RNG_SR;
     if ((rng_sr_img & (RNG_SR_SEIS | RNG_SR_CEIS)) == 0) {
       if (rng_sr_img & RNG_SR_DRDY) {
-        new = RNG_DR;
+        if (rng_discard_pending) {
+          (void)RNG_DR;
+          rng_discard_pending = false;
+        } else {
+          new = RNG_DR;
+        }
       }
     } else if ((rng_sr_img & (RNG_SR_SECS | RNG_SR_CECS)) == 0) {
       /* Reset RNG interrupt status bits (SECS, CECS errors no longer

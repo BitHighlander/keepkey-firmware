@@ -310,8 +310,10 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
                "Sign this %s transaction on %s? "
-               "Additional network fees apply.",
-               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id)) {
+               "Additional network fees apply. "
+               "Account %" PRIu64 ", sequence %" PRIu64 ".",
+               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id,
+               sign_tx->account_number, sign_tx->sequence)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

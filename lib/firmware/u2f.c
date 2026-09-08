@@ -704,9 +704,32 @@ bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
   return true;
 }
 
-static bool request_user_presence(const char* title, const char* body_fmt,
-                                  const char* arg) {
-  bool fits = layoutU2FDialog(true, title, body_fmt, arg);
+typedef enum {
+  U2F_PROMPT_CREATE,
+  U2F_PROMPT_SIGN_IN,
+  U2F_PROMPT_RESET,
+} u2f_prompt_t;
+
+/* Every format below is a literal: the device build compiles with
+ * -Werror=format-nonliteral and layoutU2FDialog is printf-attributed. */
+static bool request_user_presence(u2f_prompt_t kind, const char* arg) {
+  const char* title;
+  bool fits;
+  switch (kind) {
+    case U2F_PROMPT_CREATE:
+      title = "Create Passkey";
+      fits = layoutU2FDialog(true, title, "Create a passkey for %s?", arg);
+      break;
+    case U2F_PROMPT_SIGN_IN:
+      title = "Use Passkey";
+      fits = layoutU2FDialog(true, title, "Sign in to %s?", arg);
+      break;
+    default:
+      title = "Erase Passkeys";
+      fits = layoutU2FDialog(
+          true, title, "Delete %s and the PIN? This cannot be undone.", arg);
+      break;
+  }
   if (!fits) {
     // rp_id is host-controlled and can run up to 253 chars; the credential
     // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
@@ -745,17 +768,14 @@ static bool request_user_presence(const char* title, const char* body_fmt,
 
 bool ctap2_request_user_presence(const char* rp_id, bool registration) {
   return request_user_presence(
-      registration ? "Create Passkey" : "Use Passkey",
-      registration ? "Create a passkey for %s?" : "Sign in to %s?", rp_id);
+      registration ? U2F_PROMPT_CREATE : U2F_PROMPT_SIGN_IN, rp_id);
 }
 
 /* authenticatorReset is an irreversible mass deletion, not a login: the screen
  * must say what the press commits to. Reusing the "Sign in to %s?" dialog read
  * as an ordinary assertion prompt. */
 bool ctap2_request_reset_confirmation(void) {
-  return request_user_presence("Erase Passkeys",
-                               "Delete %s and the PIN? This cannot be undone.",
-                               "ALL saved passkeys");
+  return request_user_presence(U2F_PROMPT_RESET, "ALL saved passkeys");
 }
 
 bool ctap2_user_presence_was_cancelled(void) {

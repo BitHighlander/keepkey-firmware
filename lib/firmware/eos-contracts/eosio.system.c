@@ -139,7 +139,7 @@ bool eos_compileActionUndelegate(const EosActionCommon* common,
                   "Invalid asset format", false);
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, "Undelegate",
-               "Revoke delegation of %s CPU and %s RAM from %s to %s?\n", cpu,
+               "Revoke delegation of %s CPU and %s NET from %s to %s?\n", cpu,
                net, sender, receiver)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");
     eos_signingAbort();
