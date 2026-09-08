@@ -165,3 +165,9 @@ now identifies the current evidence and explicitly lists pending packet-lifetime
 PR #686 and incomplete full-scope audit. The original coverage inventory remains
 anchored to its original head; it must be reconciled with accumulated fixes
 before final audit closure. No release completeness or Copilot readiness claim.
+
+P02-003 integration dispatched with publish_emulator=false for 7.14.2:
+[34292497524](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34292497524),
+head e546d99798a5e7dbc54ad5fe43b040a2806c8291, confirmed running. This
+validates the later packet-buffer unit separately from the completed earlier
+assembly run. Remaining older runs are not restarted merely because they run long.
