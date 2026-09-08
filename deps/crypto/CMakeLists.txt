@@ -74,3 +74,7 @@ include_directories(
 
 
 add_library(trezorcrypto ${sources})
+# Check-encoded inputs are capped at 128 bytes plus a four-byte checksum.
+# Raw firmware callers encode 32-byte Solana accounts. Keep codec scratch
+# statically bounded so ARM stack-usage reports include its entire frame.
+target_compile_definitions(trezorcrypto PRIVATE BASE58_MAX_BINARY_SIZE=132)
