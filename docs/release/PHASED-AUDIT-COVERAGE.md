@@ -14,7 +14,7 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 | --- | ---: | ---: | ---: | --- |
 | P00-scope-documents | 96 | 14 | 38 | Pending |
 | P01-build-dependencies-release | 46 | 28 | 53 | In progress; [findings](audit-coverage/P01-findings.md) |
-| P02-wire-dispatch-lifetime | 17 | 11 | 17 | Pending |
+| P02-wire-dispatch-lifetime | 17 | 11 | 17 | In progress; [findings](audit-coverage/P02-findings.md) |
 | P03-storage-setup-authorization | 16 | 15 | 15 | Pending |
 | P04-bitcoin-signing | 14 | 13 | 13 | Pending |
 | P05-evm-signing | 26 | 21 | 22 | Pending |

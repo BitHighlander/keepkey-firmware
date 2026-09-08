@@ -928,8 +928,11 @@
       "added": "518",
       "deleted": "25",
       "phase": "P10-ui-platform",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-001 tiny-message credential lifetime fixed and native-tested; remaining path and cross-phase review pending"
     },
     {
       "path": "lib/board/draw.c",
@@ -976,8 +979,11 @@
       "added": "100",
       "deleted": "43",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-001 tiny-message credential lifetime fixed and native-tested; remaining path and cross-phase review pending"
     },
     {
       "path": "lib/board/signatures.c",
@@ -1456,16 +1462,22 @@
       "added": "76",
       "deleted": "6",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-001 tiny-message credential lifetime fixed and native-tested; remaining path and cross-phase review pending"
     },
     {
       "path": "lib/firmware/pin_sm.c",
       "added": "27",
       "deleted": "13",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-001 tiny-message credential lifetime fixed and native-tested; remaining path and cross-phase review pending"
     },
     {
       "path": "lib/firmware/recovery_cipher.c",
@@ -1651,8 +1663,11 @@
       "added": "2",
       "deleted": "1",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_blob": "dbb90ad7e40cc1a2431899eb1a17a3e10571fe84"
     },
     {
       "path": "scripts/build/docker/device/debug.sh",
