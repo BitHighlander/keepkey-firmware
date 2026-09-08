@@ -6,6 +6,8 @@ set(sources
     binance.cpp
     coins.cpp
     cosmos.cpp
+    eos_authorization_probe.c
+    eos_authorization.cpp
     eos.cpp
     ethereum.cpp
     fsm.cpp
