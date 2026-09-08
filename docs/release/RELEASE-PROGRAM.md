@@ -15,8 +15,9 @@ it does not mean endless whole-tree discovery or a proof of zero possible bugs.
 Physical release-signing requirements and the final Copilot checkpoint remain
 separate, explicit gates.
 
-The goal tool rejected replacing the older unfinished usage-limited goal. This
-manifest records the requested expanded objective without falsely completing it.
+The older usage-limited staging goal was closed after its deliverables and this
+expanded program were completed. The goal tracker now records this three-product
+acceptance objective; this manifest and the canonical receipts are its evidence.
 
 ## Canonical products and current evidence
 
