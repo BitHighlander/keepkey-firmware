@@ -32,6 +32,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       cosmos.cpp
       eip712.cpp
       eos.cpp
+      eos_authorization.cpp
+      eos_authorization_probe.c
       ethereum.cpp
       hive.cpp
       mayachain.cpp
