@@ -139,3 +139,13 @@ and passes after; all 501 full native and 93 Bitcoin-only tests pass. Device
 callbacks require ARM validation. Older-release backports and host/ARM
 integration of this new unit are pending. The previously dispatched CI run
 34291743075 targets f20c2497a and therefore does not validate this later fix.
+
+### P02-003 older-release backports staged
+
+Both older products reproduce the native packet-retention failure before the
+fix and pass afterward. 7.14.2 PR [#686](https://github.com/BitHighlander/keepkey-firmware/pull/686),
+head e546d9979, passes all 155 full firmware tests. 7.14.3 PR
+[#687](https://github.com/BitHighlander/keepkey-firmware/pull/687), head 47eae604e,
+passes all 90 Bitcoin-only firmware tests. Each is based on its frozen
+tiny-message-fix predecessor. All three P02-003 units await ARM/host integration;
+the earlier running CI jobs do not include these later packet-buffer fixes.

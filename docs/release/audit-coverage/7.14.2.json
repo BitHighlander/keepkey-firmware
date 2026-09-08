@@ -1547,16 +1547,22 @@
       "added": "0",
       "deleted": "6",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-003 packet lifetime fixed and native tested; remaining transport and device integration review pending."
     },
     {
       "path": "lib/board/usb.c",
       "added": "20",
       "deleted": "29",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-003 packet lifetime fixed and native tested; remaining transport and device integration review pending."
     },
     {
       "path": "lib/board/util.c",
