@@ -242,7 +242,8 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
 }
 
 /* A transport rejection never reaches the chain handler's abort path. Clear
- * in-flight workflows before reporting it so a later packet cannot resume one. */
+ * in-flight workflows before reporting it so a later packet cannot resume one.
+ */
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_workflows();
   layoutHome();
