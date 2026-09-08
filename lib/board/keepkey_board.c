@@ -114,7 +114,8 @@ void kk_board_init(void) {
 /* calc_crc32() - Calculate crc32 for block of memory
  *
  * INPUT
- *     none
+ *     data     - word-aligned memory block
+ *     word_len - number of 32-bit words
  * OUTPUT
  *     crc32 of data
  */
