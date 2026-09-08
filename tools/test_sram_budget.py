@@ -16,25 +16,34 @@ spec.loader.exec_module(gate)
 
 
 class BudgetGate(unittest.TestCase):
-    def run_gate(self, reserve, frames):
+    def run_gate(self, reserve, frames, variant="full"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             budgets = root / "budgets.json"
             budgets.write_text(json.dumps({"reserve_min": 16384,
-                                           "frame_margin": 4096}))
+                                           "frame_margin": 4096,
+                                           "variants": {"full": {}}}))
             archive = root / "frames.tgz"
             with tarfile.open(archive, "w:gz") as output:
-                data = frames.encode()
+                data = frames if isinstance(frames, bytes) else frames.encode()
                 entry = tarfile.TarInfo("build/firmware.c.su")
                 entry.size = len(data)
                 output.addfile(entry, io.BytesIO(data))
             args = ["gate", "--elf", "firmware.elf", "--su-tar", str(archive),
-                    "--budgets", str(budgets), "--variant", "full"]
+                    "--budgets", str(budgets), "--variant", variant]
             with patch.object(gate.sys, "argv", args), patch.object(
                     gate, "read_symbols", return_value={
                         "_ebss": 0x20000000, "_stack": 0x20000000 + reserve
                     }), contextlib.redirect_stdout(io.StringIO()):
                 gate.main()
+
+    def test_unknown_variant_fails(self):
+        with self.assertRaises(SystemExit):
+            self.run_gate(32768, "f.c:1:1:f\t16\tstatic\n", "typo")
+
+    def test_invalid_utf8_fails(self):
+        with self.assertRaises(SystemExit):
+            self.run_gate(32768, b"\xff\t16\tstatic\n")
 
     def test_exact_limits_pass(self):
         self.run_gate(16384, "firmware.c:1:1:send\t12288\tstatic\n")
