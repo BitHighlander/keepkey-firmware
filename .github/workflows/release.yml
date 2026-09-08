@@ -213,8 +213,12 @@ jobs:
       - name: Compute hashes
         working-directory: release
         run: |
-          echo "# KeepKey Firmware v${{ needs.validate.outputs.fw_version }} — Hash Manifest" > HASHES.txt
-          echo "" >> HASHES.txt
+          {
+            echo "# KeepKey Firmware v${{ needs.validate.outputs.fw_version }} — Hash Manifest"
+            echo "# UNSIGNED presign artifacts; signing changes full-image hashes."
+            echo "# Regenerate this manifest from the final signed binaries before publication."
+            echo ""
+          } > HASHES.txt
           for f in *.bin; do
             [ -f "$f" ] || continue
             FULL_HASH=$(sha256sum "$f" | awk '{print $1}')
@@ -309,6 +313,11 @@ jobs:
           - [ ] Signed on air-gapped machine (3/5 signers)
           - [ ] Storage upgrade tested on production device
           - [ ] Signed .bin uploaded, replacing unsigned
+          - [ ] All three signatures verified on each final firmware image
+          - [ ] HASHES manifests regenerated from the final signed binaries,
+                using the attached versioned filenames, and re-uploaded.
+                Signing changes the full-image hash; the attached presign
+                hashes must not be presented as hashes of the signed image.
           - [ ] Release notes finalized
           EOF
 
