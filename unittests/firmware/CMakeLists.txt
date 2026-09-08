@@ -15,6 +15,7 @@ set(sources
     mayachain.cpp
     osmosis.cpp
     nano.cpp
+    nanopb_bounds.cpp
     recovery.cpp
     setup_ceremony.cpp
     ripple.cpp
