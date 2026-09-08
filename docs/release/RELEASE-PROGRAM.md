@@ -7,25 +7,30 @@ internal rehearsal, no upstream publication or release signing.
 
 ## Objective and finish line
 
-Finish when every declared product capability is accounted for, known applicable
-findings are closed or explicitly superseded, required internal checks pass, and
-validated candidates are on the canonical fork branches with exact receipts.
-“Perfect” means that contract is met with no known unresolved in-scope defects;
-it does not mean endless whole-tree discovery or a proof of zero possible bugs.
-Physical release-signing requirements and the final Copilot checkpoint remain
-separate, explicit gates.
+Owner correction: assembly and passing CI do not complete the requested audit.
+The three assembled releases are baselines, not yet accepted for the final
+Copilot checkpoint. Audit every release PR change in bounded phases, review
+cross-phase interactions, resolve actionable findings, re-audit fixes, and rerun
+appropriate validation. Record exact file/hunk coverage and evidence; existing
+passes may be reused only for unchanged, actually reviewed scope.
 
-The older usage-limited staging goal was closed after its deliverables and this
-expanded program were completed. The goal tracker now records this three-product
-acceptance objective; this manifest and the canonical receipts are its evidence.
+The finish line is complete phase coverage and no unresolved actionable findings
+across all three releases. Do not equate green builds or absence of previously
+known defects with a completed review. A future Copilot zero-finding result is
+the target, not a guarantee. Keep release-product PRs into fork develop unmerged
+and dependent phase PRs on frozen predecessors. Copilot remains deferred.
+
+The active goal has been reopened to cover this full audit. Prior assembly
+receipts remain valid test evidence; their readiness claims are superseded by
+this correction and the phase coverage ledger.
 
 ## Canonical products and current evidence
 
 | Product | Canonical fork branch / product PR | Current canonical head | Internal status |
 | --- | --- | --- | --- |
-| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `c72672f06b3bc568183280607d9c3bc8a6245176` | Accepted and advanced; ready for the later Copilot checkpoint |
-| 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `de0251bbdb286ccdc786a5513ebc94bddd890e3f` | Accepted and advanced; both source variants validated |
-| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a18317f8869bb905cac9322f0d76ca7aacbaf544` | Accepted and advanced; both variants validated, ready for the later Copilot checkpoint |
+| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `c72672f06b3bc568183280607d9c3bc8a6245176` | Assembled baseline; complete phased audit pending |
+| 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `de0251bbdb286ccdc786a5513ebc94bddd890e3f` | Assembled baseline; complete phased audit pending |
+| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a18317f8869bb905cac9322f0d76ca7aacbaf544` | Assembled baseline; complete phased audit pending |
 
 Fork develop remains `da075b8cb717b56dc1023edb52c2ccdf171b8a08`. All three
 product PRs target it and remain unmerged. A product PR is the cumulative
@@ -88,14 +93,13 @@ and closed after exact dependency initialization; no token behavior was altered
 for those failures. The older unknown-storage lockout was superseded by the
 current explicit downgrade-erasure policy, and the uncommitted replay was withdrawn.
 
-## Internal program complete
+## Full phased audit in progress
 
-All three canonical products contain their accepted assemblies and exact receipts.
-The product PR descriptions link the evidence and remain open into fork develop.
-No known unresolved in-scope finding remains under the frozen contracts. Internal
-rehearsal is finished; no further broad discovery or feature import is planned.
-Only a concrete failed contract or missing required evidence can reopen acceptance.
-The later upstream-shaped Copilot checkpoint has not been performed.
+See [PHASED-AUDIT-COVERAGE.md](PHASED-AUDIT-COVERAGE.md). All three products
+require complete recorded review coverage before readiness can be declared.
+Prior bounded fixes remain evidence for those specific changes, not a substitute
+for auditing the full release surface. The goal stays active through phased
+review, remediation, interaction review and final assembled validation.
 
 Final physical OLED and signed-upgrade checks are not performed here. The external
 provider tooling's test-key disposition remains a release deliverable, not an

@@ -48,6 +48,23 @@ Updating a fork release branch is internal product assembly, not a develop merge
 an upstream submission, or release publication. A product is ready only when its
 entire declared scope passes; accepting individual units alone is insufficient.
 
+## Full-release review gate
+
+Owner correction, 2026-09-08: assembled branches and passing CI are prerequisites,
+not completion of the requested audit. For each product, freeze its fork develop
+comparison base, merge base, product head and dependency pins. Inventory every
+changed path, including deletions, generated sources, dependencies and automation.
+Partition the actual PR surface into bounded phases. Record reviewed files/hunks,
+security and behavior invariants, concrete findings and their dispositions, and
+cross-phase interactions. Unread paths remain pending even when tests pass.
+
+Use inherited review evidence only when its exact source and scope are recorded.
+Review remediation deltas and affected interactions until no actionable findings
+remain. Do not mark a release ready for the final Copilot checkpoint until every
+phase and the assembled interaction audit is complete. Keep the goal active until
+all three release products meet this gate. This does not authorize Copilot or
+merges into develop.
+
 ## Foundation first
 
 Use the current audited 7.14.2 candidate as the selected foundation. The
