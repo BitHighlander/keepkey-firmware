@@ -322,6 +322,12 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
+  if (!signed_metadata_enforce(hash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "Metadata does not match signed transaction");
+    ethereum_signing_abort();
+    return;
+  }
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
@@ -852,9 +858,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       return;
     }
   }
-  /* No annotation replaces raw approval, so no provider state is retained
-   * across the subsequent streaming transaction. */
-  signed_metadata_clear();
+  /* Approved annotations must still bind to the final transaction digest,
+   * even though raw review remains mandatory. Discard unused metadata. */
+  if (!signed_metadata_relied()) signed_metadata_clear();
 
   // detect ERC-20 token
   if (data_total == 68 && ethereum_isStandardERC20Transfer(msg)) {
@@ -1115,8 +1121,8 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 bool ethereum_signing_isInProgress(void) { return ethereum_signing; }
 
 void ethereum_signing_abort(void) {
-  signed_metadata_clear();
   if (ethereum_signing) {
+    signed_metadata_clear();
     memzero(privkey, sizeof(privkey));
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
