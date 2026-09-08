@@ -296,8 +296,8 @@ bool makerdao_confirmClose(const EthereumSignTx* msg) {
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x79\x20\x37\xe3", 3)) {
-    if (confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
-                                  &otcProvider))
+    if (!confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
+                                   &otcProvider))
       return false;
   }
 
@@ -562,8 +562,8 @@ bool makerdao_confirmWipe(const EthereumSignTx* msg) {
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x8a\x9f\xc4\x75", 4)) {
-    if (confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
-                                  &otcProvider))
+    if (!confirmParamIsOTCProvider(getParam(msg, 3), msg->chain_id,
+                                   &otcProvider))
       return false;
   }
 
@@ -604,7 +604,7 @@ bool makerdao_confirmWipeAndFree(const EthereumSignTx* msg) {
                        sizeof(deposit));
 
   bignum256 withdraw_val;
-  bn_from_bytes(getParam(msg, 2), 32, &withdraw_val);
+  bn_from_bytes(getParam(msg, 3), 32, &withdraw_val);
 
   char withdraw[32];
   ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw,

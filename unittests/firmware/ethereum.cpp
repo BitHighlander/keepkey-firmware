@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/board/layout.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
 #include "keepkey/firmware/ethereum_tokens.h"
@@ -506,4 +507,112 @@ TEST(Ethereum, ZxExchangeProxyChainAllowlist) {
   EXPECT_FALSE(zx_isExchangeProxyChain(250));
   EXPECT_FALSE(zx_isExchangeProxyChain(59144));
   EXPECT_FALSE(zx_isExchangeProxyChain(0xFFFFFFFFu));
+}
+
+// The chain id is bound into the signature (EIP-155) but no screen in the
+// flow names the network; the ticker is the only network indicator. A chain
+// outside the hardcoded ticker switch must therefore not render a bare number.
+TEST(Ethereum, FormatAmountNamesUnlistedChain) {
+  // 1e18 = 0x0de0b6b3a7640000
+  const uint8_t one_eth[8] = {0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0x00, 0x00};
+  bignum256 amount;
+  bn_from_bytes(one_eth, sizeof(one_eth), &amount);
+
+  char buf[96];
+  ethereumFormatAmount(&amount, NULL, 1, buf, sizeof(buf));
+  EXPECT_STREQ("1 ETH", buf);
+
+  ethereumFormatAmount(&amount, NULL, 8453, buf, sizeof(buf));
+  EXPECT_STREQ("1 (chain 8453)", buf) << "Base is not in the ticker switch";
+
+  ethereumFormatAmount(&amount, NULL, 42161, buf, sizeof(buf));
+  EXPECT_STREQ("1 (chain 42161)", buf);
+}
+
+// SaiTub on mainnet (confirmParamIsTub accepts it without a screen).
+static const uint8_t kMakerTub[20] = {0x44, 0x8a, 0x50, 0x65, 0xae, 0xbb, 0x8e,
+                                      0x42, 0x3f, 0x08, 0x96, 0xe6, 0xc5, 0xd5,
+                                      0x25, 0xc0, 0x40, 0xf5, 0x9a, 0xf3};
+
+static void MakeMakerDaoCall(EthereumSignTx* msg, const char* selector,
+                             size_t nparams) {
+  memset(msg, 0, sizeof(*msg));
+  msg->has_chain_id = true;
+  msg->chain_id = 1;
+  msg->has_to = true;
+  msg->to.size = 20;
+  msg->has_data_initial_chunk = true;
+  msg->data_initial_chunk.size = 4 + nparams * 32;
+  memcpy(msg->data_initial_chunk.bytes, selector, 4);
+  memcpy(msg->data_initial_chunk.bytes + 4 + 12, kMakerTub, 20);  // tub
+  msg->data_initial_chunk.bytes[4 + 2 * 32 - 1] = 7;              // cup 7
+}
+
+static void SetMakerDaoAddressParam(EthereumSignTx* msg, size_t idx,
+                                    uint8_t fill) {
+  memset(msg->data_initial_chunk.bytes + 4 + idx * 32 + 12, fill, 20);
+}
+
+// shut(address,bytes32,address): the OTC screen's answer must gate signing
+// in the right direction, and a tainted OTC word must refuse rather than
+// silently skip the screen.
+TEST(Ethereum, MakerDaoCloseHonoursOtcDecision) {
+  EthereumSignTx msg;
+  MakeMakerDaoCall(&msg, "\x79\x20\x37\xe3", 3);
+  SetMakerDaoAddressParam(&msg, 2, 0x11);  // non-OasisDEX OTC provider
+  ASSERT_TRUE(makerdao_isClose(&msg));
+
+  // Approve OTC, approve close.
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  EXPECT_TRUE(makerdao_confirmClose(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  // Reject OTC: nothing further may be asked, nothing signed.
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_FALSE(makerdao_confirmClose(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  // Non-zero high bytes in the OTC word: refuse before any screen.
+  msg.data_initial_chunk.bytes[4 + 2 * 32] = 0x01;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(makerdao_confirmClose(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// wipe(address,bytes32,uint256,address): the OTC provider is param 3, not the
+// wad word at param 2.
+TEST(Ethereum, MakerDaoWipeConfirmsOtcFromParamThree) {
+  EthereumSignTx msg;
+  MakeMakerDaoCall(&msg, "\x8a\x9f\xc4\x75", 4);
+  msg.data_initial_chunk.bytes[4 + 3 * 32 - 1] = 1;  // wad = 1 wei of DAI
+  SetMakerDaoAddressParam(&msg, 3, 0x22);            // OTC provider
+  ASSERT_TRUE(makerdao_isWipe(&msg));
+
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  EXPECT_TRUE(makerdao_confirmWipe(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_FALSE(makerdao_confirmWipe(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  msg.data_initial_chunk.bytes[4 + 3 * 32] = 0x01;  // taint OTC word
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(makerdao_confirmWipe(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// wipeAndFree(address,bytes32,uint256 wad,uint256 jam): both amounts are
+// calldata; the confirm reads jam from param 3 (see makerdao.c). The harness
+// cannot read the screen text, so this only exercises the single-screen path.
+TEST(Ethereum, MakerDaoWipeAndFreeConfirmsWithSingleScreen) {
+  EthereumSignTx msg;
+  MakeMakerDaoCall(&msg, "\xfa\xed\x77\xab", 4);
+  msg.data_initial_chunk.bytes[4 + 3 * 32 - 1] = 1;  // wad
+  msg.data_initial_chunk.bytes[4 + 4 * 32 - 1] = 2;  // jam
+  ASSERT_TRUE(makerdao_isWipeAndFree(&msg));
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  EXPECT_TRUE(makerdao_confirmWipeAndFree(&msg));
+  EXPECT_EQ(0, kkconfirm_drain());
 }

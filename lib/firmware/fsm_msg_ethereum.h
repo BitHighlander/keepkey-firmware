@@ -29,9 +29,11 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
                             /*show_addridx=*/false))
     return TXOUT_COMPILE_ERROR;
 
-  if (!coin->has_forkid) return TXOUT_COMPILE_ERROR;
+  /* Label the amount with the chain the signature commits to (EIP-155
+   * msg->chain_id), not the ETHEREUM coin's hardcoded mainnet forkid. */
+  if (!msg->has_chain_id || msg->chain_id < 1) return TXOUT_COMPILE_ERROR;
 
-  const uint32_t chain_id = coin->forkid;
+  const uint32_t chain_id = msg->chain_id;
 
   const uint8_t* value_bytes;
   size_t value_size;

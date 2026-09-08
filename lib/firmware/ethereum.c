@@ -45,6 +45,7 @@
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha3.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 
 #define _(X) (X)
@@ -406,6 +407,7 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
   bignum256 bn1e9;
   bn_read_uint32(1000000000, &bn1e9);
   const char* suffix = NULL;
+  char chain_suffix[24];
   int decimals = 18;
   if (token == UnknownToken) {
     strlcpy(buf, "Unknown token value", buflen);
@@ -464,6 +466,15 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         case 43114:
           suffix = " AVAX";
           break;  //  Avalanche C-Chain
+        default:
+          /* The chain id is committed to the signature (EIP-155), and no
+           * other screen in the flow names the network. An unlisted chain
+           * must not render a bare, unitless number: name the chain so the
+           * user can see which network's native asset they are sending. */
+          snprintf(chain_suffix, sizeof(chain_suffix), " (chain %" PRIu32 ")",
+                   cid);
+          suffix = chain_suffix;
+          break;
       }
     }
   }
