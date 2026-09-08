@@ -31,7 +31,6 @@
 
 #define EMULATOR_FLASH_FILE "emulator.img"
 
-uint32_t __stack_chk_guard;
 
 static int urandom = -1;
 
