@@ -1223,8 +1223,11 @@
       "added": "329",
       "deleted": "70",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "native input completeness; 7.15 screenshot input gate and selection binding; P01-004 staged, remaining report contract review pending"
     },
     {
       "path": "scripts/verify-token-def.py",
