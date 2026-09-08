@@ -10,10 +10,10 @@ extern "C" {
 #include "messages-ethereum.pb.h"
 #include "trezor/crypto/secp256k1.h"
 
-// From keepkey_board.h, which we can't include here: its shutdown(void)
-// declaration clashes with sys/socket.h's shutdown(int, int).
-void kk_board_init(void);
 }
+
+// Share the one-time bootstrap with the restored FSM tests.
+void kk_test_board_init(void);
 
 #include "gtest/gtest.h"
 #include <cstring>
@@ -91,7 +91,7 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
 bool kkconfirm_preload(int nYes, int nNo) {
   static bool initialized = false;
   if (!initialized) {
-    kk_board_init();  // canvas + runnable queues for confirm's draw path
+    kk_test_board_init();  // canvas + runnable queues for confirm's draw path
     fsm_init();       // registers the usb rx callback + message maps
     usbInit("");      // binds the emulator UDP ports
     initialized = true;
