@@ -36,8 +36,11 @@
       "added": "255",
       "deleted": "55",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "artifact selection, packaging, manifest order and token permission applicability; remaining workflow contract review pending"
     },
     {
       "path": ".gitignore",
@@ -1748,8 +1751,12 @@
       "added": "272",
       "deleted": "0",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_fix_staged",
+      "evidence": [
+        "P01-findings.md#p01-001",
+        "https://github.com/BitHighlander/keepkey-firmware/pull/669"
+      ],
+      "reviewed_blob": "e4503cd2316a0fa6e884f963072134ec491d6b43"
     },
     {
       "path": "scripts/release/verify-signatures.py",

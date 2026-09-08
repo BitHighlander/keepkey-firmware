@@ -13,7 +13,7 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 | Phase | 7.14.2 paths | 7.14.3 paths | 7.15 paths | Status |
 | --- | ---: | ---: | ---: | --- |
 | P00-scope-documents | 96 | 14 | 38 | Pending |
-| P01-build-dependencies-release | 46 | 28 | 53 | Pending |
+| P01-build-dependencies-release | 46 | 28 | 53 | In progress; [findings](audit-coverage/P01-findings.md) |
 | P02-wire-dispatch-lifetime | 17 | 11 | 17 | Pending |
 | P03-storage-setup-authorization | 16 | 15 | 15 | Pending |
 | P04-bitcoin-signing | 14 | 13 | 13 | Pending |

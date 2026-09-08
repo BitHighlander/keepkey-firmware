@@ -36,8 +36,11 @@
       "added": "185",
       "deleted": "288",
       "phase": "P01-build-dependencies-release",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P01-findings.md"
+      ],
+      "reviewed_scope": "artifact selection, packaging, manifest order and token permission applicability; remaining workflow contract review pending"
     },
     {
       "path": ".gitignore",
