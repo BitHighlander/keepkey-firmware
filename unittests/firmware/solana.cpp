@@ -1031,6 +1031,12 @@ TEST(Solana, RejectsExcessInstructions) {
   raw[pos++] = 9;
 
   SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+  for (unsigned i = 0; i < 9; ++i) {
+    raw[pos++] = 1;  // static program index
+    raw[pos++] = 0;  // no instruction accounts
+    raw[pos++] = 0;  // no instruction data
+  }
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
@@ -1132,6 +1138,67 @@ TEST(Solana, VersionedMessageWithLookupTableIsOpaque) {
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+}
+
+TEST(Solana, VersionedExternalAccountsRemainOpaque) {
+  uint8_t raw[256];
+  size_t pos = 0;
+
+  raw[pos++] = 0x80; /* v0 prefix */
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+
+  raw[pos++] = 3;
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memset(raw + pos, 0x00, 32);
+  pos += 32;
+
+  memset(raw + pos, 0xBB, 32);
+  pos += 32;
+
+  raw[pos++] = 1;
+  const size_t program_offset = pos;
+  raw[pos++] = 2;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 3; /* first loaded account */
+  raw[pos++] = 12;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0xCA;
+  raw[pos++] = 0x9A;
+  raw[pos++] = 0x3B;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0x00;
+
+  raw[pos++] = 1; /* one lookup table */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;      /* table key */
+  raw[pos++] = 1; /* writable indexes count */
+  raw[pos++] = 0; /* writable index */
+  raw[pos++] = 2; /* readonly indexes count */
+  raw[pos++] = 1;
+  raw[pos++] = 2;
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+  EXPECT_EQ(SOL_INSTR_UNKNOWN, tx.instructions[0].type);
+  raw[program_offset] = 5; /* last loaded account may also be the program */
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, pos, &tx));
+  raw[program_offset] = 6; /* outside static + loaded account list */
+  EXPECT_EQ(SOL_TX_REVIEW_MALFORMED, solana_inspectTx(raw, pos, &tx));
+  raw[program_offset] = 2;
+  EXPECT_EQ(SOL_TX_REVIEW_MALFORMED, solana_inspectTx(raw, pos - 1, &tx));
 }
 
 TEST(Solana, MalformedVersionedLookupTableRejects) {
