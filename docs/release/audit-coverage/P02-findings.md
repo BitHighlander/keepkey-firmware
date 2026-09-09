@@ -601,3 +601,27 @@ UINT32_MAX ranges, then enumerated all 589 entries in chunks of at most 24.
 Rehearsal coin_table_bounds.py CHECKOUT BUILD_DIRECTORY retains the checks.
 This is full-variant evidence; Bitcoin-only wire verification and remaining
 common-handler/session interactions are still open.
+
+## P02-006: tiny-message Failure does not unwind the suspended operation
+
+Confirmed on all three current full emulators (firmware code at c593bdbd7 /
+374efb1b6 / f8c5692b3; later stack tips add tests only). Start Ping with message
+"old operation" and button protection, receive ButtonRequest, send GetCoinTable,
+receive Failure, then send a debug yes and ButtonAck. The old Ping returns
+Success with "old operation". Owned-emulator probe fails on every release.
+
+msg_read_tiny invokes the failure callback, which aborts workflow state and
+sends Failure, but returns the same sentinel used for no message. Confirmation
+continues waiting; the blocking passphrase poll can likewise keep waiting.
+Reset's P03-001 commit gate prevents an aborted setup commit but does not solve
+this general suspended-operation lifetime defect. Keep the examples under this
+single root cause rather than opening a separate finding for every handler.
+
+Status OPEN. Remediation must distinguish terminal receive rejection from idle
+polling, unwind confirmation/PIN/passphrase/dice consumers, preserve exactly one
+terminal reply, and permit a subsequent new operation. Merely mapping failure
+to Cancel risks duplicate Failure replies from the unwinding callers and is not
+sufficient without reviewing that boundary. Confirmed tiny-poll consumers in
+7.15: confirm_sm.c, pin_sm.c, passphrase_sm.c, dice_input.c; 7.14.2 has no dice
+path. No signing exploit or production button bypass is claimed by this Ping
+reproduction; it establishes the invalid protocol lifetime after Failure.
