@@ -1,0 +1,123 @@
+# P04 Bitcoin signing audit — in progress
+
+## P04-001: input-history digest reads beyond the transaction ID array
+
+Existing defect, present on all three staged release heads: signing.c passes prev_hash.bytes to txin_dgst_addto but uses sizeof(TxInputType_prev_hash_t). The generated type is PB_BYTES_ARRAY_T(32), containing a length member as well as the array. A compiled layout probe with the actual PB_FIELD_16BIT=1 and PB_NO_PACKED_STRUCTS=1 flags reports wrapper=34, bytes=32, bytes_offset=2, hash_offset=36 and prev_index_offset=72. Thus the old range hashes two padding bytes beyond the array, not additional transaction ID bytes. The first probe omitted PB_FIELD_16BIT and reported 33; that is not the build-specific receipt. Probe source/executable: /private/tmp/txin-layout.cpp and /private/tmp/txin-layout.
+
+Correction uses sizeof(tx->inputs[0].prev_hash.bytes). This preserves the intended 32-byte history input and excludes representation padding. It affects the duplicate-output warning history, not the cryptographic transaction signature digest. No demonstrated key leak or invalid signature is claimed. Staged drafts: #735 (7.15 c46ae0aad), #736 (7.14.3 3dd0d7619), #737 (7.14.2 5c9d8a3ab), each against its immediate predecessor. No canonical branch advanced.
+
+Validation: native rebuilds completed for all five configurations. Existing Signing/Transaction suites pass 8 full and 7 Bitcoin-only cases on 7.15 and 9 per variant on 7.14.3. The 7.14.2 filtered run selected zero tests and is not accepted evidence; its complete native suite instead passes 160 tests. Logs /private/tmp/{715,715-btc,7143,7143-btc}-input-digest-tests.log and /private/tmp/7142-input-digest-full-native.log. These tests exercise signing and transaction regressions; the exact read-range proof comes from the source expression and generated layout, not a claim that those tests exercise poisoned padding.
+
+Reviewed scope so far: complete txin_check.h/txin_check.c and their production call sites in signing.c, transaction.c, fsm.c and fsm_msg_common.h; existing duplicate-output regression in transaction.cpp. Remaining work includes history state across multi-output/change/OP_RETURN flows, authorization and cancellation interactions, and the rest of the Bitcoin signing phase. No whole-file signing.c/transaction.c acceptance is claimed. The helper files are unchanged against frozen develop on the current 7.15 head, but their interactions remain in scope.
+
+## P04-002: resetting input history per output falsely refuses duplicate payments
+
+Confirmed on 7.15 c46ae0aad. STAGE_REQUEST_3_OUTPUT finalizes the input hash for every output, while the first payment calls save_and_reset and empties the context. A second equal amount/address output in the same transaction therefore compares an empty-input digest against the real input digest and is refused as a duplicate transaction. Targeted regression fails before correction with compile_output=-1 and an extra warning screen (`/private/tmp/715-output-history-red.log`). This is an existing state-lifetime defect, not introduced by P04-001's read bound.
+
+Prototype 29e14b4a4 on audit/715-p04-output-history finalizes a copy of the SHA256 context, preserves the transaction input hash through payment and OP_RETURN outputs, and leaves reset ownership at signing start/abort. Renamed save_and_reset to save and removed obsolete reset_only. The existing changed-input refusal test now explicitly starts each transaction's current hash; changed inputs still refuse. The new regression covers repeated identical payments and a payment after OP_RETURN, with exact confirmation counts. Nine Signing/Transaction tests pass on full and Bitcoin-only 7.15 (`715-output-history-green.log`, `715-btc-output-history-green.log`). Registered existing confirm_test_utils.cpp for Bitcoin-only and removed the transaction test guard so its confirmation tests actually execute. The initial Bitcoin-only seven-test result excluded the new regression and is superseded.
+
+Local CMake regeneration initially selected an incompatible protobuf generator/output invocation. Restored the known local build.ninja plugin/option arguments and regenerated its transport stamp; the corrected Bitcoin-only build completes. No tracked protobuf generation change was made. Cross-release propagation, whole-suite/ARM validation and remaining history semantics (including cancellation after output approval) are still pending. This prototype is not release acceptance.
+
+Cross-release propagation: 7.14.3 c8f47fce7 is draft #739 above #736; 7.14.2 d4c23c9d5 is draft #740 above #737. 7.14.3 already has signing start/abort resets and the shared confirmation helper; 11 Signing/Transaction cases pass on each variant, including repeated payments and OP_RETURN. 7.14.2 lacked the lifecycle reset prerequisite: added reset_current at both signing start and abort and registered txin_history.cpp. Its complete native suite passes 162 tests, including repeated finalization/save retaining input history and real signing_abort resetting current inputs while preserving the comparison key. Its helper-level tests are not claimed as end-to-end output confirmation tests. Logs /private/tmp/7143-output-history-tests.log, 7143-btc-output-history-tests.log, 7142-output-history-tests.log. 7.14.2 CMake regeneration required restoring the known local protobuf generation arguments and transport stamp; no tracked generation change. Full release acceptance remains open.
+
+7.15 complete-suite interaction correction: full native passed 507 tests after the output-history/resource changes, but Bitcoin-only stopped in USBRX.TinyAcknowledgementDoesNotReusePreviousSecret with Address already in use. Registering the shared confirmation helper made the transaction tests initialize sockets before USBRX; its older Bitcoin-only setup still called usbInit directly. Changed USBRX to the same kkconfirm_preload/drain initializer already used by full and 7.14.3. Draft #742, commit 039e2f964, sits above resource draft #741. The complete Bitcoin-only suite now passes 99 tests (/private/tmp/715-btc-latest-native.log); full receipt is /private/tmp/715-latest-native.log. This test-harness regression was introduced by the P04 prototype and is not a firmware socket defect. The focused seven/nine-case passes did not establish complete-suite compatibility. Full host preflight is running against an owned emulator on a leased random port; its first invocation lacked the optional pytest-timeout plugin and collected no tests, then restarted with the runner's 15-minute process timeout retained.
+
+Complete full-host preflight for the latest 7.15 production tree (resource fix 91439c70f, followed by test-only 039e2f964), host pin 6268e38: 727 passed, 30 skipped, 168 subtests passed in 121.84 seconds. JUnit /private/tmp/715-build-native-host-preflight.xml independently contains 757 cases, 30 skipped, zero failures/errors; log /private/tmp/715-full-host-preflight.log. Runner /private/tmp/715-full-host-preflight.py uses the pinned host Emulator helper with its own flash directory and leased random UDP ports, KK_FORCE_UDP=1, a 15-minute process timeout, and finally halts its process. Full native receipt: 507 tests; Bitcoin-only native after shared initializer correction: 99 tests. The full host skips include six dylib-only cases, eleven Bitcoin-only cases, disabled structured EIP-712/TRON/typed-data paths, an exact-RC18 boundary case, a superseded Osmosis gate, the known emulator PIN-timeout limitation and the absent burned-version case. These are not passes; remaining transport/variant/feature coverage needs its own evidence. Bitcoin-only host preflight is now running separately. Current report-input validator also accepts the recorded CI fixture XMLs and rejects 16 missing/empty/malformed/no-case mutations; those historical inputs exercise validation logic, not current binary provenance.
+
+Header review completed without actionable findings for include/keepkey/firmware/signing.h: 7.14.2 blob d3dc676718659f58619fb5d2c1694354ff8b0d2f, 7.14.3 2a4433887a5f0eb973ae753c69d8f4e124ddd6c6, 7.15 d132cf2509de6400248cbccb886fcea1bdeb5fa4. Read each complete header and matched exported declarations to signing.c definitions. Common lifecycle functions use consistent transport/HDNode types; newer variants include size_t directly for path helper counts; 7.14.3 test-state hooks are guarded by DEBUG_LINK in declarations and definitions. Product-specific checksum helper naming is explicit, not treated as interchangeable. This closes these header entries only; implementation guards, transaction authorization, state lifecycle and tests retain their separate open coverage.
+
+7.15 Bitcoin-only host preflight completed: 314 passed, 443 skipped, 107 subtests passed in 46.21 seconds. JUnit /private/tmp/715-build-native-bitcoin-host-preflight.xml independently has 757 cases, 443 skips and zero failures/errors. Log /private/tmp/715-btc-host-preflight.log. Most exclusions are full-product-only or unsupported coin APIs; six dylib cases remain transport-specific. Current modified production C/header files pass clang-format-20. Dispatched nonpublishing CI on exact 039e2f9644876443ad1c5ad78082cee0e8901cba, run 34312975959; it remains active and is not acceptance yet. 7.14.3 current c8f47fce7 complete native suites pass 197 full / 97 Bitcoin-only; its full host preflight is running against freshly rebuilt emulators.
+
+7.14.3 complete preflight at c8f47fce78337aaa0ccd18cf35ea575f8e49827e, host 5dae186a36851005600cc69ee74a89ef8736124f: 197 full / 97 Bitcoin-only native tests pass; host full 537 pass / 218 skip / 107 subtests, Bitcoin-only 309 pass / 446 skip / 107 subtests. Each JUnit has 755 cases and zero failures/errors (/private/tmp/7143-full-host-preflight.xml and 7143-btc-host-preflight.xml); logs use the same stems. Skips remain exclusions for unsupported product capabilities and transport-specific tests, not positive coverage. Changed production C/header formatting passes. The current report-input validator accepts historical CI XML fixtures and rejects 12 invalid-input mutations. Dispatched nonpublishing CI 34313363985 on the exact head; it remains active. The 7.14.2 latest emulator is rebuilt and complete host preflight is running. Its runner borrows only the 7.14.3 owned-process helper because its own host pin predates that module; restores the pinned import path and asserts keepkeylib resolves under the 7.14.2 checkout before running its own suite. Its report-input validator also rejects all 12 invalid mutations.
+
+7.14.2 complete preflight at d4c23c9d53551c62c6b18f00a8902da4796c7a64, host d3b26aee636d6d203fd91e988d1b273c4971a3ab: complete native suite 162 pass; host 434 pass / 47 skip / 5 subtests in 65.80 seconds. JUnit /private/tmp/7142-full-host-preflight.xml has 481 cases, 47 skips, no failures/errors. Log /private/tmp/7142-full-host-preflight.log explicitly identifies the library under the 7.14.2 checkout. Current modified production files pass clang-format-20; report-input validator rejects 12 invalid-input mutations. Four separately invoked framed/unframed migration/reboot cases pass on the rebuilt emulator, with KK_TEST_BAND=0 retaining the product's unbanded policy. Log /private/tmp/7142-current-pinned-migration.log verifies the host-library path. Dispatched nonpublishing CI for this exact head; no canonical release advanced.
+
+## P04-003: mixed-script change ignores extended leading wallet components
+
+Existing defect reproduced on 7.15 predecessor 039e2f964: input
+`7'/44'/0'/0'/0/0` and output `8'/84'/0'/0'/1/0` were accepted by the real
+change-path predicate despite different leading wallet branches. The mixed-script
+helper compared only the last five components. This can bypass output confirmation
+for that classification; no broadcast or key-extraction claim is made.
+
+Correction compares the first count-minus-five components after the minimum and
+equal-length guards, before mixed-purpose acceptance. Reviewed all helper callers:
+input account grouping, change classification and phase-two path consistency.
+Decoder path capacities bound counts to eight; subtraction follows count >= 5.
+The existing same-account fallback already compares the leading path and remains
+unchanged. Regression uses real signing initialization/input extraction/change
+checks for lengths 5–8, positive matching prefixes, each changed prefix, and a
+second input from a different leading branch. Full five-component behavior stays
+accepted. The original six-component negative assertion failed before correction
+(`/private/tmp/715-change-prefix-red.log`).
+
+Staged fork PRs: #743 (7.15 a1e7f5315), #744 (7.14.3 44d0c60c1), #745
+(7.14.2 ebf0eb500), each targeting its immediate predecessor. Source comparison
+establishes applicability to all three. 7.14.2 reuses its existing USB test bootstrap
+and registers the case in usb_rx.cpp; newer products use the shared confirmation
+initializer in signing.cpp. No additional production test hook is introduced.
+
+Complete native suites run serially from fresh directories: 7.14.2 163 pass,
+7.14.3 full 198 / BTC 98 pass, 7.15 full 508 / BTC 100 pass. Logs
+`/private/tmp/{7142,7143,7143-btc,715,715-btc}-change-prefix-full-native.log`.
+The initial sandbox-denied UDP bind was not a pass; the permitted complete rerun
+succeeded. New-head host/ARM validation and canonical integration remain pending.
+Earlier successful CI runs 34313676228/34313363985/34312975959 bind predecessors,
+not these new heads. No complete P04 or release acceptance is claimed.
+
+P04-003 complete host preflight passes at the published code heads: 7.14.2
+434 pass/47 skip; 7.14.3 full 537/218 and BTC 309/446; 7.15 full 727/30 and BTC
+314/443. Logs and JUnit use /private/tmp/<variant>-change-prefix-host-preflight.*.
+7.14.3 CI 34317143241 and 7.15 CI 34317146153 succeeded on 44d0c60c1/a1e7f5315.
+7.14.2 CI 34317140433 failed compiling its new test: usb_rx.cpp used std::memcpy
+without including <cstring>; the Mac build supplied a transitive declaration
+that the Linux toolchain did not. ARM passed; native/host CI did not run. Added
+the required include on original PR #745 at 875af590e and merged that predecessor
+into test-evidence PR #748 without rewriting history. Production behavior and
+pins are unchanged; corrected CI remains pending. Raw failure log:
+/private/tmp/7142-change-prefix-ci-job.log. This is an introduced test-portability
+regression, not a firmware signing failure.
+
+## P04-004: refused duplicate output authorizes its next identical retry
+
+Existing defect in all three products: compile_output saved the current input,
+amount and destination key even after the duplicate-warning branch set retval=-1.
+The next identical rejected input set then matched that newly saved key and was
+accepted. The extended real-output regression fails on 7.15 e8fe34811 with
+compile_output=25 instead of -1 and two unconsumed warning messages on retry
+(/private/tmp/715-rejected-history-red.log). Earlier P04 history-lifetime fixes
+preserved this pre-existing unconditional save; they did not introduce it.
+
+Moved save after the refusal return. Three repeated changed-input attempts must
+remain refused; the original accepted input set must remain retryable afterward.
+7.14.3/7.15 extend their existing real compile_output test. 7.14.2 adds that test
+to its registered usb_rx.cpp with its existing initialization and a bounded
+acknowledgement driver, rejection sentinel, exact queue drain and socket RAII.
+This proves warning-policy behavior, not a demonstrated invalid signature/broadcast.
+
+Staged #750 (7.14.2 b08a68717), #749 (7.14.3 684a27714), #751 (7.15 b57eb71c2).
+Complete native passes: 164 / (198 full, 98 BTC) / (508 full, 100 BTC).
+Logs /private/tmp/<variant>-rejected-history-native.log; changed production
+formatting passes. Host preflight is running; exact-head ARM/CI and canonical
+integration remain pending. This is the third primary-release unit since B01;
+the next checkpoint is assembly/validation rather than unrelated discovery.
+
+Cancellation/history disposition: clearing comparison history on every abort
+would remove the guard even after earlier signatures have been returned during
+a multi-input transaction. Preserve accepted history across signing_abort; reset
+only the in-progress input digest. The conservative warning may apply after an
+output was approved but a transaction later cancelled; this is existing policy,
+not proof of a completed transaction. The single comparison key is a heuristic,
+not a complete multi-output transaction transcript. No redesign of that policy is
+included. P04-004 closes the concrete rejected-key overwrite independently.
+
+P04-004 full host preflight succeeded on every exact published production head:
+7.14.2 434 pass/47 skip; 7.14.3 full 537/218 and BTC 309/446; 7.15 full 727/30
+and BTC 314/443. All five JUnit files independently show zero failures/errors;
+case totals are 481, 755, 755, 757 and 757. Files use
+/private/tmp/<variant>-rejected-history-host-preflight.{log,xml}.
+7.14.2 CI 34412006017 succeeded on b08a68717; 7.14.3 CI 34412520221 and 7.15 CI
+34412523117 were dispatched on 684a27714/b57eb71c2 and remain under inspection.
+The isolated B02 assembly merges the canonical B01 receipt into b08a68717 with
+no conflict and a verified empty non-receipt diff. Canonical update awaits the
+artifact receipt; full release audit remains open.

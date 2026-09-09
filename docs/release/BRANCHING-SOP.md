@@ -1,48 +1,24 @@
 # Branch and submodule SOP
 
-Three branches, three jobs. Getting the submodule pins wrong is the main source
-of tech debt here, and every rule below exists because something broke.
+## Current release rehearsal authority
 
-## The branches
+For the 7.14.2, 7.14.3 and 7.15 program,
+[REHEARSAL-SOP.md](REHEARSAL-SOP.md) governs. The older direct alpha → develop
+flow is superseded for this program. Develop remains frozen and unmerged.
 
-| branch | what it is | submodules pin | review |
-|---|---|---|---|
-| **alpha** | fork integration. Everything lands here first. | **fork masters** | none needed |
-| **develop** | staging for upstream. PRs from here go upstream. | commits that exist **upstream** | upstream review |
-| **upstream master** | shipped | released pins | upstream |
+| Surface | Purpose | Dependency identity |
+| --- | --- | --- |
+| alpha | Existing fork integration and source evidence | Record exact source and gitlink SHAs before extraction; do not advance dependencies merely to follow a branch. |
+| Canonical fork release branches → fork develop | Cumulative release products | Exact reachable pins, dependency delta review and validated assembly receipts. Fork-only pins are allowed during internal rehearsal. |
+| Small fork audit branches → frozen predecessor | Bounded review and remediation | Exact base/head and pins; independent units may target fork develop. |
+| Final upstream-shaped fork branches | Later external review and submission preparation | Verify public dependency availability and upstream requirements before submission. |
 
-Flow: `alpha` -> `develop` -> PR into upstream -> upstream `master`.
-
-## The rule that prevents most of the pain
-
-**alpha pins fork masters. Not commits, not feature branches.**
-
-That is the point of alpha: because every pin is a fork master, alpha can always
-be resolved without human review. A pin at a loose commit cannot be resolved by
-anyone who does not already know which branch it came from, and the merge stalls
-waiting for that person.
-
-So when 7.15 work lives on a device-protocol feature branch, the fix is **not**
-to pin that branch from alpha. Land the work on `BitHighlander/device-protocol`
-master, then pin master.
-
-Cost of getting this wrong, observed 2026-08-20: alpha pinned device-protocol
-`cf308fd5e`, 32 ahead of fork master and 29 behind. Merging develop into alpha
-then required a four-level reconcile -- firmware, python-keepkey,
-device-protocol, and the lockfiles inside it -- before any 7.15 work could move.
-
-## develop pins must exist upstream
-
-A PR into upstream carries its submodule pins. If a pin exists only on the fork,
-a reviewer cannot resolve the submodule and CI cannot check out the tree.
-
-Two legitimate shapes on develop:
-
-- a commit already on the upstream submodule's master
-- the head of an **open upstream PR** for that submodule -- the dress-rehearsal
-  pin, which merges once the firmware PR goes green
-
-Say which one it is in the PR body.
+A git submodule always records a commit. Record its repository and reachable
+source ref as provenance; a moving branch name never substitutes for the SHA.
+Internal hardening does not require merging dependencies into fork master or
+opening upstream dependency PRs. Resolve public dependency requirements during
+the final upstream SOP. No upstream push, develop merge or Copilot request is
+a prerequisite for internal staging or assembly.
 
 ## Traps that have actually bitten
 
@@ -51,9 +27,10 @@ can be far ahead of upstream's, and a PR based on it carries that entire
 divergence as if it were your change -- 33 files instead of 14, including an
 unrelated submodule bump. Base on the upstream branch you are targeting.
 
-**Fork-head PRs run the fork's CI.** A PR whose head lives on the fork runs the
-fork's CircleCI config, which can be red for reasons unrelated to the change.
-Push the branch to the upstream repo and PR from there.
+**CI context matters.** Inspect the workflow, repository, event and exact head
+that produced a result. Resolve fork validation problems within the fork staging
+program; do not push upstream as a workaround. External CI requirements belong
+to the final upstream phase.
 
 **`--ours` / `--theirs` take the whole file.** They do not merge hunks. Taking a
 side to settle one conflict silently reverts every other change in that file.
