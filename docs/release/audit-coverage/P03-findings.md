@@ -227,3 +227,18 @@ yet; the rehearsal is recorded evidence, not a claim that CI checks this case.
 This resolves the concrete newer-band preservation evidence gap for these
 heads. Physical interruption during a storage write and broader migration
 format coverage remain separate obligations.
+
+## 7.14.3 storage declaration changes reviewed
+
+Reviewed include/keepkey/firmware/storage.h and lib/firmware/storage.h changes
+at 7eea5be7b. Version 17 floor and reserved base 10000 agree with compile-time
+assertions and the migration dispatch. The refusal enum is returned by both
+full and Bitcoin-only locked cases and explicitly handled in storage_init;
+metadata is restored without committing that wallet. storage_wipe clears the
+lock after erasing its sectors. The new staged U2F setter changes only the RAM
+counter; the existing persistent setter calls it and then storage_commit.
+Declarations match definitions and setup_commit uses the staged form.
+
+Marked these header changes reviewed without actionable findings, supported
+by the recorded full/BTC build and restart checks. This is declaration/API
+scope, not completion of storage.c or hardware fault-path review.
