@@ -720,8 +720,11 @@
       "added": "22",
       "deleted": "2",
       "phase": "P06-other-chain-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P06 response lifetime and reachable memo length-prefix fixes, output bounds and status propagation reviewed. Remaining Ripple semantics/display obligations open."
     },
     {
       "path": "include/keepkey/firmware/signed_metadata.h",
@@ -1373,8 +1376,11 @@
       "added": "78",
       "deleted": "6",
       "phase": "P06-other-chain-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P06 response lifetime and reachable memo length-prefix fixes, output bounds and status propagation reviewed. Remaining Ripple semantics/display obligations open."
     },
     {
       "path": "lib/firmware/fsm_msg_solana.h",
@@ -1518,8 +1524,11 @@
       "added": "63",
       "deleted": "8",
       "phase": "P06-other-chain-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P06 response lifetime and reachable memo length-prefix fixes, output bounds and status propagation reviewed. Remaining Ripple semantics/display obligations open."
     },
     {
       "path": "lib/firmware/signed_metadata.c",

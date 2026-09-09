@@ -424,3 +424,29 @@ remains open into fork develop and now lists these results plus pending later
 packet/Ripple units. This accepts the tested assembly only; complete audit and
 Copilot readiness remain unproven. Batched ledger/SOP updates are published
 with this canonical advancement.
+
+## P06 bounded Ripple serializer review
+
+At 39503dacf, traced all production callers of ripple_serializeVarint and
+ripple_serialize: only ripple_signTx drives transaction serialization; its
+caller is the guarded Ripple handler. Current variable lengths are classic
+account payload 20, public key 33, DER signature bounded conservatively by its
+75-byte destination, and 7.15 memo at most 199 bytes. Thus the three-byte length
+branch and its upper-limit boundary are not reachable from shipped handlers.
+The 192-byte case is reachable and fixed separately in P06-004.
+
+Conservative maximum signed output is 404 bytes: type 3, flags 5, sequence 5,
+destination tag 5, last-ledger sequence 6, amount 9, fee 9, public key 35,
+signature 77, source/destination 22 each, memo 206. This fits the 1,024-byte
+serialized payload. The signed pass uses sizeof(serialized_tx), which includes
+the size member, but that overly broad end pointer is not reached by current
+inputs. No current buffer overflow established from it; retain this boundary
+obligation if schemas/callers expand. Older products lack memo serialization
+and have a smaller bound.
+
+The handler checks payment presence, destination length/checksum/version, fee
+range, amount limit and render success before confirmation, and refuses sign
+failure. Reviewed changed status propagation through the serializer and handler.
+Remaining obligations include transaction-flag semantics, complete memo display
+and cancellation coverage, and old-product handling of protocol fields they do
+not implement. This is not complete Ripple acceptance.
