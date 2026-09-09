@@ -350,3 +350,29 @@ ownership match definitions. No actionable declaration issue. Also reviewed the
 values, LAST(17) matches the public version, and macro cleanup remains intact.
 Reserved later format policy is documented in the public header; no reader for
 18/19/20 is claimed. These bounded file reviews do not close P03 as a whole.
+
+### Passphrase cancellation review across all variants
+
+Read the complete passphrase_sm.c state machine. All three release files are
+identical (SHA-1 88b02f6ffdd700f05fe19ac69fdc6f0d9d1db565). The local tiny-message
+buffer, confidential passphrase state and escaped display buffer are scrubbed;
+passphrase caching happens only after successful confirmation. Escape capacity
+is four bytes per input byte plus terminator and uses checked output bounds.
+Owned-emulator rehearsal passed on all five variants at the emulator-erase heads:
+Cancel and Initialize at entry and at confirmation, followed by another protected
+Ping that must request the passphrase again. Cancel returns Failure; Initialize
+returns Features. No cached passphrase or stale terminal response was observed.
+General transport-error unwind interactions remain a separate open obligation.
+
+## P03-005: current PIN and wipe-code stack buffers are not scrubbed
+
+All three pin_sm.c files are identical (SHA-1
+91ac357e834ee395679213235595636404ba31f2) at d59e16cd8 / 8d08a882d / c2197307b.
+Code tracing confirms pin_request decodes credentials into caller-owned PINInfo.
+pin_protect returns from cancellation, wipe-code detection, invalid PIN and
+success without clearing its local PINInfo. change_wipe_code likewise returns
+without clearing either entry. change_pin_staged already uses a common cleanup
+exit, but that does not cover these paths. Existing tiny-buffer cleanup removes
+the transport copy only. This is residual credential material, not an established
+remote extraction primitive. Status OPEN: extend local credential cleanup to all
+returns and validate normal PIN, cancellation, mismatch and wipe-code flows.
