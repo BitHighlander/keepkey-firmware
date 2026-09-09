@@ -327,3 +327,26 @@ and ApplySettings set the counter after other settings have been staged and have
 no subsequent rejection gate before final commit. Both header declaration deltas
 have no actionable findings; implementation and consumer reviews remain scoped
 separately, and this receipt does not close the complete P03 phase.
+
+### Setup test and recovery declaration review
+
+Reviewed complete setup_ceremony.cpp at d59e16cd8 / 8d08a882d / c2197307b.
+7.14.3 and 7.15 files are identical (SHA-1 8fd7d46448accda17ec33eda254607c013247ba2);
+7.14.2 differs only by lacking the two recovery-fragment cases and their include.
+Fixture initialization enables real failure dispatch and aborts between tests.
+Tests cover stage collision, idempotent abort, generated mnemonic cleanup,
+wrong-kind continuation, pre-arm inertness, both ceremony permutations, and
+aborted/wrong-kind commit rejection. The 240-byte mnemonic observation fits the
+pinned crypto implementation's 256-byte static buffer. Additional recovery tests
+use debug-only fill/zero observers for the actual recovery buffers. Native logs
+confirm 7 / 9 / 9 cases passed; the latter logs contain binary bytes and require
+text-mode searching. These tests do not prove flash persistence or every wire
+interleaving, as their coverage comment explicitly states. No test delta needed.
+
+Recovery public headers were read completely: all three differ only in the two
+extra debug-only observer declarations in 7.14.3/7.15; signatures and reset/abort
+ownership match definitions. No actionable declaration issue. Also reviewed the
+7.14.2 storage_versions.inc rollback: entries 1..17 preserve their positional
+values, LAST(17) matches the public version, and macro cleanup remains intact.
+Reserved later format policy is documented in the public header; no reader for
+18/19/20 is claimed. These bounded file reviews do not close P03 as a whole.

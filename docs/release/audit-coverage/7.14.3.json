@@ -401,8 +401,10 @@
       "added": "9",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P03-findings.md: Setup test and recovery declaration review; exact release differences and native execution verified."
+      ]
     },
     {
       "path": "include/keepkey/firmware/reset.h",
@@ -1473,8 +1475,10 @@
       "added": "187",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P03-findings.md: Setup test and recovery declaration review; exact release differences and native execution verified."
+      ]
     },
     {
       "path": "unittests/firmware/signing.cpp",
