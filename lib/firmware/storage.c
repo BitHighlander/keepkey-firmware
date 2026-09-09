@@ -229,7 +229,7 @@ enum StorageVersion {
 _Static_assert(STORAGE_VERSION < STORAGE_VERSION_BTC_ONLY_BASE,
                "storage version must stay below the bitcoin-only band");
 
-static enum StorageVersion version_from_int(int version) {
+static enum StorageVersion version_from_int(uint32_t version) {
 #define STORAGE_VERSION_LAST(VAL)        \
   _Static_assert(VAL == STORAGE_VERSION, \
                  "need to update "       \
@@ -1408,6 +1408,23 @@ static bool storage_getRootSeedCache(const SessionState* ss,
   return true;
 }
 
+// A verified pending record still belongs to its writer's version policy.
+// Refuse incompatible Bitcoin-only records before any marker/magic writes.
+static bool storage_lock_pending_if_required(Allocation pending) {
+  const char* flash = (const char*)flash_write_helper(pending);
+  const uint32_t raw_version = read_u32_le(flash + STORAGE_METADATA_LEN);
+  if (version_from_int(raw_version) != StorageVersion_BTC_ONLY) return false;
+#if BITCOIN_ONLY
+  if (raw_version - STORAGE_VERSION_BTC_ONLY_BASE <= STORAGE_VERSION)
+    return false;
+#endif
+  storage_location = pending;
+  btc_only_locked = true;
+  storage_reset_impl(&session, &shadow_config);
+  storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
+  return true;
+}
+
 void storage_init(void) {
   // A partially erased legacy record may retain magic without valid contents.
   // If a complete pending replacement exists, finish that handoff rather than
@@ -1423,6 +1440,7 @@ void storage_init(void) {
     if (memcmp(active + STORAGE_RECORD_DATA_LEN, erased_trailer,
                sizeof(erased_trailer)) == 0 &&
         find_pending_storage(&pending)) {
+      if (storage_lock_pending_if_required(pending)) return;
       if (!recover_pending_storage(pending)) {
         layout_warning_static("Storage Recovery Failed. Reboot Device!");
         shutdown();
@@ -1437,6 +1455,7 @@ void storage_init(void) {
      * prove the replacement is complete; install its marker first, then make
      * it visible to this firmware and to already-installed bootloaders. */
     if (find_pending_storage(&storage_location)) {
+      if (storage_lock_pending_if_required(storage_location)) return;
       if (!recover_pending_storage(storage_location)) {
         /* Do not reinterpret a verified wallet record as factory-fresh merely
          * because its marker/final-word recovery encountered a flash fault. */
