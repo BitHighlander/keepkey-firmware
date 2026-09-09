@@ -20,7 +20,7 @@ known defects with a completed review. A future Copilot zero-finding result is
 the target, not a guarantee. Keep release-product PRs into fork develop unmerged
 and dependent phase PRs on frozen predecessors. Copilot remains deferred.
 
-The active goal has been reopened to cover this full audit. Prior assembly
+The recorded goal covers this full audit. At the 2026-09-09 checkpoint the app reports it paused; automatic continuation requires the owner to resume it in the app. Work performed during the current turn does not change that control state. Prior assembly
 receipts remain valid test evidence; their readiness claims are superseded by
 this correction and the phase coverage ledger.
 
@@ -37,7 +37,7 @@ heads and terminal results before making readiness claims.
 
 | Product | Canonical fork branch / product PR | Current canonical head | Internal status |
 | --- | --- | --- | --- |
-| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `dedfd7e407a2e17a7a6e7312fb86d7a4deb32b54` | B01 integrated through 02349bf77; durability/signing fixes and full acceptance pending |
+| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `fa28986649a08f7297b98a3a9060baba9cc22b3e` | B02 integrated through b08a68717; full scoped audit acceptance pending |
 | 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `47eae604e183ab1c6c69be7dae43eee60b58326c` | Prior validated integration; subsequent audit fixes pending integration |
 | 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `f20c2497a0990a6690c5bb804414c11cac74bf58` | Prior validated integration; subsequent audit fixes pending integration |
 
@@ -49,7 +49,7 @@ remains bounded. The dirty alpha worktree is preserved.
 The receipts are `docs/release/<version>-COMBINED-CANDIDATE.md` on each product.
 They supersede status snapshots copied into a candidate before assembly.
 
-## Current audit stack tips
+## Historical audit stack snapshot
 
 Verified against fork refs on 2026-09-08. These branches contain later audit
 fixes and are not yet the canonical release products above. Each PR targets its
@@ -160,3 +160,23 @@ each; broader physical/older-loader applicability is not implied. Complete nativ
 passes 164 / (198,98) / (508,100); host preflight and next assembly are pending.
 Corrected P04-003-only 7.14.2 CI 34411206889 is running on 875af590e; newer batch
 production has the additional rejected-history fix and needs its own validation.
+
+## 2026-09-09 B02 and storage-version checkpoint
+
+7.14.2 canonical B02 is fa28986649a08f7297b98a3a9060baba9cc22b3e.
+Relative to validated code b08a68717c46af3204457149580986fe2682a707,
+only three release documentation files differ. CI 34412006017 passed all
+required jobs: 164 firmware / 28 board / 4 crypto native cases; host 434 pass /
+47 skip; screenshots 77 pass / 7 skip; dylib 4 pass. All 23 ARM manifest hashes
+verify; ELF SHA256 0bd957113957713f49391c8f0f910a754c1e2ac6ddd8a7a69fa4a20d8962b78e,
+SRAM reserve 22,500 bytes. Released bootloader 2.1.4 replay closes the named
+decision-routine gap, with limitations recorded in P03. Develop remains frozen.
+The 353-path inventory is still mostly pending; this is bounded integration.
+
+New storage-version audit tips: 7.14.3 #752 (0f64f8032), 7.15 #753 (06b1d249a),
+each above its rejected-output-history predecessor. Native suites pass
+199/99 and 509/101 full/BTC; the 11-case active/pending refusal and recovery
+rehearsal passes on all four variants. Full host suites and exact-head ARM/CI
+are pending. Their canonical products have not advanced. P03-010 and P03-011
+record separate introduced and pre-existing causes. No release is internally
+accepted or ready for Copilot.

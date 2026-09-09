@@ -721,3 +721,41 @@ commit states. It does not execute reset/startup, the fi_defense_delay periphera
 path, other released bootloader binaries, actual flash erases or exhaustive torn
 writes. Broader supported-bootloader applicability and physical release checks
 retain explicit dispositions; no whole-storage-phase acceptance is inferred.
+
+### P03-010 — pending recovery writes before incompatible-version refusal
+
+Origin: regression introduced by the staged durability handoff. On 7.15
+b57eb71c2, a CRC-valid pending future-band record was refused only after its
+magic was published. Reproduction changed offsets 49152–49155; the wallet
+payload remained intact. This violates the existing whole-image preservation
+contract, not evidence of wallet loss. Log: /private/tmp/715-pending-version-red.log.
+
+Fix checks the existing Bitcoin-only band policy before either pending-recovery
+path writes marker/magic. Refusal initializes locked RAM state and preserves
+metadata/device ID without changing flash. Supported pending records retain
+normal recovery. Applies to 7.14.3 and 7.15; 7.14.2 deliberately has no band gate.
+
+### P03-011 — signed classification loses high-bit reserved versions
+
+Origin: pre-existing uint32_t raw version passed to an int classifier. Values
+0x80000000 and 0xffffffff fell through to SUS_Invalid instead of the reserved
+Bitcoin-only band, reaching the reset policy rather than locked preservation.
+The native red regression produced two failures at 7.15 b57eb71c2:
+/private/tmp/715-band-width-red.log. Fix keeps classification uint32_t.
+This preserves the documented reserved-band policy; it does not invent future
+version compatibility or change 7.14.2 policy.
+
+Both fixes are staged together as one version-refusal audit unit: fork #752
+(7.14.3 0f64f8032), #753 (7.15 06b1d249a). Native suites pass 199 full / 99 BTC
+and 509 full / 101 BTC. Repeatable runner
+rehearsals/pending_storage_version_gate.py checks 11 cases per variant: four
+future values in active and pending states, future pending over legacy active,
+supported normal pending recovery, and variant-specific current-band pending.
+Locked cases compare the entire image and device ID; accepted cases retain
+known-wallet address assertions. All four matrices pass without skips.
+Logs: /private/tmp/{7143,7143-btc,715,715-btc}-pending-lock-{native,host}.log.
+The first positive-control attempt incorrectly required the original sector
+after PIN authentication (which legitimately commits/rotates); the corrected
+control checks an active sector plus the unchanged known wallet. That failed
+attempt is not acceptance evidence. Full host regression and exact-head CI/ARM
+remain pending. No whole-storage phase acceptance follows from this unit.
