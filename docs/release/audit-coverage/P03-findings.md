@@ -555,3 +555,28 @@ This review found no new actionable defect in these control paths. Existing
 P03-001 remediation and reset/PIN/dice host receipts remain supporting evidence.
 Whole-flow handling of unexpected tiny messages and BIP85/display interactions
 remain open; these bounded findings do not mark the full phase complete.
+
+### PIN/passphrase file review closure with staged transport remediation
+
+The complete PIN and passphrase state-machine implementations have now been
+read and their changed behavior reviewed across all products. The files share
+the same implementation across releases. PIN input validation precedes matrix
+indexing; cancellation resets the matrix; cached and uncached paths retain
+existing authorization behavior. P03-005 clears local current-PIN/wipe-code
+credentials on return. Passphrase confirmation gates caching and clears input
+and escaped display scratch. Neither recognizes unrelated acknowledgements as
+authorization. Terminal tiny receive rejection now unwinds both through the
+P02-006 receive latch rather than continuing after Failure.
+
+Mark these six file reviews reviewed_fix_staged, referencing P03-005 and
+P02-006, not accepted integration. Host checks cover normal PIN changes,
+invalid PIN input, Cancel/Initialize, passphrase confirmation cancellation,
+and fresh requests after malformed/unknown tiny messages across five variants.
+Wipe-code entry remains disabled in the release handler; no enabled-feature
+runtime claim. Physical fault/timing properties and complete caller behavior
+remain separate phase obligations.
+
+Latest full native suites pass with P02-006: 7.14.2 159, 7.14.3 194,
+7.15 505; Bitcoin-only suites pass 94 and 96 respectively. Combined CI was
+dispatched for 7.14.2 534ac50a9 and 7.14.3 f342d5a73 after their previous runs
+completed. 7.15's older recovery-display CI remains active; no duplicate dispatch.

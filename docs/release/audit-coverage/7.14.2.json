@@ -2055,9 +2055,10 @@
       "added": "39",
       "deleted": "3",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "in_progress",
+      "review_status": "reviewed_fix_staged",
       "evidence": [
-        "P02-findings.md"
+        "P02-findings.md",
+        "P03-findings.md: PIN/passphrase file review closure; P03-005 credential cleanup and P02-006 terminal rejection staged, five-variant behavior/native checks pass; integration pending."
       ],
       "reviewed_scope": "P02-001 tiny-message credential lifetime fixed and native-tested; remaining path and cross-phase review pending"
     },
@@ -2066,9 +2067,10 @@
       "added": "12",
       "deleted": "25",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "in_progress",
+      "review_status": "reviewed_fix_staged",
       "evidence": [
-        "P02-findings.md"
+        "P02-findings.md",
+        "P03-findings.md: PIN/passphrase file review closure; P03-005 credential cleanup and P02-006 terminal rejection staged, five-variant behavior/native checks pass; integration pending."
       ],
       "reviewed_scope": "P02-001 tiny-message credential lifetime fixed and native-tested; remaining path and cross-phase review pending"
     },
