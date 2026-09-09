@@ -430,3 +430,25 @@ variants. Source review establishes cleanup; host tests establish behavior, not
 direct residue observation. Combined ARM/integration validation remains pending.
 Broader recovery review, including backspace and cross-phase interactions,
 remains in progress.
+
+### Recovery input behavior after the current cleanup units
+
+Four existing host cases passed on all five variants: invalid character,
+backspace over the entered phrase followed by re-entry, known word-count
+validation (0..12), and unknown-count terminal failure followed by rejected
+continuation. Heads: e33fa4a00 / 374efb1b6 / f8c5692b3. This supplements normal
+recovery checks; it does not prove previous-word display accuracy during every
+backspace sequence or every transport-error interaction.
+
+CI 34297216508 completed successfully at 7.14.2 emulator-erase head d59e16cd8,
+and 34295830100 completed successfully at 7.15 setup head 8ac4bd9df. Neither
+contains every current fix. New combined validation was dispatched for
+7.14.2 PIN-cleanup and 7.15 recovery-display-cleanup. Artifact inspection and
+canonical integration remain pending. 7.14.3 emulator-erase validation is still
+running and was not restarted.
+
+Recovery source comparison also shows that 7.14.2's debug-only auto_completed_word
+is not included in recovery_cipher_reset, unlike 7.14.3/7.15. Its actual
+post-abort behavior requires a bounded follow-up before declaring recovery
+cleanup complete. Keep this associated with P03 recovery-buffer lifetime review;
+no whole-file completion claim is made from the passing behavior tests above.
