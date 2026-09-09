@@ -38,12 +38,6 @@
 #include <string.h>
 #include <stdint.h>
 
-#ifdef EMULATOR
-/* Native tests may snapshot completed operations to rehearse interrupted
- * commits. */
-__attribute__((weak)) void emulator_flash_operation_completed(void) {}
-#endif
-
 uint8_t HW_ENTROPY_DATA[HW_ENTROPY_LEN];
 
 /*
@@ -109,7 +103,6 @@ void flash_erase_word(Allocation group) {
       svc_flash_erase_sector((uint32_t)s->sector);
 #else
       memset((void*)FLASH_PTR(s->start), 0xff, s->len);
-      emulator_flash_operation_completed();
 #endif
     }
     ++s;
@@ -172,7 +165,6 @@ fww_exit:
   return (retval);
 #else
   memcpy((void*)(flash_write_helper(group) + offset), data, len);
-  emulator_flash_operation_completed();
   return true;
 #endif
 }
@@ -199,7 +191,6 @@ bool flash_write(Allocation group, uint32_t offset, uint32_t len,
   return (retval);
 #else
   memcpy((void*)(flash_write_helper(group) + offset), data, len);
-  emulator_flash_operation_completed();
   return true;
 #endif
 }
