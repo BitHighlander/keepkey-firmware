@@ -252,3 +252,14 @@ The existing fork develop contains later integrations. Reconstruct the selected
 foundation replacement without rewriting develop. Record the original target
 SHA, exact source tree, intentional omissions and reconstruction checks.
 Do not mistake the large replacement diff for a newly authored feature bundle.
+
+## Bound CI work during audit iteration
+
+Batch audit-ledger edits before pushing. After a documentation-only audit push,
+inspect active runs for that exact branch and cancel superseded documentation
+runs, retaining at most the newest one. Verify cancellation reaches a terminal
+state; an accepted cancellation request is not completion. Do not cancel a
+release validation run merely because it is slow. Keep exact-head product
+evidence distinct from documentation CI. Dispatch combined release validation
+once per concrete assembly, recording the run ID and head; inspect that same
+run until terminal before deciding whether another run is justified.

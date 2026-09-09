@@ -348,3 +348,24 @@ Canonical release/7.14.3-bitcoin-only fast-forwarded from 97f970147 to 47eae604e
 PR #627 stays open into develop. Its body now records current evidence and
 pending Ripple PR #692 plus incomplete audit/older-host assertion. No
 full-release acceptance or Copilot readiness claim.
+
+## Ripple integration and older host assertions
+
+Dispatched publish_emulator=false CI for 7.14.2 Ripple head 71617e991:
+34293561568; 7.14.3 head 1ce4d3961: 34293563979; 7.15 combined packet/Ripple/host
+head cecf1ea20: 34293571582. All were confirmed queued. Older 7.15 run
+34291743075 continues separately and excludes these later units.
+
+Permanent older-host assertions staged in python-keepkey fork PRs
+[#78](https://github.com/BitHighlander/python-keepkey/pull/78) at
+c9182c9b6ed11f0d5db054b81d3da2e65b245536 and
+[#79](https://github.com/BitHighlander/python-keepkey/pull/79) at
+8e5eaaaa10787a64f5d54780bb2b5f72d3d82700. Each full release passes all three
+address tests with capture enabled. Firmware pin updates remain pending; the
+newly dispatched older-release runs do not yet execute these assertions.
+
+Found 20 active P00 documentation PR CI runs; requested cancellation of 19
+superseded runs, retaining newest 34293553287. First follow-up confirmed three
+terminal cancellations; others were still processing cancellation. Recheck
+until terminal. Added SOP batching and superseded-documentation cancellation
+rule. This overhead was caused by frequent ledger pushes, not release testing.
