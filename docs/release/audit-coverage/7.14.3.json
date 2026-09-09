@@ -1081,8 +1081,11 @@
       "added": "197",
       "deleted": "22",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending."
     },
     {
       "path": "lib/firmware/storage.h",
@@ -1486,8 +1489,11 @@
       "added": "83",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending."
     },
     {
       "path": "unittests/firmware/storage_cipher_probe.c",

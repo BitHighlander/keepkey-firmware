@@ -129,3 +129,27 @@ Also traced storage_commit's ceremony abort before unrelated writes, its
 Bitcoin-only lock check before flash mutation, and terminal shutdown after
 exhausted write retries. Wider serialization/migration and fault-path evidence
 remain to be completed.
+
+## Bounded 7.14.3 storage-format review
+
+At e298e08a7 implementation (unchanged by 27865aa32 host pin), reviewed the
+V16/V17 plaintext, encrypted payload, and ConfigFlash wrapper offsets. Guards
+precede reads/writes; wrappers reserve 44 bytes for metadata before passing
+the remaining length. Current payload ends at 1501 + 1024 = 2525 bytes. V16
+decryption uses its 512-byte legacy encrypted section; production loaders
+provide the full storage sector, including for legacy versions. The fixed
+plaintext offsets reviewed are inside their conservative 852-byte guard.
+
+read_u32_le promotes unsigned bytes before shifting, avoiding signed-char
+extension; write_u32_le extracts individual bytes. Three focused tests pass:
+Version17RoundTripPreservesUnsignedFieldsAndAbsentSecrets,
+VersionedWritersRejectShortBuffersWithoutWriting, and
+VersionedReadersRejectShortBuffersWithoutChangingState. They prove their
+named boundary/round-trip properties, not complete format compatibility.
+
+Remaining obligations include migration dispatch and flags, stored-string
+termination and consumers, persistence fault behavior, and full cross-product
+comparison. The stored language/label arrays are fixed 16/48 bytes; readers
+copy that entire width, so termination must be traced through legitimate
+writers and corrupted-data handling before closing that scope. No exploit or
+new actionable defect is established by this observation alone.
