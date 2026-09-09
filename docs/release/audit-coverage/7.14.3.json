@@ -409,8 +409,11 @@
       "added": "60",
       "deleted": "1",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_scope": "P03-001 setup commit authorization fixed and full-native/host-tested; wider setup, recovery and transport interaction review pending."
     },
     {
       "path": "include/keepkey/firmware/ripple.h",
@@ -1024,16 +1027,22 @@
       "added": "125",
       "deleted": "84",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_scope": "P03-001 setup commit authorization fixed and full-native/host-tested; wider setup, recovery and transport interaction review pending."
     },
     {
       "path": "lib/firmware/reset.c",
       "added": "315",
       "deleted": "45",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_scope": "P03-001 setup commit authorization fixed and full-native/host-tested; wider setup, recovery and transport interaction review pending."
     },
     {
       "path": "lib/firmware/ripple.c",
