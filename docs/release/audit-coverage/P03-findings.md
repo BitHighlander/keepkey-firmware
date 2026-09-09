@@ -452,3 +452,18 @@ is not included in recovery_cipher_reset, unlike 7.14.3/7.15. Its actual
 post-abort behavior requires a bounded follow-up before declaring recovery
 cleanup complete. Keep this associated with P03 recovery-buffer lifetime review;
 no whole-file completion claim is made from the passing behavior tests above.
+
+## P03-007: 7.14.2 debug recovery word survives cancellation
+
+Owned-emulator reproduction at e33fa4a00: enter synthetic word "all", observe
+successful autocomplete, Cancel, then query recovery_auto_completed_word. It
+still returned "all" after the terminal Failure. recovery_cipher_reset omitted
+this debug-only buffer. This is the follow-up previously recorded in the recovery
+comparison, now confirmed rather than inferred.
+
+Fork PR #719 c593bdbd7 clears the buffer under DEBUG_LINK in the shared reset
+path. The same regression passes after the fix. Unchanged full 7.14.3 374efb1b6
+and 7.15 f8c5692b3 pass the control; both already clear the buffer. Non-debug
+builds contain neither this buffer nor its DebugLink accessor. Status: fixed in
+bounded audit unit, combined validation/canonical assembly pending. No claim
+that ordinary production USB exposes this debug-only field.
