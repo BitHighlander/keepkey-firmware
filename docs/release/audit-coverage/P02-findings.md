@@ -302,3 +302,15 @@ Fast-forwarded canonical release/7.14.2 from bae119589 to e546d9979. Product
 PR #650 remains open into fork develop; its current evidence and pending audit
 wording were updated. P02-003 is integrated for this product. Full release and
 older-release Ripple display review remain open; no Copilot readiness claim.
+
+### P06-002 reproduced and fixed on 7.14.2
+
+Using the release's own pinned host suite and current rebuilt kkemu, the
+screenshot rehearsal returns an empty address before the fix and the expected
+known address after it. All 155 native firmware tests pass.
+[#691](https://github.com/BitHighlander/keepkey-firmware/pull/691), 71617e991,
+keeps the address in a local MAX_ADDR_SIZE buffer and fills the response after
+confirmation, above frozen packet-lifetime head e546d9979. No DEBUG_LINK-off
+production failure claim. Permanent older-host assertion and ARM/host integration
+remain pending. 7.14.3 full-variant reproduction remains pending; its Bitcoin-only
+product does not expose Ripple.

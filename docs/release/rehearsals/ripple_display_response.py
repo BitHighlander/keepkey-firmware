@@ -5,7 +5,7 @@ This rehearsal strengthens the legacy host test that ignored the response.
 import os, sys, subprocess, tempfile, time, unittest, signal
 from pathlib import Path
 if len(sys.argv) != 2:
-    raise SystemExit('usage: ripple_display_response.py CHECKOUT (7.15 full native build required)')
+    raise SystemExit('usage: ripple_display_response.py CHECKOUT (full native build required)')
 root = Path(sys.argv[1]).resolve()
 os.environ['KK_FORCE_UDP'] = '1'
 os.environ['KEEPKEY_SCREENSHOT'] = '1'
