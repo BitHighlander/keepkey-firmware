@@ -15,14 +15,14 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 | P00-scope-documents | 96 | 14 | 38 | Pending |
 | P01-build-dependencies-release | 46 | 28 | 53 | In progress; [findings](audit-coverage/P01-findings.md) |
 | P02-wire-dispatch-lifetime | 17 | 11 | 17 | In progress; [findings](audit-coverage/P02-findings.md) |
-| P03-storage-setup-authorization | 16 | 15 | 15 | Pending |
+| P03-storage-setup-authorization | 16 | 15 | 15 | In progress; [findings](audit-coverage/P03-findings.md) |
 | P04-bitcoin-signing | 14 | 13 | 13 | Pending |
 | P05-evm-signing | 26 | 21 | 22 | Pending |
-| P06-other-chain-signing | 53 | 45 | 52 | Pending |
+| P06-other-chain-signing | 53 | 45 | 52 | In progress; Ripple findings in [ledger](audit-coverage/P02-findings.md) |
 | P07-provider-solana-trust | 12 | 5 | 9 | Pending |
 | P08-zcash-cryptography | 6 | 0 | 6 | Pending |
 | P09-entropy-authentication | 27 | 12 | 16 | Pending |
-| P10-ui-platform | 33 | 19 | 29 | Pending |
+| P10-ui-platform | 33 | 19 | 29 | In progress; backup acknowledgement finding in [ledger](audit-coverage/P02-findings.md) |
 
 ## Frozen product comparisons
 

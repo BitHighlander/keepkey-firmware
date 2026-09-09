@@ -61,3 +61,29 @@ Current integration runs for the new older-release heads are 34295659497
 and 34294765461 completed successfully, but do not validate subsequent Ping
 and setup changes. Their artifact evidence has not been fully inspected for
 canonical advancement. The superseded P00 run 34294793245 is terminal cancelled.
+
+### Reset implementation review and expanded host suite
+
+Traced 7.14.3 reset staging and rollback, arming after prompts, entry and commit
+kind checks, initial entropy cleanup, bounded mnemonic formatting (page bound
+checked before indexing), final temporary-buffer cleanup, and debug-only digest
+accessors. Dice/RNG implementations remain P09 dependencies; this does not close
+their audit. All eight reset host tests pass on full and Bitcoin-only 7.14.3,
+covering dice, failed PIN, re-entry, initialized-device refusal and 12/18/24 words.
+
+7.15 previous integration 34293571582 completed successfully at cecf1ea20239d140cb43dc0629219fd9179ae452. New accumulated head 8ac4bd9df is dispatched as
+34295830100 with publication disabled. No canonical advancement yet.
+
+## P03-002: dice reset test duplicates a debug backup word group (open)
+
+Expanded full 7.15 reset suite: seven tests pass, test_reset_device_dice fails
+its final mnemonic equality. Observed one four-word group repeated twice while
+the expected mnemonic contains it once. The dice loop appends read_reset_word
+on every ButtonRequest. confirm_constant_power_paged emits one request per
+physical debug subpage; reset.c retains the same logical group for those
+subpages. The normal reset helper already recognizes that repeated-group
+protocol, whereas the dice helper does not. This is a test-collection mismatch
+that requires correction and revalidation; do not suppress the equality check.
+7.14.3 has the same dice collector and debug paging semantics; applicability
+to its random inputs remains to be exercised. 7.14.2 has no dice product feature.
+The full 7.15 suite is not counted as passing.
