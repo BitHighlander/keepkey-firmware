@@ -491,3 +491,19 @@ No actionable findings in these bounded test-file reviews.
 Corrected an earlier receipt's generated mnemonic capacity: bip39.c declares
 mnemo[24 * 10], not 256 bytes (the latter belongs to a different cache field).
 The existing 240-byte cleanup observation remains valid and exactly spans mnemo.
+
+### Setup storage-boundary coverage added
+
+Fork units #720 132db57da (7.14.2), #721 1f97ea58c (7.14.3),
+#722 2e1c67e9e (7.15) add StagingIsInertAndForeignCommitAborts using the existing
+storage-backed PassphraseTransition fixture. It verifies original active label,
+passphrase protection and PIN state remain unchanged after staging/arming;
+a foreign storage_commit disarms the ceremony, retains those active settings,
+and prevents stagePin/rearm from reviving the discarded staging state.
+
+All six PassphraseTransition cases pass on all five release variants. This
+adds direct boundary coverage missing from the setup-only cases; it does not
+prove every staged field, every wire ordering, or physical fault tolerance.
+Reviewed the test's preconditions and postconditions and updated the obsolete
+comment claiming firmware-unit cannot initialize flash. Firmware behavior is
+unchanged. Combined CI and canonical integration remain pending.
