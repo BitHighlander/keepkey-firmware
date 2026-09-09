@@ -107,3 +107,25 @@ each above its frozen commit-authorization fix. Exact dependency fetch succeeds
 through the configured repository URL. All eight reset tests pass using each
 pinned dependency. Combined CI for these newer pins remains pending. 7.14.2
 has no dice feature and receives no test change for it.
+
+## Bounded cipher observer review across all products
+
+Both observer files are byte-identical across current release audit heads:
+storage_cipher_probe.c blob 10a58f670e4d1085e688ad3555b619b3120bad3a and
+its header blob 31183ce1b6b4a8c3e32d42346f3420dcff59cbf7. Reviewed all code:
+macros wrap the real storage implementation only in the native test target;
+observers delegate to real AES and memzero, inspect live objects immediately
+after wiping, clear retained observer pointers, and require cipher invocation,
+complete wipes and compatible round-trip output. The IV subtraction by 32
+returns to a real 64-byte array in each reviewed production caller on all
+three products. Native builds include the observer source and link successfully.
+
+Four focused 7.14.3 cipher-cleanup tests pass; earlier full native suites cover
+the identical observer on the other products. Marked these two test-harness
+files reviewed on each inventory. This is not acceptance of storage format,
+cryptographic design, power-loss behavior, or complete storage.c implementation.
+
+Also traced storage_commit's ceremony abort before unrelated writes, its
+Bitcoin-only lock check before flash mutation, and terminal shutdown after
+exhausted write retries. Wider serialization/migration and fault-path evidence
+remain to be completed.

@@ -1494,16 +1494,24 @@
       "added": "129",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_blob": "10a58f670e4d1085e688ad3555b619b3120bad3a",
+      "reviewed_scope": "Reviewed complete shared cipher test observer and declaration; delegates real AES/memzero, validates live-object wipe and round trip, bounded IV offset matches each release implementation. Test harness scope only."
     },
     {
       "path": "unittests/firmware/storage_cipher_probe.h",
       "added": "24",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "reviewed_blob": "31183ce1b6b4a8c3e32d42346f3420dcff59cbf7",
+      "reviewed_scope": "Reviewed complete shared cipher test observer and declaration; delegates real AES/memzero, validates live-object wipe and round trip, bounded IV offset matches each release implementation. Test harness scope only."
     },
     {
       "path": "unittests/firmware/storage_passphrase.cpp",
