@@ -278,6 +278,13 @@ int memory_firmware_hash(uint8_t* hash);
 int memory_storage_hash(uint8_t* hash, Allocation storage_location);
 bool find_active_storage(Allocation* storage_location);
 
+/// Find a complete crash-recovery record whose leading magic has not yet been
+/// committed. This is used only when no active storage record exists.
+bool find_pending_storage(Allocation* storage_location);
+
+/// Install the boot-protection marker and atomically finalize a pending record.
+bool recover_pending_storage(Allocation storage_location);
+
 /// Find the storage location *after* the active one.
 Allocation next_storage(Allocation active);
 
