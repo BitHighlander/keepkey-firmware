@@ -77,3 +77,47 @@ into test-evidence PR #748 without rewriting history. Production behavior and
 pins are unchanged; corrected CI remains pending. Raw failure log:
 /private/tmp/7142-change-prefix-ci-job.log. This is an introduced test-portability
 regression, not a firmware signing failure.
+
+## P04-004: refused duplicate output authorizes its next identical retry
+
+Existing defect in all three products: compile_output saved the current input,
+amount and destination key even after the duplicate-warning branch set retval=-1.
+The next identical rejected input set then matched that newly saved key and was
+accepted. The extended real-output regression fails on 7.15 e8fe34811 with
+compile_output=25 instead of -1 and two unconsumed warning messages on retry
+(/private/tmp/715-rejected-history-red.log). Earlier P04 history-lifetime fixes
+preserved this pre-existing unconditional save; they did not introduce it.
+
+Moved save after the refusal return. Three repeated changed-input attempts must
+remain refused; the original accepted input set must remain retryable afterward.
+7.14.3/7.15 extend their existing real compile_output test. 7.14.2 adds that test
+to its registered usb_rx.cpp with its existing initialization and a bounded
+acknowledgement driver, rejection sentinel, exact queue drain and socket RAII.
+This proves warning-policy behavior, not a demonstrated invalid signature/broadcast.
+
+Staged #750 (7.14.2 b08a68717), #749 (7.14.3 684a27714), #751 (7.15 b57eb71c2).
+Complete native passes: 164 / (198 full, 98 BTC) / (508 full, 100 BTC).
+Logs /private/tmp/<variant>-rejected-history-native.log; changed production
+formatting passes. Host preflight is running; exact-head ARM/CI and canonical
+integration remain pending. This is the third primary-release unit since B01;
+the next checkpoint is assembly/validation rather than unrelated discovery.
+
+Cancellation/history disposition: clearing comparison history on every abort
+would remove the guard even after earlier signatures have been returned during
+a multi-input transaction. Preserve accepted history across signing_abort; reset
+only the in-progress input digest. The conservative warning may apply after an
+output was approved but a transaction later cancelled; this is existing policy,
+not proof of a completed transaction. The single comparison key is a heuristic,
+not a complete multi-output transaction transcript. No redesign of that policy is
+included. P04-004 closes the concrete rejected-key overwrite independently.
+
+P04-004 full host preflight succeeded on every exact published production head:
+7.14.2 434 pass/47 skip; 7.14.3 full 537/218 and BTC 309/446; 7.15 full 727/30
+and BTC 314/443. All five JUnit files independently show zero failures/errors;
+case totals are 481, 755, 755, 757 and 757. Files use
+/private/tmp/<variant>-rejected-history-host-preflight.{log,xml}.
+7.14.2 CI 34412006017 succeeded on b08a68717; 7.14.3 CI 34412520221 and 7.15 CI
+34412523117 were dispatched on 684a27714/b57eb71c2 and remain under inspection.
+The isolated B02 assembly merges the canonical B01 receipt into b08a68717 with
+no conflict and a verified empty non-receipt diff. Canonical update awaits the
+artifact receipt; full release audit remains open.

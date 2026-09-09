@@ -12,26 +12,37 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 
 | Phase | 7.14.2 paths | 7.14.3 paths | 7.15 paths | Status |
 | --- | ---: | ---: | ---: | --- |
-| P00-scope-documents | 96 | 14 | 38 | Pending |
+| P00-scope-documents | 103 | 24 | 50 | Pending |
 | P01-build-dependencies-release | 46 | 28 | 53 | In progress; [findings](audit-coverage/P01-findings.md) |
-| P02-wire-dispatch-lifetime | 17 | 11 | 17 | In progress; [findings](audit-coverage/P02-findings.md) |
-| P03-storage-setup-authorization | 16 | 15 | 15 | In progress; [findings](audit-coverage/P03-findings.md) |
-| P04-bitcoin-signing | 14 | 13 | 13 | In progress; [findings](audit-coverage/P04-findings.md) |
+| P02-wire-dispatch-lifetime | 18 | 16 | 18 | In progress; [findings](audit-coverage/P02-findings.md) |
+| P03-storage-setup-authorization | 16 | 18 | 17 | In progress; [findings](audit-coverage/P03-findings.md) |
+| P04-bitcoin-signing | 15 | 13 | 13 | In progress; [findings](audit-coverage/P04-findings.md) |
 | P05-evm-signing | 26 | 21 | 22 | Pending |
-| P06-other-chain-signing | 53 | 45 | 52 | In progress; Ripple findings in [ledger](audit-coverage/P02-findings.md) |
+| P06-other-chain-signing | 53 | 45 | 53 | In progress; Ripple findings in [ledger](audit-coverage/P02-findings.md) |
 | P07-provider-solana-trust | 12 | 5 | 9 | Pending |
 | P08-zcash-cryptography | 6 | 0 | 6 | Pending |
 | P09-entropy-authentication | 27 | 12 | 16 | Pending |
-| P10-ui-platform | 33 | 19 | 29 | In progress; backup acknowledgement finding in [ledger](audit-coverage/P02-findings.md) |
+| P10-ui-platform | 31 | 19 | 29 | In progress; backup acknowledgement finding in [ledger](audit-coverage/P02-findings.md) |
 
-## Frozen product comparisons
+## Reconciled staged product comparisons
 
-- 7.14.2: head `c72672f06b3bc568183280607d9c3bc8a6245176`, merge base `da075b8cb717b56dc1023edb52c2ccdf171b8a08`;
-  [path ledger](audit-coverage/7.14.2.json), 346 paths.
-- 7.14.3: head `de0251bbdb286ccdc786a5513ebc94bddd890e3f`, merge base `1af2ffe7de1a40780b78b0be3807a140f9de0dd0`;
-  [path ledger](audit-coverage/7.14.3.json), 183 paths.
-- 7.15: head `a18317f8869bb905cac9322f0d76ca7aacbaf544`, merge base `1af2ffe7de1a40780b78b0be3807a140f9de0dd0`;
-  [path ledger](audit-coverage/7.15.json), 270 paths.
+These are prospective complete product surfaces at the staged audit tips, not
+claims that those tips are canonical or accepted. Initial inventory anchors remain
+in each JSON's initial_inventory. Canonical heads are recorded separately.
+
+- 7.14.2: staged head `b08a68717c46af3204457149580986fe2682a707`, merge base `da075b8cb717b56dc1023edb52c2ccdf171b8a08`;
+  [path ledger](audit-coverage/7.14.2.json), 353 paths.
+- 7.14.3: staged head `684a2771483ee80b49fa29fa081d95799d5610c9`, merge base `1af2ffe7de1a40780b78b0be3807a140f9de0dd0`;
+  [path ledger](audit-coverage/7.14.3.json), 201 paths.
+- 7.15: staged head `b57eb71c2ee1babfeb20805b7f6b64ad70c4e925`, merge base `1af2ffe7de1a40780b78b0be3807a140f9de0dd0`;
+  [path ledger](audit-coverage/7.15.json), 286 paths.
+
+Every current path has a candidate blob identity. Existing reviewed entries with
+matching explicit reviewed blobs retain that binding. Reviews whose identity was
+only described in narrative need evidence binding, not automatic whole-file
+rediscovery. A changed reviewed blob reopens only the affected delta. Paths no
+longer differing from the comparison base remain recorded as interaction evidence.
+No pending entry is closed by this reconciliation or by green CI.
 
 ## Phase execution contract
 
@@ -50,7 +61,7 @@ They do not populate pending review entries automatically. No Copilot in this ph
 
 ## Closing and refreshing coverage
 
-The frozen comparisons above are historical inventory anchors. Before batch or
+The comparisons above bind the named staged candidates. Before subsequent batch or
 release acceptance, reconcile paths against the actual candidate and recorded
 comparison base, including new remediation files, deletions and dependency
 changes. Retain prior reviewed blob/hunk identities and evidence; explicitly

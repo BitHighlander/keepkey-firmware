@@ -150,3 +150,13 @@ Complete native suites pass 163 / (198 full, 98 BTC) / (508 full, 100 BTC).
 New-head host/ARM checks remain pending; predecessor green CI is not new-head
 acceptance. P04-003 records exact scope and evidence. No tracked local firmware
 changes remain from the previously interrupted change-path unit.
+
+Current batch after B01: #750 b08a68717 (7.14.2), #749 684a27714 (7.14.3),
+#751 b57eb71c2 (7.15). Includes P04-003, bootloader replay export and P04-004.
+Reconciled prospective PR inventories contain 353 / 201 / 286 paths. Most remain
+pending; this is scope accounting, not audit completion. Named bootloader 2.1.4
+protection routines preserve all 17 snapshots in all five builds with 799 controls
+each; broader physical/older-loader applicability is not implied. Complete native
+passes 164 / (198,98) / (508,100); host preflight and next assembly are pending.
+Corrected P04-003-only 7.14.2 CI 34411206889 is running on 875af590e; newer batch
+production has the additional rejected-history fix and needs its own validation.
