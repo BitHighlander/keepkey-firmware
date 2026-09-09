@@ -267,3 +267,21 @@ whole-image Bitcoin future-version checks also require rerunning against the
 corrected flash model. This finding concerns emulator fidelity; it does not
 establish that hardware sector erase is broken. Status: OPEN. Add real emulated
 sector erasure and a regression for rotation before trusting reboot tests.
+
+### P03-004 staged correction and replacement evidence
+
+Fork audit units: 7.14.2 PR #712 d59e16cd8; 7.14.3 PR #713 8d08a882d;
+7.15 PR #714 c2197307b. Each is based on its frozen stored-string audit branch.
+The emulator now fills each selected sector with 0xff using flash_sector_map.
+Hardware erase behavior is unchanged. The native regression verifies the whole
+selected sector and both surrounding regions; it failed before the correction.
+Board suites pass: 19 / 17 / 14 respectively.
+
+With corrected emulators, 7.14.2 ordinary reboot, V16 migration and unknown-version
+reset pass. Bitcoin-band preservation now fails, consistent with that release's
+absence of the band-refusal feature. This is not counted as a supported test or a
+new firmware regression. Both variants of 7.14.3 and 7.15 pass all four runtime
+migration tests. The whole-image future Bitcoin-only version preservation probe
+also passes on both corrected Bitcoin-only emulators. These replace the prior
+false-model receipts for the stated cases only. Wider native and host integration
+validation remains pending; no canonical product branch has advanced for this fix.
