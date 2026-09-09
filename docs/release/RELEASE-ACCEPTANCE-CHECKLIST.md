@@ -1,6 +1,6 @@
 # Internal release acceptance control
 
-Updated 2026-09-08 for the SOP revision. This document defines remaining gates;
+Updated 2026-09-09 after B02 integration. This document defines remaining gates;
 it does not assert a fresh remote or CI verification. Follow
 [REHEARSAL-SOP.md](REHEARSAL-SOP.md). Finding details and coverage remain in the
 [phase ledgers](PHASED-AUDIT-COVERAGE.md); exact product and audit identities are
@@ -12,20 +12,28 @@ Primary milestone: internally accept canonical 7.14.2. Follow with 7.14.3
 Bitcoin-only and 7.15. Shared-fix applicability remains required across all three.
 All three are auditing; none is internally accepted or ready for Copilot.
 
-Before the next implementation session:
+Current execution checkpoint:
 
-- [x] Verify canonical heads, audit tips, dependency pins and working-tree changes (B01 restart).
-- [x] Inspect existing release CI: 34313676228, 34313363985 and 34312975959 all succeeded on their recorded heads.
-- [ ] Reconcile staged units into accepted, pending review/checks, or blocked.
-- [x] Select and integrate 7.14.2 B01 through 02349bf77, with exact CI/artifact checks; canonical receipt dedfd7e40. Durability and later signing work remain staged.
-- [x] Finish and publish the interrupted change-path unit across all three releases
-      (#743–#745); complete native suites pass. Host/ARM checks and integration
-      remain pending. Next assembly blocker: durability bootloader evidence.
+- [x] Canonical 7.14.2 B02 integrated: fa2898664, validated code b08a68717,
+      CI 34412006017. Fork develop remains da075b8cb; product PRs remain open.
+- [x] Publish P04 change-prefix and rejected-history units across all products.
+      7.14.2 is integrated; later-product assemblies remain pending.
+- [x] Replay released bootloader 2.1.4 decision routines against five variants;
+      retain explicit full-boot, older-binary and physical-erase limitations.
+- [x] Reconcile prospective audit surfaces: 353 / 201 / 286 paths. Most remain
+      pending; reviewed-blob identity gaps are explicit in JSON ledgers.
+- [ ] Finish exact-head acceptance of P03-010/P03-011 (#752/#753), then assemble
+      applicable validated fixes into canonical 7.14.3 and 7.15.
+- [ ] Complete remaining whole-release coverage and cross-phase review.
+- [ ] Resume the paused app goal for unattended continuation; this control
+      cannot be changed through the available goal tools.
 
-Known open work includes P04 transaction-history cancellation semantics, P03
-recovery-cipher behavior and storage/bootloader recovery evidence. These are
-investigations or evidence gaps until dispositioned in the relevant finding ledger;
-this list is not an exhaustive inventory and does not declare them all defects.
+Transaction-history cancellation retains accepted history by documented policy;
+P04-004 separately fixes rejected-warning history mutation. The recovery-cipher
+backspace hypothesis remains unverified, requiring a bounded reproduction or
+source disposition before any change. P03 retains broader storage and supported
+bootloader evidence gaps. See the finding ledgers; this is not an exhaustive
+inventory and does not label every investigation a confirmed defect.
 
 ## Per-release gates
 

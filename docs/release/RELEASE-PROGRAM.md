@@ -180,3 +180,11 @@ rehearsal passes on all four variants. Full host suites and exact-head ARM/CI
 are pending. Their canonical products have not advanced. P03-010 and P03-011
 record separate introduced and pre-existing causes. No release is internally
 accepted or ready for Copilot.
+
+Latest validation checkpoint: both new storage fixes pass all four full host
+suites with zero JUnit failures/errors and unchanged skips (7143: 537/218,
+309/446; 715: 727/30, 314/443). 7143 CI 34414064705 is running; 715 exact-head
+CI is not dispatched while predecessor 34412523117 remains active. These checks
+do not change canonical status or whole-release readiness. Superseded P00 runs
+34411183796 and 34413307308 were cancelled and verified terminal; no release
+validation run was cancelled. App goal remains paused.

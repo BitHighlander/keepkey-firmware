@@ -124,6 +124,13 @@ method, not a cap that permits unresolved defects to pass.
 
 ## Autonomous session contract
 
+Verify the execution goal is active before promising unattended continuation.
+A paused app goal is an execution-control blocker, not a firmware acceptance
+result. If available tools cannot resume it, tell the owner that the app control
+needs resuming, preserve the current checkpoint, and continue authorized work
+within the current turn. Never claim an overnight worker is running from a
+written plan or a paused goal.
+
 Before an overnight run, record the primary milestone, exact starting heads,
 current unit, required checks and known blockers in the acceptance checklist.
 Use the existing ledgers as the finding source of truth; link rather than copy

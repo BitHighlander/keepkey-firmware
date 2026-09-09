@@ -759,3 +759,13 @@ after PIN authentication (which legitimately commits/rotates); the corrected
 control checks an active sector plus the unchanged known wallet. That failed
 attempt is not acceptance evidence. Full host regression and exact-head CI/ARM
 remain pending. No whole-storage phase acceptance follows from this unit.
+
+P03-010/011 host preflight completed on committed 0f64f8032 / 06b1d249a:
+7.14.3 full 537 pass / 218 skip (107 subtests), BTC 309 / 446 (107);
+7.15 full 727 / 30 (168), BTC 314 / 443 (107). All four JUnit reports
+have zero failures and errors; established skip counts are unchanged. Logs and
+XML: /private/tmp/<variant>-pending-lock-host-preflight.{log,xml}. Production
+helper formatting and git diff checks pass. Exact 7.14.3 CI 34414064705 is
+running. 7.15 predecessor CI 34412523117 still runs its full Docker integration
+job; defer new 7.15 CI until that lane is terminal. Both products' canonical
+updates remain pending exact-head CI/artifact acceptance.
