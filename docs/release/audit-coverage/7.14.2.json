@@ -1358,8 +1358,10 @@
       "added": "0",
       "deleted": "7",
       "phase": "P04-bitcoin-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P04-findings.md"
+      ]
     },
     {
       "path": "include/keepkey/firmware/u2f.h",
@@ -2145,8 +2147,10 @@
       "added": "99",
       "deleted": "491",
       "phase": "P04-bitcoin-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P04-findings.md"
+      ]
     },
     {
       "path": "lib/firmware/signtx_tendermint.c",
@@ -2237,8 +2241,10 @@
       "added": "36",
       "deleted": "198",
       "phase": "P04-bitcoin-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P04-findings.md"
+      ]
     },
     {
       "path": "lib/firmware/tron.c",
@@ -2253,8 +2259,10 @@
       "added": "4",
       "deleted": "14",
       "phase": "P04-bitcoin-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P04-findings.md"
+      ]
     },
     {
       "path": "lib/firmware/u2f.c",
@@ -2879,8 +2887,10 @@
       "added": "0",
       "deleted": "99",
       "phase": "P04-bitcoin-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P04-findings.md"
+      ]
     },
     {
       "path": "unittests/firmware/tron.cpp",

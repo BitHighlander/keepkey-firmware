@@ -16,7 +16,7 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 | P01-build-dependencies-release | 46 | 28 | 53 | In progress; [findings](audit-coverage/P01-findings.md) |
 | P02-wire-dispatch-lifetime | 17 | 11 | 17 | In progress; [findings](audit-coverage/P02-findings.md) |
 | P03-storage-setup-authorization | 16 | 15 | 15 | In progress; [findings](audit-coverage/P03-findings.md) |
-| P04-bitcoin-signing | 14 | 13 | 13 | Pending |
+| P04-bitcoin-signing | 14 | 13 | 13 | In progress; [findings](audit-coverage/P04-findings.md) |
 | P05-evm-signing | 26 | 21 | 22 | Pending |
 | P06-other-chain-signing | 53 | 45 | 52 | In progress; Ripple findings in [ledger](audit-coverage/P02-findings.md) |
 | P07-provider-solana-trust | 12 | 5 | 9 | Pending |
