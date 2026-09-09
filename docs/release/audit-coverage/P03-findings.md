@@ -153,3 +153,29 @@ comparison. The stored language/label arrays are fixed 16/48 bytes; readers
 copy that entire width, so termination must be traced through legitimate
 writers and corrupted-data handling before closing that scope. No exploit or
 new actionable defect is established by this observation alone.
+
+## P03-003: loaded public strings lacked bounds/termination
+
+Current setters zero-fill and use strlcpy for label and supported language,
+so legitimately written values reserve a terminator. V11 and V16/V17 readers
+instead copied entire 16-byte language and 48-byte label fields after zeroing
+those same-size destinations, losing termination for nonterminated stored data.
+The legacy reader also copied 17 bytes into its 16-byte language member; the
+following has_label assignment overwrote that adjacent byte later, but the
+copy itself exceeded its destination member. No host-reachable exploit is
+established. GetFeatures is the reviewed consumer; corrupted-data robustness
+is the claim, not a demonstrated remote disclosure.
+
+Bound copies to destination size minus one after existing zero-fill, retaining
+layout offsets and legitimate setter-produced strings. Regression
+VersionedReadersTerminateStoredStrings fails on old 7.14.3 readers for V11,
+V16 and V17. Corrected test and all Storage tests pass on each release: 27
+(7.14.2), 27 (7.14.3), 34 (7.15), including existing migration fixtures.
+
+Staged fork PRs above frozen predecessors:
+- #709, 100f9f2e9, 7.14.2 above 7b26c58dc.
+- #710, 7eea5be7b, 7.14.3 above 27865aa32.
+- #711, 32df2a9ac, 7.15 above 2b891ceb8.
+
+No format/version change. Combined CI for these new heads remains pending.
+Remaining storage migration and persistence review is not closed by this fix.
