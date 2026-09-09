@@ -115,6 +115,23 @@ TEST(Transaction, ChangedInputsTriggerDuplicateOutputRefusal) {
   ASSERT_TRUE(kkconfirm_preload(2, 0));
   EXPECT_EQ(-1, compile_output(coin, &root, &output, &compiled, true));
   EXPECT_EQ(0, kkconfirm_drain());
+
+  // Refusing an output must not bless the rejected input set for a retry.
+  for (int retry = 0; retry < 3; ++retry) {
+    txin_dgst_reset_current();
+    txin_dgst_addto(changed_input, sizeof(changed_input));
+    txin_dgst_final();
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    EXPECT_EQ(-1, compile_output(coin, &root, &output, &compiled, true));
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+  // The original accepted transaction can still be retried afterward.
+  txin_dgst_reset_current();
+  txin_dgst_addto(first_input, sizeof(first_input));
+  txin_dgst_final();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  EXPECT_GT(compile_output(coin, &root, &output, &compiled, true), 0);
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 TEST(Transaction, IdenticalOutputsWithinOneTransactionKeepInputHistory) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
