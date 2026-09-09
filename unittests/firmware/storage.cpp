@@ -1483,3 +1483,20 @@ TEST(Storage, DecryptionClearsAuthdataCipherSecrets) {
   EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
             storage_test_cipher_cleanup(false, false));
 }
+
+TEST(Storage, VersionedReadersTerminateStoredStrings) {
+  char bytes[1501 + V17_ENCSEC_SIZE] = {};
+  memset(bytes + 16, 'L', 16);
+  memset(bytes + 32, 'X', 48);
+  const auto check = [&](void (*reader)(Storage *, const char *, size_t)) {
+    Storage storage = {};
+    reader(&storage, bytes, sizeof(bytes));
+    EXPECT_EQ('\0', storage.pub.language[sizeof(storage.pub.language) - 1]);
+    EXPECT_EQ('\0', storage.pub.label[sizeof(storage.pub.label) - 1]);
+    EXPECT_EQ('L', storage.pub.language[0]);
+    EXPECT_EQ('X', storage.pub.label[0]);
+  };
+  check(storage_readStorageV11);
+  check(storage_readStorageV16);
+  check(storage_readStorageV17);
+}
