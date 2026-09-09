@@ -50,7 +50,7 @@ static bool enforce_wordlist = true;
 static bool dry_run = true;
 static bool awaiting_character;
 static CONFIDENTIAL char mnemonic[MNEMONIC_BUF];
-static char english_alphabet[ENGLISH_ALPHABET_BUF] =
+static const char english_alphabet[ENGLISH_ALPHABET_BUF] =
     "abcdefghijklmnopqrstuvwxyz";
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
 static int uncyphered_word_count = 0;
