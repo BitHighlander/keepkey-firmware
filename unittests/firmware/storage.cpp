@@ -745,13 +745,15 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
   memcpy(flash + 44, &older,
          4);  // test host is little-endian, matches read_u32_le
   memset(&session, 0, sizeof(session));
-  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Updated);
+  EXPECT_EQ(shadow.storage.version, STORAGE_VERSION_BTC_ONLY);
 
   // Our own current in-band version: loads (not refused).
   uint32_t current = STORAGE_VERSION_BTC_ONLY;
   memcpy(flash + 44, &current, 4);
   memset(&session, 0, sizeof(session));
-  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Valid);
+  EXPECT_EQ(shadow.storage.version, STORAGE_VERSION_BTC_ONLY);
 
   // A newer in-band version than this firmware understands: refuse.
   uint32_t newer = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION + 1);
