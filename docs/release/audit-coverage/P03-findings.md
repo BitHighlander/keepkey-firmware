@@ -242,3 +242,28 @@ Declarations match definitions and setup_commit uses the staged form.
 Marked these header changes reviewed without actionable findings, supported
 by the recorded full/BTC build and restart checks. This is declaration/API
 scope, not completion of storage.c or hardware fault-path review.
+
+## P03-004: emulator sector erase is a no-op; migration evidence reopened
+
+All three current release audit trees implement flash_erase_word only under
+#ifndef EMULATOR. Emulator writes use memcpy, but erases do nothing. The storage
+rotation therefore leaves multiple sectors with valid magic. A migration test
+that compares only the original sector can pass after firmware resets RAM and
+writes a different sector; restoring the old stamp can resurrect the old wallet.
+
+Confirmed on 7.14.2 head 100f9f2e9, emulator SHA-256
+ceb1f31fc49f25db5a6e13e2f83671f6b2b12a8e76c91033016bdcfea6f67b3f.
+Instrumented the shared host test: its module, source root, executable and owned
+UDP process were correct. After wallet creation both offsets 0x4000 and 0xc000
+carried storage magic. Changing the first stamp to 10017 reported uninitialized
+and left that original record intact, despite this firmware having no Bitcoin
+band refusal implementation. The whole image changed. Its reported preservation
+pass was therefore a false positive, not evidence of a supported refusal policy.
+
+The prior runtime migration receipts in this document are withdrawn as release
+readiness evidence pending emulator erase correction and serial reruns on all
+five release variants. Static source checks remain separate. The earlier
+whole-image Bitcoin future-version checks also require rerunning against the
+corrected flash model. This finding concerns emulator fidelity; it does not
+establish that hardware sector erase is broken. Status: OPEN. Add real emulated
+sector erasure and a regression for rotation before trusting reboot tests.
