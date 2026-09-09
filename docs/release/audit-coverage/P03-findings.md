@@ -74,7 +74,7 @@ covering dice, failed PIN, re-entry, initialized-device refusal and 12/18/24 wor
 7.15 previous integration 34293571582 completed successfully at cecf1ea20239d140cb43dc0629219fd9179ae452. New accumulated head 8ac4bd9df is dispatched as
 34295830100 with publication disabled. No canonical advancement yet.
 
-## P03-002: dice reset test duplicates a debug backup word group (open)
+## P03-002: dice reset test duplicates a debug backup word group (fix staged)
 
 Expanded full 7.15 reset suite: seven tests pass, test_reset_device_dice fails
 its final mnemonic equality. Observed one four-word group repeated twice while
@@ -87,3 +87,23 @@ that requires correction and revalidation; do not suppress the equality check.
 7.14.3 has the same dice collector and debug paging semantics; applicability
 to its random inputs remains to be exercised. 7.14.2 has no dice product feature.
 The full 7.15 suite is not counted as passing.
+
+### P03-002 correction and verification
+
+Host PR #84 (7.14.3, ec828d40f7e1f296d52566abcee59c979e562209) and #85
+(7.15, 081fad067f3b9bdf0bb2cc17ea95601e65a0897e) collect consecutive reports
+of the same logical group once, matching the existing normal-reset helper.
+The final exact mnemonic equality assertion remains; an explicit expected
+word-count assertion was added. This does not change firmware signing/setup.
+
+Twenty corrected dice resets pass per release. Twenty old-collector 7.14.3
+resets also passed; do not claim reproduction on that sample. Its change is
+applicable through the shared debug-subpage protocol. One initial 7.14.3
+baseline launch overlapped an active 7.15 run and its emulator refused to start;
+discarded that attempt, then ran the complete baseline and correction serially.
+
+Firmware pins: PR #707, 27865aa32 (7.14.3), and PR #708, 2b891ceb8 (7.15),
+each above its frozen commit-authorization fix. Exact dependency fetch succeeds
+through the configured repository URL. All eight reset tests pass using each
+pinned dependency. Combined CI for these newer pins remains pending. 7.14.2
+has no dice feature and receives no test change for it.
