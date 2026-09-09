@@ -1868,8 +1868,11 @@
       "added": "45",
       "deleted": "117",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "P02-004 protected Ping response lifetime reproduced, fixed and host-tested; remaining common handlers and cross-phase interactions pending."
     },
     {
       "path": "lib/firmware/fsm_msg_cosmos.h",

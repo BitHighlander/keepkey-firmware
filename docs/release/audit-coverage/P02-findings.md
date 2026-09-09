@@ -547,3 +547,33 @@ Existing board tests cover grayscale foreground conversion; prior full CI
 board evidence and the current reset screenshot rehearsals exercise the path.
 Marked changed-handler scope reviewed with no actionable finding. This does
 not close shared-response-arena interactions with suspended normal handlers.
+
+## P02-004: protected Ping reused DebugLink response presence
+
+At predecessors 70ae2ab8d (7.14.2), 9d6636089 (7.14.3), and 39503dacf
+(7.15), a Ping with button_protection=true and no message returned Success
+with an unexpected message field after DebugLinkGetState during confirmation.
+The same one-case owned-emulator regression failed on all three. RESP_INIT
+ran before confirmation; the shared response arena then held DebugLinkState.
+The normal Ping path did not reset has_message when the request omitted it.
+
+Fix: clear the normal Success object after protection checks and before
+constructing its optional message. This is the same response lifetime class
+as P06-002, with a separate affected handler. Debug-off production impact
+is not established. Authenticator subcommands set their response presence
+explicitly and are outside this normal-Ping change.
+
+Applicability and staged units (all three affected):
+- 7.14.2 firmware PR #700, 176cc998d; host PR #81,
+  d3b26aee636d6d203fd91e988d1b273c4971a3ab.
+- 7.14.3 firmware PR #701, 86249279a; host PR #82,
+  7646e858cd4de2c0bf4fc5bc7734d70160682ce2.
+- 7.15 firmware PR #702, 5b2a62ce0; host PR #83,
+  f4040d2f919f35a23ca75be444c93c0f599a6eab.
+
+Rebuilt each full native firmware/emulator successfully. Permanent host test
+test_protected_ping_preserves_message_presence_after_debug_read checks absent,
+explicitly empty and nonempty messages. It and existing test_ping pass on all
+three owned emulators. Exact pinned host commits fetch from the configured
+repository URL. Combined integration of these new heads remains pending;
+currently running integration covers their earlier recorded predecessors.
