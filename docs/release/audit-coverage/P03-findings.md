@@ -411,3 +411,22 @@ Their added change_pin_staged contract matches the implementation and its setup
 caller, which passes the full PIN_BUF capacity and requires staged state.
 No actionable header issue. PIN implementation remains in progress for the
 recorded cleanup integration and broader transport/error interactions.
+
+## P03-006: 7.15 previous-word display scratch retained seed text
+
+At b73f7a5f7, next_character formats a completed recovery word into static
+prev_info[32]. Only byte zero is reset on the next draw; the buffer was neither
+confidential nor scrubbed at return/abort. The separate last_completed_word
+cleanup did not clear this display copy. The previous-word feature is absent
+from 7.14.2 and 7.14.3, confirmed by comparing complete recovery source deltas.
+This is residual seed-word text, not a demonstrated remote extraction primitive.
+
+Fix staged in fork PR #718, f8c5692b3, above frozen PIN-cleanup predecessor:
+mark the buffer CONFIDENTIAL and memzero it immediately after layout_cipher.
+The renderer reads the text synchronously and retains only the separate cipher
+pointer for animation, so clearing the text does not invalidate its rendering.
+Normal recovery with and without PIN/passphrase passed on both 7.15 emulator
+variants. Source review establishes cleanup; host tests establish behavior, not
+direct residue observation. Combined ARM/integration validation remains pending.
+Broader recovery review, including backspace and cross-phase interactions,
+remains in progress.
