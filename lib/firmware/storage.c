@@ -257,12 +257,6 @@ void storage_readMeta(Metadata* meta, const char* ptr, size_t len) {
   memcpy(meta->magic, ptr, STORAGE_MAGIC_LEN);
   memcpy(meta->uuid, ptr + 4, STORAGE_UUID_LEN);
   memcpy(meta->uuid_str, ptr + 16, STORAGE_UUID_STR_LEN);
-  if (len >= STORAGE_METADATA_LEN) {
-    memcpy(meta->generation, ptr + STORAGE_GENERATION_OFFSET,
-           STORAGE_GENERATION_LEN);
-  } else {
-    memzero(meta->generation, sizeof(meta->generation));
-  }
 }
 
 void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
@@ -270,18 +264,6 @@ void storage_writeMeta(char* ptr, size_t len, const Metadata* meta) {
   memcpy(ptr, meta->magic, STORAGE_MAGIC_LEN);
   memcpy(ptr + 4, meta->uuid, STORAGE_UUID_LEN);
   memcpy(ptr + 16, meta->uuid_str, STORAGE_UUID_STR_LEN);
-}
-
-static uint32_t storage_generation(const Metadata* meta) {
-  return (uint32_t)meta->generation[0] | ((uint32_t)meta->generation[1] << 8) |
-         ((uint32_t)meta->generation[2] << 16);
-}
-
-static void storage_generation_increment(Metadata* meta) {
-  uint32_t next = (storage_generation(meta) + 1u) & 0x00FFFFFFu;
-  meta->generation[0] = (uint8_t)next;
-  meta->generation[1] = (uint8_t)(next >> 8);
-  meta->generation[2] = (uint8_t)(next >> 16);
 }
 
 void storage_readPolicyV1(PolicyType* policy, const char* ptr, size_t len) {
@@ -1353,6 +1335,32 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   return SUS_Invalid;
 }
 
+/// \brief Shifts sector for config storage
+static void wear_leveling_shift(void) {
+  switch (storage_location) {
+    case FLASH_STORAGE1: {
+      storage_location = FLASH_STORAGE2;
+      break;
+    }
+
+    case FLASH_STORAGE2: {
+      storage_location = FLASH_STORAGE3;
+      break;
+    }
+
+    /* wraps around */
+    case FLASH_STORAGE3: {
+      storage_location = FLASH_STORAGE1;
+      break;
+    }
+
+    default: {
+      storage_location = STORAGE_SECT_DEFAULT;
+      break;
+    }
+  }
+}
+
 /// \brief Set root session seed in storage.
 ///
 /// \param cfg[in]    The active storage sector.
@@ -1408,65 +1416,11 @@ static bool storage_getRootSeedCache(const SessionState* ss,
   return true;
 }
 
-// A verified pending record still belongs to its writer's version policy.
-// Refuse incompatible Bitcoin-only records before any marker/magic writes.
-static bool storage_lock_pending_if_required(Allocation pending) {
-  const char* flash = (const char*)flash_write_helper(pending);
-  const uint32_t raw_version = read_u32_le(flash + STORAGE_METADATA_LEN);
-  if (version_from_int(raw_version) != StorageVersion_BTC_ONLY) return false;
-#if BITCOIN_ONLY
-  if (raw_version - STORAGE_VERSION_BTC_ONLY_BASE <= STORAGE_VERSION)
-    return false;
-#endif
-  storage_location = pending;
-  btc_only_locked = true;
-  storage_reset_impl(&session, &shadow_config);
-  storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
-  return true;
-}
-
 void storage_init(void) {
-  // A partially erased legacy record may retain magic without valid contents.
-  // If a complete pending replacement exists, finish that handoff rather than
-  // trust the unchecksummed legacy record. Verified active records retain the
-  // normal selection path.
-  bool active_found = find_active_storage(&storage_location);
-  if (active_found) {
-    const uint8_t* active =
-        (const uint8_t*)flash_write_helper(storage_location);
-    const uint8_t erased_trailer[STORAGE_RECORD_TRAILER_MAGIC_LEN] = {
-        0xff, 0xff, 0xff, 0xff};
-    Allocation pending;
-    if (memcmp(active + STORAGE_RECORD_DATA_LEN, erased_trailer,
-               sizeof(erased_trailer)) == 0 &&
-        find_pending_storage(&pending)) {
-      if (storage_lock_pending_if_required(pending)) return;
-      if (!recover_pending_storage(pending)) {
-        layout_warning_static("Storage Recovery Failed. Reboot Device!");
-        shutdown();
-        return;
-      }
-      storage_location = pending;
-    }
-  }
-  if (!active_found) {
-    /* A power cut may have landed after the old sector was retired but before
-     * the replacement's final magic word was programmed. Its trailer and CRC
-     * prove the replacement is complete; install its marker first, then make
-     * it visible to this firmware and to already-installed bootloaders. */
-    if (find_pending_storage(&storage_location)) {
-      if (storage_lock_pending_if_required(storage_location)) return;
-      if (!recover_pending_storage(storage_location)) {
-        /* Do not reinterpret a verified wallet record as factory-fresh merely
-         * because its marker/final-word recovery encountered a flash fault. */
-        layout_warning_static("Storage Recovery Failed. Reboot Device!");
-        shutdown();
-        return;
-      }
-    } else {
-      // Otherwise initialize it to the default sector.
-      storage_location = STORAGE_SECT_DEFAULT;
-    }
+  // Find storage sector with valid data and set storage_location variable.
+  if (!find_active_storage(&storage_location)) {
+    // Otherwise initialize it to the default sector.
+    storage_location = STORAGE_SECT_DEFAULT;
   }
   const char* flash = (const char*)flash_write_helper(storage_location);
 
@@ -1658,41 +1612,16 @@ void storage_commit(void) {
    * calls us, so anything still armed here is a DIFFERENT operation
    * persisting: end the ceremony rather than let its staged settings, or its
    * arming, outlive a write it did not make. setup_abort() touches no
-   * storage, so this cannot recurse.
-   *
-   * Ordered BEFORE the bitcoin-only backstop deliberately: a refused commit
-   * must still not leave a foreign ceremony armed and consumable. */
+   * storage, so this cannot recurse. */
   if (setup_isArmed()) setup_abort();
 
   // Never overwrite a bitcoin-only wallet from multi-chain firmware; the
-  // only way out is storage_wipe() (which clears the lock). This is the
-  // backstop behind the per-handler checks.
+  // only way out is storage_wipe() (which clears the lock).
   if (btc_only_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
-  //
-  // V17 reuses V17's reserved bytes, so meta (44) + storage (2525) = 2569
-  // meaningful bytes. STORAGE_RECORD_DATA_LEN rounds that payload to a whole
-  // number of words for CRC, then STORAGE_RECORD_LEN appends a marker+CRC
-  // trailer that legacy firmware safely ignores.
-  //
-  // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
-  // says the buffer is a whole number of words, not that it starts on one.
-  // __attribute__((aligned)) rather than C11 _Alignas -- the ARM toolchain
-  // rejects _Alignas here, and this is the form the rest of the tree already
-  // uses (fsm.c msg_resp, usb.c buffers).
-  static char flash_temp[STORAGE_RECORD_LEN] __attribute__((aligned(4)));
-  _Static_assert(
-      STORAGE_RECORD_DATA_LEN % sizeof(uint32_t) == 0,
-      "storage payload must be word-sized or the CRC drops its tail");
-  _Static_assert(STORAGE_RECORD_DATA_LEN >= 2569,
-                 "flash_temp must cover the whole V17 record");
-  _Static_assert(STORAGE_RECORD_LEN <= STORAGE_SECTOR_LEN,
-                 "storage record must fit in one sector");
-  _Static_assert(sizeof(Metadata) == STORAGE_METADATA_LEN,
-                 "generation must occupy only Metadata's former padding");
-  _Static_assert(offsetof(ConfigFlash, storage) == STORAGE_METADATA_LEN,
-                 "generation must not move the serialized Storage payload");
+  // Size of v17 storage layout (2525 bytes) + size of meta (44 bytes) + 1
+  static char flash_temp[2570];
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -1702,53 +1631,29 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  /* Stamp the magic BEFORE serialising, not after. storage_writeV17() copies
-     shadow_config.meta -- magic included -- into flash_temp, so setting it
-     afterwards left the RECORD WE ARE ABOUT TO WRITE carrying whatever the
-     magic held, which on a device whose storage has never been written is
-     zeroes. find_active_storage()/storage_isActiveSector() then did not
-     recognise the sector we had just committed, so the next boot took the
-     not-an-active-sector path again: storage_resetUuid() + storage_commit(),
-     every boot, until the first storage-changing operation happened to write
-     it correctly. That is a redundant flash erase+write on every boot and a
-     window in which no sector is valid. The CRC below is computed over
-     flash_temp after this call, so the magic is now covered by it too. */
+  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
+
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-  storage_generation_increment(&shadow_config.meta);
 
-  storage_writeV17(flash_temp, STORAGE_RECORD_DATA_LEN, &shadow_config);
-  /* Frame generation lives in legacy padding; keep the V17 writer unchanged. */
-  memcpy(flash_temp + STORAGE_GENERATION_OFFSET, shadow_config.meta.generation,
-         STORAGE_GENERATION_LEN);
-
-  const uint32_t shadow_ram_crc32 =
-      calc_crc32(flash_temp, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
-  memcpy(flash_temp + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
-         STORAGE_RECORD_TRAILER_MAGIC_LEN);
-  memcpy(flash_temp + STORAGE_RECORD_CRC_OFFSET, &shadow_ram_crc32,
-         sizeof(shadow_ram_crc32));
-
-  const Allocation previous_storage_location = storage_location;
-  /* Commit into the spare sector, not the sector immediately following the
-   * active one: that following sector holds the boot-protection marker. The
-   * spare is the predecessor of the active sector, so after finalization its
-   * marker naturally occupies the retired old-active sector. */
-  const Allocation replacement_storage_location =
-      next_storage(next_storage(previous_storage_location));
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
+    /* Capture CRC for verification at restore */
+    uint32_t shadow_ram_crc32 =
+        calc_crc32(flash_temp, sizeof(flash_temp) / sizeof(uint32_t));
+
+    if (shadow_ram_crc32 == 0) {
+      continue; /* Retry */
+    }
+
     /* Make sure storage sector is valid before proceeding */
-    if (previous_storage_location < FLASH_STORAGE1 ||
-        previous_storage_location > FLASH_STORAGE3) {
+    if (storage_location < FLASH_STORAGE1 ||
+        storage_location > FLASH_STORAGE3) {
       /* Let it exhaust the retries and error out */
       continue;
     }
 
-    /* Preserve both the active record and its boot marker until a complete
-     * replacement is present in the spare sector. Leave the replacement's
-     * leading magic erased: old bootloaders must not select it before its own
-     * marker exists. */
-    storage_location = replacement_storage_location;
+    flash_erase_word(storage_location);
+    wear_leveling_shift();
     flash_erase_word(storage_location);
 
     /* Write storage data first before writing storage magic  */
@@ -1756,46 +1661,31 @@ void storage_commit(void) {
                           sizeof(flash_temp) - STORAGE_MAGIC_LEN,
                           (uint8_t*)flash_temp + STORAGE_MAGIC_LEN)) {
       flash_erase_word(storage_location);
-      storage_location = previous_storage_location;
       continue;  // Retry
     }
 
-    /* Verify every programmed byte before retiring anything. The stored CRC
-     * describes the final record (including "stor"), so byte comparison is
-     * the direct proof while the leading word intentionally remains erased. */
-    const uint8_t* flash_record =
-        (const uint8_t*)flash_write_helper(storage_location);
-    if (memcmp(flash_record + STORAGE_MAGIC_LEN, flash_temp + STORAGE_MAGIC_LEN,
-               sizeof(flash_temp) - STORAGE_MAGIC_LEN) == 0) {
-      /* The replacement is durable. Retire the previous record, install the
-       * replacement's marker in that now-erased sector, and program its magic
-       * last. recover_pending_storage() is deliberately reboot-idempotent if
-       * power fails anywhere in this three-step handoff. */
-      flash_erase_word(previous_storage_location);
-      if (recover_pending_storage(replacement_storage_location)) {
-        storage_location = replacement_storage_location;
-        /* The old marker is now the spare sector. */
-        flash_erase_word(next_storage(previous_storage_location));
-        break;
-      }
-
-      /* No active record may be visible here, but the verified pending record
-       * remains recoverable on reboot. Never erase or cycle it on this path. */
-      storage_location = replacement_storage_location;
-      retries = STORAGE_RETRIES;
-      break;
+    if (!flash_write_word(storage_location, 0, STORAGE_MAGIC_LEN,
+                          (uint8_t*)flash_temp)) {
+      flash_erase_word(storage_location);
+      continue;  // Retry
     }
 
-    flash_erase_word(storage_location);
-    storage_location = previous_storage_location;
+    /* Flash write completed successfully.  Verify CRC */
+    uint32_t shadow_flash_crc32 =
+        calc_crc32((const void*)flash_write_helper(storage_location),
+                   sizeof(flash_temp) / sizeof(uint32_t));
+
+    if (shadow_flash_crc32 == shadow_ram_crc32) {
+      storage_protect_off();
+      /* Commit successful, break to exit */
+      break;
+    }
   }
 
   memzero(flash_temp, sizeof(flash_temp));
 
   if (retries >= STORAGE_RETRIES) {
-    /* Before the handoff the old record+marker remain intact. After it begins,
-     * the pending replacement remains recoverable. In neither case should a
-     * write failure be converted into a wallet wipe. */
+    storage_wipe();
     layout_warning_static("Error Detected.  Reboot Device!");
     shutdown();
   }
