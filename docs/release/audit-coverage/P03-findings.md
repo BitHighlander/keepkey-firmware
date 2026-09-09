@@ -207,3 +207,23 @@ and source-gate disposition remain an integration obligation.
 These runs do not establish physical power-loss safety or complete migration
 coverage for every historical format. Bitcoin-only runtime migration validation
 of the current accumulated heads remains separate work.
+
+### Bitcoin-only migration and future-version preservation
+
+Rebuilt Bitcoin-only emulators at 7eea5be7b (7.14.3) and 32df2a9ac (7.15).
+Each storage-version suite ran 15 tests: 14 pass / one no-burned-version skip.
+Its own-band branch verifies byte-identical storage across reboot and the same
+PIN-protected Bitcoin address. V16 upgrade and normal reboot cases also run.
+
+The existing unknown-version test asserts uninitialized Features, which alone
+cannot distinguish wiping from refusal. Do not use its name as proof of flash
+preservation on a newer Bitcoin-only stamp. Added a repeatable rehearsal
+bitcoin_future_storage.py CHECKOUT BUILD_DIRECTORY: create a protected wallet,
+change its banded version to the next version, save the complete image, boot,
+assert refusal, halt and compare the entire image byte-for-byte. This passes
+on both current Bitcoin-only emulators. No permanent host CI assertion added
+yet; the rehearsal is recorded evidence, not a claim that CI checks this case.
+
+This resolves the concrete newer-band preservation evidence gap for these
+heads. Physical interruption during a storage write and broader migration
+format coverage remain separate obligations.
