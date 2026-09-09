@@ -90,8 +90,9 @@ bool setup_stagePin(bool pin_protection);
 void setup_arm(SetupKind kind);
 
 /// The ONE place staged settings reach storage. Applies them, stores \a
-/// mnemonic, disarms, then commits to flash.
-void setup_commit(const char* mnemonic, bool imported);
+/// mnemonic, disarms, then commits to flash. Refuses an aborted or different
+/// ceremony before modifying storage, reports Failure, and returns false.
+bool setup_commit(SetupKind kind, const char* mnemonic, bool imported);
 
 /* No display_random parameter: ResetDevice.display_random remains on the wire
  * for host compatibility but is ignored, because internal entropy is seed
