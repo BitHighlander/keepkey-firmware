@@ -618,9 +618,10 @@ void recovery_cipher_finalize(void) {
     /* Commit point: the settings staged at the start of THIS ceremony and
      * the seed the user typed word by word land together, or neither lands.
      * setup_commit() disarms before it writes. */
-    setup_commit(rc_new_mnemonic, /*imported=*/!enforce_wordlist);
+    const bool committed = setup_commit(SETUP_RECOVERY, rc_new_mnemonic,
+                                        /*imported=*/!enforce_wordlist);
     memzero(rc_new_mnemonic, sizeof(rc_new_mnemonic));
-    fsm_sendSuccess("Device recovered");
+    if (committed) fsm_sendSuccess("Device recovered");
   } else if (dry_run) {
     bool match =
         storage_isInitialized() && storage_containsMnemonic(rc_new_mnemonic);
