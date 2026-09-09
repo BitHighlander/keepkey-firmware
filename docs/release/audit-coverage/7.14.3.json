@@ -365,8 +365,12 @@
       "added": "11",
       "deleted": "0",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "Reviewed added cleanup/abort declarations against definitions and conditional debug declarations in fsm.c; full/BTC builds link. This closes header declaration changes only, not cleanup implementation or all callers.",
+      "reviewed_blob": "6b3f65c7c38e6cf334c2ffa751f2dc254c6bd944"
     },
     {
       "path": "include/keepkey/firmware/mayachain.h",
@@ -963,8 +967,12 @@
       "added": "4",
       "deleted": "0",
       "phase": "P02-wire-dispatch-lifetime",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P02-findings.md"
+      ],
+      "reviewed_scope": "Reviewed all four added variant guards; preprocessed full/BTC and debug on/off; 126/133 full entries and 47/54 BTC entries; all 79 alternate-chain routes excluded from BTC, no duplicate direction/ID pairs, debug routes correctly gated. Handler semantics audited separately.",
+      "reviewed_blob": "d8b8f91347fe9f989c5dc01ad3eefbc8902aea08"
     },
     {
       "path": "lib/firmware/nano.c",

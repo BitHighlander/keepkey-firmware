@@ -519,3 +519,18 @@ assembly heads with publication disabled; no canonical advancement yet.
 Validation follow-up: the existing 7.15 backup acknowledgement regression passed
 at 39503dacf. Combined older-release runs are 34294763501 (70ae2ab8d) and
 34294765461 (9d6636089), pending.
+
+## P02 bounded 7.14.3 map and declaration review
+
+At 9d6636089, preprocessed messagemap.def in all four BITCOIN_ONLY/DEBUG_LINK
+configurations. Full map has 126 normal entries / 133 with debug; Bitcoin-only
+has 47 / 54. All 79 alternate-chain routes are excluded in Bitcoin-only; seven
+debug entries disappear when DEBUG_LINK=0. No duplicate direction/ID pairs.
+Reviewed each new guard boundary against the complete enclosed entries. Full
+and Bitcoin-only compilation/link evidence accompanies the assembly tests.
+Marked this changed map scope reviewed with no actionable finding.
+
+Also matched fsm.h added cleanup/abort declarations and debug test guards to
+fsm.c definitions. Marked only the header declaration change reviewed. The
+workflow cleanup implementations, handler retention and broader dispatch scope
+remain open. Superseded documentation run 34293977795 is terminal cancelled.
