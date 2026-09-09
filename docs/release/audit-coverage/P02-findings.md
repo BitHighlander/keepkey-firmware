@@ -329,3 +329,22 @@ assertion and combined integration remain pending.
 The earlier packet-lifetime CI 34292591562 has completed successfully, including
 both ARM variants and evidence gate. Artifact inspection remains pending before
 canonical advancement; that earlier run excludes the Ripple fix.
+
+## 7.14.3 packet-lifetime assembly accepted into canonical branch
+
+Inspected successful CI 34292591562 artifacts. Native firmware full 190 /
+Bitcoin-only 90, with 16 board and 18 crypto in each, all pass. Host full
+530 pass/222 skip; Bitcoin-only 303 pass/449 skip. Screenshot selection full
+70 pass/14 skip; Bitcoin-only 28 pass/56 skip. Zero failures/errors.
+Both ARM manifests and report identify 47eae604e183ab1c6c69be7dae43eee60b58326c.
+All 23 hashes per ARM variant verify. Full ELF SHA-256
+b29cba5b78a8e44fc2fc253cd5a2a2a9246a48b34539f3cae92b9f8e5548b783,
+reserve 21,312 bytes; Bitcoin-only ELF SHA-256
+66c1e2cec79dc040b459b3e1f8b88fe6f1a97498c0e44df7af0cc0b674839240,
+reserve 28,268 bytes. Report PDF verifies as
+0dd42ea9c03c293de0b749362bf7375e011e3b6954b27e1b8cc2a1986f1054c2.
+
+Canonical release/7.14.3-bitcoin-only fast-forwarded from 97f970147 to 47eae604e;
+PR #627 stays open into develop. Its body now records current evidence and
+pending Ripple PR #692 plus incomplete audit/older-host assertion. No
+full-release acceptance or Copilot readiness claim.
