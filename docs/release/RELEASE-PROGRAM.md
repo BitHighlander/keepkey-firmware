@@ -37,7 +37,7 @@ heads and terminal results before making readiness claims.
 
 | Product | Canonical fork branch / product PR | Current canonical head | Internal status |
 | --- | --- | --- | --- |
-| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `e546d99798a5e7dbc54ad5fe43b040a2806c8291` | Prior validated integration; subsequent audit fixes pending integration |
+| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `dedfd7e407a2e17a7a6e7312fb86d7a4deb32b54` | B01 integrated through 02349bf77; durability/signing fixes and full acceptance pending |
 | 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `47eae604e183ab1c6c69be7dae43eee60b58326c` | Prior validated integration; subsequent audit fixes pending integration |
 | 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `f20c2497a0990a6690c5bb804414c11cac74bf58` | Prior validated integration; subsequent audit fixes pending integration |
 
@@ -57,9 +57,9 @@ frozen immediate predecessor; no develop merge is involved.
 
 | Product | Audit tip | Head | Current validation |
 | --- | --- | --- | --- |
-| 7.14.2 | [Current audit draft, #740](https://github.com/BitHighlander/keepkey-firmware/pull/740) | `d4c23c9d53551c62c6b18f00a8902da4796c7a64` | Native: 162 pass; host: 434 pass / 47 skip; migration: 4 pass. CI 34313676228 running; ARM and audit acceptance pending. |
-| 7.14.3 | [Current audit draft, #739](https://github.com/BitHighlander/keepkey-firmware/pull/739) | `c8f47fce78337aaa0ccd18cf35ea575f8e49827e` | Native: 197 full / 97 BTC pass; host: 537/218 full and 309/446 BTC pass/skip. CI 34313363985 running. |
-| 7.15 | [Current audit draft, #742](https://github.com/BitHighlander/keepkey-firmware/pull/742) | `039e2f9644876443ad1c5ad78082cee0e8901cba` | Native suites: 507 full / 99 Bitcoin-only pass. Local ARM resource correction passes with 16,412-byte reserve. Host: 727/30 full and 314/443 BTC pass/skip. CI 34312975959 running. |
+| 7.14.2 | [Current audit draft, #740](https://github.com/BitHighlander/keepkey-firmware/pull/740) | `d4c23c9d53551c62c6b18f00a8902da4796c7a64` | Native: 162 pass; host: 434 pass / 47 skip; migration: 4 pass. CI 34313676228 succeeded; full audit acceptance pending. |
+| 7.14.3 | [Current audit draft, #739](https://github.com/BitHighlander/keepkey-firmware/pull/739) | `c8f47fce78337aaa0ccd18cf35ea575f8e49827e` | Native: 197 full / 97 BTC pass; host: 537/218 full and 309/446 BTC pass/skip. CI 34313363985 succeeded; full audit acceptance pending. |
+| 7.15 | [Current audit draft, #742](https://github.com/BitHighlander/keepkey-firmware/pull/742) | `039e2f9644876443ad1c5ad78082cee0e8901cba` | Native suites: 507 full / 99 Bitcoin-only pass. Local ARM resource correction passes with 16,412-byte reserve. Host: 727/30 full and 314/443 BTC pass/skip. CI 34312975959 succeeded; full audit acceptance pending. |
 
 The P03 findings ledger records scope, applicability, regressions and limitations.
 Prior migration-test receipts using the emulator without sector erasure were
@@ -132,3 +132,21 @@ provider tooling's test-key disposition remains a release deliverable, not an
 excuse to change firmware trust anchors. Upstream preparation uses the accepted
 receipts to stage final small fork PRs, reconcile public dependencies and perform
 the deferred Copilot review before upstream PR creation.
+
+## Overnight B01 checkpoint
+
+Canonical 7.14.2 advanced by verified fast-forward to dedfd7e407a2e17a7a6e7312fb86d7a4deb32b54.
+The candidate receipt accepts the bounded batch through 02349bf77, independently
+verified against CI 34299743827 and all 23 ARM artifact hashes. Complete release
+coverage is not reconciled yet. Durability remains outside this batch because
+installed-bootloader execution/compatibility evidence is open. Later signing fixes
+remain on the existing predecessor stack. The receipt commit changes no code or
+pins; future assembly must carry it forward without replaying old readiness text.
+Develop remains da075b8cb717b56dc1023edb52c2ccdf171b8a08.
+
+Current staged change-path units supersede the audit-tip snapshot above:
+7.14.2 #745 ebf0eb500, 7.14.3 #744 44d0c60c1, 7.15 #743 a1e7f5315.
+Complete native suites pass 163 / (198 full, 98 BTC) / (508 full, 100 BTC).
+New-head host/ARM checks remain pending; predecessor green CI is not new-head
+acceptance. P04-003 records exact scope and evidence. No tracked local firmware
+changes remain from the previously interrupted change-path unit.

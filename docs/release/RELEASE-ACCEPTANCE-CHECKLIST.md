@@ -14,14 +14,13 @@ All three are auditing; none is internally accepted or ready for Copilot.
 
 Before the next implementation session:
 
-- [ ] Verify canonical heads, audit tips, dependency pins and working-tree changes.
-- [ ] Inspect the existing release CI runs to terminal status; record exact heads.
+- [x] Verify canonical heads, audit tips, dependency pins and working-tree changes (B01 restart).
+- [x] Inspect existing release CI: 34313676228, 34313363985 and 34312975959 all succeeded on their recorded heads.
 - [ ] Reconcile staged units into accepted, pending review/checks, or blocked.
-- [ ] Select the first 7.14.2 assembly batch and its required checks. The existing
-      stack backlog requires this checkpoint before unrelated new discovery.
-- [ ] Record the active unit and next resolving action. The latest known local
-      unit is the uncommitted 7.15 Bitcoin change-path prefix fix; focused tests
-      passed, but review, publication and applicable ports remain pending.
+- [x] Select and integrate 7.14.2 B01 through 02349bf77, with exact CI/artifact checks; canonical receipt dedfd7e40. Durability and later signing work remain staged.
+- [x] Finish and publish the interrupted change-path unit across all three releases
+      (#743–#745); complete native suites pass. Host/ARM checks and integration
+      remain pending. Next assembly blocker: durability bootloader evidence.
 
 Known open work includes P04 transaction-history cancellation semantics, P03
 recovery-cipher behavior and storage/bootloader recovery evidence. These are

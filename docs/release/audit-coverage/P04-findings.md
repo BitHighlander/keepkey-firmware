@@ -31,3 +31,36 @@ Header review completed without actionable findings for include/keepkey/firmware
 7.14.3 complete preflight at c8f47fce78337aaa0ccd18cf35ea575f8e49827e, host 5dae186a36851005600cc69ee74a89ef8736124f: 197 full / 97 Bitcoin-only native tests pass; host full 537 pass / 218 skip / 107 subtests, Bitcoin-only 309 pass / 446 skip / 107 subtests. Each JUnit has 755 cases and zero failures/errors (/private/tmp/7143-full-host-preflight.xml and 7143-btc-host-preflight.xml); logs use the same stems. Skips remain exclusions for unsupported product capabilities and transport-specific tests, not positive coverage. Changed production C/header formatting passes. The current report-input validator accepts historical CI XML fixtures and rejects 12 invalid-input mutations. Dispatched nonpublishing CI 34313363985 on the exact head; it remains active. The 7.14.2 latest emulator is rebuilt and complete host preflight is running. Its runner borrows only the 7.14.3 owned-process helper because its own host pin predates that module; restores the pinned import path and asserts keepkeylib resolves under the 7.14.2 checkout before running its own suite. Its report-input validator also rejects all 12 invalid mutations.
 
 7.14.2 complete preflight at d4c23c9d53551c62c6b18f00a8902da4796c7a64, host d3b26aee636d6d203fd91e988d1b273c4971a3ab: complete native suite 162 pass; host 434 pass / 47 skip / 5 subtests in 65.80 seconds. JUnit /private/tmp/7142-full-host-preflight.xml has 481 cases, 47 skips, no failures/errors. Log /private/tmp/7142-full-host-preflight.log explicitly identifies the library under the 7.14.2 checkout. Current modified production files pass clang-format-20; report-input validator rejects 12 invalid-input mutations. Four separately invoked framed/unframed migration/reboot cases pass on the rebuilt emulator, with KK_TEST_BAND=0 retaining the product's unbanded policy. Log /private/tmp/7142-current-pinned-migration.log verifies the host-library path. Dispatched nonpublishing CI for this exact head; no canonical release advanced.
+
+## P04-003: mixed-script change ignores extended leading wallet components
+
+Existing defect reproduced on 7.15 predecessor 039e2f964: input
+`7'/44'/0'/0'/0/0` and output `8'/84'/0'/0'/1/0` were accepted by the real
+change-path predicate despite different leading wallet branches. The mixed-script
+helper compared only the last five components. This can bypass output confirmation
+for that classification; no broadcast or key-extraction claim is made.
+
+Correction compares the first count-minus-five components after the minimum and
+equal-length guards, before mixed-purpose acceptance. Reviewed all helper callers:
+input account grouping, change classification and phase-two path consistency.
+Decoder path capacities bound counts to eight; subtraction follows count >= 5.
+The existing same-account fallback already compares the leading path and remains
+unchanged. Regression uses real signing initialization/input extraction/change
+checks for lengths 5–8, positive matching prefixes, each changed prefix, and a
+second input from a different leading branch. Full five-component behavior stays
+accepted. The original six-component negative assertion failed before correction
+(`/private/tmp/715-change-prefix-red.log`).
+
+Staged fork PRs: #743 (7.15 a1e7f5315), #744 (7.14.3 44d0c60c1), #745
+(7.14.2 ebf0eb500), each targeting its immediate predecessor. Source comparison
+establishes applicability to all three. 7.14.2 reuses its existing USB test bootstrap
+and registers the case in usb_rx.cpp; newer products use the shared confirmation
+initializer in signing.cpp. No additional production test hook is introduced.
+
+Complete native suites run serially from fresh directories: 7.14.2 163 pass,
+7.14.3 full 198 / BTC 98 pass, 7.15 full 508 / BTC 100 pass. Logs
+`/private/tmp/{7142,7143,7143-btc,715,715-btc}-change-prefix-full-native.log`.
+The initial sandbox-denied UDP bind was not a pass; the permitted complete rerun
+succeeded. New-head host/ARM validation and canonical integration remain pending.
+Earlier successful CI runs 34313676228/34313363985/34312975959 bind predecessors,
+not these new heads. No complete P04 or release acceptance is claimed.
