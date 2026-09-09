@@ -2141,8 +2141,10 @@
       "added": "195",
       "deleted": "783",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md: Production storage commit review: open power-interruption boundary; compare replacement-first frozen develop with erase-first releases, cross-file resolution pending."
+      ]
     },
     {
       "path": "lib/firmware/storage.h",

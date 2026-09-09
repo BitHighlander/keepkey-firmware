@@ -1094,7 +1094,8 @@
       "phase": "P03-storage-setup-authorization",
       "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md"
+        "P03-findings.md",
+        "P03-findings.md: Production storage commit review: open power-interruption boundary; compare replacement-first frozen develop with erase-first releases, cross-file resolution pending."
       ],
       "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending."
     },
