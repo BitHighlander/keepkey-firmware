@@ -397,7 +397,7 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
 
   if (buf[0] != '?' || buf[1] != '#' || buf[2] != '#') {
     reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                   "Malformed tiny packet");
+                        "Malformed tiny packet");
     goto cleanup;
   }
 
@@ -407,7 +407,7 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
 
   if (msgSize > 64 - 9) {
     reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                   "Malformed tiny packet");
+                        "Malformed tiny packet");
     goto cleanup;
   }
 
@@ -445,12 +445,14 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
     if (status) {
       msg_tiny_id = msgId;
     } else {
-      reject_tiny_message(FailureType_Failure_SyntaxError, "Malformed tiny packet");
+      reject_tiny_message(FailureType_Failure_SyntaxError,
+                          "Malformed tiny packet");
       memzero(msg_tiny, sizeof(msg_tiny));
       msg_tiny_id = MSG_TINY_TYPE_ERROR;
     }
   } else {
-    reject_tiny_message(FailureType_Failure_UnexpectedMessage, "Unknown message");
+    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                        "Unknown message");
     msg_tiny_id = 0xffff;
   }
 
