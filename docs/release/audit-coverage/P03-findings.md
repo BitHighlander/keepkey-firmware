@@ -285,3 +285,25 @@ migration tests. The whole-image future Bitcoin-only version preservation probe
 also passes on both corrected Bitcoin-only emulators. These replace the prior
 false-model receipts for the stated cases only. Wider native and host integration
 validation remains pending; no canonical product branch has advanced for this fix.
+
+### 7.15 private storage declarations reviewed
+
+Reviewed lib/firmware/storage.h against the product merge base at c2197307b,
+including its additional KDF and retired-identity declarations rather than
+inheriting the narrower 7.14.3 header review. Signatures match definitions and
+callers. V19 KDF selection is gated off; active unlock/rewrap selects V15/V16,
+and V17 decoding clears the V19 flag. The retired two-record identity array has
+no production consumers outside the storage scrubber; V18 writing zeros its
+910 serialized bytes and reading clears the in-memory array. V18/V19 readers
+are not dispatched as current release formats. Existing native retirement,
+versioned-flag and PIN serialize/reboot regressions passed in the 504-test full
+suite. Declaration review found no actionable issue; complete storage.c and
+cryptographic implementation review remain separate open work.
+
+P03-004 broader native validation now passes: 7.14.2 full 158; 7.14.3 full 193,
+Bitcoin-only 93; 7.15 full 504, Bitcoin-only 95. All eight reset host tests pass
+on both variants of 7.14.3 and 7.15 with the corrected erase implementation.
+7.14.2 combined CI is queued at d59e16cd8; 7.14.3 combined CI was dispatched at
+8d08a882d. 7.15's older setup-authorization CI remains running, so no redundant
+715 dispatch yet. P00 receipt batch was pushed at 341c1052e; superseded doc-only
+run 34295681883 is confirmed completed/cancelled.
