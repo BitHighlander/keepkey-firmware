@@ -48,9 +48,9 @@ frozen immediate predecessor; no develop merge is involved.
 
 | Product | Audit tip | Head | Current validation |
 | --- | --- | --- | --- |
-| 7.14.2 | [recovery debug cleanup, #719](https://github.com/BitHighlander/keepkey-firmware/pull/719) | `c593bdbd74479c8a3c4c88d56e65284fef35af0b` | Local regression passes; CI 34297892518 runs on predecessor e33fa4a00 and excludes this debug-only fix |
-| 7.14.3 | [PIN cleanup, #716](https://github.com/BitHighlander/keepkey-firmware/pull/716) | `374efb1b63a8d1d3dd01abeb5b6287c9b781dfd2` | Local full/BTC PIN checks pass; combined CI dispatched after predecessor run 34297269194 completed successfully |
-| 7.15 | [recovery display cleanup, #718](https://github.com/BitHighlander/keepkey-firmware/pull/718) | `f8c5692b310c137a9dd1005ec1297a244e694ffd` | Local full/BTC recovery checks pass; combined CI 34297894523 running on this head |
+| 7.14.2 | [V17 durability draft, #732](https://github.com/BitHighlander/keepkey-firmware/pull/732) | `63037ea119d52ba9ceccd47b86b87a73380b9a7f` | Full emulator: nine selection tests, 34 storage/passphrase tests, four migration cases. Torn-legacy correction locally validated; CI 34300623966 is on predecessor 75be71abc. |
+| 7.14.3 | [V17 durability draft, #731](https://github.com/BitHighlander/keepkey-firmware/pull/731) | `1083292820bc52dffafc14e7ce88258946fc2a00` | Full/BTC: nine selection tests, 34 storage/passphrase tests and five migration cases per variant. Torn-legacy correction locally validated; CI 34300625891 is on predecessor e25201c6f. |
+| 7.15 | [V17 durability draft, #730](https://github.com/BitHighlander/keepkey-firmware/pull/730) | `b9b88955fa4ea137e882189764394f3c5a5ed198` | Full/BTC: nine selection tests, storage and migration suites, 17-image commit replay. Durability CI pending completion of predecessor run 34299583518. |
 
 The P03 findings ledger records scope, applicability, regressions and limitations.
 Prior migration-test receipts using the emulator without sector erasure were
