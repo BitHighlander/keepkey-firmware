@@ -529,3 +529,29 @@ cross-phase display/transport obligations remain open.
 Superseded documentation run 34297193569 is now confirmed completed/cancelled.
 Current documentation run is 34298090688 at pushed 0ff5a1aea; subsequent local
 review receipts are being accumulated for the next batch publication.
+
+### Reset entropy and backup control-path review
+
+Reviewed 7.15 reset_init/reset_entropy and compared the 7.14.3 deltas, then
+checked 7.14.2's initialization and distinct early-exit path. Strength accepts
+128/192/256; setup is staged before prompts and armed only before EntropyRequest.
+No-backup requires two confirmations and still passes through setup_commit's
+live-kind gate. SHA256 combines 32 device bytes with the provided host bytes;
+mnemonic generation uses the validated strength. Device entropy is cleared after
+conversion. The backup page index is checked immediately after increment and
+before access; fixed buffers bound formatting and each accepted path uses the
+same authorized commit. Page buffers are cleared at exit. 7.15 additionally
+clears its BIP85-shared scratch at entry. Return-to-home clears constant-power
+mode through layout_clear_static.
+
+7.14.2 retains but ignores display_random and has no dice path; 7.14.3 retains
+the optional entropy display but excludes dice/no-backup combinations; 7.15
+has removed that display. Random-source correctness and dice mixing remain
+separate P09 obligations. An apparent missing SHA context cleanup on 7.14.2's
+backup-warning cancellation was dismissed after inspecting its pinned
+sha256_Final: it memzeros the whole context before returning. No extra patch.
+
+This review found no new actionable defect in these control paths. Existing
+P03-001 remediation and reset/PIN/dice host receipts remain supporting evidence.
+Whole-flow handling of unexpected tiny messages and BIP85/display interactions
+remain open; these bounded findings do not mark the full phase complete.
