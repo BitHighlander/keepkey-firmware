@@ -1,5 +1,10 @@
 # Firmware rehearsal and acceptance SOP
 
+Historical candidate snapshot. For current execution and acceptance status, use
+the [active fork release program](https://github.com/BitHighlander/keepkey-firmware/blob/audit/releases-p00-scope/docs/release/RELEASE-PROGRAM.md)
+and [rehearsal SOP](https://github.com/BitHighlander/keepkey-firmware/blob/audit/releases-p00-scope/docs/release/REHEARSAL-SOP.md).
+Older readiness claims below do not supersede the open full-release audit.
+
 Owner decision: 2026-09-07. This is the canonical procedure for the new
 7.14.2 hardening foundation and subsequent extraction of alpha features.
 It supersedes the alpha audit requirement for two whole-tree zero-finding

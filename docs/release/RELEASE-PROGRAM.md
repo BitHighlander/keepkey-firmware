@@ -1,5 +1,10 @@
 # Fork release product program
 
+Historical candidate snapshot. For current execution and acceptance status, use
+the [active fork release program](https://github.com/BitHighlander/keepkey-firmware/blob/audit/releases-p00-scope/docs/release/RELEASE-PROGRAM.md)
+and [rehearsal SOP](https://github.com/BitHighlander/keepkey-firmware/blob/audit/releases-p00-scope/docs/release/REHEARSAL-SOP.md).
+Older readiness claims below do not supersede the open full-release audit.
+
 Owner direction: 2026-09-08. Harden and assemble 7.14.2, 7.14.3 and 7.15 through
 small local audit units. The canonical procedure is [REHEARSAL-SOP.md](REHEARSAL-SOP.md).
 Copilot belongs to final upstream preparation, after internal product acceptance.
