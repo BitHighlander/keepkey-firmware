@@ -404,3 +404,23 @@ Earlier 7.15 CI 34291743075 completed successfully at f20c2497a. Its artifact
 inspection and canonical advancement remain pending; it excludes subsequent
 packet/Ripple units. New combined run 34293571582 targets cecf1ea20 and also
 excludes this newest length-prefix fix.
+
+## 7.15 earlier audited assembly verified and canonical advanced
+
+CI 34291743075 succeeded at f20c2497a0990a6690c5bb804414c11cac74bf58.
+Inspected native XMLs: 500 full / 93 Bitcoin-only firmware, 13 board and 18
+crypto per variant, 6 full Pallas tests, all passing. Host full 719 pass/36 skip;
+Bitcoin-only 307 pass/448 skip. Screenshot full 171 pass/12 skip; Bitcoin-only
+35 pass/148 skip. All 23 hashes per ARM manifest verify against that head.
+Full ELF 50d412ad2b54fa88142400aaf7b2a3e2194983d5d8090b80c7b878fc13a471bd,
+reserve 16,392 bytes; Bitcoin-only ELF
+4f0ae2af548dd00a0633ef29a6f063855d33772342812d42b9b23ee18dbfb07f,
+reserve 31,424 bytes. PDF text identifies the exact candidate; its computed
+SHA-256 is 84501e10c70c22ee377f4f5a0bce6aa931af9ed4365ebf2d3df67e58517fb876.
+This workflow uploads only the PDF, with no separate report hash manifest.
+
+Canonical release/7.15 fast-forwarded from a18317f88 to f20c2497a. PR #629
+remains open into fork develop and now lists these results plus pending later
+packet/Ripple units. This accepts the tested assembly only; complete audit and
+Copilot readiness remain unproven. Batched ledger/SOP updates are published
+with this canonical advancement.
