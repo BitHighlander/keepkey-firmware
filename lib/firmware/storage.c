@@ -1308,8 +1308,29 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 }
 
 void storage_init(void) {
-  // Find storage sector with valid data and set storage_location variable.
-  if (!find_active_storage(&storage_location)) {
+  // A partially erased legacy record may retain magic without valid contents.
+  // If a complete pending replacement exists, finish that handoff rather than
+  // trust the unchecksummed legacy record. Verified active records retain the
+  // normal selection path.
+  bool active_found = find_active_storage(&storage_location);
+  if (active_found) {
+    const uint8_t* active =
+        (const uint8_t*)flash_write_helper(storage_location);
+    const uint8_t erased_trailer[STORAGE_RECORD_TRAILER_MAGIC_LEN] = {
+        0xff, 0xff, 0xff, 0xff};
+    Allocation pending;
+    if (memcmp(active + STORAGE_RECORD_DATA_LEN, erased_trailer,
+               sizeof(erased_trailer)) == 0 &&
+        find_pending_storage(&pending)) {
+      if (!recover_pending_storage(pending)) {
+        layout_warning_static("Storage Recovery Failed. Reboot Device!");
+        shutdown();
+        return;
+      }
+      storage_location = pending;
+    }
+  }
+  if (!active_found) {
     /* A power cut may have landed after the old sector was retired but before
      * the replacement's final magic word was programmed. Its trailer and CRC
      * prove the replacement is complete; install its marker first, then make
