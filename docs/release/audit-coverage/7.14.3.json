@@ -1506,11 +1506,13 @@
       "added": "83",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "in_progress",
+      "review_status": "reviewed_fix_staged",
       "evidence": [
-        "P03-findings.md"
+        "P03-findings.md",
+        "P03-findings.md: 7.14.2 / 7.14.3 storage test review closure; reset flag correction staged in PR #728/#729, 27 Storage cases per applicable variant pass."
       ],
-      "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending."
+      "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending.",
+      "reviewed_blob": "b959fb374c8031066a991dae67fcd7e7d0b05991"
     },
     {
       "path": "unittests/firmware/storage_cipher_probe.c",

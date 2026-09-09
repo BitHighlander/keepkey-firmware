@@ -2769,8 +2769,11 @@
       "added": "104",
       "deleted": "565",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_fix_staged",
+      "evidence": [
+        "P03-findings.md: 7.14.2 / 7.14.3 storage test review closure; reset flag correction staged in PR #728/#729, 27 Storage cases per applicable variant pass."
+      ],
+      "reviewed_blob": "4cd9234b547523105dfcd20adbed7a44fc354737"
     },
     {
       "path": "unittests/firmware/storage_cipher_probe.c",
