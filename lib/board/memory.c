@@ -276,24 +276,158 @@ int memory_storage_hash(uint8_t* hash, Allocation storage_location) {
  *
  */
 bool find_active_storage(Allocation* storage_location) {
-  bool ret_stat = false;
+  bool found = false;
+  bool found_verified = false;
+  uint32_t newest_generation = 0;
   Allocation storage_location_use;
 
-  /* Find 1st storage sector with valid data */
+  /* Prefer the newest CRC-verified generation. Legacy records have an erased
+   * trailer and are accepted only when no verified record exists, preserving
+   * upgrade compatibility. A non-erased invalid trailer is a torn/corrupt new
+   * record and must never be mistaken for legacy. */
   for (storage_location_use = FLASH_STORAGE1;
        storage_location_use <= FLASH_STORAGE3; storage_location_use++) {
     size_t storage_location_start = flash_write_helper(storage_location_use);
 
     if (memcmp((void*)storage_location_start, STORAGE_MAGIC_STR,
                STORAGE_MAGIC_LEN) == 0) {
-      /* Found valid data.  Load data and exit */
-      *storage_location = storage_location_use;
-      ret_stat = true;
-      break;
+      const uint8_t* record = (const uint8_t*)storage_location_start;
+      const uint8_t erased_magic[STORAGE_RECORD_TRAILER_MAGIC_LEN] = {
+          0xFF, 0xFF, 0xFF, 0xFF};
+      const bool legacy = memcmp(record + STORAGE_RECORD_DATA_LEN, erased_magic,
+                                 sizeof(erased_magic)) == 0;
+      const bool has_crc =
+          memcmp(record + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
+                 STORAGE_RECORD_TRAILER_MAGIC_LEN) == 0;
+
+      uint32_t stored_crc = 0;
+      if (has_crc) {
+        memcpy(&stored_crc, record + STORAGE_RECORD_CRC_OFFSET,
+               sizeof(stored_crc));
+      }
+      const bool verified =
+          has_crc && stored_crc == calc_crc32(record, STORAGE_RECORD_DATA_LEN /
+                                                          sizeof(uint32_t));
+
+      if (!legacy && !verified) continue;
+
+      uint32_t generation =
+          (uint32_t)record[STORAGE_GENERATION_OFFSET] |
+          ((uint32_t)record[STORAGE_GENERATION_OFFSET + 1] << 8) |
+          ((uint32_t)record[STORAGE_GENERATION_OFFSET + 2] << 16);
+      uint32_t delta = (generation - newest_generation) & 0x00FFFFFFu;
+      const bool generation_is_newer = delta != 0 && delta < 0x00800000u;
+
+      if ((verified && !found_verified) || (verified && generation_is_newer) ||
+          (!found && legacy)) {
+        *storage_location = storage_location_use;
+        newest_generation = generation;
+        found = true;
+        found_verified = verified;
+      }
     }
   }
 
-  return (ret_stat);
+  return found;
+}
+
+/* Calculate the storage CRC as though the final "stor" word had been written.
+ * The STM32 peripheral consumes native 32-bit words MSB-first using the
+ * CRC-32/MPEG-2 polynomial. A pending record deliberately leaves that first
+ * word erased so old bootloaders see no active storage during the handoff. */
+static uint32_t pending_storage_crc(const uint8_t* record) {
+  uint32_t crc = 0xFFFFFFFFu;
+  uint32_t magic_word = 0;
+  memcpy(&magic_word, STORAGE_MAGIC_STR, sizeof(magic_word));
+
+  for (size_t i = 0; i < STORAGE_RECORD_DATA_LEN / sizeof(uint32_t); i++) {
+    uint32_t word = 0;
+    if (i == 0) {
+      word = magic_word;
+    } else {
+      memcpy(&word, record + i * sizeof(word), sizeof(word));
+    }
+    crc ^= word;
+    for (size_t bit = 0; bit < 32; bit++) {
+      crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04C11DB7u : crc << 1;
+    }
+  }
+  return crc;
+}
+
+static bool pending_magic_can_finalize(const uint8_t* record) {
+  if (memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0) return false;
+  for (size_t i = 0; i < STORAGE_MAGIC_LEN; i++) {
+    /* Flash programming can only clear bits. Accept erased or partially
+     * programmed magic so recovery is idempotent after a torn final write. */
+    if ((record[i] & (uint8_t)STORAGE_MAGIC_STR[i]) !=
+        (uint8_t)STORAGE_MAGIC_STR[i])
+      return false;
+  }
+  return true;
+}
+
+static bool pending_storage_verified(Allocation location) {
+  const uint8_t* record = (const uint8_t*)flash_write_helper(location);
+  if (!pending_magic_can_finalize(record) ||
+      memcmp(record + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
+             STORAGE_RECORD_TRAILER_MAGIC_LEN) != 0)
+    return false;
+
+  uint32_t stored_crc = 0;
+  memcpy(&stored_crc, record + STORAGE_RECORD_CRC_OFFSET, sizeof(stored_crc));
+  return stored_crc == pending_storage_crc(record);
+}
+
+bool find_pending_storage(Allocation* storage_location) {
+  bool found = false;
+  uint32_t newest_generation = 0;
+  for (Allocation candidate = FLASH_STORAGE1; candidate <= FLASH_STORAGE3;
+       candidate++) {
+    if (!pending_storage_verified(candidate)) continue;
+    const uint8_t* record = (const uint8_t*)flash_write_helper(candidate);
+    const uint32_t generation =
+        (uint32_t)record[STORAGE_GENERATION_OFFSET] |
+        ((uint32_t)record[STORAGE_GENERATION_OFFSET + 1] << 8) |
+        ((uint32_t)record[STORAGE_GENERATION_OFFSET + 2] << 16);
+    const uint32_t delta = (generation - newest_generation) & 0x00FFFFFFu;
+    const bool newer = delta != 0 && delta < 0x00800000u;
+    if (!found || newer) {
+      *storage_location = candidate;
+      newest_generation = generation;
+      found = true;
+    }
+  }
+  return found;
+}
+
+bool recover_pending_storage(Allocation storage_location) {
+  if (storage_location < FLASH_STORAGE1 || storage_location > FLASH_STORAGE3 ||
+      !pending_storage_verified(storage_location))
+    return false;
+
+  /* The final marker is written before the storage magic. At every possible
+   * interruption an installed bootloader therefore sees either the old
+   * record+marker, no active record (which preserves storage), or the new
+   * record+marker -- never an active record without its marker. */
+  const Allocation marker_sector = next_storage(storage_location);
+  flash_erase_word(marker_sector);
+  if (!flash_write(marker_sector, 0, sizeof(STORAGE_PROTECT_OFF_MAGIC),
+                   (const uint8_t*)STORAGE_PROTECT_OFF_MAGIC) ||
+      memcmp((const void*)flash_write_helper(marker_sector),
+             STORAGE_PROTECT_OFF_MAGIC, sizeof(STORAGE_PROTECT_OFF_MAGIC)) != 0)
+    return false;
+
+  if (!flash_write(storage_location, 0, STORAGE_MAGIC_LEN,
+                   (const uint8_t*)STORAGE_MAGIC_STR))
+    return false;
+
+  const uint8_t* record = (const uint8_t*)flash_write_helper(storage_location);
+  uint32_t stored_crc = 0;
+  memcpy(&stored_crc, record + STORAGE_RECORD_CRC_OFFSET, sizeof(stored_crc));
+  return memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0 &&
+         stored_crc ==
+             calc_crc32(record, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
 }
 
 Allocation next_storage(Allocation active) {
