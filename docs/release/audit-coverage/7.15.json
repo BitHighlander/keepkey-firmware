@@ -2227,8 +2227,10 @@
       "added": "561",
       "deleted": "17",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md: Storage test review: policy lifetime and Bitcoin-only migration assertions; PR #727 strengthens successful migration status, remaining sections pending."
+      ]
     },
     {
       "path": "unittests/firmware/storage_cipher_probe.c",
