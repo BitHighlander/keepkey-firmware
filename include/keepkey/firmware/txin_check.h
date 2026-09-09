@@ -33,6 +33,7 @@ void txin_dgst_reset_current(void);
 bool txin_dgst_compare(const char* amt_str, const char* addr_str);
 void txin_dgst_final(void);
 void txin_dgst_getstrs(char* prev, char* cur, size_t len);
-void txin_dgst_save_and_reset(const char* amt_str, const char* addr_str);
+// Signing start/abort own the current-hash reset; outputs only save history.
+void txin_dgst_save(const char* amt_str, const char* addr_str);
 
 #endif
