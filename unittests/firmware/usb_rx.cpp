@@ -257,3 +257,54 @@ TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
   }
   EXPECT_EQ(2, remaining);  // Only the sentinel remains, never a page's Ack.
 }
+
+extern "C" {
+#include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/signing.h"
+void extract_input_bip32_path(const TxInputType* input);
+bool check_change_bip32_path(const TxOutputType* output);
+}
+static constexpr uint32_t H(uint32_t i) { return 0x80000000 | i; }
+
+TEST(Signing, MixedModeChangeMustPreserveLeadingPathComponents) {
+  init_test_usb();
+  if (layout_get_canvas() == nullptr) {
+    timer_init();
+    layout_init(display_canvas_init());
+  }
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  for (uint32_t count = 5; count <= 8; ++count) {
+    SignTx request = {};
+    request.inputs_count = request.outputs_count = 1;
+    request.version = 1;
+    signing_init(&request, coin, nullptr);
+    struct Abort {
+      ~Abort() { signing_abort(); }
+    } abort;
+    TxInputType input = {};
+    input.address_n_count = count;
+    for (uint32_t i = 0; i < count - 5; ++i) input.address_n[i] = H(7 + i);
+    const uint32_t tail[] = {H(44), H(0), H(0), 0, 0};
+    std::memcpy(input.address_n + count - 5, tail, sizeof(tail));
+    extract_input_bip32_path(&input);
+    TxOutputType output = {};
+    output.address_n_count = count;
+    output.script_type = OutputScriptType_PAYTOWITNESS;
+    std::memcpy(output.address_n, input.address_n, sizeof(input.address_n));
+    output.address_n[count - 5] = H(84);
+    output.address_n[count - 2] = 1;
+    EXPECT_TRUE(check_change_bip32_path(&output));
+    if (count > 5) {
+      for (uint32_t i = 0; i < count - 5; ++i) {
+        output.address_n[i]++;
+        EXPECT_FALSE(check_change_bip32_path(&output));
+        output.address_n[i]--;
+      }
+      // A second input from a different leading branch also disables change.
+      input.address_n[0]++;
+      extract_input_bip32_path(&input);
+      EXPECT_FALSE(check_change_bip32_path(&output));
+    }
+  }
+}
