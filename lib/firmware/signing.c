@@ -659,6 +659,7 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   memset(&input, 0, sizeof(TxInputType));
   memset(&resp, 0, sizeof(TxRequest));
 
+  txin_dgst_reset_current();
   signing = true;
   progress = 0;
   // we step by 500/inputs_count per input in phase1 and phase2
@@ -1939,6 +1940,7 @@ void signing_txack(TransactionType* tx) {
 }
 
 void signing_abort(void) {
+  txin_dgst_reset_current();
   if (signing) {
     layoutHome();
     signing = false;
