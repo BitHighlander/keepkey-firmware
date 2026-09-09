@@ -5,10 +5,12 @@
 #include <csignal>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 extern "C" {
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/font.h"
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/keepkey_display.h"
@@ -386,3 +388,22 @@ TEST(Board, BaseToPrecisionRespectsCapacity) {
   EXPECT_EQ(-1, base_to_precision(NULL, (const uint8_t *)"1", 16, 1, 6));
   EXPECT_EQ(-1, base_to_precision(buf, NULL, 16, 1, 6));
 }
+
+#ifdef EMULATOR
+TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
+  std::vector<uint8_t> flash(FLASH_TOTAL_SIZE, 0x42);
+  uint8_t* previous = emulator_flash_base;
+  emulator_flash_base = flash.data();
+  flash_erase_word(FLASH_STORAGE2);
+  emulator_flash_base = previous;
+
+  const size_t start = 0x8000;
+  const size_t end = start + STOR_FLASH_SECT_LEN;
+  EXPECT_EQ(std::vector<uint8_t>(start, 0x42),
+            std::vector<uint8_t>(flash.begin(), flash.begin() + start));
+  EXPECT_EQ(std::vector<uint8_t>(STOR_FLASH_SECT_LEN, 0xff),
+            std::vector<uint8_t>(flash.begin() + start, flash.begin() + end));
+  EXPECT_EQ(std::vector<uint8_t>(FLASH_TOTAL_SIZE - end, 0x42),
+            std::vector<uint8_t>(flash.begin() + end, flash.end()));
+}
+#endif
