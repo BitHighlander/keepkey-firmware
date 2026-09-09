@@ -337,7 +337,7 @@ Fixture initialization enables real failure dispatch and aborts between tests.
 Tests cover stage collision, idempotent abort, generated mnemonic cleanup,
 wrong-kind continuation, pre-arm inertness, both ceremony permutations, and
 aborted/wrong-kind commit rejection. The 240-byte mnemonic observation fits the
-pinned crypto implementation's 256-byte static buffer. Additional recovery tests
+pinned crypto implementation's 240-byte static mnemo buffer. Additional recovery tests
 use debug-only fill/zero observers for the actual recovery buffers. Native logs
 confirm 7 / 9 / 9 cases passed; the latter logs contain binary bytes and require
 text-mode searching. These tests do not prove flash persistence or every wire
@@ -467,3 +467,27 @@ and 7.15 f8c5692b3 pass the control; both already clear the buffer. Non-debug
 builds contain neither this buffer nor its DebugLink accessor. Status: fixed in
 bounded audit unit, combined validation/canonical assembly pending. No claim
 that ordinary production USB exposes this debug-only field.
+
+### Recovery helper and passphrase-transition test review
+
+Reviewed recovery.cpp completely: three cases verify prefix versus exact match,
+precise/unique/invalid autocomplete, and every word's padding through index 8.
+The autocomplete test's nine-byte array accommodates the longest eight-letter
+BIP39 word plus NUL; comparisons use the actual array extent. The file is
+identical across release worktrees (SHA-1 afe2f1672ca38099e47071791a2600688d359617),
+and only 7.14.2 includes it in the changed-path inventory. Its native cases passed.
+
+Reviewed complete storage_passphrase.cpp on all three products (identical SHA-1
+badeb57d1f379f417167d453d1a779a5388674a1). Setup initializes emulator storage and
+loads the synthetic fixture; teardown aborts setup and clears session state.
+Expected wallet private key and chain code are independently derived from the
+fixture phrase and chosen passphrase. Five cases cover enable, disable, unchanged
+setting, retained PIN authorization and retained staged setup. All five executed
+in each recorded full native suite. These tests prove RAM wallet selection and
+specified retained state, not reboot persistence or UI confirmation. Source and
+subject code are unchanged by the subsequent PIN/display/debug cleanup units.
+No actionable findings in these bounded test-file reviews.
+
+Corrected an earlier receipt's generated mnemonic capacity: bip39.c declares
+mnemo[24 * 10], not 256 bytes (the latter belongs to a different cache field).
+The existing 240-byte cleanup observation remains valid and exactly spans mnemo.
