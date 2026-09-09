@@ -1,10 +1,12 @@
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <vector>
 
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/layout.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/reset.h"
@@ -13,6 +15,18 @@ extern "C" {
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/memzero.h"
+}
+
+namespace {
+bool capture_flash_operations = false;
+std::vector<std::vector<uint8_t>> commit_snapshots;
+}
+
+extern "C" void emulator_flash_operation_completed(void) {
+  if (capture_flash_operations) {
+    commit_snapshots.emplace_back(emulator_flash_base,
+                                  emulator_flash_base + FLASH_TOTAL_SIZE);
+  }
 }
 
 namespace {
@@ -138,3 +152,59 @@ TEST_F(PassphraseTransition, StagingIsInertAndForeignCommitAborts) {
 }
 
 }  // namespace
+
+TEST_F(PassphraseTransition, WalletSurvivesEveryCompletedCommitOperation) {
+  storage_setLabel("before");
+  storage_commit();
+  commit_snapshots.clear();
+  capture_flash_operations = true;
+  storage_setLabel("after");
+  storage_commit();
+  capture_flash_operations = false;
+  ASSERT_EQ(commit_snapshots.size(), 7u);
+  // Snapshot 4 has the replacement marker; snapshot 5 publishes its magic.
+  // Replay each partial byte prefix of that final four-byte programming step.
+  const auto before_magic = commit_snapshots[4];
+  const auto after_magic = commit_snapshots[5];
+  size_t magic_offset = 0;
+  for (Allocation a : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
+    const size_t offset = static_cast<size_t>(flash_write_helper(a) -
+                           reinterpret_cast<intptr_t>(emulator_flash_base));
+    if (std::memcmp(before_magic.data() + offset, STORAGE_MAGIC_STR, 4) != 0 &&
+        std::memcmp(after_magic.data() + offset, STORAGE_MAGIC_STR, 4) == 0) {
+      magic_offset = offset;
+    }
+  }
+  ASSERT_NE(magic_offset, 0u);
+  for (size_t bytes = 1; bytes < STORAGE_MAGIC_LEN; ++bytes) {
+    auto torn = before_magic;
+    std::memcpy(torn.data() + magic_offset, after_magic.data() + magic_offset, bytes);
+    commit_snapshots.push_back(std::move(torn));
+  }
+  const size_t first_partial_payload = commit_snapshots.size();
+  // The spare was erased in snapshot 0; snapshot 1 contains the full payload.
+  // Stop in the header, ciphertext and trailer, including one byte short.
+  for (size_t bytes : {size_t{1}, size_t{4}, size_t{512}, size_t{1500},
+                       size_t{2568}, STORAGE_RECORD_LEN - STORAGE_MAGIC_LEN - 1}) {
+    auto torn = commit_snapshots[0];
+    std::memcpy(torn.data() + magic_offset + STORAGE_MAGIC_LEN,
+                commit_snapshots[1].data() + magic_offset + STORAGE_MAGIC_LEN,
+                bytes);
+    commit_snapshots.push_back(std::move(torn));
+  }
+  for (size_t i = 0; i < commit_snapshots.size(); ++i) {
+    SCOPED_TRACE(i);
+    std::memcpy(emulator_flash_base, commit_snapshots[i].data(), FLASH_TOTAL_SIZE);
+    storage_init();
+    ASSERT_TRUE(storage_isInitialized());
+    const char* label = storage_getLabel();
+    if (i >= first_partial_payload) EXPECT_STREQ("before", label);
+    ASSERT_TRUE(std::strcmp(label, "before") == 0 ||
+                std::strcmp(label, "after") == 0);
+    HDNode node = {};
+    ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, false, &node));
+    ExpectWallet("", node);
+    memzero(&node, sizeof(node));
+  }
+  commit_snapshots.clear();
+}
