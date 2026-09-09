@@ -179,3 +179,31 @@ Staged fork PRs above frozen predecessors:
 
 No format/version change. Combined CI for these new heads remains pending.
 Remaining storage migration and persistence review is not closed by this fix.
+
+## Restart-based migration validation
+
+Built current full emulators at 100f9f2e9 / 7eea5be7b / 32df2a9ac and ran
+test_storage_version_gate.py with explicit KK_FIRMWARE_ROOT, KK_EMULATOR_BIN
+and forced UDP. The suite owns fresh emulator storage and restarts processes;
+this is stronger than a same-session RAM-shadow check.
+
+7.14.3 and 7.15 each ran 15 tests: 14 passed, one skipped because their version
+ladders contain no burned version. All four runtime cases executed: protected
+wallet reboot, V16 upgrade, unknown normal version handling, and Bitcoin-only
+band refusal/preservation. Reviewed dispatch routes for normal known versions,
+unknown normal versions and the reserved band, including metadata restoration
+for the locked state. Unknown normal versions intentionally reset under the
+existing downgrade policy; no policy reversal was introduced.
+
+7.14.2's pinned host tree has no test_storage_version_gate.py: discovery there
+ran ZERO tests, which is not evidence. Ran the same file from the exact
+7.14.3 host checkout ec828d40f7e1f296d52566abcee59c979e562209 against the
+explicit 7.14.2 firmware root and emulator instead. Four runtime cases passed;
+eleven source-gate cases correctly skipped because 7.14.2 has no declared
+STORAGE_VERSION_LAST_SHIPPED floor. Do not count those as passing or imply
+that the static gate exists in 7.14.2. Its permanent migration-test coverage
+and source-gate disposition remain an integration obligation.
+
+These runs do not establish physical power-loss safety or complete migration
+coverage for every historical format. Bitcoin-only runtime migration validation
+of the current accumulated heads remains separate work.
