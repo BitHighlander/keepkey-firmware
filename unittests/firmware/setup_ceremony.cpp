@@ -158,3 +158,14 @@ TEST_F(SetupCeremony, MessagePermutationsLeaveNothingArmed) {
 }
 
 }  // namespace
+
+TEST_F(SetupCeremony, CommitRefusesAbortedOrDifferentCeremony) {
+  ASSERT_TRUE(setup_stage(false, "english", "aborted", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  setup_abort();
+  EXPECT_FALSE(setup_commit(SETUP_RESET, "", false));
+  ASSERT_TRUE(setup_stage(false, "english", "different", 0, 0, false));
+  setup_arm(SETUP_RECOVERY);
+  EXPECT_FALSE(setup_commit(SETUP_RESET, "", false));
+  EXPECT_FALSE(setup_isArmed());
+}
