@@ -309,3 +309,120 @@ TEST(Signing, MixedModeChangeMustPreserveLeadingPathComponents) {
     }
   }
 }
+
+extern "C" {
+#include "keepkey/firmware/transaction.h"
+#include "keepkey/firmware/txin_check.h"
+}
+
+TEST(Transaction, ChangedInputsTriggerDuplicateOutputRefusal) {
+  init_test_usb();
+  if (layout_get_canvas() == nullptr) {
+    timer_init();
+    layout_init(display_canvas_init());
+  }
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct CloseSocket {
+    int fd;
+    ~CloseSocket() { close(fd); }
+  } close_socket{fd};
+  auto preload = [&](int yes_count, int no_count) {
+    uint8_t stale[MSG_TINY_BFR_SZ];
+    while (check_for_tiny_msg(stale) != MSG_TINY_TYPE_ERROR) {}
+    struct sockaddr_in address = {};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(11044);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    for (int screen = 0; screen < yes_count + no_count + 1; ++screen) {
+      for (uint16_t id : {uint16_t(MessageType_MessageType_ButtonAck),
+                          uint16_t(MessageType_MessageType_DebugLinkDecision)}) {
+        uint8_t frame[64] = {'?', '#', '#'};
+        frame[3] = id >> 8;
+        frame[4] = id & 0xff;
+        if (id == MessageType_MessageType_DebugLinkDecision) {
+          frame[8] = 2;
+          frame[9] = 0x08;
+          frame[10] = screen < yes_count;
+        }
+        if (sendto(fd, frame, sizeof(frame), 0,
+                    reinterpret_cast<struct sockaddr*>(&address),
+                    sizeof(address)) != sizeof(frame)) return false;
+      }
+    }
+    return true;
+  };
+  auto drain = [&]() {
+    int count = 0, idle = 0;
+    uint8_t tiny[MSG_TINY_BFR_SZ];
+    while (idle < 200) {
+      if (check_for_tiny_msg(tiny) != MSG_TINY_TYPE_ERROR) {
+        ++count;
+        idle = 0;
+      } else {
+        usleep(1000);
+        ++idle;
+      }
+    }
+    return count - 2;  // Discount the trailing rejection sentinel.
+  };
+  // Initialize the queue before seeding transaction-history state.
+  ASSERT_TRUE(preload(0, 0));
+  ASSERT_EQ(0, drain());
+  struct ClearHistory {
+    ~ClearHistory() { txin_dgst_initialize(); }
+  } clear_history;
+  txin_dgst_initialize();
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  HDNode root = {};
+  TxOutputType output = {};
+  output.has_address = true;
+  std::strcpy(output.address, "1MJ2tj2ThBE62zXbBYA5ZaN3fdve5CPAz1");
+  output.amount = 380000;
+  output.script_type = OutputScriptType_PAYTOADDRESS;
+  TxOutputBinType compiled = {};
+
+  const uint8_t first_input[] = {1, 2, 3};
+  txin_dgst_addto(first_input, sizeof(first_input));
+  txin_dgst_final();
+  ASSERT_TRUE(preload(1, 0));
+  ASSERT_GT(compile_output(coin, &root, &output, &compiled, true), 0);
+  ASSERT_EQ(0, drain());
+
+  // Signing initialization starts the next transaction's input hash.
+  // Identical inputs and outputs remain a permitted repeat.
+  txin_dgst_reset_current();
+  txin_dgst_addto(first_input, sizeof(first_input));
+  txin_dgst_final();
+  ASSERT_TRUE(preload(1, 0));
+  ASSERT_GT(compile_output(coin, &root, &output, &compiled, true), 0);
+  ASSERT_EQ(0, drain());
+
+  // A different input digest with the same output reaches the real warning
+  // and refuses compilation even when the user acknowledges both screens.
+  const uint8_t changed_input[] = {4, 5, 6};
+  txin_dgst_reset_current();
+  txin_dgst_addto(changed_input, sizeof(changed_input));
+  txin_dgst_final();
+  ASSERT_TRUE(preload(2, 0));
+  EXPECT_EQ(-1, compile_output(coin, &root, &output, &compiled, true));
+  EXPECT_EQ(0, drain());
+
+  // Refusing an output must not bless the rejected input set for a retry.
+  for (int retry = 0; retry < 3; ++retry) {
+    txin_dgst_reset_current();
+    txin_dgst_addto(changed_input, sizeof(changed_input));
+    txin_dgst_final();
+    ASSERT_TRUE(preload(2, 0));
+    EXPECT_EQ(-1, compile_output(coin, &root, &output, &compiled, true));
+    EXPECT_EQ(0, drain());
+  }
+  // The original accepted transaction can still be retried afterward.
+  txin_dgst_reset_current();
+  txin_dgst_addto(first_input, sizeof(first_input));
+  txin_dgst_final();
+  ASSERT_TRUE(preload(1, 0));
+  EXPECT_GT(compile_output(coin, &root, &output, &compiled, true), 0);
+  EXPECT_EQ(0, drain());
+}

@@ -462,11 +462,11 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
              "To try again, unplug/replug KeepKey.");
       retval = -1;  // abort
     }
-    txin_dgst_save(amount_str, prefix_len + in->address);
-
     if (retval == -1) {
       return retval;
     }
+    // A refused output must not replace the comparison key for the next retry.
+    txin_dgst_save(amount_str, prefix_len + in->address);
   }
 
   return out->script_pubkey.size;
