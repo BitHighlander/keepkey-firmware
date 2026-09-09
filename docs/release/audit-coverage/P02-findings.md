@@ -625,3 +625,21 @@ sufficient without reviewing that boundary. Confirmed tiny-poll consumers in
 7.15: confirm_sm.c, pin_sm.c, passphrase_sm.c, dice_input.c; 7.14.2 has no dice
 path. No signing exploit or production button bypass is claimed by this Ping
 reproduction; it establishes the invalid protocol lifetime after Failure.
+
+### P02-006 implementation under validation
+
+Local 7.14.3 branch audit/7143-p02-terminal-tiny-failure implements a suspended
+handler rejection latch. The tiny decoder sends the original Failure, then
+latches rejection. Blocking/nonblocking tiny polling returns Cancel while the
+latch is set; normal msg_write refuses subsequent output until handle_usb_rx
+returns from that handler. The next normal receive begins with a clear latch.
+This reuses existing cancellation cleanup in the four consumers while avoiding
+the second response from their callers. Not yet accepted or propagated.
+
+Full 7.14.3 native suite passes 194 tests. Owned-emulator checks verify a fresh
+Ping immediately after rejected confirmation, and fresh requests after rejection
+inside button/PIN/passphrase loops. An initial extended test sent both a stray
+debug decision and ButtonAck after termination, then mistook their two legitimate
+rejections for a duplicate; corrected it to send a fresh valid request immediately
+after Failure. The corrected two-case suite passes. Malformed tiny frames, dice,
+other variants, and broader request-boundary review remain before acceptance.
