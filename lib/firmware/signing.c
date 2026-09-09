@@ -479,6 +479,11 @@ static bool isCrossAccountSegwitChangeAllowed(const uint32_t* lhs_address_n,
 
   if (count != lhs_address_n_count) return false;
 
+  // Mixed script purposes may share an account only below the same leading
+  // path. Extended paths must not silently cross into another wallet branch.
+  if (memcmp(lhs_address_n, rhs_address_n, (count - 5) * sizeof(uint32_t)) != 0)
+    return false;
+
   // Only do this for coins that support segwit
   if (!coin->has_segwit || !coin->segwit) return false;
 
