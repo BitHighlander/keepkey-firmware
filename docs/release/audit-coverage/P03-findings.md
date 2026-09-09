@@ -392,3 +392,22 @@ cleanup was checked in source. Wipe-code entry is behind ENABLE_WIPECODE in the
 normal handler, so no enabled wipe-code runtime coverage is claimed. ARM and
 combined integration evidence remains pending. Finding status: fixed in audit
 units, awaiting final validation and canonical assembly.
+
+### PIN entry rejection and declaration review
+
+At PIN-cleanup heads e33fa4a00 / 374efb1b6 / b73f7a5f7, an owned-emulator
+rehearsal passed on all five variants: empty, zero and alphabetic PIN matrix
+acknowledgements return PinCancelled; Cancel returns PinCancelled; Initialize
+returns Features. After each, another protected Ping requests the PIN again,
+and a correctly encoded PIN succeeds. This verifies input rejection, cache
+behavior and terminal reply ordering. It does not directly observe erased stack
+bytes or prove every transport-error interleaving.
+
+Read the remaining PIN request/validation/decode code: bounded protobuf copy,
+1..9 digit validation before matrix indexing, checked index conversion, matrix
+masking on return, and tiny-buffer clearing are present. PIN declarations in
+7.14.3 and 7.15 are identical (SHA-1 dd75cc6128b6622f1505c56030f567d681c155a3).
+Their added change_pin_staged contract matches the implementation and its setup
+caller, which passes the full PIN_BUF capacity and requires staged state.
+No actionable header issue. PIN implementation remains in progress for the
+recorded cleanup integration and broader transport/error interactions.
