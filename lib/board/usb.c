@@ -442,6 +442,7 @@ char usbTiny(char set) {
 #endif  // EMULATOR
 
 bool msg_write(MessageType msg_id, const void* msg) {
+  if (msg_handler_rejected()) return false;
   const pb_field_t* fields = message_fields(NORMAL_MSG, msg_id, OUT_MSG);
 
   if (!fields) return false;

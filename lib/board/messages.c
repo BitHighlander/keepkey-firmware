@@ -33,6 +33,17 @@
 static const MessagesMap_t* MessagesMap = NULL;
 static size_t map_size = 0;
 static msg_failure_t msg_failure;
+/* A tiny receive failure has already answered the suspended handler. Keep
+ * its unwind from producing another reply or waiting for another prompt. */
+static bool tiny_handler_rejected;
+
+bool msg_handler_rejected(void) { return tiny_handler_rejected; }
+
+static void reject_tiny_message(FailureType code, const char* text) {
+  if (tiny_handler_rejected) return;
+  (*msg_failure)(code, text);
+  tiny_handler_rejected = true;
+}
 
 #if DEBUG_LINK
 static msg_debug_link_get_state_t msg_debug_link_get_state;
@@ -335,8 +346,8 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
   memcpy(buf, msg, sizeof(buf));
 
   if (buf[0] != '?' || buf[1] != '#' || buf[2] != '#') {
-    (*msg_failure)(FailureType_Failure_UnexpectedMessage,
-                   "Malformed tiny packet");
+    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                        "Malformed tiny packet");
     goto cleanup;
   }
 
@@ -345,8 +356,8 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
                      ((uint32_t)buf[6]) << 16 | ((uint32_t)buf[5]) << 24;
 
   if (msgSize > 64 - 9) {
-    (*msg_failure)(FailureType_Failure_UnexpectedMessage,
-                   "Malformed tiny packet");
+    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                        "Malformed tiny packet");
     goto cleanup;
   }
 
@@ -384,12 +395,14 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
     if (status) {
       msg_tiny_id = msgId;
     } else {
-      (*msg_failure)(FailureType_Failure_SyntaxError, "Malformed tiny packet");
+      reject_tiny_message(FailureType_Failure_SyntaxError,
+                          "Malformed tiny packet");
       memzero(msg_tiny, sizeof(msg_tiny));
       msg_tiny_id = MSG_TINY_TYPE_ERROR;
     }
   } else {
-    (*msg_failure)(FailureType_Failure_UnexpectedMessage, "Unknown message");
+    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                        "Unknown message");
     msg_tiny_id = 0xffff;
   }
 
@@ -401,7 +414,9 @@ void handle_usb_rx(const void* msg, size_t len) {
   if (msg_tiny_flag) {
     msg_read_tiny(msg, len);
   } else {
+    tiny_handler_rejected = false;
     usb_rx_helper(msg, len, NORMAL_MSG);
+    tiny_handler_rejected = false;
   }
 }
 
@@ -430,7 +445,7 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   msg_tiny_flag = true;
 
-  while (msg_tiny_id == MSG_TINY_TYPE_ERROR) {
+  while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
     usbPoll();
 
     if (!block) {
@@ -439,6 +454,12 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   }
 
   msg_tiny_flag = false;
+
+  if (tiny_handler_rejected) {
+    memzero(msg_tiny, sizeof(msg_tiny));
+    memzero(buf, MSG_TINY_BFR_SZ);
+    return MessageType_MessageType_Cancel;
+  }
 
   if (msg_tiny_id != MSG_TINY_TYPE_ERROR) {
     memcpy(buf, msg_tiny, sizeof(msg_tiny));
