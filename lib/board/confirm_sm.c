@@ -630,6 +630,8 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 
 #if DEBUG_LINK
     if (decided_via_debug) {
+      /* Each debug subpage must consume its own host acknowledgement. */
+      button_request_acked = false;
       /* Production keeps the legacy one-ButtonRequest-per-word-group
        * protocol. The debug build emits a request for each renderer subpage
        * so the evidence harness can capture every physical OLED page instead
