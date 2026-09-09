@@ -1492,7 +1492,7 @@ void signing_txack(TransactionType* tx) {
         authorized_bip143_in += tx->inputs[0].amount;
 
         txin_dgst_addto(tx->inputs[0].prev_hash.bytes,
-                        sizeof(TxInputType_prev_hash_t));
+                        sizeof(tx->inputs[0].prev_hash.bytes));
 
         phase1_request_next_input();
       } else {
