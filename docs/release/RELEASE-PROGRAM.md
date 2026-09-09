@@ -28,9 +28,9 @@ this correction and the phase coverage ledger.
 
 | Product | Canonical fork branch / product PR | Current canonical head | Internal status |
 | --- | --- | --- | --- |
-| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `c72672f06b3bc568183280607d9c3bc8a6245176` | Assembled baseline; complete phased audit pending |
-| 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `de0251bbdb286ccdc786a5513ebc94bddd890e3f` | Assembled baseline; complete phased audit pending |
-| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `a18317f8869bb905cac9322f0d76ca7aacbaf544` | Assembled baseline; complete phased audit pending |
+| 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `e546d99798a5e7dbc54ad5fe43b040a2806c8291` | Prior validated integration; subsequent audit fixes pending integration |
+| 7.14.3 | [release/7.14.3-bitcoin-only](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.3-bitcoin-only), [#627](https://github.com/BitHighlander/keepkey-firmware/pull/627) | `47eae604e183ab1c6c69be7dae43eee60b58326c` | Prior validated integration; subsequent audit fixes pending integration |
+| 7.15 | [release/7.15](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.15), [#629](https://github.com/BitHighlander/keepkey-firmware/pull/629) | `f20c2497a0990a6690c5bb804414c11cac74bf58` | Prior validated integration; subsequent audit fixes pending integration |
 
 Fork develop remains `da075b8cb717b56dc1023edb52c2ccdf171b8a08`. All three
 product PRs target it and remain unmerged. A product PR is the cumulative
@@ -40,7 +40,24 @@ remains bounded. The dirty alpha worktree is preserved.
 The receipts are `docs/release/<version>-COMBINED-CANDIDATE.md` on each product.
 They supersede status snapshots copied into a candidate before assembly.
 
-## Validated candidates
+## Current audit stack tips
+
+Verified against fork refs on 2026-09-08. These branches contain later audit
+fixes and are not yet the canonical release products above. Each PR targets its
+frozen immediate predecessor; no develop merge is involved.
+
+| Product | Audit tip | Head | Current validation |
+| --- | --- | --- | --- |
+| 7.14.2 | [recovery debug cleanup, #719](https://github.com/BitHighlander/keepkey-firmware/pull/719) | `c593bdbd74479c8a3c4c88d56e65284fef35af0b` | Local regression passes; CI 34297892518 runs on predecessor e33fa4a00 and excludes this debug-only fix |
+| 7.14.3 | [PIN cleanup, #716](https://github.com/BitHighlander/keepkey-firmware/pull/716) | `374efb1b63a8d1d3dd01abeb5b6287c9b781dfd2` | Local full/BTC PIN checks pass; combined CI dispatched after predecessor run 34297269194 completed successfully |
+| 7.15 | [recovery display cleanup, #718](https://github.com/BitHighlander/keepkey-firmware/pull/718) | `f8c5692b310c137a9dd1005ec1297a244e694ffd` | Local full/BTC recovery checks pass; combined CI 34297894523 running on this head |
+
+The P03 findings ledger records scope, applicability, regressions and limitations.
+Prior migration-test receipts using the emulator without sector erasure were
+withdrawn and replaced by corrected-model checks. Passing builds do not close the
+remaining phase inventory or cross-phase review. No product is ready for Copilot.
+
+## Historical validated candidate receipts
 
 - 7.14.2: code `34e7c236d`, [CI 34277705965](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34277705965)
   passed every required gate. Native suites and 433 host tests pass; 47 documented
