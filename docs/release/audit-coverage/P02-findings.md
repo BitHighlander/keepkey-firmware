@@ -472,3 +472,46 @@ The rejection and ordinary signing/fee tests pass against 06d84f561. Exact
 commit fetch through the configured URL succeeds. Firmware PR
 [#697](https://github.com/BitHighlander/keepkey-firmware/pull/697), 89c03a5a1,
 pins this host test above the frozen rejection fix. Combined CI remains pending.
+
+## P06 memo-display helper review
+
+At 7.15 audit head 39503dacf, traced thorchain_confirm_full_memo through
+confirm_bytes and its page formatter: escaping preserves byte identity, page
+boundaries preserve complete escape tokens, rendered row limits determine page
+size, and any rejected page propagates failure to the Ripple caller before
+signing. Temporary page storage is cleared. Seven existing native tests passed
+(Thorchain.FullMemo* and Confirmation.ExactLengthPager*) covering pagination,
+binary escaping, empty input and cancellation. This is helper-level evidence,
+not physical-display validation or complete Ripple acceptance.
+
+## Integration follow-up: 7.14.3 reset failure
+
+Run 34293563979 at 1ce4d3961 failed full host integration:
+test_reset_device_18_words received Failure instead of Features from Initialize
+after its reset helper completed. Bitcoin-only integration, native units and
+both ARM builds passed. The report and final gates correctly refused acceptance.
+Investigating the returned failure and setup/transport timing; no classification
+as a flaky test and no canonical advancement based on this failed run.
+
+## P10-001: debug backup subpages reused an earlier acknowledgement
+
+Root cause: confirm_constant_power_paged issued additional debug ButtonRequests
+without clearing button_request_acked. A decision arriving first could finish
+the subpage and leave its ButtonAck queued. The existing 7.15 implementation
+already resets that flag and contains a regression; both older products lacked
+it. A deterministic native regression failed on both older heads with exactly
+one extra acknowledgement remaining. Ordinary full 7.14.3 reset repetitions
+(20 normal, 5 with delayed acknowledgements) passed before the fix, so they do
+not independently reproduce the original CI failure. Its post-reset Failure
+is consistent with the demonstrated queue defect, not proven to have that cause.
+
+Applicability and staged fixes:
+- 7.14.2: PR #699, 70ae2ab8d, above bedf3aca1. All 156 native tests pass.
+- 7.14.3: PR #698, 9d6636089, above 89c03a5a1. All 191 full / 91
+  Bitcoin-only native tests pass; 20 full reset repetitions with capture pass.
+- 7.15: fix and Confirmation.BackupSubpagesConsumeTheirOwnAcknowledgements
+  already present at 39503dacf; no duplicate code change needed.
+
+This changes additional debug-page acknowledgement handling only. Physical
+production paging is unchanged. Combined validation dispatched for both older
+assembly heads with publication disabled; no canonical advancement yet.

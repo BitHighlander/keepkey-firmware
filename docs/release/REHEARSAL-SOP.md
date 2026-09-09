@@ -101,6 +101,13 @@ something a vulnerability is evidence to investigate, not permission to reverse
 the current contract. Check test build registration and version-based skips against
 the actual candidate capabilities; a test in the tree is not evidence it ran.
 
+Before closing a finding, record its applicability to all three canonical
+products at exact heads: present and verified, applicable and staged, or
+excluded with a technical reason. Include any corresponding regression test
+and whether it actually runs in full and Bitcoin-only configurations. Reuse
+existing proven fixes where policy matches. A fix present in 7.15 does not
+close the same root cause in 7.14.2 or 7.14.3.
+
 ## Findings and review units
 
 Each finding has a stable ID, affected SHA/configuration, concrete failure
