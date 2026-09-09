@@ -181,12 +181,24 @@ TEST_F(PassphraseTransition, WalletSurvivesEveryCompletedCommitOperation) {
     std::memcpy(torn.data() + magic_offset, after_magic.data() + magic_offset, bytes);
     commit_snapshots.push_back(std::move(torn));
   }
+  const size_t first_partial_payload = commit_snapshots.size();
+  // The spare was erased in snapshot 0; snapshot 1 contains the full payload.
+  // Stop in the header, ciphertext and trailer, including one byte short.
+  for (size_t bytes : {size_t{1}, size_t{4}, size_t{512}, size_t{1500},
+                       size_t{2568}, STORAGE_RECORD_LEN - STORAGE_MAGIC_LEN - 1}) {
+    auto torn = commit_snapshots[0];
+    std::memcpy(torn.data() + magic_offset + STORAGE_MAGIC_LEN,
+                commit_snapshots[1].data() + magic_offset + STORAGE_MAGIC_LEN,
+                bytes);
+    commit_snapshots.push_back(std::move(torn));
+  }
   for (size_t i = 0; i < commit_snapshots.size(); ++i) {
     SCOPED_TRACE(i);
     std::memcpy(emulator_flash_base, commit_snapshots[i].data(), FLASH_TOTAL_SIZE);
     storage_init();
     ASSERT_TRUE(storage_isInitialized());
     const char* label = storage_getLabel();
+    if (i >= first_partial_payload) EXPECT_STREQ("before", label);
     ASSERT_TRUE(std::strcmp(label, "before") == 0 ||
                 std::strcmp(label, "after") == 0);
     HDNode node = {};
