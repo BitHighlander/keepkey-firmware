@@ -192,13 +192,29 @@ TEST_F(PassphraseTransition, WalletSurvivesEveryCompletedCommitOperation) {
                 bytes);
     commit_snapshots.push_back(std::move(torn));
   }
+  // A legacy record has no CRC: a torn erase can leave its magic intact
+  // while damaging a field. The complete pending replacement must win.
+  auto legacy_torn_erase = commit_snapshots[1];
+  for (Allocation a : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
+    const size_t offset = static_cast<size_t>(flash_write_helper(a) -
+                           reinterpret_cast<intptr_t>(emulator_flash_base));
+    if (std::memcmp(legacy_torn_erase.data() + offset, STORAGE_MAGIC_STR, 4) == 0) {
+      std::memset(legacy_torn_erase.data() + offset + STORAGE_RECORD_DATA_LEN,
+                  0xff, 8);
+      legacy_torn_erase[offset + 44 + 32] |= 0x80;
+    }
+  }
+  const size_t legacy_torn_index = commit_snapshots.size();
+  commit_snapshots.push_back(std::move(legacy_torn_erase));
   for (size_t i = 0; i < commit_snapshots.size(); ++i) {
     SCOPED_TRACE(i);
     std::memcpy(emulator_flash_base, commit_snapshots[i].data(), FLASH_TOTAL_SIZE);
     storage_init();
     ASSERT_TRUE(storage_isInitialized());
     const char* label = storage_getLabel();
-    if (i >= first_partial_payload) EXPECT_STREQ("before", label);
+    if (i >= first_partial_payload && i < legacy_torn_index)
+      EXPECT_STREQ("before", label);
+    if (i == legacy_torn_index) EXPECT_STREQ("after", label);
     ASSERT_TRUE(std::strcmp(label, "before") == 0 ||
                 std::strcmp(label, "after") == 0);
     HDNode node = {};
