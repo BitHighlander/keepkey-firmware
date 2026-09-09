@@ -389,18 +389,8 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
            in->op_return_data.size);
     r += in->op_return_data.size;
     out->script_pubkey.size = r;
-    /* signing.c calls txin_dgst_final() once per output, and the pay-to-address
-       path below re-arms the context via txin_dgst_save_and_reset(). This path
-       returns before that, so a transaction whose LAST output is OP_RETURN used
-       to leave the hash finalised and never re-initialised -- the NEXT
-       transaction's inputs were then hashed into a finalised context, its
-       digest no longer matched while the amount and address still did, and the
-       device falsely reported "WARNING: Duplicate Transaction!" and aborted
-       until the user replugged. Every THORChain/Maya swap from Bitcoin is an
-       OP_RETURN memo, so an ordinary send right after a swap hit this.
-       Reset only: an OP_RETURN has no amount/address worth saving as a
-       comparison key. */
-    txin_dgst_reset_only();
+    // OP_RETURN has no payment comparison key. Preserve the transaction's
+    // input hash for any following outputs.
     return r;
   }
 
@@ -603,7 +593,7 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
              "To try again, unplug/replug KeepKey.");
       retval = -1;  // abort
     }
-    txin_dgst_save_and_reset(amount_str, prefix_len + in->address);
+    txin_dgst_save(amount_str, prefix_len + in->address);
 
     if (retval == -1) {
       return retval;
