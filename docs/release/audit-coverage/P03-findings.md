@@ -376,3 +376,19 @@ exit, but that does not cover these paths. Existing tiny-buffer cleanup removes
 the transport copy only. This is residual credential material, not an established
 remote extraction primitive. Status OPEN: extend local credential cleanup to all
 returns and validate normal PIN, cancellation, mismatch and wipe-code flows.
+
+### P03-005 staged remediation
+
+All three functions now route returns after credential entry through memzero of
+the complete local PINInfo structures. Current PIN paths preserve their previous
+result and counter behavior; wipe-code entry clears both attempts on cancellation,
+mismatch and success. The no-PIN fast path never creates credential state.
+Fork units: PR #715 e33fa4a00 (7.14.2), #716 374efb1b6 (7.14.3),
+#717 b73f7a5f7 (7.15), each on its frozen emulator-erase predecessor.
+
+All five existing PIN-change host tests pass on all five emulator variants after
+rebuilding. This verifies behavior, not stack residue directly; complete exit
+cleanup was checked in source. Wipe-code entry is behind ENABLE_WIPECODE in the
+normal handler, so no enabled wipe-code runtime coverage is claimed. ARM and
+combined integration evidence remains pending. Finding status: fixed in audit
+units, awaiting final validation and canonical assembly.
