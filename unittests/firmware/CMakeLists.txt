@@ -24,6 +24,7 @@ set(sources
     storage.cpp
     storage_passphrase.cpp
     thorchain.cpp
+    txin_history.cpp
     usb_rx.cpp
     u2f.cpp)
 
