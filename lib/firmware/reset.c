@@ -171,7 +171,8 @@ void setup_arm(SetupKind kind) {
   setup.kind = setup.staged ? kind : SETUP_NONE;
 }
 
-void setup_commit(const char* mnemonic, bool imported) {
+bool setup_commit(SetupKind kind, const char* mnemonic, bool imported) {
+  if (!setup_require(kind, "Setup ceremony was aborted")) return false;
   /* The ordering below is load-bearing. storage_setPin() derives the storage
    * key that storage_commit() encrypts the secrets with, so it has to run
    * before storage_setMnemonic(). Do not reorder. */
@@ -191,6 +192,7 @@ void setup_commit(const char* mnemonic, bool imported) {
    * storage_commit() aborts any ceremony still armed when it runs. */
   setup_abort();
   storage_commit();
+  return true;
 }
 
 void reset_init(bool display_random, uint32_t _strength,
@@ -404,7 +406,8 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   if (setup.no_backup) {
     /* Consent for this path is the two WARNING holds taken during the same
      * ceremony, in reset_init(). */
-    setup_commit(temp_mnemonic, /*imported=*/false);
+    if (!setup_commit(SETUP_RESET, temp_mnemonic, /*imported=*/false))
+      goto exit;
     fsm_sendSuccess(_("Device reset"));
     goto exit;
   } else {
@@ -511,7 +514,7 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   /* Every page was held through. This is the commit point: the settings the
    * user chose during THIS ceremony and the seed land together, or neither
    * lands. */
-  setup_commit(temp_mnemonic, /*imported=*/false);
+  if (!setup_commit(SETUP_RESET, temp_mnemonic, /*imported=*/false)) goto exit;
   fsm_sendSuccess(_("Device reset"));
 
 exit:
