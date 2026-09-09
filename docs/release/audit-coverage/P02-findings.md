@@ -662,3 +662,9 @@ sequence was reproduced before the fix on all three full products. The current
 runner checks immediate fresh-request acceptance and all listed rejection paths.
 Broader integration and remaining request-boundary review are pending, so this
 is staged remediation rather than canonical acceptance.
+
+### P02-006 normal reset regression and formatting follow-up
+
+The unchanged normal reset host suite passes against the terminal-rejection implementation on all five emulator variants: 7.14.2 full 6 cases; 7.14.3 full and Bitcoin-only 8 each; 7.15 full and Bitcoin-only 8 each, with no skips. Logs: `/private/tmp/{7142,7143,715,7143-btc,715-btc}-terminal-reset-suite.log`. These binaries precede the formatting-only follow-ups; no behavior changed in those follow-ups.
+
+CI run 34298843903 on 7.14.2 stopped at clang-format before build/test execution. Four rejection calls needed wrapping/indentation. Corrected the same calls in all three release audit branches: 543b43185 (7.14.2), 9af75acb0 (7.14.3), cb5650490 (7.15), retaining PRs 723/724/725. Replacement 7.14.2 CI run 34299111789 is pending; 7.14.3 replacement dispatched. Exact-head CI/artifact acceptance and canonical integration remain pending. This is staged remediation, not release audit completion.
