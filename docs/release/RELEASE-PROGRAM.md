@@ -48,9 +48,9 @@ frozen immediate predecessor; no develop merge is involved.
 
 | Product | Audit tip | Head | Current validation |
 | --- | --- | --- | --- |
-| 7.14.2 | [Current audit draft, #740](https://github.com/BitHighlander/keepkey-firmware/pull/740) | `d4c23c9d53551c62c6b18f00a8902da4796c7a64` | Complete native suite: 162 pass. Current-head host/ARM acceptance pending. |
-| 7.14.3 | [Current audit draft, #739](https://github.com/BitHighlander/keepkey-firmware/pull/739) | `c8f47fce78337aaa0ccd18cf35ea575f8e49827e` | Signing/transaction tests: 11 per variant pass. Current-head complete preflight pending. |
-| 7.15 | [Current audit draft, #742](https://github.com/BitHighlander/keepkey-firmware/pull/742) | `039e2f9644876443ad1c5ad78082cee0e8901cba` | Native suites: 507 full / 99 Bitcoin-only pass. Local ARM resource correction passes with 16,412-byte reserve. Complete host preflight running; exact-head CI pending. |
+| 7.14.2 | [Current audit draft, #740](https://github.com/BitHighlander/keepkey-firmware/pull/740) | `d4c23c9d53551c62c6b18f00a8902da4796c7a64` | Native: 162 pass; host: 434 pass / 47 skip; migration: 4 pass. CI 34313676228 running; ARM and audit acceptance pending. |
+| 7.14.3 | [Current audit draft, #739](https://github.com/BitHighlander/keepkey-firmware/pull/739) | `c8f47fce78337aaa0ccd18cf35ea575f8e49827e` | Native: 197 full / 97 BTC pass; host: 537/218 full and 309/446 BTC pass/skip. CI 34313363985 running. |
+| 7.15 | [Current audit draft, #742](https://github.com/BitHighlander/keepkey-firmware/pull/742) | `039e2f9644876443ad1c5ad78082cee0e8901cba` | Native suites: 507 full / 99 Bitcoin-only pass. Local ARM resource correction passes with 16,412-byte reserve. Host: 727/30 full and 314/443 BTC pass/skip. CI 34312975959 running. |
 
 The P03 findings ledger records scope, applicability, regressions and limitations.
 Prior migration-test receipts using the emulator without sector erasure were
