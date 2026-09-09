@@ -72,6 +72,12 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
 
   CHECK_INITIALIZED
 
+  if (msg->has_memo && msg->memo[0] != '\0') {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Ripple memos require firmware 7.15 or later"));
+    return;
+  }
+
   CHECK_PIN
 
   bool needs_confirm = true;
