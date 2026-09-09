@@ -12,7 +12,15 @@ def timeout(signum, frame):
     raise TimeoutError("framed storage rehearsal exceeded 60 seconds")
 signal.signal(signal.SIGALRM, timeout)
 signal.alarm(60)
+pinned_paths = list(sys.path)
 from test_storage_version_gate import Emulator, TestStorageUpgradePreservation, OFF_VERSION
+# A borrowed helper may prepend its own checkout during import. Restore the
+# selected release's library precedence before any client is instantiated.
+sys.path[:] = pinned_paths
+import keepkeylib
+if not Path(keepkeylib.__file__).resolve().is_relative_to(root / "deps/python-keepkey"):
+    raise AssertionError("migration rehearsal loaded a different host library")
+print("Pinned host library:", keepkeylib.__file__, flush=True)
 original_patch = Emulator.patch
 def framed_patch(self, off, rel, data):
     original_patch(self, off, rel, data)
