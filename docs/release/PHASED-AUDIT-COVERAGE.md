@@ -47,3 +47,19 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 
 Prior assembly CI and unit receipts remain evidence only for their named checks.
 They do not populate pending review entries automatically. No Copilot in this phase.
+
+## Closing and refreshing coverage
+
+The frozen comparisons above are historical inventory anchors. Before batch or
+release acceptance, reconcile paths against the actual candidate and recorded
+comparison base, including new remediation files, deletions and dependency
+changes. Retain prior reviewed blob/hunk identities and evidence; explicitly
+review changed deltas and affected interactions. Never convert an unread path
+to reviewed based on a green test or matching filename.
+
+A phase closes when every current path/hunk has a supported disposition, its
+required interactions have been reviewed, actionable findings are resolved in
+the candidate, and required evidence is recorded. A phase may close before its
+accepted units are integrated; report integration separately. Reopen only under
+the evidence-based triggers in the rehearsal SOP. The acceptance checklist links
+these ledgers rather than maintaining a competing finding inventory.

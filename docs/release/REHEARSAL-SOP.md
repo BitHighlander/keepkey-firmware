@@ -65,6 +65,87 @@ phase and the assembled interaction audit is complete. Keep the goal active unti
 all three release products meet this gate. This does not authorize Copilot or
 merges into develop.
 
+## Convergence and acceptance control
+
+Operational revision: 2026-09-08. Use
+[RELEASE-ACCEPTANCE-CHECKLIST.md](RELEASE-ACCEPTANCE-CHECKLIST.md) as the live
+control record. This section governs scheduling and status; it does not waive
+full-release coverage or authorize external actions.
+
+Work toward one primary release milestone at a time: first internal acceptance
+of 7.14.2, then 7.14.3, then 7.15. Continue applicable shared-fix ports while their
+context is fresh. Do not add alpha features beyond the frozen 7.15 manifest.
+This order is a scheduling priority, not permission to omit another product.
+
+Keep at most one discovery unit and one assembly batch active. Before opening
+another discovery unit, finish the current unit or record its concrete blocker
+and switch to named independent work. A unit's size is determined by one behavior,
+its invariants and affected consumers, not an arbitrary line-count target.
+
+At every completed phase or three accepted units for the primary release,
+whichever occurs first, assemble and validate the accepted batch before opening
+more unrelated discovery. At session start, reconcile any existing backlog that
+already exceeds this threshold. Do not replay an unaccepted predecessor merely
+to reach an accepted descendant. Extract onto the canonical base and validate,
+or name the blocking dependency and finish it first. If assembly is blocked,
+record the exact blocker and next resolving action; independent work may continue.
+The cadence is an integration checkpoint, not a release-acceptance shortcut.
+
+Use these distinct statuses and never abbreviate all of them to “done”:
+
+| Object | Status progression | Required evidence |
+| --- | --- | --- |
+| Audit unit | scoped → reviewing → staged → accepted | Named contract, exact base/head, reviewed delta and interactions, finding dispositions and applicable checks. Pushed or green alone means staged. |
+| Integration batch | assembling → validated → integrated | Included accepted units, exact tree/pins, interaction review, required checks, then verified canonical remote head. |
+| Release | auditing → internally accepted → awaiting external review | Complete current scope coverage, no unresolved actionable findings, integrated fixes and final candidate validation. External review remains a separate phase. |
+
+“Blocked” is an additional condition with a reason, not an acceptance status.
+A finding fixed on an audit branch is “staged remediation”; it is not resolved
+in the canonical product until integrated and verified there.
+
+Close a unit after its contract is satisfied. Reopen only for a concrete new
+failure, a changed invariant or requirement, a dependency/consumer change that
+invalidates its reasoning, or evidence that required coverage was missing or
+incorrect. Record the trigger and affected scope. A new reviewer, another elapsed
+round, a changed unrelated head or optional cleanup is not a reopening reason.
+Carry forward exact unchanged evidence with an explicit impact assessment.
+
+Triage each candidate finding as confirmed defect, unverified claim, missing
+required evidence, optional improvement, or technically rejected. Confirmed
+in-scope defects and missing required evidence prevent internal acceptance.
+Unverified claims need a bounded reproduction or source-trace task and disposition;
+they must not silently become either fixes or accepted risks. Optional improvements
+leave the frozen scope. Do not relabel a defect optional to meet a deadline.
+
+If two consecutive remediation rounds do not close a finding or acceptance item,
+stop repeating the same review. Record the obstacle and choose a smaller unit,
+a targeted experiment, or a root-cause investigation. This is an escalation of
+method, not a cap that permits unresolved defects to pass.
+
+## Autonomous session contract
+
+Before an overnight run, record the primary milestone, exact starting heads,
+current unit, required checks and known blockers in the acceptance checklist.
+Use the existing ledgers as the finding source of truth; link rather than copy
+finding details into new reports. Firmware changes must address a named defect
+or frozen product requirement. Host, tooling and documentation work must name
+the firmware check or acceptance item they enable.
+
+At each integration checkpoint and at handoff, report canonical head versus audit
+tip, coverage closed/total from the current ledger, unresolved finding IDs,
+accepted-but-unintegrated units, exact validation status, and the next milestone.
+Label historical receipts and tests run before local uncommitted changes.
+PR counts and test counts are supporting evidence, not release progress measures.
+Do not invent a percentage when the current inventory has not been reconciled.
+
+Continue authorized internal work without per-unit permission requests. Preserve
+dirty unrelated work. Do not merge develop, request Copilot, submit upstream,
+flash hardware, sign or publish releases under this internal audit contract.
+When a required check cannot run, name the missing evidence and continue useful
+independent work; do not waive the check or claim internal acceptance. Finish an
+accepted milestone by advancing to the next release. Finish all three by issuing
+an exact acceptance handoff and leaving the external checkpoint pending.
+
 ## Foundation first
 
 Use the current audited 7.14.2 candidate as the selected foundation. The

@@ -24,6 +24,15 @@ The active goal has been reopened to cover this full audit. Prior assembly
 receipts remain valid test evidence; their readiness claims are superseded by
 this correction and the phase coverage ledger.
 
+## Execution control
+
+Use [RELEASE-ACCEPTANCE-CHECKLIST.md](RELEASE-ACCEPTANCE-CHECKLIST.md) for the
+remaining work and milestone order. First prove internal acceptance of 7.14.2,
+then 7.14.3 and 7.15, carrying applicable shared fixes across products. The SOP
+requires an assembly checkpoint after each phase or three accepted units.
+The tables below are dated evidence snapshots, not live CI status; refresh exact
+heads and terminal results before making readiness claims.
+
 ## Canonical products and current evidence
 
 | Product | Canonical fork branch / product PR | Current canonical head | Internal status |
