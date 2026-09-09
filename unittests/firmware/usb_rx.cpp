@@ -5,6 +5,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include <cstring>
 
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
