@@ -450,3 +450,15 @@ failure. Reviewed changed status propagation through the serializer and handler.
 Remaining obligations include transaction-flag semantics, complete memo display
 and cancellation coverage, and old-product handling of protocol fields they do
 not implement. This is not complete Ripple acceptance.
+
+## P06-005: full 7.14.3 silently omitted a supplied Ripple memo
+
+Unwrapped the original host memo test on full 7.14.3: the call returned a signed
+transaction, but the unchanged memo-suffix assertion failed. Protocol memo
+storage exists; this serializer does not implement it.
+[#696](https://github.com/BitHighlander/keepkey-firmware/pull/696), 06d84f561,
+rejects nonempty memos before PIN/key derivation. Rejection, ordinary signing
+and fee host tests pass, as do all 190 full native tests. Bitcoin-only compiles
+with this handler excluded. Rehearsal ripple_unsupported_memo.py is repeatable
+against the full build. Permanent host CI coverage and integration remain open.
+7.14.2's pinned schema has no memo member; no blind backport was made there.
