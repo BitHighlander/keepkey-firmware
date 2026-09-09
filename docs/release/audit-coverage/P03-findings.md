@@ -39,3 +39,25 @@ malformed ranges and enumerated exactly two entries. Existing product tests
 verified names Bitcoin/Testnet and the correct firmware variant. Full variant
 previously enumerated 589 entries; this closes the variant-specific wire check,
 not the remaining storage/setup audit.
+
+### P03-001 follow-up validation
+
+At the staged commit-authorization fixes, normal recovery succeeds both without
+PIN/passphrase and with PIN/passphrase on all three full emulators. Existing
+host tests verify recovered mnemonic and resulting protection behavior.
+
+Bitcoin-only variants rebuilt successfully at e298e08a7 (7.14.3) and 8ac4bd9df
+(7.15). All 92 / 94 native tests pass respectively. The aborted-reset wire
+rehearsal terminates with Failure on both, and both normal recovery tests pass
+on each Bitcoin-only emulator. No skips counted as passes.
+
+Inspected the possible pre-arm resurrection path: setup_abort clears staged;
+setup_stagePin refuses an unstaged setup, and setup_arm assigns SETUP_NONE
+when staged is false. Thus a cleared stage does not re-arm through that path.
+No additional defect established there. Later EntropyAck is gated by setup_require.
+
+Current integration runs for the new older-release heads are 34295659497
+(7b26c58dc) and 34295661595 (e298e08a7). Earlier backup-fix runs 34294763501
+and 34294765461 completed successfully, but do not validate subsequent Ping
+and setup changes. Their artifact evidence has not been fully inspected for
+canonical advancement. The superseded P00 run 34294793245 is terminal cancelled.
