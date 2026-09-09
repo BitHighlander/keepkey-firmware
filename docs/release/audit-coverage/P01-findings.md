@@ -49,3 +49,7 @@ its audited CI binaries; review its source/build/evidence contract before decidi
 whether this is an actionable gap. A shellcheck warning in its bootloader guard
 also remains to be dispositioned. Dependency delta review and the rest of P01
 remain pending. Do not automatically import the 7.15 workflow into older products.
+
+### Open: 7.15 durable-storage head exceeds SRAM reserve budget
+
+CI 34309719051 at b9b88955fa4ea137e882189764394f3c5a5ed198 completed with failure. ARM job 102336772909 fails linking firmware.keepkey.elf: Insufficient runtime SRAM: require 16 KiB stack/heap reserve between _ebss and _stack. The report and aggregate gates also fail; they are not independent evidence of another firmware defect. Log /private/tmp/715-durable-arm-failure.log. This is a confirmed build/resource regression and blocks acceptance; do not lower the linker floor. A local reproduction on the newer 29e14b4a4 history head is running with the exact pinned CI image kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2 and isolated /private/tmp/715-output-history-arm-build. Immutable recovery english_alphabet currently occupies writable data in the native binary and is a candidate to move to flash; no resource fix or ARM acceptance has yet been claimed.
