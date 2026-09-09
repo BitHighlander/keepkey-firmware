@@ -286,3 +286,19 @@ cecf1ea20, pins it above the frozen response fix. Combined CI remains pending.
 7.14.2 packet-buffer run 34292497524 completed successfully; artifact inspection
 and canonical advancement remain pending. Its native/host/report artifacts are
 10082076305 / 10082076607 / 10082087463; ARM is 10081905002.
+
+## 7.14.2 packet-lifetime integration accepted into canonical branch
+
+Run 34292497524 succeeded. Inspected downloaded artifacts: firmware 155, board
+18 and crypto 4 tests all pass; host 433 pass/47 skip and screenshot selection
+77 pass/7 skip, zero failures/errors. Both report and ARM manifests identify
+e546d99798a5e7dbc54ad5fe43b040a2806c8291; all 23 ARM hashes verify.
+Application ELF SHA-256:
+88eaaaa336b1965a2c101f3b8da77b138e63788f6b64aee32dcc120c2ae0bcec.
+Reserve remains 22,508 bytes. Report PDF hash verifies as
+e3d8cad46c87bac96c6d1c842257b6fb1826353f826dfcdbd0c03bc28a900f9e.
+
+Fast-forwarded canonical release/7.14.2 from bae119589 to e546d9979. Product
+PR #650 remains open into fork develop; its current evidence and pending audit
+wording were updated. P02-003 is integrated for this product. Full release and
+older-release Ripple display review remain open; no Copilot readiness claim.
