@@ -462,3 +462,13 @@ and fee host tests pass, as do all 190 full native tests. Bitcoin-only compiles
 with this handler excluded. Rehearsal ripple_unsupported_memo.py is repeatable
 against the full build. Permanent host CI coverage and integration remain open.
 7.14.2's pinned schema has no memo member; no blind backport was made there.
+
+### P06-006 permanent unsupported-memo test pinned
+
+Host PR [#80](https://github.com/BitHighlander/python-keepkey/pull/80),
+0f4c839db56767eac43c9c7be8a2e2b589667b49, requires explicit syntax rejection
+for nonempty memos on full 7.14.3, gating older/BTC/7.15 products appropriately.
+The rejection and ordinary signing/fee tests pass against 06d84f561. Exact
+commit fetch through the configured URL succeeds. Firmware PR
+[#697](https://github.com/BitHighlander/keepkey-firmware/pull/697), 89c03a5a1,
+pins this host test above the frozen rejection fix. Combined CI remains pending.
