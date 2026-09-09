@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <vector>
 
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
@@ -13,6 +14,18 @@ extern "C" {
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/memzero.h"
+}
+
+namespace {
+bool capture_flash_operations = false;
+std::vector<std::vector<uint8_t>> commit_snapshots;
+}
+
+extern "C" void emulator_flash_operation_completed(void) {
+  if (capture_flash_operations) {
+    commit_snapshots.emplace_back(emulator_flash_base,
+                                  emulator_flash_base + FLASH_TOTAL_SIZE);
+  }
 }
 
 namespace {
@@ -138,3 +151,28 @@ TEST_F(PassphraseTransition, StagingIsInertAndForeignCommitAborts) {
 }
 
 }  // namespace
+
+TEST_F(PassphraseTransition, WalletSurvivesEveryCompletedCommitOperation) {
+  storage_setLabel("before");
+  storage_commit();
+  commit_snapshots.clear();
+  capture_flash_operations = true;
+  storage_setLabel("after");
+  storage_commit();
+  capture_flash_operations = false;
+  ASSERT_EQ(commit_snapshots.size(), 7u);
+  for (size_t i = 0; i < commit_snapshots.size(); ++i) {
+    SCOPED_TRACE(i);
+    std::memcpy(emulator_flash_base, commit_snapshots[i].data(), FLASH_TOTAL_SIZE);
+    storage_init();
+    ASSERT_TRUE(storage_isInitialized());
+    const char* label = storage_getLabel();
+    ASSERT_TRUE(std::strcmp(label, "before") == 0 ||
+                std::strcmp(label, "after") == 0);
+    HDNode node = {};
+    ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, false, &node));
+    ExpectWallet("", node);
+    memzero(&node, sizeof(node));
+  }
+  commit_snapshots.clear();
+}
