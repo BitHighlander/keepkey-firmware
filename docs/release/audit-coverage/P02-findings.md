@@ -386,3 +386,21 @@ Only retained newest 34293553287 remains active. Six lagged the initial cancel
 requests; force-cancel accepted one, while five had already completed by that
 request. Final list confirms all nineteen cancelled. Release runs were not
 cancelled. Ledger updates are batched locally to avoid recreating that queue.
+
+## P06-004: incorrect 192-byte Ripple memo prefix
+
+The native boundary test reproduces two prefix bytes at length 192 instead of
+one. XRPL's documented single-byte range includes 192:
+https://xrpl.org/docs/references/protocol/binary-format#length-prefixing
+7.15 memo[200] permits this input. Change `< 192` to `<= 192`. Vectors at
+191/192/193/199 now pass, as do all 502 full native firmware tests.
+[#695](https://github.com/BitHighlander/keepkey-firmware/pull/695), 39503dacf,
+is staged above the frozen display-test pin. Older serializers lack memo
+implementation and use shorter fixed lengths; no old-product trigger has
+been established. Full serialization/helper-domain and integration review
+remain pending.
+
+Earlier 7.15 CI 34291743075 completed successfully at f20c2497a. Its artifact
+inspection and canonical advancement remain pending; it excludes subsequent
+packet/Ripple units. New combined run 34293571582 targets cecf1ea20 and also
+excludes this newest length-prefix fix.
