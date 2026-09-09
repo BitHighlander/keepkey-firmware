@@ -643,3 +643,22 @@ debug decision and ButtonAck after termination, then mistook their two legitimat
 rejections for a duplicate; corrected it to send a fresh valid request immediately
 after Failure. The corrected two-case suite passes. Malformed tiny frames, dice,
 other variants, and broader request-boundary review remain before acceptance.
+
+### P02-006 five-variant rehearsal and staged units
+
+Expanded validation passes with the shared latch fix on all five variants.
+Bad 64-byte headers, declared tiny payload size 56 and malformed protobuf payloads
+were injected during button, PIN and passphrase waits. Each produced Failure
+and accepted a fresh Ping without a queued stale reply. Dice entry rejection
+also unwinds on 7.14.3/7.15, rejects a stale EntropyAck and leaves the device
+uninitialized. 7.14.2 has no dice feature; its three applicable test cases ran,
+while the other four variants ran four cases each, with no skipped cases.
+
+Fork units #723 534ac50a9 (7.14.2), #724 f342d5a73 (7.14.3),
+#725 32c655531 (7.15), on frozen storage-transaction-test predecessors.
+Repeatable owned-emulator runner: rehearsals/terminal_tiny_failure.py CHECKOUT
+BUILD_DIRECTORY; set KK_TEST_DICE=0 only for 7.14.2. The original stale-Ping
+sequence was reproduced before the fix on all three full products. The current
+runner checks immediate fresh-request acceptance and all listed rejection paths.
+Broader integration and remaining request-boundary review are pending, so this
+is staged remediation rather than canonical acceptance.
