@@ -12,10 +12,10 @@ the pinned dependency delta, not merely confirmation that a gitlink exists.
 
 | Phase | 7.14.2 paths | 7.14.3 paths | 7.15 paths | Status |
 | --- | ---: | ---: | ---: | --- |
-| P00-scope-documents | 103 | 24 | 50 | Pending |
+| P00-scope-documents | 106 | 25 | 51 | Pending |
 | P01-build-dependencies-release | 46 | 28 | 53 | In progress; [findings](audit-coverage/P01-findings.md) |
 | P02-wire-dispatch-lifetime | 18 | 16 | 18 | In progress; [findings](audit-coverage/P02-findings.md) |
-| P03-storage-setup-authorization | 16 | 18 | 17 | In progress; [findings](audit-coverage/P03-findings.md) |
+| P03-storage-setup-authorization | 16 | 15 | 15 | In progress; [findings](audit-coverage/P03-findings.md) |
 | P04-bitcoin-signing | 15 | 13 | 13 | In progress; [findings](audit-coverage/P04-findings.md) |
 | P05-evm-signing | 26 | 21 | 22 | Pending |
 | P06-other-chain-signing | 53 | 45 | 53 | In progress; Ripple findings in [ledger](audit-coverage/P02-findings.md) |
@@ -74,3 +74,11 @@ the candidate, and required evidence is recorded. A phase may close before its
 accepted units are integrated; report integration separately. Reopen only under
 the evidence-based triggers in the rehearsal SOP. The acceptance checklist links
 these ledgers rather than maintaining a competing finding inventory.
+
+## Scope-repair comparison supersedes the historical heads above
+
+JSON ledgers now bind #754 (8c13ed24f), #755 (0fe01bc1b), and #756 (bd5e509cd),
+with prior comparison saved as pre_scope_repair_inventory. Changed blob identities
+require delta evidence binding; no unread path is closed. See
+[scope-repair.md](audit-coverage/scope-repair.md) for the withdrawn acceptance.
+Canonical integration and whole-release acceptance remain separate and pending.

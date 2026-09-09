@@ -6,6 +6,29 @@ It supersedes the alpha audit requirement for two whole-tree zero-finding
 passes as a prerequisite to staging. Historical rehearsal handoffs are
 evidence, not executable instructions or current branch identities.
 
+## Firmware-only scope boundary
+
+Owner correction, 2026-09-09: bootloader changes are out of scope. Neither the
+"perfect" audit goal nor a firmware finding authorizes a bootloader redesign,
+new storage-protection contract, bootloader release, or bootloader audit program.
+Trace consumers of shared code before accepting a change; directory names alone
+are not a scope check. A shared storage change that alters bootloader selection
+or protection is excluded unless the owner separately changes scope.
+
+For a firmware fix that crosses this boundary, record the confirmed finding and
+separate the proposed remediation. Preserve the existing storage/bootloader
+contract, or remove the coupled batch from these candidates. Do not add bootloader
+work as a new release acceptance requirement to justify the expansion. Existing
+compatibility evidence can remain historical evidence, with its actual limits;
+it does not authorize bootloader changes. Independent firmware changes in shared
+files still require consumer-impact review; this correction is not blanket
+acceptance of all shared-library changes.
+
+The 2026-09-09 durability batch is withdrawn from the corrected release candidates.
+See [scope-repair.md](audit-coverage/scope-repair.md) for exact predecessors,
+removed scope, retained findings and current validation. No whole-release or
+bootloader-artifact equivalence follows from restoring that batch.
+
 ## Two fork PR types: products and audit units
 
 Owner clarification: 2026-09-08. The main products are the fork release branches

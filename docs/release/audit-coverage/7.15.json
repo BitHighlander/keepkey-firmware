@@ -4,7 +4,7 @@
   "product_pr": 629,
   "develop_sha": "da075b8cb717b56dc1023edb52c2ccdf171b8a08",
   "merge_base": "1af2ffe7de1a40780b78b0be3807a140f9de0dd0",
-  "head_sha": "b57eb71c2ee1babfeb20805b7f6b64ad70c4e925",
+  "head_sha": "bd5e509cd56418c8cfacce467b8d26f1d1456229",
   "comparison": "merge-base to staged audit candidate (prospective product PR surface), no rename collapsing; canonical integration separate",
   "files": [
     {
@@ -514,6 +514,19 @@
       "identity_status": "review_pending"
     },
     {
+      "path": "docs/release/audit-units/scope-repair.md",
+      "phase": "P00-scope-documents",
+      "review_status": "pending",
+      "evidence": [
+        "scope-repair.md"
+      ],
+      "added": "32",
+      "deleted": "0",
+      "pre_scope_repair_blob": null,
+      "identity_status": "scope_repair_delta_requires_binding",
+      "candidate_blob": "937816b2514e4ae0a7ad8d5c92dbfe9218aa98cb"
+    },
+    {
       "path": "docs/release/audit-units/source-storage-policy.md",
       "added": "14",
       "deleted": "0",
@@ -708,20 +721,22 @@
     },
     {
       "path": "include/keepkey/board/keepkey_board.h",
-      "added": "20",
-      "deleted": "1",
+      "added": "2",
+      "deleted": "0",
       "phase": "P10-ui-platform",
       "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md"
+        "P03-findings.md",
+        "scope-repair.md"
       ],
       "remediation_review": {
         "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
         "status": "in_progress",
         "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
       },
-      "candidate_blob": "fc6b212e3d79c628d8dc987a872dbfb0e92f7c9f",
-      "identity_status": "review_pending"
+      "candidate_blob": "69ad6880286e951a303f5b86f1c9c5729cdb4445",
+      "identity_status": "scope_repair_delta_requires_binding",
+      "pre_scope_repair_blob": "fc6b212e3d79c628d8dc987a872dbfb0e92f7c9f"
     },
     {
       "path": "include/keepkey/board/keepkey_display.h",
@@ -741,16 +756,6 @@
       "review_status": "pending",
       "evidence": [],
       "candidate_blob": "d65b96cd7519cde0d0482ab395f11aa1db6059ac",
-      "identity_status": "review_pending"
-    },
-    {
-      "path": "include/keepkey/board/memory.h",
-      "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": [],
-      "added": "7",
-      "deleted": "0",
-      "candidate_blob": "5a23f4ff7e3b20833497b8e430571f9da16efdb5",
       "identity_status": "review_pending"
     },
     {
@@ -1354,20 +1359,22 @@
     },
     {
       "path": "lib/board/keepkey_flash.c",
-      "added": "25",
+      "added": "16",
       "deleted": "6",
       "phase": "P10-ui-platform",
       "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md"
+        "P03-findings.md",
+        "scope-repair.md"
       ],
       "remediation_review": {
         "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
         "status": "in_progress",
         "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
       },
-      "candidate_blob": "7eb2e5c7f2399e2e6402c9a3b87adb969d79ac9b",
-      "identity_status": "review_pending"
+      "candidate_blob": "a0030036943c84fc912efd850be81c65ff18640c",
+      "identity_status": "scope_repair_delta_requires_binding",
+      "pre_scope_repair_blob": "7eb2e5c7f2399e2e6402c9a3b87adb969d79ac9b"
     },
     {
       "path": "lib/board/layout.c",
@@ -1377,16 +1384,6 @@
       "review_status": "pending",
       "evidence": [],
       "candidate_blob": "0a81c1c36b4ef233b73015170eff03f28054e144",
-      "identity_status": "review_pending"
-    },
-    {
-      "path": "lib/board/memory.c",
-      "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": [],
-      "added": "141",
-      "deleted": "7",
-      "candidate_blob": "b37138da5249ee06ff7b8c24f98159b6ee1f318c",
       "identity_status": "review_pending"
     },
     {
@@ -2119,21 +2116,23 @@
     },
     {
       "path": "lib/firmware/storage.c",
-      "added": "729",
-      "deleted": "170",
+      "added": "615",
+      "deleted": "114",
       "phase": "P03-storage-setup-authorization",
       "review_status": "in_progress",
       "evidence": [
         "P03-findings.md: Production storage commit review: open power-interruption boundary; compare replacement-first frozen develop with erase-first releases, cross-file resolution pending.",
-        "P03-findings.md"
+        "P03-findings.md",
+        "scope-repair.md"
       ],
       "remediation_review": {
         "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
         "status": "in_progress",
         "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
       },
-      "candidate_blob": "5fb4dfc72fdcd3d7ce99c9281b91c9b282758e11",
-      "identity_status": "review_pending"
+      "candidate_blob": "f446028da1d7eaec3440c4e6ad14648d83d7db35",
+      "identity_status": "scope_repair_delta_requires_binding",
+      "pre_scope_repair_blob": "5fb4dfc72fdcd3d7ce99c9281b91c9b282758e11"
     },
     {
       "path": "lib/firmware/storage.h",
@@ -2656,20 +2655,22 @@
     },
     {
       "path": "unittests/board/board.cpp",
-      "added": "571",
+      "added": "402",
       "deleted": "2",
       "phase": "P10-ui-platform",
       "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md"
+        "P03-findings.md",
+        "scope-repair.md"
       ],
       "remediation_review": {
         "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
         "status": "in_progress",
         "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
       },
-      "candidate_blob": "7163e4445f32930d7d4b380f5d4a75f47f8f5e80",
-      "identity_status": "review_pending"
+      "candidate_blob": "41220720754f4b0d925c0093266bb447e5955170",
+      "identity_status": "scope_repair_delta_requires_binding",
+      "pre_scope_repair_blob": "7163e4445f32930d7d4b380f5d4a75f47f8f5e80"
     },
     {
       "path": "unittests/crypto/CMakeLists.txt",
@@ -2938,17 +2939,19 @@
     },
     {
       "path": "unittests/firmware/storage.cpp",
-      "added": "580",
+      "added": "595",
       "deleted": "17",
       "phase": "P03-storage-setup-authorization",
       "review_status": "reviewed_fix_staged",
       "evidence": [
         "P03-findings.md: Storage test review: policy lifetime and Bitcoin-only migration assertions; PR #727 strengthens successful migration status, remaining sections pending.",
-        "P03-findings.md: 7.15 storage test file review closure; both Storage suites 34 passes, PR #727 staged, production implementation and integration pending."
+        "P03-findings.md: 7.15 storage test file review closure; both Storage suites 34 passes, PR #727 staged, production implementation and integration pending.",
+        "scope-repair.md"
       ],
       "reviewed_blob": "e98eda06225bf272c8035e813974be27ca90f334",
-      "candidate_blob": "e98eda06225bf272c8035e813974be27ca90f334",
-      "identity_status": "bound"
+      "candidate_blob": "1263c059de72d971993b9a82771d64cf75fd3dce",
+      "identity_status": "scope_repair_delta_requires_binding",
+      "pre_scope_repair_blob": "e98eda06225bf272c8035e813974be27ca90f334"
     },
     {
       "path": "unittests/firmware/storage_cipher_probe.c",
@@ -2980,21 +2983,23 @@
     },
     {
       "path": "unittests/firmware/storage_passphrase.cpp",
-      "added": "243",
+      "added": "140",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
       "review_status": "in_progress",
       "evidence": [
         "P03-findings.md: Recovery helper and passphrase-transition test review; exact file identity, bounds, oracle and executed native cases checked.",
-        "P03-findings.md"
+        "P03-findings.md",
+        "scope-repair.md"
       ],
       "remediation_review": {
         "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
         "status": "in_progress",
         "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
       },
-      "candidate_blob": "ddd8a012d20ec63ba7161ebf7fbf5991a67bad4f",
-      "identity_status": "review_pending"
+      "candidate_blob": "5035fc4a76633c73ed28360fc85fa0ea62bff882",
+      "identity_status": "scope_repair_delta_requires_binding",
+      "pre_scope_repair_blob": "ddd8a012d20ec63ba7161ebf7fbf5991a67bad4f"
     },
     {
       "path": "unittests/firmware/test_board.cpp",
@@ -3084,7 +3089,34 @@
     "merge_base": "1af2ffe7de1a40780b78b0be3807a140f9de0dd0",
     "path_count": 270
   },
-  "candidate_branch": "audit/715-p04-rejected-output-history",
+  "candidate_branch": "audit/715-scope-repair",
   "canonical_head_at_reconciliation": "f20c2497a0990a6690c5bb804414c11cac74bf58",
-  "paths_no_longer_in_pr_surface": []
+  "paths_no_longer_in_pr_surface": [],
+  "pre_scope_repair_inventory": {
+    "head_sha": "b57eb71c2ee1babfeb20805b7f6b64ad70c4e925",
+    "candidate_branch": "audit/715-p04-rejected-output-history",
+    "path_count": 286
+  },
+  "scope_repair_removed_paths": [
+    {
+      "path": "include/keepkey/board/memory.h",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": [],
+      "added": "7",
+      "deleted": "0",
+      "candidate_blob": "5a23f4ff7e3b20833497b8e430571f9da16efdb5",
+      "identity_status": "review_pending"
+    },
+    {
+      "path": "lib/board/memory.c",
+      "phase": "P03-storage-setup-authorization",
+      "review_status": "pending",
+      "evidence": [],
+      "added": "141",
+      "deleted": "7",
+      "candidate_blob": "b37138da5249ee06ff7b8c24f98159b6ee1f318c",
+      "identity_status": "review_pending"
+    }
+  ]
 }

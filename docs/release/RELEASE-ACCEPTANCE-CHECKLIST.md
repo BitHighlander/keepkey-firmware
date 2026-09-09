@@ -12,28 +12,20 @@ Primary milestone: internally accept canonical 7.14.2. Follow with 7.14.3
 Bitcoin-only and 7.15. Shared-fix applicability remains required across all three.
 All three are auditing; none is internally accepted or ready for Copilot.
 
-Current execution checkpoint:
+Current execution checkpoint (owner scope correction supersedes B02):
 
-- [x] Canonical 7.14.2 B02 integrated: fa2898664, validated code b08a68717,
-      CI 34412006017. Fork develop remains da075b8cb; product PRs remain open.
-- [x] Publish P04 change-prefix and rejected-history units across all products.
-      7.14.2 is integrated; later-product assemblies remain pending.
-- [x] Replay released bootloader 2.1.4 decision routines against five variants;
-      retain explicit full-boot, older-binary and physical-erase limitations.
-- [x] Reconcile prospective audit surfaces: 353 / 201 / 286 paths. Most remain
-      pending; reviewed-blob identity gaps are explicit in JSON ledgers.
-- [ ] Finish exact-head acceptance of P03-010/P03-011 (#752/#753), then assemble
-      applicable validated fixes into canonical 7.14.3 and 7.15.
-- [ ] Complete remaining whole-release coverage and cross-phase review.
-- [ ] Resume the paused app goal for unattended continuation; this control
-      cannot be changed through the available goal tools.
+- [x] Remove bootloader-coupled durability from candidates #754 / #755 / #756.
+- [x] Fresh native firmware/board and full pinned-host suites pass all five variants.
+- [x] Restore shared storage selectors and metadata to pre-durability identities.
+- [ ] Exact-head CI/ARM validation: 34416605044 / 34416675343 / 34416677172.
+- [ ] Integrate validated corrections into canonical products with forward commits.
+- [ ] Complete remaining release-wide coverage and shared-consumer review.
+- [ ] Resolve the original power-interruption finding within authorized scope or
+      obtain an explicit release disposition; do not claim it fixed.
 
-Transaction-history cancellation retains accepted history by documented policy;
-P04-004 separately fixes rejected-warning history mutation. The recovery-cipher
-backspace hypothesis remains unverified, requiring a bounded reproduction or
-source disposition before any change. P03 retains broader storage and supported
-bootloader evidence gaps. See the finding ledgers; this is not an exhaustive
-inventory and does not label every investigation a confirmed defect.
+Bootloader audit expansion is excluded. Historical replay evidence cannot create
+new acceptance requirements. See [scope-repair.md](audit-coverage/scope-repair.md)
+for withdrawn receipts, retained findings and exact candidate identities.
 
 ## Per-release gates
 

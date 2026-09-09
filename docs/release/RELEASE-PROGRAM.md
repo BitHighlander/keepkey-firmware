@@ -35,6 +35,11 @@ heads and terminal results before making readiness claims.
 
 ## Canonical products and current evidence
 
+**Scope correction:** B02 durability acceptance is withdrawn. Canonical 7.14.2
+still contains it until the validated forward correction lands. Use
+[scope-repair.md](audit-coverage/scope-repair.md) for current candidates. Prior
+tables are historical evidence, not current acceptance.
+
 | Product | Canonical fork branch / product PR | Current canonical head | Internal status |
 | --- | --- | --- | --- |
 | 7.14.2 | [release/7.14.2](https://github.com/BitHighlander/keepkey-firmware/tree/release/7.14.2), [#650](https://github.com/BitHighlander/keepkey-firmware/pull/650) | `fa28986649a08f7297b98a3a9060baba9cc22b3e` | B02 integrated through b08a68717; full scoped audit acceptance pending |

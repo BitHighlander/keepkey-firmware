@@ -1,3 +1,8 @@
+> Current scope correction (2026-09-09): durability remediation and bootloader
+> replay acceptance below are historical and withdrawn from corrected candidates.
+> See [scope-repair.md](scope-repair.md). The original power-interruption finding
+> remains open; P03-011 is retained; removed-feature P03-009/010 are inapplicable.
+
 # P03 setup and storage findings
 
 ## P03-001: aborted reset resumed to commit and Success
@@ -619,7 +624,7 @@ Compared complete test bodies across all three releases. 7.14.2 and 7.14.3 stora
 
 Found a reset-test argument alias: sca_hardened was passed twice, rather than passing v15_16_trans independently. Corrected in 02349bf77 (7.14.2, PR #728) and 8ef50c146 (7.14.3, PR #729). Production code is unchanged. Storage suites pass 27 each on 7.14.2 full, 7.14.3 full and Bitcoin-only: `/private/tmp/7142-storage-flags-test.log`, `7143-storage-flags-test.log`, `7143-btc-storage-flags-test.log`. Close both test-file reviews with the corrections staged, not canonically integrated. Full production storage review remains pending; these native tests do not establish hardware power-loss behavior.
 
-### Production storage commit review: open power-interruption boundary
+### P03-STORAGE-POWER-INTERRUPTION: open power-interruption boundary
 
 Read 7.15 storage_init/reset/wipe/session-clear/commit and the active-sector selector. Compared commit ordering with both 7.14 releases and frozen develop da075b8cb717b56dc1023edb52c2ccdf171b8a08. All three staged releases erase the active sector, advance to another sector, erase it, then write data and magic. A power interruption after the first erase and before replacement magic can leave no active wallet record. Their memory.c selector picks the first sector with storage magic. Frozen develop instead retains the active record while building a replacement and includes generation/trailer/boot-marker coordination. Thus the release rollback removes a storage durability mechanism present in the comparison base; this is not covered by green RAM serialization or normal reboot tests.
 
