@@ -40,7 +40,8 @@
 #include <stdint.h>
 
 #ifdef EMULATOR
-/* Native tests may snapshot completed operations to rehearse interrupted commits. */
+/* Native tests may snapshot completed operations to rehearse interrupted
+ * commits. */
 __attribute__((weak)) void emulator_flash_operation_completed(void) {}
 #endif
 

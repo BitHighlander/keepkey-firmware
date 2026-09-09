@@ -6,6 +6,7 @@
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/layout.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/reset.h"
@@ -161,6 +162,25 @@ TEST_F(PassphraseTransition, WalletSurvivesEveryCompletedCommitOperation) {
   storage_commit();
   capture_flash_operations = false;
   ASSERT_EQ(commit_snapshots.size(), 7u);
+  // Snapshot 4 has the replacement marker; snapshot 5 publishes its magic.
+  // Replay each partial byte prefix of that final four-byte programming step.
+  const auto before_magic = commit_snapshots[4];
+  const auto after_magic = commit_snapshots[5];
+  size_t magic_offset = 0;
+  for (Allocation a : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
+    const size_t offset = static_cast<size_t>(flash_write_helper(a) -
+                           reinterpret_cast<intptr_t>(emulator_flash_base));
+    if (std::memcmp(before_magic.data() + offset, STORAGE_MAGIC_STR, 4) != 0 &&
+        std::memcmp(after_magic.data() + offset, STORAGE_MAGIC_STR, 4) == 0) {
+      magic_offset = offset;
+    }
+  }
+  ASSERT_NE(magic_offset, 0u);
+  for (size_t bytes = 1; bytes < STORAGE_MAGIC_LEN; ++bytes) {
+    auto torn = before_magic;
+    std::memcpy(torn.data() + magic_offset, after_magic.data() + magic_offset, bytes);
+    commit_snapshots.push_back(std::move(torn));
+  }
   for (size_t i = 0; i < commit_snapshots.size(); ++i) {
     SCOPED_TRACE(i);
     std::memcpy(emulator_flash_base, commit_snapshots[i].data(), FLASH_TOTAL_SIZE);
