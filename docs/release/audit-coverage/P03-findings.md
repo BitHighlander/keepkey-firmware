@@ -507,3 +507,25 @@ prove every staged field, every wire ordering, or physical fault tolerance.
 Reviewed the test's preconditions and postconditions and updated the obsolete
 comment claiming firmware-unit cannot initialize flash. Firmware behavior is
 unchanged. Combined CI and canonical integration remain pending.
+
+### Reset header and release-specific API review
+
+Reviewed complete reset.h and compared all three release variants at audit tips
+132db57da / 1f97ea58c / 2e1c67e9e. Shared setup declarations match staging,
+arming, abort and the newly authorized bool-returning commit implementation.
+7.14.2 has no dice parameter; 7.14.3 adds dice and rejects its combination with
+display_random; 7.15 removes display_random from the internal API while retaining
+and ignoring the wire field. Handler argument order matches each signature.
+Dice digest access returns 0 or copies 32 bytes to the debug response field and
+its state is cleared by setup_abort; this does not audit dice entropy quality.
+
+7.15 alone declares shared mnemonic display scratch. Array dimensions match
+definitions in confidential storage and the reset/BIP85 consumers; consumers
+explicitly clear the arrays around use. Header review establishes declaration
+and ownership consistency, not complete BIP85 or paging behavior. These three
+header reviews have no remaining actionable findings; reset implementation and
+cross-phase display/transport obligations remain open.
+
+Superseded documentation run 34297193569 is now confirmed completed/cancelled.
+Current documentation run is 34298090688 at pushed 0ff5a1aea; subsequent local
+review receipts are being accumulated for the next batch publication.
