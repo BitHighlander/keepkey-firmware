@@ -2,6 +2,9 @@
 
 #include <cstring>
 #include <vector>
+#include <cstdlib>
+#include <fstream>
+#include <string>
 
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
@@ -206,6 +209,20 @@ TEST_F(PassphraseTransition, WalletSurvivesEveryCompletedCommitOperation) {
   }
   const size_t legacy_torn_index = commit_snapshots.size();
   commit_snapshots.push_back(std::move(legacy_torn_erase));
+  // Optional export of fixed-test-wallet images for the released ARM
+  // bootloader replay. Normal unit runs do not write snapshot files.
+  if (const char* directory = std::getenv("KK_TEST_STORAGE_SNAPSHOTS")) {
+    for (size_t i = 0; i < commit_snapshots.size(); ++i) {
+      const std::string path = std::string(directory) + "/commit-" +
+                               std::to_string(i) + ".bin";
+      std::ofstream output(path, std::ios::binary | std::ios::trunc);
+      ASSERT_TRUE(output.is_open()) << path;
+      output.write(reinterpret_cast<const char*>(commit_snapshots[i].data()),
+                   commit_snapshots[i].size());
+      output.close();
+      ASSERT_TRUE(output.good()) << path;
+    }
+  }
   for (size_t i = 0; i < commit_snapshots.size(); ++i) {
     SCOPED_TRACE(i);
     std::memcpy(emulator_flash_base, commit_snapshots[i].data(), FLASH_TOTAL_SIZE);
