@@ -314,3 +314,18 @@ confirmation, above frozen packet-lifetime head e546d9979. No DEBUG_LINK-off
 production failure claim. Permanent older-host assertion and ARM/host integration
 remain pending. 7.14.3 full-variant reproduction remains pending; its Bitcoin-only
 product does not expose Ripple.
+
+### P06-002 full 7.14.3 backport verified and staged
+
+Built full variant separately in build-native-full using the existing native
+compiler/nanopb settings with KK_BITCOIN_ONLY=OFF. Its own pinned host suite
+reproduces the empty displayed address with screenshot capture. The same local
+address/late-response fix passes that regression, all 190 full native tests
+and all 90 Bitcoin-only native tests. Bitcoin-only does not expose Ripple.
+[#692](https://github.com/BitHighlander/keepkey-firmware/pull/692), 1ce4d3961,
+is staged above frozen packet-lifetime head 47eae604e. Permanent older-host
+assertion and combined integration remain pending.
+
+The earlier packet-lifetime CI 34292591562 has completed successfully, including
+both ARM variants and evidence gate. Artifact inspection remains pending before
+canonical advancement; that earlier run excludes the Ripple fix.
