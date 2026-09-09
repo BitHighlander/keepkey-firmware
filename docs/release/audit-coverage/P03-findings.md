@@ -580,3 +580,11 @@ Latest full native suites pass with P02-006: 7.14.2 159, 7.14.3 194,
 7.15 505; Bitcoin-only suites pass 94 and 96 respectively. Combined CI was
 dispatched for 7.14.2 534ac50a9 and 7.14.3 f342d5a73 after their previous runs
 completed. 7.15's older recovery-display CI remains active; no duplicate dispatch.
+
+### Recovery implementation review: autocomplete and remaining edit-state boundary
+
+Read the complete 7.15 `recovery_cipher.c` at cb5650490 and compared it with staged 7.14.2 / 7.14.3 implementations. Autocomplete initializes all 2049 permutation entries, permutes only the first 2048 (leaving the wordlist sentinel last), bounds padded comparisons to the BIP39 maximum, and clears its permutation on every post-acquisition return. The 7.15 frame-arena scratch acquisition resets inbound assembly; the lookup itself neither polls USB nor emits messages, so this reviewed call path does not overlap an outbound encoding. Previous releases use dedicated static permutation storage. This bounded review found no actionable defect in that lookup lifetime.
+
+The four existing recovery input cases (invalid character, backspace/re-entry, known word-count rejection, unknown-count failure followed by stale input rejection) pass on the full 7.15 terminal-rejection implementation, no skips; `/private/tmp/715-terminal-recovery-inputs.log`. This is protocol evidence, not evidence of previous-word screen accuracy.
+
+Remaining 7.15 edit-state review is explicit: deleting a word separator changes the current word index while `last_completed_word` is updated only on forward boundaries/reset; the previous-word indicator needs targeted observation when moving backward across multiple word boundaries. The backspace comment also assumes a fixed session cipher even though `next_character()` reshuffles it per character; the reconstructed `coded_word` heuristic needs separate verification. Neither concern is closed by the successful generic backspace test. Full recovery file status remains in progress pending these checks and final integration.
