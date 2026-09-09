@@ -196,3 +196,64 @@ TEST(USBRX, PacketStorageIsWipedAfterCallback) {
   // The transport owns static storage; observe its lifetime after callback.
   for (size_t i = 0; i < sizeof(frame); ++i) EXPECT_EQ(0, observed_packet[i]);
 }
+
+extern "C" {
+#include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/layout.h"
+#include "keepkey/board/timer.h"
+}
+
+TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
+  init_test_usb();
+  if (layout_get_canvas() == nullptr) {
+    timer_init();
+    layout_init(display_canvas_init());
+  }
+  const char body[] = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+  size_t pages = 0;
+  for (const char *cursor = body; *cursor;) {
+    const size_t take = confirm_constant_power_subpage_take(cursor);
+    ASSERT_GT(take, 0u);
+    cursor += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1u);
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  auto send = [&](uint16_t id, bool decision, bool yes) {
+    uint8_t frame[64] = {'?', '#', '#'};
+    frame[3] = id >> 8;
+    frame[4] = id & 0xff;
+    if (decision) {
+      frame[8] = 2;
+      frame[9] = 0x08;
+      frame[10] = yes;
+    }
+    EXPECT_EQ(
+        sizeof(frame),
+        sendto(fd, frame, sizeof(frame), 0,
+               reinterpret_cast<struct sockaddr *>(&address), sizeof(address)));
+  };
+  // The debug decision may arrive before the main-channel acknowledgement.
+  for (size_t page = 0; page < pages; page++) {
+    send(MessageType_MessageType_DebugLinkDecision, true, true);
+    send(MessageType_MessageType_ButtonAck, false, false);
+  }
+  // A rejection sentinel prevents an over-consuming implementation hanging.
+  send(MessageType_MessageType_ButtonAck, false, false);
+  send(MessageType_MessageType_DebugLinkDecision, true, false);
+  close(fd);
+  EXPECT_TRUE(confirm_constant_power_paged(
+      ButtonRequestType_ButtonRequest_ConfirmWord, "Backup", body));
+  int remaining = 0;
+  uint8_t tiny[MSG_TINY_BFR_SZ];
+  for (int idle = 0; idle < 200; idle++) {
+    if (check_for_tiny_msg(tiny) != MSG_TINY_TYPE_ERROR) remaining++;
+    usleep(1000);
+  }
+  EXPECT_EQ(2, remaining);  // Only the sentinel remains, never a page's Ack.
+}
