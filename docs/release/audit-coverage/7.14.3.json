@@ -616,8 +616,15 @@
       "added": "12",
       "deleted": "4",
       "phase": "P10-ui-platform",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "lib/board/layout.c",
@@ -1097,7 +1104,12 @@
         "P03-findings.md",
         "P03-findings.md: Production storage commit review: open power-interruption boundary; compare replacement-first frozen develop with erase-first releases, cross-file resolution pending."
       ],
-      "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending."
+      "reviewed_scope": "Reviewed V16/V17 offset/length guards and unsigned integer serialization; three focused boundary/round-trip tests pass. Remaining migration, strings, persistence and cross-product review pending.",
+      "remediation_review": {
+        "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "lib/firmware/storage.h",
@@ -1326,8 +1338,15 @@
       "added": "444",
       "deleted": "2",
       "phase": "P10-ui-platform",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "unittests/crypto/CMakeLists.txt",
@@ -1544,10 +1563,16 @@
       "added": "114",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "reviewed_no_actionable_findings",
+      "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md: Recovery helper and passphrase-transition test review; exact file identity, bounds, oracle and executed native cases checked."
-      ]
+        "P03-findings.md: Recovery helper and passphrase-transition test review; exact file identity, bounds, oracle and executed native cases checked.",
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "unittests/firmware/test_board.cpp",
@@ -1572,6 +1597,35 @@
       "phase": "P04-bitcoin-signing",
       "review_status": "pending",
       "evidence": []
+    }
+  ],
+  "staged_remediation_additional_paths": [
+    {
+      "path": "include/keepkey/board/keepkey_board.h",
+      "phase": "P03-storage-setup-authorization",
+      "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ]
+    },
+    {
+      "path": "include/keepkey/board/memory.h",
+      "phase": "P03-storage-setup-authorization",
+      "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ]
+    },
+    {
+      "path": "lib/board/memory.c",
+      "phase": "P03-storage-setup-authorization",
+      "head_sha": "1083292820bc52dffafc14e7ce88258946fc2a00",
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ]
     }
   ]
 }

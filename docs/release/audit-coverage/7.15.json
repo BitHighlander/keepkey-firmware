@@ -477,8 +477,15 @@
       "added": "2",
       "deleted": "0",
       "phase": "P10-ui-platform",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "include/keepkey/board/keepkey_display.h",
@@ -980,8 +987,15 @@
       "added": "12",
       "deleted": "4",
       "phase": "P10-ui-platform",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "lib/board/layout.c",
@@ -1586,8 +1600,14 @@
       "phase": "P03-storage-setup-authorization",
       "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md: Production storage commit review: open power-interruption boundary; compare replacement-first frozen develop with erase-first releases, cross-file resolution pending."
-      ]
+        "P03-findings.md: Production storage commit review: open power-interruption boundary; compare replacement-first frozen develop with erase-first releases, cross-file resolution pending.",
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "lib/firmware/storage.h",
@@ -2016,8 +2036,15 @@
       "added": "381",
       "deleted": "2",
       "phase": "P10-ui-platform",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "unittests/crypto/CMakeLists.txt",
@@ -2265,10 +2292,16 @@
       "added": "114",
       "deleted": "0",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "reviewed_no_actionable_findings",
+      "review_status": "in_progress",
       "evidence": [
-        "P03-findings.md: Recovery helper and passphrase-transition test review; exact file identity, bounds, oracle and executed native cases checked."
-      ]
+        "P03-findings.md: Recovery helper and passphrase-transition test review; exact file identity, bounds, oracle and executed native cases checked.",
+        "P03-findings.md"
+      ],
+      "remediation_review": {
+        "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+        "status": "in_progress",
+        "scope": "V17 durable commit framing, sector selection, interrupted handoff and emulator replay; earlier reviewed blobs do not cover this delta."
+      }
     },
     {
       "path": "unittests/firmware/test_board.cpp",
@@ -2309,6 +2342,26 @@
       "phase": "P08-zcash-cryptography",
       "review_status": "pending",
       "evidence": []
+    }
+  ],
+  "staged_remediation_additional_paths": [
+    {
+      "path": "include/keepkey/board/memory.h",
+      "phase": "P03-storage-setup-authorization",
+      "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ]
+    },
+    {
+      "path": "lib/board/memory.c",
+      "phase": "P03-storage-setup-authorization",
+      "head_sha": "b9b88955fa4ea137e882189764394f3c5a5ed198",
+      "review_status": "in_progress",
+      "evidence": [
+        "P03-findings.md"
+      ]
     }
   ]
 }
