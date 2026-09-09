@@ -534,3 +534,16 @@ Also matched fsm.h added cleanup/abort declarations and debug test guards to
 fsm.c definitions. Marked only the header declaration change reviewed. The
 workflow cleanup implementations, handler retention and broader dispatch scope
 remain open. Superseded documentation run 34293977795 is terminal cancelled.
+
+### 7.14.3 changed DebugLink handler scope
+
+Reviewed fsm_msg_debug.h at 9d6636089: reset_get_dice_digest returns 0 or copies
+32 bytes, matching the generated 32-byte field and has flag. The PIN matrix
+uses X-filled idle state; recovery animation requires the armed recovery kind
+and a nonempty cipher. The shared monochrome helper indexes its 4x4 table with
+masked coordinates, and the 256x64 packing loop writes offsets 0..2047 into
+the generated 2048-byte layout field. Handler and routes are debug-gated.
+Existing board tests cover grayscale foreground conversion; prior full CI
+board evidence and the current reset screenshot rehearsals exercise the path.
+Marked changed-handler scope reviewed with no actionable finding. This does
+not close shared-response-arena interactions with suspended normal handlers.
