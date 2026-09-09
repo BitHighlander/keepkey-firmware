@@ -97,6 +97,9 @@ void recovery_cipher_reset(void) {
   memzero(rc_formatted_word, sizeof(rc_formatted_word));
   memzero(rc_new_mnemonic, sizeof(rc_new_mnemonic));
   memzero(rc_temp_word, sizeof(rc_temp_word));
+#if DEBUG_LINK
+  memzero(auto_completed_word, sizeof(auto_completed_word));
+#endif
 }
 
 /* The `if (!dry_run) storage_reset();` that used to open this function is
