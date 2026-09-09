@@ -257,3 +257,18 @@ Firmware fork PR [#688](https://github.com/BitHighlander/keepkey-firmware/pull/6
 is pending. Earlier run 34291743075 at f20c2497a has now passed static analysis
 and started downstream builds/host jobs; it does not validate these later units.
 Full P06 and release audits remain open.
+
+## P06-002: Ripple display response overwritten by debug capture
+
+Reproduced on full 7.15: show_display returns the known address without
+capture but an empty string when screenshot capture requests DebugLinkState
+during confirmation. The shared response arena is reused by that handler.
+The legacy host display case ignored the response explicitly, masking the bug.
+
+[#689](https://github.com/BitHighlander/keepkey-firmware/pull/689), 885609fbe,
+uses the existing local address buffer for confirmation and populates the
+response after confirmation. The screenshot regression now passes; all 501
+full native tests pass. Rehearsal ripple_display_response.py asserts the known
+address and requires captured PNG evidence. DEBUG_LINK-off production failure
+was not established. Older releases, persistent host assertion and integration
+remain pending. This is a bounded fix, not completion of the Ripple audit.

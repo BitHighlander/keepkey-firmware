@@ -16,7 +16,7 @@ signal.signal(signal.SIGALRM, timed_out)
 signal.alarm(60)
 from test_msg_ripple_sign_tx import TestMsgRippleSignTx
 method = TestMsgRippleSignTx.test_sign_with_thorchain_memo
-TestMsgRippleSignTx.test_sign_with_thorchain_memo = method.__wrapped__
+TestMsgRippleSignTx.test_sign_with_thorchain_memo = getattr(method, '__wrapped__', method)
 with tempfile.TemporaryDirectory(prefix='ripple-memo-') as directory:
     with open(os.path.join(directory, 'emulator.log'), 'w') as log:
         proc = subprocess.Popen([str(root / 'build-native/bin/kkemu')], cwd=directory, stdout=log, stderr=subprocess.STDOUT)
