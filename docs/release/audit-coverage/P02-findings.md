@@ -369,3 +369,20 @@ superseded runs, retaining newest 34293553287. First follow-up confirmed three
 terminal cancellations; others were still processing cancellation. Recheck
 until terminal. Added SOP batching and superseded-documentation cancellation
 rule. This overhead was caused by frequent ledger pushes, not release testing.
+
+### Older permanent host assertions pinned; redundant CI cancellation complete
+
+7.14.2 firmware PR [#694](https://github.com/BitHighlander/keepkey-firmware/pull/694),
+bedf3aca1, pins host c9182c9b6ed11f0d5db054b81d3da2e65b245536 above 71617e991.
+7.14.3 PR [#693](https://github.com/BitHighlander/keepkey-firmware/pull/693),
+0292e7fa2, pins host 8e5eaaaa10787a64f5d54780bb2b5f72d3d82700 above 1ce4d3961.
+Both exact host commits fetch through the configured submodule URL. Previous
+full-emulator screenshot runs passed all three address tests per release.
+Combined validation of these later pins remains pending; earlier dispatched
+Ripple runs cover their firmware predecessors.
+
+Re-polled the P00 runs: all 19 superseded runs are now terminal cancelled.
+Only retained newest 34293553287 remains active. Six lagged the initial cancel
+requests; force-cancel accepted one, while five had already completed by that
+request. Final list confirms all nineteen cancelled. Release runs were not
+cancelled. Ledger updates are batched locally to avoid recreating that queue.
