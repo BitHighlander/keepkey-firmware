@@ -515,3 +515,7 @@ Applicability and staged fixes:
 This changes additional debug-page acknowledgement handling only. Physical
 production paging is unchanged. Combined validation dispatched for both older
 assembly heads with publication disabled; no canonical advancement yet.
+
+Validation follow-up: the existing 7.15 backup acknowledgement regression passed
+at 39503dacf. Combined older-release runs are 34294763501 (70ae2ab8d) and
+34294765461 (9d6636089), pending.
