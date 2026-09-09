@@ -728,10 +728,8 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   multisig_fp_mismatch = false;
   next_nonsegwit_input = 0xffffffff;
 
-  /* An OP_RETURN-only transaction never reaches the payment-output path that
-   * normally resets this context. Start each signing request with a fresh
-   * current digest while preserving the previous completed transaction used
-   * by the duplicate-output warning. */
+  /* All outputs share this request's input hash. Preserve the prior payment
+   * comparison key, but start a fresh current hash at the signing boundary. */
   txin_dgst_reset_current();
 
   curve = get_curve_by_name(coin->curve_name);
