@@ -19,6 +19,7 @@ class RecoveryCleanup(common.KeepKeyTest):
   self.assertIsInstance(r,proto.ButtonRequest)
   self.client.debug.press_yes()
   r=self.client.call_raw(proto.ButtonAck())
+  initial=self.client.debug.read_layout()
   def enter(word):
    for char in word:
     cipher=self.client.debug.read_recovery_cipher()
@@ -31,6 +32,13 @@ class RecoveryCleanup(common.KeepKeyTest):
   self.assertIsInstance(self.client.call_raw(proto.CharacterAck(delete=True)),proto.CharacterRequest)
   edited=self.client.debug.read_layout()
   self.assertEqual(first[:72],edited[:72])
+  # Delete zoo and the separator before it: no completed word precedes word 1.
+  for _ in range(4):
+   self.assertIsInstance(self.client.call_raw(proto.CharacterAck(delete=True)),proto.CharacterRequest)
+  self.assertEqual(initial[:72],self.client.debug.read_layout()[:72])
+  # Re-accept word 1 and check that forward navigation restores its indicator.
+  self.assertIsInstance(self.client.call_raw(proto.CharacterAck(character=' ')),proto.CharacterRequest)
+  self.assertEqual(first[:72],self.client.debug.read_layout()[:72])
 
 with tempfile.TemporaryDirectory(prefix='setup-rejection-') as directory:
  with open(Path(directory)/'emulator.log','w') as log:
