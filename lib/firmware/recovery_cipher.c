@@ -565,8 +565,9 @@ void recovery_delete_character(void) {
   }
 
   size_t len = strlen(mnemonic);
+  bool deleted_separator = len > 0 && mnemonic[len - 1] == ' ';
   if (len > 0) {
-    if (mnemonic[len - 1] == ' ') words_entered--;
+    if (deleted_separator) words_entered--;
 
     mnemonic[len - 1] = '\0';
   }
@@ -577,6 +578,23 @@ void recovery_delete_character(void) {
    * decoded_word is the typed prefix of the current word; coded_word is its
    * reverse-cipher form (session cipher is fixed, so it is reconstructable). */
   char cur[CURRENT_WORD_BUF];
+  if (deleted_separator) {
+    /* Moving back a word changes which completed word precedes the cursor. */
+    memzero(last_completed_word, sizeof(last_completed_word));
+    const char* end = strrchr(mnemonic, ' ');
+    if (end) {
+      const char* start = end;
+      while (start > mnemonic && start[-1] != ' ') start--;
+      size_t previous_len = (size_t)(end - start);
+      if (previous_len < sizeof(cur)) {
+        memcpy(cur, start, previous_len);
+        cur[previous_len] = '\0';
+        attempt_auto_complete(cur);
+        strlcpy(last_completed_word, cur, sizeof(last_completed_word));
+      }
+    }
+    memzero(cur, sizeof(cur));
+  }
   get_current_word(cur);
   strlcpy(decoded_word, cur, sizeof(decoded_word));
   memzero(cur, sizeof(cur));
