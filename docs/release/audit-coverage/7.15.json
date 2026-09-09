@@ -754,8 +754,12 @@
       "added": "15",
       "deleted": "1",
       "phase": "P04-bitcoin-signing",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P04-findings.md"
+      ],
+      "reviewed_blob": "d132cf2509de6400248cbccb886fcea1bdeb5fa4",
+      "reviewed_scope": "Complete header: type includes, declaration/definition agreement, variant-specific pure helpers and DEBUG_LINK test-hook guard. Signing implementation and protocol semantics remain separately in progress."
     },
     {
       "path": "include/keepkey/firmware/signtx_tendermint.h",
