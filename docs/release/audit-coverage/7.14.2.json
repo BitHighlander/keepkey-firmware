@@ -1291,8 +1291,10 @@
       "added": "8",
       "deleted": "60",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P03-findings.md: 7.14.2 storage header rollback reviewed at d59e16cd8; removed consumers, KDF signatures, V17 policy and U2F stage/set checked."
+      ]
     },
     {
       "path": "include/keepkey/firmware/tendermint.h",
@@ -2142,8 +2144,10 @@
       "added": "2",
       "deleted": "45",
       "phase": "P03-storage-setup-authorization",
-      "review_status": "pending",
-      "evidence": []
+      "review_status": "reviewed_no_actionable_findings",
+      "evidence": [
+        "P03-findings.md: 7.14.2 storage header rollback reviewed at d59e16cd8; removed consumers, KDF signatures, V17 policy and U2F stage/set checked."
+      ]
     },
     {
       "path": "lib/firmware/storage_versions.inc",

@@ -307,3 +307,23 @@ on both variants of 7.14.3 and 7.15 with the corrected erase implementation.
 8d08a882d. 7.15's older setup-authorization CI remains running, so no redundant
 715 dispatch yet. P00 receipt batch was pushed at 341c1052e; superseded doc-only
 run 34295681883 is confirmed completed/cancelled.
+
+### 7.14.2 storage header rollback reviewed
+
+Reviewed both storage headers against frozen develop da075b8 at audit head
+d59e16cd8. The foundation removes CTAP2/passkey storage, V19 KDF selectors and
+Bitcoin-band refusal APIs along with their consumers; searches of production
+and native-test sources found no remaining references to the removed APIs or
+fields. The private header restores the V15/V16 boolean KDF signatures used by
+its definitions/callers. The storage ladder ends at 17 and the public header
+explicitly reserves alpha formats 18/19/20. The downgrade from those formats or
+Bitcoin-only storage is a reset in this foundation, not preservation; corrected
+emulator evidence above now reflects that policy. This does not establish an
+upgrade path from those later formats or audit the separate release-history gate.
+
+The U2F stage/set distinction matches implementation: reset stages the counter
+before its authorized setup commit; public set persists immediately. LoadDevice
+and ApplySettings set the counter after other settings have been staged and have
+no subsequent rejection gate before final commit. Both header declaration deltas
+have no actionable findings; implementation and consumer reviews remain scoped
+separately, and this receipt does not close the complete P03 phase.
