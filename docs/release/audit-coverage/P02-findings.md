@@ -577,3 +577,27 @@ explicitly empty and nonempty messages. It and existing test_ping pass on all
 three owned emulators. Exact pinned host commits fetch from the configured
 repository URL. Combined integration of these new heads remains pending;
 currently running integration covers their earlier recorded predecessors.
+
+## P02-005: duplicate 7.14.3 setup guard definition
+
+Only 7.14.3 defined CHECK_NO_CEREMONY twice consecutively, including duplicate
+comments. Verified both blocks byte-identical and removed the second in
+PR #703, c23460ba9, above the frozen Ping fix. 7.14.2 and 7.15 each have one
+definition. Maintenance cleanup only; no claimed runtime defect or new test.
+
+### Further bounded common-handler evidence
+
+At the 7.14.3 Ping fix implementation, all seven full host TestPing methods
+pass, including authenticator passphrase cancellation, caching, format-string
+handling, and paging. Reviewed the changed cancellation helper: it clears auth
+cache, emits Failure and returns false; the caller exits before the subcommand.
+The added CANCELED text occupies the corresponding enum slot, and wipeAuthData
+now returns cancellation instead of unconditional success.
+
+Reviewed GetCoinTable count selection, paired bounds presence, upper/lower
+range checks before subtraction, chunk limit, and guarded token access. Full
+emulator rehearsal rejected single-bound, reversed, past-end, oversized and
+UINT32_MAX ranges, then enumerated all 589 entries in chunks of at most 24.
+Rehearsal coin_table_bounds.py CHECKOUT BUILD_DIRECTORY retains the checks.
+This is full-variant evidence; Bitcoin-only wire verification and remaining
+common-handler/session interactions are still open.
