@@ -128,3 +128,20 @@ TEST(Ripple, Serialize) {
 
   ASSERT_TRUE(memcmp(serialized, expected, sizeof(serialized)) == 0);
 }
+
+TEST(Ripple, MemoLengthPrefixBoundary) {
+  // XRPL Binary Format / Length Prefixing: 0..192 use one byte;
+  // 193..12480 use two. 192 is reachable with memo[200].
+  const int lengths[] = {191, 192, 193, 199};
+  const uint8_t expected[][2] = {{0xbf, 0}, {0xc0, 0}, {0xc1, 0}, {0xc1, 6}};
+  for (size_t i = 0; i < 4; ++i) {
+    uint8_t buffer[4] = {};
+    uint8_t *cursor = buffer;
+    bool ok = true;
+    ripple_serializeVarint(&ok, &cursor, buffer + sizeof(buffer), lengths[i]);
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(lengths[i] <= 192 ? 1 : 2, cursor - buffer) << lengths[i];
+    EXPECT_EQ(expected[i][0], buffer[0]) << lengths[i];
+    if (lengths[i] > 192) EXPECT_EQ(expected[i][1], buffer[1]);
+  }
+}
