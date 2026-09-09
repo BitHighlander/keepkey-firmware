@@ -929,7 +929,7 @@ TEST(Storage, Reset) {
       "1234", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
       &config.storage.pub.sca_hardened, 
-      &config.storage.pub.sca_hardened, 
+      &config.storage.pub.v15_16_trans,
       new_storage_key,
       config.storage.pub.random_salt));
 
