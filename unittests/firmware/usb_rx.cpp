@@ -105,14 +105,8 @@ bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 
 TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
-#if BITCOIN_ONLY
-  kk_test_board_init();
-  fsm_init();
-  usbInit("");
-#else
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_EQ(0, kkconfirm_drain());
-#endif
   const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
