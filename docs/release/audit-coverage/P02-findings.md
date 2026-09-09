@@ -272,3 +272,17 @@ full native tests pass. Rehearsal ripple_display_response.py asserts the known
 address and requires captured PNG evidence. DEBUG_LINK-off production failure
 was not established. Older releases, persistent host assertion and integration
 remain pending. This is a bounded fix, not completion of the Ripple audit.
+
+### P06-003 permanent display regression staged
+
+Host PR [#77](https://github.com/BitHighlander/python-keepkey/pull/77),
+81b950da16209c492a956bb4969db93963e01c4f, strengthens the existing
+screenshot-selected address test with the known response assertion on 7.15.
+All three Ripple address tests pass with capture enabled against 885609fbe.
+The exact host commit is fetchable through the configured submodule URL.
+Firmware PR [#690](https://github.com/BitHighlander/keepkey-firmware/pull/690),
+cecf1ea20, pins it above the frozen response fix. Combined CI remains pending.
+
+7.14.2 packet-buffer run 34292497524 completed successfully; artifact inspection
+and canonical advancement remain pending. Its native/host/report artifacts are
+10082076305 / 10082076607 / 10082087463; ARM is 10081905002.
