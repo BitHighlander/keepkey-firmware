@@ -535,4 +535,44 @@ TEST_F(StorageSelection, CorruptPendingRecordIsNeverFinalized) {
       0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
 }
 
+// Model the installed bootloader's legacy first-magic selector and adjacent
+// protection marker at each completed operation of the handoff.
+TEST_F(StorageSelection, HandoffKeepsLegacyBootProtectionDisabled) {
+  const auto legacy_protected = [&]() {
+    for (Allocation a : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
+      if (memcmp(Sector(a), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0) {
+        return memcmp(Sector(next_storage(a)), STORAGE_PROTECT_OFF_MAGIC,
+                      sizeof(STORAGE_PROTECT_OFF_MAGIC)) != 0;
+      }
+    }
+    return false;  // No active record: legacy bootloader preserves storage.
+  };
+  for (Allocation old : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
+    SCOPED_TRACE(static_cast<int>(old));
+    std::fill(flash.begin(), flash.end(), 0xFF);
+    WriteLegacy(old);
+    memcpy(Sector(next_storage(old)), STORAGE_PROTECT_OFF_MAGIC,
+           sizeof(STORAGE_PROTECT_OFF_MAGIC));
+    const Allocation replacement = next_storage(next_storage(old));
+    EXPECT_FALSE(legacy_protected());
+    WritePending(replacement, 1);
+    EXPECT_FALSE(legacy_protected());
+    Allocation active = FLASH_INVALID;
+    ASSERT_TRUE(find_active_storage(&active));
+    EXPECT_EQ(old, active);
+    flash_erase_word(old);
+    EXPECT_FALSE(legacy_protected());
+    EXPECT_FALSE(find_active_storage(&active));
+    Allocation pending = FLASH_INVALID;
+    ASSERT_TRUE(find_pending_storage(&pending));
+    EXPECT_EQ(replacement, pending);
+    ASSERT_TRUE(recover_pending_storage(pending));
+    EXPECT_FALSE(legacy_protected());
+    ASSERT_TRUE(find_active_storage(&active));
+    EXPECT_EQ(replacement, active);
+    flash_erase_word(next_storage(old));
+    EXPECT_FALSE(legacy_protected());
+  }
+}
+
 }  // namespace
