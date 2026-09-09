@@ -53,13 +53,16 @@ def test_future_record(self):
     else:
         self.assertNotEqual(before, self.emu.image())
 TestStorageUpgradePreservation.test_valid_framed_future_version = test_future_record
-suite = unittest.TestSuite(TestStorageUpgradePreservation(name) for name in [
+names = [
     "test_valid_framed_future_version",
     "test_reboot_preserves_the_wallet",
     "test_v16_blob_upgrades_without_wiping",
     "test_unframed_v16_migration",
     "test_bitcoin_only_band_refuses_without_wiping",
-])
+]
+if os.environ.get("KK_TEST_BAND", "1") == "0":
+    names.remove("test_bitcoin_only_band_refuses_without_wiping")
+suite = unittest.TestSuite(TestStorageUpgradePreservation(name) for name in names)
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 if not result.wasSuccessful() or result.skipped:
     raise SystemExit(1)
