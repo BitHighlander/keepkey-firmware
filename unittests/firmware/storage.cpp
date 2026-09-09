@@ -1039,3 +1039,18 @@ TEST(Storage, VersionedReadersTerminateStoredStrings) {
   check(storage_readStorageV16);
   check(storage_readStorageV17);
 }
+
+TEST(Storage, FutureBitcoinBandValuesNeverFallThroughToWipe) {
+  static char flash[STORAGE_SECTOR_LEN];
+  for (uint32_t version : {uint32_t(STORAGE_VERSION_BTC_ONLY + 1),
+                           uint32_t(0x80000000), uint32_t(0xffffffff)}) {
+    memset(flash, 0, sizeof(flash));
+    memcpy(flash, "stor", 4);
+    for (size_t i = 0; i < sizeof(version); ++i)
+      flash[44 + i] = static_cast<char>(version >> (8 * i));
+    SessionState session = {};
+    ConfigFlash shadow = {};
+    EXPECT_EQ(SUS_BitcoinOnlyLocked,
+              storage_fromFlash(&session, &shadow, flash));
+  }
+}
