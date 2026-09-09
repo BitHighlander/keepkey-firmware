@@ -1,0 +1,76 @@
+{
+  "bootloader_double_sha256": "fe98454e7ebd4aef4a6db5bd4c60f52cf3f58b974283a7c1e1fcc5fea02cf3eb",
+  "controls_passed": 799,
+  "snapshots_passed": 17,
+  "snapshots": [
+    {
+      "file": "commit-0.bin",
+      "sha256": "da823faf1f607fbd2b778165066a415a2540c9b13eec0c1b7d9fc401d9d359a3"
+    },
+    {
+      "file": "commit-1.bin",
+      "sha256": "38d39e13c86492835b3b5c894d4b1ee67c62e7c0b709b10815788298568a2843"
+    },
+    {
+      "file": "commit-2.bin",
+      "sha256": "e8274cf96d1a38e4db0ac407cd9f87e3a5d067ec13ff3379b7104bc423fdf7d8"
+    },
+    {
+      "file": "commit-3.bin",
+      "sha256": "e8274cf96d1a38e4db0ac407cd9f87e3a5d067ec13ff3379b7104bc423fdf7d8"
+    },
+    {
+      "file": "commit-4.bin",
+      "sha256": "afe3b2f420fb25102327b071b50e604385be27a1363b1ea4bd402dc2fe468957"
+    },
+    {
+      "file": "commit-5.bin",
+      "sha256": "bb4ec18ed40e413fdb63808955142061cef5d1e818b3589e0434a3cc6ac2cf28"
+    },
+    {
+      "file": "commit-6.bin",
+      "sha256": "bf9c92ab0020c1e11b769bf365484f96a7071d78385e90c8397ca8e85998b66b"
+    },
+    {
+      "file": "commit-7.bin",
+      "sha256": "6aa481e5e6c719dd35f1dfaf9b31005e16358b26f16ede26556b87d8395cb4df"
+    },
+    {
+      "file": "commit-8.bin",
+      "sha256": "d4891cdc141d3c36736bdcd50797f910a60d40ec336fea5a53e60da498683f61"
+    },
+    {
+      "file": "commit-9.bin",
+      "sha256": "f0794cd5d917ba7ac1cd2c7d7de84f4e5b11e295087a06af23a6c63ac9f3027d"
+    },
+    {
+      "file": "commit-10.bin",
+      "sha256": "dcefc79cfa8c7132bd8a3a92adfa2f3fafaa211fdae00560beb085cbd0fa72fe"
+    },
+    {
+      "file": "commit-11.bin",
+      "sha256": "57092837fe901e8a642374789ad5f2b260b594b273a4aa84b9ec57ad662ff21d"
+    },
+    {
+      "file": "commit-12.bin",
+      "sha256": "c74e0a8b678e6a26d215f4d14e630b57d3c0ac15b1b3db928473d84ebe4bb8ee"
+    },
+    {
+      "file": "commit-13.bin",
+      "sha256": "1a0ecc92721c3a9a043d120d73f53c16f0bd784d5cda02964e0b1e418fa9e7ee"
+    },
+    {
+      "file": "commit-14.bin",
+      "sha256": "0a39375f7878f53613cf61e24c72bc2b034dc6dc4a4dbc6e428e179c070559f4"
+    },
+    {
+      "file": "commit-15.bin",
+      "sha256": "1af24e1331f59ccf64605b4a11f5e5d8815d8046d668a0d25ab6aa81196660e6"
+    },
+    {
+      "file": "commit-16.bin",
+      "sha256": "68710875d2cdc9e49f9d13e5a48263a770fd1133ed6a26c68b8576ec332ee42f"
+    }
+  ],
+  "scope": "released 2.1.4 decision routines; no physical erase or complete boot"
+}

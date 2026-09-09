@@ -684,3 +684,40 @@ Staged host PRs BitHighlander/python-keepkey #86 (6268e38) and #87 (5dae186), ba
 Recovery heuristic follow-up: next_character() randomizes cipher after each key, but recovery_delete_character() reconstructs coded_word using the current cipher and describes it as session-fixed. This does not reconstruct the historical wire characters. The decoded mnemonic remains independently restored from mnemonic. Impact on the plaintext-entry heuristic is still unverified and requires a targeted behavioral reproduction; do not close it based on successful previous-word indicator tests.
 
 Migration-runner provenance correction: importing a borrowed test_storage_version_gate module can prepend that helper checkout to sys.path, defeating the earlier caller's library precedence. Updated framed_storage_migration.py to restore the selected import path after helper import and assert keepkeylib resolves under the requested release checkout. Earlier cross-root receipts lacking that assertion are not proof of the claimed host-library pin. Re-ran the four 7.14.2 cases on current d4c23c9d5 successfully with the asserted d3b26ae library path (/private/tmp/7142-current-pinned-migration.log). Same-root 7.14.3/7.15 fixture runs did not borrow another checkout. This corrects evidence attribution rather than firmware behavior.
+
+### Released bootloader 2.1.4 binary replay
+
+The historical upstream v7.3.2 blupdater.bin contains the released 2.1.4 payload
+at offset 0x3204, length 262144. Updater SHA256:
+6bb7cfd28262fcd61c450fdc3f6932650bdf16a134ab6c1bc6f90b0d1578e620.
+Payload double-SHA256 fe98454e7ebd4aef4a6db5bd4c60f52cf3f58b974283a7c1e1fcc5fea02cf3eb
+matches bl_hash_v2_1_4 in the firmware, unlike the newly built candidate bootloader.
+Source asset: https://github.com/keepkey/keepkey-firmware/releases/tag/v7.3.2.
+
+Disassembly identifies storage_protect_status at 0x0802363c, its calls to the real
+legacy selector (0x08023510), next-sector helper (0x08023560), and memcmp
+(0x0802a914), and storage_protect_wipe at 0x080236ac. The repeatable
+rehearsals/bootloader_storage_gate.py executes these unmodified ARM Thumb routines
+using pinned Unicorn 2.1.4. It intercepts only flash_erase_word at 0x08022790 to
+observe requested sectors rather than simulate peripheral registers. Both routine
+returns are checked against a sentinel PC with time/instruction limits. Input
+payload identity and exact snapshot count are enforced.
+
+799 controls pass: factory-empty; active wallet with valid/missing marker in all
+three sectors; each of the 264 bits in the 33-byte marker (including terminator)
+corrupted independently in each sector. Invalid controls must request erasure of
+all three storage allocations [2,3,4]; positive controls must preserve storage.
+All 17 actual-commit/sample-interruption images pass per build on 7.14.2,
+7.14.3 full/BTC and 7.15 full/BTC. Seven PassphraseTransition native cases pass per
+build while exporting the fixed-test-wallet snapshots. No host-owned wallet or
+physical device is involved. Machine-readable snapshot hashes and verdicts are
+in rehearsals/evidence/bootloader-214/{7142,7143,7143-btc,715,715-btc}.json.
+
+Snapshot exporter is opt-in test-only code: #748 (7.14.2 c1f33fcbb, followed by
+predecessor-header merge 6bf2f396e), #746 (7.14.3 330556334), #747 (7.15 e8fe34811).
+Normal unit runs create no export files; production code/pins are unchanged.
+This closes the named 2.1.4 storage-protection decision-logic gap for sampled
+commit states. It does not execute reset/startup, the fi_defense_delay peripheral
+path, other released bootloader binaries, actual flash erases or exhaustive torn
+writes. Broader supported-bootloader applicability and physical release checks
+retain explicit dispositions; no whole-storage-phase acceptance is inferred.

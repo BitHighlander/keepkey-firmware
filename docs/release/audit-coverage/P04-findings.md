@@ -64,3 +64,16 @@ The initial sandbox-denied UDP bind was not a pass; the permitted complete rerun
 succeeded. New-head host/ARM validation and canonical integration remain pending.
 Earlier successful CI runs 34313676228/34313363985/34312975959 bind predecessors,
 not these new heads. No complete P04 or release acceptance is claimed.
+
+P04-003 complete host preflight passes at the published code heads: 7.14.2
+434 pass/47 skip; 7.14.3 full 537/218 and BTC 309/446; 7.15 full 727/30 and BTC
+314/443. Logs and JUnit use /private/tmp/<variant>-change-prefix-host-preflight.*.
+7.14.3 CI 34317143241 and 7.15 CI 34317146153 succeeded on 44d0c60c1/a1e7f5315.
+7.14.2 CI 34317140433 failed compiling its new test: usb_rx.cpp used std::memcpy
+without including <cstring>; the Mac build supplied a transitive declaration
+that the Linux toolchain did not. ARM passed; native/host CI did not run. Added
+the required include on original PR #745 at 875af590e and merged that predecessor
+into test-evidence PR #748 without rewriting history. Production behavior and
+pins are unchanged; corrected CI remains pending. Raw failure log:
+/private/tmp/7142-change-prefix-ci-job.log. This is an introduced test-portability
+regression, not a firmware signing failure.
