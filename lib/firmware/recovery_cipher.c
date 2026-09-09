@@ -408,7 +408,7 @@ void next_character(void) {
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
-  static char prev_info[32];
+  static CONFIDENTIAL char prev_info[32];
   prev_info[0] = '\0';
   if (word_pos > 0 && last_completed_word[0]) {
     snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
@@ -417,6 +417,7 @@ void next_character(void) {
 
   /* Show cipher and partial word */
   layout_cipher(formatted_word_scratch, cipher, prev_info);
+  memzero(prev_info, sizeof(prev_info));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
