@@ -890,7 +890,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->sec.pin, ptr + 393, 10);
   storage->pub.has_language = read_bool(ptr + 403);
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
-  memcpy(storage->pub.language, ptr + 404, 17);
+  memcpy(storage->pub.language, ptr + 404, sizeof(storage->pub.language) - 1);
   storage->pub.has_label = read_bool(ptr + 421);
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
   memcpy(storage->pub.label, ptr + 422, 33);
@@ -1050,10 +1050,10 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
       MAX(read_u32_le(ptr + 12), STORAGE_MIN_SCREENSAVER_TIMEOUT);
 
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
-  memcpy(storage->pub.language, ptr + 16, 16);
+  memcpy(storage->pub.language, ptr + 16, sizeof(storage->pub.language) - 1);
 
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
-  memcpy(storage->pub.label, ptr + 32, 48);
+  memcpy(storage->pub.label, ptr + 32, sizeof(storage->pub.label) - 1);
 
   memcpy(storage->pub.wrapped_storage_key, ptr + 80, 64);
   memcpy(storage->pub.storage_key_fingerprint, ptr + 144, 32);
@@ -1190,10 +1190,10 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
       MAX(read_u32_le(ptr + 12), STORAGE_MIN_SCREENSAVER_TIMEOUT);
 
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
-  memcpy(storage->pub.language, ptr + 16, 16);
+  memcpy(storage->pub.language, ptr + 16, sizeof(storage->pub.language) - 1);
 
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
-  memcpy(storage->pub.label, ptr + 32, 48);
+  memcpy(storage->pub.label, ptr + 32, sizeof(storage->pub.label) - 1);
 
   memcpy(storage->pub.wrapped_storage_key, ptr + 80, 64);
   memcpy(storage->pub.storage_key_fingerprint, ptr + 144, 32);
