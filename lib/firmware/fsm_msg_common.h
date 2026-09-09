@@ -311,6 +311,8 @@ void fsm_msgPing(Ping* msg) {
         return;
       }
     }
+    /* Confirmation may service DebugLink through the shared response arena. */
+    memset(resp, 0, sizeof(*resp));
     if (msg->has_message) {
       resp->has_message = true;
       memcpy(&(resp->message), &(msg->message), sizeof(resp->message));
