@@ -773,6 +773,13 @@ static bool signing_validate_input(const TxInputType* txinput) {
     return false;
   }
   if (txinput->has_multisig) {
+    if (!multisig_quorum_is_valid(&txinput->multisig)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid multisig quorum"));
+      signing_abort();
+      return false;
+    }
+
     /* DER-encoded secp256k1 signatures are at most 72 bytes. The generated
      * field is bytes[73], but the legacy nanopb decoder can accept size 74
      * because its static repeated-element stride includes padding. Bound the
@@ -828,7 +835,18 @@ static bool signing_validate_input(const TxInputType* txinput) {
   return true;
 }
 
+bool signing_output_multisig_quorum_is_valid(const TxOutputType* txoutput) {
+  return txoutput != NULL && (!txoutput->has_multisig ||
+                              multisig_quorum_is_valid(&txoutput->multisig));
+}
+
 static bool signing_validate_output(const TxOutputType* txoutput) {
+  if (!signing_output_multisig_quorum_is_valid(txoutput)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid multisig quorum"));
+    signing_abort();
+    return false;
+  }
   if (txoutput->has_multisig && !is_multisig_output_script_type(txoutput)) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Multisig field provided but not expected."));

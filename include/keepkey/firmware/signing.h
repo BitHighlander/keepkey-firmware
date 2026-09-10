@@ -27,6 +27,8 @@
 #include <stdbool.h>
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);
+bool signing_output_multisig_quorum_is_valid(const TxOutputType* txoutput);
+
 void signing_abort(void);
 bool signing_is_active(void);
 void signing_txack(TransactionType* tx);

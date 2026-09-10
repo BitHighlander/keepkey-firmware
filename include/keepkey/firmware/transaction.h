@@ -64,6 +64,8 @@ bool compute_address(const CoinType* coin, InputScriptType script_type,
                      char address[MAX_ADDR_SIZE]);
 uint32_t compile_script_sig(uint32_t address_type, const uint8_t* pubkeyhash,
                             uint8_t* out);
+bool multisig_quorum_is_valid(const MultisigRedeemScriptType* multisig);
+
 uint32_t compile_script_multisig(const CoinType* coin,
                                  const MultisigRedeemScriptType* multisig,
                                  uint8_t* out);
