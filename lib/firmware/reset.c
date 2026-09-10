@@ -76,9 +76,16 @@ static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 static uint8_t CONFIDENTIAL dice_digest[32];
 static bool has_dice_digest = false;
 
+/* Dice-only derivation: seed = SHA256(rolls), with the RNG draw and
+ * external_entropy excluded rather than mixed. Chosen ON THE DEVICE, never by
+ * the host, so a host can neither select it nor force it. Cleared with the
+ * digest, so an abandoned ceremony cannot leave it armed for the next one. */
+static bool dice_only = false;
+
 static void dice_digest_clear(void) {
   memzero(dice_digest, sizeof(dice_digest));
   has_dice_digest = false;
+  dice_only = false;
 }
 
 bool setup_isArmed(void) { return setup.kind != SETUP_NONE; }
@@ -345,7 +352,21 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
       return;
     }
 
-    dice_mix(int_entropy, dice_rolls, rolls_needed);
+    /* The advanced path. confirm() needs a deliberate button hold, so
+     * declining leaves the mixed derivation in place. Offered only after the
+     * digest is confirmed, so the user has already seen the commitment to the
+     * rolls they are about to depend on entirely. */
+    if (confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Only?"),
+                _("Derive the seed from these rolls ALONE, ignoring device "
+                  "and host randomness. You can then verify this wallet "
+                  "offline. Your dice become the ONLY protection."))) {
+      dice_only = true;
+      /* Not dice_mix(): the RNG draw is discarded rather than folded in, so
+       * the derivation contains nothing the user does not hold. */
+      sha256_Raw((const uint8_t*)dice_rolls, rolls_needed, int_entropy);
+    } else {
+      dice_mix(int_entropy, dice_rolls, rolls_needed);
+    }
     memzero(dice_rolls, sizeof(dice_rolls));
   }
 
@@ -372,10 +393,20 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   }
 
   SHA256_CTX ctx;
-  sha256_Init(&ctx);
-  sha256_Update(&ctx, int_entropy, 32);
-  sha256_Update(&ctx, ext_entropy, len);
-  sha256_Final(&ctx, int_entropy);
+  memzero(&ctx, sizeof(ctx));
+  /* Under dice-only int_entropy is ALREADY the whole derivation --
+   * SHA256(rolls), set in reset_init() -- so it is used verbatim. The host's
+   * EntropyAck is still consumed, so the wire flow and every host stay
+   * unchanged, but its bytes are dropped: folding them in would put a value
+   * the user does not hold back into the derivation and destroy the offline
+   * check that is the entire point of the mode. Not re-hashed either, so the
+   * published derivation is exactly SHA256(rolls) with nothing to explain. */
+  if (!dice_only) {
+    sha256_Init(&ctx);
+    sha256_Update(&ctx, int_entropy, 32);
+    sha256_Update(&ctx, ext_entropy, len);
+    sha256_Final(&ctx, int_entropy);
+  }
 
   const char* temp_mnemonic = mnemonic_from_data(int_entropy, strength / 8);
 
