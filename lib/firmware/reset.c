@@ -207,7 +207,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
-
   /* Nothing below this line writes storage. Everything the host asked for is
    * staged, and stays staged until reset_entropy() reaches setup_commit().
    * Returning early from any of the screens below therefore rolls the whole
@@ -342,7 +341,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     dice_mix(int_entropy, dice_rolls, rolls_needed);
     memzero(dice_rolls, sizeof(dice_rolls));
   }
-
 
   if (!setup_stagePin(pin_protection)) {
     /* Clears the roll digest along with the staged settings and entropy. */
