@@ -288,19 +288,24 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   /* Dice fold in before EntropyRequest, so the host contribution arrives
    * strictly after the device has committed to its own.
    *
-   * They are deliberately NOT displayed. An earlier version of this code
-   * showed the mixed internal entropy on the OLED and called it a
-   * verifiable commitment; that was wrong. A host that supplies
-   * ext_entropy and reads that screen once computes
-   * SHA256(shown || ext_entropy) -- the seed pre-image -- and dice change
-   * nothing about it, because the displayed value is already post-mix. The
-   * roll digest below is safe by contrast: it is a hash of the user's own
-   * input, not of seed material.
+   * Neither half is displayed. Earlier firmware rendered the device half on
+   * the OLED under ResetDevice.display_random and called it a verifiable
+   * commitment; it was not one. The screen was drawn strictly BEFORE
+   * EntropyRequest, so it disclosed the exact 32 bytes whose complement the
+   * host itself supplies: anyone who reads the OLED and knows ext_entropy
+   * computes SHA256(shown || ext_entropy), the seed pre-image. Dice could
+   * never coexist with it, so the value shown was the raw RNG draw rather
+   * than a mixed one -- earlier comments here claiming a POST-mix value were
+   * wrong on every reachable path. Trezor, whose ResetDevice this inherits,
+   * removed the same feature for the same reason (PR #4119).
    *
    * ResetDevice.display_random stays in the wire schema and is ignored by
    * fsm_msgResetDevice(), which is why the old "Can't show internal entropy
    * when backup is skipped" syntax check is gone: there is no longer an
    * entropy screen for it to be inconsistent with.
+   *
+   * The roll digest below is safe by contrast: it is a hash of the user's
+   * own input, not of seed material.
    *
    * The digest needs no clear here -- setup_stage() above ran setup_abort(),
    * which zeroes it. */
