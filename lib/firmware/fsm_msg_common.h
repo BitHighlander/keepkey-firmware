@@ -587,7 +587,8 @@ void fsm_msgResetDevice(ResetDevice* msg) {
              msg->has_auto_lock_delay_ms ? msg->auto_lock_delay_ms
                                          : STORAGE_DEFAULT_SCREENSAVER_TIMEOUT,
              msg->has_u2f_counter ? msg->u2f_counter : 0,
-             msg->has_dice_entropy && msg->dice_entropy);
+             msg->has_dice_entropy && msg->dice_entropy,
+             msg->has_dice_only && msg->dice_only);
 }
 
 void fsm_msgEntropyAck(EntropyAck* msg) {
