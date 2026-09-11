@@ -50,30 +50,58 @@ STRENGTH_FOR_WORDS = {12: 128, 18: 192, 24: 256}
 TAG_USER = b"KK\x01D"
 TAG_MIX = b"KK\x01SM"
 
+# The English wordlist the firmware itself is built from, as shipped in the
+# trezor-crypto submodule. It is a C source file (the .h only declares the
+# array), not a .txt; either form is read.
 WORDLIST_CANDIDATES = (
-    "deps/crypto/trezor-firmware/crypto/bip39_english.txt",
-    "deps/crypto/bip39_english.txt",
+    "deps/crypto/trezor-firmware/crypto/bip39_english.c",
+    "deps/crypto/trezor-firmware/crypto/bip39_english.h",
 )
 
 
-def find_wordlist(explicit):
+def parse_wordlist(path):
+    """One word per line, or a C source with the words as quoted literals.
+    Returns the list, or None if the file does not hold exactly the 2048
+    English words -- a wrong or partial file must not yield a plausible but
+    different sentence."""
+    with open(path) as handle:
+        text = handle.read()
+    if path.endswith((".h", ".c")):
+        # The C source quotes other things too (its license text, for one),
+        # so take the run from the first word to the last rather than every
+        # quoted literal in the file.
+        import re
+        tokens = re.findall(r'"([a-z]+)"', text)
+        try:
+            first = tokens.index("abandon")
+            last = tokens.index("zoo", first)
+        except ValueError:
+            return None
+        words = tokens[first:last + 1]
+    else:
+        words = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(words) != 2048 or words[0] != "abandon" or words[-1] != "zoo":
+        return None
+    return words
+
+
+def load_wordlist(explicit):
+    """The wordlist from --wordlist, else the first repo candidate that
+    parses. None if nothing usable was found."""
     if explicit:
-        return explicit
+        words = parse_wordlist(explicit)
+        if words is None:
+            raise SystemExit("%s does not contain the 2048 BIP-39 English "
+                             "words" % explicit)
+        return words
     here = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     for rel in WORDLIST_CANDIDATES:
         path = os.path.join(here, rel)
         if os.path.isfile(path):
-            return path
+            words = parse_wordlist(path)
+            if words is not None:
+                return words
     return None
-
-
-def load_wordlist(path):
-    with open(path) as handle:
-        words = [line.strip() for line in handle if line.strip()]
-    if len(words) != 2048:
-        raise SystemExit("wordlist %s has %d entries, expected 2048"
-                         % (path, len(words)))
-    return words
 
 
 def mnemonic_from_entropy(entropy, words):
@@ -143,8 +171,7 @@ def main():
             "transcription error, not a warning." % (len(rolls), args.words,
                                                      expected))
 
-    path = find_wordlist(args.wordlist)
-    words = load_wordlist(path) if path else None
+    words = load_wordlist(args.wordlist)
 
     digest = hashlib.sha256(rolls.encode("ascii")).digest()
     if args.device_words:
@@ -169,9 +196,10 @@ def main():
 
     if words is None:
         raise SystemExit(
-            "\nno BIP39 wordlist found; pass --wordlist <bip39_english.txt> to "
-            "print the mnemonic. The entropy above is the value the backup "
-            "words encode.")
+            "\nno BIP39 wordlist found (looked for the trezor-crypto "
+            "submodule's bip39_english.c under deps/); pass --wordlist with "
+            "that file or any one-word-per-line English list to print the "
+            "mnemonic. The entropy above is the value the backup words encode.")
 
     mnemonic = mnemonic_from_entropy(seed[:strength // 8], words)
     print()

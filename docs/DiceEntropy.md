@@ -1,22 +1,39 @@
 # Dice Entropy
 
-On-device dice rolls, folded into the seed at creation time. Available from
-firmware v7.14.3 (bitcoin-only line) and v7.15.0 (`ResetDevice.dice_entropy`).
+On-device dice rolls as seed entropy, in two modes a user can verify offline.
+Available from firmware v7.14.3 (bitcoin-only line) and v7.15.0
+(`ResetDevice.dice_entropy`, `ResetDevice.dice_only`); a host must check
+`Features.supports_dice_modes` before offering either, because older firmware
+skips unknown fields silently rather than refusing them.
 
 ## What happens
 
 `reset.c:reset_init()`, when `dice_entropy` is set:
 
-1. `dice_input_collect()` gathers rolls on the device's own button — short press
+1. A consent screen names the mode the host selected — "Dice + Device" or
+   "Dice Only" — with the roll count. Holding proceeds; the only "no" is the
+   host's Cancel, which aborts the reset. `no_backup` is refused with dice.
+2. MIXED only: the device shows its own 32-byte RNG draw as 24 BIP-39 words,
+   titled "Entropy N/M", and the consent screen has just said these are NOT a
+   backup. The user copies them down. This happens before any roll is entered,
+   so the draw is committed before the device has seen the rolls.
+3. `dice_input_collect()` gathers rolls on the device's own button — short press
    selects 1-6, long press commits. 50 rolls for a 12-word seed, 75 for 18, 99
    for 24 (`dice_rolls_for_strength`). Rolls are stored as ASCII `'1'`-`'6'`,
    one byte each.
-2. `dice_digest = SHA256(rolls)`. The first 8 bytes are shown on the OLED as 16
-   hex characters, with the roll count, on a confirm screen.
-3. `dice_mix(int_entropy, rolls, count)` replaces the internal entropy with
-   `SHA256(int_entropy || rolls)` (`dice_input.c:138`).
-4. Only then does the device send `EntropyRequest`, so the host's contribution
-   arrives strictly after the device has committed to its own.
+4. Rolls on which any face lands more than 30% of the time are refused with a
+   `SyntaxError` before anything else is shown (`dice_rolls_look_biased`).
+5. `dice_digest = SHA256(rolls)`. All 32 bytes are shown on the OLED as 64 hex
+   characters, with the roll count, on a paged confirm screen.
+6. The seed is derived per mode (`dice_derive_only` / `dice_derive_mixed`, in
+   `dice_input.c`):
+   - ONLY: `seed = SHA256(rolls)`
+   - MIXED: `user = SHA256("KK\x01D" || rolls)`;
+     `seed = SHA256(SHA256("KK\x01SM" || draw || user))`
+7. The device sends `EntropyRequest` and consumes the host's `EntropyAck`, so
+   the wire flow is unchanged, but the bytes are dropped: nothing enters the
+   derivation that the user does not hold.
+8. The backup words are shown and the seed is committed as usual.
 
 Cancelling at any point aborts the reset and zeroes the buffers. Nothing is
 stored.
@@ -27,7 +44,7 @@ The digest is over the rolls, and nothing else. A user who wrote their rolls
 down can recompute it:
 
 ```
-printf '536142...' | shasum -a 256    # first 16 hex chars == displayed digest
+printf '536142...' | shasum -a 256    # all 64 hex chars == displayed digest
 ```
 
 A match proves the device recorded exactly that sequence, in that order, with

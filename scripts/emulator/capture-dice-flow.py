@@ -87,8 +87,16 @@ resp = client.transport.read_blocking()
 assert isinstance(resp, proto.ButtonRequest), resp
 snap("04-digest-confirm.png")
 
-client.debug.press_yes()
-ret = client.call_raw(proto.ButtonAck())
+# The full digest spans constant-power subpages; under DEBUG_LINK each one
+# after the first raises its own ButtonRequest. Hold through all of them.
+ret = resp
+page = 1
+while isinstance(ret, proto.ButtonRequest):
+    if page > 1:
+        snap("04-digest-confirm-page%d.png" % page)
+    client.debug.press_yes()
+    ret = client.call_raw(proto.ButtonAck())
+    page += 1
 assert isinstance(ret, proto.EntropyRequest), ret
 ret = client.call_raw(proto.EntropyAck(entropy=b'E' * 32))
 

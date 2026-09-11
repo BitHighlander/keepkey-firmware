@@ -76,9 +76,10 @@ static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 static uint8_t CONFIDENTIAL dice_digest[32];
 static bool has_dice_digest = false;
 
-/* Which dice derivation this ceremony uses. Chosen ON THE DEVICE, never by
- * the host, so a host can neither select a mode nor force one. Cleared with
- * the digest, so an abandoned ceremony cannot leave it armed for the next. */
+/* Which dice derivation this ceremony uses. Selected by the host in
+ * ResetDevice (dice_entropy / dice_only) and confirmed on the device by the
+ * consent screen in reset_init() before anything runs. Cleared with the
+ * digest by setup_abort(), so an abandoned ceremony cannot leave it armed. */
 static DiceMode dice_mode = DICE_MODE_NONE;
 
 static void dice_digest_clear(void) {
@@ -223,6 +224,17 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
+  /* The dice modes exist to be checked against the backup words. A reset that
+   * never shows them has nothing to verify, and would put seed material (the
+   * digest, the entropy words) on the screen under a WARNING that recovery is
+   * impossible. Refused, as display_random with no_backup was. */
+  if (dice_entropy && _no_backup) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Dice entropy cannot be combined with no_backup"));
+    layoutHome();
+    return;
+  }
+
   /* Nothing below this line writes storage. Everything the host asked for is
    * staged, and stays staged until reset_entropy() reaches setup_commit().
    * Returning early from any of the screens below therefore rolls the whole
@@ -328,21 +340,19 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
    * setup_abort(), which zeroes them. */
   if (dice_entropy) {
     static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
-    static char CONFIDENTIAL digest_body[128];
     uint32_t rolls_needed = dice_rolls_for_strength(strength);
 
     dice_mode = dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED;
     bool consented =
         dice_only
             ? confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Only"),
-                      _("Seed from %lu rolls ALONE. No device randomness: "
-                        "your dice are the only protection. Verifiable "
-                        "offline."),
+                      _("Seed from %lu rolls ALONE, no device randomness. "
+                        "Verifiable offline."),
                       (unsigned long)rolls_needed)
             : confirm(ButtonRequestType_ButtonRequest_DiceRoll,
                       _("Dice + Device"),
-                      _("Copy the 24 entropy words shown next, then roll "
-                        "%lu dice. Verifiable offline."),
+                      _("Next: 24 entropy words, NOT a backup. Copy "
+                        "them, then roll %lu dice."),
                       (unsigned long)rolls_needed);
     if (!consented) {
       /* setup_abort() is the whole rollback -- staged settings, int_entropy,
@@ -398,20 +408,27 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     sha256_Raw((const uint8_t*)dice_rolls, rolls_needed, dice_digest);
     has_dice_digest = true;
 
+    /* The digest page is formatted into current_words: 265 bytes, already
+     * CONFIDENTIAL, and idle between roll entry and the backup pager. A new
+     * static buffer here cost the full 7.15 image its 16 KiB SRAM reserve,
+     * which sits within a few dozen bytes of the linker floor. Under
+     * DEBUG_LINK reset_get_word() returns this text while the page is up; the
+     * digest is already exposed there. */
     {
       char hex[4][17];
       data2hex(dice_digest, 8, hex[0]);
       data2hex(dice_digest + 8, 8, hex[1]);
       data2hex(dice_digest + 16, 8, hex[2]);
       data2hex(dice_digest + 24, 8, hex[3]);
-      snprintf(digest_body, sizeof(digest_body),
+      snprintf(current_words, sizeof(current_words),
                _("%lu rolls. Digest, SECRET:\n%s %s\n%s %s"),
                (unsigned long)rolls_needed, hex[0], hex[1], hex[2], hex[3]);
       memzero(hex, sizeof(hex));
     }
-    bool confirmed = confirm_constant_power_paged(
-        ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Rolls"), digest_body);
-    memzero(digest_body, sizeof(digest_body));
+    bool confirmed =
+        confirm_constant_power_paged(ButtonRequestType_ButtonRequest_DiceRoll,
+                                     _("Dice Rolls"), current_words);
+    memzero(current_words, sizeof(current_words));
     if (!confirmed) {
       memzero(dice_rolls, sizeof(dice_rolls));
       setup_abort();
