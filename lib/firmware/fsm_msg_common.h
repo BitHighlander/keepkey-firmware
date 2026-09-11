@@ -48,6 +48,13 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_supports_taproot = true;
   resp->supports_taproot = true;
 
+  /* Verifiable dice modes: the on-device consent screen, ResetDevice.dice_only
+     and the tagged MIXED derivation. Reported as a capability because older
+     firmware skips the unknown dice_only field and would derive a different
+     wallet without complaint; a host must fail closed on this bit. */
+  resp->has_supports_dice_modes = true;
+  resp->supports_dice_modes = true;
+
   /* Variant Name */
   resp->has_firmware_variant = true;
 #if BITCOIN_ONLY

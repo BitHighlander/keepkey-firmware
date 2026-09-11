@@ -69,8 +69,4 @@ void dice_derive_only(const char *rolls, uint32_t count, uint8_t out[32]);
 void dice_derive_mixed(const uint8_t device[32], const char *rolls,
                        uint32_t count, uint8_t out[32]);
 
-/// entropy = SHA256(entropy[32] || rolls[count]); the caller displays or
-/// commits only the post-mix value.
-void dice_mix(uint8_t entropy[32], const char *rolls, uint32_t count);
-
 #endif

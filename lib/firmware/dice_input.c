@@ -135,15 +135,6 @@ uint32_t dice_rolls_for_strength(uint32_t strength_bits) {
   }
 }
 
-void dice_mix(uint8_t entropy[32], const char *rolls, uint32_t count) {
-  SHA256_CTX ctx;
-  sha256_Init(&ctx);
-  sha256_Update(&ctx, entropy, 32);
-  sha256_Update(&ctx, (const uint8_t *)rolls, count);
-  sha256_Final(&ctx, entropy);
-  memzero(&ctx, sizeof(ctx));
-}
-
 bool dice_rolls_look_biased(const char *rolls, uint32_t count) {
   uint32_t face[6] = {0, 0, 0, 0, 0, 0};
   for (uint32_t i = 0; i < count; i++) {
@@ -253,8 +244,8 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
 }
 
 /* Arm the button ISRs, reset the shared press state, and announce the screen.
- * Shared by every dice screen so the mode selector and the roll collector
- * cannot drift apart in how they treat the host ack or a stale press. */
+ * Factored out of the roll collector so any later dice screen shares its
+ * exact treatment of the host ack and of a stale press. */
 static void dice_session_begin(void) {
   reset_msg_stack = false;
 

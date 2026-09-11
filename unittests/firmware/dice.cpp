@@ -24,45 +24,6 @@ TEST(Dice, RollsForStrength) {
   EXPECT_EQ(dice_rolls_for_strength(256), 99u);
 }
 
-TEST(Dice, MixZeroEntropyVector) {
-  // SHA256(0x00*32 || "123456")
-  uint8_t entropy[32];
-  memset(entropy, 0, sizeof(entropy));
-  dice_mix(entropy, "123456", 6);
-  EXPECT_EQ(hexlify(entropy, 32),
-            "16ba88244e0230b0fc84868b703a0e32c344be1b0284f2e67e59715f123748d6");
-}
-
-TEST(Dice, MixNonZeroEntropyVector) {
-  // SHA256(0x00..0x1f || "654321165243")
-  uint8_t entropy[32];
-  for (int i = 0; i < 32; i++) entropy[i] = (uint8_t)i;
-  dice_mix(entropy, "654321165243", 12);
-  EXPECT_EQ(hexlify(entropy, 32),
-            "d1ab5a0b7f106313b6ba44d6863c5d1b90397d9e4a0f87a0a6baa25bad00ae97");
-}
-
-TEST(Dice, MixDependsOnRolls) {
-  uint8_t a[32], b[32];
-  memset(a, 0xAB, sizeof(a));
-  memset(b, 0xAB, sizeof(b));
-  dice_mix(a, "111111", 6);
-  dice_mix(b, "111112", 6);
-  EXPECT_NE(0, memcmp(a, b, 32));
-}
-
-TEST(Dice, MixUsesExactCount) {
-  // Only `count` bytes of the roll buffer may contribute.
-  uint8_t a[32], b[32];
-  memset(a, 0, sizeof(a));
-  memset(b, 0, sizeof(b));
-  const char rolls_a[8] = {'1', '2', '3', '4', '5', '6', '1', '2'};
-  const char rolls_b[8] = {'1', '2', '3', '4', '5', '6', '6', '5'};
-  dice_mix(a, rolls_a, 6);
-  dice_mix(b, rolls_b, 6);
-  EXPECT_EQ(0, memcmp(a, b, 32));
-}
-
 // Expected values below were computed in Python from the published formulas,
 // not captured from this code: a vector produced by the function under test
 // would only prove the function agrees with itself.
@@ -103,15 +64,26 @@ TEST(Dice, DeriveMixedAliasesInPlace) {
   EXPECT_EQ(0, memcmp(device, separate, 32));
 }
 
-TEST(Dice, DeriveMixedDiffersFromLegacyMix) {
-  // The tagged derivation must not collide with dice_mix() on the same
-  // inputs, or a wallet could be silently re-derived under the wrong mode.
-  uint8_t device[32], mixed[32];
+TEST(Dice, DeriveMixedDiffersFromUntaggedMix) {
+  // The tagged derivation must not collide with what earlier firmware
+  // derived for the same inputs, SHA256(draw || rolls) -- here
+  // SHA256(0x00*32 || "123456"), computed in Python -- or a wallet could be
+  // silently re-derived under the wrong formula.
+  uint8_t device[32];
   memset(device, 0, sizeof(device));
-  memcpy(mixed, device, 32);
   dice_derive_mixed(device, "123456", 6, device);
-  dice_mix(mixed, "123456", 6);
-  EXPECT_NE(0, memcmp(device, mixed, 32));
+  EXPECT_NE(hexlify(device, 32),
+            "16ba88244e0230b0fc84868b703a0e32c344be1b0284f2e67e59715f123748d6");
+}
+
+TEST(Dice, DeriveOnlyUsesExactCount) {
+  // Only `count` bytes of the roll buffer may contribute.
+  uint8_t a[32], b[32];
+  const char rolls_a[8] = {'1', '2', '3', '4', '5', '6', '1', '2'};
+  const char rolls_b[8] = {'1', '2', '3', '4', '5', '6', '6', '5'};
+  dice_derive_only(rolls_a, 6, a);
+  dice_derive_only(rolls_b, 6, b);
+  EXPECT_EQ(0, memcmp(a, b, 32));
 }
 
 static std::string rolls_with_ones(size_t ones, size_t total) {
@@ -131,6 +103,14 @@ TEST(Dice, BiasGateIsThirtyPercentPerFace) {
 }
 
 TEST(Dice, BiasGateRejectsNonDiceBytes) {
-  EXPECT_TRUE(dice_rolls_look_biased("12345612345612345612345612345612345612345612345612340", 51));
+  // A non-d6 byte anywhere inside `count` is refused, whatever the
+  // distribution of the rest. (An earlier version of this test placed the bad
+  // byte past `count`, where it is correctly never examined.)
+  std::string s = rolls_with_ones(8, 50);
+  EXPECT_FALSE(dice_rolls_look_biased(s.c_str(), 50));
+  s[10] = '0';
+  EXPECT_TRUE(dice_rolls_look_biased(s.c_str(), 50));
+  s[10] = '7';
+  EXPECT_TRUE(dice_rolls_look_biased(s.c_str(), 50));
   EXPECT_TRUE(dice_rolls_look_biased("1234567", 7));
 }
