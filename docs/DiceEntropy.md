@@ -91,11 +91,13 @@ cannot prove the rolls were used.
 ## The two opt-in modes
 
 Verifiability requires that the derivation contain nothing the user does not
-hold. After the host requests `dice_entropy`, the device shows a selector —
-short press toggles, hold commits; the host can neither choose nor force it —
-with two modes, both verifiable:
+hold. The host selects the mode in `ResetDevice` before the ceremony starts,
+so the wallet can explain what is coming, and the device shows a consent
+screen naming the mode it was asked for — holding proceeds, and the only "no"
+is cancelling the reset, which is the right answer to a mode the user did not
+choose. Two modes, both verifiable:
 
-**MIXED** (initial selection). The device first shows its own 32-byte RNG draw
+**MIXED** (`dice_entropy` alone). The device first shows its own 32-byte RNG draw
 as 24 BIP-39 words, which the user copies down, and only then collects the
 rolls. Because the draw is committed before the device has seen a roll, it
 cannot be chosen to steer the result. Then
@@ -108,8 +110,8 @@ seed = SHA256(SHA256("KK\x01SM" || device_draw || user))
 Showing the draw is safe here for the mirror-image reason it was unsafe under
 `display_random`: the other half is dice the host never sees.
 
-**DICE ONLY.** `seed = SHA256(rolls)`, ColdCard's Dice-Rolls-Only byte for
-byte. The device draw is discarded, so the wallet rests entirely on the
+**DICE ONLY** (`dice_entropy` with `dice_only`). `seed = SHA256(rolls)`,
+ColdCard's Dice-Rolls-Only byte for byte. The device draw is discarded, so the wallet rests entirely on the
 quality and privacy of the rolls. A biased die, a short sequence, or a
 photographed roll sheet is the whole seed. That is why it is an explicit
 choice, never a default, and why the device refuses rolls where any face

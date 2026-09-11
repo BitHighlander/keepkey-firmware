@@ -108,13 +108,15 @@ ColdCard offers both and labels dice-only as advanced.
 
 ## What changed
 
-Opting into dice (`ResetDevice.dice_entropy`) now opens an on-device selector
-— a selector rather than a yes/no screen, because a one-button `confirm()`
-cannot be declined without the host cancelling the whole reset. The host
-cannot choose or force the mode; it only learns which was chosen if the user
-tells it.
+The host selects the mode before the ceremony starts — `dice_entropy` alone
+is MIXED, `dice_entropy` with `dice_only` is DICE ONLY — so a wallet can
+explain what is coming: 99 rolls, and for MIXED 24 words to copy down. The
+device then shows a consent screen naming the mode it was asked for; holding
+proceeds and the only "no" is cancelling the reset, which on a one-button
+device is exactly the right answer to a mode the user did not choose. A host
+cannot select dice-only silently.
 
-**MIXED** (initial selection):
+**MIXED** (`dice_entropy` without `dice_only`):
 
 ```
 user = SHA256("KK\x01D" || rolls)

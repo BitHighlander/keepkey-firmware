@@ -27,9 +27,12 @@
  * convention of 50 rolls per 128-bit seed and 99 per 256-bit. */
 #define DICE_MAX_ROLLS 99
 
-/// How a dice ceremony derives the seed. Both opt-in modes are verifiable
-/// offline: nothing enters the derivation that the user does not hold, and
-/// the host's EntropyAck bytes are consumed and dropped.
+/// How a dice ceremony derives the seed. The host selects the mode in
+/// ResetDevice (dice_entropy alone = MIXED, with dice_only = ONLY) and the
+/// device shows a consent screen naming it before anything happens. Both
+/// opt-in modes are verifiable offline: nothing enters the derivation that
+/// the user does not hold, and the host's EntropyAck bytes are consumed and
+/// dropped.
 typedef enum {
   DICE_MODE_NONE = 0, /* no dice: the legacy device+host derivation */
   DICE_MODE_MIXED,    /* device draw (shown as 24 words) + rolls */
@@ -38,14 +41,6 @@ typedef enum {
 
 /// Number of rolls required for a given seed strength (128/192/256).
 uint32_t dice_rolls_for_strength(uint32_t strength_bits);
-
-/// Choose the dice mode on the device with the single button: short press
-/// toggles MIXED/ONLY, holding commits. MIXED is the initial selection.
-/// Announces itself with ButtonRequest_DiceRoll and accepts input only after
-/// the host's ButtonAck. Under DEBUG_LINK, '1' (MIXED) or '2' (ONLY) in
-/// DebugLinkDecision.input is a committed selection. Returns false if the
-/// host cancelled (Cancel/Initialize); \a out is then DICE_MODE_NONE.
-bool dice_mode_select(DiceMode *out);
 
 /// Collect `target` dice rolls on the device with the single button:
 /// short press advances the 1-6/UNDO selector, holding the button commits

@@ -57,16 +57,14 @@ client.auto_button = False
 ret = client.call_raw(proto.ResetDevice(
     strength=256, passphrase_protection=False,
     pin_protection=False, language='english', label='dice evidence',
-    dice_entropy=True))
+    dice_entropy=True, dice_only=True))
 assert isinstance(ret, proto.ButtonRequest), ret
 
-# The on-device mode selector comes first. DICE ONLY is the shortest
-# verifiable flow; MIXED would add the 24 device-entropy word pages here.
-client.transport.write(proto.ButtonAck())
-time.sleep(0.3)
-snap("00-mode-selector.png")
-client.debug.press_input("2")
-ret = client.transport.read_blocking()
+# The consent screen names the mode the host selected. DICE ONLY is the
+# shortest verifiable flow; MIXED would add the 24 device-entropy word pages.
+snap("00-mode-consent.png")
+client.debug.press_yes()
+ret = client.call_raw(proto.ButtonAck())
 assert isinstance(ret, proto.ButtonRequest), ret
 
 client.transport.write(proto.ButtonAck())

@@ -214,11 +214,18 @@ char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 void reset_init(uint32_t _strength, bool passphrase_protection,
                 bool pin_protection, const char* language, const char* label,
                 bool _no_backup, uint32_t _auto_lock_delay_ms,
-                uint32_t _u2f_counter, bool dice_entropy) {
+                uint32_t _u2f_counter, bool dice_entropy, bool dice_only) {
   if (_strength != 128 && _strength != 192 && _strength != 256) {
     fsm_sendFailure(
         FailureType_Failure_SyntaxError,
         _("Invalid mnemonic strength (has to be 128, 192 or 256 bits)"));
+    layoutHome();
+    return;
+  }
+
+  if (dice_only && !dice_entropy) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("dice_only requires dice_entropy"));
     layoutHome();
     return;
   }
@@ -294,11 +301,15 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
-  /* Dice ceremony. The mode is chosen on the device -- a selector, because a
-   * one-button confirm() cannot be declined without the host cancelling the
-   * whole reset -- and both modes are verifiable offline: nothing enters the
-   * derivation that the user does not hold, and the host's EntropyAck bytes
-   * are consumed and dropped in reset_entropy().
+  /* Dice ceremony. The host selects the mode in ResetDevice so a wallet can
+   * explain what is coming before anything starts; the device then shows a
+   * consent screen naming the mode it was asked for, so a host cannot pick
+   * one silently. (It is a confirm, not a selector: on a one-button device a
+   * confirm() ends only by hold or by the host's Cancel, and "cancel the
+   * reset" is exactly the right answer to a mode the user did not want.)
+   * Both modes are verifiable offline: nothing enters the derivation that
+   * the user does not hold, and the host's EntropyAck bytes are consumed and
+   * dropped in reset_entropy().
    *
    *   MIXED: seed = SHA256d(tag || device_draw || SHA256(tag2 || rolls)).
    *          The device draw is shown as 24 BIP-39 words BEFORE the rolls
@@ -327,11 +338,22 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     static char CONFIDENTIAL digest_body[128];
     uint32_t rolls_needed = dice_rolls_for_strength(strength);
 
-    if (!dice_mode_select(&dice_mode)) {
+    dice_mode = dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED;
+    bool consented =
+        dice_only
+            ? confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Only"),
+                      _("Seed from %lu rolls ALONE. No device randomness: "
+                        "your dice are the only protection. Verifiable "
+                        "offline."),
+                      (unsigned long)rolls_needed)
+            : confirm(ButtonRequestType_ButtonRequest_DiceRoll,
+                      _("Dice + Device"),
+                      _("Copy the 24 entropy words shown next, then roll "
+                        "%lu dice. Verifiable offline."),
+                      (unsigned long)rolls_needed);
+    if (!consented) {
       /* setup_abort() is the whole rollback -- staged settings, int_entropy,
-       * strength, roll digest, mode. Load-bearing: the tiny-message pump that
-       * accepted the Cancel/Initialize does not dispatch fsm_msgCancel, so
-       * nothing else has aborted the ceremony at this point. */
+       * strength, roll digest, mode. */
       setup_abort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
@@ -360,6 +382,9 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     memzero(current_words, sizeof(current_words));
     if (!dice_input_collect(dice_rolls, rolls_needed)) {
       memzero(dice_rolls, sizeof(dice_rolls));
+      /* Load-bearing: the tiny-message pump that accepted the
+       * Cancel/Initialize does not dispatch fsm_msgCancel, so nothing else
+       * has aborted the ceremony at this point. */
       setup_abort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
