@@ -27,8 +27,25 @@
  * convention of 50 rolls per 128-bit seed and 99 per 256-bit. */
 #define DICE_MAX_ROLLS 99
 
+/// How a dice ceremony derives the seed. Both opt-in modes are verifiable
+/// offline: nothing enters the derivation that the user does not hold, and
+/// the host's EntropyAck bytes are consumed and dropped.
+typedef enum {
+  DICE_MODE_NONE = 0, /* no dice: the legacy device+host derivation */
+  DICE_MODE_MIXED,    /* device draw (shown as 24 words) + rolls */
+  DICE_MODE_ONLY,     /* rolls alone; the device draw is discarded */
+} DiceMode;
+
 /// Number of rolls required for a given seed strength (128/192/256).
 uint32_t dice_rolls_for_strength(uint32_t strength_bits);
+
+/// Choose the dice mode on the device with the single button: short press
+/// toggles MIXED/ONLY, holding commits. MIXED is the initial selection.
+/// Announces itself with ButtonRequest_DiceRoll and accepts input only after
+/// the host's ButtonAck. Under DEBUG_LINK, '1' (MIXED) or '2' (ONLY) in
+/// DebugLinkDecision.input is a committed selection. Returns false if the
+/// host cancelled (Cancel/Initialize); \a out is then DICE_MODE_NONE.
+bool dice_mode_select(DiceMode *out);
 
 /// Collect `target` dice rolls on the device with the single button:
 /// short press advances the 1-6/UNDO selector, holding the button commits
@@ -41,6 +58,21 @@ uint32_t dice_rolls_for_strength(uint32_t strength_bits);
 /// appended past target; the caller owns zeroization). Returns false if the
 /// host cancelled (Cancel/Initialize).
 bool dice_input_collect(char *rolls, uint32_t target);
+
+/// Coldcard's rule: any face landing on more than 30% of the rolls is not a
+/// fair die (or not a real one). Also true for any non-'1'..'6' byte.
+bool dice_rolls_look_biased(const char *rolls, uint32_t count);
+
+/// ONLY mode: out = SHA256(rolls). Byte-identical to Coldcard's
+/// Dice-Rolls-Only derivation, so its published verifier applies unchanged.
+void dice_derive_only(const char *rolls, uint32_t count, uint8_t out[32]);
+
+/// MIXED mode, domain-separated after Coldcard's mixed derivation:
+///   user = SHA256("KK\x01D" || rolls)
+///   out  = SHA256(SHA256("KK\x01SM" || device[32] || user))
+/// \a device and \a out may alias.
+void dice_derive_mixed(const uint8_t device[32], const char *rolls,
+                       uint32_t count, uint8_t out[32]);
 
 /// entropy = SHA256(entropy[32] || rolls[count]); the caller displays or
 /// commits only the post-mix value.

@@ -144,6 +144,56 @@ void dice_mix(uint8_t entropy[32], const char *rolls, uint32_t count) {
   memzero(&ctx, sizeof(ctx));
 }
 
+bool dice_rolls_look_biased(const char *rolls, uint32_t count) {
+  uint32_t face[6] = {0, 0, 0, 0, 0, 0};
+  for (uint32_t i = 0; i < count; i++) {
+    if (rolls[i] < '1' || rolls[i] > '6') {
+      return true;
+    }
+    face[rolls[i] - '1']++;
+  }
+  for (uint32_t f = 0; f < 6; f++) {
+    /* face/count > 0.30, in integers */
+    if (face[f] * 10 > count * 3) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void dice_derive_only(const char *rolls, uint32_t count, uint8_t out[32]) {
+  sha256_Raw((const uint8_t *)rolls, count, out);
+}
+
+/* Byte arrays, not string literals: "\x01D" would parse as the single byte
+ * 0x1D, because a C hex escape swallows every hex digit that follows it. */
+static const uint8_t DICE_TAG_USER[4] = {'K', 'K', 0x01, 'D'};
+static const uint8_t DICE_TAG_MIX[5] = {'K', 'K', 0x01, 'S', 'M'};
+
+void dice_derive_mixed(const uint8_t device[32], const char *rolls,
+                       uint32_t count, uint8_t out[32]) {
+  uint8_t user[32];
+  uint8_t seed[32];
+  SHA256_CTX ctx;
+
+  sha256_Init(&ctx);
+  sha256_Update(&ctx, DICE_TAG_USER, sizeof(DICE_TAG_USER));
+  sha256_Update(&ctx, (const uint8_t *)rolls, count);
+  sha256_Final(&ctx, user);
+
+  sha256_Init(&ctx);
+  sha256_Update(&ctx, DICE_TAG_MIX, sizeof(DICE_TAG_MIX));
+  sha256_Update(&ctx, device, 32);
+  sha256_Update(&ctx, user, 32);
+  sha256_Final(&ctx, seed);
+  sha256_Raw(seed, 32, seed);
+
+  memcpy(out, seed, 32);
+  memzero(seed, sizeof(seed));
+  memzero(user, sizeof(user));
+  memzero(&ctx, sizeof(ctx));
+}
+
 static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
                              const char *status, uint16_t hold_permil) {
   Canvas *canvas = layout_get_canvas();
@@ -202,6 +252,229 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
   display_refresh();
 }
 
+/* Arm the button ISRs, reset the shared press state, and announce the screen.
+ * Shared by every dice screen so the mode selector and the roll collector
+ * cannot drift apart in how they treat the host ack or a stale press. */
+static void dice_session_begin(void) {
+  reset_msg_stack = false;
+
+  dice_accept = false;
+  dice_pressed = false;
+  dice_committed = false;
+  dice_press_start = 0;
+  dice_release_time = 0;
+  dice_have_release = false;
+  dice_short_events = 0;
+  dice_hold_events = 0;
+
+  call_leaving_handler();
+
+#ifndef EMULATOR
+  keepkey_button_set_on_press_handler(&dice_on_press, NULL);
+  keepkey_button_set_on_release_handler(&dice_on_release, NULL);
+#endif
+
+  ButtonRequest br;
+  memset(&br, 0, sizeof(br));
+  br.has_code = true;
+  br.code = ButtonRequestType_ButtonRequest_DiceRoll;
+  msg_write(MessageType_MessageType_ButtonRequest, &br);
+}
+
+static void dice_session_end(void) {
+  dice_accept = false;
+#ifndef EMULATOR
+  keepkey_button_set_on_press_handler(NULL, NULL);
+  keepkey_button_set_on_release_handler(NULL, NULL);
+#endif
+}
+
+/* One critical section performs the whole read-classify-drain step, so the
+ * in-flight hold below cannot also be classified by the release ISR (and
+ * vice versa): whoever gets there first sets dice_committed. */
+static void dice_poll(bool *pressed, uint32_t *held, uint8_t *shorts,
+                      uint8_t *holds) {
+  *held = 0;
+  *shorts = 0;
+#ifndef EMULATOR
+  svc_disable_interrupts();
+#endif
+  {
+    uint32_t now = getSysTime();
+    *pressed = dice_pressed;
+    if (*pressed) {
+      *held = now - dice_press_start;
+      if (!dice_committed && *held >= DICE_HOLD_MS) {
+        dice_committed = true;
+        if (dice_hold_events < 8) {
+          dice_hold_events++;
+        }
+      }
+    }
+    /* Queued short presses stay queued until a debounce window has passed
+     * since the release that produced them, giving dice_on_press the
+     * chance to retract a bounce-generated one before it is acted on.
+     * Deliberately NOT conditioned on the button being up: a retraction
+     * can only happen inside that window, so once it closes the count is
+     * final. Waiting for the button to be released instead would let a
+     * tap-then-hold commit the digit the tap was meant to move off of. */
+    if (dice_have_release && now - dice_release_time >= DICE_DEBOUNCE_MS) {
+      *shorts = dice_short_events;
+      dice_short_events = 0;
+    }
+    *holds = dice_hold_events;
+    dice_hold_events = 0;
+  }
+#ifndef EMULATOR
+  svc_enable_interrupts();
+#endif
+}
+
+static uint16_t dice_hold_permil(bool pressed, uint32_t held) {
+  uint16_t bar_permil = 0;
+  if (pressed && held < DICE_HOLD_MS) {
+    bar_permil = (uint16_t)((held * 1000) / DICE_HOLD_MS);
+  } else if (pressed) {
+    bar_permil = 1000; /* held past the threshold: keep the bar full */
+  }
+  /* Quantize the bar so idle passes stay refresh-free. */
+  return (uint16_t)(bar_permil - (bar_permil % 50));
+}
+
+#define DICE_MODE_ROW_Y 12
+#define DICE_MODE_ROW_H 13
+#define DICE_MODE_ROW_GAP 2
+#define DICE_MODE_STATUS_Y 43
+#define DICE_MODE_BAR_Y 55
+
+static void dice_mode_draw(uint8_t position, uint16_t hold_permil) {
+  static const char *const labels[2] = {"MIXED  device+dice", "DICE ONLY"};
+  Canvas *canvas = layout_get_canvas();
+
+  layout_clear();
+  display_constant_power(true);
+
+  DrawableParams p = {.color = 0xFF, .x = DICE_LEFT, .y = 0};
+  draw_string(canvas, get_title_font(), _("DICE MODE"), &p, 0, 10);
+
+  for (uint8_t i = 0; i < 2; i++) {
+    uint16_t ry = DICE_MODE_ROW_Y + i * (DICE_MODE_ROW_H + DICE_MODE_ROW_GAP);
+    bool active = (i == position);
+    /* Inverse video marks the selection, as on the roll grid: geometry, not
+     * shade, so the 1bpp DebugLink capture can tell the rows apart. */
+    draw_box_simple(canvas, active ? 0xFF : 0x22, DICE_LEFT, ry, DICE_BAR_W,
+                    DICE_MODE_ROW_H);
+    p.color = active ? 0x00 : 0xFF;
+    p.x = DICE_LEFT + 3;
+    p.y = ry + 2;
+    draw_string(canvas, get_body_font(), labels[i], &p, DICE_BAR_W - 6, 10);
+  }
+
+  p.color = 0xFF;
+  p.x = DICE_LEFT;
+  p.y = DICE_MODE_STATUS_Y;
+  draw_string(canvas, get_body_font(), _("PRESS next HOLD ok"), &p, DICE_BAR_W,
+              10);
+
+  if (hold_permil > 0) {
+    draw_box_simple(canvas, 0xCC, DICE_BAR_X, DICE_MODE_BAR_Y, DICE_BAR_W,
+                    DICE_BAR_H);
+    draw_box_simple(canvas, 0x00, DICE_BAR_X + 1, DICE_MODE_BAR_Y + 1,
+                    DICE_BAR_W - 2, DICE_BAR_H - 2);
+    uint16_t fill =
+        (uint16_t)(((uint32_t)(DICE_BAR_W - 2) * hold_permil) / 1000);
+    if (fill > 0) {
+      draw_box_simple(canvas, 0xFF, DICE_BAR_X + 1, DICE_MODE_BAR_Y + 1, fill,
+                      DICE_BAR_H - 2);
+    }
+  }
+
+  display_refresh();
+}
+
+bool dice_mode_select(DiceMode *out) {
+  uint8_t position = 0; /* MIXED first: the safer default for most users */
+  bool ret = false;
+  bool redraw = true;
+  uint16_t last_bar_permil = 0;
+  static CONFIDENTIAL uint8_t msg_tiny_buf[MSG_TINY_BFR_SZ];
+
+  *out = DICE_MODE_NONE;
+  dice_session_begin();
+
+  for (;;) {
+    bool pressed;
+    uint32_t held;
+    uint8_t shorts;
+    uint8_t holds;
+    dice_poll(&pressed, &held, &shorts, &holds);
+
+    uint16_t tiny_msg = check_for_tiny_msg(msg_tiny_buf);
+    switch (tiny_msg) {
+      case MessageType_MessageType_ButtonAck:
+        dice_accept = true;
+        break;
+
+      case MessageType_MessageType_Cancel:
+      case MessageType_MessageType_Initialize:
+        if (tiny_msg == MessageType_MessageType_Initialize) {
+          reset_msg_stack = true;
+        }
+        goto mode_exit;
+
+#if DEBUG_LINK
+      case MessageType_MessageType_DebugLinkDecision: {
+        const DebugLinkDecision *dld = (const DebugLinkDecision *)msg_tiny_buf;
+        if (dice_accept && dld->has_input) {
+          for (const char *c = dld->input; *c != '\0'; c++) {
+            if (*c == '1' || *c == '2') {
+              position = (uint8_t)(*c - '1');
+              holds = 1; /* injected characters are committed selections */
+            }
+          }
+          redraw = true;
+        }
+        break;
+      }
+
+      case MessageType_MessageType_DebugLinkGetState:
+        call_msg_debug_link_get_state_handler(
+            (DebugLinkGetState *)msg_tiny_buf);
+        break;
+#endif
+
+      default:
+        break;
+    }
+
+    if (shorts > 0) {
+      position = (uint8_t)((position + shorts) % 2);
+      redraw = true;
+    }
+
+    if (holds > 0) {
+      *out = (position == 0) ? DICE_MODE_MIXED : DICE_MODE_ONLY;
+      ret = true;
+      goto mode_exit;
+    }
+
+    uint16_t bar_permil = dice_hold_permil(pressed, held);
+    if (redraw || bar_permil != last_bar_permil) {
+      dice_mode_draw(position, bar_permil);
+      last_bar_permil = bar_permil;
+      redraw = false;
+    }
+
+    animate();
+    display_refresh();
+  }
+
+mode_exit:
+  dice_session_end();
+  memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
+  return ret;
+}
+
 bool dice_input_collect(char *rolls, uint32_t target) {
   uint32_t count = 0;
   uint8_t position = 0;
@@ -220,73 +493,16 @@ bool dice_input_collect(char *rolls, uint32_t target) {
     return false;
   }
 
-  reset_msg_stack = false;
-
-  dice_accept = false;
-  dice_pressed = false;
-  dice_committed = false;
-  dice_press_start = 0;
-  dice_release_time = 0;
-  dice_have_release = false;
-  dice_short_events = 0;
-  dice_hold_events = 0;
-
-  call_leaving_handler();
+  dice_session_begin();
 
   snprintf(status, sizeof(status), _("PRESS next HOLD ok"));
 
-#ifndef EMULATOR
-  keepkey_button_set_on_press_handler(&dice_on_press, NULL);
-  keepkey_button_set_on_release_handler(&dice_on_release, NULL);
-#endif
-
-  ButtonRequest br;
-  memset(&br, 0, sizeof(br));
-  br.has_code = true;
-  br.code = ButtonRequestType_ButtonRequest_DiceRoll;
-  msg_write(MessageType_MessageType_ButtonRequest, &br);
-
   while (count < target) {
     bool pressed;
-    uint32_t held = 0;
-    uint8_t shorts = 0;
+    uint32_t held;
+    uint8_t shorts;
     uint8_t holds;
-
-    /* One critical section performs the whole read-classify-drain step, so
-     * the in-flight hold below cannot also be classified by the release ISR
-     * (and vice versa): whoever gets there first sets dice_committed. */
-#ifndef EMULATOR
-    svc_disable_interrupts();
-#endif
-    {
-      uint32_t now = getSysTime();
-      pressed = dice_pressed;
-      if (pressed) {
-        held = now - dice_press_start;
-        if (!dice_committed && held >= DICE_HOLD_MS) {
-          dice_committed = true;
-          if (dice_hold_events < 8) {
-            dice_hold_events++;
-          }
-        }
-      }
-      /* Queued short presses stay queued until a debounce window has passed
-       * since the release that produced them, giving dice_on_press the
-       * chance to retract a bounce-generated one before it is acted on.
-       * Deliberately NOT conditioned on the button being up: a retraction
-       * can only happen inside that window, so once it closes the count is
-       * final. Waiting for the button to be released instead would let a
-       * tap-then-hold commit the digit the tap was meant to move off of. */
-      if (dice_have_release && now - dice_release_time >= DICE_DEBOUNCE_MS) {
-        shorts = dice_short_events;
-        dice_short_events = 0;
-      }
-      holds = dice_hold_events;
-      dice_hold_events = 0;
-    }
-#ifndef EMULATOR
-    svc_enable_interrupts();
-#endif
+    dice_poll(&pressed, &held, &shorts, &holds);
 
     uint16_t tiny_msg = check_for_tiny_msg(msg_tiny_buf);
     switch (tiny_msg) {
@@ -354,15 +570,7 @@ bool dice_input_collect(char *rolls, uint32_t target) {
       redraw = true;
     }
 
-    uint16_t bar_permil = 0;
-    if (pressed && held < DICE_HOLD_MS) {
-      bar_permil = (uint16_t)((held * 1000) / DICE_HOLD_MS);
-    } else if (pressed) {
-      bar_permil = 1000; /* held past the threshold: keep the bar full */
-    }
-
-    /* Quantize the bar so idle passes stay refresh-free. */
-    bar_permil = (uint16_t)(bar_permil - (bar_permil % 50));
+    uint16_t bar_permil = dice_hold_permil(pressed, held);
     if (redraw || bar_permil != last_bar_permil) {
       dice_draw_screen(count, target, position, status, bar_permil);
       last_bar_permil = bar_permil;
@@ -376,11 +584,7 @@ bool dice_input_collect(char *rolls, uint32_t target) {
   ret = true;
 
 dice_exit:
-  dice_accept = false;
-#ifndef EMULATOR
-  keepkey_button_set_on_press_handler(NULL, NULL);
-  keepkey_button_set_on_release_handler(NULL, NULL);
-#endif
+  dice_session_end();
   memzero(status, sizeof(status));
   memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
   return ret;

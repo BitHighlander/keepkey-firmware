@@ -60,6 +60,15 @@ ret = client.call_raw(proto.ResetDevice(
     dice_entropy=True))
 assert isinstance(ret, proto.ButtonRequest), ret
 
+# The on-device mode selector comes first. DICE ONLY is the shortest
+# verifiable flow; MIXED would add the 24 device-entropy word pages here.
+client.transport.write(proto.ButtonAck())
+time.sleep(0.3)
+snap("00-mode-selector.png")
+client.debug.press_input("2")
+ret = client.transport.read_blocking()
+assert isinstance(ret, proto.ButtonRequest), ret
+
 client.transport.write(proto.ButtonAck())
 time.sleep(0.3)
 snap("01-dice-screen-initial.png")

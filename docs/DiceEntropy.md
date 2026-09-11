@@ -36,20 +36,16 @@ worth doing — it catches a device that quietly ignores button presses.
 
 ## What the digest does not prove
 
-It does not prove the rolls reached the seed. `dice_mix()` is a separate step,
-and neither `int_entropy` nor the mixed result is ever displayed. Firmware that
-showed a correct digest and then skipped the mix would look identical from the
-outside.
+On its own it does not prove the rolls reached the seed: a digest of the input
+says nothing about what was done with it, and firmware that showed a correct
+digest and then ignored the rolls would look identical from outside. That is
+why the dice ceremony no longer offers an unverifiable derivation. Both modes
+it offers (below) are built so the user can recompute the seed, and the digest
+is the commitment that recomputation checks against.
 
-The seed is
-
-```
-seed = SHA256( SHA256(int_entropy || rolls) || ext_entropy )
-```
-
-Of those three inputs the user holds exactly one. `int_entropy` is the device
-RNG draw and `ext_entropy` is supplied by the host, so there is no computation
-the user can perform that confirms their rolls are in the result.
+Before this unit the dice derivation was
+`SHA256(SHA256(int_entropy || rolls) || ext_entropy)` — three inputs, of which
+the user held one, so no such recomputation existed.
 
 An earlier revision displayed `int_entropy` and described it as a verifiable
 commitment. That was strictly worse, and not for the reason the old text here
@@ -92,26 +88,45 @@ cannot today prove their dice reached the seed.** They can prove the rolls were
 captured, which is worth something and catches a device that drops presses. They
 cannot prove the rolls were used.
 
-## Closing the gap
+## The two opt-in modes
 
 Verifiability requires that the derivation contain nothing the user does not
-hold. Concretely that means a dice-only mode in which `seed = SHA256(rolls)`,
-with the device RNG and the host's `ext_entropy` excluded from the derivation
-rather than mixed in, and the full digest shown so the commitment is 256 bits
-rather than 64. That is ColdCard's Dice-Rolls-Only, and it is the only shape
-that yields an offline check.
+hold. After the host requests `dice_entropy`, the device shows a selector —
+short press toggles, hold commits; the host can neither choose nor force it —
+with two modes, both verifiable:
 
-It carries a real cost, which is why it must be an explicit advanced choice and
-never a default: it stakes the wallet entirely on the quality and privacy of the
-user's dice. A biased die, a short sequence, or a photographed roll sheet is the
-whole seed. The mixed mode is safer for almost everyone and unverifiable; the
-dice-only mode is verifiable and less forgiving. Both are defensible; silently
-shipping the second as the default would not be.
+**MIXED** (initial selection). The device first shows its own 32-byte RNG draw
+as 24 BIP-39 words, which the user copies down, and only then collects the
+rolls. Because the draw is committed before the device has seen a roll, it
+cannot be chosen to steer the result. Then
 
-## Why the current mode has no verifier
+```
+user = SHA256("KK\x01D" || rolls)
+seed = SHA256(SHA256("KK\x01SM" || device_draw || user))
+```
 
-There is no host-side verifier for the mixing step as it stands, and adding one
-would be a security regression rather than a feature.
+Showing the draw is safe here for the mirror-image reason it was unsafe under
+`display_random`: the other half is dice the host never sees.
+
+**DICE ONLY.** `seed = SHA256(rolls)`, ColdCard's Dice-Rolls-Only byte for
+byte. The device draw is discarded, so the wallet rests entirely on the
+quality and privacy of the rolls. A biased die, a short sequence, or a
+photographed roll sheet is the whole seed. That is why it is an explicit
+choice, never a default, and why the device refuses rolls where any face
+exceeds 30% of the total before a digest is ever shown.
+
+In both modes the host's `EntropyAck` is still consumed, so the wire flow and
+every existing host are unchanged, but its bytes are dropped. The digest is
+shown in full. `tools/verify_dice_seed.py` recomputes the wallet offline from
+the roll string, plus the 24 device words for MIXED, with no secret from the
+device and no network — compare its output with the backup words the device
+showed, and the derivation has been checked by code the device did not write.
+
+## Why the default, no-dice mode has no verifier
+
+Without dice the seed is `SHA256(device_draw || ext_entropy)`. There is no
+host-side verifier for that, and adding one would be a security regression
+rather than a feature.
 
 Any such tool would need the device to disclose seed-derived material for the
 host to check against — the exact disclosure removed above. A verifier that
@@ -120,12 +135,15 @@ from the component whose honesty is in question, and manufactures false
 assurance. A user who trusts a green checkmark is worse off than one who knows
 the mix is unverified.
 
-Note the scope of that argument. It says the *mixed* derivation cannot be
-verified without an unsafe disclosure. It does not say verification is
-impossible — a derivation with no device-held or host-held inputs is verifiable
-with no disclosure at all, which is what the dice-only mode above is for.
+Note the scope of that argument. It says a derivation with a host-held input
+cannot be verified without an unsafe disclosure. It does not say verification
+is impossible — that is what the dice modes above are for: DICE ONLY has no
+device- or host-held input at all, and MIXED discloses the device half only
+where the other half is dice the host never sees. Host entropy stays in the
+default mode because it is the one backstop against a device RNG that is
+broken but honest, and it is removed exactly where it blocked verification.
 
-For the mixed mode the assurance chain is not a tool. It is:
+For the default mode the assurance chain is not a tool. It is:
 
 1. **The digest** proves your rolls were captured.
 2. **The published source** proves what the firmware does with them.
