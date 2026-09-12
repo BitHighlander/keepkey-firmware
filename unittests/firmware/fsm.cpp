@@ -167,7 +167,12 @@ TEST(Fsm, AutoLockTerminatesSigningWhileWaitingAwayFromHome) {
  * which resets the idle timer. If that reset stands, the very next tick sees
  * an idle device and replaces the screensaver with the home screen. */
 TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
-  kk_test_board_init();
+  /* Same board precondition the AutoLock test above establishes, in this
+   * file's idiom: a second timer_init() relinks the static runnables. */
+  if (layout_get_canvas() == nullptr) {
+    timer_init();
+    layout_init(display_canvas_init());
+  }
   fsm_init();
   layoutHomeForced();
   storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
@@ -199,7 +204,12 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
  * working through outlasts the delay only because nothing else resets the
  * timer once the device has left the home screen. */
 TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
-  kk_test_board_init();
+  /* Same board precondition the AutoLock test above establishes, in this
+   * file's idiom: a second timer_init() relinks the static runnables. */
+  if (layout_get_canvas() == nullptr) {
+    timer_init();
+    layout_init(display_canvas_init());
+  }
   fsm_init();
   layoutHomeForced();
   storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
@@ -232,7 +242,12 @@ TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
 /* The control: at the home screen the same frames must not hold the device
  * unlocked, or a polling host would defeat auto-lock entirely. */
 TEST(Fsm, HostActivityAtHomeDoesNotDeferTheAutoLock) {
-  kk_test_board_init();
+  /* Same board precondition the AutoLock test above establishes, in this
+   * file's idiom: a second timer_init() relinks the static runnables. */
+  if (layout_get_canvas() == nullptr) {
+    timer_init();
+    layout_init(display_canvas_init());
+  }
   fsm_init();
   layoutHomeForced();
   storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
