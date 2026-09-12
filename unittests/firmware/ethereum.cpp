@@ -13,6 +13,7 @@ extern "C" {
 
 #include "gtest/gtest.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -299,6 +300,54 @@ TEST(Ethereum, ThorchainNativeAssetUsesOnlyItsZeroAddressSentinel) {
   EXPECT_FALSE(thor_assetIsNative(kNativePseudoAddress));
   EXPECT_FALSE(thor_assetIsNative(kTokenAddress));
   EXPECT_FALSE(thor_assetIsNative(nullptr));
+}
+
+// A deposit-shaped call is only THORChain's if it goes to THORChain's router
+// ON THIS CHAIN. Without the pin, any contract carrying the selector inherited
+// the deposit clear-sign UX and skipped the AdvancedMode blind-sign gate.
+static void MakeThorDeposit(EthereumSignTx* msg, const char* to_hex,
+                            uint32_t chain_id) {
+  *msg = EthereumSignTx{};
+  msg->has_to = true;
+  msg->to.size = 20;
+  for (size_t i = 0; i < 20; i++) {
+    char byte[3] = {to_hex[i * 2], to_hex[i * 2 + 1], 0};
+    msg->to.bytes[i] = (uint8_t)strtoul(byte, nullptr, 16);
+  }
+  msg->has_chain_id = true;
+  msg->chain_id = chain_id;
+  msg->has_data_initial_chunk = true;
+  msg->data_initial_chunk.size = 4 + 6 * 32;
+  std::memcpy(msg->data_initial_chunk.bytes, THOR_SELECTOR_DEPOSIT_WITH_EXPIRY,
+              4);
+}
+
+TEST(Ethereum, ThorchainDepositIsPinnedToItsRouterOnItsChain) {
+  EthereumSignTx msg;
+
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  EXPECT_TRUE(thor_isThorchainTx(&msg));
+
+  MakeThorDeposit(&msg, THOR_ROUTER_AVAX, 43114);
+  EXPECT_TRUE(thor_isThorchainTx(&msg));
+
+  // An attacker contract with the same calldata shape.
+  MakeThorDeposit(&msg, "1234567890123456789012345678901234567890", 1);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+
+  // The right address on the wrong chain: those 20 bytes are unrelated code
+  // there, so it cannot borrow the trusted UX.
+  MakeThorDeposit(&msg, THOR_ROUTER, 43114);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+  MakeThorDeposit(&msg, THOR_ROUTER_AVAX, 1);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+
+  // A chain with no pinned router, and a tx with no chain at all.
+  MakeThorDeposit(&msg, THOR_ROUTER, 56);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  msg.has_chain_id = false;
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
 }
 
 // A canonical transformERC20 call with one transformation whose data is one
