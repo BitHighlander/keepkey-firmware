@@ -666,15 +666,23 @@ TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
   EXPECT_TRUE(has_fee);
   EXPECT_EQ(fee, 70000000ULL);
 
-  /* With no explicit limit, use the limit the RUNTIME will request: 200,000
-     compute units per non-ComputeBudget instruction, capped at 1,400,000.
+  /* With no explicit limit, derive one instead of assuming the 1,400,000 cap:
+     200,000 compute units per non-ComputeBudget instruction, capped at
+     1,400,000.
 
      This replaces an earlier rule that assumed the 1,400,000 cap whenever
      SetComputeUnitLimit was absent. That could not understate the fee, but it
      overstated it badly -- a transfer alongside a unit-price instruction is
-     charged on 200,000 CUs and was shown as seven times that. Deriving the
-     limit still cannot understate what the runtime charges, because it is
-     exactly what the runtime charges. */
+     charged on 200,000 CUs and was shown as seven times that.
+
+     What follows pins the DEVICE's rule; it is not a proof about the runtime,
+     and this test has no way to be one. Under SIMD-0170 the runtime reserves
+     3,000 CU for every builtin instruction, the ComputeBudget ones included,
+     which solana.c excludes outright -- so the value behind "Maximum priority
+     fee" can sit 3,000 CU per ComputeBudget instruction below the limit the
+     runtime actually requests. The second case below makes that exclusion
+     observable here instead of leaving it asserted away in a comment; closing
+     the gap is a change to solana_calculatePriorityFee(). */
   memset(&tx, 0, sizeof(tx));
   tx.num_instructions = 2;
   tx.instructions[0].type = SOL_INSTR_SYSTEM_TRANSFER;
@@ -683,6 +691,22 @@ TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
   ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
   EXPECT_TRUE(has_fee);
   EXPECT_EQ(fee, 400000ULL); /* 2 lamports/CU * 1 * 200,000 CUs */
+
+  /* Same shape with a second ComputeBudget instruction added. The derived
+     limit does not move: ComputeBudget instructions contribute zero CUs. A
+     runtime reserving 3,000 CU for each of the two of them requests 206,000
+     and charges 412,000 lamports, so the 12,000 between these two numbers is
+     the size of the understatement. If solana.c adopts that reservation this
+     expectation must be updated to 412000, not deleted. */
+  memset(&tx, 0, sizeof(tx));
+  tx.num_instructions = 3;
+  tx.instructions[0].type = SOL_INSTR_SYSTEM_TRANSFER;
+  tx.instructions[1].type = SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME;
+  tx.instructions[2].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[2].extra_value = 2000000;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_EQ(fee, 400000ULL);
 
   /* Seven non-budget instructions reach the 1,400,000 cap exactly, which is
      also the most SOL_MAX_INSTRUCTIONS (8) allows alongside a price

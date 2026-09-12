@@ -966,8 +966,8 @@ jobs:
           echo "sha=$(git rev-parse HEAD:deps/python-keepkey)" >> "$GITHUB_OUTPUT"
 
       # generate-test-report.py records the exact provenance of the evidence
-      # it produces -- both source SHAs, the run it came from, and the two PRs
-      # under review. Those are release gates for 7.14.2, so the PDF names
+      # it produces -- both source SHAs, the run it came from, and the firmware
+      # PR under review. Those are release gates for 7.14.2, so the PDF names
       # them rather than a single build label.
       - name: Generate test report PDF
         env:
@@ -976,13 +976,15 @@ jobs:
           KK_PYTHON_SHA: ${{ steps.python.outputs.sha }}
           KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
+          # KK_FIRMWARE_PR comes from the event, so it cannot drift from the
+          # run. There is deliberately no KK_PYTHON_PR: it was a literal URL
+          # that nothing in this workflow or in release.yml ever checked
+          # against deps/python-keepkey, and it drifted twice -- it named PR
+          # #219 while pinning 92e8745, then #221 while the tree pins
+          # 7f538a9. The gitlink recorded as python_sha IS the provenance of
+          # the Python tree; an unverified PR link beside it only invites a
+          # reviewer to audit the wrong source.
           KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
-          # The submodule is pinned to ce5c1bb, the merge of python-keepkey
-          # PR #221 -- keep this URL and that pin in step. It previously named
-          # PR #219 while pinning 92e8745, which is #221's FIRST commit, so
-          # the evidence credited the wrong PR and the pinned tree predated
-          # 7c04903 ("test(solana): match AdvancedMode refusal").
-          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/221
         run: python3 scripts/generate-test-report.py
 
       # A DIRECTORY, not a bare PDF: the script emits test-report.pdf next to
