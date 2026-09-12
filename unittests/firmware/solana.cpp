@@ -37,6 +37,16 @@ TEST(Solana, FormatTokenAmountUsesSignedDecimals) {
   EXPECT_STREQ(buf, "20.00 tokens");
 }
 
+/* SCOPE, so the next reader does not over-read these two tests: they are unit
+   coverage of solana.c helpers, NOT evidence of anything the signer does. The
+   unit suite is the only caller of solana_findKnownToken(),
+   solana_deriveAssociatedTokenAddress() and solana_findTokenRecipientOwner();
+   fsm_msg_solana.h invokes none of them, so the SPL transfer screen still
+   displays the raw destination account and the word "tokens", and
+   SolanaSignTx.token_recipient_owner is parsed and discarded. Wiring the
+   helpers into the SOL_INSTR_TOKEN_TRANSFER_CHECKED confirmation (or dropping
+   them with the proto field) is a firmware change; until it lands, the
+   device-level binding these names suggest does not exist. */
 TEST(Solana, MainnetUsdcIsFirmwareKnown) {
   const uint8_t usdc_mint[32] = {
       0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,

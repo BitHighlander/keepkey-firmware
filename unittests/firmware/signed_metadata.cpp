@@ -1657,6 +1657,15 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   signed_metadata_clear_signers();
   signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                nullptr, 0, 0, 0, false);
+  // Slot 0 must be LIVE for the key_id=256 case below to test anything:
+  // (uint8_t)256 == 0, so a narrowing cast is only observable when slot 0
+  // holds a key whose signature actually verifies. With slot 0 empty,
+  // metadata_pubkey_for() returns NULL and the refusal comes from the empty
+  // slot no matter what the range guard does. Same pubkey, and the preimage
+  // does not commit to the slot, so the one attestation below verifies through
+  // either slot -- which is exactly the aliasing an attacker would exploit.
+  signed_metadata_store_signer(0, EXPECTED_SLOT3_PUB, TEST_ALIAS, nullptr, 0, 0,
+                               0, false);
 
   SolanaTokenInfo ti;
   memset(&ti, 0, sizeof(ti));
@@ -1705,7 +1714,14 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   EXPECT_FALSE(solana_token_info_trusted(&ti));
   ti.signature.bytes[10] ^= 0x40;
 
-  // Out-of-range signer slot (256 would narrow to slot 0 without the guard).
+  // Control: slot 0 is live and this very attestation verifies through it.
+  ti.signer_key_id = 0;
+  EXPECT_TRUE(solana_token_info_trusted(&ti));
+
+  // Out-of-range signer slot: (uint8_t)256 aliases the live slot 0 above, so
+  // without the pre-narrowing range check in solana_token_info_trusted() this
+  // tuple WOULD verify and a host-chosen symbol/decimals would render as a
+  // trusted token definition.
   ti.signer_key_id = 256;
   EXPECT_FALSE(solana_token_info_trusted(&ti));
   ti.signer_key_id = TEST_KEY_ID;

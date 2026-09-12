@@ -242,30 +242,37 @@ static EthereumSignTx approve_liquidity_tx() {
   return msg;
 }
 
+// The declared calldata length is the ONLY thing bounding the ABI reads:
+// abi_word() indexes data_initial_chunk.bytes + 4 + word*32 without consulting
+// .size, and that nanopb buffer is not cleared between messages (see
+// ethereum_contracts.c). Drop the equality and a 4-byte addLiquidityETH call
+// gets its token, amounts, recipient and deadline from the PREVIOUS
+// transaction's leftovers — clear-signed on the Uniswap screens.
+//
+// So build from the shapes that PASS and vary only the size. The earlier
+// fixture was memset to zero and never set has_chain_id, and `!has_chain_id`
+// is the first term of both shape predicates' short-circuiting || chain, so
+// every assertion here was satisfied by the chain-id gate and the size guards
+// could have been deleted outright. The ASSERT_TRUE controls are what pin
+// that: they fail if anything but the size stops these messages.
 TEST(Ethereum, LiquiditySelectorChecksDeclaredCalldataLength) {
-  EthereumSignTx msg;
-  memset(&msg, 0, sizeof(msg));
-  msg.has_to = true;
-  msg.to.size = 20;
-  memcpy(msg.to.bytes, UNISWAP_ROUTER_ADDRESS, 20);
-  msg.has_data_initial_chunk = true;
-  msg.data_initial_chunk.size = 3;
-  memcpy(msg.data_initial_chunk.bytes, "\xf3\x05\xd7", 3);
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
+  EthereumSignTx liquidity = liquidity_tx(true);
+  ASSERT_TRUE(zx_isZxLiquidTx(&liquidity));
 
-  msg.data_initial_chunk.size = 4;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+  liquidity.data_initial_chunk.size = 3;  // shorter than the selector
+  EXPECT_FALSE(zx_isZxLiquidTx(&liquidity));
 
-  msg.data_initial_chunk.size = 4 + 2 * 32 + 1;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memcpy(msg.data_initial_chunk.bytes + 4 + 32 - 20, UNISWAP_ROUTER_ADDRESS,
-         20);
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+  liquidity.data_initial_chunk.size = 4 + 6 * 32 + 1;
+  EXPECT_FALSE(zx_isZxLiquidTx(&liquidity));
 
-  msg.data_initial_chunk.size = 4 + 6 * 32 + 1;
-  memcpy(msg.data_initial_chunk.bytes, "\xf3\x05\xd7\x19", 4);
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
+  EthereumSignTx approve = approve_liquidity_tx();
+  ASSERT_TRUE(zx_isZxApproveLiquid(&approve));
+
+  approve.data_initial_chunk.size = 4;
+  EXPECT_FALSE(zx_isZxApproveLiquid(&approve));
+
+  approve.data_initial_chunk.size = 4 + 2 * 32 + 1;
+  EXPECT_FALSE(zx_isZxApproveLiquid(&approve));
 }
 
 TEST(Ethereum, LiquidityCancellationFailsClosed) {

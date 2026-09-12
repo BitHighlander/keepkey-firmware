@@ -1005,9 +1005,17 @@ TEST(Thorchain, ConfirmThorTxAvaxLongMemoDecodesFully) {
   EthereumSignTx msg;
   make_deposit_msg(&msg, avax, data.data(), data.size(), 43114, true);
 
-  ASSERT_TRUE(kkconfirm_preload(12, 0));  // generous; extras drain below
+  // 9 screens, and the count is the evidence — see the harness contract at the
+  // top of this file. Deposit path: router, Asgard vault, amount, expiry. Memo
+  // parse: asset+chain, dest, limit, affiliate fee. Raw memo: one page (67
+  // escaped bytes still fit BODY_ROWS, so confirm_bytes pages it once). A bare
+  // kkconfirm_drain() here proved only that the call returned true: deleting
+  // thorchain_confirm_full_memo() or the affiliate screen drops the count to
+  // 8, which an over-budget preload silently swallows — exactly the
+  // display-vs-execute regression this test is named for.
+  ASSERT_TRUE(kkconfirm_preload(9, 0));
   EXPECT_TRUE(thor_confirmThorTx((uint32_t)data.size(), &msg));
-  kkconfirm_drain();
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 // A memo-length word claiming more bytes than are present must be REJECTED —
@@ -1025,7 +1033,11 @@ TEST(Thorchain, ConfirmThorTxRejectsOverlongDeclaredMemo) {
   EthereumSignTx msg;
   make_deposit_msg(&msg, avax, data.data(), data.size(), 43114, true);
 
-  ASSERT_TRUE(kkconfirm_preload(12, 0));
+  // Zero screens: the ABI memo bounds are checked before the first confirm(),
+  // so budgeting 0 accepts (the sentinel pair alone) asserts the refusal shows
+  // NOTHING. An over-budget preload could not tell a clean refusal apart from
+  // one that had already taken the router and vault holds.
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
   EXPECT_FALSE(thor_confirmThorTx((uint32_t)data.size(), &msg));
-  kkconfirm_drain();
+  EXPECT_EQ(0, kkconfirm_drain());
 }
