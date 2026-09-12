@@ -183,11 +183,23 @@ bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg,
              ((uint64_t)deadlineBytes[6] << 8 * 1) |
              ((uint64_t)deadlineBytes[7]);
 
+  /* Word 1 is amountTokenDesired for addLiquidityETH, but for
+   * removeLiquidityETH it is `liquidity` -- an amount of the pool's UniswapV2
+   * pair token, which is always 18 decimals and is NOT `token`. Rendering it
+   * with the pool token's ticker and decimals stated a wrong quantity of the
+   * wrong asset: burning one LP token of the USDC/ETH pool read
+   * "1000000000000 USDC". Label it as the LP amount it is, the same way 7.15
+   * draws this word (zx_formatZxLiquidityPrimaryAmount). */
   bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 32, 32,
-                &Amount);  // token amount
-  if (!ethereumFormatAmount(&Amount, token, msg->chain_id, tokbuf,
-                            sizeof(tokbuf)))
+                &Amount);  // token amount (add) / LP amount (remove)
+  if (isRemoveLiquidityEthCall(msg)) {
+    if (bn_format(&Amount, NULL, " LP", 18, 0, false, tokbuf, sizeof(tokbuf)) ==
+        0)
+      return false;
+  } else if (!ethereumFormatAmount(&Amount, token, msg->chain_id, tokbuf,
+                                   sizeof(tokbuf))) {
     return false;
+  }
   snprintf(constr1, 32, "%s", tokbuf);
   bn_from_bytes(msg->data_initial_chunk.bytes + 4 + 2 * 32, 32,
                 &Amount);  // token min amount

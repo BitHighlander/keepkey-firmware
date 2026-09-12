@@ -21,6 +21,7 @@
 
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
@@ -205,7 +206,20 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     assetToken = tokenByChainAddress(msg->chain_id, assetAddress);
   }
 
-  char amountStr[41];
+  /* Wide enough for the WORST amount this screen can be asked to render, not
+   * for a typical one. bn_format() zeroes its output and returns 0 when the
+   * buffer is short, and a false return from this decoder is reported to the
+   * host as ActionCancelled, so an undersized buffer here is not a display
+   * defect -- it makes the deposit unsignable, with no AdvancedMode fallback
+   * because the predicate already claimed the tx.
+   *
+   * The bound: a uint256 is at most 78 decimal digits, plus one decimal point,
+   * plus the longest suffix used below (" unformatted", 12), plus the NUL.
+   * The previous 41 bytes held only 28 digits of an unlisted token's raw
+   * amount, so any raw value >= 1e28 -- an ordinary size for an 18-decimal
+   * memecoin, none of which are in the token table -- was refused as a user
+   * cancel. Bodies longer than one screen are paged by confirm(). */
+  char amountStr[78 + 1 + 12 + 1];
   if (assetToken == UnknownToken) {
     /* We don't know what the exponent should be, so confirm the raw
      * unformatted number. */
@@ -315,13 +329,35 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     return false;
   }
 
-  /* Pass the memo's true ABI length, not a fixed 64. There is no raw-memo
-   * fallback screen on this path - ethereum.c turns a false return into
-   * ActionCancelled - so an unparsed memo must refuse rather than sign bytes
-   * that were never displayed. */
-  if (thorchain_parseConfirmMemo((const char*)thorchainData, memo_len) !=
-      THORCHAIN_MEMO_CONFIRMED) {
-    return false;
+  /* Pass the memo's true ABI length, not a fixed 64: a longer memo places
+   * router-executed fields (destination, affiliate fee, aggregator routing)
+   * past byte 64, which a fixed-length parse never displayed. */
+  const ThorchainMemoResult memo_result =
+      thorchain_parseConfirmMemo((const char*)thorchainData, memo_len);
+  if (memo_result == THORCHAIN_MEMO_CANCELLED) return false;
+  if (memo_result == THORCHAIN_MEMO_UNPARSED) {
+    /* Disclose the raw memo, the way the two other consumers of this parser
+     * already do (fsm_msg_thorchain.h, transaction.c).
+     *
+     * Returning false instead reported Failure_ActionCancelled -- "Signing
+     * cancelled by user" -- AFTER the router, vault, amount and expiry screens
+     * had been approved, and the predicate had already claimed the tx so the
+     * AdvancedMode raw-calldata path could never be reached. The parser is
+     * deliberately fail-closed about every memo shape it cannot label by
+     * position: an empty positional field (`...::t:10`), a savers/synth asset
+     * with no dot (`+:BTC/BTC::t:10`), a lowercase or abbreviated operation.
+     * Those are ordinary live-grammar deposits, so refusing made them
+     * unsignable on any setting rather than merely unlabelled, and told the
+     * host something that never happened.
+     *
+     * confirm_bytes(), not confirm("%s"): it takes an explicit length and
+     * escapes every non-printable byte, so an embedded NUL is shown as \x00
+     * instead of hiding the tail of a memo the signature covers. */
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                       "Thorchain memo", (const uint8_t*)thorchainData,
+                       memo_len)) {
+      return false;
+    }
   }
 
   return true;
