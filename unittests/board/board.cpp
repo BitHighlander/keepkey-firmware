@@ -204,6 +204,29 @@ TEST_F(BodyFits, ConstantPowerBodyFitsMeasuresFromItsOwnOrigin) {
          "so the confirm layer pages it instead of silently dropping the tail "
          "of the user's seed";
 
+  // The page the seed pagers can actually emit and the renderer actually
+  // clips: they pack words until three rows fit at BODY_WIDTH, so a page of
+  // long words is accepted there and then wraps into more rows than the screen
+  // has when it is drawn at CONSTANT_POWER_BODY_WIDTH. Measured, not assumed.
+  static const char kWidestPackedPage[] =
+      "  17.household  18.household\n  19.household  20.household\n"
+      "  21.household  22.household\n";
+  EXPECT_TRUE(confirm_body_fits(kWidestPackedPage, BODY_WIDTH))
+      << "the packer measures at BODY_WIDTH, which is how this reaches the "
+         "constant-power renderer as one page";
+  EXPECT_FALSE(confirm_body_fits_constant_power(kWidestPackedPage,
+                                                CONSTANT_POWER_BODY_WIDTH))
+      << "drawn where it is actually drawn, it does not fit";
+
+  // ...and the subpage pager splits it, which is why every seed screen on this
+  // layout (reset.c's backup and the BIP-85 child seed) must use the paged
+  // renderer rather than confirm_constant_power().
+  const size_t take = confirm_constant_power_subpage_take(kWidestPackedPage);
+  EXPECT_GT(take, 0u);
+  EXPECT_LT(take, strlen(kWidestPackedPage))
+      << "a page the renderer clips must take more than one subpage, or paging "
+         "it changes nothing";
+
   // Control: a short body fits under both probes, so the constant-power probe
   // is not simply refusing everything.
   EXPECT_TRUE(confirm_body_fits("   1.abandon", BODY_WIDTH));
