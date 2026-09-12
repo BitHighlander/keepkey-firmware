@@ -22,7 +22,7 @@ Status of each finding below:
   release pass. Not individually re-checked by the three-reviewer process.
 
 
-Counts: 28 fixed, 5 refuted on re-check, 0 open, 9 triaged by reading (42 findings touching this line).
+Counts: 31 fixed, 5 refuted on re-check, 0 open, 9 triaged by reading (45 findings touching this line).
 
 
 ## Fixed
@@ -48,10 +48,13 @@ Counts: 28 fixed, 5 refuted on re-check, 0 open, 9 triaged by reading (42 findin
 - **F021** (P3, `lib/board/layout.c`) — DEBUG_LINK device build no longer links: bootloader still calls deleted layout_debuglink_watermark()
 - **F023** (P2, `lib/board/confirm_sm.c`) — confirm_address_with_custom_layout keeps a renderer that silently drops the tail of addresses longer than one row; the comment's wrap claim is false
 - **F024** (P3, `lib/board/confirm_sm.c`) — Mnemonic rows copied into an un-zeroed stack buffer in confirm_constant_power_subpage_take()
+- **F029** (P3, `.gitmodules`) — python-keepkey tracking branch does not contain the pinned commit; --remote silently rewinds the pin (raised on 7.14.3; this line carried the same defect)
+- **F035** (P3, `lib/firmware/ethereum.c`) — TRANSFER amount screen can show a stale WAN ticker left by an earlier request (raised on 7.14.3; this line carried the same code)
 - **F100** (P2, `include/keepkey/board/layout.h`) — layout_debuglink_watermark() removed on 7.14.2/7.14.3 but its bootloader call site was left behind — the DEBUG_LINK device build no longer compiles, and debug-link firmware is no longer visibly marked
 - **F106** (P2, `docs/release/7.14.2-COMBINED-CANDIDATE.md`) — Release docs stop before the last five commits: host pin claim is false at head and a signing-policy change has no receipt
 - **F114** (P3, `.github/workflows/ci.yml`) — Presign evidence stamps a hard-coded python-keepkey PR URL that no longer matches the pinned submodule, and nothing verifies it
 - **F155** (P2, `unittests/board/board.cpp`) — Crc32CoversTheFinalByteOfTheV17Record asserts a 2572-byte flash_temp that 7.14.2's storage.c does not have
+- **F196** (P3, `lib/firmware/signing.c`) — sig_with_hashtype[73] is one byte too small for the size it is written for, so the OOB write it was added to remove is only prevented by the separate cap (raised on 7.15; this line carried the same code)
 - **F216** (P2, `lib/firmware/ethereum_contracts/thortx.c`) — 7.14.2 leaves thor_isThorchainTx unpinned: any mainnet contract with the deposit selector gets the THORChain clear-sign UX and suppresses both the value screen and the AdvancedMode gate
 - **F234** (P2, `docs/release/7.14.2-COMBINED-CANDIDATE.md`) — Candidate receipt still claims storage durability (preserve-old-record / generation+CRC framing) that was removed from the tree
 - **F235** (P2, `docs/release/7.14.2-PRODUCT-ASSEMBLY.md`) — Every recorded host/python-keepkey pin is contradicted by the tree; the RC's actual pin is in no release document
@@ -76,3 +79,9 @@ Counts: 28 fixed, 5 refuted on re-check, 0 open, 9 triaged by reading (42 findin
 - F119 (`.github/workflows/release.yml`) — Draft release no longer attaches the bootloader binary
 - F238 (`include/keepkey/board/layout.h`) — layout_debuglink_watermark() deleted on 7.14.2/7.14.3 while the bootloader still calls it — KK_DEBUG_LINK device build fails, and the debug-build indicator is gone
 - F240 (`docs/release/7.14.2-COMBINED-CANDIDATE.md`) — 7.14.2 receipt asserts the host pin is unchanged while the release head advances it 20 commits
+
+## Re-checked at head
+
+- F238 — `layout_debuglink_watermark()` is declared in `layout.h` and defined in
+  `layout.c` at this head, so the DEBUG_LINK device image links again. The
+  finding was raised against the head that deleted it.
