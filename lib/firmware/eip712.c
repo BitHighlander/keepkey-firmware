@@ -809,24 +809,14 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
               return errRet;
             }
             const bool is_uint = type_is_integer(typeType, "uint");
-            uint8_t negInt = 0;  // 0 is positive, 1 is negative
-            if (!is_uint) {
-              if (*valStr == '-') {
-                negInt = 1;
-              }
-            }
-            // parse out the length val
-            for (ctr = 0; ctr < 32; ctr++) {
-              if (negInt) {
-                // sign extend negative values
-                encBytes[ctr] = 0xFF;
-              } else {
-                // zero padding for positive
-                encBytes[ctr] = 0;
-              }
-            }
+            /* A leading '-' only tells the digit scan where the number starts;
+             * it does not decide the sign of the encoded word. Sign-extending
+             * on the character encoded "-0" as -2^64 while the screen showed
+             * "-0", which reads as zero -- the one thing a signing device must
+             * never do. The fill below keys on the parsed value instead. */
+            const uint8_t hasMinus = (!is_uint && *valStr == '-') ? 1 : 0;
             // all int strings are assumed to be base 10 and fit into 64 bits
-            const char* digits = valStr + (negInt ? 1 : 0);
+            const char* digits = valStr + hasMinus;
             if (*digits == '\0') return GENERAL_ERROR;
             for (const char* p = digits; *p; p++) {
               if (*p < '0' || *p > '9') return GENERAL_ERROR;
@@ -853,6 +843,10 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 if (intVal < min_value || intVal > max_value)
                   return GENERAL_ERROR;
               }
+            }
+            for (ctr = 0; ctr < 32; ctr++) {
+              // sign extend negative values, zero pad positive ones
+              encBytes[ctr] = (intVal < 0) ? 0xFF : 0;
             }
             // Needs to be big endian, so add to encBytes appropriately
             const uint64_t intBits = (uint64_t)intVal;
