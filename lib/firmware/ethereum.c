@@ -151,6 +151,16 @@ bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
   size_t value_size;
   const TokenType* token;
 
+  /* ethereumFormatAmount() keys the " WAN" ticker off the module's
+   * wanchain_tx_type, which ethereum_signing_init() sets -- and on the
+   * transfer path that has not run yet. Set it from THIS message, or a
+   * previous Wanchain transaction's type names the asset on this one's amount
+   * screen. signing_init() assigns the same value again later. */
+  wanchain_tx_type =
+      (msg->has_tx_type && (msg->tx_type == 1 || msg->tx_type == 6))
+          ? msg->tx_type
+          : 0;
+
   if (ethereum_isStandardERC20Transfer(msg)) {
     value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
     value_size = 32;
