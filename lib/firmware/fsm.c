@@ -30,6 +30,7 @@
 #include "keepkey/board/messages.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/app_confirm.h"
@@ -276,6 +277,15 @@ static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_sendFailure(code, text);
 }
 
+/* Every host frame counts as activity, so a streamed ceremony or signing
+ * session the user is still working through is not auto-locked mid-flight.
+ * note_host_activity() ignores frames that arrive at the home screen, so a
+ * polling host cannot hold an idle device unlocked. */
+static void fsm_usb_rx(const void* msg, size_t len) {
+  note_host_activity();
+  handle_usb_rx(msg, len);
+}
+
 void fsm_init(void) {
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
   set_msg_failure_handler(&sendFailureWrapper);
@@ -288,6 +298,8 @@ void fsm_init(void) {
 #endif
 
   msg_init();
+  /* after msg_init(), which installs the board's own rx callback */
+  usb_set_rx_callback(&fsm_usb_rx);
 
   txin_dgst_initialize();
 }
@@ -329,6 +341,14 @@ void fsm_sendFailure(FailureType code, const char* text) {
 
 void fsm_abort_workflows(void) {
   setup_abort();
+  fsm_abort_signing_workflows();
+}
+
+/* The signing half of the above. Clearing PIN authorization revokes retained
+ * signing state, but must not discard a setup ceremony: recovery stages its
+ * ceremony before prompting for the PIN, and every routine PIN entry clears
+ * the session while checking the entered digits against the wipe code. */
+void fsm_abort_signing_workflows(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();

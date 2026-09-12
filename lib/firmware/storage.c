@@ -1565,9 +1565,15 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   pintest_t ret = PIN_WRONG;
 
   /* Direct callers bypass session_clear(), so revoke retained signing state
-   * here whenever PIN authorization is cleared. This writes no flash. */
+   * here whenever PIN authorization is cleared. This writes no flash. Setup
+   * ceremonies are deliberately left alone: pin_protect() reaches this through
+   * the routine wipe-code probe (any PIN that is not the wipe code returns
+   * PIN_WRONG), and a dry-run recovery has already staged its ceremony by
+   * then. The paths that must discard a ceremony -- session_clear(), the
+   * auto-lock, Initialize, ClearSession -- call fsm_abort_workflows()
+   * themselves. */
   if (clear_pin) {
-    fsm_abort_workflows();
+    fsm_abort_signing_workflows();
   }
 
   ss->seedCached = false;
@@ -1620,8 +1626,23 @@ void storage_commit(void) {
   if (btc_only_locked) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
-  // Size of v17 storage layout (2525 bytes) + size of meta (44 bytes) + 1
-  static char flash_temp[2570];
+  //
+  // V17 = meta (44) + storage layout (2525) = 2569 bytes, so the last
+  // meaningful byte is index 2568. The size MUST be a multiple of 4: the CRC
+  // below is computed as sizeof(flash_temp) / sizeof(uint32_t) WORDS, and
+  // integer division silently drops the tail. At 2570 the CRC covered
+  // 642 words = 2568 bytes and left byte 2568 -- the final byte of the
+  // encrypted secret section -- unprotected, so a corrupted last byte could
+  // pass commit verification and only surface later as a secret fingerprint
+  // failure, which reaches storage_wipe(). 2572 = 643 words covers all 2569.
+  //
+  // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
+  // says the buffer is a whole number of words, not that it starts on one.
+  static char flash_temp[2572] __attribute__((aligned(4)));
+  _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
+                 "flash_temp must be word-sized or the CRC drops its tail");
+  _Static_assert(sizeof(flash_temp) >= 2569,
+                 "flash_temp must cover the whole V17 record");
 
   memzero(flash_temp, sizeof(flash_temp));
 

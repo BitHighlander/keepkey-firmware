@@ -9,6 +9,7 @@ extern "C" {
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/osmosis.h"
+#include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/storage.h"
@@ -160,6 +161,124 @@ TEST(Fsm, AutoLockTerminatesSigningWhileWaitingAwayFromHome) {
 
   /* Restore a deterministic home state for subsequent tests. */
   layoutHomeForced();
+}
+
+/* The lock path aborts signing, and signing_abort() draws the home screen,
+ * which resets the idle timer. If that reset stands, the very next tick sees
+ * an idle device and replaces the screensaver with the home screen. */
+TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
+  kk_test_board_init();
+  fsm_init();
+  layoutHomeForced();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  toggle_screensaver();
+  ASSERT_FALSE(signing_is_active());
+  ASSERT_EQ(SCREENSAVER, home_get_state());
+
+  increment_idle_time(1000);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state())
+      << "a locked device must stay on the screensaver, not wake to home";
+
+  layoutHomeForced();
+}
+
+/* Host traffic is activity: a ceremony or signing stream the user is still
+ * working through outlasts the delay only because nothing else resets the
+ * timer once the device has left the home screen. */
+TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
+  kk_test_board_init();
+  fsm_init();
+  layoutHomeForced();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  note_host_activity();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  EXPECT_TRUE(signing_is_active())
+      << "two sub-delay gaps around a host frame must not add up to a lock";
+
+  // The lock still fires once the host really has stalled for the full delay.
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+
+  layoutHomeForced();
+}
+
+/* The control: at the home screen the same frames must not hold the device
+ * unlocked, or a polling host would defeat auto-lock entirely. */
+TEST(Fsm, HostActivityAtHomeDoesNotDeferTheAutoLock) {
+  kk_test_board_init();
+  fsm_init();
+  layoutHomeForced();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  ASSERT_EQ(AT_HOME, home_get_state());
+
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  note_host_activity();
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+
+  layoutHomeForced();
+}
+
+/* Clearing PIN authorization revokes signing, but must not discard a staged
+ * setup ceremony: recovery stages before it prompts for the PIN, and every
+ * routine PIN entry lands here through the wipe-code probe. */
+TEST(Fsm, PinRevocationKeepsAStagedCeremony) {
+  fsm_init();
+  setup_abort();
+  ASSERT_TRUE(setup_stage(false, "english", "dry run", 0, 0, false));
+
+  SessionState session = {};
+  Storage storage = {};
+  storage.pub.has_pin = true;
+  session_clear_impl(&session, &storage, /*clear_pin=*/true);
+
+  setup_arm(SETUP_RECOVERY);
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY))
+      << "the PIN prompt must not disarm the ceremony it was asked for";
+
+  setup_abort();
+}
+
+/* ... while the paths that really do end a session still discard it. */
+TEST(Fsm, SessionClearDiscardsAStagedCeremony) {
+  fsm_init();
+  setup_abort();
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+
+  fsm_abort_workflows();
+  EXPECT_FALSE(setup_isArmedAs(SETUP_RESET));
+
+  setup_abort();
 }
 
 TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
