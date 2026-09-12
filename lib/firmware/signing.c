@@ -1334,7 +1334,13 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
         nwitnesses++;
         /* Never append the sighash inside the decoded protobuf field. Even a
          * nominal 73-byte value has no spare byte there. */
-        uint8_t sig_with_hashtype[73];
+        /* One byte larger than the field it copies, so the sighash
+         * append below is in bounds for every size nanopb can decode
+         * (bytes[73]) -- the cap above is then a policy check, not the
+         * only thing standing between a host and a stack write. */
+        uint8_t
+            sig_with_hashtype[sizeof(txinput->multisig.signatures[0].bytes) +
+                              1];
         const size_t sig_len = txinput->multisig.signatures[i].size;
         memcpy(sig_with_hashtype, txinput->multisig.signatures[i].bytes,
                sig_len);
