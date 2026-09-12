@@ -464,6 +464,44 @@ TEST(Ethereum, ThorchainDepositIsPinnedToItsRouterOnItsChain) {
   EXPECT_FALSE(thor_isThorchainTx(&msg));
 }
 
+// A complete, clear-signable depositWithExpiry() to the mainnet router: native
+// asset (zero address), zero amount/expiry, and a 15-byte memo whose 32-byte
+// ABI slot therefore has 17 bytes of tail padding to play with.
+static const char kThorMemo[] = "+:BTC/BTC::t:10";
+static void MakeThorDepositWithMemo(EthereumSignTx* msg) {
+  MakeThorDeposit(msg, THOR_ROUTER, 1);
+  const size_t memo_off = 4 + 6 * 32;
+  msg->data_initial_chunk.size = memo_off + 32;
+  // Canonical memo head pointer for the 5-head-word expiry variant.
+  msg->data_initial_chunk.bytes[4 + 3 * 32 + 31] = 0xa0;
+  msg->data_initial_chunk.bytes[4 + 5 * 32 + 31] = sizeof(kThorMemo) - 1;
+  std::memcpy(msg->data_initial_chunk.bytes + memo_off, kThorMemo,
+              sizeof(kThorMemo) - 1);
+}
+
+// Only memo_len bytes are parsed and drawn, but all memo_padded bytes are
+// signed, so non-zero ABI tail padding is up to 31 attacker-chosen bytes that
+// this clear-sign path would vouch for while suppressing the raw-calldata
+// review. The control below is what makes this meaningful: with zeroed padding
+// the same message reaches its first confirm screen (drain() == 0), so the
+// dirty variant leaving both queued pairs untouched (drain() == 2) proves the
+// refusal happened before any approval was taken, not for some other reason.
+TEST(Ethereum, ThorchainDepositRejectsNonZeroMemoPadding) {
+  EthereumSignTx msg;
+
+  MakeThorDepositWithMemo(&msg);
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  MakeThorDepositWithMemo(&msg);
+  std::memset(msg.data_initial_chunk.bytes + 4 + 6 * 32 + sizeof(kThorMemo) - 1,
+              0xff, 32 - (sizeof(kThorMemo) - 1));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(2, kkconfirm_drain());
+}
+
 static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
                                const char* out_token) {
   *msg = EthereumSignTx{};
@@ -577,4 +615,24 @@ TEST(Ethereum, ZxExchangeProxyChainAllowlist) {
   EXPECT_FALSE(zx_isExchangeProxyChain(250));
   EXPECT_FALSE(zx_isExchangeProxyChain(59144));
   EXPECT_FALSE(zx_isExchangeProxyChain(0xFFFFFFFFu));
+}
+
+// An all-zero `value` of any length is not the same message as no value at
+// all: ethereum.c's unlimited-approval refusal is gated on
+// ethereum_isStandardERC20Approve(), which requires value.size == 0, so a
+// padded spelling of the byte-identical transaction (RLP strips leading zeros)
+// would take the clear-sign path and skip that refusal entirely. And an
+// unlimited allowance has to be declined before any screen is drawn, not
+// presented as "full LP balance" and refused after both holds are taken.
+TEST(Ethereum, LpApprovalRefusesPaddedValueAndUnlimitedAllowance) {
+  EthereumSignTx msg = approve_liquidity_tx();
+  ASSERT_TRUE(zx_isZxApproveLiquid(&msg));
+
+  msg.value.size = 32;  // 32 zero bytes
+  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+
+  msg = approve_liquidity_tx();
+  memset(msg.data_initial_chunk.bytes + 4 + 32, 0xff, 32);
+  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+  EXPECT_FALSE(zx_confirmApproveLiquidity(msg.data_initial_chunk.size, &msg));
 }
