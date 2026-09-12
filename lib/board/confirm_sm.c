@@ -454,10 +454,14 @@ static size_t page_take(const char* body, uint16_t body_width, char* buf,
 /// after the first writes its own request and clears button_request_acked, so
 /// a host that answers every request it is told about never waits on a press
 /// it never heard of.
+/// `notify_host` is false for the *_without_button_request() entry points,
+/// which deliberately never message the host; emitting per-page requests for
+/// those would tell a host about presses it never asked to arbitrate.
 static bool page_body_confirm(const char* request_title, const char* body,
                               layout_notification_t layout_notification_func,
                               bool constant_power, IconType iconNum,
-                              bool immediate, uint16_t body_width) {
+                              bool immediate, uint16_t body_width,
+                              bool notify_host) {
   const body_fits_fn fits = fits_probe_for(layout_notification_func);
   static CONFIDENTIAL char page_buf[BODY_CHAR_MAX];
   static char page_title[TITLE_CHAR_MAX];
@@ -514,7 +518,7 @@ static bool page_body_confirm(const char* request_title, const char* body,
     if (title_len < 0 || (size_t)title_len >= sizeof(page_title)) break;
 
     const bool last = (page + 1 == pages);
-    if (page > 0) {
+    if (page > 0 && notify_host) {
       ButtonRequest page_ack;
       memset(&page_ack, 0, sizeof(page_ack));
       page_ack.has_code = true;
@@ -553,7 +557,7 @@ done:
 static bool confirm_helper(const char* request_title, const char* request_body,
                            layout_notification_t layout_notification_func,
                            bool constant_power, IconType iconNum,
-                           bool immediate) {
+                           bool immediate, bool notify_host) {
   const uint16_t body_width =
       (uint16_t)((iconNum == NO_ICON) ? BODY_WIDTH : BODY_WIDTH_WITH_ICON);
 
@@ -606,7 +610,7 @@ static bool confirm_helper(const char* request_title, const char* request_body,
      * Page it. */
     return page_body_confirm(request_title, request_body,
                              layout_notification_func, constant_power, iconNum,
-                             immediate, body_width);
+                             immediate, body_width, notify_host);
   }
 
   return confirm_screen(request_title, request_body, layout_notification_func,
@@ -635,7 +639,7 @@ bool confirm(ButtonRequestType type, const char* request_title,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -739,7 +743,7 @@ bool confirm_constant_power(ButtonRequestType type, const char* request_title,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_constant_power_notification,
-                     true, NO_ICON, false);
+                     true, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -763,7 +767,7 @@ bool confirm_with_custom_button_request(const ButtonRequest* button_request,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -800,7 +804,7 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -847,7 +851,7 @@ bool confirm_address_with_custom_layout(
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
   bool ret = confirm_helper(request_title, strbuf, layout_notification_func,
-                            false, NO_ICON, false);
+                            false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -867,7 +871,7 @@ bool confirm_without_button_request(const char* request_title,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, false);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -895,7 +899,7 @@ bool confirm_with_icon(ButtonRequestType type, IconType iconNum,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, iconNum, false);
+                     false, iconNum, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -922,7 +926,7 @@ bool review(ButtonRequestType type, const char* request_title,
 
   const bool shown =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return shown;
 }
@@ -942,7 +946,7 @@ bool review_without_button_request(const char* request_title,
 
   const bool shown =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, false);
   memzero(strbuf, sizeof(strbuf));
   return shown;
 }
@@ -970,7 +974,7 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum,
 
   const bool shown =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, iconNum, false);
+                     false, iconNum, false, true);
   memzero(strbuf, sizeof(strbuf));
   return shown;
 }
@@ -997,7 +1001,7 @@ bool review_immediate(ButtonRequestType type, const char* request_title,
 
   const bool shown =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, true);
+                     false, NO_ICON, true, true);
   memzero(strbuf, sizeof(strbuf));
   return shown;
 }
