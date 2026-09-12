@@ -2,7 +2,9 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/tendermint.h"
+#include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
 }
 
 #include "gtest/gtest.h"
@@ -364,4 +366,133 @@ TEST(Mayachain, MemoGarbageAndOversized) {
   EXPECT_FALSE(parseMayaMemo("hello world"));
   EXPECT_FALSE(parseMayaMemo("SWAP:ETH.ETH:0xdest:420", 257));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* The MAYAChain session gates, mirroring THORChain's: the envelope is refused
+   before anything is hashed, a message past the declared budget is refused
+   rather than underflowing the countdown, and msgs[] elements are separated. */
+TEST(Mayachain, SessionGatesMatchThorchains) {
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  const MayachainSignTx base = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 6359,                    // account_number
+      true, "mayachain-mainnet-v1",  // chain_id
+      true, 3000,                    // fee_amount
+      true, 200000,                  // gas
+      true, "",                      // memo
+      true, 19,                      // sequence
+      true, 1                        // msg_count
+  };
+  const char* const kTo = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+
+  MayachainSignTx tx = base;
+  tx.has_msg_count = false;
+  EXPECT_FALSE(mayachain_signTxInit(&node, &tx));
+  EXPECT_FALSE(mayachain_signingIsInited());
+
+  tx = base;
+  tx.msg_count = 0;
+  EXPECT_FALSE(mayachain_signTxInit(&node, &tx));
+  EXPECT_FALSE(mayachain_signingIsInited());
+
+  tx = base;
+  // Newlines re-flow confirm()'s body, letting the host choose which part of
+  // the approval sentence the owner actually reads.
+  strcpy(tx.chain_id, "mayachain\n\n\n");
+  EXPECT_FALSE(mayachain_signTxInit(&node, &tx));
+  EXPECT_FALSE(mayachain_signingIsInited());
+
+  // Budget: one declared message, so the second must be refused rather than
+  // wrapping msgs_remaining to 0xFFFFFFFF.
+  tx = base;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(100, kTo, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  EXPECT_FALSE(mayachain_signTxUpdateMsgSend(100, kTo, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
+
+  // An armed session that hashed nothing is not a finished document.
+  tx = base;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  EXPECT_FALSE(mayachain_signingIsFinished());
+  mayachain_signAbort();
+}
+
+/* Two messages must be comma-separated in the signed document: without the
+   separator the device hashes "...}{..." -- not JSON -- so the signature can
+   never match what the network canonicalizes, and the owner approved both
+   screens for a signature no node will accept. The expected document is
+   assembled here rather than captured from the code under test. */
+TEST(Mayachain, TwoMessagesAreCommaSeparatedInTheSignedDocument) {
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  char from_address[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "maya", from_address));
+
+  MayachainSignTx tx = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 6359, true, "mayachain-mainnet-v1", true, 3000, true, 200000,
+      true, "",   true, 19,                     true, 2};
+  const char* const kTo = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(100, kTo, "cacao"));
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(200, kTo, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(mayachain_signTxFinalize(public_key, signature));
+
+  auto msg = [&](const char* amount) {
+    return std::string(
+               "{\"type\":\"mayachain/MsgSend\",\"value\":{\"amount\":[{"
+               "\"amount\":\"") +
+           amount + "\",\"denom\":\"cacao\"}],\"from_address\":\"" +
+           from_address + "\",\"to_address\":\"" + kTo + "\"}}";
+  };
+  const std::string doc =
+      std::string(
+          "{\"account_number\":\"6359\",\"chain_id\":\"mayachain-mainnet-v1\","
+          "\"fee\":{\"amount\":[{\"amount\":\"3000\",\"denom\":\"cacao\"}],"
+          "\"gas\":\"200000\"},\"memo\":\"\",\"msgs\":[") +
+      msg("100") + "," + msg("200") + "],\"sequence\":\"19\"}";
+
+  uint8_t expected_hash[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc.c_str(), doc.size(), expected_hash);
+  uint8_t expected_sig[64];
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, node.private_key, expected_hash,
+                                 expected_sig, NULL, NULL));
+  EXPECT_EQ(0, memcmp(signature, expected_sig, sizeof(expected_sig)))
+      << "the signed document is not the comma-separated msgs[] array";
+
+  mayachain_signAbort();
 }

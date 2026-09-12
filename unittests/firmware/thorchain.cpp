@@ -8,7 +8,9 @@ extern "C" {
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tendermint.h"
 #include "messages-ethereum.pb.h"
+#include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
 
 }
 
@@ -331,7 +333,10 @@ static const ThorchainSignTx kSignTx = {
     true, 0,
     true, 1};
 
-static const char* kToAddr = "thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v";
+/* A VALID thor address: the previous constant failed its own bech32
+   checksum, so every test using it exercised the address check rather
+   than the property it was named for. */
+static const char* kToAddr = "thor1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5e949nr";
 
 // Denom validation: only [a-z0-9./\-] is allowed; anything else is rejected
 TEST(Thorchain, ThorchainDenomValidation) {
@@ -359,6 +364,102 @@ TEST(Thorchain, ThorchainSignTxInvalidDenom) {
   // Quote-injection attempt must be rejected at the signing layer
   EXPECT_FALSE(thorchain_signTxUpdateMsgSend(100000, kToAddr,
                                              "rune\",\"from_address\":\"evil"));
+  thorchain_signAbort();
+}
+
+/* The envelope has to be refused before anything is hashed. msg_count is the
+   message budget, so an absent or zero count leaves the session with nothing
+   to spend; chain_id is serialized into the sign doc and printed on the final
+   approval sentence, so host-chosen control bytes must never get that far. */
+TEST(Thorchain, SignTxInitRefusesMalformedEnvelope) {
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+
+  ThorchainSignTx tx = kSignTx;
+  tx.has_msg_count = false;
+  EXPECT_FALSE(thorchain_signTxInit(&node, &tx));
+  EXPECT_FALSE(thorchain_signingIsInited());
+
+  tx = kSignTx;
+  tx.msg_count = 0;
+  EXPECT_FALSE(thorchain_signTxInit(&node, &tx));
+  EXPECT_FALSE(thorchain_signingIsInited());
+
+  tx = kSignTx;
+  // Newlines re-flow confirm()'s body, letting the host choose which part of
+  // the approval sentence the owner actually reads.
+  strcpy(tx.chain_id, "thorchain\n\n\n");
+  EXPECT_FALSE(thorchain_signTxInit(&node, &tx));
+  EXPECT_FALSE(thorchain_signingIsInited());
+
+  thorchain_signAbort();
+}
+
+/* msgs_remaining is unsigned: one message past the declared budget used to
+   wrap it to 0xFFFFFFFF, so thorchain_signingIsFinished() never came true and
+   the FSM looped issuing ThorchainMsgRequest with the session left armed. */
+TEST(Thorchain, SignTxUpdateRefusesAfterMsgBudgetIsSpent) {
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+
+  ASSERT_TRUE(thorchain_signTxInit(&node, &kSignTx));  // msg_count == 1
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100000, kToAddr, "rune"));
+  EXPECT_TRUE(thorchain_signingIsFinished());
+
+  EXPECT_FALSE(thorchain_signTxUpdateMsgSend(100000, kToAddr, "rune"));
+  EXPECT_TRUE(thorchain_signingIsFinished());
+
+  thorchain_signAbort();
+}
+
+/* msgs[] is a JSON array, so its elements are comma-separated. The expected
+   document is assembled here rather than captured from the code under test:
+   without the separator the device hashes "...}{..." -- not JSON -- and the
+   signature can never match what the network canonicalizes, so the owner
+   approves two transfers and gets an unusable signature. */
+TEST(Thorchain, TwoMessagesAreCommaSeparatedInTheSignedDocument) {
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+
+  char from_address[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "thor", from_address));
+
+  ThorchainSignTx tx = kSignTx;
+  tx.msg_count = 2;
+
+  ASSERT_TRUE(thorchain_signTxInit(&node, &tx));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100000, kToAddr, "rune"));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(200000, kToAddr, "rune"));
+  EXPECT_TRUE(thorchain_signingIsFinished());
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(thorchain_signTxFinalize(public_key, signature));
+
+  const std::string msg1 =
+      std::string(
+          "{\"type\":\"thorchain/MsgSend\",\"value\":{\"amount\":"
+          "[{\"amount\":\"100000\",\"denom\":\"rune\"}],"
+          "\"from_address\":\"") +
+      from_address + "\",\"to_address\":\"" + kToAddr + "\"}}";
+  const std::string msg2 =
+      std::string(
+          "{\"type\":\"thorchain/MsgSend\",\"value\":{\"amount\":"
+          "[{\"amount\":\"200000\",\"denom\":\"rune\"}],"
+          "\"from_address\":\"") +
+      from_address + "\",\"to_address\":\"" + kToAddr + "\"}}";
+  const std::string doc =
+      std::string(
+          "{\"account_number\":\"0\",\"chain_id\":\"thorchain\","
+          "\"fee\":{\"amount\":[{\"amount\":\"5000\",\"denom\":"
+          "\"rune\"}],\"gas\":\"200000\"},\"memo\":\"\","
+          "\"msgs\":[") +
+      msg1 + "," + msg2 + "],\"sequence\":\"0\"}";
+
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc.data(), doc.size(), digest);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, public_key, signature, digest));
+
   thorchain_signAbort();
 }
 

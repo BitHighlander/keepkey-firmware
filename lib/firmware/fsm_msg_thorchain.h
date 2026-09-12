@@ -80,16 +80,19 @@ void fsm_msgThorchainGetAddress(const ThorchainGetAddress* msg) {
 
 void fsm_msgThorchainSignTx(const ThorchainSignTx* msg) {
   CHECK_INITIALIZED
-  CHECK_PIN
 
   if (!msg->has_account_number || !msg->has_chain_id || !msg->has_fee_amount ||
-      !msg->has_gas || !msg->has_sequence) {
+      !msg->has_gas || !msg->has_sequence || !msg->has_msg_count ||
+      msg->msg_count == 0 || !tendermint_validateSafeText(msg->chain_id)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Missing Fields On Message");
+                    "Missing or Invalid Fields On Message");
     layoutHome();
     return;
   }
+
+  /* Reject malformed envelopes before authentication or key derivation. */
+  CHECK_PIN
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -347,10 +350,13 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     memset(node_str, 0, sizeof(node_str));
   }
 
+  /* Disclose the fee and gas that are hashed into the StdSignDoc. The base
+     wording ("Additional network fees apply.") named neither, so a host could
+     sign away an arbitrary fee against a screen that never showed it. Same
+     shape as the Osmosis screen above. */
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this RUNE transaction on %s? "
-               "Additional network fees apply.",
-               sign_tx->chain_id)) {
+               "Sign RUNE on %s? Fee: %" PRIu32 " rune. Gas: %" PRIu32 ".",
+               sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

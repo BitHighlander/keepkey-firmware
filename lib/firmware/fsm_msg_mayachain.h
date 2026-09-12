@@ -80,16 +80,19 @@ void fsm_msgMayachainGetAddress(const MayachainGetAddress* msg) {
 
 void fsm_msgMayachainSignTx(const MayachainSignTx* msg) {
   CHECK_INITIALIZED
-  CHECK_PIN
 
   if (!msg->has_account_number || !msg->has_chain_id || !msg->has_fee_amount ||
-      !msg->has_gas || !msg->has_sequence) {
+      !msg->has_gas || !msg->has_sequence || !msg->has_msg_count ||
+      msg->msg_count == 0 || !tendermint_validateSafeText(msg->chain_id)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Missing Fields On Message");
+                    "Missing or Invalid Fields On Message");
     layoutHome();
     return;
   }
+
+  /* Reject malformed envelopes before authentication or key derivation. */
+  CHECK_PIN
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -338,10 +341,12 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     memset(node_str, 0, sizeof(node_str));
   }
 
+  /* Disclose the fee and gas that are hashed into the StdSignDoc; the base
+     wording named neither. See the same change on the THORChain screen. */
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this %s transaction on %s? "
-               "Additional network fees apply.",
-               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id)) {
+               "Sign %s on %s? Fee: %" PRIu32 " cacao. Gas: %" PRIu32 ".",
+               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id,
+               sign_tx->fee_amount, sign_tx->gas)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

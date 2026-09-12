@@ -44,6 +44,7 @@ bool thorchain_isValidAsset(const char* asset) {
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static ThorchainSignTx msg;
 static bool testnet;
@@ -66,7 +67,18 @@ bool thorchain_formatAmount(uint64_t amount, const char* asset, char* out,
 }
 
 bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
-  initialized = true;
+  thorchain_signAbort();
+  /* Validate the envelope before any of it is hashed, the way
+     osmosis_signTxInit() does. msg_count drives the msgs_remaining countdown,
+     so an absent or zero count would underflow on the first approved message
+     and the session would never finish; chain_id is both serialized into the
+     sign doc and printed on the final approval sentence, so it has to be safe
+     text before either use. */
+  if (!_node || !_msg || !_msg->has_msg_count || _msg->msg_count == 0 ||
+      !_msg->has_chain_id || !tendermint_validateSafeText(_msg->chain_id)) {
+    return false;
+  }
+
   msgs_remaining = _msg->msg_count;
   testnet = false;
 
@@ -116,11 +128,20 @@ bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
   // 10
   sha256_Update(&ctx, (uint8_t*)"\",\"msgs\":[", 10);
 
-  return success;
+  /* Only arm the session once the prologue actually hashed: a half-written
+     sign doc must not accept messages. */
+  if (!success) {
+    thorchain_signAbort();
+    return false;
+  }
+  initialized = true;
+  return true;
 }
 
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
                                    const char* to_address, const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "thor";
   const char testnetp[] = "tthor";
   const char* pfix;
@@ -163,6 +184,13 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
+  /* msgs[] elements are comma-separated; without this the second approved
+     message concatenates onto the first and the signature covers non-JSON.
+     Same shape as binance.c and osmosis.c on this head. */
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
@@ -185,11 +213,14 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) has_message = true;
   msgs_remaining--;
   return success;
 }
 
 bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   char buffer[64 + 1];
 
   // Defended here too (not just by the FSM caller) so this signing path is
@@ -197,6 +228,11 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   if (!thorchain_isValidAsset(depmsg->asset) ||
       !thorchain_isValidSigner(depmsg->signer)) {
     return false;
+  }
+
+  // See the MsgSend path: msgs[] elements need the separator.
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -224,6 +260,7 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"signer\":\"%s\"}}", depmsg->signer);
 
+  if (success) has_message = true;
   msgs_remaining--;
   return success;
 }
@@ -263,10 +300,15 @@ bool thorchain_addressIsSigner(const char* address) {
 
 bool thorchain_signingIsInited(void) { return initialized; }
 
-bool thorchain_signingIsFinished(void) { return msgs_remaining == 0; }
+/* msgs_remaining == 0 alone is also the pre-init state, so require that at
+   least one message actually hashed before the sign doc can be finalized. */
+bool thorchain_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void thorchain_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));
