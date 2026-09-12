@@ -145,12 +145,6 @@ static bool zcash_script_is_p2sh(const uint8_t* script, size_t script_size) {
          script[1] == 0x14 && script[22] == 0x87;
 }
 
-static bool zcash_script_is_standard_transparent(const uint8_t* script,
-                                                 size_t script_size) {
-  return zcash_script_is_p2pkh(script, script_size) ||
-         zcash_script_is_p2sh(script, script_size);
-}
-
 static bool zcash_transparent_script_to_address(const uint8_t* script,
                                                 size_t script_size, char* out,
                                                 size_t out_size) {
@@ -1571,10 +1565,17 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
     return;
   }
 
-  if (!zcash_script_is_standard_transparent(msg->script_pubkey.bytes,
-                                            msg->script_pubkey.size)) {
+  /* P2PKH only. The path enforcement below derives a BIP-44 secp256k1 key and
+   * the sighash uses this scriptPubKey as the scriptCode, which is right for
+   * P2PKH and wrong for P2SH -- a P2SH input needs the redeem script as the
+   * scriptCode and a key that satisfies it. Accepting P2SH here produced a
+   * signature no node would accept, after showing the user a P2SH address the
+   * device cannot actually spend. zcash_transparent_script_to_address() still
+   * renders P2SH, which is what OUTPUTS legitimately need. */
+  if (!zcash_script_is_p2pkh(msg->script_pubkey.bytes,
+                             msg->script_pubkey.size)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unsupported transparent input script"));
+                    _("Transparent inputs must be P2PKH"));
     zcash_signing_abort();
     layoutHome();
     return;
