@@ -106,3 +106,53 @@ TEST(EIP712, MissingTypedValueFailsWithoutDereferencingNull) {
   uint8_t hash[32] = {};
   EXPECT_EQ(JSON_TYPE_WNOVAL, encode(types, values, "Mail", hash));
 }
+
+// Shared emulator confirmation driver from thorchain.cpp.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+
+/* Chain IDs above 2^32 are legal and in production (Palm is 11297108109). The
+ * domain separator's chainId is only ever DISPLAYED -- dsConfirm() prints the
+ * host's string and nothing consumes a numeric value -- so a uint32 parse must
+ * not be what decides whether the domain can be signed at all. This domain
+ * used to fail with GENERAL_ERROR before a single screen was drawn, making
+ * EIP-712 signing impossible on those chains. */
+TEST(EIP712, DomainAcceptsChainIdAboveThirtyTwoBits) {
+  char types_json[] =
+      "{\"types\":{\"EIP712Domain\":["
+      "{\"name\":\"name\",\"type\":\"string\"},"
+      "{\"name\":\"chainId\",\"type\":\"uint256\"}]}}";
+  char values_json[] =
+      "{\"domain\":{\"name\":\"Palm\",\"chainId\":\"11297108109\"}}";
+  json_t type_nodes[24] = {};
+  json_t value_nodes[12] = {};
+  const json_t* types = json_create(types_json, type_nodes, 24);
+  const json_t* values = json_create(values_json, value_nodes, 12);
+  ASSERT_NE(nullptr, types);
+  ASSERT_NE(nullptr, values);
+
+  uint8_t hash[32] = {};
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  EXPECT_EQ(SUCCESS, encode(types, values, "EIP712Domain", hash));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* The canonical-decimal shape is still enforced: parseVals() hashes the value
+ * with a base-10 parse, so a string the screen would print differently from
+ * what was hashed ("0x1" encodes as 0) fails closed. No screen is drawn on
+ * this path, so nothing is preloaded. */
+TEST(EIP712, DomainRejectsNonCanonicalChainId) {
+  char types_json[] =
+      "{\"types\":{\"EIP712Domain\":["
+      "{\"name\":\"chainId\",\"type\":\"uint256\"}]}}";
+  char values_json[] = "{\"domain\":{\"chainId\":\"007\"}}";
+  json_t type_nodes[16] = {};
+  json_t value_nodes[8] = {};
+  const json_t* types = json_create(types_json, type_nodes, 16);
+  const json_t* values = json_create(values_json, value_nodes, 8);
+  ASSERT_NE(nullptr, types);
+  ASSERT_NE(nullptr, values);
+
+  uint8_t hash[32] = {};
+  EXPECT_EQ(GENERAL_ERROR, encode(types, values, "EIP712Domain", hash));
+}

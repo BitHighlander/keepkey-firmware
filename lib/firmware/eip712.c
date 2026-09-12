@@ -518,6 +518,34 @@ bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
   return true;
 }
 
+/* chainStr in dsConfirm() is written with a 32-byte bound and holds
+   "chain " + this + ",  ", so 20 digits is the widest value that reaches the
+   screen unclipped. It also covers the full range parseVals()' 64-bit integer
+   encoder can represent, so the bound turns away nothing the device could
+   have hashed correctly anyway. */
+#define DS_CHAINID_MAX_DIGITS 20
+
+/* The domain's chainId is only ever DISPLAYED -- dsConfirm() prints the host's
+   own string and nothing consumes a numeric value (the icon selection it was
+   once parsed for is still TBD). Chain IDs above 2^32 are legal and in
+   production (Palm is 11297108109), so validating it with
+   eip712_parse_canonical_u32() refused the whole domain separator on those
+   chains over a number that was discarded. Keep only the property the screen
+   needs: canonical base-10 digits, so the string shown cannot disagree with
+   the value parseVals() hashed (e.g. "0x1" displays as 0x1 but encodes as 0),
+   with no bound on magnitude. */
+static bool dsChainIdIsDisplayable(const char* text) {
+  if (!text || text[0] == '\0') return false;
+  if (text[0] == '0' && text[1] != '\0') return false;
+
+  size_t digits = 0;
+  for (const char* p = text; *p != '\0'; p++) {
+    if (*p < '0' || *p > '9') return false;
+    if (++digits > DS_CHAINID_MAX_DIGITS) return false;
+  }
+  return true;
+}
+
 static void clearDsVals(void) {
   dsname = NULL;
   dsversion = NULL;
@@ -597,15 +625,13 @@ int dsConfirm(void) {
   if (NULL != dschainId) {
     /* Merge note: the release branch parsed this with sscanf("%" SCNu32),
      * which accepts a trailing space, a leading '+', and non-canonical forms
-     * like "007", and cannot report overflow. eip712_parse_canonical_u32()
-     * rejects all of those and fails closed, so it is used instead. See the
-     * cases in unittests/firmware/ethereum.cpp. */
-    uint32_t chainInt = 0;
-    if (!eip712_parse_canonical_u32(dschainId, &chainInt)) {
+     * like "007". dsChainIdIsDisplayable() rejects all of those and fails
+     * closed. It deliberately does NOT bound the magnitude -- see its comment.
+     * See the cases in unittests/firmware/eip712.cpp. */
+    if (!dsChainIdIsDisplayable(dschainId)) {
       clearDsVals();
       return GENERAL_ERROR;
     }
-    (void)chainInt;
     // As more chains are supported, add icon choice below
     // TBD: not implemented for first release
     // if (chainInt == 1) {

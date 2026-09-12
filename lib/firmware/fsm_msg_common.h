@@ -223,17 +223,28 @@ void fsm_msgPing(Ping* msg) {
     flash_setModel(&message);
   }
 
+  /* Indexed directly by the AUTH_ERR_TYPE value the authenticator returns, so
+     it is designated per enumerator rather than positional: the table was
+     written positionally when the enum had nine values, and DUPLICATE /
+     AUTH_CANCELLED were later added without a matching string. That shifted
+     every message from DUPLICATE on by one (a duplicate account reported
+     "Action cancelled") and left the last slot NULL, so a real refusal sent a
+     Failure with no reason at all. A designated entry per enumerator cannot
+     shift, and a future enumerator added without one is a NULL the compiler
+     will not hide -- keep one line here for every AUTH_ERR_TYPE value. */
   const char* errMsgStr[NUM_AUTHERRS] = {
-      "noerr",
-      "Authenticator secret storage full",
-      "Authenticator secret can't be decoded",
-      "Account name missing or too long, or seed/message string missing",
-      "Account not found",
-      "Slot request out of range",
-      "Authenticator secret seed too large",
-      "passphrase incorrect for authdata",
-      "Auth secret unknown error",
-      "Action cancelled",
+      [NOERR] = "noerr",
+      [STORFULL] = "Authenticator secret storage full",
+      [BADSECRET] = "Authenticator secret can't be decoded",
+      [TOKERR] =
+          "Account name missing or too long, or seed/message string missing",
+      [NOACC] = "Account not found",
+      [NOSLOT] = "Slot request out of range",
+      [LARGESEED] = "Authenticator secret seed too large",
+      [BADPASS] = "passphrase incorrect for authdata",
+      [UNKERR] = "Auth secret unknown error",
+      [DUPLICATE] = "Account already exists",
+      [AUTH_CANCELLED] = "Action cancelled",
   };
 
   typedef enum _AUTH_MSG_TYPE {
