@@ -27,6 +27,31 @@ std::vector<uint8_t> pseudo(size_t len, uint32_t seed = 1) {
   return v;
 }
 
+// THE BOOT GATE, ACTUALLY ENTERED.
+//
+// Every other verdict-touching test below calls rng_health_force_verdict()
+// before the call under test, which assigns the latch directly. So
+// rng_health_check() never took its RNG_UNTESTED branch and rng_health_gate()
+// -- rng_source_live() plus the chunked RNG_HEALTH_SAMPLE_BYTES self-test draw
+// -- was never executed by this suite at all, while the release report listed
+// this file as the evidence for the boot RNG gate.
+//
+// The latch is one-way and per boot by design and there is no seam that puts
+// it back to RNG_UNTESTED, so the gate can be entered at most once per test
+// binary: this must stay the FIRST test in the file that touches a verdict.
+//
+// WHAT IT DOES NOT PIN: the `!rng_source_live() -> RNG_FAILED` arm, and the
+// size of the sample drawn. Both need an emulator seam in lib/rand/rng_health.c
+// that can make the source report dead or stuck, which does not exist yet.
+TEST(RngHealth, BootGateRunsOnAFreshVerdict) {
+  EXPECT_TRUE(rng_health_check())
+      << "the boot self-test refused a healthy generator";
+
+  uint8_t buf[64] = {0};
+  EXPECT_TRUE(random_buffer_checked(buf, sizeof(buf)))
+      << "a draw was refused after the gate it just passed";
+}
+
 TEST(RngHealth, RejectsEmptyAndNull) {
   EXPECT_FALSE(rng_health_analyze(nullptr, 32));
   const uint8_t b = 0;

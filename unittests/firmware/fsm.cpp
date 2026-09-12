@@ -1,6 +1,11 @@
 extern "C" {
 #include "keepkey/transport/interface.h"
 #include "trezor/crypto/sha2.h"
+#include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/keepkey_flash.h"
+#include "keepkey/board/memory.h"
+#include "keepkey/board/messages.h"
+#include "keepkey/emulator/setup.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/coins.h"
@@ -25,6 +30,14 @@ extern "C" {
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
 void kk_test_board_init(void);
+
+// confirm() auto-accept driver, from confirm_test_utils.cpp. preload() queues
+// nYes accepts, nNo rejections and a trailing rejection sentinel; drain()
+// returns the sentinel-discounted surplus, so 0 means exactly the budgeted
+// screens appeared and a negative value means a screen appeared that was not
+// budgeted for.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
 
 TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   char credential[] = "site:user:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -363,4 +376,114 @@ TEST(Fsm, LowLevelSoftClearPreservesSigning) {
   session_clear_impl(&session, &storage, false);
   EXPECT_TRUE(signing_is_active());
   signing_abort();
+}
+
+/* A rejected frame must not be able to resume a signing session -- but it must
+ * not be able to destroy a setup ceremony either. Every unmapped message id
+ * reaches the same handler, and on bitcoin-only firmware that is every
+ * multi-chain message a host probes with, so a routine EthereumGetAddress
+ * would otherwise memzero a recovery the user is 20 words into. */
+TEST(Fsm, TransportFailureEndsSigningButKeepsASetupCeremony) {
+  kk_test_board_init();
+  fsm_init();
+  setup_abort();
+
+  ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
+  setup_arm(SETUP_RECOVERY);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  // Exactly what lib/board/messages.c does for a message id that is not in
+  // the map, via the handler fsm_init() installed.
+  call_msg_failure_handler(FailureType_Failure_UnexpectedMessage,
+                           "Unknown message");
+
+  EXPECT_FALSE(signing_is_active())
+      << "a rejected frame left a signing session a later ack could resume";
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY))
+      << "an unmapped host probe tore down the ceremony the user was in";
+
+  setup_abort();
+  layoutHomeForced();
+}
+
+/* THE LOCK, FROM THE HANDLER SIDE.
+ *
+ * A bitcoin-only wallet seen by this firmware leaves the device LOOKING
+ * uninitialized -- the RAM shadow is reset, so storage_isInitialized() and
+ * storage_hasPin() are both false -- while storage_commit() silently declines
+ * to write. Every handler that only persists settings therefore used to run to
+ * completion, consume an on-device confirmation, and answer Success for a
+ * change that was gone at the next boot.
+ *
+ * Asserted through the confirm budget rather than the reply, because "refuse
+ * before the user does the work" is the property: with no screens budgeted,
+ * kkconfirm_drain() goes negative the moment a handler puts one up.
+ *
+ * The lock is reachable only through a real boot, so plant a wallet in the
+ * emulated flash and call storage_init(). storage_wipe() at the end clears
+ * btc_only_locked (its only exit) and leaves the rest of the binary an
+ * ordinary erased device. */
+TEST(Fsm, BitcoinOnlyLockRefusesSettingsHandlersBeforeAnyConfirm) {
+  setup();  // maps the emulated flash; idempotent across test binaries
+  kk_test_board_init();
+  fsm_init();
+
+  flash_erase_word(FLASH_STORAGE1);
+  flash_erase_word(FLASH_STORAGE2);
+  flash_erase_word(FLASH_STORAGE3);
+#if BITCOIN_ONLY
+  // In-band but NEWER than this build understands -- the only way a
+  // bitcoin-only image reaches the same lock.
+  const uint32_t version = STORAGE_VERSION_BTC_ONLY + 1;
+#else
+  const uint32_t version = STORAGE_VERSION_BTC_ONLY;
+#endif
+  ASSERT_TRUE(flash_write(FLASH_STORAGE1, 0, STORAGE_MAGIC_LEN,
+                          (const uint8_t*)STORAGE_MAGIC_STR));
+  // Offset 44: the version word, immediately after the 44-byte Metadata.
+  ASSERT_TRUE(flash_write(FLASH_STORAGE1, 44, sizeof(version),
+                          (const uint8_t*)&version));
+  storage_init();
+  ASSERT_TRUE(storage_isBitcoinOnlyLocked());
+  ASSERT_FALSE(storage_isInitialized());
+
+  ApplyPolicies policies = {};
+  policies.policy_count = 1;
+  policies.policy[0].has_policy_name = true;
+  std::strcpy(policies.policy[0].policy_name, "AdvancedMode");
+  policies.policy[0].has_enabled = true;
+  policies.policy[0].enabled = true;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgApplyPolicies(&policies);
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "ApplyPolicies asked for a button press it could never persist";
+  EXPECT_FALSE(storage_isPolicyEnabled("AdvancedMode"))
+      << "the policy changed in RAM only, so this boot disagrees with flash";
+
+  ApplySettings settings = {};
+  settings.has_label = true;
+  std::strcpy(settings.label, "locked");
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgApplySettings(&settings);
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "ApplySettings asked for a button press it could never persist";
+
+  ChangePin pin = {};
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgChangePin(&pin);
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "ChangePin ran the Create PIN ceremony on a device it cannot write";
+
+  storage_wipe();
+  EXPECT_FALSE(storage_isBitcoinOnlyLocked());
+  layoutHomeForced();
 }
