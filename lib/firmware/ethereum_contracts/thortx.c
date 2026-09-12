@@ -41,21 +41,25 @@ bool thor_is_expiry_variant(const EthereumSignTx* msg) {
                 THOR_SELECTOR_DEPOSIT_WITH_EXPIRY, 4) == 0;
 }
 
-/* The THORChain router address for this tx's chain, or NULL if the chain has
- * no pinned router (then the deposit is not clear-signed and falls to the
- * blind-sign gate). Each router address is a per-chain identity -- the same
- * address on another chain may hold unrelated attacker code -- so the pin is
- * (chain_id, address) together. A tx with NO chain_id gets no router at all. */
-static const char* thor_router_for_chain(const EthereumSignTx* msg) {
+/* The label for the pinned deposit router this tx is addressed to, or NULL if
+ * it is addressed anywhere else (then the deposit is not clear-signed and falls
+ * to the blind-sign gate). Each router address is a per-chain identity -- the
+ * same address on another chain may hold unrelated attacker code -- so the pin
+ * is (chain_id, address) together, and a tx with NO chain_id matches nothing.
+ * Both protocols deposit with the same calldata shape and are narrated by the
+ * same screens, so both routers are pinned here. */
+static const char* thor_router_label(const EthereumSignTx* msg,
+                                     const char toStr[41]) {
   if (!msg->has_chain_id) return NULL;
-  switch (msg->chain_id) {
-    case 1:
-      return THOR_ROUTER; /* Ethereum */
-    case 43114:
-      return THOR_ROUTER_AVAX; /* Avalanche C-Chain */
-    default:
-      return NULL;
+  if (msg->chain_id == 1) {
+    if (strncmp(toStr, THOR_ROUTER, 40) == 0) return "Thorchain router";
+    if (strncmp(toStr, MAYA_ROUTER, 40) == 0) return "Mayachain router";
+    return NULL;
   }
+  if (msg->chain_id == 43114 && strncmp(toStr, THOR_ROUTER_AVAX, 40) == 0) {
+    return "Thorchain router"; /* Avalanche C-Chain */
+  }
+  return NULL;
 }
 
 static void thor_format_to_addr(const EthereumSignTx* msg, char out[41]) {
@@ -72,11 +76,9 @@ bool thor_isThorchainTx(const EthereumSignTx* msg) {
    * bypass the AdvancedMode blind-sign gate, letting an attacker contract
    * drain funds while the device shows a benign deposit. Without the chain
    * scope, only mainnet deposits ever match (the AVAX->ETH blind-sign bug). */
-  const char* router = thor_router_for_chain(msg);
-  if (!router) return false;
   char toStr[41];
   thor_format_to_addr(msg, toStr);
-  return strncmp(toStr, router, 40) == 0;
+  return thor_router_label(msg, toStr) != NULL;
 }
 
 bool thor_assetIsNative(const uint8_t asset_address[20]) {
@@ -265,9 +267,9 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   }
   /* Each router address is an identity on ONE chain, so the trusted label is
    * bound to the chain; otherwise a host-chosen chain_id borrows it. */
-  const char* pinned_router = thor_router_for_chain(msg);
-  if (pinned_router && strncmp(confStr, pinned_router, 40) == 0) {
-    conf = "Thorchain router";
+  const char* pinned_label = thor_router_label(msg, confStr);
+  if (pinned_label) {
+    conf = pinned_label;
   } else {
     conf = confStr;
   }

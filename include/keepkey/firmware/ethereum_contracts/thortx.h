@@ -46,6 +46,11 @@
  * gate rather than inheriting the trusted UX. */
 #define THOR_ROUTER_AVAX "00dc6100103bc402d490aee3f9a5560cbd91f1d4"
 
+/* Maya Protocol deposits through its OWN router, with the same calldata shape,
+ * and this decoder narrates both. Ethereum mainnet only; same migration caveat
+ * as THOR_ROUTER. */
+#define MAYA_ROUTER "e3985e6b61b814f7cdb188766562ba71b446b46d"
+
 /* deposit(address,address,uint256,string) — legacy selector */
 #define THOR_SELECTOR_DEPOSIT "\x1f\xec\xe7\xb4"
 /* depositWithExpiry(address,address,uint256,string,uint256) — current selector

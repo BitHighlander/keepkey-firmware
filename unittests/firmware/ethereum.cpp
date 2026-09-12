@@ -342,6 +342,13 @@ TEST(Ethereum, ThorchainDepositIsPinnedToItsRouterOnItsChain) {
   MakeThorDeposit(&msg, THOR_ROUTER_AVAX, 1);
   EXPECT_FALSE(thor_isThorchainTx(&msg));
 
+  // Maya Protocol deposits with the same calldata shape through its own
+  // mainnet router, and this decoder narrates both.
+  MakeThorDeposit(&msg, MAYA_ROUTER, 1);
+  EXPECT_TRUE(thor_isThorchainTx(&msg));
+  MakeThorDeposit(&msg, MAYA_ROUTER, 43114);
+  EXPECT_FALSE(thor_isThorchainTx(&msg)) << "mainnet identity, mainnet only";
+
   // A chain with no pinned router, and a tx with no chain at all.
   MakeThorDeposit(&msg, THOR_ROUTER, 56);
   EXPECT_FALSE(thor_isThorchainTx(&msg));
