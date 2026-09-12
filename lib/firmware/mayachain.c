@@ -61,7 +61,14 @@ bool mayachain_formatAmount(uint64_t amount, const char* denom, char* out,
   const int suffix_len = snprintf(suffix, sizeof(suffix), " %s", denom);
   if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return false;
 
-  const int decimals = strcmp(denom, "cacao") == 0 ? 10 : 0;
+  /* MsgSend carries the bare denom ("cacao"); MsgDeposit carries the pool
+   * identifier ("MAYA.CACAO"). Both are CACAO, whose base unit is 1e-10. Any
+   * other asset is rendered in base units, because its exponent is not known
+   * on-device -- assuming CACAO's (as the deposit screen did before the two
+   * denominations were told apart) mis-states every non-CACAO deposit. */
+  const int decimals =
+      (strcmp(denom, "cacao") == 0 || strcmp(denom, "MAYA.CACAO") == 0) ? 10
+                                                                        : 0;
   return bn_format_uint64(amount, NULL, suffix, decimals, 0, false, out,
                           out_len) != 0;
 }

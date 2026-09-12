@@ -661,11 +661,14 @@ size_t confirm_constant_power_subpage_take(const char* body) {
   const size_t len = strlen(body);
   if (len == 0) return 0;
 
+  /* The bodies measured here are the seed-backup word rows, so the probe holds
+   * mnemonic text and is scrubbed on every exit rather than left on the stack.
+   */
+  char probe[BODY_CHAR_MAX];
   size_t best = 0;
   for (size_t i = 0; i < len; i++) {
     if (body[i] != '\n' && i + 1 != len) continue;
     const size_t take = i + 1;
-    char probe[BODY_CHAR_MAX];
     if (take >= sizeof(probe)) break;
     memcpy(probe, body, take);
     probe[take] = '\0';
@@ -675,6 +678,7 @@ size_t confirm_constant_power_subpage_take(const char* body) {
       break;
     }
   }
+  memzero(probe, sizeof(probe));
   return best;
 }
 

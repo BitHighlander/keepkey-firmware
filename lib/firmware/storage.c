@@ -1789,8 +1789,14 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
    * Shadow only -- writes no flash, so the "does not modify flash storage
    * config state" contract above holds. AdvancedMode is never persisted. */
   if (clear_pin) {
-    /* Direct callers bypass session_clear(); revoke all authorization here. */
-    fsm_abort_workflows();
+    /* Direct callers bypass session_clear(); revoke all authorization here.
+     * Setup ceremonies are deliberately left alone: pin_protect() reaches this
+     * through the routine wipe-code probe (any PIN that is not the wipe code
+     * returns PIN_WRONG), and a dry-run recovery has already staged its
+     * ceremony by then. The paths that must discard a ceremony --
+     * session_clear(), the auto-lock, Initialize, ClearSession -- call
+     * fsm_abort_workflows() themselves. */
+    fsm_abort_signing_workflows();
     signed_metadata_clear_signers();
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
