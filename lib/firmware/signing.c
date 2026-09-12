@@ -817,6 +817,13 @@ bool signing_output_multisig_quorum_is_valid(const TxOutputType* txoutput) {
                               multisig_quorum_is_valid(&txoutput->multisig));
 }
 
+/// Exposed for unit tests: pure predicate, no signing state involved.
+bool signing_input_multisig_quorum_is_valid(const TxInputType* txinput) {
+  return txinput != NULL &&
+         (!txinput->has_multisig ||
+          transaction_multisig_quorum_is_valid(&txinput->multisig));
+}
+
 void signing_checksum_script_type_bytes(InputScriptType script_type,
                                         uint8_t out[4]) {
   const uint32_t value = (uint32_t)script_type;
@@ -879,6 +886,20 @@ static bool signing_validate_input(const TxInputType* txinput) {
     return false;
   }
   if (txinput->has_multisig) {
+    /* Validate before tx_input_script_size() uses m for fee accounting: it
+     * computes m * (1 + TXSIZE_DER_SIGNATURE) from this uint32 with no bound
+     * of its own, so an absurd m inflates tx_weight and lifts the excessive-fee
+     * threshold out of reach, silently suppressing that confirmation screen.
+     * The mixed single-sig/multisig path can stop comparing a common
+     * fingerprint, so the later fingerprint validation is not a sufficient
+     * boundary. The outputs are already guarded the same way below. */
+    if (!signing_input_multisig_quorum_is_valid(txinput)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid multisig quorum"));
+      signing_abort();
+      return false;
+    }
+
     /* A DER-encoded ECDSA signature is at most 72 bytes: 0x30 len, then two
      * 0x02-tagged integers of at most 33 bytes each. The wire field is sized
      * max_size:73, so the decoder accepts 73 -- and the witness path writes
