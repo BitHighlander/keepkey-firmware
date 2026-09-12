@@ -195,35 +195,14 @@ bool setup_commit(SetupKind kind, const char* mnemonic, bool imported) {
   return true;
 }
 
-void reset_init(bool display_random, uint32_t _strength,
-                bool passphrase_protection, bool pin_protection,
-                const char* language, const char* label, bool _no_backup,
-                uint32_t _auto_lock_delay_ms, uint32_t _u2f_counter,
-                bool dice_entropy) {
+void reset_init(uint32_t _strength, bool passphrase_protection,
+                bool pin_protection, const char* language, const char* label,
+                bool _no_backup, uint32_t _auto_lock_delay_ms,
+                uint32_t _u2f_counter, bool dice_entropy) {
   if (_strength != 128 && _strength != 192 && _strength != 256) {
     fsm_sendFailure(
         FailureType_Failure_SyntaxError,
         _("Invalid mnemonic strength (has to be 128, 192 or 256 bits)"));
-    layoutHome();
-    return;
-  }
-
-  if (display_random && _no_backup) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Can't show internal entropy when backup is skipped"));
-    layoutHome();
-    return;
-  }
-
-  /* Refused, not silently ignored: the entropy screen renders the POST-mix
-   * internal entropy, so honoring both would hand a host that reads that
-   * screen the seed pre-image and make the dice fold-in worthless. 7.15
-   * removes the entropy screen outright; this release keeps it because
-   * already-shipped hosts of the 7.14 line legitimately request it, but it
-   * must never coexist with dice. */
-  if (display_random && dice_entropy) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Can't show internal entropy when dice entropy is used"));
     layoutHome();
     return;
   }
@@ -302,12 +281,24 @@ void reset_init(bool display_random, uint32_t _strength,
   /* Dice fold in before EntropyRequest, so the host contribution arrives
    * strictly after the device has committed to its own.
    *
-   * The mixed value is deliberately NOT displayable: display_random is
-   * refused above whenever dice are in use, because the entropy screen shows
-   * the POST-mix value, and a host that supplies ext_entropy and reads that
-   * screen once computes SHA256(shown || ext_entropy) -- the seed pre-image
-   * -- making the dice fold-in worthless. The roll digest below is safe by
-   * contrast: it is a hash of the user's own input, not of seed material.
+   * Neither half is displayed. Earlier firmware rendered the device half on
+   * the OLED under ResetDevice.display_random and called it a verifiable
+   * commitment; it was not one. The screen was drawn strictly BEFORE
+   * EntropyRequest, so it disclosed the exact 32 bytes whose complement the
+   * host itself supplies: anyone who reads the OLED and knows ext_entropy
+   * computes SHA256(shown || ext_entropy), the seed pre-image. Dice could
+   * never coexist with it, so the value shown was the raw RNG draw rather
+   * than a mixed one -- earlier comments here claiming a POST-mix value were
+   * wrong on every reachable path. Trezor, whose ResetDevice this inherits,
+   * removed the same feature for the same reason (PR #4119).
+   *
+   * ResetDevice.display_random stays in the wire schema and is ignored by
+   * fsm_msgResetDevice(), which is why the old "Can't show internal entropy
+   * when backup is skipped" syntax check is gone: there is no longer an
+   * entropy screen for it to be inconsistent with.
+   *
+   * The roll digest below is safe by contrast: it is a hash of the user's
+   * own input, not of seed material.
    *
    * The digest needs no clear here -- setup_stage() above ran setup_abort(),
    * which zeroes it. */
@@ -349,26 +340,6 @@ void reset_init(bool display_random, uint32_t _strength,
 
     dice_mix(int_entropy, dice_rolls, rolls_needed);
     memzero(dice_rolls, sizeof(dice_rolls));
-  }
-
-  if (display_random) {
-    static char CONFIDENTIAL ent_str[4][17];
-    data2hex(int_entropy, 8, ent_str[0]);
-    data2hex(int_entropy + 8, 8, ent_str[1]);
-    data2hex(int_entropy + 16, 8, ent_str[2]);
-    data2hex(int_entropy + 24, 8, ent_str[3]);
-
-    if (!confirm(ButtonRequestType_ButtonRequest_ResetDevice,
-                 _("Internal Entropy"), "%s %s %s %s", ent_str[0], ent_str[1],
-                 ent_str[2], ent_str[3])) {
-      memzero(ent_str, sizeof(ent_str));
-      setup_abort();
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Reset cancelled"));
-      layoutHome();
-      return;
-    }
-    memzero(ent_str, sizeof(ent_str));
   }
 
   if (!setup_stagePin(pin_protection)) {

@@ -351,6 +351,8 @@ void fsm_msgPing(Ping* msg) {
 }
 
 void fsm_msgChangePin(ChangePin* msg) {
+  CHECK_NOT_BITCOIN_ONLY_LOCKED
+
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -401,6 +403,8 @@ void fsm_msgChangePin(ChangePin* msg) {
 }
 
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
+  CHECK_NOT_BITCOIN_ONLY_LOCKED
+
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -571,8 +575,10 @@ void fsm_msgResetDevice(ResetDevice* msg) {
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
 
-  reset_init(msg->has_display_random && msg->display_random,
-             msg->has_strength ? msg->strength : 128,
+  // display_random remains in the wire schema for host compatibility, but is
+  // intentionally ignored: internal entropy is seed pre-image material and
+  // must never be rendered or returned by production firmware.
+  reset_init(msg->has_strength ? msg->strength : 128,
              msg->has_passphrase_protection && msg->passphrase_protection,
              msg->has_pin_protection && msg->pin_protection,
              msg->has_language ? msg->language : 0,
@@ -603,6 +609,8 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
+  CHECK_NOT_BITCOIN_ONLY_LOCKED
+
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
                  "Do you want to change the label to \"%s\"?", msg->label)) {
@@ -735,6 +743,8 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
+  CHECK_NOT_BITCOIN_ONLY_LOCKED
+
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 
   for (size_t i = 0; i < msg->policy_count; ++i) {

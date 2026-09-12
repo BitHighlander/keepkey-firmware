@@ -348,8 +348,28 @@ jobs:
           ## KeepKey Firmware v${VER}
 
           ### Reproducible Build Verification
+
+          Regular image — \`firmware.keepkey.v${VER}.bin\`, hashes in
+          \`HASHES.txt\`. From the repository root:
           \`\`\`bash
           ./scripts/build/docker/device/release.sh
+          tail -c +257 bin/firmware.keepkey.bin | shasum -a 256
+          \`\`\`
+
+          Bitcoin-only image — \`firmware.keepkey.v${VER}-bitcoin-only.bin\`,
+          hashes in \`HASHES-bitcoin-only.txt\`. \`release.sh\` takes no variant
+          argument on this release line and always builds the regular image, so
+          running it and comparing against the bitcoin-only manifest mismatches
+          by construction — and comparing against \`HASHES.txt\` instead would
+          "match" while saying nothing about the binary you meant to check.
+          Drive the same pinned builder image directly, adding the one cmake
+          flag CI used for this asset:
+          \`\`\`bash
+          docker run --rm -v "\$PWD:/root/keepkey-firmware:z" ${BASE_IMAGE} \\
+            /bin/sh -c 'mkdir /root/build && cd /root/build &&
+              cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware -DKK_BITCOIN_ONLY=ON -DCMAKE_BUILD_TYPE=MinSizeRel &&
+              make && mkdir -p /root/keepkey-firmware/bin &&
+              cp bin/*.bin /root/keepkey-firmware/bin/ && chmod -R a+rw /root/keepkey-firmware/bin'
           tail -c +257 bin/firmware.keepkey.bin | shasum -a 256
           \`\`\`
 
@@ -359,7 +379,9 @@ jobs:
           > **DRAFT** — firmware must be signed by 3/5 key holders before publishing.
 
           ### Signing Checklist
-          - [ ] Built on multiple machines, hashes match
+          - [ ] Both variants built on multiple machines, each payload hash
+                matched against its own manifest (\`HASHES.txt\` for the regular
+                image, \`HASHES-bitcoin-only.txt\` for the bitcoin-only one)
           - [ ] Signed on air-gapped machine (3/5 signers)
           - [ ] Storage upgrade tested on production device
           - [ ] Signed .bin uploaded, replacing unsigned

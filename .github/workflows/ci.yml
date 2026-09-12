@@ -60,9 +60,14 @@ jobs:
 
       - name: Install clang-format-20 (pinned stable)
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20
+          # apt.llvm.org flakes; this job now gates the whole graph, so retry.
+          for attempt in 1 2 3; do
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add - &&
+            echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list &&
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20 && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 20
+          done
           sudo ln -sf /usr/bin/clang-format-20 /usr/bin/clang-format
 
       - name: Check code formatting
@@ -149,9 +154,23 @@ jobs:
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
+      - name: Cache cppcheck analysis
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cppcheck-build
+          # Keyed per commit, restored from the newest prior one: cppcheck's
+          # build dir re-checks each file's own hash, so a stale restore is safe.
+          key: cppcheck-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            cppcheck-${{ runner.os }}-
+
       - name: Run cppcheck
         run: |
+          mkdir -p .cppcheck-build
+
           cppcheck \
+            -j "$(nproc)" \
+            --cppcheck-build-dir=.cppcheck-build \
             --enable=warning,style,performance,portability \
             --std=c11 \
             --platform=unspecified \
@@ -265,7 +284,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   build-emulator:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -296,7 +315,10 @@ jobs:
       - name: Pull and cache base image
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
-          docker pull ${{ env.BASE_IMAGE }}
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
           docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
 
       - name: Load base image from cache
@@ -321,7 +343,7 @@ jobs:
           retention-days: 1
 
   build-arm-firmware:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -360,7 +382,10 @@ jobs:
       - name: Pull and cache base image
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
-          docker pull ${{ env.BASE_IMAGE }}
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
           docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
 
       - name: Load base image from cache
@@ -503,7 +528,7 @@ jobs:
           retention-days: 30
 
   python-integration-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -533,6 +558,26 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: /tmp/base-image.tar
+          key: base-image-${{ env.BASE_IMAGE }}
+
+      - name: Pull and cache base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
+          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+
+      - name: Load base image from cache
+        if: steps.cache-base.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/base-image.tar
+
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
         run: |
@@ -542,11 +587,18 @@ jobs:
           fi
 
           # Run each test container — capture exit codes, always extract reports
+          FW_RC=0
+          PY_RC=0
           set +e
+          # Build once, up twice. The base image was loaded from the cache above,
+          # so this never reaches Docker Hub. `|| RC=$?`, never `; RC=$?`: this
+          # step runs under bash -e, and the semicolon form aborts before the
+          # assignment -- and before the evidence below is extracted.
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} build
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
+            up --exit-code-from firmware-unit firmware-unit || FW_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+            up --exit-code-from python-keepkey python-keepkey || PY_RC=$?
           set -e
 
           REPORT_ROOT=${{ github.workspace }}/test-reports/${{ matrix.variant }}
@@ -648,7 +700,7 @@ jobs:
   #     fsm_msgDebugLinkGetState is excluded from the build and any
   #     read_layout() call hangs the test).
   python-dylib-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -922,7 +974,7 @@ jobs:
   # GATE: one authoritative answer for the whole graph
   # ═══════════════════════════════════════════════════════════
   #
-  # Every build and test job declares `needs: [lint-format, static-analysis,
+  # Every build and test job declares `needs: [lint-format,
   # check-submodules, secret-scan]`. When one of those gate jobs fails, GitHub
   # marks the whole downstream graph SKIPPED rather than failed -- and a skipped
   # job is not a red check. The run summary then shows green ticks on whatever

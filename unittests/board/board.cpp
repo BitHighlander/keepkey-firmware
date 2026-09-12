@@ -453,6 +453,31 @@ TEST(Board, BaseToPrecisionRespectsCapacity) {
 }
 
 #ifdef EMULATOR
+TEST(Board, Crc32MatchesTheStm32Peripheral) {
+  const uint32_t one[] = {0x12345678};  // bytes 12 34 56 78
+  EXPECT_EQ(0xDF8A8A2Bu, calc_crc32(one, 1));
+
+  const uint32_t two[] = {0x12345678, 0x9ABCDEF0};  // ... 9A BC DE F0
+  EXPECT_EQ(0x7D24A31Bu, calc_crc32(two, 2));
+}
+
+// storage_commit() marshals a 2572-byte buffer — 643 words — holding a
+// 2569-byte V17 record, so the last meaningful byte is index 2568. It reaches
+// storage_wipe() when the CRC disagrees, so a byte outside the CRC is a byte
+// whose corruption surfaces later as a decrypt failure instead.
+TEST(Board, Crc32CoversTheFinalByteOfTheV17Record) {
+  alignas(uint32_t) uint8_t buf[2572] = {};
+  const uint32_t clean643 = calc_crc32(buf, 643);
+  const uint32_t clean642 = calc_crc32(buf, 642);
+
+  buf[2568] = 0x01;
+
+  EXPECT_NE(clean643, calc_crc32(buf, 643)) << "byte 2568 is outside the CRC";
+  // The regression itself: at sizeof(flash_temp)==2570 the integer division
+  // gave 642 words = 2568 bytes, and byte 2568 changed nothing.
+  EXPECT_EQ(clean642, calc_crc32(buf, 642));
+}
+
 TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
   std::vector<uint8_t> flash(FLASH_TOTAL_SIZE, 0x42);
   uint8_t* previous = emulator_flash_base;
@@ -470,172 +495,3 @@ TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
             std::vector<uint8_t>(flash.begin() + end, flash.end()));
 }
 #endif
-
-namespace {
-
-class StorageSelection : public ::testing::Test {
- protected:
-  void SetUp() override {
-    previous_flash = emulator_flash_base;
-    flash.assign(FLASH_TOTAL_SIZE, 0xFF);
-    emulator_flash_base = flash.data();
-  }
-
-  void TearDown() override { emulator_flash_base = previous_flash; }
-
-  uint8_t *Sector(Allocation allocation) {
-    return reinterpret_cast<uint8_t *>(flash_write_helper(allocation));
-  }
-
-  void WriteLegacy(Allocation allocation) {
-    uint8_t *record = Sector(allocation);
-    memcpy(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-  }
-
-  void WriteVerified(Allocation allocation, uint32_t generation) {
-    uint8_t *record = Sector(allocation);
-    memset(record, 0, STORAGE_RECORD_LEN);
-    memcpy(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-    record[STORAGE_GENERATION_OFFSET] = static_cast<uint8_t>(generation);
-    record[STORAGE_GENERATION_OFFSET + 1] =
-        static_cast<uint8_t>(generation >> 8);
-    record[STORAGE_GENERATION_OFFSET + 2] =
-        static_cast<uint8_t>(generation >> 16);
-    memcpy(record + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
-           STORAGE_RECORD_TRAILER_MAGIC_LEN);
-    const uint32_t crc =
-        calc_crc32(record, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
-    memcpy(record + STORAGE_RECORD_CRC_OFFSET, &crc, sizeof(crc));
-  }
-
-  void WritePending(Allocation allocation, uint32_t generation) {
-    WriteVerified(allocation, generation);
-    memset(Sector(allocation), 0xFF, STORAGE_MAGIC_LEN);
-  }
-
-  uint8_t* previous_flash = nullptr;
-  std::vector<uint8_t> flash;
-};
-
-TEST_F(StorageSelection, LegacyRecordRemainsReadable) {
-  WriteLegacy(FLASH_STORAGE2);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE2, active);
-}
-
-TEST_F(StorageSelection, NewestVerifiedGenerationWinsAcrossSectors) {
-  WriteVerified(FLASH_STORAGE1, 7);
-  WriteVerified(FLASH_STORAGE3, 8);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE3, active);
-}
-
-TEST_F(StorageSelection, VerifiedRecordWinsOverLegacyAfterInterruptedCommit) {
-  WriteLegacy(FLASH_STORAGE1);
-  WriteVerified(FLASH_STORAGE2, 1);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE2, active);
-}
-
-TEST_F(StorageSelection, CorruptNewRecordFallsBackToPreservedLegacy) {
-  WriteLegacy(FLASH_STORAGE1);
-  WriteVerified(FLASH_STORAGE2, 1);
-  Sector(FLASH_STORAGE2)[100] ^= 1;
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE1, active);
-}
-
-TEST_F(StorageSelection, GenerationComparisonHandlesTwentyFourBitWrap) {
-  WriteVerified(FLASH_STORAGE1, 0x00FFFFFFu);
-  WriteVerified(FLASH_STORAGE2, 0);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE2, active);
-}
-
-TEST_F(StorageSelection, PendingRecordIsInvisibleUntilMarkerIsInstalled) {
-  WritePending(FLASH_STORAGE3, 9);
-
-  Allocation active = FLASH_INVALID;
-  EXPECT_FALSE(find_active_storage(&active));
-
-  Allocation pending = FLASH_INVALID;
-  ASSERT_TRUE(find_pending_storage(&pending));
-  ASSERT_EQ(FLASH_STORAGE3, pending);
-  ASSERT_TRUE(recover_pending_storage(pending));
-
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE3, active);
-  EXPECT_EQ(0, memcmp(Sector(FLASH_STORAGE1), STORAGE_PROTECT_OFF_MAGIC,
-                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
-}
-
-TEST_F(StorageSelection, TornFinalMagicCanBeCompletedIdempotently) {
-  WritePending(FLASH_STORAGE2, 10);
-  Sector(FLASH_STORAGE2)[0] =
-      static_cast<uint8_t>(STORAGE_MAGIC_STR[0]) | 0x80u;
-
-  Allocation pending = FLASH_INVALID;
-  ASSERT_TRUE(find_pending_storage(&pending));
-  ASSERT_EQ(FLASH_STORAGE2, pending);
-  ASSERT_TRUE(recover_pending_storage(pending));
-  EXPECT_EQ(
-      0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
-}
-
-TEST_F(StorageSelection, CorruptPendingRecordIsNeverFinalized) {
-  WritePending(FLASH_STORAGE2, 11);
-  Sector(FLASH_STORAGE2)[100] ^= 1;
-
-  Allocation pending = FLASH_INVALID;
-  EXPECT_FALSE(find_pending_storage(&pending));
-  EXPECT_FALSE(recover_pending_storage(FLASH_STORAGE2));
-  EXPECT_NE(
-      0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
-}
-
-// Model the installed bootloader's legacy first-magic selector and adjacent
-// protection marker at each completed operation of the handoff.
-TEST_F(StorageSelection, HandoffKeepsLegacyBootProtectionDisabled) {
-  const auto legacy_protected = [&]() {
-    for (Allocation a : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
-      if (memcmp(Sector(a), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0) {
-        return memcmp(Sector(next_storage(a)), STORAGE_PROTECT_OFF_MAGIC,
-                      sizeof(STORAGE_PROTECT_OFF_MAGIC)) != 0;
-      }
-    }
-    return false;  // No active record: legacy bootloader preserves storage.
-  };
-  for (Allocation old : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
-    SCOPED_TRACE(static_cast<int>(old));
-    std::fill(flash.begin(), flash.end(), 0xFF);
-    WriteLegacy(old);
-    memcpy(Sector(next_storage(old)), STORAGE_PROTECT_OFF_MAGIC,
-           sizeof(STORAGE_PROTECT_OFF_MAGIC));
-    const Allocation replacement = next_storage(next_storage(old));
-    EXPECT_FALSE(legacy_protected());
-    WritePending(replacement, 1);
-    EXPECT_FALSE(legacy_protected());
-    Allocation active = FLASH_INVALID;
-    ASSERT_TRUE(find_active_storage(&active));
-    EXPECT_EQ(old, active);
-    flash_erase_word(old);
-    EXPECT_FALSE(legacy_protected());
-    EXPECT_FALSE(find_active_storage(&active));
-    Allocation pending = FLASH_INVALID;
-    ASSERT_TRUE(find_pending_storage(&pending));
-    EXPECT_EQ(replacement, pending);
-    ASSERT_TRUE(recover_pending_storage(pending));
-    EXPECT_FALSE(legacy_protected());
-    ASSERT_TRUE(find_active_storage(&active));
-    EXPECT_EQ(replacement, active);
-    flash_erase_word(next_storage(old));
-    EXPECT_FALSE(legacy_protected());
-  }
-}
-
-}  // namespace

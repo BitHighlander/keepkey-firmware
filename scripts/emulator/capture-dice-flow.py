@@ -55,7 +55,7 @@ client.wipe_device()
 client.auto_button = False
 
 ret = client.call_raw(proto.ResetDevice(
-    display_random=True, strength=256, passphrase_protection=False,
+    strength=256, passphrase_protection=False,
     pin_protection=False, language='english', label='dice evidence',
     dice_entropy=True))
 assert isinstance(ret, proto.ButtonRequest), ret
@@ -79,11 +79,6 @@ client.debug.press_input(rolls[80:])
 resp = client.transport.read_blocking()
 assert isinstance(resp, proto.ButtonRequest), resp
 snap("04-digest-confirm.png")
-
-client.debug.press_yes()
-ret = client.call_raw(proto.ButtonAck())
-assert isinstance(ret, proto.ButtonRequest), ret  # post-mix entropy display
-snap("05-postmix-internal-entropy.png")
 
 client.debug.press_yes()
 ret = client.call_raw(proto.ButtonAck())
