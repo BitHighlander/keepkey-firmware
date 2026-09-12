@@ -22,15 +22,19 @@ Status of each finding below:
   release pass. Not individually re-checked by the three-reviewer process.
 
 
-Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 findings touching this line).
+Counts: 78 fixed, 11 refuted on re-check, 0 open, 77 triaged by reading (166 findings touching this line).
 
 
 ## Fixed
 
+- **F028** (P3, `lib/rand/rng_health.c`) — random_buffer_checked() ignores a hardware seed/clock error latched during the draw itself (raised on 7.14.3; this line carried the same code)
+- **F033** (P3, `lib/firmware/eip712.c`) — int value "-0" is shown as zero but encoded as -2^64 (sign-extension keyed on the '-' character, not the value)
+- **F035** (P3, `lib/firmware/ethereum.c`) — TRANSFER amount screen can show a stale WAN ticker left by an earlier request (raised on 7.14.3; this line carried the same code)
 - **F044** (P3, `lib/firmware/eip712.c`) — EIP-712 refuses any domain whose chainId exceeds 2^32, on a value it never uses
 - **F047** (P1, `lib/firmware/fsm_msg_bip85.h`) — BIP-85 seed pages use the UNPAGED confirm_constant_power, so words are silently clipped off the OLED
 - **F054** (P3, `lib/firmware/fsm_msg_common.h`) — Two new auth error codes, one new error string: DUPLICATE reports "Action cancelled", AUTH_CANCELLED reports nothing
 - **F058** (P2, `lib/firmware/ethereum_contracts/zxappliquid.c`) — Unlimited LP approval: refused after the user consents, or signed outright if the host pads `value`
+- **F059** (P3, `lib/firmware/fsm_msg_ethereum.h`) — process_ethereum_xfer() leaves a derived private key in the shared fsm_derived_node scratch on two error returns
 - **F067** (P2, `lib/firmware/hive.c`) — HiveSignTx serializes the display symbol ("HIVE") instead of the wire symbol ("STEEM"), so every transfer signature is unverifiable on-chain
 - **F072** (P1, `lib/board/confirm_sm.c`) — Render-completeness gate excludes constant-power layouts, so BIP-85 mnemonic pages still drop whole words
 - **F073** (P2, `lib/board/confirm_sm.c`) — Seed words copied into an uncleared plain stack buffer in confirm_constant_power_subpage_take()
@@ -50,6 +54,7 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - **F103** (P3, `lib/firmware/authenticator.c`) — 7.15 authenticator cancel paths do not revoke the decrypted TOTP cache
 - **F120** (P2, `lib/board/confirm_sm.c`) — 7.15 keeps the >99-page truncation confirm_sm fixed on 7.14.2: page 100 is labelled "100/100" and its hold approves a prefix
 - **F121** (P2, `lib/board/confirm_sm.c`) — 7.15 lets the user hold to approve a body vsnprintf() already cut; 7.14.2/7.14.3 refuse before any ButtonRequest
+- **F122** (P3, `lib/board/confirm_sm.c`) — 7.15 emits per-page ButtonRequests from the *_without_button_request() entry points (7.14.2's notify_host gate is missing)
 - **F124** (P2, `docs/release/7.15-COMBINED-CANDIDATE.md`) — Acceptance receipt claims "documentation only" over a head carrying 1,670 lines of firmware change
 - **F125** (P3, `docs/security/clearsign-provider-tier.md`) — Provider-tier doc says Solana has no per-transaction provider field and no firmware LUT path; head ships both
 - **F131** (P2, `lib/firmware/mayachain.c`) — 7.14.2's MAYAChain signTxInit envelope validation + msg-separator/underflow guards are absent on 7.15
@@ -57,7 +62,9 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - **F133** (P2, `lib/firmware/fsm_msg_thorchain.h`) — THORChain (and MAYAChain) final sign screen omits the signed fee_amount/gas on 7.15, which 7.14.2 and 7.15's own Cosmos/Osmosis/Tendermint screens show
 - **F136** (P2, `include/keepkey/transport/messages-hive.options`) — Hive account-name nanopb bounds are one byte short; a legal 16-character account is rejected at decode
 - **F137** (P2, `docs/release/7.15-COMBINED-CANDIDATE.md`) — Release-candidate "Dependency pins" sections do not match the gitlinks at head, in all three releases
+- **F138** (P3, `.gitmodules`) — .gitmodules branch keys name branches that are not what is pinned, for both dependency submodules
 - **F140** (P2, `lib/firmware/solana.c`) — 7.15 never propagated the 7.14.2 "decimals > 18" token-amount fix: high-decimal SPL amounts render with the scale silently dropped
+- **F142** (P3, `lib/firmware/signing.c`) — 7.15 applied only the multisig half of the 7.14.2 sighash-suffix hunk; the single-signature segwit branch still writes into the protobuf field and lost the memzero
 - **F143** (P2, `lib/firmware/solana.c`) — 7.14.2's "scale never dropped" fix for decimals > 18 did not propagate to 7.15 (and its test was deleted)
 - **F144** (P2, `lib/firmware/thorchain.c`) — 7.14.2 ThorchainSignTx envelope validation + msgs_remaining guards absent on 7.15; msgs_remaining underflows
 - **F147** (P2, `lib/firmware/mayachain.c`) — 7.14.2's msgs[] comma separator (has_message) never landed on 7.15 — a 2-message MAYAChain tx is signed over invalid JSON
@@ -67,6 +74,7 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - **F158** (P2, `unittests/firmware/thorchain.cpp`) — 7.14.2's chain_id safe-text refusal (and its test) never reached 7.15; unvalidated chain_id is rendered on the sign screen
 - **F163** (P3, `tools/merge_direction_gate.py`) — Merge-direction gate exits 0 and reports "0 files" when git fails or the SHAs are absent
 - **F166** (P2, `include/keepkey/firmware/ripple.h`) — RIPPLE_MAX_DROPS is ~7 orders of magnitude too small; XRP payments over 100,000 XRP that 7.14.x signed correctly are now hard-refused
+- **F167** (P3, `lib/firmware/zcash.c`) — Wire-supplied rho is silently truncated to 255 bits instead of rejected as non-canonical
 - **F173** (P2, `tools/merge_symbol_gate.py`) — merge_symbol_gate.py reports a clean green run and exits 0 when it has read nothing
 - **F177** (P2, `lib/emulator/libkkemu.c`) — kkemu_get_display() still thresholds at >0 while every other 1-bit renderer moved to the dither helper
 - **F178** (P3, `lib/emulator/libkkemu.c`) — Poll thread can wedge forever in delay_ms(); kkemu_stop()/kkemu_shutdown() then join with no deadline
@@ -74,7 +82,9 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - **F186** (P2, `include/keepkey/board/confirm_sm.h`) — confirm_with_custom_layout() does not do the measured routing its header contract promises; transaction-consent screens stay unmeasured and unpaged
 - **F187** (P3, `include/keepkey/firmware/authenticator.h`) — Two new AUTH_ERR_TYPE values, one new string: authenticator errors are off by one and AUTH_CANCELLED reports nothing
 - **F188** (P2, `unittests/firmware/hive.cpp`) — hived golden vectors never reach the on-device serializer, which still writes the display symbol "HIVE" instead of the wire symbol "STEEM"
+- **F192** (P3, `lib/firmware/fsm_msg_zcash.h`) — P2SH accepted as a transparent input scriptPubKey, then signed with a P2PKH key and the wrong scriptCode
 - **F195** (P2, `lib/firmware/fsm_msg_solana.h`) — Attested-schema review renders one instruction in full detail and never shows the transaction's other, fully-decoded instructions
+- **F196** (P3, `lib/firmware/signing.c`) — sig_with_hashtype[73] is one byte too small for the size it is written for, so the OOB write it was added to remove is only prevented by the separate cap
 - **F197** (P3, `unittests/firmware/signed_metadata.cpp`) — key_id=256 aliasing regression assertion passes with or without the production guard
 - **F198** (P3, `unittests/firmware/signed_metadata.cpp`) — Icon width cap (review finding 2) is asserted as a constant, never exercised against the code that enforces it
 - **F200** (P3, `unittests/firmware/ethereum.cpp`) — LiquiditySelectorChecksDeclaredCalldataLength never reaches the calldata-length guard it is named for
@@ -89,6 +99,7 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - **F226** (P2, `lib/board/confirm_sm.c`) — 7.15 lets the 100-page cap truncate a confirmation body; 7.14.2/7.14.3 refuse
 - **F227** (P2, `lib/firmware/signing.c`) — Input-side multisig quorum check missing on 7.15 (present on 7.14.2 and 7.14.3)
 - **F228** (P3, `lib/board/confirm_sm.c`) — 7.15 downgrades 7.14.2's refuse-on-source-truncation to warn-and-continue
+- **F229** (P3, `lib/board/confirm_sm.c`) — `notify_host` suppression for *_without_button_request() paging not propagated to 7.15
 - **F237** (P3, `lib/firmware/fsm_msg_common.h`) — 7.15 inserts DUPLICATE into AUTH_ERR_TYPE without extending errMsgStr[]: cancel reports no reason, duplicate reports "Action cancelled"
 - **F239** (P2, `docs/release/7.14.3-COMBINED-CANDIDATE.md`) — Recorded dependency pins predate the release's own dice protocol commits
 - **F241** (P3, `include/keepkey/transport/messages-hive.options`) — Hive account-name fields sized 16, so a valid 16-character account name fails to decode
@@ -113,14 +124,12 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 ## Triaged by reading (P3)
 
 - F032 (`lib/firmware/eip712.c`) — Domain statics (dsname/dsversion/dschainId/dsverifyingContract) survive every parseVals error path, so a later domain screen shows fields from an aborted request
-- F033 (`lib/firmware/eip712.c`) — int value "-0" is shown as zero but encoded as -2^64 (sign-extension keyed on the '-' character, not the value)
 - F046 (`lib/firmware/eip712.c`) — Struct type names of 33+ chars are re-registered on each use, duplicating their definition in encodeType
 - F048 (`lib/firmware/fsm_msg_common.h`) — errMsgStr[] gained one string while the AUTH_ERR_TYPE enum gained two, shifting every new code by one
 - F049 (`lib/firmware/fsm_msg_common.h`) — Authenticator writes in fsm_msgPing were missed by CHECK_NOT_BITCOIN_ONLY_LOCKED, so they report Success for a write flash refuses
 - F055 (`lib/firmware/app_layout.c`) — Recovery-cipher previous-word indicator wraps onto the "Recovery Cipher:" prompt and both render superimposed
 - F056 (`unittests/firmware/signed_metadata.cpp`) — The attestor's only native test re-implements the issuer instead of calling it, so an issuer-side digest change stays green
 - F057 (`lib/firmware/authenticator.c`) — removeAuthAccount now validates the identity it is asked to delete, making pre-7.15 non-ASCII accounts undeletable
-- F059 (`lib/firmware/fsm_msg_ethereum.h`) — process_ethereum_xfer() leaves a derived private key in the shared fsm_derived_node scratch on two error returns
 - F060 (`lib/firmware/ethereum.c`) — Unmapped-chain native amounts now render as an 18-digit Wei integer instead of a scaled decimal
 - F061 (`lib/firmware/ethereum_contracts/thortx.c`) — Maya Protocol deposits are narrated to the user as THORChain on every memo screen
 - F068 (`lib/firmware/hive.c`) — append_asset() silently truncates a host asset symbol to 6 bytes, so the transfer confirm screen can show a symbol the device did not sign
@@ -136,7 +145,6 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - F095 (`lib/firmware/ethereum_contracts/zxliquidtx.c`) — 7.14.2's "format every amount before the first approval" ordering not carried to 7.15 Uniswap liquidity confirm
 - F101 (`include/keepkey/firmware/authenticator.h`) — 7.15 inserted DUPLICATE into AUTH_ERR_TYPE without extending errMsgStr[], so the cancel string now belongs to the wrong code and AUTH_CANCELLED maps to a NULL entry
 - F104 (`lib/emulator/libkkemu.c`) — 7.15 kkemu_get_display still thresholds at >0, contradicting the frame ring it is meant to mirror
-- F122 (`lib/board/confirm_sm.c`) — 7.15 emits per-page ButtonRequests from the *_without_button_request() entry points (7.14.2's notify_host gate is missing)
 - F123 (`lib/firmware/signing.c`) — 7.15 dropped the input-side multisig quorum check that 7.14.2 added alongside the output-side one
 - F126 (`docs/security/storage-version-downgrade-policy.md`) — Release doc records an already-fixed storage_writeV17 bounds defect as still open, and misquotes the shipped guard
 - F127 (`docs/coin-integration/README.md`) — New contributor guide documents a CI system and job that do not exist in this repo
@@ -144,10 +152,8 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - F129 (`docs/security/pin-kdf-v19-migration.md`) — PIN-KDF doc describes v19 behavior as live without mentioning the compile-time gate that makes all of it dead at head
 - F130 (`docs/release/REHEARSAL-SOP.md`) — Canonical SOP anchors the whole release program to a manifest file that is not in the tree
 - F134 (`lib/firmware/mayachain.c`) — mayachain_parseConfirmMemo has no production caller on 7.15, but its unit tests still assert clear-signing screen counts
-- F138 (`.gitmodules`) — .gitmodules branch keys name branches that are not what is pinned, for both dependency submodules
 - F139 (`deps/python-keepkey`) — python-keepkey's checked-in _pb2 bindings were generated from a device-protocol revision the firmware does not pin
 - F141 (`lib/firmware/signing.c`) — 7.15's signing_validate_input() dropped the 7.14.2 input-side multisig quorum refusal while keeping its sibling signature-length bound
-- F142 (`lib/firmware/signing.c`) — 7.15 applied only the multisig half of the 7.14.2 sighash-suffix hunk; the single-signature segwit branch still writes into the protobuf field and lost the memzero
 - F145 (`lib/firmware/thorchain.c`) — 7.14.2 multi-message comma separator (has_message) not propagated to 7.15
 - F149 (`unittests/firmware/ethereum.cpp`) — 7.15 drops the only tests that pin the chain-scoped 0xeee…ee sentinel and zx_tokenLabelsThisChain, while 7.15 has more live callers of that guard than 7.14.2
 - F151 (`.github/workflows/ci.yml`) — secret-scan reverts to a full-history scan on the first push of any new branch
@@ -158,7 +164,6 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - F161 (`unittests/firmware/usb_rx.cpp`) — PacketStorageIsWipedAfterCallback is compiled out of 7.15's bitcoin-only build by a #if !BITCOIN_ONLY that 7.14.3 proves is unnecessary
 - F164 (`tools/check_pallas_ct_disassembly.py`) — bitcoin-only "privacy code absent" check misses the ct_* core it elsewhere requires, and passes a symbol-less image
 - F165 (`.github/workflows/release.yml`) — Release build runs the SRAM gate but not the Pallas constant-time gate, and CI does not trigger on tags
-- F167 (`lib/firmware/zcash.c`) — Wire-supplied rho is silently truncated to 255 bits instead of rejected as non-canonical
 - F169 (`lib/firmware/solana.c`) — Five new/retained Solana metadata functions have no firmware caller; unit tests assert behavior no signing screen can produce
 - F170 (`lib/firmware/thorchain.c`) — Memo op matching lost case-insensitivity; lowercase "swap"/"add" memos are now unsignable on the ETH router path
 - F171 (`lib/firmware/tendermint.c`) — New JSON control-character escaper emits \b and \f, which the chain's canonical encoder never produces
@@ -173,10 +178,8 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - F185 (`lib/firmware/storage.c`) — storage_writeStorageV18/V19 require 3435 bytes but storage_commit()'s only buffer is 2572; the guard is a silent no-op, and the tests never see it
 - F189 (`unittests/firmware/hive.cpp`) — The asset symbol NUL-padding check has zero coverage; the two cases labelled as covering it are routed away by wire_symbol()
 - F191 (`lib/firmware/fsm_msg_zcash.h`) — Orchard spending key cached in a non-CONFIDENTIAL static for the whole signing session
-- F192 (`lib/firmware/fsm_msg_zcash.h`) — P2SH accepted as a transparent input scriptPubKey, then signed with a P2PKH key and the wrong scriptCode
 - F193 (`lib/firmware/fsm_msg_ton.h`) — TonSignTx gate comment asserts TonSignMessage is ungated; the gate is right there
 - F194 (`lib/firmware/fsm_msg_tron.h`) — Rationale for dropping the TRON message-signing gate states AdvancedMode is persistent; it is session-scoped
-- F196 (`lib/firmware/signing.c`) — sig_with_hashtype[73] is one byte too small for the size it is written for, so the OOB write it was added to remove is only prevented by the separate cap
 - F199 (`unittests/firmware/signed_metadata.cpp`) — RELAY_ROUTER bytes disagree with the on-chain address the comment claims they were captured from
 - F202 (`unittests/firmware/thorchain.cpp`) — Refusal assertions run with an empty decision queue: a regression hangs CI instead of failing
 - F203 (`unittests/firmware/thorchain.cpp`) — The end-to-end THORChain signing vector was deleted, not regenerated, in the same commit that changed the signed MsgSend document
@@ -189,7 +192,6 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - F212 (`unittests/firmware/zcash.cpp`) — EmptyBundleDigests_MatchZip244AndZip229 compares the test's own hex to the test's own BLAKE2b and never touches the pinned firmware constants
 - F214 (`CMakeLists.txt`) — zcash-crypto-unit, whose only test source is this chunk's file, is built and registered with ctest but never executed by the xunit target CI runs
 - F225 (`lib/firmware/fsm_msg_mayachain.h`) — MAYAChain chain_id is never validated as safe text on 7.15, though every sibling Tendermint chain on the same branch validates it
-- F229 (`lib/board/confirm_sm.c`) — `notify_host` suppression for *_without_button_request() paging not propagated to 7.15
 - F232 (`lib/emulator/libkkemu.c`) — 7.15 kkemu_get_display() still thresholds at `> 0`; only the frame-ring path got the dithering fix
 - F233 (`lib/firmware/ethereum.c`) — 7.15 keeps the tightened MAX_CHAIN_ID but not 7.14.2's chain-id gate that enforces it at signing init
 - F242 (`docs/release/7.15-COMBINED-CANDIDATE.md`) — Shipped protocol pin re-publishes NEAR as supported with the display fields canonical removed as a display-binding hazard
@@ -198,3 +200,33 @@ Counts: 67 fixed, 11 refuted on re-check, 0 open, 86 triaged by reading (164 fin
 - F246 (`docs/coin-integration/README.md`) — Coin-integration guide's wire-ID allocation table is wrong and would guide a new coin into occupied IDs
 - F248 (`docs/release/SRS-7.15.md`) — SRS verification reference names a storage-version test that does not exist in the pinned host suite
 - F249 (`docs/release/REHEARSAL-SOP.md`) — Release SOP and roadmap cite canonical documents that do not exist in the release
+
+## Re-checked at head
+
+The triaged list above records each finding as it was raised. Some of those
+were overtaken by another finding's fix, and some were read again and found
+unreachable. Both are recorded here so a reader does not mistake the triaged
+list for a list of live defects.
+
+Verified already fixed by another finding's change:
+
+- F048, F101 — the authenticator error table now uses a designated initialiser
+  per enumerator, so no code can shift and no slot is NULL
+- F104, F232 — the emulator dylib adopted the ordered-dither lit-pixel
+  predicate the device uses; the `> 0` threshold is gone from both paths
+- F123, F141 — `signing_input_multisig_quorum_is_valid()` gates inputs
+- F145, F160 — the `has_message` comma separator is emitted
+- F225 — the MAYAChain envelope gate validates `chain_id` as safe text
+
+Verified unreachable on this build:
+
+- F068, F081 — `cur_asset()` bounds the symbol to STEEM/SBD/VESTS and pins each
+  one's precision, so the formatter can neither truncate a symbol nor overflow
+  the amount buffer
+- F180 — no firmware-pinned signer exists: `metadata_pubkey_for()` resolves
+  runtime-loaded keys only, so the branch that would suppress the native-value
+  screen cannot be entered. It is a trap for whoever adds the first pinned
+  signer, not a defect at this head
+- F185 — `storage_commit()` serialises through `storage_writeV17()`; the
+  V18/V19 writers have no caller, and their guards fail closed rather than
+  overrun
