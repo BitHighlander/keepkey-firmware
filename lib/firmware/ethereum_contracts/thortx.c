@@ -159,7 +159,8 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     if (msg->data_initial_chunk.bytes[i] != 0) return false;
   }
 
-  char confStr[41], *conf;
+  char confStr[41];
+  const char* conf;
   const TokenType* assetToken;
   uint8_t* thorchainData;
   const uint8_t* contractAssetAddress;
