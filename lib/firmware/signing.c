@@ -1601,7 +1601,13 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
          * witness stack after the user reviewed it, or on has_m at i == 14.
          * signing_validate_input() now caps size at 72; this removes the
          * out-of-bounds write itself rather than relying on that cap. */
-        uint8_t sig_with_hashtype[73];
+        /* One byte larger than the field it copies, so the sighash
+         * append below is in bounds for every size nanopb can decode
+         * (bytes[73]) -- the cap above is then a policy check, not the
+         * only thing standing between a host and a stack write. */
+        uint8_t
+            sig_with_hashtype[sizeof(txinput->multisig.signatures[0].bytes) +
+                              1];
         const size_t sig_len = txinput->multisig.signatures[i].size;
         memcpy(sig_with_hashtype, txinput->multisig.signatures[i].bytes,
                sig_len);
@@ -1619,10 +1625,22 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
     } else {  // single signature
       uint32_t r = 0;
       r += ser_length(2, resp.serialized.serialized_tx.bytes + r);
-      resp.serialized.signature.bytes[resp.serialized.signature.size] = sighash;
-      r += tx_serialize_script(resp.serialized.signature.size + 1,
-                               resp.serialized.signature.bytes,
+      /* The protobuf signature field has no guaranteed spare byte. Serialize
+       * the wire-only sighash suffix from bounded scratch instead of writing
+       * one byte past bytes[size]. */
+      uint8_t sig_with_hashtype[73];
+      const size_t sig_len = resp.serialized.signature.size;
+      if (sig_len > 72) {
+        fsm_sendFailure(FailureType_Failure_Other,
+                        _("Invalid signature length"));
+        signing_abort();
+        return false;
+      }
+      memcpy(sig_with_hashtype, resp.serialized.signature.bytes, sig_len);
+      sig_with_hashtype[sig_len] = sighash;
+      r += tx_serialize_script(sig_len + 1, sig_with_hashtype,
                                resp.serialized.serialized_tx.bytes + r);
+      memzero(sig_with_hashtype, sizeof(sig_with_hashtype));
       r += tx_serialize_script(33, node.public_key,
                                resp.serialized.serialized_tx.bytes + r);
       resp.serialized.serialized_tx.size = r;
