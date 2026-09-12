@@ -591,6 +591,7 @@ void recovery_cipher_finalize(void) {
   memzero(rc_temp_word, sizeof(rc_temp_word));
 
   /* Attempt to autocomplete each word */
+  uint32_t words_committed = 0;
   char* tok = strtok(mnemonic, " ");
 
   while (tok) {
@@ -600,8 +601,26 @@ void recovery_cipher_finalize(void) {
 
     strlcat(rc_new_mnemonic, rc_temp_word, MNEMONIC_BUF);
     strlcat(rc_new_mnemonic, " ", MNEMONIC_BUF);
+    words_committed++;
 
     tok = strtok(NULL, " ");
+  }
+
+  /* words_entered counts SEPARATORS, and strtok() collapses runs of them, so a
+   * ceremony driven with nothing but spaces satisfies the count gate above
+   * while producing no words at all. The phrase that then reaches the commit
+   * is empty, !enforce_wordlist (the wire default) skips mnemonic_check(), and
+   * the device stores a seed every attacker can derive. Require the words the
+   * loop actually emitted to be the count the ceremony claimed -- on every
+   * path, including the dry run, where a short phrase is equally meaningless.
+   */
+  if (words_committed != words_entered) {
+    memzero(rc_new_mnemonic, sizeof(rc_new_mnemonic));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Not enough words entered");
+    setup_abort();
+    layoutHome();
+    return;
   }
   memzero(rc_temp_word, sizeof(rc_temp_word));
 

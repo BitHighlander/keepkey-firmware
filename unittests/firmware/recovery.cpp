@@ -1,11 +1,18 @@
 extern "C" {
+#include "keepkey/board/layout.h"
+#include "keepkey/emulator/setup.h"
+#include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/recovery_cipher.h"
+#include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/bip39_english.h"
 }
 
 #include "gtest/gtest.h"
 
 #include <cstring>
+
 
 TEST(Recovery, ExactStrMatch) {
   char LHS[] = "allow\0";
@@ -42,3 +49,10 @@ TEST(Recovery, WordlistLengths) {
     }
   }
 }
+
+/* The end-to-end case for this line's spaces-only ceremony fix lives on the
+   7.14.3 and 7.15 twins (Recovery.SpacesOnlyCeremonyIsRefusedAndCommitsNothing).
+   It needs the confirm driver (kkconfirm_preload/drain) to answer
+   recovery_cipher_init()'s confirm screen, and this line has only stale
+   declarations of it -- no definition -- so the test cannot link here. Stated
+   rather than left as an unexplained absence. */
