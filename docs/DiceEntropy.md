@@ -28,8 +28,10 @@ skips unknown fields silently rather than refusing them.
 6. The seed is derived per mode (`dice_derive_only` / `dice_derive_mixed`, in
    `dice_input.c`):
    - ONLY: `seed = SHA256(rolls)`
-   - MIXED: `user = SHA256("KK\x01D" || rolls)`;
-     `seed = SHA256(SHA256("KK\x01SM" || draw || user))`
+   - MIXED: `user = SHA256(TAG_USER || rolls)`;
+     `seed = SHA256(SHA256(TAG_MIX || draw || user))`, where
+     `TAG_USER` is the 4 bytes `4B 4B 01 44` and `TAG_MIX` the 5 bytes
+     `4B 4B 01 53 4D`
 7. The device sends `EntropyRequest` and consumes the host's `EntropyAck`, so
    the wire flow is unchanged, but the bytes are dropped: nothing enters the
    derivation that the user does not hold.
@@ -120,9 +122,18 @@ rolls. Because the draw is committed before the device has seen a roll, it
 cannot be chosen to steer the result. Then
 
 ```
-user = SHA256("KK\x01D" || rolls)
-seed = SHA256(SHA256("KK\x01SM" || device_draw || user))
+TAG_USER = 4B 4B 01 44          (the bytes 'K' 'K' 0x01 'D')
+TAG_MIX  = 4B 4B 01 53 4D       (the bytes 'K' 'K' 0x01 'S' 'M')
+
+user = SHA256(TAG_USER || rolls)
+seed = SHA256(SHA256(TAG_MIX || device_draw || user))
 ```
+
+The tags are written as bytes on purpose. As a C string literal,
+`"KK\x01D"` is NOT those four bytes: C's `\x` escape is greedy and eats
+`01D` as one hex number, giving `K K 0x1D` -- three bytes, a different
+seed, and a verification that fails against an honest device. The firmware
+spells them out as arrays (`dice_input.c`) for the same reason.
 
 Showing the draw is safe here for the mirror-image reason it was unsafe under
 `display_random`: the other half is dice the host never sees.
