@@ -152,6 +152,10 @@ def main():
     ap.add_argument("--device-words",
                     help="the 24 device-entropy words shown before rolling "
                          "(MIXED mode); omit for DICE ONLY")
+    ap.add_argument("--mode", choices=("mixed", "only"),
+                    help="the mode the device ran. Inferred from "
+                         "--device-words when omitted; pass it to be told off "
+                         "rather than handed the wrong wallet")
     ap.add_argument("--wordlist", help="path to bip39_english.txt")
     args = ap.parse_args()
 
@@ -174,7 +178,25 @@ def main():
     words = load_wordlist(args.wordlist)
 
     digest = hashlib.sha256(rolls.encode("ascii")).digest()
-    if args.device_words:
+
+    # The mode decides the derivation, so getting it wrong produces a perfectly
+    # valid mnemonic for the OTHER ceremony -- which then does not match what
+    # the device showed. Inferring it from the presence of --device-words alone
+    # meant a forgotten flag ended in "the device did not derive the wallet
+    # from your rolls", i.e. this tool accused the device of cheating because
+    # the user left an argument off.
+    mode_arg = args.mode or ("mixed" if args.device_words else "only")
+    if mode_arg == "mixed" and not args.device_words:
+        raise SystemExit(
+            "MIXED needs --device-words: the 24 words the device showed "
+            "BEFORE you rolled. Without them this cannot reproduce the seed.")
+    if mode_arg == "only" and args.device_words:
+        raise SystemExit(
+            "DICE ONLY derives from the rolls alone, so --device-words cannot "
+            "be part of it. Drop the flag, or pass --mode mixed if that is "
+            "the ceremony you ran.")
+
+    if mode_arg == "mixed":
         if words is None:
             raise SystemExit("MIXED mode needs the BIP-39 wordlist to decode "
                              "--device-words; pass --wordlist")
@@ -208,9 +230,21 @@ def main():
     for i in range(0, len(parts), 4):
         print("  %2d. %s" % (i + 1, "  ".join(parts[i:i + 4])))
     print()
-    print("If these are not the words the device showed, the device did not "
-          "derive")
-    print("the wallet from your rolls. Do not fund it.")
+    other = ("--mode mixed --device-words '<the 24 words the device showed>'"
+             if mode_arg == "only" else "--mode only")
+    print("These are the words for %s."
+          % ("DICE ONLY" if mode_arg == "only" else "MIXED"))
+    print()
+    print("If they are not what the device showed, check the MODE first. The "
+          "other")
+    print("ceremony derives a different, equally valid-looking wallet from the "
+          "same")
+    print("rolls, so a wrong --mode looks exactly like a dishonest device.")
+    print("Re-run with:  %s" % other)
+    print()
+    print("If BOTH modes disagree with the device, the device did not derive "
+          "the")
+    print("wallet from your rolls. Do not fund it.")
 
 
 if __name__ == "__main__":
