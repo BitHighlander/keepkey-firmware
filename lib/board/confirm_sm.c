@@ -52,19 +52,18 @@ extern bool reset_msg_stack;
 
 static CONFIDENTIAL char strbuf[BODY_CHAR_MAX];
 
-/* Set by format_body() when the formatted body did not fit strbuf, i.e. when
- * characters were lost before any screen existed to show them. Read and
- * cleared by confirm_helper(). Truncation here is invisible to every later
- * check: what reaches the renderer is a complete, well-formed, shorter string,
- * so the screen looks correct and is not. */
-static bool body_truncated = false;
-
 /* The single place a host-supplied body is formatted. vsnprintf() returns the
  * length it WOULD have written, which is the only chance to notice that
- * strbuf was too small -- after this, the evidence is gone. */
-static void format_body(const char* request_body, va_list vl) {
+ * strbuf was too small -- after this, the evidence is gone.
+ *
+ * Treat anything that did not fit as a refusal: once characters are lost, no
+ * renderer and no pager can recover them, so there is no complete body left
+ * for the user to approve. A warn-and-continue screen cannot substitute,
+ * because the hold it takes is consent to bytes no screen ever contained. */
+static bool format_body(const char* request_body, va_list vl) {
+  if (!request_body) return false;
   const int needed = vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
-  body_truncated = (needed < 0) || ((size_t)needed >= sizeof(strbuf));
+  return needed >= 0 && (size_t)needed < sizeof(strbuf);
 }
 
 /// Handler for push button being pressed.
@@ -463,7 +462,20 @@ static bool page_body_confirm(const char* request_title, const char* body,
   static CONFIDENTIAL char page_buf[BODY_CHAR_MAX];
   static char page_title[TITLE_CHAR_MAX];
 
-  /* Pass 1: count. */
+  /* Pass 1: count.
+   *
+   * The cap REFUSES; it must never truncate. Breaking out with input still
+   * unread left `pages` at 100 while the body ran on, and the render loop then
+   * treats page 100 as the last one -- so the hold that means "I approve this"
+   * lands on a prefix, with the tail neither shown nor accounted for. A body of
+   * 351 newlines reaches that: confirm_body_fits() accepts three newlines and
+   * rejects four, so page_take() returns 3 and the body needs 117 pages.
+   *
+   * Returning false instead is not a lost capability. BODY_CHAR_MAX is 352, and
+   * a body needing more than 99 pages is one averaging under four characters a
+   * screen -- unreachable for real text, and not something a user could review
+   * in any meaningful sense if it were. The caller reports it exactly as it
+   * reports a refused screen. */
   size_t pages = 0;
   {
     const char* p = body;
@@ -474,7 +486,11 @@ static bool page_body_confirm(const char* request_title, const char* body,
       p += take;
       while (*p == ' ') p++; /* a leading space is dropped at a line start */
       pages++;
-      if (pages > 99) break; /* title formats n/m; refuse to run away */
+      if (pages > 99) {
+        /* title formats n/m, and a prefix must never become the approval */
+        memzero(page_buf, sizeof(page_buf));
+        return false;
+      }
     }
   }
   if (pages <= 1) {
@@ -523,19 +539,14 @@ done:
   return ok;
 }
 
-/// Show a confirmation, warning first when its body will not fit the screen.
+/// Show a confirmation, paging when its complete body will not fit the screen.
 ///
 /// draw_string() draws until a glyph no longer fits the canvas and then simply
 /// stops: a body taller than BODY_ROWS is drawn in part, with no ellipsis and
 /// nothing to tell the user that the tail of an address, an amount or a
-/// warning was dropped. The vsnprintf() into strbuf[BODY_CHAR_MAX] below cuts
-/// long host strings a second time, just as quietly.
-///
-/// So when the body will not fit, put an explicit screen in front of it. That
-/// screen costs its own hold, and the hold is a real consent signal: a host
-/// Cancel breaks it and the caller reports ActionCancelled, exactly as it
-/// would for the body screen. A body that is only partly shown is now never
-/// shown without saying so.
+/// warning was dropped. Complete formatted bodies are therefore paged here.
+/// Source formatting overflow is refused by every public entry point before a
+/// ButtonRequest is emitted, because lost source cannot be paged.
 ///
 /// Bodies that fit take exactly the path they took before: one screen, one
 /// ButtonRequest, one hold.
@@ -546,20 +557,9 @@ static bool confirm_helper(const char* request_title, const char* request_body,
   const uint16_t body_width =
       (uint16_t)((iconNum == NO_ICON) ? BODY_WIDTH : BODY_WIDTH_WITH_ICON);
 
-  /* Consume the source-completeness latch exactly once, whatever happens
-   * below: leaving it set would make the NEXT confirmation warn for this
-   * one's reason. */
-  const bool truncated = body_truncated;
-  body_truncated = false;
-
-  /* Two independent ways the user can be shown less than what is being
-   * approved, and they need separate measurements because they happen at
-   * different times:
+  /* The one way left for the user to be shown less than what is being
+   * approved, now that source loss is refused at the entry points:
    *
-   *   SOURCE       the formatted body did not fit strbuf. Characters were lost
-   *                before the renderer ever saw them, so no amount of looking
-   *                at the screen can detect it -- only vsnprintf()'s return
-   *                value could, and format_body() kept it.
    *   RENDER       the body reached the renderer intact but did not fit the
    *                canvas. draw_string_fits() replays the real placement and
    *                reports whether the last character landed.
@@ -579,9 +579,7 @@ static bool confirm_helper(const char* request_title, const char* request_body,
    * character after it. A user writes down 23 words and cannot restore.
    *
    * The answer is to measure at the right origin, not to skip the measurement.
-   * Custom layouts that place their own body still opt out.
-   *
-   * A SOURCE truncation is layout-independent and must warn regardless. */
+   * Custom layouts that place their own body still opt out. */
   /* NOT wired to constant-power screens, deliberately, and this is a
    * behavioural constraint rather than an oversight.
    *
@@ -602,25 +600,6 @@ static bool confirm_helper(const char* request_title, const char* request_body,
       (layout_notification_func == &layout_standard_notification) &&
       !confirm_body_fits(request_body, body_width);
 
-  if (truncated) {
-    /* SOURCE truncation: characters were lost in vsnprintf() before the
-     * renderer ever saw them. They cannot be paged, because they do not
-     * exist any more. Say exactly that -- the old copy promised to show the
-     * rest on the next hold and then redrew the same clipped body, which is
-     * worse than not warning at all: a user who read it carefully was
-     * misled about what they had seen. */
-    if (!confirm_screen("Cut Off",
-                        "This text is too long to show in full. The rest "
-                        "cannot be displayed. Hold to continue anyway.",
-                        &layout_standard_notification, constant_power, NO_ICON,
-                        immediate)) {
-      return false;
-    }
-    return page_body_confirm(request_title, request_body,
-                             layout_notification_func, constant_power, iconNum,
-                             immediate, body_width);
-  }
-
   if (render_incomplete) {
     /* RENDER overflow: the body reached the renderer intact, so every
      * character is still in hand and can be shown -- on more than one screen.
@@ -640,8 +619,12 @@ bool confirm(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -740,8 +723,12 @@ bool confirm_constant_power(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -764,8 +751,12 @@ bool confirm_with_custom_button_request(const ButtonRequest* button_request,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   msg_write(MessageType_MessageType_ButtonRequest, button_request);
@@ -793,8 +784,12 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -803,8 +798,9 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
   resp.code = type;
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
-  bool ret = confirm_helper(request_title, strbuf, layout_notification_func,
-                            false, NO_ICON, false);
+  bool ret =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, NO_ICON, false);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -836,8 +832,12 @@ bool confirm_address_with_custom_layout(
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -858,8 +858,12 @@ bool confirm_without_button_request(const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
@@ -875,8 +879,12 @@ bool confirm_with_icon(ButtonRequestType type, IconType iconNum,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -898,8 +906,12 @@ bool review(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -921,8 +933,12 @@ bool review_without_button_request(const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   const bool shown =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
@@ -938,8 +954,12 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -961,8 +981,12 @@ bool review_immediate(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  format_body(request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;

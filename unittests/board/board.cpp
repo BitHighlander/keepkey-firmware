@@ -173,6 +173,29 @@ TEST_F(BodyFits, ConfirmBodyFits) {
       << "a body overflowing by exactly one glyph must not report as fitting";
 }
 
+// Source loss is not a rendering problem and cannot be paged: vsnprintf() drops
+// the tail before any screen exists, so no later screen can contain it. The
+// entry points must therefore refuse, and refuse BEFORE the ButtonRequest --
+// a "Cut Off, hold to continue anyway" screen takes consent for bytes the
+// device has just admitted it cannot show. This test calls confirm() for real:
+// with the refusal in place it returns without touching the state machine, and
+// without it the call enters confirm_screen() and never returns.
+TEST(Board, ConfirmationFormattingRefusesAnySourceLoss) {
+  const std::string one_too_many(BODY_CHAR_MAX, 'A');
+
+  // Source overflow must return before confirm() sends a ButtonRequest or
+  // enters the interactive confirmation state machine.
+  EXPECT_FALSE(confirm(ButtonRequestType_ButtonRequest_Other, "Overflow", "%s",
+                       one_too_many.c_str()));
+
+  // Expansion is measured after formatting, not from the format string or any
+  // one argument. This is the shape used by multi-field confirmation bodies.
+  const std::string left(175, 'L');
+  const std::string right(175, 'R');
+  EXPECT_FALSE(confirm(ButtonRequestType_ButtonRequest_Other, "Overflow",
+                       "%s::%s", left.c_str(), right.c_str()));
+}
+
 // Constant-power screens draw from x = 128 + LEFT_MARGIN, because the display
 // driver mirrors the right half of the canvas onto the panel. Only
 // KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) px exists past that origin, not
@@ -318,6 +341,32 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
   if (!confirm_body_fits(wide.c_str(), BODY_WIDTH)) {
     EXPECT_FALSE(confirm_body_fits(wide.c_str(), BODY_WIDTH_WITH_ICON));
   }
+}
+
+TEST_F(BodyFits, PagerCanExceedItsOwnPageCap) {
+  // page_body_confirm() refuses a body needing more than 99 pages rather than
+  // stopping the count there, because a truncated count makes page 100 the
+  // "last" page and puts the approving hold on a prefix.
+  //
+  // That bound is reachable, which is the point of this test: page_take() sizes
+  // a page by the largest prefix confirm_body_fits() accepts, and for newlines
+  // that is three -- they consume rows without drawing a glyph. A body filling
+  // BODY_CHAR_MAX therefore needs ceil(351 / 3) = 117 pages.
+  //
+  // The refusal itself cannot be asserted here: page_body_confirm() is static
+  // and reaching it means driving real confirm screens, which this binary has
+  // no canvas or input for. What is asserted is the arithmetic the cap depends
+  // on, so that a future change to BODY_ROWS or BODY_CHAR_MAX that quietly
+  // moves the bound fails here rather than in the field.
+  EXPECT_TRUE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
+  EXPECT_FALSE(confirm_body_fits(std::string(4, '\n').c_str(), BODY_WIDTH));
+
+  const size_t chars_per_page = 3;
+  const size_t worst_case_body = BODY_CHAR_MAX - 1;
+  const size_t pages_needed =
+      (worst_case_body + chars_per_page - 1) / chars_per_page;
+  EXPECT_GT(pages_needed, 99u)
+      << "the 99-page cap is unreachable, so the refusal is dead code";
 }
 
 static std::string FormatEveryPage(const std::string &input, size_t *pages) {
