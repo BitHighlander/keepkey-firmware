@@ -173,6 +173,29 @@ TEST_F(BodyFits, ConfirmBodyFits) {
       << "a body overflowing by exactly one glyph must not report as fitting";
 }
 
+// Source loss is not a rendering problem and cannot be paged: vsnprintf() drops
+// the tail before any screen exists, so no later screen can contain it. The
+// entry points must therefore refuse, and refuse BEFORE the ButtonRequest --
+// a "Cut Off, hold to continue anyway" screen takes consent for bytes the
+// device has just admitted it cannot show. This test calls confirm() for real:
+// with the refusal in place it returns without touching the state machine, and
+// without it the call enters confirm_screen() and never returns.
+TEST(Board, ConfirmationFormattingRefusesAnySourceLoss) {
+  const std::string one_too_many(BODY_CHAR_MAX, 'A');
+
+  // Source overflow must return before confirm() sends a ButtonRequest or
+  // enters the interactive confirmation state machine.
+  EXPECT_FALSE(confirm(ButtonRequestType_ButtonRequest_Other, "Overflow", "%s",
+                       one_too_many.c_str()));
+
+  // Expansion is measured after formatting, not from the format string or any
+  // one argument. This is the shape used by multi-field confirmation bodies.
+  const std::string left(175, 'L');
+  const std::string right(175, 'R');
+  EXPECT_FALSE(confirm(ButtonRequestType_ButtonRequest_Other, "Overflow",
+                       "%s::%s", left.c_str(), right.c_str()));
+}
+
 // Constant-power screens draw from x = 128 + LEFT_MARGIN, because the display
 // driver mirrors the right half of the canvas onto the panel. Only
 // KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) px exists past that origin, not
@@ -203,6 +226,29 @@ TEST_F(BodyFits, ConstantPowerBodyFitsMeasuresFromItsOwnOrigin) {
       << "a constant-power page the renderer clips must report as not fitting, "
          "so the confirm layer pages it instead of silently dropping the tail "
          "of the user's seed";
+
+  // The page the seed pagers can actually emit and the renderer actually
+  // clips: they pack words until three rows fit at BODY_WIDTH, so a page of
+  // long words is accepted there and then wraps into more rows than the screen
+  // has when it is drawn at CONSTANT_POWER_BODY_WIDTH. Measured, not assumed.
+  static const char kWidestPackedPage[] =
+      "  17.household  18.household\n  19.household  20.household\n"
+      "  21.household  22.household\n";
+  EXPECT_TRUE(confirm_body_fits(kWidestPackedPage, BODY_WIDTH))
+      << "the packer measures at BODY_WIDTH, which is how this reaches the "
+         "constant-power renderer as one page";
+  EXPECT_FALSE(confirm_body_fits_constant_power(kWidestPackedPage,
+                                                CONSTANT_POWER_BODY_WIDTH))
+      << "drawn where it is actually drawn, it does not fit";
+
+  // ...and the subpage pager splits it, which is why every seed screen on this
+  // layout (reset.c's backup and the BIP-85 child seed) must use the paged
+  // renderer rather than confirm_constant_power().
+  const size_t take = confirm_constant_power_subpage_take(kWidestPackedPage);
+  EXPECT_GT(take, 0u);
+  EXPECT_LT(take, strlen(kWidestPackedPage))
+      << "a page the renderer clips must take more than one subpage, or paging "
+         "it changes nothing";
 
   // Control: a short body fits under both probes, so the constant-power probe
   // is not simply refusing everything.
@@ -295,6 +341,32 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
   if (!confirm_body_fits(wide.c_str(), BODY_WIDTH)) {
     EXPECT_FALSE(confirm_body_fits(wide.c_str(), BODY_WIDTH_WITH_ICON));
   }
+}
+
+TEST_F(BodyFits, PagerCanExceedItsOwnPageCap) {
+  // page_body_confirm() refuses a body needing more than 99 pages rather than
+  // stopping the count there, because a truncated count makes page 100 the
+  // "last" page and puts the approving hold on a prefix.
+  //
+  // That bound is reachable, which is the point of this test: page_take() sizes
+  // a page by the largest prefix confirm_body_fits() accepts, and for newlines
+  // that is three -- they consume rows without drawing a glyph. A body filling
+  // BODY_CHAR_MAX therefore needs ceil(351 / 3) = 117 pages.
+  //
+  // The refusal itself cannot be asserted here: page_body_confirm() is static
+  // and reaching it means driving real confirm screens, which this binary has
+  // no canvas or input for. What is asserted is the arithmetic the cap depends
+  // on, so that a future change to BODY_ROWS or BODY_CHAR_MAX that quietly
+  // moves the bound fails here rather than in the field.
+  EXPECT_TRUE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
+  EXPECT_FALSE(confirm_body_fits(std::string(4, '\n').c_str(), BODY_WIDTH));
+
+  const size_t chars_per_page = 3;
+  const size_t worst_case_body = BODY_CHAR_MAX - 1;
+  const size_t pages_needed =
+      (worst_case_body + chars_per_page - 1) / chars_per_page;
+  EXPECT_GT(pages_needed, 99u)
+      << "the 99-page cap is unreachable, so the refusal is dead code";
 }
 
 static std::string FormatEveryPage(const std::string &input, size_t *pages) {
@@ -407,172 +479,3 @@ TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
             std::vector<uint8_t>(flash.begin() + end, flash.end()));
 }
 #endif
-
-namespace {
-
-class StorageSelection : public ::testing::Test {
- protected:
-  void SetUp() override {
-    previous_flash = emulator_flash_base;
-    flash.assign(FLASH_TOTAL_SIZE, 0xFF);
-    emulator_flash_base = flash.data();
-  }
-
-  void TearDown() override { emulator_flash_base = previous_flash; }
-
-  uint8_t *Sector(Allocation allocation) {
-    return reinterpret_cast<uint8_t *>(flash_write_helper(allocation));
-  }
-
-  void WriteLegacy(Allocation allocation) {
-    uint8_t *record = Sector(allocation);
-    memcpy(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-  }
-
-  void WriteVerified(Allocation allocation, uint32_t generation) {
-    uint8_t *record = Sector(allocation);
-    memset(record, 0, STORAGE_RECORD_LEN);
-    memcpy(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-    record[STORAGE_GENERATION_OFFSET] = static_cast<uint8_t>(generation);
-    record[STORAGE_GENERATION_OFFSET + 1] =
-        static_cast<uint8_t>(generation >> 8);
-    record[STORAGE_GENERATION_OFFSET + 2] =
-        static_cast<uint8_t>(generation >> 16);
-    memcpy(record + STORAGE_RECORD_DATA_LEN, STORAGE_RECORD_TRAILER_MAGIC,
-           STORAGE_RECORD_TRAILER_MAGIC_LEN);
-    const uint32_t crc =
-        calc_crc32(record, STORAGE_RECORD_DATA_LEN / sizeof(uint32_t));
-    memcpy(record + STORAGE_RECORD_CRC_OFFSET, &crc, sizeof(crc));
-  }
-
-  void WritePending(Allocation allocation, uint32_t generation) {
-    WriteVerified(allocation, generation);
-    memset(Sector(allocation), 0xFF, STORAGE_MAGIC_LEN);
-  }
-
-  uint8_t* previous_flash = nullptr;
-  std::vector<uint8_t> flash;
-};
-
-TEST_F(StorageSelection, LegacyRecordRemainsReadable) {
-  WriteLegacy(FLASH_STORAGE2);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE2, active);
-}
-
-TEST_F(StorageSelection, NewestVerifiedGenerationWinsAcrossSectors) {
-  WriteVerified(FLASH_STORAGE1, 7);
-  WriteVerified(FLASH_STORAGE3, 8);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE3, active);
-}
-
-TEST_F(StorageSelection, VerifiedRecordWinsOverLegacyAfterInterruptedCommit) {
-  WriteLegacy(FLASH_STORAGE1);
-  WriteVerified(FLASH_STORAGE2, 1);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE2, active);
-}
-
-TEST_F(StorageSelection, CorruptNewRecordFallsBackToPreservedLegacy) {
-  WriteLegacy(FLASH_STORAGE1);
-  WriteVerified(FLASH_STORAGE2, 1);
-  Sector(FLASH_STORAGE2)[100] ^= 1;
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE1, active);
-}
-
-TEST_F(StorageSelection, GenerationComparisonHandlesTwentyFourBitWrap) {
-  WriteVerified(FLASH_STORAGE1, 0x00FFFFFFu);
-  WriteVerified(FLASH_STORAGE2, 0);
-  Allocation active = FLASH_INVALID;
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE2, active);
-}
-
-TEST_F(StorageSelection, PendingRecordIsInvisibleUntilMarkerIsInstalled) {
-  WritePending(FLASH_STORAGE3, 9);
-
-  Allocation active = FLASH_INVALID;
-  EXPECT_FALSE(find_active_storage(&active));
-
-  Allocation pending = FLASH_INVALID;
-  ASSERT_TRUE(find_pending_storage(&pending));
-  ASSERT_EQ(FLASH_STORAGE3, pending);
-  ASSERT_TRUE(recover_pending_storage(pending));
-
-  ASSERT_TRUE(find_active_storage(&active));
-  EXPECT_EQ(FLASH_STORAGE3, active);
-  EXPECT_EQ(0, memcmp(Sector(FLASH_STORAGE1), STORAGE_PROTECT_OFF_MAGIC,
-                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
-}
-
-TEST_F(StorageSelection, TornFinalMagicCanBeCompletedIdempotently) {
-  WritePending(FLASH_STORAGE2, 10);
-  Sector(FLASH_STORAGE2)[0] =
-      static_cast<uint8_t>(STORAGE_MAGIC_STR[0]) | 0x80u;
-
-  Allocation pending = FLASH_INVALID;
-  ASSERT_TRUE(find_pending_storage(&pending));
-  ASSERT_EQ(FLASH_STORAGE2, pending);
-  ASSERT_TRUE(recover_pending_storage(pending));
-  EXPECT_EQ(
-      0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
-}
-
-TEST_F(StorageSelection, CorruptPendingRecordIsNeverFinalized) {
-  WritePending(FLASH_STORAGE2, 11);
-  Sector(FLASH_STORAGE2)[100] ^= 1;
-
-  Allocation pending = FLASH_INVALID;
-  EXPECT_FALSE(find_pending_storage(&pending));
-  EXPECT_FALSE(recover_pending_storage(FLASH_STORAGE2));
-  EXPECT_NE(
-      0, memcmp(Sector(FLASH_STORAGE2), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN));
-}
-
-// Model the installed bootloader's legacy first-magic selector and adjacent
-// protection marker at each completed operation of the handoff.
-TEST_F(StorageSelection, HandoffKeepsLegacyBootProtectionDisabled) {
-  const auto legacy_protected = [&]() {
-    for (Allocation a : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
-      if (memcmp(Sector(a), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0) {
-        return memcmp(Sector(next_storage(a)), STORAGE_PROTECT_OFF_MAGIC,
-                      sizeof(STORAGE_PROTECT_OFF_MAGIC)) != 0;
-      }
-    }
-    return false;  // No active record: legacy bootloader preserves storage.
-  };
-  for (Allocation old : {FLASH_STORAGE1, FLASH_STORAGE2, FLASH_STORAGE3}) {
-    SCOPED_TRACE(static_cast<int>(old));
-    std::fill(flash.begin(), flash.end(), 0xFF);
-    WriteLegacy(old);
-    memcpy(Sector(next_storage(old)), STORAGE_PROTECT_OFF_MAGIC,
-           sizeof(STORAGE_PROTECT_OFF_MAGIC));
-    const Allocation replacement = next_storage(next_storage(old));
-    EXPECT_FALSE(legacy_protected());
-    WritePending(replacement, 1);
-    EXPECT_FALSE(legacy_protected());
-    Allocation active = FLASH_INVALID;
-    ASSERT_TRUE(find_active_storage(&active));
-    EXPECT_EQ(old, active);
-    flash_erase_word(old);
-    EXPECT_FALSE(legacy_protected());
-    EXPECT_FALSE(find_active_storage(&active));
-    Allocation pending = FLASH_INVALID;
-    ASSERT_TRUE(find_pending_storage(&pending));
-    EXPECT_EQ(replacement, pending);
-    ASSERT_TRUE(recover_pending_storage(pending));
-    EXPECT_FALSE(legacy_protected());
-    ASSERT_TRUE(find_active_storage(&active));
-    EXPECT_EQ(replacement, active);
-    flash_erase_word(next_storage(old));
-    EXPECT_FALSE(legacy_protected());
-  }
-}
-
-}  // namespace

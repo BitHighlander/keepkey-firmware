@@ -80,16 +80,19 @@ void fsm_msgMayachainGetAddress(const MayachainGetAddress* msg) {
 
 void fsm_msgMayachainSignTx(const MayachainSignTx* msg) {
   CHECK_INITIALIZED
-  CHECK_PIN
 
   if (!msg->has_account_number || !msg->has_chain_id || !msg->has_fee_amount ||
-      !msg->has_gas || !msg->has_sequence) {
+      !msg->has_gas || !msg->has_sequence || !msg->has_msg_count ||
+      msg->msg_count == 0 || !tendermint_validateSafeText(msg->chain_id)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Missing Fields On Message");
+                    "Missing or Invalid Fields On Message");
     layoutHome();
     return;
   }
+
+  /* Reject malformed envelopes before authentication or key derivation. */
+  CHECK_PIN
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
@@ -178,8 +181,15 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
         // MayachainMsgSend.denom's max_size (69 today) cannot overflow
         // anything here. #437's class is closed by construction, not by a
         // size that has to be kept in step with the .options file.
+        //
+        // The exponent is the denom's, not a constant: MayachainMsgSend.denom
+        // is host-chosen, and scaling "maya" (1e4) or a synth (1e8) by CACAO's
+        // 1e10 shows an amount the signed document does not contain. The rule
+        // lives in mayachain_decimalsForDenom(), which the deposit screen and
+        // the formatter share.
         char amount_str[32];
-        if (!bn_format_uint64(msg->send.amount, NULL, NULL, 10, 0, false,
+        if (!bn_format_uint64(msg->send.amount, NULL, NULL,
+                              mayachain_decimalsForDenom(coin_denom), 0, false,
                               amount_str, sizeof(amount_str))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_FirmwareError,
@@ -331,10 +341,12 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     memset(node_str, 0, sizeof(node_str));
   }
 
+  /* Disclose the fee and gas that are hashed into the StdSignDoc; the base
+     wording named neither. See the same change on the THORChain screen. */
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign this %s transaction on %s? "
-               "Additional network fees apply.",
-               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id)) {
+               "Sign %s on %s? Fee: %" PRIu32 " cacao. Gas: %" PRIu32 ".",
+               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id,
+               sign_tx->fee_amount, sign_tx->gas)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

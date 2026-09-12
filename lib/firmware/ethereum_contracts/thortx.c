@@ -165,6 +165,20 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
                    */
   }
 
+  /* The equality above bounds the calldata but says nothing about what is IN
+   * the ABI tail padding. Only memo_len bytes are handed to the parser and
+   * drawn, while all memo_padded bytes are signed, so a host can carry up to
+   * 31 arbitrary bytes per transaction in a region no screen ever shows. The
+   * router ignores them - abi.decode reads memo_len - which is exactly why
+   * they are attractive: they cost the sender nothing and the device vouches
+   * for them. Canonical ABI pads with zeroes; anything else is a non-canonical
+   * encoding this path already refuses elsewhere (dirty high bytes in the
+   * length word, a non-canonical offset pointer). Refuse it here too rather
+   * than sign bytes that were never displayed. */
+  for (size_t i = memo_off + memo_len; i < memo_off + memo_padded; i++) {
+    if (msg->data_initial_chunk.bytes[i] != 0) return false;
+  }
+
   char confStr[41];
   const char* conf;
   const TokenType* assetToken;

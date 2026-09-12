@@ -1,4 +1,6 @@
 extern "C" {
+#include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/signing.h"
 }
 
@@ -64,6 +66,7 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 void extract_input_bip32_path(const TxInputType* input);
 bool check_change_bip32_path(const TxOutputType* output);
+bool signing_input_multisig_quorum_is_valid(const TxInputType* input);
 }
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
@@ -106,4 +109,49 @@ TEST(Signing, MixedModeChangeMustPreserveLeadingPathComponents) {
       EXPECT_FALSE(check_change_bip32_path(&output));
     }
   }
+}
+
+// The input side had no quorum guard at all: m and pubkeys_count arrived
+// straight from the wire and reached tx_input_script_size(), whose
+// m * (1 + TXSIZE_DER_SIGNATURE) term inflates tx_weight and so raises the
+// excessive-fee threshold past any fee a user could be charged. Outputs were
+// already guarded; this keeps the two sides symmetric.
+/* NOTE ON COVERAGE, stated rather than implied: the test below pins the
+   predicate, not the call site. Driving signing_validate_input() through
+   fsm_msgTxAck() needs a multisig input complete enough to survive the
+   fingerprint validation that follows it -- three real pubkeys and paths --
+   and an input that falls short is refused for that reason instead, which
+   makes such a test pass with the quorum guard removed (measured: it does).
+   The call site is covered by review against the 7.14.3 twin, which carries
+   the same hunk in the same position. */
+TEST(Signing, RejectsInvalidMultisigQuorumOnInputs) {
+  TxInputType input = {};
+  input.script_type = InputScriptType_SPENDMULTISIG;
+
+  // No multisig field at all is the single-sig case, not a bad quorum.
+  EXPECT_TRUE(signing_input_multisig_quorum_is_valid(&input));
+
+  input.has_multisig = true;
+  input.multisig.has_m = true;
+  input.multisig.m = 2;
+  input.multisig.pubkeys_count = 3;
+  EXPECT_TRUE(signing_input_multisig_quorum_is_valid(&input));
+
+  input.multisig.has_m = false;
+  EXPECT_FALSE(signing_input_multisig_quorum_is_valid(&input));
+  input.multisig.has_m = true;
+
+  input.multisig.m = 0;
+  EXPECT_FALSE(signing_input_multisig_quorum_is_valid(&input));
+  input.multisig.m = 4;
+  EXPECT_FALSE(signing_input_multisig_quorum_is_valid(&input));
+  // The fee-suppression case: a uint32 m with nothing on the wire bounding it.
+  input.multisig.m = 10000000;
+  EXPECT_FALSE(signing_input_multisig_quorum_is_valid(&input));
+
+  input.multisig.m = 1;
+  input.multisig.pubkeys_count = 0;
+  EXPECT_FALSE(signing_input_multisig_quorum_is_valid(&input));
+  input.multisig.pubkeys_count = 16;
+  EXPECT_FALSE(signing_input_multisig_quorum_is_valid(&input));
 }

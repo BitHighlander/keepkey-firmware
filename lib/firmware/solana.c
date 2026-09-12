@@ -880,6 +880,27 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
   return cur == end; /* no trailing bytes */
 }
 
+/* Instructions that may ride along unscreened next to a schema-described one.
+ * The schema review runs only in the SOL_TX_REVIEW_OPAQUE branch of
+ * fsm_msgSolanaSignTx, and that branch never calls solana_confirmInstruction()
+ * for anything -- it goes from the schema screens straight to the blind-sign
+ * warning. So "firmware recognises it" is not enough: a recognised
+ * SystemProgram Transfer beside the described instruction would be signed
+ * without one screen naming its amount or destination. Only instructions that
+ * move no value and grant no authority qualify. */
+static bool solana_schemaCompanionIsInert(SolanaInstrType type) {
+  switch (type) {
+    case SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME:
+    case SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT:
+    case SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE:
+    case SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE:
+    case SOL_INSTR_MEMO:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index) {
   if (!schema || !tx || !out_index) return false;
@@ -922,13 +943,14 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
   }
   if (!found) return false;
 
-  /* A schema explains ONE instruction. Every other instruction must be one
-   * firmware already decodes, or the message could move funds through a path
-   * no screen described. */
+  /* A schema explains ONE instruction, and nothing in the schema path draws a
+   * screen for any other, so every other instruction must be inert. Requiring
+   * only that they be RECOGNISED was not enough: a SystemProgram Transfer is
+   * recognised, and it would have been signed unscreened. */
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     if (i == match) continue;
     if (tx->instructions[i].external ||
-        tx->instructions[i].type == SOL_INSTR_UNKNOWN) {
+        !solana_schemaCompanionIsInert(tx->instructions[i].type)) {
       return false;
     }
   }
@@ -980,6 +1002,9 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   return true;
 }
 
+/* Per SIMD-0170: the runtime's per-instruction allocation for a builtin. */
+#define SOL_BUILTIN_CU_PER_INSTRUCTION 3000u
+
 bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
                                  bool* has_fee) {
   if (!tx || !fee_out || !has_fee) return false;
@@ -1012,10 +1037,23 @@ bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
   }
 
   if (!seen_limit) {
-    /* Solana's runtime default is 200,000 compute units per non-budget
-     * instruction, capped at 1,400,000. Derive the actual implicit limit
-     * instead of overstating every transaction as though it used the cap. */
-    limit = non_budget_instructions * 200000u;
+    /* Solana's runtime default is 200,000 compute units per instruction, or
+     * 3,000 for a builtin one, capped at 1,400,000 (SIMD-0170). Deriving the
+     * implicit limit stops the screen overstating every transaction as though
+     * it used the cap -- but charging the ComputeBudget instructions NOTHING
+     * turns that into an understatement, and "Maximum priority fee" has to be
+     * an upper bound or it is worse than no screen. The ComputeBudget program
+     * is itself a builtin, so [SetComputeUnitPrice, TransferChecked] -- the
+     * ordinary clear-signed token send -- is charged on 203,000 CUs and was
+     * shown as 200,000. Count every instruction: the non-budget ones at
+     * 200,000 and the budget ones at 3,000. That is >= what the runtime
+     * charges under the old rule and under SIMD-0170 alike (a builtin this
+     * over-counts at 200,000 only widens the margin). num_instructions is a
+     * uint8_t, so this cannot overflow. */
+    const uint64_t budget_instructions =
+        (uint64_t)tx->num_instructions - non_budget_instructions;
+    limit = non_budget_instructions * 200000u +
+            budget_instructions * SOL_BUILTIN_CU_PER_INSTRUCTION;
     if (limit > 1400000u) limit = 1400000u;
   }
 
@@ -1034,8 +1072,18 @@ void solana_formatAmount(char* buf, size_t len, uint64_t lamports) {
 
 void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
                               const char* symbol, uint8_t decimals) {
-  if (decimals == 0 || decimals > SOL_MAX_TOKEN_DECIMALS) {
+  if (decimals == 0) {
     snprintf(buf, len, "%llu %s", (unsigned long long)amount, symbol);
+    return;
+  }
+
+  /* A mint's decimals field is an unrestricted uint8_t. Preserve both signed
+   * values exactly when the scale exceeds this formatter's arithmetic range
+   * instead of dropping the scale: printing the raw base units with no
+   * exponent renders a 20-decimal mint identically to a 0-decimal one. */
+  if (decimals > SOL_MAX_TOKEN_DECIMALS) {
+    snprintf(buf, len, "%llu base units (%u decimals) %s",
+             (unsigned long long)amount, (unsigned)decimals, symbol);
     return;
   }
 

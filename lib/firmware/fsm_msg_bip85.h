@@ -113,9 +113,16 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
       snprintf(title, MEDIUM_STR_BUF, "BIP-85 Seed");
     }
 
-    if (!confirm_constant_power(ButtonRequestType_ButtonRequest_ConfirmWord,
-                                title, "%s",
-                                mnemonic_scratch_formatted[current_page])) {
+    /* Paged, exactly as reset.c's backup pager is: these pages are packed
+     * against BODY_WIDTH (225 px) but drawn on the constant-power half-canvas
+     * (124 px), and the unpaged renderer stops at the first glyph that will not
+     * fit and drops everything after it -- silently, including whole words. A
+     * BIP-85 child seed exists only on the paper the user is writing, so a
+     * dropped word is an unrecoverable wallet. The paged variant splits inside
+     * this one ButtonRequest, so the host protocol is unchanged. */
+    if (!confirm_constant_power_paged(
+            ButtonRequestType_ButtonRequest_ConfirmWord, title,
+            mnemonic_scratch_formatted[current_page])) {
       memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
       memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
       memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));

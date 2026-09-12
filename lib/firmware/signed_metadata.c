@@ -531,7 +531,9 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
 
   /* Session icon into the RAM working slot. The Orchard build omits this
    * cosmetic cache to preserve its tight SRAM margin; signers remain usable
-   * and render text-only after the mandatory load confirmation. */
+   * and render text-only on EVERY screen there, the load confirmation
+   * included (see signed_metadata_confirm_load) — a logo the per-tx identity
+   * screen cannot repeat is worse than no logo. */
 #if !ZCASH_PRIVACY
   memzero(loaded_icons[key_id], sizeof(loaded_icons[key_id]));
   if (has_icon) {
@@ -564,10 +566,11 @@ const char* signed_metadata_signer_alias(uint8_t key_id) {
 
 /* Resolve the icon for a session slot. Returns false for a text-only slot. */
 /* An icon is renderable only if its geometry fits the confirm's icon column
- * AND its RLE stream decodes exactly to that geometry. This is the single
- * choke point for session icons: signed_metadata_signer_icon() is what both the
- * load-confirm and the per-tx identity screen call, and the per-tx screen
- * stages the frame itself (it never goes through stage_runtime_icon). Fail
+ * AND its RLE stream decodes exactly to that geometry. This is the choke point
+ * for SESSION icons — the ones signed_metadata_signer_icon() hands the per-tx
+ * identity screen. The load-confirm does not come through here: it renders the
+ * wire buffer directly, and only in the builds that keep this cache, so that
+ * no build shows a logo at load time that no per-tx screen can repeat. Fail
  * closed to a text-only identity: a missing logo is cosmetic, an over-wide one
  * erases the alias, fingerprint and the "NOT verified by KeepKey" warning. */
 #if !ZCASH_PRIVACY
@@ -644,10 +647,26 @@ static IconType stage_runtime_icon(Image* img, AnimationFrame* frame,
 bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
                                   const uint8_t* icon, uint8_t icon_w,
                                   uint8_t icon_h, uint16_t icon_len) {
+  /* Draw the logo only in a build that also keeps the session icon cache. In a
+   * build without it, signed_metadata_signer_icon() returns false for the rest
+   * of the session, so NO later screen can repeat the logo — and a logo shown
+   * once here would train the user to expect one on the per-tx identity
+   * screen, making its absence carry no signal at all: a swapped signer would
+   * then look exactly like the approved one apart from the 8-hex fingerprint.
+   * Showing the same text-only identity the per-tx screens will show is the
+   * honest option, and it is the one that costs no SRAM. */
+#if !ZCASH_PRIVACY
   Image icon_img;
   AnimationFrame icon_frame;
   IconType id_icon = stage_runtime_icon(&icon_img, &icon_frame, icon, icon_w,
                                         icon_h, icon_len);
+#else
+  IconType id_icon = NO_ICON;
+  (void)icon;
+  (void)icon_w;
+  (void)icon_h;
+  (void)icon_len;
+#endif
 
   char body[160];
   memset(body, 0, sizeof(body));
@@ -825,11 +844,14 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   return true;
 }
 
-/* Renders the clearsign screens in sequence. When a signer with an icon is
- * loaded, its logo (the compass) is set as RUNTIME_ICON and STAYS set for the
- * whole flow, so every screen — identity, method, contract, each arg — carries
- * it. The caller (signed_metadata_confirm) clears the runtime icon once on
- * return, covering every early-exit path. */
+/* Renders the clearsign screens in sequence. When a session icon is available
+ * — only in a build that keeps the icon cache; see loaded_icons — the signer's
+ * logo (the compass) is set as RUNTIME_ICON and STAYS set for the whole flow,
+ * so every screen — identity, method, contract, each arg — carries it. Where
+ * the cache is compiled out, signed_metadata_signer_icon() returns false and
+ * every screen here is text-only, matching the load-confirm. The caller
+ * (signed_metadata_confirm) clears the runtime icon once on return, covering
+ * every early-exit path. */
 static bool signed_metadata_confirm_screens(void) {
   char body[128];
   /* Compass shown on every screen once a signer with an icon is loaded. */

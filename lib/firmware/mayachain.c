@@ -43,6 +43,7 @@ bool mayachain_isValidAsset(const char* asset) {
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static MayachainSignTx msg;
 static bool testnet;
@@ -53,6 +54,21 @@ bool mayachain_isValidSigner(const char* signer) {
 
 const MayachainSignTx* mayachain_getMayachainSignTx(void) { return &msg; }
 
+/* MsgSend carries the bare denom ("cacao"); MsgDeposit carries the pool
+ * identifier ("MAYA.CACAO"). Both are CACAO, whose base unit is 1e-10. Any
+ * other denom is rendered in base units, because its exponent is not known
+ * on-device -- scaling it by CACAO's exponent states an amount the signed
+ * document does not contain, which is worse than an unscaled integer.
+ *
+ * One rule, one place: every screen that renders a MAYAChain amount asks this,
+ * so a send screen and a deposit screen cannot disagree about the same coin.
+ */
+int mayachain_decimalsForDenom(const char* denom) {
+  if (!denom) return 0;
+  return (strcmp(denom, "cacao") == 0 || strcmp(denom, "MAYA.CACAO") == 0) ? 10
+                                                                           : 0;
+}
+
 bool mayachain_formatAmount(uint64_t amount, const char* denom, char* out,
                             size_t out_len) {
   if (!tendermint_validateSafeText(denom) || !out || out_len == 0) return false;
@@ -61,13 +77,23 @@ bool mayachain_formatAmount(uint64_t amount, const char* denom, char* out,
   const int suffix_len = snprintf(suffix, sizeof(suffix), " %s", denom);
   if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return false;
 
-  const int decimals = strcmp(denom, "cacao") == 0 ? 10 : 0;
+  const int decimals = mayachain_decimalsForDenom(denom);
   return bn_format_uint64(amount, NULL, suffix, decimals, 0, false, out,
                           out_len) != 0;
 }
 
 bool mayachain_signTxInit(const HDNode* _node, const MayachainSignTx* _msg) {
-  initialized = true;
+  mayachain_signAbort();
+  /* Validate the envelope before any of it is hashed, as thorchain_signTxInit()
+     does. msg_count drives the msgs_remaining countdown, so an absent or zero
+     count underflows on the first approved message and the session never
+     finishes; chain_id is both serialized into the sign doc and printed on the
+     final approval sentence, so it has to be safe text before either use. */
+  if (!_node || !_msg || !_msg->has_msg_count || _msg->msg_count == 0 ||
+      !_msg->has_chain_id || !tendermint_validateSafeText(_msg->chain_id)) {
+    return false;
+  }
+
   msgs_remaining = _msg->msg_count;
   testnet = false;
 
@@ -117,11 +143,22 @@ bool mayachain_signTxInit(const HDNode* _node, const MayachainSignTx* _msg) {
   // 10
   sha256_Update(&ctx, (uint8_t*)"\",\"msgs\":[", 10);
 
-  return success;
+  /* Only arm the session once the prologue actually hashed: a half-written
+     sign doc must not accept messages. */
+  if (!success) {
+    mayachain_signAbort();
+    return false;
+  }
+  initialized = true;
+  return true;
 }
 
 bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
                                    const char* to_address, const char* denom) {
+  /* A message the session did not budget for must not be hashed: msgs_remaining
+     is the host's own declared count, and the countdown below underflows if a
+     message arrives after it is spent. */
+  if (!initialized || msgs_remaining == 0) return false;
   const char mainnetp[] = "maya";
   const char testnetp[] = "smaya";
   const char* pfix;
@@ -177,6 +214,13 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
 
   bool success = true;
 
+  /* msgs[] is a JSON array: every message after the first needs its
+     separator, or a two-message document hashes as invalid JSON that no node
+     will accept -- after the owner approved both screens. */
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   const char* const prelude = "{\"type\":\"mayachain/MsgSend\",\"value\":{";
   sha256_Update(&ctx, (uint8_t*)prelude, strlen(prelude));
 
@@ -197,11 +241,15 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
 
 bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
+  if (!initialized || msgs_remaining == 0) return false;
   char buffer[64 + 1];
 
   // Defended here too (not just by the FSM caller) so this signing path is
@@ -236,6 +284,9 @@ bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"signer\":\"%s\"}}", depmsg->signer);
 
+  if (success) {
+    has_message = true;
+  }
   msgs_remaining--;
   return success;
 }
@@ -275,10 +326,17 @@ bool mayachain_addressIsSigner(const char* address) {
 
 bool mayachain_signingIsInited(void) { return initialized; }
 
-bool mayachain_signingIsFinished(void) { return msgs_remaining == 0; }
+/* Finished means the declared messages were actually written, not merely that
+   the countdown reached zero: msg_count is host-chosen and the budget guards
+   below refuse extra messages, so a session that hashed nothing must not be
+   presented as a complete document ready to sign. */
+bool mayachain_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void mayachain_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));

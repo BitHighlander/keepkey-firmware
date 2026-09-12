@@ -37,6 +37,16 @@ TEST(Solana, FormatTokenAmountUsesSignedDecimals) {
   EXPECT_STREQ(buf, "20.00 tokens");
 }
 
+/* SCOPE, so the next reader does not over-read these two tests: they are unit
+   coverage of solana.c helpers, NOT evidence of anything the signer does. The
+   unit suite is the only caller of solana_findKnownToken(),
+   solana_deriveAssociatedTokenAddress() and solana_findTokenRecipientOwner();
+   fsm_msg_solana.h invokes none of them, so the SPL transfer screen still
+   displays the raw destination account and the word "tokens", and
+   SolanaSignTx.token_recipient_owner is parsed and discarded. Wiring the
+   helpers into the SOL_INSTR_TOKEN_TRANSFER_CHECKED confirmation (or dropping
+   them with the proto field) is a firmware change; until it lands, the
+   device-level binding these names suggest does not exist. */
 TEST(Solana, MainnetUsdcIsFirmwareKnown) {
   const uint8_t usdc_mint[32] = {
       0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
@@ -111,6 +121,17 @@ TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
      so it is still used. 10 base units at 10dp = 0.000000001. */
   solana_formatTokenAmount(buf, sizeof(buf), 10, "tokens", 10);
   EXPECT_STREQ(buf, "0.000000001 tokens");
+
+  /* The on-chain decimals field is a uint8_t and is not capped at 18: a scale
+     outside the formatter's arithmetic range must still be disclosed, or a
+     20-decimal mint renders exactly like a 0-decimal one and the number on
+     screen reads as whole tokens. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 19);
+  EXPECT_STREQ(buf, "1 base units (19 decimals) tokens");
+  solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 255);
+  EXPECT_STREQ(buf, "0 base units (255 decimals) tokens");
+  solana_formatTokenAmount(buf, sizeof(buf), UINT64_MAX, "tokens", 255);
+  EXPECT_STREQ(buf, "18446744073709551615 base units (255 decimals) tokens");
 
   /* 9 decimals is the boundary -- nothing is dropped, decimal form always. */
   solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 9);
@@ -467,20 +488,31 @@ TEST(Solana, PriorityFeeOverflowSafe) {
   EXPECT_FALSE(solana_priority_fee_lamports(UINT64_MAX, UINT64_MAX, &fee));
 }
 
-TEST(Solana, PriorityFeeUsesRuntimeImplicitLimit) {
-  SolanaParsedTx tx = {};
+TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
+  SolanaParsedTx tx;
+  memset(&tx, 0, sizeof(tx));
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT;
+  tx.instructions[0].extra_value = 1400000;
+  tx.instructions[1].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[1].extra_value = 50000000;
   uint64_t fee = 0;
   bool has_fee = false;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_EQ(fee, 70000000ULL);
 
   /* With no explicit limit, use the limit the RUNTIME will request: 200,000
-     compute units per non-ComputeBudget instruction, capped at 1,400,000.
+     compute units per non-ComputeBudget instruction plus 3,000 for each
+     ComputeBudget instruction, capped at 1,400,000.
 
      This replaces an earlier rule that assumed the 1,400,000 cap whenever
      SetComputeUnitLimit was absent. That could not understate the fee, but it
      overstated it badly -- a transfer alongside a unit-price instruction is
-     charged on 200,000 CUs and was shown as seven times that. Deriving the
-     limit still cannot understate what the runtime charges, because it is
-     exactly what the runtime charges. */
+     charged on a few thousand CUs and was shown as several hundred times that.
+     The derived limit must still be an UPPER bound on what the runtime
+     charges, which is why the ComputeBudget instructions are counted at the
+     builtin rate rather than at nothing. */
   memset(&tx, 0, sizeof(tx));
   tx.num_instructions = 2;
   tx.instructions[0].type = SOL_INSTR_SYSTEM_TRANSFER;
@@ -488,11 +520,108 @@ TEST(Solana, PriorityFeeUsesRuntimeImplicitLimit) {
   tx.instructions[1].extra_value = 2000000;
   ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
   EXPECT_TRUE(has_fee);
-  EXPECT_EQ(fee, 400000ULL); /* 2 lamports/CU * 1 * 200,000 CUs */
+  EXPECT_EQ(fee, 406000ULL); /* 2 lamports/CU * (200,000 + 3,000) CUs */
+
+  /* THE UNDERSTATEMENT, PINNED. Expected value derived from the runtime rule
+     (SIMD-0170), not from the device's own formula: SetComputeUnitPrice is a
+     ComputeBudget instruction and the ComputeBudget program is a builtin, so
+     the runtime allocates it 3,000 CUs; the SPL Token program is not a
+     builtin, so TransferChecked gets 200,000. The runtime therefore charges on
+     203,000 CUs and the device must not quote a "Maximum priority fee" below
+     that. Charging the budget instructions 0 CUs showed 2.000000000 SOL where
+     2.030000000 was debited. There is deliberately no non-budget BUILTIN
+     instruction here: one of those is over-counted at 200,000 and its slack
+     hides the gap. */
+  memset(&tx, 0, sizeof(tx));
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[0].extra_value = 1000000; /* 1 lamport/CU, so fee == CUs */
+  tx.instructions[1].type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_GE(fee, 203000ULL) << "quoted maximum is below what the runtime "
+                               "charges for the common token send";
+
+  /* Seven non-budget instructions plus a price instruction derive 1,403,000
+     CUs -- the most SOL_MAX_INSTRUCTIONS (8) allows -- so the clamp to
+     1,400,000 is a reachable path, not just defence, now that the budget
+     instruction is charged its builtin 3,000. */
+  memset(&tx, 0, sizeof(tx));
+  tx.num_instructions = 8;
+  for (int i = 0; i < 7; i++)
+    tx.instructions[i].type = SOL_INSTR_SYSTEM_TRANSFER;
+  tx.instructions[7].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[7].extra_value = 2000000;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_EQ(fee, 2800000ULL); /* capped: 2 * 1,400,000 */
+
+  memset(&tx, 0, sizeof(tx));
+
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT;
+  tx.instructions[0].extra_value = 1;
+  tx.instructions[1].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[1].extra_value = 1;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_EQ(fee, 1ULL); /* ceil(1 micro-lamport) */
+
+  tx.instructions[0].extra_value = UINT32_MAX;
+  tx.instructions[1].extra_value = UINT64_MAX;
+  EXPECT_FALSE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  EXPECT_FALSE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+}
+
+TEST(Solana, PriorityFeeUsesRuntimeImplicitLimit) {
+  SolanaParsedTx tx = {};
+  uint64_t fee = 0;
+  bool has_fee = false;
+
+  /* With no explicit limit, use the limit the RUNTIME will request: 200,000
+     compute units per non-ComputeBudget instruction plus 3,000 for each
+     ComputeBudget instruction, capped at 1,400,000.
+
+     This replaces an earlier rule that assumed the 1,400,000 cap whenever
+     SetComputeUnitLimit was absent. That could not understate the fee, but it
+     overstated it badly -- a transfer alongside a unit-price instruction is
+     charged on a few thousand CUs and was shown as several hundred times that.
+     The derived limit must still be an UPPER bound on what the runtime
+     charges, which is why the ComputeBudget instructions are counted at the
+     builtin rate rather than at nothing. */
+  memset(&tx, 0, sizeof(tx));
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_SYSTEM_TRANSFER;
+  tx.instructions[1].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[1].extra_value = 2000000;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_EQ(fee, 406000ULL); /* 2 lamports/CU * (200,000 + 3,000) CUs */
+
+  /* THE UNDERSTATEMENT, PINNED. Expected value derived from the runtime rule
+     (SIMD-0170), not from the device's own formula: SetComputeUnitPrice is a
+     ComputeBudget instruction and the ComputeBudget program is a builtin, so
+     the runtime allocates it 3,000 CUs; the SPL Token program is not a
+     builtin, so TransferChecked gets 200,000. The runtime therefore charges on
+     203,000 CUs and the device must not quote a "Maximum priority fee" below
+     that. Charging the budget instructions 0 CUs showed 2.000000000 SOL where
+     2.030000000 was debited. */
+  memset(&tx, 0, sizeof(tx));
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[0].extra_value = 1000000; /* 1 lamport/CU, so fee == CUs */
+  tx.instructions[1].type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_GE(fee, 203000ULL) << "quoted maximum is below what the runtime "
+                               "charges for the common token send";
 
   /* Seven non-budget instructions reach the 1,400,000 cap exactly, which is
      also the most SOL_MAX_INSTRUCTIONS (8) allows alongside a price
-     instruction. The clamp stays as defence rather than as a reachable path. */
+     instruction; with the budget instruction charged its builtin 3,000 the
+     derivation reaches 1,403,000, so the clamp is a reachable path rather
+     than defence. */
   memset(&tx, 0, sizeof(tx));
   tx.num_instructions = 8;
   for (int i = 0; i < 7; i++)
@@ -1550,4 +1679,109 @@ TEST(Solana, AtaUnknownInstructionStillOpaque) {
   size_t len = build_ata_then_transfer_tx(raw, 2, true); /* RecoverNested */
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+/* Build a two-instruction legacy message: ix0 is the schema-described call on
+ * `program` (unknown to the parser, so the message is OPAQUE and the schema
+ * review path runs), ix1 is a companion instruction on `companion_program`. */
+static size_t build_schema_plus_companion_tx(
+    uint8_t* raw, const uint8_t* program, const uint8_t* instr_data,
+    uint8_t data_len, const uint8_t* companion_program, uint8_t companion_accts,
+    const uint8_t* companion_data, uint8_t companion_len) {
+  size_t pos = 0;
+  raw[pos++] = 1; /* num_required_sigs */
+  raw[pos++] = 0; /* num_readonly_signed */
+  raw[pos++] = 2; /* num_readonly_unsigned: both programs */
+  raw[pos++] = 4; /* sender, vault, schema program, companion program */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memcpy(raw + pos, program, 32);
+  pos += 32;
+  memcpy(raw + pos, companion_program, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* recent blockhash */
+  pos += 32;
+
+  raw[pos++] = 2; /* two instructions */
+
+  raw[pos++] = 2; /* ix0 program index */
+  raw[pos++] = 2; /* two account indices */
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = data_len;
+  memcpy(raw + pos, instr_data, data_len);
+  pos += data_len;
+
+  raw[pos++] = 3; /* ix1 program index */
+  raw[pos++] = companion_accts;
+  for (uint8_t i = 0; i < companion_accts; i++) raw[pos++] = i;
+  raw[pos++] = companion_len;
+  memcpy(raw + pos, companion_data, companion_len);
+  pos += companion_len;
+  return pos;
+}
+
+/* SystemProgram Transfer: u32 LE type 2 + u64 LE lamports (1 SOL). */
+static const uint8_t kSystemTransfer12[12] = {2,    0,    0,    0, 0x00, 0xCA,
+                                              0x9A, 0x3B, 0x00, 0, 0,    0};
+
+/* A schema describes ONE instruction, and the schema review path draws no
+ * screen for any other -- it goes from the schema screens straight to the
+ * blind-sign warning. So a recognised-but-undescribed instruction must not be
+ * allowed to ride along: this SystemProgram Transfer would otherwise be signed
+ * without a single screen naming its amount or destination, which is exactly
+ * the property solana.h says a schema can never green-light. */
+TEST(Solana, SchemaRejectsUndescribedValueInstruction) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+
+  const uint8_t system_program[32] = {0};
+  uint8_t raw[512];
+  size_t pos = build_schema_plus_companion_tx(
+      raw, program, d, sizeof(d), system_program, 2, kSystemTransfer12,
+      sizeof(kSystemTransfer12));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 2);
+  /* The parser DOES recognise it -- that is the point: recognition alone used
+   * to be the whole gate. */
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_SYSTEM_TRANSFER);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* Control: an inert companion (SetComputeUnitPrice moves no value and grants
+ * no authority) still applies, so the rejection above is about the unscreened
+ * transfer and not about the message simply having two instructions. */
+TEST(Solana, SchemaAppliesBesideInertComputeBudget) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+
+  const uint8_t unit_price[9] = {3, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos = build_schema_plus_companion_tx(raw, program, d, sizeof(d),
+                                              SOL_COMPUTE_BUDGET_PROGRAM, 0,
+                                              unit_price, sizeof(unit_price));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaApplies(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0);
 }

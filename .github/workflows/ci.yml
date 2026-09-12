@@ -70,9 +70,14 @@ jobs:
 
       - name: Install clang-format-20 (pinned stable)
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20
+          # apt.llvm.org flakes; this job now gates the whole graph, so retry.
+          for attempt in 1 2 3; do
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add - &&
+            echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list &&
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20 && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 20
+          done
           sudo ln -sf /usr/bin/clang-format-20 /usr/bin/clang-format
 
       - name: Check code formatting
@@ -182,9 +187,23 @@ jobs:
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y cppcheck
 
+      - name: Cache cppcheck analysis
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cppcheck-build
+          # Keyed per commit, restored from the newest prior one: cppcheck's
+          # build dir re-checks each file's own hash, so a stale restore is safe.
+          key: cppcheck-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            cppcheck-${{ runner.os }}-
+
       - name: Run cppcheck
         run: |
+          mkdir -p .cppcheck-build
+
           cppcheck \
+            -j "$(nproc)" \
+            --cppcheck-build-dir=.cppcheck-build \
             --enable=warning,style,performance,portability \
             --std=c11 \
             --platform=unspecified \
@@ -382,7 +401,7 @@ jobs:
 
   build-emulator:
     name: build-emulator${{ matrix.label }}
-    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -425,7 +444,10 @@ jobs:
       - name: Pull and cache base image
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
-          docker pull ${{ env.BASE_IMAGE }}
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
           docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
 
       - name: Load base image from cache
@@ -452,7 +474,7 @@ jobs:
 
   build-arm-firmware:
     name: build-arm-firmware${{ matrix.label }}
-    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -495,7 +517,10 @@ jobs:
       - name: Pull and cache base image
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
-          docker pull ${{ env.BASE_IMAGE }}
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
           docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
 
       - name: Load base image from cache
@@ -687,7 +712,7 @@ jobs:
           retention-days: 30
 
   python-integration-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -717,6 +742,26 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: /tmp/base-image.tar
+          key: base-image-${{ env.BASE_IMAGE }}
+
+      - name: Pull and cache base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
+          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+
+      - name: Load base image from cache
+        if: steps.cache-base.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/base-image.tar
+
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
         run: |
@@ -735,10 +780,15 @@ jobs:
           if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
             COMPOSE_ARGS+=(-f docker-compose.bitcoin-only.yml)
           fi
+          # Build once, up twice. The base image was loaded from the cache above,
+          # so this never reaches Docker Hub. `|| RC=$?`, never `; RC=$?`: this
+          # step runs under bash -e, and the semicolon form aborts before the
+          # assignment -- and before the evidence below is extracted.
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} build
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from firmware-unit firmware-unit || FW_RC=$?
+            up --exit-code-from firmware-unit firmware-unit || FW_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from python-keepkey python-keepkey || PY_RC=$?
+            up --exit-code-from python-keepkey python-keepkey || PY_RC=$?
 
           REPORT_ROOT=${{ github.workspace }}/test-reports/${{ matrix.variant }}
           mkdir -p "$REPORT_ROOT"
@@ -839,7 +889,7 @@ jobs:
   #     fsm_msgDebugLinkGetState is excluded from the build and any
   #     read_layout() call hangs the test).
   python-dylib-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
+    needs: [lint-format, check-submodules, secret-scan]
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -1079,7 +1129,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   generate-test-report:
-    needs: [unit-tests, python-integration-tests, build-arm-firmware]
+    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1089,34 +1139,42 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # Every download is fail-closed: a missing input means the evidence
+      # is incomplete, and the wrapper refuses to render a PDF over a gap.
       - name: Download unit test results
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        continue-on-error: true
         with:
           # Report covers the regular/full build. Bitcoin-only is built and
-          # unit-tested in its own matrix leg but does not get a PDF.
+          # unit-tested in its own matrix leg but does not get a PDF; its ARM
+          # manifest is still bound below.
           name: unit-test-results-full
           path: test-reports/firmware-unit/
 
       - name: Download python test results
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        continue-on-error: true
         with:
           name: python-test-results
           path: test-reports/python-keepkey/
 
       - name: Download OLED screenshots
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        continue-on-error: true
         with:
           name: oled-screenshots
           path: test-reports/screenshots/
+
+      - name: Download dylib test results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-dylib-test-results
+          path: test-reports/
 
       - name: Download both ARM products
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: firmware-v*
           path: test-reports/arm/
+          # Preserve one directory per product. Full and bitcoin-only contain
+          # identically named outputs whose bytes intentionally differ.
           merge-multiple: false
 
       - name: Extract firmware version
@@ -1126,12 +1184,20 @@ jobs:
           echo "fw_version=${FW_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Init python-keepkey submodule
-        run: git submodule update --init deps/python-keepkey
+        id: python
+        run: |
+          git submodule update --init deps/python-keepkey
+          echo "sha=$(git rev-parse HEAD:deps/python-keepkey)" >> "$GITHUB_OUTPUT"
 
       - name: Generate test report PDF
         env:
           FW_VERSION: ${{ steps.version.outputs.fw_version }}
-          KK_BUILD_LABEL: ${{ github.head_ref || github.ref_name }}@${{ github.event.pull_request.head.sha || github.sha }}
+          KK_FIRMWARE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          KK_PYTHON_SHA: ${{ steps.python.outputs.sha }}
+          KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          KK_WORKFLOW_EVENT: ${{ github.event_name }}
+          KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
+          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/197
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report
@@ -1139,8 +1205,9 @@ jobs:
         if: always()
         with:
           name: test-report
-          path: test-report.pdf
+          path: test-report/
           retention-days: 90
+          if-no-files-found: error
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
@@ -1149,7 +1216,7 @@ jobs:
   # GATE: one authoritative answer for the whole graph
   # ═══════════════════════════════════════════════════════════
   #
-  # Every build and test job declares `needs: [lint-format, static-analysis,
+  # Every build and test job declares `needs: [lint-format,
   # check-submodules, secret-scan]`. When one of those gate jobs fails, GitHub
   # marks the whole downstream graph SKIPPED rather than failed -- and a skipped
   # job is not a red check. The run summary then shows green ticks on whatever
@@ -1178,6 +1245,7 @@ jobs:
       - lint-format
       - secret-scan
       - static-analysis
+      - crypto-tests
       - check-submodules
       - build-emulator
       - build-arm-firmware
@@ -1271,7 +1339,14 @@ jobs:
   # check here is fatal.
   # ═══════════════════════════════════════════════════════════
   publish-emulator-libs:
-    needs: [python-dylib-tests]
+    # ci-gate, not python-dylib-tests. These assets land on a stable public URL
+    # that Vault and external auditors pull from, so a red graph must never
+    # clobber them: python-dylib-tests alone passes on a commit that broke
+    # firmware-unit or the integration suite. ci-gate needs the whole graph and
+    # fails on any non-success, which is exactly the Stage 4 promise above.
+    # (The artifact this job downloads still comes from python-dylib-tests,
+    # transitively.)
+    needs: [ci-gate]
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/alpha')
