@@ -17,6 +17,12 @@ TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
                                      sizeof(rendered)));
   EXPECT_STREQ("1 cacao", rendered);
 
+  /* MsgDeposit names the same coin by its pool identifier. Rendering this at
+   * zero decimals showed 1 CACAO as "10000000000 MAYA.CACAO". */
+  ASSERT_TRUE(mayachain_formatAmount(10000000000ULL, "MAYA.CACAO", rendered,
+                                     sizeof(rendered)));
+  EXPECT_STREQ("1 MAYA.CACAO", rendered);
+
   ASSERT_TRUE(mayachain_formatAmount(10000000000ULL, "maya", rendered,
                                      sizeof(rendered)));
   EXPECT_STREQ("10000000000 maya", rendered);
