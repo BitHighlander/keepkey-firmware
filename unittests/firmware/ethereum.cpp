@@ -643,3 +643,38 @@ TEST(Ethereum, LpApprovalRefusesPaddedValueAndUnlimitedAllowance) {
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
   EXPECT_FALSE(zx_confirmApproveLiquidity(msg.data_initial_chunk.size, &msg));
 }
+/* ethereumFormatAmount() takes the Wanchain tx type from a module static that
+ * ethereum_signing_init() owns -- and on the transfer path the amount screen is
+ * drawn before signing_init() runs. A Wanchain transaction therefore left its
+ * type behind, and the NEXT transfer's amount screen named the asset " WAN" on
+ * whatever chain it was really on. The Wanchain leg is the in-test control: it
+ * must still say " WAN", or a build that simply never set the ticker would
+ * pass the Ethereum assertion for the wrong reason. */
+TEST(Ethereum, TransferTickerComesFromThisMessageNotTheLastOne) {
+  EthereumSignTx wan;
+  memset(&wan, 0, sizeof(wan));
+  wan.has_chain_id = true;
+  wan.chain_id = 888;  // Wanchain
+  wan.has_tx_type = true;
+  wan.tx_type = 1;
+  wan.has_value = true;
+  wan.value.size = 8;
+  wan.value.bytes[7] = 0x01;  // 1 wei short of nothing, but > 1e9 after padding
+  wan.value.bytes[0] = 0x0d;
+  char buf[64] = {0};
+  ASSERT_TRUE(ethereumFormatTransferAmount(&wan, buf, sizeof(buf)));
+  EXPECT_NE(nullptr, strstr(buf, " WAN")) << buf;
+
+  EthereumSignTx eth;
+  memset(&eth, 0, sizeof(eth));
+  eth.has_chain_id = true;
+  eth.chain_id = 1;  // Ethereum mainnet, no tx_type at all
+  eth.has_value = true;
+  eth.value.size = 8;
+  eth.value.bytes[0] = 0x0d;
+  eth.value.bytes[7] = 0x01;
+  memset(buf, 0, sizeof(buf));
+  ASSERT_TRUE(ethereumFormatTransferAmount(&eth, buf, sizeof(buf)));
+  EXPECT_EQ(nullptr, strstr(buf, " WAN")) << buf;
+  EXPECT_NE(nullptr, strstr(buf, " ETH")) << buf;
+}
