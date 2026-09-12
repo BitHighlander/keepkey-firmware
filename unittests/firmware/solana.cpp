@@ -112,6 +112,17 @@ TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
   solana_formatTokenAmount(buf, sizeof(buf), 10, "tokens", 10);
   EXPECT_STREQ(buf, "0.000000001 tokens");
 
+  /* The on-chain decimals field is a uint8_t and is not capped at 18: a scale
+     outside the formatter's arithmetic range must still be disclosed, or a
+     20-decimal mint renders exactly like a 0-decimal one and the number on
+     screen reads as whole tokens. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 19);
+  EXPECT_STREQ(buf, "1 base units (19 decimals) tokens");
+  solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 255);
+  EXPECT_STREQ(buf, "0 base units (255 decimals) tokens");
+  solana_formatTokenAmount(buf, sizeof(buf), UINT64_MAX, "tokens", 255);
+  EXPECT_STREQ(buf, "18446744073709551615 base units (255 decimals) tokens");
+
   /* 9 decimals is the boundary -- nothing is dropped, decimal form always. */
   solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 9);
   EXPECT_STREQ(buf, "0.000000001 tokens");
