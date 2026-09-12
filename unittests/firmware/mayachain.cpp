@@ -15,6 +15,21 @@ extern "C" {
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 
+/* Every MAYAChain screen scales by the denom's own exponent, and they all ask
+ * the same function: the send screen renders the amount without a suffix (the
+ * denom gets its own screen), so it cannot use the formatter and would
+ * otherwise carry a second, divergent copy of the rule -- which is exactly how
+ * it came to scale every host-chosen denom by CACAO's 1e10. */
+TEST(Mayachain, DecimalsAreKeyedOnTheDenomNotTheChain) {
+  EXPECT_EQ(10, mayachain_decimalsForDenom("cacao"));
+  EXPECT_EQ(10, mayachain_decimalsForDenom("MAYA.CACAO"));
+  EXPECT_EQ(0, mayachain_decimalsForDenom("maya"));
+  EXPECT_EQ(0, mayachain_decimalsForDenom("btc/btc"));
+  EXPECT_EQ(0, mayachain_decimalsForDenom("ETH.ETH"));
+  EXPECT_EQ(0, mayachain_decimalsForDenom(""));
+  EXPECT_EQ(0, mayachain_decimalsForDenom(nullptr));
+}
+
 TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
   char rendered[96];
 

@@ -178,8 +178,15 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
         // MayachainMsgSend.denom's max_size (69 today) cannot overflow
         // anything here. #437's class is closed by construction, not by a
         // size that has to be kept in step with the .options file.
+        //
+        // The exponent is the denom's, not a constant: MayachainMsgSend.denom
+        // is host-chosen, and scaling "maya" (1e4) or a synth (1e8) by CACAO's
+        // 1e10 shows an amount the signed document does not contain. The rule
+        // lives in mayachain_decimalsForDenom(), which the deposit screen and
+        // the formatter share.
         char amount_str[32];
-        if (!bn_format_uint64(msg->send.amount, NULL, NULL, 10, 0, false,
+        if (!bn_format_uint64(msg->send.amount, NULL, NULL,
+                              mayachain_decimalsForDenom(coin_denom), 0, false,
                               amount_str, sizeof(amount_str))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_FirmwareError,
