@@ -1002,6 +1002,9 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   return true;
 }
 
+/* Per SIMD-0170: the runtime's per-instruction allocation for a builtin. */
+#define SOL_BUILTIN_CU_PER_INSTRUCTION 3000u
+
 bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
                                  bool* has_fee) {
   if (!tx || !fee_out || !has_fee) return false;
@@ -1034,10 +1037,23 @@ bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
   }
 
   if (!seen_limit) {
-    /* Solana's runtime default is 200,000 compute units per non-budget
-     * instruction, capped at 1,400,000. Derive the actual implicit limit
-     * instead of overstating every transaction as though it used the cap. */
-    limit = non_budget_instructions * 200000u;
+    /* Solana's runtime default is 200,000 compute units per instruction, or
+     * 3,000 for a builtin one, capped at 1,400,000 (SIMD-0170). Deriving the
+     * implicit limit stops the screen overstating every transaction as though
+     * it used the cap -- but charging the ComputeBudget instructions NOTHING
+     * turns that into an understatement, and "Maximum priority fee" has to be
+     * an upper bound or it is worse than no screen. The ComputeBudget program
+     * is itself a builtin, so [SetComputeUnitPrice, TransferChecked] -- the
+     * ordinary clear-signed token send -- is charged on 203,000 CUs and was
+     * shown as 200,000. Count every instruction: the non-budget ones at
+     * 200,000 and the budget ones at 3,000. That is >= what the runtime
+     * charges under the old rule and under SIMD-0170 alike (a builtin this
+     * over-counts at 200,000 only widens the margin). num_instructions is a
+     * uint8_t, so this cannot overflow. */
+    const uint64_t budget_instructions =
+        (uint64_t)tx->num_instructions - non_budget_instructions;
+    limit = non_budget_instructions * 200000u +
+            budget_instructions * SOL_BUILTIN_CU_PER_INSTRUCTION;
     if (limit > 1400000u) limit = 1400000u;
   }
 
