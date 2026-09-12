@@ -942,6 +942,52 @@ TEST(SignedMetadataIcon, IconColumnCapIsNarrowerThanTheIconHeight) {
    * icon is drawn after the text, erase the "NOT verified" warning. */
   EXPECT_EQ(LEFT_MARGIN_WITH_ICON, 40);
   EXPECT_LT(LEFT_MARGIN_WITH_ICON, 64);
+
+  /* Those two lines assert a preprocessor constant, not the code that applies
+   * it, and in this build that is as far as the cap can be tested. Both places
+   * that enforce it — icon_renderable() and stage_runtime_icon() in
+   * lib/firmware/signed_metadata.c — live under `#if !ZCASH_PRIVACY`, and this
+   * file only compiles in the NOT KK_BITCOIN_ONLY build, where the top-level
+   * CMakeLists forces KK_ZCASH_PRIVACY ON. So the session icon cache is
+   * compiled out of every image that runs this suite: the obvious round trip
+   * ("store a 64px-wide icon, expect no icon back") would still pass with both
+   * width checks deleted, because signed_metadata_signer_icon() returns false
+   * for every slot regardless of geometry. Exercising the cap itself needs a
+   * host build with ZCASH_PRIVACY=0.
+   *
+   * What IS reachable here is that compile-out, and it is a property worth
+   * pinning: a build without the cache must render text-only everywhere, so no
+   * screen shows a logo a later screen cannot repeat. A well-formed icon
+   * exactly at the cap still comes back as "no icon". */
+  signed_metadata_clear_signers();
+  const uint8_t icon[] = {0x28, 0xFF}; /* RUN of 40 -> exactly 40x1 */
+  ASSERT_TRUE(draw_bitmap_mono_rle_valid(icon, (uint32_t)sizeof(icon),
+                                         LEFT_MARGIN_WITH_ICON, 1));
+  ASSERT_TRUE(signed_metadata_store_signer(
+      TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS, icon, LEFT_MARGIN_WITH_ICON,
+      1, (uint16_t)sizeof(icon), false));
+#if ZCASH_PRIVACY
+  EXPECT_FALSE(signed_metadata_signer_icon(TEST_KEY_ID, nullptr, nullptr,
+                                           nullptr, nullptr));
+#else
+  /* Only compiled in a variant this suite is not currently built for; kept so
+   * the control and the cap both run the day one exists. */
+  const uint8_t* out_icon = nullptr;
+  uint8_t out_w = 0, out_h = 0;
+  uint16_t out_len = 0;
+  EXPECT_TRUE(signed_metadata_signer_icon(TEST_KEY_ID, &out_icon, &out_w,
+                                          &out_h, &out_len));
+  EXPECT_EQ(out_w, LEFT_MARGIN_WITH_ICON);
+  /* One pixel over the text column must fail closed, not draw over the
+   * fingerprint and the "NOT verified by KeepKey" warning. */
+  std::vector<uint8_t> wide{0x29, 0xFF}; /* RUN of 41 -> exactly 41x1 */
+  ASSERT_TRUE(signed_metadata_store_signer(
+      TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS, wide.data(),
+      LEFT_MARGIN_WITH_ICON + 1, 1, (uint16_t)wide.size(), false));
+  EXPECT_FALSE(signed_metadata_signer_icon(TEST_KEY_ID, nullptr, nullptr,
+                                           nullptr, nullptr));
+#endif
+  signed_metadata_clear_signers();
 }
 
 TEST(SignedMetadataSignerValid, AcceptsValidCompressedKeyAllSlots) {

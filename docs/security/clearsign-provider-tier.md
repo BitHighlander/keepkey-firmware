@@ -93,39 +93,64 @@ The honest UX is therefore *"enable AdvancedMode → Vault offers to load Pionee
 device shows the identity → user confirms"*, once per session — not a silent
 background load.
 
-### 2. Live per-tx context is EVM-only, and Solana does not need it
+### 2. Live per-tx context: EVM metadata, plus Solana lookup-table accounts
 
 `EthereumTxMetadata` is transaction-bound, so a provider can sign *this*
-transaction *now*. `SolanaSignTx` accepts only
-`schema_payload` / `schema_signature` / `schema_signer_key_id` — instruction
-scoped and reusable, with no per-tx field.
+transaction *now*. Solana's reusable path — `schema_payload` /
+`schema_signature` / `schema_signer_key_id` (`KKSOLSC1`) — is instruction
+scoped, and does not need to be transaction-bound: a schema describes how to
+*read* an instruction, and the device decodes the actual values out of the bytes
+it is about to sign, so the display is bound to the signature by construction.
 
-**This is not a Solana gap to close with firmware.** A Solana schema describes
-how to *read* an instruction; the device decodes the actual values out of the
-bytes it is about to sign, so the display is bound to the signature by
-construction. Per-transaction signing would add nothing to decode correctness.
+The one Solana surface that *does* need a per-transaction attestation is
+**address lookup tables**: `solana.c` — "Accounts resolved via lookup tables:
+unverifiable on-device" — and `solana_schemaApplies` skips instructions whose
+accounts are absent from the signed message (`if (ix->external) continue`).
+Such a message is forced to `SOL_TX_REVIEW_OPAQUE`, i.e. refused outright
+without `AdvancedMode` and an explicit blind sign with **nothing** shown.
 
-The real Solana limitation is **address lookup tables**: `solana.c:204` —
-"Accounts resolved via lookup tables: unverifiable on-device" — and
-`solana_schemaApplies` skips instructions whose accounts are absent from the
-signed message (`if (ix->external) continue`). A live signature cannot repair
-this, because the device would have to take the host's word for accounts it
-cannot see, which is precisely what it refuses to do.
+**That attestation ships in this release** (`KKSOLSW1`, firmware PR #500), so
+the earlier "no firmware change" framing no longer describes the device:
 
-**The fix is host-side: the provider must inline ALT accounts into the message
-before signing.** No firmware change.
+- `SolanaSignTx` carries `lut_account` (≤ 8 × 32 bytes), `lut_signature` and
+  `lut_signer_key_id`.
+- `solana_lut_accounts_trusted()` (`solana.c`) verifies a **runtime** signer's
+  signature over `"KeepKeySolanaTxAccounts/1" || sha256(raw_tx) ||
+  count(le32) || key[i]` — domain-tagged, and bound to the exact message being
+  signed, so it cannot be replayed onto another transaction.
+- `fsm_msg_solana.h` then draws a "Lookup Accounts" screen naming the signer's
+  alias and fingerprint plus "NOT verified by KeepKey", followed by one screen
+  per base58 account.
 
-Per-tx Solana attestation is only interesting later, for context that is *not*
-derivable from the bytes at all (reputation, recipient labels, fiat values) —
-a Phase 3 want, not a blocker here.
+This is the tier's invariant applied, not an exception to it: the screens are
+**additive and drawn before** the blind-sign warning, never instead of it, and
+an absent, malformed or unverifiable attestation draws nothing and leaves the
+flow byte-for-byte what it was. The accounts stay host-supplied and are never
+represented as derived — the device still cannot see them; it now names who is
+claiming them, which is the whole difference between a blind sign and a
+described one.
+
+**Host-side ALT inlining remains the stronger fix where a provider can do it**,
+because inlined accounts are derived from the signed bytes rather than asserted
+by a third party. The attestation is the fallback for the messages where it
+cannot.
+
+Per-tx Solana attestation for context that is *not* derivable from the bytes at
+all (reputation, recipient labels, fiat values) is still a Phase 3 want, not a
+blocker here.
 
 ## What actually has to be built
 
-Nothing in firmware. The work is provider-side and host-side:
+The firmware side of the Solana lookup-table gap shipped as `KKSOLSW1` (§2
+above); everything remaining is provider-side and host-side:
 
 1. **Pioneer signing service** — holds the provider key; pre-signs the schema
-   catalog, and signs per-transaction EVM metadata live.
-2. **Pioneer ALT inlining** — so Solana schemas can apply at all.
+   catalog, and signs per-transaction EVM metadata and `KKSOLSW1` account lists
+   live.
+2. **Pioneer ALT resolution** — inline lookup-table accounts into the message
+   where possible, so Solana schemas can apply at all; where that is not
+   possible, attest the resolved account list so the accounts are at least
+   named on screen.
 3. **Vault provider flow** — offer to load the provider after AdvancedMode is
    enabled, surface the device confirm, remember the *user's choice* as a Vault
    setting while the *device trust* stays session-scoped, and attach provider
@@ -170,14 +195,20 @@ be omitted: two different ordered type declarations can have the same total
 width while assigning the same labels to different byte offsets.
 
 `SolanaSignTx` tags 9, 10, and 11 carry `schema_payload`, `schema_signature`,
-and `schema_signer_key_id`. Tags 5 through 8 are reserved for the
-transaction-bound `KKSOLSW1` descriptor and one-request opaque-signing
-consent — removing that reservation or assigning those tags is a
-protocol-review event. Hosts built against the older experimental schema
-contract (tags 5, 6, 7) fall back silently to the ordinary unverified review,
-since protobuf treats those fields as unknown; that fallback is safe but
-operationally silent, so host release notes must state which contract a
-reusable schema requires.
+and `schema_signer_key_id`. Tags 5, 6, and 7 are **no longer reserved**: they
+are the shipped transaction-bound `KKSOLSW1` attestation (`lut_account`,
+`lut_signature`, `lut_signer_key_id`). Only tag 8 is still held back, for
+one-request opaque-signing consent — removing that reservation or assigning
+that tag is a protocol-review event.
+
+A host built against the older experimental schema contract (tags 5, 6, 7)
+therefore no longer falls back by protobuf ignoring unknown fields: its bytes
+now **decode** into the `lut_*` fields. The fallback is still safe, but the
+mechanism is validation — every `lut_account` must be exactly 32 bytes, the
+count must be 1–8, and the signature must verify against a loaded signer over
+this transaction's own hash — so stale or foreign material is rejected and no
+extra screen is drawn. That rejection remains operationally silent, so host
+release notes must state which contract a reusable schema requires.
 
 ## Open question for the roadmap
 
