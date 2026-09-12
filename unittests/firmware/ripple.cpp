@@ -67,27 +67,24 @@ TEST(Ripple, SerializeAddress) {
                      22) == 0);
 }
 
-TEST(Ripple, AmountBoundaryMatchesProtocolAndFsmLimit) {
-  uint8_t buffer[9] = {0};
-  uint8_t *buf = buffer;
+/* XRP's own ceiling is 100 billion XRP = 1e17 drops. The amount encoding has
+ * 62 usable bits (the top two flag XRP and positive), so it fits with room to
+ * spare -- a device bound of 1e11 drops would refuse 99.9999% of the supply. */
+TEST(Ripple, SerializeAmountCoversTheProtocolMaximum) {
+  uint8_t buf[16];
+  memset(buf, 0, sizeof(buf));
+  uint8_t *cursor = buf;
   bool ok = true;
-  ripple_serializeAmount(&ok, &buf, buffer + sizeof(buffer), &RFM_amount,
-                         RIPPLE_MAX_AMOUNT_DROPS);
-  EXPECT_TRUE(ok);
-  EXPECT_EQ(buffer + sizeof(buffer), buf);
 
-  memset(buffer, 0, sizeof(buffer));
-  buf = buffer;
-  ok = true;
-  ripple_serializeAmount(&ok, &buf, buffer + sizeof(buffer), &RFM_amount,
-                         RIPPLE_MAX_AMOUNT_DROPS + 1);
-  EXPECT_FALSE(ok);
-  EXPECT_EQ(buffer, buf) << "an invalid amount must emit no partial field";
+  ripple_serializeAmount(&ok, &cursor, buf + sizeof(buf), &RFM_amount,
+                         (int64_t)RIPPLE_MAX_DROPS);
 
-  ok = true;
-  ripple_serializeAmount(&ok, &buf, buffer + sizeof(buffer), &RFM_amount, -1);
-  EXPECT_FALSE(ok);
-  EXPECT_EQ(buffer, buf);
+  ASSERT_TRUE(ok);
+  ASSERT_EQ(9, cursor - buf);
+  EXPECT_EQ(0x61, buf[0]);  // field type 6 (amount), key 1
+  // 1e17 = 0x016345785D8A0000, with bit 62 set to mark it positive.
+  const uint8_t expected[8] = {0x41, 0x63, 0x45, 0x78, 0x5D, 0x8A, 0x00, 0x00};
+  EXPECT_EQ(0, memcmp(buf + 1, expected, sizeof(expected)));
 }
 
 TEST(Ripple, Serialize) {
@@ -150,45 +147,4 @@ TEST(Ripple, Serialize) {
         "\x78\x08\x26";
 
   ASSERT_TRUE(memcmp(serialized, expected, sizeof(serialized)) == 0);
-}
-
-/* #553 boundary regression, requested by independent review before PR #557
- * merged (added afterward in round 4's remediation, per #583). An earlier
- * fix attempt bounded payment.amount at 1e11 (XRP-sized), which would have
- * rejected any legitimate payment over 100,000 XRP; the corrected bound is
- * 1e17 DROPS -- XRPL's real protocol maximum of 100,000,000,000 XRP. This
- * checks the serializer half of that fix: ripple_serializeAmount()'s own
- * assert() uses the same 1e17 ceiling as fsm_msg_ripple.h's runtime check
- * (see #557), so the true maximum must serialize without tripping it. */
-TEST(Ripple, SerializerAcceptsMaximumProtocolAmount) {
-  RippleSignTx tx;
-  memset(&tx, 0, sizeof(tx));
-
-  tx.address_n_count = 0;
-  tx.has_fee = true;
-  tx.fee = 100000;
-  tx.has_flags = true;
-  tx.flags = 0x80000000;
-  tx.has_sequence = true;
-  tx.sequence = 1;
-
-  tx.has_payment = true;
-  tx.payment.has_amount = true;
-  tx.payment.amount = 100000000000000000ULL;  // 1e17 drops = 100B XRP
-  tx.payment.has_destination = true;
-  strcpy(tx.payment.destination, "rBKz5MC2iXdoS3XgnNSYmF69K1Yo4NS3Ws");
-
-  uint8_t serialized[200];
-  memset(serialized, 0, sizeof(serialized));
-
-  const uint8_t *public_key = (const uint8_t*)
-        "\x02\x13\x1f\xac\xd1\xea\xb7\x48\xd6\xcd\xdc\x49\x2f\x54\xb0\x4e"
-        "\x8c\x35\x65\x88\x94\xf4\xad\xd2\x23\x2e\xbc\x5a\xfe\x75\x21\xdb\xe4";
-
-  uint8_t *buf = serialized;
-  EXPECT_TRUE(ripple_serialize(&buf, buf + sizeof(serialized), &tx,
-                               "rNaqKtKrMSwpwZSzRckPf7S96DkimjkF4H", public_key,
-                               nullptr, 0))
-      << "the protocol maximum must serialize, not trip "
-         "ripple_serializeAmount()'s bound assert";
 }

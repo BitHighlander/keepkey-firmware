@@ -32,7 +32,6 @@
 #include "keepkey/board/supervise.h"
 #include "keepkey/board/util.h"
 #include "keepkey/rand/rng.h"
-#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/rand.h"
 
@@ -97,23 +96,17 @@ bool flash_chk_status(void) {
  *     none
  */
 void flash_erase_word(Allocation group) {
+  const FlashSector* s = flash_sector_map;
+  while (s->use != FLASH_INVALID) {
+    if (s->use == group) {
 #ifndef EMULATOR
-  const FlashSector* s = flash_sector_map;
-  while (s->use != FLASH_INVALID) {
-    if (s->use == group) {
       svc_flash_erase_sector((uint32_t)s->sector);
-    }
-    ++s;
-  }
 #else
-  const FlashSector* s = flash_sector_map;
-  while (s->use != FLASH_INVALID) {
-    if (s->use == group) {
-      memset((void*)FLASH_PTR(s->start), 0xFF, s->len);
+      memset((void*)FLASH_PTR(s->start), 0xff, s->len);
+#endif
     }
     ++s;
   }
-#endif
 }
 
 /*
@@ -338,17 +331,10 @@ void flash_collectHWEntropy(bool privileged) {
     // set entropy in the OTP randomness block
     if (!flash_otp_is_locked(FLASH_OTP_BLOCK_RANDOMNESS)) {
       uint8_t entropy[FLASH_OTP_BLOCK_SIZE] = {0};
-      /* Written once and then locked forever, and it feeds the PIN KDF salt
-       * via flash_readHWEntropy(). A block filled from a dead generator can
-       * never be corrected, so on a failed draw write nothing: the block stays
-       * unlocked and a later healthy boot claims it. Halting is wrong here --
-       * this runs before kk_board_init(), so there is no display to warn on. */
-      if (random_buffer_checked(entropy, FLASH_OTP_BLOCK_SIZE)) {
-        flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, 0, entropy,
-                        FLASH_OTP_BLOCK_SIZE);
-        flash_otp_lock(FLASH_OTP_BLOCK_RANDOMNESS);
-      }
-      memzero(entropy, sizeof(entropy));
+      random_buffer(entropy, FLASH_OTP_BLOCK_SIZE);
+      flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, 0, entropy,
+                      FLASH_OTP_BLOCK_SIZE);
+      flash_otp_lock(FLASH_OTP_BLOCK_RANDOMNESS);
     }
     // collect entropy from OTP randomness block
     flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0, HW_ENTROPY_DATA + 12,

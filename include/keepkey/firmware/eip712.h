@@ -21,15 +21,12 @@
    EIP-712 spec in how arrays of structs are hashed but is compatable with
    metamask. See https://github.com/MetaMask/eth-sig-util/pull/107
 
-    eip712 data rules:
-    Parser wants to see C strings, not javascript strings:
-        requires all complete json message strings to be enclosed by braces,
-   i.e., { ... } Cannot have entire json string quoted, i.e., "{ ... }" will not
-   work. Remove all quote escape chars, e.g., {"types":  not  {\"types\":
-    Integer values must use canonical base-10 digits. Negative values use a
-   leading minus sign. Do not prefix ints or uints with 0x.
-    All hex and byte strings must be big-endian
-    Byte strings and address should be prefixed by 0x
+    EIP-712 input rules for this legacy parser:
+    Supply a JSON object as a NUL-terminated C string, not a JSON string
+    containing an escaped object. Integer values are parsed as base-10 text
+    with strtoll and must fit its signed 64-bit range; do not use a 0x prefix.
+    Negative signed values use a leading minus sign. Byte strings and addresses
+    use big-endian hexadecimal with a 0x prefix.
 */
 #ifndef EIP712_H
 #define EIP712_H
@@ -110,11 +107,5 @@ int encAddress(const char* string, uint8_t* encoded);
 int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
            uint8_t* hashRet);
 bool eip712_parse_canonical_u32(const char* text, uint32_t* value);
-
-/* Exposed for strict-value regression tests. encAddress is declared above with
-   the rest of the encoder API; re-declaring it here trips
-   -Werror=redundant-decls on the ARM build. */
-int encodeBytes(const char* string, uint8_t* encoded);
-int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded);
 
 #endif

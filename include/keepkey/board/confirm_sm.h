@@ -25,6 +25,7 @@
 #include "keepkey/board/layout.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* implement a means to display debug information */
 #ifdef DEBUG_ON
@@ -97,34 +98,16 @@ typedef void (*layout_notification_t)(const char* str1, const char* str2,
 /// \returns true iff the whole body will be on screen.
 bool confirm_body_fits(const char* body, uint16_t body_width);
 
-/// Constant-power confirmation that pages locally inside ONE ButtonRequest.
-///
-/// Content grouped for BODY_WIDTH does not always fit the real constant-power
-/// width, but the grouping is the host protocol boundary -- one request per
-/// group, one word set read per request -- so extra screens must not become
-/// extra requests. Intermediate subpages take a short press; the last takes the
-/// hold. Cancelling any subpage cancels the group.
+/// Same renderer-backed fit probe at the constant-power draw origin.
+bool confirm_body_fits_constant_power(const char* body, uint16_t body_width);
+
+/// Split a constant-power body at the last complete row that fits.
+size_t confirm_constant_power_subpage_take(const char* body);
+
+/// Page a constant-power body locally under exactly one ButtonRequest.
 bool confirm_constant_power_paged(ButtonRequestType type,
                                   const char* request_title,
                                   const char* request_body);
-
-/// How many bytes of `body` fit one constant-power screen, split only at row
-/// boundaries so a numbered word is never divided across screens.
-///
-/// Exposed for tests. The carried subpages inside a group are drawn but not
-/// waited on, so DebugLinkGetState cannot observe them individually -- a
-/// DebugLink screenshot sees a group's LAST subpage. Per-subpage content is
-/// proven here and on physical hardware instead.
-size_t confirm_constant_power_subpage_take(const char* body);
-
-/// Same, for constant-power screens, which draw from x = 128 + LEFT_MARGIN.
-///
-/// Only KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) px exists past that origin,
-/// so a body that fits when measured from the left margin can still be clipped
-/// here. Exposed for tests: the seed-backup pages are drawn by this layout, and
-/// a page that does not fit loses every character after the first rejected
-/// glyph -- including whole later lines.
-bool confirm_body_fits_constant_power(const char* body, uint16_t body_width);
 
 /// User confirmation.
 /// \param type            The kind of button request to send to the host.
@@ -159,6 +142,23 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
                                 ButtonRequestType type,
                                 const char* request_title,
                                 const char* request_body, ...)
+    __attribute__((format(printf, 4, 5)));
+
+/// Address/xpub verification, custom layout -- the layout is HONORED.
+///
+/// Unlike confirm_with_custom_layout(), which routes consent screens through
+/// the measured standard renderer, this keeps the caller's renderer so the
+/// address QR code survives. Use it only for screens that display a
+/// device-derived public value for checking; anything the owner is consenting
+/// to sign belongs on confirm_with_custom_layout().
+/// \param layout_notification_func      Layout callback.
+/// \param type            The kind of button request to send to the host.
+/// \param request_title   Title of confirm message.
+/// \param request_body    Body of confirm message.
+/// \returns true iff the device confirmed.
+bool confirm_address_with_custom_layout(
+    layout_notification_t layout_notification_func, ButtonRequestType type,
+    const char* request_title, const char* request_body, ...)
     __attribute__((format(printf, 4, 5)));
 
 /// User confirmation.
@@ -202,9 +202,17 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum,
                       const char* request_title, const char* request_body, ...)
     __attribute__((format(printf, 4, 5)));
 
-/// Like confirm, but always \returns true and immediately.
+/// Like confirm, but the hold is immediate: a short click confirms.
+///
+/// The screen is otherwise a confirmation, and the verdict is real -- a host
+/// Cancel (or Initialize) still \returns false, so callers that page a body
+/// across several screens can bail out of an intermediate page. Use it for
+/// screens that are shown rather than consented to; reserve confirm()'s full
+/// hold for the screen that actually approves something.
+/// \param type            The kind of button request to send to the host.
 /// \param request_title   Title of confirm message.
 /// \param request_body    Body of confirm message.
+/// \returns true iff the device confirmed.
 bool review_immediate(ButtonRequestType type, const char* request_title,
                       const char* request_body, ...)
     __attribute__((format(printf, 3, 4)));

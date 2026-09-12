@@ -23,11 +23,9 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
-#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/pin_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
-#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/memzero.h"
 
 #include <stdbool.h>
@@ -83,6 +81,7 @@ static void check_for_pin_ack(PINInfo* pin_info) {
     default:
       break;
   }
+  memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
 }
 
 /// Request and receive PIN from user over USB port
@@ -162,12 +161,7 @@ static bool pin_request(const char* prompt, PINInfo* pin_info) {
 
   /* Init and randomize pin matrix */
   strlcpy(pin_matrix, "123456789", PIN_BUF);
-  if (!random_permute_char_checked(pin_matrix, 9)) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    "RNG health check failed; PIN entry refused");
-    layoutHome();
-    return false;
-  }
+  random_permute_char(pin_matrix, 9);
 
   /* Show layout */
   layout_pin(prompt, pin_matrix);
@@ -244,13 +238,13 @@ bool pin_protect(const char* prompt) {
 
   // Set request type
   PINInfo pin_info;
+  bool ret = false;
   pin_info.type = PinMatrixRequestType_PinMatrixRequestType_Current;
 
   // Get PIN
   if (!pin_request(prompt, &pin_info)) {
     // PIN entry has been canceled by the user
-    memzero(&pin_info, sizeof(pin_info));
-    return false;
+    goto done;
   }
 
   // Preincrement the failed counter before authentication
@@ -259,23 +253,25 @@ bool pin_protect(const char* prompt) {
 
   // Check if PIN entered is wipe code
   if (storage_isWipeCodeCorrect(pin_info.pin)) {
+    fsm_abort_workflows();
     session_clear(false);
     storage_clearKeys();
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
-    memzero(&pin_info, sizeof(pin_info));
-    return false;
+    goto done;
   }
 
   // Authenticate user PIN
   if (!storage_isPinCorrect(pin_info.pin) || pre_increment_cnt_flg) {
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
-    memzero(&pin_info, sizeof(pin_info));
-    return false;
+    goto done;
   }
 
   storage_resetPinFails();
+  ret = true;
+
+done:
   memzero(&pin_info, sizeof(pin_info));
-  return true;
+  return ret;
 }
 
 bool pin_protect_cached(void) {
@@ -325,8 +321,6 @@ bool change_pin(void) {
 }
 
 bool change_wipe_code(void) {
-  /* Both structs are memzero'd on every exit path below, including the
-     failure ones -- same discipline as change_pin_staged() above. */
   PINInfo wipe_code_info_first, wipe_code_info_second;
   bool ret = false;
 
@@ -336,12 +330,17 @@ bool change_wipe_code(void) {
   wipe_code_info_second.type =
       PinMatrixRequestType_PinMatrixRequestType_NewSecond;
 
-  if (!pin_request("Enter New Wipe Code", &wipe_code_info_first)) goto done;
-
-  if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second)) goto done;
-
-  if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0)
+  if (!pin_request("Enter New Wipe Code", &wipe_code_info_first)) {
     goto done;
+  }
+
+  if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second)) {
+    goto done;
+  }
+
+  if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0) {
+    goto done;
+  }
 
   storage_setWipeCode(wipe_code_info_first.pin);
   ret = true;

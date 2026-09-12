@@ -33,8 +33,6 @@
 
 // #include <stdio.h>
 
-/* Renamed from `errno` to avoid colliding with the libc <errno.h> macro on
- * glibc/MinGW (where errno expands to (*_errno())). Write-only, never read. */
 int json_errno = 0;
 
 /** Structure to handle a heap of JSON properties. */

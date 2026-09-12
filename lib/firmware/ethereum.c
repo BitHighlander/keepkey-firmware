@@ -33,7 +33,6 @@
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
-#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
@@ -53,27 +52,24 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
   return advanced_mode;
 }
 
-/* The device-driven stream validates, renders and hashes each leaf from the
- * same byte buffer. It is not blind signing and therefore does not inherit the
- * AdvancedMode requirement of the precomputed-hash endpoint. */
-bool ethereum_streamed_eip712_enabled(void) { return true; }
-
 /* The legacy JSON parser cannot guarantee that every displayed value is the
  * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
  * but fail closed in the FSM until the complete parser hardening is backported.
  */
 bool ethereum_structured_eip712_enabled(void) { return false; }
 
-/* Exact match, never a prefix. The legacy test was
- *   strncmp(primeType, "EIP712Domain", strlen(primeType))
- * whose length came from the HOST-supplied string, so every prefix -- "" and
- * "EIP" included -- compared equal and took the domain-only branch, emitting a
- * signature with no message hash for typed data the user was shown. */
-bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
-  return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
-}
-
-#define MAX_CHAIN_ID 2147483630
+/* The EIP-155 legacy recovery id is v + 2 * chain_id + 35, computed below in
+ * a uint32_t, where v is 0 or 1. The bound is the largest chain id whose
+ * WORST case still fits:
+ *
+ *     2 * 2147483629 + 35 + 1 == 4294967294   <= UINT32_MAX, fits
+ *     2 * 2147483630 + 35 + 1 == 4294967296   wraps to 0
+ *
+ * The old bound of 2147483630 sat exactly on that wrap: with v == 0 it lands
+ * on UINT32_MAX, and with v == 1 it reports a recovery id of 0 for a signature
+ * the device really made. A verifier recovers the wrong address from that, so
+ * the signature is silently unverifiable rather than refused. */
+#define MAX_CHAIN_ID 2147483629
 
 #define ETHEREUM_TX_TYPE_LEGACY 0UL
 #define ETHEREUM_TX_TYPE_EIP_2930 1UL
@@ -81,10 +77,9 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
 
 static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
-/* Arbitrary calldata can arrive over several EthereumTxAck messages.  Keep a
- * second Keccak state for the user-visible commitment: the transaction hash
- * state also includes RLP fields and therefore cannot identify calldata by
- * itself. */
+/* Arbitrary calldata may continue across EthereumTxAck messages. Track a
+ * second Keccak state whose sole input is calldata so the final approval can
+ * bind to every byte, not merely the first chunk or the whole RLP preimage. */
 static bool data_hash_pending = false;
 static struct SHA3_CTX data_keccak_ctx;
 static EthereumTxRequest msg_tx_request;
@@ -94,6 +89,11 @@ static uint32_t wanchain_tx_type;  // Wanchain only
 static uint32_t
     ethereum_tx_type;  // Ethereum tx type (0=Legacy, 1=EIP-2930, 2=EIP-1559)
 struct SHA3_CTX keccak_ctx;
+
+bool ethereum_chainIdIsValid(const EthereumSignTx* msg) {
+  return msg && msg->has_chain_id && msg->chain_id >= 1 &&
+         msg->chain_id <= MAX_CHAIN_ID;
+}
 
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
@@ -139,6 +139,41 @@ bool ethereum_getStandardERC20Coin(const EthereumSignTx* msg, CoinType* coin) {
 
   coinFromToken(coin, token);
   return true;
+}
+
+bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
+                                  int buflen) {
+  if (!msg || !buf || buflen <= 0 || !ethereum_chainIdIsValid(msg)) {
+    return false;
+  }
+
+  const uint8_t* value_bytes;
+  size_t value_size;
+  const TokenType* token;
+
+  /* ethereumFormatAmount() keys the " WAN" ticker off the module's
+   * wanchain_tx_type, which ethereum_signing_init() sets -- and on the
+   * transfer path that has not run yet. Set it from THIS message, or a
+   * previous Wanchain transaction's type names the asset on this one's amount
+   * screen. signing_init() assigns the same value again later. */
+  wanchain_tx_type =
+      (msg->has_tx_type && (msg->tx_type == 1 || msg->tx_type == 6))
+          ? msg->tx_type
+          : 0;
+
+  if (ethereum_isStandardERC20Transfer(msg)) {
+    value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
+    value_size = 32;
+    token = tokenByChainAddress(msg->chain_id, msg->to.bytes);
+  } else {
+    value_bytes = msg->value.bytes;
+    value_size = msg->value.size;
+    token = NULL;
+  }
+
+  bignum256 value;
+  bn_from_bytes(value_bytes, value_size, &value);
+  return ethereumFormatAmount(&value, token, msg->chain_id, buf, buflen);
 }
 
 void bn_from_bytes(const uint8_t* value, size_t value_len, bignum256* val) {
@@ -235,20 +270,6 @@ static void hash_rlp_number(uint32_t number) {
   hash_rlp_field(data + offset, 4 - offset);
 }
 
-/* Strip leading zero bytes before RLP-encoding an integer field.
- * Per the Ethereum yellow paper, integer fields (nonce, gas, value, etc.)
- * must not have leading zeros. Addresses are NOT integers and must not use
- * this function. */
-static void hash_rlp_bytes_stripped(const uint8_t* buf, size_t size) {
-  size_t offset = 0;
-  while (offset < size && buf[offset] == 0) offset++;
-  if (offset == size) {
-    hash_rlp_field(buf, 0);
-  } else {
-    hash_rlp_field(buf + offset, size - offset);
-  }
-}
-
 /*
  * Calculate the number of bytes needed for an RLP length header.
  * NOTE: supports up to 16MB of data (how unlikely...)
@@ -266,21 +287,6 @@ static int rlp_calculate_length(int length, uint8_t firstbyte) {
   } else {
     return 4 + length;
   }
-}
-
-/* Length of an RLP-encoded integer field AFTER stripping leading zero bytes.
- * MUST mirror hash_rlp_bytes_stripped(): the Stage-1 list-length header
- * (hash_rlp_list_length) and the Stage-2 bytes actually hashed have to agree,
- * or the keccak pre-image is malformed and the signature recovers to a garbage
- * address (looks like a "random signer" / dropped tx). Any integer field whose
- * big-endian form has a leading zero byte hits this. */
-static int rlp_calculate_length_stripped(const uint8_t* buf, size_t size) {
-  size_t offset = 0;
-  while (offset < size && buf[offset] == 0) offset++;
-  if (offset == size) {
-    return rlp_calculate_length(0, 0);
-  }
-  return rlp_calculate_length(size - offset, buf[offset]);
 }
 
 static int rlp_calculate_number_length(uint32_t number) {
@@ -325,19 +331,6 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
-
-  /* Insight clear-signing binding. If a verified metadata blob suppressed the
-   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
-   * metadata committed to. This is the first point that digest exists, so the
-   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
-   * never emit a signature the displayed decoded screen did not cover. */
-  if (!signed_metadata_enforce(hash)) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    "Metadata does not match signed transaction");
-    ethereum_signing_abort();
-    return;
-  }
-
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
@@ -399,9 +392,9 @@ static void finalize_eip1559_and_send_signature(void) {
 
 /* Format a 256 bit number (amount in wei) into a human readable format
  * using standard ethereum units.
- * The buffer must be at least 25 bytes.
+ * The buffer must be at least 28 bytes so the overflow sentinel always fits.
  */
-void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
+bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
                           uint32_t cid, char* buf, int buflen) {
   bignum256 bn1e9;
   bn_read_uint32(1000000000, &bn1e9);
@@ -409,7 +402,7 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
   int decimals = 18;
   if (token == UnknownToken) {
     strlcpy(buf, "Unknown token value", buflen);
-    return;
+    return true;
   } else if (token != NULL) {
     suffix = token->ticker;
     decimals = token->decimals;
@@ -432,7 +425,7 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
           suffix = " UBQ";
           break;  // UBIQ
         case 10:
-          suffix = " OP";
+          suffix = " ETH";
           break;  // Optimism
         case 20:
           suffix = " EOSC";
@@ -461,28 +454,49 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         case 137:
           suffix = " MATIC";
           break;  //  Polygon Mainnet
+        case 8453:
+          suffix = " ETH";
+          break;  // Base
+        case 42161:
+          suffix = " ETH";
+          break;  // Arbitrum One
         case 43114:
           suffix = " AVAX";
-          break;  //  Avalanche C-Chain
+          break;  // Avalanche C-Chain
+      }
+
+      /* No case matched: this chain's native asset has no name here.
+       *
+       * Falling through with suffix == NULL made bn_format() render a bare
+       * 18-decimal number -- "Send 0.05 to 0xABC" -- which names no asset and
+       * no network, on a screen that is the whole basis for the signature.
+       * Both the value and the gas fee go through this function with
+       * token == NULL, so an unmapped chain got two unlabelled numbers.
+       *
+       * Adding more cases does not fix this; the fallback has to stop being
+       * silent. Refusing is not right either: every caller treats false as a
+       * hard refusal, so a chain merely missing from this list -- a new L2,
+       * say -- would become unsignable, including its gas.
+       *
+       * So state exactly what is known. Wei is the base unit of every EVM
+       * chain regardless of what its native asset is called, so the amount
+       * stays exact and carries a correct unit; what is dropped is the claim
+       * to know the asset's name. This is the same rendering sub-gwei amounts
+       * already get a few lines above. */
+      if (!suffix) {
+        suffix = " Wei";
+        decimals = 0;
       }
     }
   }
-  /* bn_format() BLANKS the buffer and returns 0 when the value does not fit:
-   * BN_FORMAT_ADD_OUTPUT_CHAR does memset(output, 0, output_length) on
-   * overflow. Ignoring the return therefore renders an EMPTY amount on the
-   * confirmation screen, and an empty string is the one rendering a user
-   * cannot read as wrong -- they approve a transfer whose value was never
-   * shown. A 256-bit value at 18 decimals needs ~80 characters, so this is
-   * reachable with an ordinary large-amount transfer, not a corner case.
-   *
-   * Never leave the caller a blank amount. Say the value could not be shown,
-   * so the screen is refusable rather than silently empty. */
-  if (bn_format(amnt, NULL, suffix, decimals, 0, false, buf, buflen) == 0) {
-    strlcpy(buf, _("AMOUNT TOO LARGE TO DISPLAY"), buflen);
+  if (!bn_format(amnt, NULL, suffix, decimals, 0, false, buf, buflen)) {
+    strlcpy(buf, "AMOUNT TOO LARGE TO DISPLAY", buflen);
+    return false;
   }
+  return true;
 }
 
-static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
+static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
                                     size_t out_str_len, bool approve) {
@@ -492,19 +506,17 @@ static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   memcpy(pad_val + (32 - value_len), value, value_len);
   bn_read_be(pad_val, &val);
 
-  /* 256-bit at 18 decimals is 60 integer digits + '.' + 18 fractional + a
-   * suffix, so 32 bytes silently blanked the amount for ordinary large
-   * transfers. Size it so the formatter cannot overflow at all; the guard in
-   * ethereumFormatAmount() remains as the backstop. */
-  char amount[96];
+  char amount[32];
   if (token == NULL) {
     if (bn_is_zero(&val)) {
       strcpy(amount, _("message"));
     } else {
-      ethereumFormatAmount(&val, NULL, chain_id, amount, sizeof(amount));
+      if (!ethereumFormatAmount(&val, NULL, chain_id, amount, sizeof(amount)))
+        return false;
     }
   } else {
-    ethereumFormatAmount(&val, token, chain_id, amount, sizeof(amount));
+    if (!ethereumFormatAmount(&val, token, chain_id, amount, sizeof(amount)))
+      return false;
   }
 
   char addr[43] = "0x";
@@ -543,7 +555,9 @@ static void layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   if (out_str_len <= (size_t)cx) {
     /*error detected. Clear the buffer */
     memset(out_str, 0, out_str_len);
+    return false;
   }
+  return true;
 }
 
 static bool confirm_ethereum_data_hash(void) {
@@ -554,9 +568,9 @@ static bool confirm_ethereum_data_hash(void) {
   data2hex(digest, sizeof(digest), hex_digest);
   data_hash_pending = false;
 
-  /* The hash is ASCII hex so a user can compare it directly with a host-side
-   * Keccak-256.  confirm_bytes() guarantees that all 64 characters are shown
-   * even if a future font/layout change makes them span multiple screens. */
+  /* ASCII hex lets an AdvancedMode user compare the exact Keccak-256 with a
+   * host-side value. confirm_bytes() guarantees all 64 characters are shown
+   * if a future layout/font makes them span more than one screen. */
   const bool approved = confirm_bytes(
       ButtonRequestType_ButtonRequest_ConfirmOutput, "Ethereum Data Hash",
       (const uint8_t*)hex_digest, sizeof(hex_digest) - 1);
@@ -591,7 +605,7 @@ static void formatEthereumFeeEIP1559(bignum256* fee,
   bn_add(fee, &max_fee);
 }
 
-static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
+static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
                               char* out_str, size_t out_str_len) {
   bignum256 val, gas;
   char gas_value[32];
@@ -613,7 +627,8 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
          msg->gas_limit.size);
   bn_read_be(pad_val, &gas);
   bn_multiply(&val, &gas, &secp256k1.prime);
-  ethereumFormatAmount(&gas, NULL, chain_id, gas_value, sizeof(gas_value));
+  if (!ethereumFormatAmount(&gas, NULL, chain_id, gas_value, sizeof(gas_value)))
+    return false;
 
   memset(pad_val, 0, sizeof(pad_val));
   memcpy(pad_val + (32 - msg->value.size), msg->value.bytes, msg->value.size);
@@ -622,7 +637,8 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
   if (bn_is_zero(&val)) {
     strcpy(tx_value, is_token ? _("the tokens") : _("the message"));
   } else {
-    ethereumFormatAmount(&val, NULL, chain_id, tx_value, sizeof(tx_value));
+    if (!ethereumFormatAmount(&val, NULL, chain_id, tx_value, sizeof(tx_value)))
+      return false;
   }
 
   if ((uint32_t)snprintf(
@@ -631,7 +647,9 @@ static void layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
           gas_value) >= out_str_len) {
     /*error detected.  Clear the buffer */
     memset(out_str, 0, out_str_len);
+    return false;
   }
+  return true;
 }
 
 /*
@@ -663,13 +681,23 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
     return false;
   }
 
-  // Sanity-bound the fee field that this tx type actually uses, so the
-  // on-screen fee (fee_per_gas * gas_limit) cannot overflow into the modular
-  // bn_multiply and display a wrong value. EIP-1559 uses max_fee_per_gas;
-  // legacy uses gas_price (which is 0 for EIP-1559 and vice versa).
-  size_t fee_per_gas_size = msg->has_max_fee_per_gas ? msg->max_fee_per_gas.size
-                                                     : msg->gas_price.size;
-  if (fee_per_gas_size + msg->gas_limit.size > 30) {
+  if (msg->gas_price.size + msg->gas_limit.size > 30) {
+    // sanity check that fee doesn't overflow
+    return false;
+  }
+
+  /* The same sanity check, for the field the EIP-1559 fee screen actually
+     multiplies. confirmEthereumTx() feeds max_fee_per_gas into
+     bn_multiply(&val, &gas, &secp256k1.prime), which reduces its product
+     modulo the curve prime. The legacy bound above never reaches it: a 1559
+     transaction carries no gas_price, so gas_price.size is 0 and a 32-byte
+     max_fee_per_gas paired with a 32-byte gas_limit passes untouched. The
+     product then wraps and the approval screen names a gas cost that is not
+     the one being signed -- the display diverges from the signature, which is
+     the one thing this release line exists to prevent. Hold the 1559 pair to
+     the same 30-byte budget. */
+  if (msg->has_max_fee_per_gas &&
+      msg->max_fee_per_gas.size + msg->gas_limit.size > 30) {
     return false;
   }
 
@@ -678,15 +706,7 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
 
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
-  /* layoutEthereumConfirmTx's amount[96] buffer (95 usable chars: 60 integer
-   * digits + '.' + 18 fractional + a suffix, sized to hold any 256-bit
-   * amount) is composed into this buffer via templates up to
-   * "Approve withdrawal of up to %s by %s?" (34 literal chars) plus a
-   * 42-char "0x"+40-hex address: 34 + 95 + 42 + 1 (NUL) = 172. The old
-   * 121-byte size predates amount's enlargement and could silently blank
-   * the whole confirmation body for an ordinary large-but-valid transfer;
-   * size for the real worst case with headroom. */
-  char confirm_body_message[176] = {0};
+  char confirm_body_message[121] = {0};
 
   ethereum_signing = true;
   data_hash_pending = false;
@@ -725,7 +745,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
    * id >= 1; a host omitting the field is malformed, not legacy.
    */
   chain_id = msg->has_chain_id ? msg->chain_id : 0;
-  if (chain_id < 1) {
+  if (!ethereum_chainIdIsValid(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Chain Id out of bounds"));
     ethereum_signing_abort();
@@ -760,30 +780,17 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_tx_type = ETHEREUM_TX_TYPE_LEGACY;
   }
 
-  /* The typed prefix (0x02) and access list are emitted based on
-   * ethereum_tx_type, while the fee fields are selected by has_max_fee_per_gas.
-   * If those two disagree, Stage 1 (rlp_length) and Stage 2 (hashed bytes)
-   * describe different field lists and the signature recovers to a wrong
-   * address. Enforce a consistent shape up front. */
-  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
-    if (chain_id == 0) {
-      /* chain_id is the mandatory first RLP field of an EIP-1559 tx; absent
-       * chain_id is counted (1 byte) in Stage 1 but hash_rlp_number(0) hashes
-       * nothing in Stage 2. */
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("EIP-1559 transactions require chain_id"));
-      ethereum_signing_abort();
-      return;
-    }
-    if (!msg->has_max_fee_per_gas) {
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("EIP-1559 transactions require max_fee_per_gas"));
-      ethereum_signing_abort();
-      return;
-    }
-  } else if (msg->has_max_fee_per_gas) {
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559 && chain_id == 0) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("max_fee_per_gas requires an EIP-1559 (type 2) tx"));
+                    _("EIP-1559 transactions require chain_id"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559 &&
+      !msg->has_max_fee_per_gas) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("EIP-1559 transactions require max_fee_per_gas"));
     ethereum_signing_abort();
     return;
   }
@@ -843,59 +850,6 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
-  // Signed metadata clear signing (backwards compatible).
-  // Only fires if host sent EthereumTxMetadata before this EthereumSignTx.
-  if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
-    if (signed_metadata_matches_tx(msg)) {
-      if (signed_metadata_confirm()) {
-        /* Suppression is the POSITIVE arm, deliberately.
-         *
-         * This used to read "if runtime signer ... else suppress", and an
-         * else-arm answers "not a runtime signer" -- which quietly becomes
-         * true for any trust tier added later, including one nobody reviewed
-         * against this question. Asking may_suppress() instead means a new
-         * tier defaults to the additive path and has to be let in on purpose.
-         *
-         * The chain id is passed because a certificate is bound to ONE
-         * network: the same address means something entirely different
-         * elsewhere, so a mainnet delegate must not describe an L2
-         * transaction. */
-        if (signed_metadata_may_suppress(chain_id)) {
-          /* KeepKey vouched for this describer, so the raw-data screen may be
-           * replaced by the decoded one. Payable calls still show
-           * amount/recipient because a v2 schema describes calldata only and
-           * cannot bind msg->value. */
-          needs_confirm = signed_metadata_schema_moves_value();
-          data_needs_confirm = false;
-        } else {
-          /* Everything else -- no metadata, a self-service signer, an expired
-           * or unverifiable certificate, a certificate for another chain -- is
-           * ANNOTATION ONLY. The decoded screens are followed by the same
-           * amount and raw-calldata review the transaction would have received
-           * without metadata, so a lying describer cannot conceal bytes.
-           *
-           * Note this is also the DEGRADE path: a certificate that fails to
-           * verify lands here rather than refusing the transaction. A stale
-           * describer is one we no longer trust; an undescribed transaction is
-           * what 7.15 already handles safely. */
-          needs_confirm = true;
-          data_needs_confirm = true;
-        }
-      } else {
-        fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                        "Signing cancelled by user");
-        ethereum_signing_abort();  // clears metadata
-        return;
-      }
-    }
-  }
-  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
-  // (then it must survive to bind the signature). Prevents stale reuse when the
-  // contractHandled / ERC-20 paths bypass the metadata check above.
-  if (!signed_metadata_relied()) {
-    signed_metadata_clear();
-  }
-
   // detect ERC-20 token
   if (data_total == 68 && ethereum_isStandardERC20Transfer(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
@@ -909,14 +863,26 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   if (needs_confirm) {
     if (token != NULL) {
-      layoutEthereumConfirmTx(
-          msg->data_initial_chunk.bytes + 16, 20,
-          msg->data_initial_chunk.bytes + 36, 32, token, confirm_body_message,
-          sizeof(confirm_body_message), /*approve=*/is_approve);
+      if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
+                                   msg->data_initial_chunk.bytes + 36, 32,
+                                   token, confirm_body_message,
+                                   sizeof(confirm_body_message),
+                                   /*approve=*/is_approve)) {
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Ethereum amount too large"));
+        ethereum_signing_abort();
+        return;
+      }
     } else {
-      layoutEthereumConfirmTx(msg->to.bytes, msg->to.size, msg->value.bytes,
-                              msg->value.size, NULL, confirm_body_message,
-                              sizeof(confirm_body_message), /*approve=*/false);
+      if (!layoutEthereumConfirmTx(
+              msg->to.bytes, msg->to.size, msg->value.bytes, msg->value.size,
+              NULL, confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/false)) {
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Ethereum amount too large"));
+        ethereum_signing_abort();
+        return;
+      }
     }
     bool is_transfer = msg->address_type == OutputAddressType_TRANSFER;
     const char* title;
@@ -965,11 +931,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       return;
     }
 
-    /* The initial protobuf carries at most 1024 bytes, while data_total may be
-     * much larger.  Showing that prefix as if it described the transaction
-     * let a hostile host hide executable calldata in later EthereumTxAck
-     * chunks.  Commit every chunk here and in ethereum_signing_txack(), then
-     * require approval of the complete Keccak-256 before signing. */
+    /* A prefix preview cannot commit to executable bytes in later chunks.
+     * Collect the complete calldata and approve its Keccak-256 only after the
+     * last byte has arrived. */
     sha3_256_Init(&data_keccak_ctx);
     sha3_Update(&data_keccak_ctx, msg->data_initial_chunk.bytes,
                 msg->data_initial_chunk.size);
@@ -981,8 +945,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
-  layoutEthereumFee(msg, token != NULL, confirm_body_message,
-                    sizeof(confirm_body_message));
+  if (!layoutEthereumFee(msg, token != NULL, confirm_body_message,
+                         sizeof(confirm_body_message))) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Ethereum fee too large"));
+    ethereum_signing_abort();
+    return;
+  }
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction", "%s",
                confirm_body_message)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -999,24 +968,24 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     rlp_length += rlp_calculate_number_length(chain_id);
   }
 
-  rlp_length +=
-      rlp_calculate_length_stripped(msg->nonce.bytes, msg->nonce.size);
-  if (msg->has_max_fee_per_gas) {
+  rlp_length += rlp_calculate_length(msg->nonce.size, msg->nonce.bytes[0]);
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
     rlp_length +=
-        rlp_calculate_length_stripped(msg->max_priority_fee_per_gas.bytes,
-                                      msg->max_priority_fee_per_gas.size);
-    rlp_length += rlp_calculate_length_stripped(msg->max_fee_per_gas.bytes,
-                                                msg->max_fee_per_gas.size);
+        rlp_calculate_length(msg->max_priority_fee_per_gas.size,
+                             msg->max_priority_fee_per_gas.size
+                                 ? msg->max_priority_fee_per_gas.bytes[0]
+                                 : 0);
+    rlp_length += rlp_calculate_length(msg->max_fee_per_gas.size,
+                                       msg->max_fee_per_gas.bytes[0]);
   } else {
-    rlp_length += rlp_calculate_length_stripped(msg->gas_price.bytes,
-                                                msg->gas_price.size);
+    rlp_length +=
+        rlp_calculate_length(msg->gas_price.size, msg->gas_price.bytes[0]);
   }
 
   rlp_length +=
-      rlp_calculate_length_stripped(msg->gas_limit.bytes, msg->gas_limit.size);
+      rlp_calculate_length(msg->gas_limit.size, msg->gas_limit.bytes[0]);
   rlp_length += rlp_calculate_length(msg->to.size, msg->to.bytes[0]);
-  rlp_length +=
-      rlp_calculate_length_stripped(msg->value.bytes, msg->value.size);
+  rlp_length += rlp_calculate_length(msg->value.size, msg->value.bytes[0]);
   rlp_length +=
       rlp_calculate_length(data_total, msg->data_initial_chunk.bytes[0]);
 
@@ -1063,26 +1032,19 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     hash_rlp_number(chain_id);
   }
 
-  hash_rlp_bytes_stripped(msg->nonce.bytes, msg->nonce.size);
+  hash_rlp_field(msg->nonce.bytes, msg->nonce.size);
 
-  if (msg->has_max_fee_per_gas) {
-    /* max_priority_fee_per_gas is a mandatory EIP-1559 field; when absent it
-     * encodes as the empty integer (0x80). Stage 1 always counts it
-     * (unconditionally, above), so Stage 2 must always hash it too -- guarding
-     * on has_max_priority_fee_per_gas here would under-hash and leave the list
-     * header over-declared (the same wrong-signer class this commit fixes).
-     * .size is 0 when unset, which hash_rlp_bytes_stripped emits as 0x80. */
-    hash_rlp_bytes_stripped(msg->max_priority_fee_per_gas.bytes,
-                            msg->max_priority_fee_per_gas.size);
-    hash_rlp_bytes_stripped(msg->max_fee_per_gas.bytes,
-                            msg->max_fee_per_gas.size);
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
+    hash_rlp_field(msg->max_priority_fee_per_gas.bytes,
+                   msg->max_priority_fee_per_gas.size);
+    hash_rlp_field(msg->max_fee_per_gas.bytes, msg->max_fee_per_gas.size);
   } else {
-    hash_rlp_bytes_stripped(msg->gas_price.bytes, msg->gas_price.size);
+    hash_rlp_field(msg->gas_price.bytes, msg->gas_price.size);
   }
 
-  hash_rlp_bytes_stripped(msg->gas_limit.bytes, msg->gas_limit.size);
-  hash_rlp_field(msg->to.bytes, msg->to.size); /* address: no strip */
-  hash_rlp_bytes_stripped(msg->value.bytes, msg->value.size);
+  hash_rlp_field(msg->gas_limit.bytes, msg->gas_limit.size);
+  hash_rlp_field(msg->to.bytes, msg->to.size);
+  hash_rlp_field(msg->value.bytes, msg->value.size);
   hash_rlp_length(data_total, msg->data_initial_chunk.bytes[0]);
   hash_data(msg->data_initial_chunk.bytes, msg->data_initial_chunk.size);
   data_left = data_total - msg->data_initial_chunk.size;
@@ -1147,17 +1109,12 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 void ethereum_signing_abort(void) {
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
-    signed_metadata_clear();
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     layoutHome();
     ethereum_signing = false;
   }
 }
-
-/* Whether a signing flow is mid-flight. The clearsign metadata handlers
- * refuse to accept metadata once signing has started. */
-bool ethereum_signing_isInProgress(void) { return ethereum_signing; }
 
 static void ethereum_message_hash(const uint8_t* message, size_t message_len,
                                   uint8_t hash[32]) {
@@ -1311,19 +1268,6 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
   resp->signature.bytes[64] = 27 + v;
   resp->signature.size = 65;
-  /* Populate response-only fields after every confirmation. Emulator debug
-   * requests (including screenshot capture) share msg_resp and can clear data
-   * prepared before the confirmation callbacks complete. */
-  uint8_t pubkeyhash[20] = {0};
-  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Ethereum address derivation failed"));
-    return;
-  }
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
-
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
 }
 
@@ -1360,7 +1304,7 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 pair name is NULL",
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
-    "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
+    "EIP-712 no value for type during walkVals",  // 33
 };
 
 void failMessage(int err) {
@@ -1368,13 +1312,9 @@ void failMessage(int err) {
     /* Not a parse failure: a typed-data review screen ended without a
        completed button hold, which is what confirm_helper() reports when the
        host sends Cancel or Initialize. Report it as a cancellation so the host
-       does not read a refusal as a malformed message.
-
-       USER_CANCELLED sits deliberately ABOVE LAST_ERROR and has no
-       failMsgReturn[] slot: the table is sized LAST_ERROR - 2 and indexed
-       err - 3, so giving a cancellation a row would shift every message
-       already in it. This branch is therefore the only thing that names the
-       code, and it also picks the FailureType. It must stay first. */
+       does not read a refusal as a malformed message. USER_CANCELLED is above
+       LAST_ERROR and has no failMsgReturn[] slot, so this branch must come
+       first. */
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("EIP-712 cancelled"));
     return;
@@ -1455,23 +1395,14 @@ void e712_types_values(Ethereum712TypesValues* msg,
       failMessage(JSON_PTYPENAMEERR);
       return;
     }
-    if (json_getType(obTest) != JSON_TEXT) {
-      failMessage(JSON_PTYPEVALERR);
-      return;
-    }
     const char* primeType;
-    if (0 == (primeType = json_getValue(obTest)) || primeType[0] == '\0') {
+    if (0 == (primeType = json_getValue(obTest))) {
       failMessage(JSON_PTYPEVALERR);
       return;
     }
-    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
-                       "EIP-712 Primary Type", (const uint8_t*)primeType,
-                       strlen(primeType))) {
-      failMessage(USER_CANCELLED);
-      return;
-    }
-    if (!ethereum_eip712_is_domain_primary_type(
-            primeType)) {  // domain-only signatures have no message hash
+    if (0 != strncmp(primeType, "EIP712Domain",
+                     strlen(primeType))) {  // if primaryType is "EIP712Domain",
+                                            // message hash is NULL
       errRet = encode(jsonT, jsonV, primeType, resp->message_hash.bytes);
       if (!(SUCCESS == errRet || NULL_MSG_HASH == errRet)) {
         failMessage(errRet);
@@ -1494,26 +1425,11 @@ void e712_types_values(Ethereum712TypesValues* msg,
     resp->has_domain_separator_hash = true;
     resp->domain_separator_hash.size = 32;
 
-    /* Derive the signer into a local for the confirmation text. resp->address
-     * is deliberately not written until after the last confirmation (debug-link
-     * reads reuse msg_resp and clear anything staged before the confirm
-     * callbacks finish), and RESP_INIT memset it to "" -- so naming
-     * resp->address here would render "Sign with address ?" and disclose
-     * nothing at the one screen that has to carry the disclosure. */
-    char signer_address[43] = "0x";
-    uint8_t signer_pubkeyhash[20] = {0};
-    if (!hdnode_get_ethereum_pubkeyhash(node, signer_pubkeyhash)) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Ethereum address derivation failed"));
-      return;
-    }
-    ethereum_address_checksum(signer_pubkeyhash, signer_address + 2, false, 0);
-
     // Every screen shown while parsing the typed data is a review(), which
     // cannot express refusal. Take one real confirmation before producing a
     // signature so a host cannot obtain one without a button press.
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
-                 "Sign with address %s?", signer_address)) {
+                 "Sign with address %s?", resp->address)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "Signing cancelled by user");
       memzero(domainSeparatorHash, 32);
@@ -1537,18 +1453,6 @@ void e712_types_values(Ethereum712TypesValues* msg,
     memzero(messageHash, 32);
     have_ds = false;
   }
-
-  /* Debug-link reads during confirmation reuse msg_resp, so populate the
-   * returned address only after the final confirmation has completed. */
-  uint8_t pubkeyhash[20] = {0};
-  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Ethereum address derivation failed"));
-    return;
-  }
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
 
   msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
 }

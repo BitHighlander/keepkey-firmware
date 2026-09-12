@@ -1,30 +1,21 @@
 extern "C" {
-#include "keepkey/board/layout.h"
-#include "keepkey/firmware/app_confirm.h"
-#include "keepkey/firmware/ethereum.h"
-#include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
-#include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
-#include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts.h"
+#include "keepkey/firmware/ethereum_contracts/saproxy.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
-#include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
 #include "messages-ethereum.pb.h"
-
-void setup(void);
 }
 
 #include "gtest/gtest.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
-#include <vector>
-
-bool kkconfirm_preload(int nYes, int nNo);
-int kkconfirm_drain(void);
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;
@@ -59,237 +50,113 @@ TEST(Ethereum, AddressChecksum) {
   test_checksum("D1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb");
 }
 
-TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
-  EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
-  EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
-}
+TEST(Ethereum, ChainIdValidationCoversPresenceAndBounds) {
+  EthereumSignTx msg = EthereumSignTx{};
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
 
-TEST(Ethereum, DomainOnlyPrimaryTypeRequiresExactMatch) {
-  EXPECT_TRUE(ethereum_eip712_is_domain_primary_type("EIP712Domain"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP712Domain[]"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type(""));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type(nullptr));
-}
-
-static const uint8_t DAI_MAINNET_ADDRESS[20] = {
-    0x6b, 0x17, 0x54, 0x74, 0xe8, 0x90, 0x94, 0xc4, 0x4d, 0xa9,
-    0x8b, 0x95, 0x4e, 0xed, 0xea, 0xc4, 0x95, 0x27, 0x1d, 0x0f};
-static const uint8_t USDC_MAINNET_ADDRESS[20] = {
-    0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b, 0x36, 0xc1, 0xd1,
-    0x9d, 0x4a, 0x2e, 0x9e, 0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
-
-static EthereumSignTx liquidity_tx(
-    bool known_token, bool add = true,
-    const uint8_t* token_address = DAI_MAINNET_ADDRESS) {
-  EthereumSignTx msg;
-  memset(&msg, 0, sizeof(msg));
   msg.has_chain_id = true;
+  msg.chain_id = 0;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
   msg.chain_id = 1;
-  msg.has_to = true;
-  msg.to.size = 20;
-  memcpy(msg.to.bytes, UNISWAP_ROUTER_ADDRESS, 20);
-  msg.has_data_initial_chunk = true;
-  msg.data_initial_chunk.size = 4 + 6 * 32;
-  memcpy(msg.data_initial_chunk.bytes,
-         add ? "\xf3\x05\xd7\x19" : "\x02\x75\x1c\xec", 4);
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
 
-  const TokenType* token = tokenByChainAddress(1, token_address);
-  EXPECT_NE(UnknownToken, token);
-  if (token == UnknownToken) return msg;
-  uint8_t unknown[20];
-  memset(unknown, 0xa5, sizeof(unknown));
-  memcpy(
-      msg.data_initial_chunk.bytes + 4 + 32 - 20,
-      known_token ? reinterpret_cast<const uint8_t*>(token->address) : unknown,
-      20);
+  /* The boundary is where v + 2 * chain_id + 35 stops fitting in a uint32_t
+     at the worst-case v == 1. Pin both sides of it, in 64-bit arithmetic so
+     the check itself cannot wrap. */
+  msg.chain_id = 2147483629u;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+  EXPECT_EQ(2ull * 2147483629ull + 35ull + 1ull, 4294967294ull);
 
-  // Token desired/minimum and native minimum.
-  msg.data_initial_chunk.bytes[4 + 2 * 32 - 1] = 1;
-  msg.data_initial_chunk.bytes[4 + 3 * 32 - 1] = 1;
-  msg.data_initial_chunk.bytes[4 + 4 * 32 - 1] = 1;
-  // Recipient and deadline.
-  memset(msg.data_initial_chunk.bytes + 4 + 5 * 32 - 20, 0x11, 20);
-  msg.data_initial_chunk.bytes[4 + 6 * 32 - 1] = 1;
-  msg.has_value = true;
-  if (add) {
-    msg.value.size = 1;
-    msg.value.bytes[0] = 1;
-  }
-  return msg;
+  /* One higher wraps to 0: a recovery id the device never produced. */
+  EXPECT_EQ(2ull * 2147483630ull + 35ull + 1ull, 4294967296ull);
+  EXPECT_EQ(static_cast<uint32_t>(2ull * 2147483630ull + 35ull + 1ull), 0u);
+
+  msg.chain_id = 2147483630u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
+  msg.chain_id = 2147483631u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+  EXPECT_FALSE(ethereum_chainIdIsValid(nullptr));
 }
 
-static void ensure_liquidity_signing_seed(void) {
-  if (storage_getLocation() == FLASH_INVALID) {
-    setup();
-    storage_init();
-  }
-  session_clear(true);
-  storage_setMnemonic("all all all all all all all all all all all all");
+TEST(Ethereum, AmountFormattingNeverReturnsBlank) {
+  uint8_t max_bytes[32];
+  std::memset(max_bytes, 0xff, sizeof(max_bytes));
+  bignum256 amount;
+  bn_read_be(max_bytes, &amount);
+
+  const TokenType token = {nullptr, " TEST", 1, 18};
+  char rendered[32];
+  EXPECT_FALSE(
+      ethereumFormatAmount(&amount, &token, 1, rendered, sizeof(rendered)));
+  EXPECT_STREQ("AMOUNT TOO LARGE TO DISPLAY", rendered);
 }
 
-static void set_word_u64(EthereumSignTx& msg, size_t word, uint64_t value) {
-  uint8_t* out = msg.data_initial_chunk.bytes + 4 + word * 32;
-  memset(out, 0, 32);
-  for (size_t i = 0; i < 8; i++) {
-    out[31 - i] = static_cast<uint8_t>(value);
-    value >>= 8;
-  }
+TEST(Ethereum, ContractAmountCallsitesFailClosedAtDisplayBoundary) {
+  uint8_t max_word[32];
+  std::memset(max_word, 0xff, sizeof(max_word));
+  char rendered[41];
+
+  EXPECT_FALSE(sa_formatUint256(max_word, "", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      sa_formatUint256(max_word, " Token Units", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      thor_formatUnknownAssetAmount(max_word, rendered, sizeof(rendered)));
+
+  uint8_t one[32] = {};
+  one[31] = 1;
+  ASSERT_TRUE(
+      sa_formatUint256(one, " Token Units", rendered, sizeof(rendered)));
+  EXPECT_STREQ("1 Token Units", rendered);
+  ASSERT_TRUE(thor_formatUnknownAssetAmount(one, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1 unformatted", rendered);
 }
 
-static EthereumSignTx approve_liquidity_tx() {
-  EthereumSignTx msg;
-  memset(&msg, 0, sizeof(msg));
+TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
+  bignum256 amount;
+  bn_read_uint64(1500000000000000000ULL, &amount);
+  char rendered[32];
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 43114, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 AVAX", rendered);
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 42161, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
+  /* An unmapped chain must never render a bare, unit-less number. Wei is the
+     base unit of every EVM chain, so the amount stays exact while the device
+     stops claiming to know an asset name it does not have. */
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 59144, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1500000000000000000 Wei", rendered);
+
+  ASSERT_TRUE(
+      ethereumFormatAmount(&amount, nullptr, 257, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1500000000000000000 Wei", rendered);
+}
+
+TEST(Ethereum, TransferAmountUsesTheRequestsSigningChain) {
+  EthereumSignTx msg = EthereumSignTx{};
   msg.has_chain_id = true;
-  msg.chain_id = 1;
-  msg.has_to = true;
-  msg.to.size = 20;
-  // Canonical mainnet DAI/WETH Uniswap V2 pair.
-  const uint8_t pair[20] = {0xa4, 0x78, 0xc2, 0x97, 0x5a, 0xb1, 0xea,
-                            0x89, 0xe8, 0x19, 0x68, 0x11, 0xf5, 0x1a,
-                            0x7b, 0x7a, 0xde, 0x33, 0xeb, 0x11};
-  memcpy(msg.to.bytes, pair, sizeof(pair));
-  msg.has_data_initial_chunk = true;
-  msg.data_initial_chunk.size = 4 + 2 * 32;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memcpy(msg.data_initial_chunk.bytes + 4 + 12, UNISWAP_ROUTER_ADDRESS, 20);
-  msg.data_initial_chunk.bytes[4 + 2 * 32 - 1] = 1;
   msg.has_value = true;
-  return msg;
-}
+  msg.value.size = 8;
+  const uint64_t amount = 1500000000000000000ULL;
+  for (size_t i = 0; i < msg.value.size; ++i) {
+    msg.value.bytes[msg.value.size - 1 - i] =
+        static_cast<uint8_t>(amount >> (8 * i));
+  }
 
-TEST(Ethereum, LiquiditySelectorChecksDeclaredCalldataLength) {
-  EthereumSignTx msg;
-  memset(&msg, 0, sizeof(msg));
-  msg.has_to = true;
-  msg.to.size = 20;
-  memcpy(msg.to.bytes, UNISWAP_ROUTER_ADDRESS, 20);
-  msg.has_data_initial_chunk = true;
-  msg.data_initial_chunk.size = 3;
-  memcpy(msg.data_initial_chunk.bytes, "\xf3\x05\xd7", 3);
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-
-  msg.data_initial_chunk.size = 4;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
-
-  msg.data_initial_chunk.size = 4 + 2 * 32 + 1;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memcpy(msg.data_initial_chunk.bytes + 4 + 32 - 20, UNISWAP_ROUTER_ADDRESS,
-         20);
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
-
-  msg.data_initial_chunk.size = 4 + 6 * 32 + 1;
-  memcpy(msg.data_initial_chunk.bytes, "\xf3\x05\xd7\x19", 4);
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-}
-
-TEST(Ethereum, LiquidityCancellationFailsClosed) {
-  EthereumSignTx msg = liquidity_tx(true);
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Ethereum, AddLiquidityToThirdPartyCanCompleteAllConfirmations) {
-  ensure_liquidity_signing_seed();
-  EthereumSignTx msg = liquidity_tx(true, true);
-
-  ASSERT_TRUE(kkconfirm_preload(6, 0));
-  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Ethereum, RemoveLiquidityToThirdPartyCanCompleteAllConfirmations) {
-  ensure_liquidity_signing_seed();
-  EthereumSignTx msg = liquidity_tx(true, false);
-
-  ASSERT_TRUE(kkconfirm_preload(5, 0));
-  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Ethereum, LiquidityRejectsUnknownTokenBeforeConfirmation) {
-  EthereumSignTx msg = liquidity_tx(false);
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
-}
-
-TEST(Ethereum, LiquidityClearSigningIsMainnetOnly) {
-  EthereumSignTx msg = liquidity_tx(true);
-  EXPECT_TRUE(zx_isZxLiquidTx(&msg));
+  char rendered[32];
+  msg.chain_id = 56;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 BNB", rendered);
 
   msg.chain_id = 137;
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-  msg.chain_id = 1;
-  msg.has_chain_id = false;
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-}
-
-TEST(Ethereum, LiquidityRejectsTruncatedDeadlineAndNoncanonicalAddresses) {
-  EthereumSignTx msg = liquidity_tx(true);
-  msg.data_initial_chunk.bytes[4 + 5 * 32] = 1;
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
-
-  msg = liquidity_tx(true);
-  msg.data_initial_chunk.bytes[4] = 1;
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-
-  msg = liquidity_tx(true);
-  msg.data_initial_chunk.bytes[4 + 4 * 32] = 1;
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-}
-
-TEST(Ethereum, RemoveLiquidityRejectsNativeValue) {
-  EthereumSignTx msg = liquidity_tx(true, false);
-  EXPECT_TRUE(zx_isZxLiquidTx(&msg));
-  msg.value.size = 1;
-  msg.value.bytes[0] = 1;
-  EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-}
-
-TEST(Ethereum, RemoveLiquidityFormatsPrimaryAmountAsLpTokens) {
-  EthereumSignTx add = liquidity_tx(true, true, USDC_MAINNET_ADDRESS);
-  set_word_u64(add, 1, UINT64_C(1000000000000000000));
-  char formatted[96];
-  ASSERT_TRUE(
-      zx_formatZxLiquidityPrimaryAmount(&add, formatted, sizeof(formatted)));
-  EXPECT_STREQ("1000000000000 USDC", formatted);
-
-  EthereumSignTx remove = liquidity_tx(true, false, USDC_MAINNET_ADDRESS);
-  set_word_u64(remove, 1, UINT64_C(1000000000000000000));
-  ASSERT_TRUE(
-      zx_formatZxLiquidityPrimaryAmount(&remove, formatted, sizeof(formatted)));
-  EXPECT_STREQ("1 LP", formatted);
-}
-
-TEST(Ethereum, LiquidityFormatsFullUint256WithoutBlankConfirmation) {
-  EthereumSignTx msg = liquidity_tx(true);
-  memset(msg.data_initial_chunk.bytes + 4 + 32, 0xff, 32);
-  char formatted[96];
-  ASSERT_TRUE(
-      zx_formatZxLiquidityPrimaryAmount(&msg, formatted, sizeof(formatted)));
-  EXPECT_GT(strlen(formatted), 32u);
-
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Ethereum, LpApprovalRequiresMainnetDerivedPairAndCanonicalSpender) {
-  EthereumSignTx msg = approve_liquidity_tx();
-  EXPECT_TRUE(zx_isZxApproveLiquid(&msg));
-
-  msg.to.bytes[0] ^= 1;
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
-
-  msg = approve_liquidity_tx();
-  msg.chain_id = 137;
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
-
-  msg = approve_liquidity_tx();
-  msg.data_initial_chunk.bytes[4] = 1;
-  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 MATIC", rendered);
 }
 
 TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
@@ -333,9 +200,8 @@ TEST(Ethereum, PrecomputedTypedHashesRequireAdvancedMode) {
   EXPECT_TRUE(tron_typed_hash_policy_allows(true));
 }
 
-TEST(Ethereum, LegacyJsonEip712StaysDisabledWhileStructuredStreamIsEnabled) {
+TEST(Ethereum, StructuredEip712IsDisabledForPointRelease) {
   EXPECT_FALSE(ethereum_structured_eip712_enabled());
-  EXPECT_TRUE(ethereum_streamed_eip712_enabled());
 }
 
 // Two real chain-1 table entries, so the decoder's token lookups resolve.
@@ -347,11 +213,154 @@ static const char kTUSD[] =
 static const char kTGBP[] =
     "\x00\x00\x00\x00\x44\x13\x78\x00\x8E\xA6\x7F\x42\x84\xA5\x79\x32\xB1\xc0"
     "\x00\xa5";
+static const uint8_t kNativePseudoAddress[20] = {
+    0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+    0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee};
 
-// transformERC20(address,address,uint256,uint256,(uint32,bytes)[]) — the two
-// address words carry the token in their low 20 bytes.
-static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
-                               const char* out_token) {
+TEST(Ethereum, TransferDisplayDoesNotAliasHighChainTokenMetadata) {
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.chain_id = 257;
+  msg.has_to = true;
+  msg.to.size = 20;
+  std::memcpy(msg.to.bytes, kTUSD, msg.to.size);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  std::memcpy(msg.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  msg.address_type = OutputAddressType_TRANSFER;
+
+  ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+  char rendered[32];
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("Unknown token value", rendered);
+}
+
+TEST(Ethereum, NativePseudoAddressCallsRenderUnknownOffMainnet) {
+  static const uint8_t selectors[][4] = {
+      {0xa9, 0x05, 0x9c, 0xbb}, /* transfer(address,uint256) */
+      {0x09, 0x5e, 0xa7, 0xb3}, /* approve(address,uint256) */
+  };
+
+  for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); ++i) {
+    EthereumSignTx msg = EthereumSignTx{};
+    msg.has_chain_id = true;
+    msg.chain_id = 257;
+    msg.has_to = true;
+    msg.to.size = sizeof(kNativePseudoAddress);
+    std::memcpy(msg.to.bytes, kNativePseudoAddress, msg.to.size);
+    msg.has_data_initial_chunk = true;
+    msg.data_initial_chunk.size = 68;
+    std::memcpy(msg.data_initial_chunk.bytes, selectors[i], 4);
+    msg.data_initial_chunk.bytes[67] = 1;
+
+    if (i == 0) {
+      ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+    } else {
+      ASSERT_FALSE(ethereum_isStandardERC20Transfer(&msg));
+    }
+
+    const TokenType* token = tokenByChainAddress(msg.chain_id, msg.to.bytes);
+    ASSERT_EQ(UnknownToken, token);
+
+    bignum256 amount;
+    bn_from_bytes(msg.data_initial_chunk.bytes + 36, 32, &amount);
+    char rendered[32];
+    ASSERT_TRUE(ethereumFormatAmount(&amount, token, msg.chain_id, rendered,
+                                     sizeof(rendered)));
+    EXPECT_STREQ("Unknown token value", rendered);
+  }
+}
+
+TEST(Ethereum, NativePseudoAddressTransferFormatterIsUnknownOffMainnet) {
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.chain_id = 257;
+  msg.has_to = true;
+  msg.to.size = sizeof(kNativePseudoAddress);
+  std::memcpy(msg.to.bytes, kNativePseudoAddress, msg.to.size);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  std::memcpy(msg.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  msg.address_type = OutputAddressType_TRANSFER;
+
+  ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+  char rendered[32];
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("Unknown token value", rendered);
+}
+
+TEST(Ethereum, ThorchainNativeAssetUsesOnlyItsZeroAddressSentinel) {
+  static const uint8_t kZeroAddress[20] = {};
+  static const uint8_t kTokenAddress[20] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                            0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+
+  EXPECT_TRUE(thor_assetIsNative(kZeroAddress));
+  EXPECT_FALSE(thor_assetIsNative(kNativePseudoAddress));
+  EXPECT_FALSE(thor_assetIsNative(kTokenAddress));
+  EXPECT_FALSE(thor_assetIsNative(nullptr));
+}
+
+// A deposit-shaped call is only THORChain's if it goes to THORChain's router
+// ON THIS CHAIN. Without the pin, any contract carrying the selector inherited
+// the deposit clear-sign UX and skipped the AdvancedMode blind-sign gate.
+static void MakeThorDeposit(EthereumSignTx* msg, const char* to_hex,
+                            uint32_t chain_id) {
+  *msg = EthereumSignTx{};
+  msg->has_to = true;
+  msg->to.size = 20;
+  for (size_t i = 0; i < 20; i++) {
+    char byte[3] = {to_hex[i * 2], to_hex[i * 2 + 1], 0};
+    msg->to.bytes[i] = (uint8_t)strtoul(byte, nullptr, 16);
+  }
+  msg->has_chain_id = true;
+  msg->chain_id = chain_id;
+  msg->has_data_initial_chunk = true;
+  msg->data_initial_chunk.size = 4 + 6 * 32;
+  std::memcpy(msg->data_initial_chunk.bytes, THOR_SELECTOR_DEPOSIT_WITH_EXPIRY,
+              4);
+}
+
+TEST(Ethereum, ThorchainDepositIsPinnedToItsRouterOnItsChain) {
+  EthereumSignTx msg;
+
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  EXPECT_TRUE(thor_isThorchainTx(&msg));
+
+  MakeThorDeposit(&msg, THOR_ROUTER_AVAX, 43114);
+  EXPECT_TRUE(thor_isThorchainTx(&msg));
+
+  // An attacker contract with the same calldata shape.
+  MakeThorDeposit(&msg, "1234567890123456789012345678901234567890", 1);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+
+  // The right address on the wrong chain: those 20 bytes are unrelated code
+  // there, so it cannot borrow the trusted UX.
+  MakeThorDeposit(&msg, THOR_ROUTER, 43114);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+  MakeThorDeposit(&msg, THOR_ROUTER_AVAX, 1);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+
+  // Maya Protocol deposits with the same calldata shape through its own
+  // mainnet router, and this decoder narrates both.
+  MakeThorDeposit(&msg, MAYA_ROUTER, 1);
+  EXPECT_TRUE(thor_isThorchainTx(&msg));
+  MakeThorDeposit(&msg, MAYA_ROUTER, 43114);
+  EXPECT_FALSE(thor_isThorchainTx(&msg)) << "mainnet identity, mainnet only";
+
+  // A chain with no pinned router, and a tx with no chain at all.
+  MakeThorDeposit(&msg, THOR_ROUTER, 56);
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  msg.has_chain_id = false;
+  EXPECT_FALSE(thor_isThorchainTx(&msg));
+}
+
+// A canonical transformERC20 call with one transformation whose data is one
+// byte. The transformation byte is deliberately outside the four static words
+// that the retired decoder displayed.
+static void MakeTransformErc20(EthereumSignTx* msg, uint8_t transform_byte) {
   *msg = EthereumSignTx{};
   msg->has_to = true;
   msg->to.size = 20;
@@ -359,109 +368,64 @@ static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
   msg->has_chain_id = true;
   msg->chain_id = 1;
   msg->has_data_initial_chunk = true;
-  msg->data_initial_chunk.size = ZX_TRANSFORM_ERC20_MIN_LEN;
+  msg->data_initial_chunk.size = 4 + 11 * 32;
   std::memcpy(msg->data_initial_chunk.bytes, "\x41\x55\x65\xb0", 4);
-  if (in_token)
-    std::memcpy(msg->data_initial_chunk.bytes + 4 + 12, in_token, 20);
-  if (out_token)
-    std::memcpy(msg->data_initial_chunk.bytes + 4 + 32 + 12, out_token, 20);
-  msg->data_initial_chunk.bytes[ZX_TRANSFORM_ERC20_HEAD_LEN - 1] = 0xa0;
+  std::memcpy(msg->data_initial_chunk.bytes + 4 + 12, kTUSD, 20);
+  std::memcpy(msg->data_initial_chunk.bytes + 4 + 32 + 12, kTGBP, 20);
+  msg->data_initial_chunk.bytes[4 + 3 * 32 - 1] = 1;     // input amount
+  msg->data_initial_chunk.bytes[4 + 4 * 32 - 1] = 1;     // minimum output
+  msg->data_initial_chunk.bytes[4 + 5 * 32 - 1] = 0xa0;  // array offset
+  msg->data_initial_chunk.bytes[4 + 6 * 32 - 1] = 1;     // array length
+  msg->data_initial_chunk.bytes[4 + 7 * 32 - 1] = 0x20;  // element offset
+  msg->data_initial_chunk.bytes[4 + 8 * 32 - 1] = 1;     // deployment nonce
+  msg->data_initial_chunk.bytes[4 + 9 * 32 - 1] = 0x40;  // data offset
+  msg->data_initial_chunk.bytes[4 + 10 * 32 - 1] = 1;    // data length
+  msg->data_initial_chunk.bytes[4 + 10 * 32] = transform_byte;
 }
 
-TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
-  EthereumSignTx msg;
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
+TEST(Ethereum, TransformErc20AlwaysRequiresAdvancedMode) {
+  EthereumSignTx first, second;
+  MakeTransformErc20(&first, 0x41);
+  MakeTransformErc20(&second, 0x42);
 
-  EXPECT_TRUE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
+  ASSERT_EQ(first.data_initial_chunk.size, second.data_initial_chunk.size);
+  ASSERT_EQ(0, std::memcmp(first.data_initial_chunk.bytes,
+                           second.data_initial_chunk.bytes,
+                           first.data_initial_chunk.size - 32));
+  ASSERT_NE(0, std::memcmp(first.data_initial_chunk.bytes,
+                           second.data_initial_chunk.bytes,
+                           first.data_initial_chunk.size));
+
   EXPECT_FALSE(
-      ethereum_contractHandled(msg.data_initial_chunk.size + 1, &msg, nullptr));
-
-  msg.data_initial_chunk.size = 4 + 4 * 32;
-  EXPECT_FALSE(ethereum_contractHandled(msg.data_initial_chunk.size, &msg,
-                                        nullptr))
-      << "the fifth ABI head word and array length must be present";
-
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
-  msg.data_initial_chunk.bytes[ZX_TRANSFORM_ERC20_HEAD_LEN - 1] = 0xc0;
-  EXPECT_FALSE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
-      << "the displayed static arguments must bind the canonical route tail";
+      ethereum_contractHandled(first.data_initial_chunk.size, &first, nullptr));
+  EXPECT_FALSE(ethereum_contractHandled(second.data_initial_chunk.size, &second,
+                                        nullptr));
 }
 
-// The structured screen shows four values and the route follows on raw-data
-// screens. ethereumFormatAmount() still renders the literal "Unknown token
-// value" whenever tokenByChainAddress() misses, so an unresolved token turns
-// the displayed bound into nothing while the calldata still executes.
-//
-// Gating on the lookup rather than on a chain allowlist keeps this correct
-// however the tables change. It matters in practice: the generated table
-// carries ~1924 entries for chain 1, three each for BSC and Polygon, and NONE
-// for Base, Arbitrum or Avalanche, so on those chains every pair fails here.
-TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
-  EthereumSignTx msg;
+TEST(Ethereum, MakerDaoSelectorsAreNotSpecializedForPointRelease) {
+  struct MakerCall {
+    const uint8_t selector[4];
+    size_t argument_count;
+  };
+  static const MakerCall kCalls[] = {
+      {{0xc7, 0x40, 0x73, 0xa1}, 1},  // open(address)
+      {{0x1b, 0x96, 0x81, 0x60}, 5},  // wipeAndFree(...,address)
+  };
 
-  // Both known -> the device can name what it is showing.
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
-  EXPECT_TRUE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
+  for (const MakerCall& call : kCalls) {
+    EthereumSignTx msg = EthereumSignTx{};
+    msg.has_chain_id = true;
+    msg.chain_id = 1;
+    msg.has_to = true;
+    msg.to.size = 20;
+    msg.has_data_initial_chunk = true;
+    msg.data_initial_chunk.size = 4 + call.argument_count * 32;
+    std::memcpy(msg.data_initial_chunk.bytes, call.selector,
+                sizeof(call.selector));
 
-  msg.has_value = true;
-  msg.value.size = 1;
-  msg.value.bytes[0] = 1;
-  EXPECT_FALSE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
-      << "native value is not shown by the transformERC20 confirmation";
-
-  // Either side unknown -> refuse to claim it, so ethereum.c falls through to
-  // the raw-calldata path (AdvancedMode-gated, bytes shown).
-  MakeTransformErc20(&msg, nullptr, kTGBP);
-  EXPECT_FALSE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
-      << "unknown INPUT token must not clear-sign";
-
-  MakeTransformErc20(&msg, kTUSD, nullptr);
-  EXPECT_FALSE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
-      << "unknown OUTPUT token must not clear-sign";
-
-  MakeTransformErc20(&msg, nullptr, nullptr);
-  EXPECT_FALSE(
-      ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
-
-  // A chain with no token table entries at all cannot name either asset, so it
-  // must refuse even though 0x deploys the same proxy there. This is what the
-  // chain allowlist was previously being asked to approximate.
-  for (uint32_t cid : {8453u, 42161u, 43114u}) {
-    MakeTransformErc20(&msg, kTUSD, kTGBP);
-    msg.chain_id = cid;
     EXPECT_FALSE(
-        ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
-        << "chain " << cid << " has no token entries; nothing is nameable";
+        ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
   }
-}
-
-TEST(Ethereum, TransformErc20DisclosesCompleteRoute) {
-  std::vector<uint8_t> route(220, 0x00);
-  route[31] = 1;  // transformations[] length word
-  route.back() = 0xa5;
-
-  size_t pages = 0;
-  size_t offset = 0;
-  while (offset < route.size()) {
-    char page[BODY_CHAR_MAX];
-    const size_t take = confirm_bytes_format_page(
-        route.data() + offset, route.size() - offset, page, sizeof(page));
-    ASSERT_GT(take, 0u);
-    offset += take;
-    pages++;
-  }
-  ASSERT_GT(pages, 1u)
-      << "fixture must prove the route is paginated rather than truncated";
-
-  ASSERT_TRUE(kkconfirm_preload(static_cast<int>(pages), 0));
-  EXPECT_TRUE(zx_confirmZxTransformRoute(route.data(), route.size()));
-  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Ethereum, Eip712ChainIdRequiresCanonicalUint32) {
@@ -506,4 +470,67 @@ TEST(Ethereum, ZxExchangeProxyChainAllowlist) {
   EXPECT_FALSE(zx_isExchangeProxyChain(250));
   EXPECT_FALSE(zx_isExchangeProxyChain(59144));
   EXPECT_FALSE(zx_isExchangeProxyChain(0xFFFFFFFFu));
+}
+
+TEST(Ethereum, NativePseudoAddressIsStrictlyChainScoped) {
+  EXPECT_EQ(tokenByChainAddress(1, kNativePseudoAddress), EthTestToken);
+  EXPECT_EQ(tokenByChainAddress(56, kNativePseudoAddress), UnknownToken);
+  EXPECT_EQ(tokenByChainAddress(137, kNativePseudoAddress), UnknownToken);
+  EXPECT_EQ(tokenByChainAddress(257, kNativePseudoAddress), UnknownToken);
+
+  /* The sentinel is ETH metadata and must remain a chain-1-only value. */
+  EXPECT_STREQ(EthTestToken->ticker, "  ETH");
+  EXPECT_TRUE(zx_tokenLabelsThisChain(1, EthTestToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(56, EthTestToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(137, EthTestToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(8453, EthTestToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(42161, EthTestToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(43114, EthTestToken));
+
+  /* Unresolved and NULL stay refused, on every chain -- this helper replaced
+     the UnknownToken check, so it has to still do that job. */
+  EXPECT_FALSE(zx_tokenLabelsThisChain(1, UnknownToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(56, UnknownToken));
+  EXPECT_FALSE(zx_tokenLabelsThisChain(1, NULL));
+
+  /* An ordinary chain-1 table entry is unaffected. */
+  const TokenType* usdc = NULL;
+  if (tokenByTicker(1, "USDC", &usdc) && usdc != UnknownToken) {
+    EXPECT_TRUE(zx_tokenLabelsThisChain(1, usdc));
+  }
+}
+/* ethereumFormatAmount() takes the Wanchain tx type from a module static that
+ * ethereum_signing_init() owns -- and on the transfer path the amount screen is
+ * drawn before signing_init() runs. A Wanchain transaction therefore left its
+ * type behind, and the NEXT transfer's amount screen named the asset " WAN" on
+ * whatever chain it was really on. The Wanchain leg is the in-test control: it
+ * must still say " WAN", or a build that simply never set the ticker would
+ * pass the Ethereum assertion for the wrong reason. */
+TEST(Ethereum, TransferTickerComesFromThisMessageNotTheLastOne) {
+  EthereumSignTx wan;
+  memset(&wan, 0, sizeof(wan));
+  wan.has_chain_id = true;
+  wan.chain_id = 888;  // Wanchain
+  wan.has_tx_type = true;
+  wan.tx_type = 1;
+  wan.has_value = true;
+  wan.value.size = 8;
+  wan.value.bytes[7] = 0x01;  // 1 wei short of nothing, but > 1e9 after padding
+  wan.value.bytes[0] = 0x0d;
+  char buf[64] = {0};
+  ASSERT_TRUE(ethereumFormatTransferAmount(&wan, buf, sizeof(buf)));
+  EXPECT_NE(nullptr, strstr(buf, " WAN")) << buf;
+
+  EthereumSignTx eth;
+  memset(&eth, 0, sizeof(eth));
+  eth.has_chain_id = true;
+  eth.chain_id = 1;  // Ethereum mainnet, no tx_type at all
+  eth.has_value = true;
+  eth.value.size = 8;
+  eth.value.bytes[0] = 0x0d;
+  eth.value.bytes[7] = 0x01;
+  memset(buf, 0, sizeof(buf));
+  ASSERT_TRUE(ethereumFormatTransferAmount(&eth, buf, sizeof(buf)));
+  EXPECT_EQ(nullptr, strstr(buf, " WAN")) << buf;
+  EXPECT_NE(nullptr, strstr(buf, " ETH")) << buf;
 }

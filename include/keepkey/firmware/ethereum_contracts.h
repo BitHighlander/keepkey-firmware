@@ -25,6 +25,8 @@
 
 #include "trezor/crypto/bip32.h"
 
+#include "keepkey/firmware/ethereum_tokens.h"
+
 typedef struct _EthereumSignTx EthereumSignTx;
 
 /// \returns true iff the 0x Exchange Proxy is deployed at ZXSWAP_ADDRESS on
@@ -46,6 +48,16 @@ typedef struct _EthereumSignTx EthereumSignTx;
 /// through to the generic disclosure. That is the safe direction, so an
 /// incomplete list costs display quality rather than safety.
 bool zx_isExchangeProxyChain(uint32_t chain_id);
+
+/// May `token`'s ticker be shown as the asset for a transaction on this chain?
+///
+/// Ordinary lookup is chain-scoped, including the Ethereum-mainnet
+/// 0xeeee..eeee pseudo-address.  This remains a defense-in-depth check for
+/// specialized decoders: directly supplied or stale token metadata may be
+/// displayed only when its chain ID matches the signing domain.
+///
+/// \returns false for NULL, UnknownToken, or metadata from another chain.
+bool zx_tokenLabelsThisChain(uint32_t chain_id, const TokenType* token);
 
 /// \returns true iff there is custom support for this ETH signing request
 bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,

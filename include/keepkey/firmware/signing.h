@@ -23,23 +23,14 @@
 #include "trezor/crypto/bip32.h"
 #include "keepkey/transport/interface.h"
 
-#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-/// Exposed for unit tests: pure predicate, no signing state involved.
-bool isCrossAccountSegwitChangeForbidden(const uint32_t* lhs_address_n,
-                                         size_t lhs_address_n_count,
-                                         const uint32_t* rhs_address_n,
-                                         size_t rhs_address_n_count,
-                                         OutputScriptType rhs_script_type);
-
-/// Encode the protobuf enum in the fixed four-byte little-endian form used by
-/// the Bitcoin transaction-consistency checksum on every target ABI.
-void signing_encode_script_type(InputScriptType script_type, uint8_t out[4]);
-
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);
+bool signing_output_multisig_quorum_is_valid(const TxOutputType* txoutput);
+
 void signing_abort(void);
+bool signing_is_active(void);
 void signing_txack(TransactionType* tx);
 void send_fsm_co_error_message(int co_error);
 
