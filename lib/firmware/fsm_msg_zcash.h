@@ -251,11 +251,26 @@ static bool zcash_check_seed_fingerprint(bool has_expected,
 static bool zcash_verify_and_confirm_orchard_output(
     const ZcashPCZTAction* msg, ZcashOrchardProgressCallback progress,
     void* progress_context) {
+  /* Every one of these is read as a fixed 32 bytes below. nanopb leaves an
+   * omitted or short `bytes` field zeroed rather than absent, so checking only
+   * three of the five let a host drop `nullifier` and have the device verify a
+   * commitment over an implicit rho of zero. */
   if (!msg->has_value || !msg->has_recipient ||
       msg->recipient.size != ZCASH_ORCHARD_RAW_RECEIVER_SIZE ||
-      !msg->has_rseed || msg->rseed.size != 32) {
+      !msg->has_rseed || msg->rseed.size != 32 || !msg->has_nullifier ||
+      msg->nullifier.size != 32 || !msg->has_cmx || msg->cmx.size != 32) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Missing Orchard output metadata"));
+    return false;
+  }
+
+  /* rho is I2LEBSP_255-encoded into the commitment message, so bit 255 is
+   * dropped. Masking it silently would map two distinct wire values onto one
+   * commitment; a value that does not fit 255 bits is malformed, not something
+   * to round off. */
+  if (msg->nullifier.bytes[31] & 0x80) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Orchard nullifier is not canonical"));
     return false;
   }
 
