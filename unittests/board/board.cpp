@@ -16,6 +16,7 @@ extern "C" {
 #include "keepkey/board/timer.h"
 #include "keepkey/board/keepkey_display.h"
 #include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/app_layout.h"
 }
 
 TEST(Board, Shutdown) {
@@ -253,6 +254,55 @@ TEST_F(BodyFits, PagerCanExceedItsOwnPageCap) {
       (worst_case_body + chars_per_page - 1) / chars_per_page;
   EXPECT_GT(pages_needed, 99u)
       << "the 99-page cap is unreachable, so the refusal is dead code";
+}
+
+// Address screens keep their own renderer instead of the measured/paged confirm
+// path, so the layout itself has to land every row on canvas.
+// layout_address_notification() put the address at TOP_MARGIN_FOR_ONE_LINE +
+// font_height + ADDRESS_TOP_MARGIN = y 46 and stepped 14px per row, so the
+// second row of a 62-character bech32 address (p2wsh and p2tr are both that
+// long) was asked for at y 60. draw_char_impl() refuses a glyph whose bottom
+// passes KEEPKEY_DISPLAY_HEIGHT and reports nothing back, so the row was
+// dropped whole: the owner checked a 44-character prefix against the host while
+// the QR beside it encoded the entire address.
+//
+// The first row's last pixel is row 55 and the small QR's box ends at row 44,
+// so ink at row 56 or below exists only if the wrapped remainder was drawn.
+// The control asserts that second half rather than assuming it -- if a future
+// QR version reaches the band, ink there stops proving anything and this test
+// must fail loudly instead of passing for the wrong reason.
+TEST_F(BodyFits, AddressNotificationDrawsTheWrappedTailOfALongBech32) {
+  static const char kTaproot[] =
+      "bc1p5d7rjq7g6rdk2yhzks9smlaqtedr4dekq08ge8ztwac72sfr9rusxg3297";
+  ASSERT_EQ(strlen(kTaproot), 62u);
+
+  Canvas* canvas = layout_get_canvas();
+  ASSERT_TRUE(canvas != NULL);
+  ASSERT_GT(calc_str_line(get_body_font(), kTaproot, TRANSACTION_WIDTH),
+            ONE_LINE)
+      << "the address no longer wraps, so this test proves nothing";
+
+  const uint16_t band_top = 56;
+  auto lit_in_band = [&]() {
+    size_t lit = 0;
+    for (uint16_t y = band_top; y < canvas->height; y++) {
+      for (uint16_t x = 0; x < canvas->width; x++) {
+        if (canvas->buffer[y * canvas->width + x] != 0) lit++;
+      }
+    }
+    return lit;
+  };
+
+  // Control: the QR is the only other thing this screen draws.
+  layout_clear();
+  layout_address(kTaproot, QR_SMALL);
+  ASSERT_EQ(lit_in_band(), 0u)
+      << "the QR now reaches the band, so ink there no longer isolates the "
+         "address text";
+
+  layout_address_notification("", kTaproot, NOTIFICATION_INFO);
+  EXPECT_GT(lit_in_band(), 0u)
+      << "the wrapped remainder of a 62-character address was never drawn";
 }
 
 static std::string FormatEveryPage(const std::string& input, size_t* pages) {

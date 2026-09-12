@@ -764,9 +764,15 @@ bool confirm_address_with_custom_layout(
    * the address is actually used, so the fallback removed the feature rather
    * than hardening it.
    *
-   * Clipping is still handled, just by the layout rather than the pager: these
-   * renderers wrap the address with draw_string() and drop to the body font
-   * when it will not fit bold.
+   * Clipping is handled by the layout rather than the pager, but only because
+   * the layout was made to handle it. draw_string() alone does NOT make this
+   * safe: it stops at the bottom edge of the canvas and drops the remainder
+   * without reporting anything, and dropping to the body font only widens the
+   * first row -- it says nothing about the rows below. That is why
+   * layout_address_notification() now measures the wrapped address with
+   * calc_str_line() and closes the inter-line padding so the last row lands on
+   * canvas; before that, a 62-character bech32 address (p2wsh, p2tr) showed
+   * its first 44 characters and nothing else.
    *
    * confirm_helper() already applies its measured/paged path only to
    * layout_standard_notification, so handing it a custom layout renders
