@@ -1339,7 +1339,14 @@ jobs:
   # check here is fatal.
   # ═══════════════════════════════════════════════════════════
   publish-emulator-libs:
-    needs: [python-dylib-tests]
+    # ci-gate, not python-dylib-tests. These assets land on a stable public URL
+    # that Vault and external auditors pull from, so a red graph must never
+    # clobber them: python-dylib-tests alone passes on a commit that broke
+    # firmware-unit or the integration suite. ci-gate needs the whole graph and
+    # fails on any non-success, which is exactly the Stage 4 promise above.
+    # (The artifact this job downloads still comes from python-dylib-tests,
+    # transitively.)
+    needs: [ci-gate]
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/alpha')
