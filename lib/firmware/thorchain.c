@@ -36,7 +36,7 @@
 
 /* THORChain swap memo limits use 1e8 output-asset units. Its scientific
  * notation appends decimal zeros (e.g. 1e8 means 100000000). Render only
- * bounded, exact decimal forms; streaming suffixes remain raw. */
+ * bounded, exact decimal forms; streaming suffixes are parsed separately. */
 static bool thorchain_format_swap_limit(const char* raw, const char* asset,
                                         char* out, size_t out_size) {
   const size_t len = strlen(raw);
@@ -86,6 +86,38 @@ static bool thorchain_format_swap_limit(const char* raw, const char* asset,
   const int written = snprintf(out, out_size, "%s%s%s %s", whole,
                                fraction[0] ? "." : "", fraction, symbol);
   return written > 0 && (size_t)written < out_size;
+}
+
+/* LIM/INTERVAL/QUANTITY is a streaming swap. Never infer the schedule from a
+ * partial or extra-delimited suffix; the fallback displays every byte raw. */
+static bool thorchain_parse_streaming_limit(const char* raw, char* base,
+                                             size_t base_size,
+                                             unsigned* interval,
+                                             unsigned* quantity) {
+  const char* first = strchr(raw, '/');
+  if (first == NULL) return false;
+  const char* second = strchr(first + 1, '/');
+  if (second == NULL || strchr(second + 1, '/') != NULL) return false;
+  const size_t base_len = (size_t)(first - raw);
+  const size_t interval_len = (size_t)(second - first - 1);
+  const size_t quantity_len = strlen(second + 1);
+  if (base_len == 0 || base_len >= base_size || interval_len == 0 ||
+      interval_len > 5 || quantity_len == 0 || quantity_len > 5) return false;
+  unsigned values[2] = {0, 0};
+  const char* parts[2] = {first + 1, second + 1};
+  const size_t lengths[2] = {interval_len, quantity_len};
+  for (size_t part = 0; part < 2; part++) {
+    for (size_t i = 0; i < lengths[part]; i++) {
+      const char c = parts[part][i];
+      if (c < '0' || c > '9') return false;
+      values[part] = values[part] * 10 + (unsigned)(c - '0');
+    }
+  }
+  memcpy(base, raw, base_len);
+  base[base_len] = '\0';
+  *interval = values[0];
+  *quantity = values[1];
+  return true;
 }
 
 /* THORChain affiliate fees are basis points (100 bps = 1%). Show the percent
@@ -478,14 +510,41 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
       return THORCHAIN_MEMO_CANCELLED;
     }
     char readable_limit[64] = {0};
+    char limit_base[24] = {0};
+    unsigned stream_interval = 0;
+    unsigned stream_quantity = 0;
+    const bool is_streaming =
+        thorchain_parse_streaming_limit(limit, limit_base,
+                                        sizeof(limit_base), &stream_interval,
+                                        &stream_quantity);
     const bool limit_is_readable =
-        thorchain_format_swap_limit(limit, asset, readable_limit,
+        thorchain_format_swap_limit(is_streaming ? limit_base : limit, asset,
+                                    readable_limit,
                                     sizeof(readable_limit));
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain swap", limit_is_readable ? "Minimum output %s"
                                                      : "Confirm limit %s",
                  limit_is_readable ? readable_limit : limit)) {
       return THORCHAIN_MEMO_CANCELLED;
+    }
+    if (is_streaming && limit_is_readable) {
+      char schedule[80] = {0};
+      char count_text[32] = {0};
+      if (stream_quantity == 0) {
+        snprintf(count_text, sizeof(count_text), "Network chooses swap count");
+      } else {
+        snprintf(count_text, sizeof(count_text), "%u swaps", stream_quantity);
+      }
+      if (stream_interval == 0) {
+        snprintf(schedule, sizeof(schedule), "Rapid streaming\n%s", count_text);
+      } else {
+        snprintf(schedule, sizeof(schedule), "Every %u block%s\n%s",
+                 stream_interval, stream_interval == 1 ? "" : "s", count_text);
+      }
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Thorchain streaming", "%s", schedule)) {
+        return THORCHAIN_MEMO_CANCELLED;
+      }
     }
     /* Never hide the affiliate fee skim. Gated on EITHER field being present,
      * not on the affiliate alone: a memo may carry a fee with an empty

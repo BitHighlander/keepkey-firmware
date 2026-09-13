@@ -210,6 +210,12 @@ TEST(Thorchain, MemoSwapNoFeeIsThreeScreens) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+TEST(Thorchain, MemoSwapStreamingShowsMinimumAndSchedule) {
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  EXPECT_TRUE(parseMemo("=:ETH.ETH:0xdest:1e8/1/0"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 // Abbreviated asset with no '.' (no chain.asset pair) is not parseable
 // thorchain data: raw-memo fallback
 TEST(Thorchain, MemoSwapNoChainAssetPair) {
