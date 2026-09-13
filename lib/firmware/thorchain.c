@@ -71,6 +71,23 @@ static bool thorchain_format_swap_limit(const char* raw, const char* asset,
   return written > 0 && (size_t)written < out_size;
 }
 
+/* THORChain affiliate fees are basis points (100 bps = 1%). Show the percent
+ * only for a plain, in-range integer; preserve unfamiliar syntax verbatim. */
+static bool thorchain_format_fee_bps(const char* raw, char* out,
+                                     size_t out_size) {
+  unsigned bps = 0;
+  const size_t len = strlen(raw);
+  if (len == 0 || len > 4) return false;
+  for (size_t i = 0; i < len; i++) {
+    if (raw[i] < '0' || raw[i] > '9') return false;
+    bps = bps * 10 + (unsigned)(raw[i] - '0');
+  }
+  if (bps > 1000) return false;
+  const int written = snprintf(out, out_size, "%u.%02u%%", bps / 100,
+                               bps % 100);
+  return written > 0 && (size_t)written < out_size;
+}
+
 bool thorchain_isValidDenom(const char* denom) {
   return tendermint_isValidDenom(denom);
 }
@@ -460,8 +477,14 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
      * filled in. Showing the fee against "(none given)" discloses what is
      * actually signed; skipping the screen discloses nothing. */
     if (affiliate != NULL || has_fee) {
+      char fee_percent[16] = {0};
+      const bool fee_is_readable =
+          has_fee && thorchain_format_fee_bps(fee_bps, fee_percent,
+                                              sizeof(fee_percent));
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Thorchain swap", "Affiliate fee %s bps to %s", fee_bps,
+                   "Thorchain swap", fee_is_readable ? "Affiliate fee %s to %s"
+                                                    : "Affiliate fee %s bps to %s",
+                   fee_is_readable ? fee_percent : fee_bps,
                    affiliate ? affiliate : "(none given)")) {
         return THORCHAIN_MEMO_CANCELLED;
       }
