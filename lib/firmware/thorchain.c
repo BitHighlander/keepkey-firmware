@@ -30,8 +30,46 @@
 #include "trezor/crypto/segwit_addr.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
+
+/* THORChain swap memo limits use 1e8 output-asset units. Render only plain
+ * decimal integers; scientific notation and streaming suffixes remain raw so
+ * this preview never guesses at a value it did not parse. */
+static bool thorchain_format_swap_limit(const char* raw, const char* asset,
+                                        char* out, size_t out_size) {
+  const size_t len = strlen(raw);
+  if (len == 0 || len > 20) return false;
+  for (size_t i = 0; i < len; i++) {
+    if (raw[i] < '0' || raw[i] > '9') return false;
+  }
+  char padded[32] = {0};
+  const size_t digits = len < 9 ? 9 : len;
+  memset(padded, '0', digits - len);
+  memcpy(padded + digits - len, raw, len);
+  const size_t whole_len = digits - 8;
+  char whole[24] = {0};
+  memcpy(whole, padded, whole_len);
+  char fraction[9] = {0};
+  memcpy(fraction, padded + whole_len, 8);
+  for (size_t i = 8; i > 0 && fraction[i - 1] == '0'; i--) {
+    fraction[i - 1] = '\0';
+  }
+  char symbol[13] = {0};
+  size_t symbol_len = 0;
+  while (asset[symbol_len] != '\0' && asset[symbol_len] != '-' &&
+         symbol_len < sizeof(symbol) - 1) {
+    const char c = asset[symbol_len];
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return false;
+    symbol[symbol_len++] = c;
+  }
+  if (symbol_len == 0 ||
+      (asset[symbol_len] != '\0' && asset[symbol_len] != '-')) return false;
+  const int written = snprintf(out, out_size, "%s%s%s %s", whole,
+                               fraction[0] ? "." : "", fraction, symbol);
+  return written > 0 && (size_t)written < out_size;
+}
 
 bool thorchain_isValidDenom(const char* denom) {
   return tendermint_isValidDenom(denom);
@@ -405,8 +443,14 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                  "Thorchain swap", "Confirm to %s", dest)) {
       return THORCHAIN_MEMO_CANCELLED;
     }
+    char readable_limit[64] = {0};
+    const bool limit_is_readable =
+        thorchain_format_swap_limit(limit, asset, readable_limit,
+                                    sizeof(readable_limit));
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Thorchain swap", "Confirm limit %s", limit)) {
+                 "Thorchain swap", limit_is_readable ? "Minimum output %s"
+                                                     : "Confirm limit %s",
+                 limit_is_readable ? readable_limit : limit)) {
       return THORCHAIN_MEMO_CANCELLED;
     }
     /* Never hide the affiliate fee skim. Gated on EITHER field being present,
