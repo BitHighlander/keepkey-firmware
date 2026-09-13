@@ -34,20 +34,37 @@
 #include <string.h>
 #include <time.h>
 
-/* THORChain swap memo limits use 1e8 output-asset units. Render only plain
- * decimal integers; scientific notation and streaming suffixes remain raw so
- * this preview never guesses at a value it did not parse. */
+/* THORChain swap memo limits use 1e8 output-asset units. Its scientific
+ * notation appends decimal zeros (e.g. 1e8 means 100000000). Render only
+ * bounded, exact decimal forms; streaming suffixes remain raw. */
 static bool thorchain_format_swap_limit(const char* raw, const char* asset,
                                         char* out, size_t out_size) {
   const size_t len = strlen(raw);
   if (len == 0 || len > 20) return false;
-  for (size_t i = 0; i < len; i++) {
-    if (raw[i] < '0' || raw[i] > '9') return false;
+  char expanded[24] = {0};
+  size_t mantissa_len = 0;
+  while (mantissa_len < len && raw[mantissa_len] >= '0' &&
+         raw[mantissa_len] <= '9') {
+    mantissa_len++;
   }
+  if (mantissa_len == 0) return false;
+  unsigned exponent = 0;
+  if (mantissa_len < len) {
+    if (raw[mantissa_len] != 'e' && raw[mantissa_len] != 'E') return false;
+    if (mantissa_len + 1 == len || len - mantissa_len - 1 > 2) return false;
+    for (size_t i = mantissa_len + 1; i < len; i++) {
+      if (raw[i] < '0' || raw[i] > '9') return false;
+      exponent = exponent * 10 + (unsigned)(raw[i] - '0');
+    }
+  }
+  if (mantissa_len + exponent > 20) return false;
+  memcpy(expanded, raw, mantissa_len);
+  memset(expanded + mantissa_len, '0', exponent);
+  const size_t expanded_len = mantissa_len + exponent;
   char padded[32] = {0};
-  const size_t digits = len < 9 ? 9 : len;
-  memset(padded, '0', digits - len);
-  memcpy(padded + digits - len, raw, len);
+  const size_t digits = expanded_len < 9 ? 9 : expanded_len;
+  memset(padded, '0', digits - expanded_len);
+  memcpy(padded + digits - expanded_len, expanded, expanded_len);
   const size_t whole_len = digits - 8;
   char whole[24] = {0};
   memcpy(whole, padded, whole_len);
