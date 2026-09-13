@@ -483,6 +483,25 @@ TEST(Tron, FormatTrc20AmountUint256) {
   EXPECT_STREQ(buf, "1000000000000000000");
 }
 
+TEST(Tron, VerifiedUsdtFormattingIsBoundToExactContract) {
+  const uint8_t usdt[21] = {0x41, 0xa6, 0x14, 0xf8, 0x03, 0xb6, 0xfd,
+                            0x78, 0x09, 0x86, 0xa4, 0x2c, 0x78, 0xec,
+                            0x9c, 0x7f, 0x77, 0xe6, 0xde, 0xd1, 0x3c};
+  uint8_t amount[32] = {0};
+  amount[28] = 0x02;
+  amount[29] = 0x0d;
+  amount[30] = 0x3b;
+  amount[31] = 0x89;  // 34,421,641 base units
+  char display[90];
+  ASSERT_TRUE(tron_formatVerifiedUsdt(usdt, amount, display, sizeof(display)));
+  EXPECT_STREQ(display, "34.421641 USDT");
+  uint8_t impostor[21];
+  memcpy(impostor, usdt, sizeof(impostor));
+  impostor[20] ^= 1;
+  EXPECT_FALSE(tron_formatVerifiedUsdt(impostor, amount, display,
+                                       sizeof(display)));
+}
+
 TEST(Tron, AddressFromBytes) {
   /* Base58Check of 41 + 20 bytes must round-trip through the display helper */
   uint8_t addr[21];

@@ -464,6 +464,9 @@ void ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         case 43114:
           suffix = " AVAX";
           break;  //  Avalanche C-Chain
+        case 8453:
+          suffix = " ETH";
+          break;  //  Base native currency
       }
     }
   }

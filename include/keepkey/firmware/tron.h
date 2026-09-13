@@ -84,6 +84,11 @@ bool tron_addressFromBytes(const uint8_t addr[TRON_RAW_ADDRESS_SIZE], char* out,
  * base units. Token decimals are unknown on-device, so no scaling is done.
  */
 bool tron_formatTrc20Amount(const uint8_t amount_be[32], char* buf, size_t len);
+/* Returns true only for the pinned TRON USDT contract; formats six-decimal
+ * USDT units. Unknown contracts must remain in raw base units. */
+bool tron_formatVerifiedUsdt(const uint8_t contract[TRON_RAW_ADDRESS_SIZE],
+                             const uint8_t amount_be[32], char* buf,
+                             size_t len);
 
 /**
  * Generate TRON address from secp256k1 public key

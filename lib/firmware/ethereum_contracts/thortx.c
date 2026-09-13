@@ -75,6 +75,8 @@ static const char* thor_router_for_chain(const EthereumSignTx* msg) {
       return THOR_ROUTER; /* Ethereum */
     case 43114:
       return THOR_ROUTER_AVAX; /* Avalanche C-Chain */
+    case 8453:
+      return THOR_ROUTER_AVAX; /* Base: same verified router address */
     default:
       return NULL;
   }

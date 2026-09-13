@@ -95,6 +95,20 @@ bool tron_formatTrc20Amount(const uint8_t amount_be[32], char* buf,
   return bn_format(&val, NULL, NULL, 0, 0, false, buf, len);
 }
 
+bool tron_formatVerifiedUsdt(const uint8_t contract[TRON_RAW_ADDRESS_SIZE],
+                             const uint8_t amount_be[32], char* buf,
+                             size_t len) {
+  /* Tether's published TRON USD₮ contract, network-prefixed 21-byte form.
+   * Never infer token identity from a caller-supplied name or ticker. */
+  static const uint8_t USDT_CONTRACT[TRON_RAW_ADDRESS_SIZE] = {
+      0x41, 0xa6, 0x14, 0xf8, 0x03, 0xb6, 0xfd, 0x78, 0x09, 0x86, 0xa4,
+      0x2c, 0x78, 0xec, 0x9c, 0x7f, 0x77, 0xe6, 0xde, 0xd1, 0x3c};
+  if (memcmp(contract, USDT_CONTRACT, sizeof(USDT_CONTRACT)) != 0) return false;
+  bignum256 val;
+  bn_read_be(amount_be, &val);
+  return bn_format(&val, NULL, " USDT", 6, 0, false, buf, len);
+}
+
 /* ------------------------------------------------------------------ */
 /*  raw_data protobuf parser                                           */
 /*                                                                     */
