@@ -203,6 +203,8 @@ TEST(RngHealth, TransientHardwareFaultRemainsLatched) {
   const uint8_t zeros[32] = {0};
   EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
   EXPECT_TRUE(rng_seed_error_latched());
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
 }
 
 TEST(RngHealth, PersistentHardwareFaultLatchesBeforeReset) {

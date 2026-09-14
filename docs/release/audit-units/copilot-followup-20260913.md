@@ -110,3 +110,14 @@ still erases all sectors when the marker remains invalid. Neither candidate is
 release-ready.
 
 The integrator corrected the release receipt, Python-host PR URL, and dice screenshot numbering, and checked workflow YAML syntax, Python syntax, and the merge-symbol gate. Remaining metadata, report-generator, host-pin, and PR-description assertions require final evidence reconciliation on the eventual candidate head. A new Copilot review is blocked until this coverage and exact-head CI are complete.
+
+## GitHub response record
+
+- [Review-body dispositions](https://github.com/BitHighlander/keepkey-firmware/pull/756#issuecomment-5657825015); all body-only findings are answered there.
+- Inline finding `4001505609`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/756#discussion_r4001627038).
+- Inline finding `4001505636`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/756#discussion_r4001627104).
+- Inline finding `4001505653`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/756#discussion_r4001627148).
+- Inline finding `4001505672`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/756#discussion_r4001627237).
+- Inline finding `4001505690`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/756#discussion_r4001627326).
+
+All original inline threads remain unresolved while fixes are on follow-up PRs and storage blockers remain open. No new Copilot review has been requested.

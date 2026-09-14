@@ -1283,7 +1283,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   publish-emulator:
-    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware]
+    needs: [ci-gate]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.publish_emulator == 'true'
