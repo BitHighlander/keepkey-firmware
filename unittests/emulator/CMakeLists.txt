@@ -1,3 +1,6 @@
+# The Linux emulator builder uses an old Clang without C11 stdatomic.h; this
+# dylib-specific regression runs in the macOS dylib job with a C11 toolchain.
+if(APPLE)
 # Inject the post-timeout state into the real implementation in a standalone
 # translation unit, without exposing a production FFI for forcing a wedge.
 add_executable(emulator-wedge-unit wedged_poll.c
@@ -24,4 +27,5 @@ find_package(Threads REQUIRED)
 target_link_libraries(emulator-wedge-unit Threads::Threads)
 if(APPLE)
   target_link_options(emulator-wedge-unit PRIVATE "-Wl,-no_fixup_chains")
+endif()
 endif()

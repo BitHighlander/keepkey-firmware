@@ -1015,6 +1015,13 @@ jobs:
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
           echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
+      - name: Test emulator timeout wedge
+        run: |
+          NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          export PATH="$PATH:$NANOPB_GENERATOR_DIR"
+          cmake --build build-emu --target emulator-wedge-unit -j"$(sysctl -n hw.ncpu)"
+          ./build-emu/bin/emulator-wedge-unit
+
       # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
       # Uses cmake/toolchains/mingw-w64-x86_64.cmake, so no Windows runner
       # is needed. BLOCKING on purpose: the DLL and the dylib are the same
