@@ -295,11 +295,28 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
 }
 
 /* A transport rejection never reaches the chain handler's abort path. Clear
- * in-flight workflows before reporting it so a later packet cannot resume one.
- */
+ * the in-flight SIGNING session before reporting it so a later packet cannot
+ * resume one: a malformed EthereumTxAck or TxAck is rejected here, and without
+ * this the half-advanced session is still live for the next ack.
+ *
+ * NOT fsm_abort_workflows(): a setup ceremony cannot be resumed by a rejected
+ * frame -- it advances only on on-device input, setup_stage() refuses to
+ * restage over an armed ceremony (#429) and storage_commit() disarms one --
+ * so tearing it down here buys nothing and costs the user real work. Every
+ * unmapped message id lands in this handler, and on bitcoin-only firmware that
+ * is every multi-chain message a host probes with: setup_abort() would
+ * memzero a recovery 20 words into its seed, mid-entry, because a wallet
+ * application asked for an Ethereum address. */
 static void sendFailureWrapper(FailureType code, const char* text) {
-  fsm_abort_workflows();
-  layoutHome();
+  fsm_abort_signing_workflows();
+  if (setup_isArmedAs(SETUP_RECOVERY)) {
+    /* Signing aborts may already have replaced the OLED with home. Restore
+     * the same recovery cipher, without randomizing its mapping or accepting
+     * another character from the unrelated host packet. */
+    recovery_cipher_redraw();
+  } else if (!setup_isArmed()) {
+    layoutHome();
+  }
   fsm_sendFailure(code, text);
 }
 

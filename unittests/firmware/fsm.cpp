@@ -379,3 +379,40 @@ TEST(Fsm, LowLevelSoftClearPreservesSigning) {
   EXPECT_TRUE(signing_is_active());
   signing_abort();
 }
+
+/* A rejected frame must not be able to resume a signing session -- but it must
+ * not be able to destroy a setup ceremony either. Every unmapped message id
+ * reaches the same handler, and on bitcoin-only firmware that is every
+ * multi-chain message a host probes with, so a routine EthereumGetAddress
+ * would otherwise memzero a recovery the user is 20 words into. */
+TEST(Fsm, TransportFailureEndsSigningButKeepsASetupCeremony) {
+  kk_test_board_init();
+  fsm_init();
+  setup_abort();
+
+  ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
+  setup_arm(SETUP_RECOVERY);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  // Exactly what lib/board/messages.c does for a message id that is not in
+  // the map, via the handler fsm_init() installed.
+  call_msg_failure_handler(FailureType_Failure_UnexpectedMessage,
+                           "Unknown message");
+
+  EXPECT_FALSE(signing_is_active())
+      << "a rejected frame left a signing session a later ack could resume";
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY))
+      << "an unmapped host probe tore down the ceremony the user was in";
+
+  setup_abort();
+  layoutHomeForced();
+}

@@ -421,6 +421,36 @@ void next_character(void) {
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
+bool recovery_cipher_redraw(void) {
+  if (!setup_isArmedAs(SETUP_RECOVERY) || !awaiting_character || !cipher[0]) {
+    return false;
+  }
+
+  char word[CURRENT_WORD_BUF] = {0};
+  char formatted[CURRENT_WORD_BUF + 10] = {0};
+  char prev_info[32] = {0};
+  get_current_word(word);
+  uint32_t word_pos = get_current_word_pos();
+  if (strlen(word) > 4 || word_pos + 1 != words_entered) {
+    memzero(word, sizeof(word));
+    return false;
+  }
+
+  bool auto_completed = strlen(word) >= 3 && attempt_auto_complete(word);
+  format_current_word(word_pos, word, auto_completed, &formatted);
+  if (word_pos > 0 && last_completed_word[0]) {
+    snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
+             last_completed_word);
+  }
+  /* Keep cipher unchanged: the host still encodes the next character using
+   * the mapping already shown before the unrelated packet arrived. */
+  layout_cipher(formatted, cipher, prev_info);
+  memzero(word, sizeof(word));
+  memzero(formatted, sizeof(formatted));
+  memzero(prev_info, sizeof(prev_info));
+  return true;
+}
+
 /*
  * recovery_character() - Decodes character received from host
  *

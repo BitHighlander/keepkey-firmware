@@ -318,7 +318,8 @@ bool solana_deriveAssociatedTokenAddress(
 
 /* Match a host-provided candidate owner only after deriving its ATA and
  * comparing it to the destination that is present in the signed instruction.
- * Returns the verified owner through out, or false without modifying out. */
+ * Returns the matching derivation wallet through out, or false without
+ * modifying out. This does not verify the token account's current authority. */
 bool solana_findTokenRecipientOwner(
     const SolanaSignTx* msg, const uint8_t token_program[SOL_PUBKEY_SIZE],
     const uint8_t mint[SOL_PUBKEY_SIZE],
