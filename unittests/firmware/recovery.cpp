@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/board/layout.h"
 #include "keepkey/emulator/setup.h"
+#include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/home_sm.h"
@@ -14,6 +15,7 @@ extern "C" {
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <algorithm>
 #include <vector>
 
 bool kkconfirm_preload(int nYes, int nNo);
@@ -113,7 +115,19 @@ TEST(Recovery, UnrelatedTransportFailureKeepsCurrentCipherVisible) {
   ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
   const Canvas* canvas = layout_get_canvas();
   ASSERT_NE(nullptr, canvas);
-  const size_t bytes = canvas->width * canvas->height / 8;
+  for (int frame = 0; frame < 20; ++frame) {
+    force_animation_start();
+    animate();
+  }
+  const size_t bytes = canvas->width * canvas->height;
+  bool cipher_drawn = false;
+  for (size_t y = 0; y < canvas->height; ++y) {
+    for (size_t x = CIPHER_START_X; x < canvas->width; ++x) {
+      cipher_drawn |= canvas->buffer[y * canvas->width + x] != 0;
+    }
+  }
+  ASSERT_TRUE(cipher_drawn)
+      << "test must capture a rendered cipher, not a blank queue";
   std::vector<uint8_t> cipher_before(canvas->buffer, canvas->buffer + bytes);
 
   /* A previously active signer also calls layoutHome() while it aborts. The
@@ -129,6 +143,10 @@ TEST(Recovery, UnrelatedTransportFailureKeepsCurrentCipherVisible) {
 
   call_msg_failure_handler(FailureType_Failure_UnexpectedMessage,
                            "Unknown message");
+  for (int frame = 0; frame < 20; ++frame) {
+    force_animation_start();
+    animate();
+  }
   EXPECT_FALSE(signing_is_active());
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
