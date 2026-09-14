@@ -552,6 +552,7 @@ void fsm_msgCosmosMsgAck(const CosmosMsgAck* msg) {
 
   if (!tendermint_signingIsFinished()) {
     RESP_INIT(CosmosMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_CosmosMsgRequest, resp);
     return;
   }

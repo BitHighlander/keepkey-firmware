@@ -1,10 +1,14 @@
 extern "C" {
 #include "keepkey/transport/interface.h"
+#include "keepkey/board/usb.h"
+#include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
+#include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/mayachain.h"
@@ -21,10 +25,13 @@ extern "C" {
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <algorithm>
 
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
 void kk_test_board_init(void);
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
 
 TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   char credential[] = "site:user:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -210,57 +217,270 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
   layoutHomeForced();
 }
 
-/* Host traffic is activity: a ceremony or signing stream the user is still
- * working through outlasts the delay only because nothing else resets the
- * timer once the device has left the home screen. */
-TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
-  kk_test_board_init();
-  fsm_init();
-  layoutHomeForced();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+namespace {
+void receiveMessage(MessageType type, const pb_field_t* fields,
+                    const void* msg) {
+  uint8_t encoded[4096] = {};
+  pb_ostream_t stream = pb_ostream_from_buffer(encoded, sizeof(encoded));
+  ASSERT_TRUE(pb_encode(&stream, fields, msg));
+  uint8_t frame[64] = {'?', '#', '#'};
+  frame[3] = type >> 8;
+  frame[4] = type & 0xff;
+  const size_t size = stream.bytes_written;
+  frame[5] = size >> 24;
+  frame[6] = size >> 16;
+  frame[7] = size >> 8;
+  frame[8] = size;
+  size_t sent = std::min(size, sizeof(frame) - 9);
+  std::memcpy(frame + 9, encoded, sent);
+  usb_test_receive(frame, sizeof(frame));
+  while (sent < size) {
+    std::memset(frame + 1, 0, sizeof(frame) - 1);
+    const size_t chunk = std::min(size - sent, sizeof(frame) - 1);
+    std::memcpy(frame + 1, encoded + sent, chunk);
+    usb_test_receive(frame, sizeof(frame));
+    sent += chunk;
+  }
+}
 
-  SignTx start = {};
-  start.inputs_count = 1;
-  start.outputs_count = 1;
-  HDNode root = {};
-  const CoinType* coin = coinByName("Bitcoin");
-  ASSERT_NE(nullptr, coin);
-  signing_init(&start, coin, &root);
+class AutoLockProgress : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+    layoutHomeForced();
+    storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+    SignTx start = {};
+    start.inputs_count = start.outputs_count = 1;
+    HDNode root = {};
+    const uint8_t seed[32] = {1};
+    ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+    signing_init(&start, coinByName("Bitcoin"), &root);
+    ASSERT_TRUE(signing_is_active());
+    leave_home();
+  }
+  void TearDown() override {
+    fsm_abort_workflows();
+    layoutHomeForced();
+  }
+};
+}  // namespace
+
+TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
+  GetFeatures poll = {};
+  for (int i = 0; i < 4; ++i) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+    receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                   &poll);
+    ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+    ASSERT_TRUE(signing_is_active());
+    toggle_screensaver();
+  }
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  // Valid Ping header, but its 60-byte payload has not arrived in full.
+  uint8_t frame[64] = {'?', '#', '#', 0, 1, 0, 0, 0, 60};
+  usb_test_receive(frame, sizeof(frame));
   ASSERT_TRUE(signing_is_active());
-
-  leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  note_host_activity();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  toggle_screensaver();
-  EXPECT_TRUE(signing_is_active())
-      << "two sub-delay gaps around a host frame must not add up to a lock";
-
-  // The lock still fires once the host really has stalled for the full delay.
   increment_idle_time(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
-
-  layoutHomeForced();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  // Finish the pending transport message so it cannot affect later tests.
+  uint8_t tail[64] = {'?'};
+  usb_test_receive(tail, sizeof(tail));
 }
 
-/* The control: at the home screen the same frames must not hold the device
- * unlocked, or a polling host would defeat auto-lock entirely. */
-TEST(Fsm, HostActivityAtHomeDoesNotDeferTheAutoLock) {
-  kk_test_board_init();
-  fsm_init();
-  layoutHomeForced();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  ASSERT_EQ(AT_HOME, home_get_state());
-
+TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
+  TxAck ack = {};
+  ack.has_tx = true;
+  ack.tx.inputs_count = 1;
+  ack.tx.inputs[0].prev_hash.size = 32;
+  ack.tx.inputs[0].has_script_type = true;
+  ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  note_host_activity();
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  ASSERT_TRUE(signing_is_active());
+
+  // Real next stage: supply metadata for the requested previous transaction.
+  ack = {};
+  ack.has_tx = true;
+  ack.tx.has_inputs_cnt = ack.tx.has_outputs_cnt = true;
+  ack.tx.inputs_cnt = ack.tx.outputs_cnt = 1;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  ASSERT_TRUE(signing_is_active());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, FeaturePollingAtHomeDoesNotRenewTheIdleDeadline) {
+  signing_abort();
+  layoutHomeForced();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  GetFeatures poll = {};
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
   increment_idle_time(1);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
-
-  layoutHomeForced();
 }
+
+TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  TxAck invalid = {};
+  invalid.has_tx = true;
+  // Decodable protobuf, but the required 32-byte previous hash is missing.
+  invalid.tx.inputs_count = 1;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &invalid);
+  EXPECT_FALSE(signing_is_active());
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
+  signing_abort();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  recovery_cipher_init(12, false, false, "english", "idle test", false,
+                       STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  ASSERT_EQ(0, kkconfirm_drain());
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  CharacterAck character = {};
+  character.has_character = true;
+  character.character[0] = 'a';  // Every a-z character belongs to the cipher.
+  receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                 &character);
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  character = {};
+  character.has_delete = character.del = true;
+  receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                 &character);
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  // The mnemonic is now empty: another delete makes no progress.
+  receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                 &character);
+  GetFeatures poll = {};
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+#if !BITCOIN_ONLY
+TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
+  signing_abort();
+  storage_reset();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  struct RestorePolicy {
+    ~RestorePolicy() { storage_setPolicy("AdvancedMode", false); }
+  } restore;
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  EthereumSignTx start = {};
+  start.has_chain_id = true;
+  start.chain_id = 1;
+  start.has_gas_price = start.has_gas_limit = true;
+  start.gas_price.size = start.gas_limit.size = 1;
+  start.gas_price.bytes[0] = start.gas_limit.bytes[0] = 1;
+  start.has_to = true;
+  start.to.size = 20;
+  start.to.bytes[0] = 1;
+  start.has_data_initial_chunk = start.has_data_length = true;
+  start.data_initial_chunk.size = 1;
+  start.data_initial_chunk.bytes[0] = 1;
+  start.data_length = 4096;
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&start, &node, false);
+  ASSERT_TRUE(ethereum_signing_isInProgress());
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  for (int i = 0; i < 2; ++i) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    EthereumTxAck chunk = {};
+    chunk.has_data_chunk = true;
+    chunk.data_chunk.size = 128;  // Requires multiple USB frames.
+    receiveMessage(MessageType_MessageType_EthereumTxAck, EthereumTxAck_fields,
+                   &chunk);
+    toggle_screensaver();
+    ASSERT_TRUE(ethereum_signing_isInProgress());
+  }
+  GetFeatures poll = {};
+  for (int i = 0; i < 4; ++i) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+    receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                   &poll);
+    toggle_screensaver();
+  }
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
+  signing_abort();
+  storage_reset();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  struct RestorePolicy {
+    ~RestorePolicy() { storage_setPolicy("AdvancedMode", false); }
+  } restore;
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  uint8_t chain_id[32] = {};
+  EosTxHeader header = {};
+  uint32_t path[8] = {};
+  eos_signingInit(chain_id, 1, &header, &node, path, 0);
+  ASSERT_TRUE(eos_signingIsInited());
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  EosTxActionAck ack = {};
+  ack.has_common = ack.has_unknown = true;
+  ack.common.has_account = ack.common.has_name = true;
+  ack.common.account = 0x1111;
+  ack.common.name = 0x2222;
+  ack.common.authorization_count = 1;
+  ack.common.authorization[0].has_actor = true;
+  ack.common.authorization[0].actor = 0x3333;
+  ack.common.authorization[0].has_permission = true;
+  ack.common.authorization[0].permission = 0x4444;
+  ack.unknown.has_data_size = ack.unknown.has_data_chunk = true;
+  ack.unknown.data_size = 256;
+  ack.unknown.data_chunk.size = 1;
+  for (int i = 0; i < 2; ++i) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_EosTxActionAck,
+                   EosTxActionAck_fields, &ack);
+    toggle_screensaver();
+    ASSERT_TRUE(eos_signingIsInited());
+  }
+  ack.unknown.data_chunk.size = 0;
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  receiveMessage(MessageType_MessageType_EosTxActionAck, EosTxActionAck_fields,
+                 &ack);
+  ASSERT_TRUE(eos_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(eos_signingIsInited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+#endif
 
 /* Clearing PIN authorization revokes signing, but must not discard a staged
  * setup ceremony: recovery stages before it prompts for the PIN, and every
