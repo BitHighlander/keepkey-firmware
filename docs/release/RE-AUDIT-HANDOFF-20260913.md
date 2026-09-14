@@ -7,8 +7,8 @@ handoff for independent Astra review. Follow
 
 | Candidate | Actual PR base | Frozen candidate head | Exact-head non-publishing CI |
 | --- | --- | --- | --- |
-| [7.14.3 #755](https://github.com/BitHighlander/keepkey-firmware/pull/755) | `audit/7143-p03-pending-version-lock` `0f64f80323813e107c25b838d137cc0e65417d79` | `efba271d2954a9b64db88b5ff8c3f92a6c7b1901` | [run 34798104808](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34798104808), success at this SHA |
-| [7.15 #756](https://github.com/BitHighlander/keepkey-firmware/pull/756) | `audit/715-p03-pending-version-lock` `06b1d249ada75b53d06cb5b7f27512fd276ef83c` | `d7d0525e4c43e7464493a90a064505e16ec408fb` | [run 34798387842](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34798387842), success at this SHA |
+| [7.14.3 #755](https://github.com/BitHighlander/keepkey-firmware/pull/755) | `audit/7143-p03-pending-version-lock` `0f64f80323813e107c25b838d137cc0e65417d79` | `225eb80fddb6f351df64983515d74dec495855ca` | [run 34801670712](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34801670712), success at this SHA |
+| [7.15 #756](https://github.com/BitHighlander/keepkey-firmware/pull/756) | `audit/715-p03-pending-version-lock` `06b1d249ada75b53d06cb5b7f27512fd276ef83c` | `be9db9c4983e1a72486635a9a03d57647eef77ab` | [run 34802109009](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34802109009), in progress at this snapshot |
 
 The previous Copilot review IDs were `5193039090` on #755 and `5193037080`
 on #756. Both reviewed older heads (`18606c1a...` and `4921cf91...`), not the
@@ -136,11 +136,45 @@ checks a nonblank cipher area, and compares the full framebuffer after mixed
 signer cleanup. This is source review, not physical screen evidence; partial
 words, autocomplete and prior-word display are outside this regression.
 
-Neither draft is merged into its candidate. CI on a fix branch is not the
-post-merge candidate receipt. Merge only after green fix-head CI and review,
-then dispatch non-publishing CI on each new `audit/*` merge head. The three
-storage blockers, 7.14.3 erase-failure reproduction,
-full changed-file coverage reconciliation, and physical gates remain open.
+Both follow-up PRs passed exact fix-head CI and were merged into their audit
+candidates. #755 is now `225eb80fddb6f351df64983515d74dec495855ca`,
+with [non-publishing run 34801670712](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34801670712)
+**successful** on that merge head. #756 is now
+`be9db9c4983e1a72486635a9a03d57647eef77ab`, with
+[non-publishing run 34802109009](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34802109009)
+in progress at this snapshot. Fresh Astra whole-head coverage passes are in
+progress on both refs. The three storage blockers, 7.14.3 erase-failure
+reproduction, full changed-file coverage reconciliation, and physical gates
+remain open. Do not spend the next Copilot request while those gates are open.
+
+### Whole-head Astra results at the merged refs
+
+The 7.14.3 pass inventoried all **57** changed paths at `225eb80f` and read
+changed runtime implementations and adjacent callers. It found no new
+confirmed P1/P2 runtime defect. The earlier file ledgers do not name the new
+recovery header or record the post-review redraw, so their historical coverage
+claim cannot certify this head. The combined receipt's blanket claim that all
+remaining P3s were fixed or unreachable is unsupported by the cited ledger:
+23 entries were only “triaged by reading.” F050's explicit Solana compute
+limit remains an example requiring individual disposition. Correct the claim
+or provide per-item evidence before a final review.
+
+The 7.15 pass inventoried all **79** changed paths at `be9db9c4`, including
+42 `include/lib` paths, 21 test/build paths and 16 others. It found no further
+confirmed Solana consent or recovery-redraw defect. Ten newly relevant paths
+(including the Solana presenter/header/tests and recovery header) are absent
+from the old literal file lists. The pass is source review; host artifact and
+physical proof remain separate.
+
+It also raised a **P2 policy question** on `fsm_usb_rx()` in both lines:
+`note_host_activity()` runs before dispatch on every received host frame.
+A valid but unrelated `GetFeatures` poll can therefore keep an active,
+stalled signing session unlocked indefinitely without transaction progress or
+user action. This is intentional broad activity policy in the present code,
+not a malformed-packet signing bypass; malformed packets abort signing. The
+release owner must decide whether only validated workflow progress may extend
+auto-lock. Until that policy and its test are settled, keep this as an open
+security review item rather than claiming a clean whole-head audit.
 
 The evidence pass checked all four ARM variant ZIPs against their manifests:
 92 file hashes matched. Both report-bundle PDF and merged-JUnit hashes also
@@ -153,7 +187,8 @@ Both lines still skip five host boot/version tests because the host container
 has no owned `kkemu`; #756 also skips two power-cycle tests. These skips do
 not satisfy physical-device gates.
 
-The frozen PR diffs contain 56 files on #755 and 74 on #756. Earlier runtime
+Before the latest follow-up merges, the PR diffs contained 56 files on #755 and
+74 on #756; the current counts are 57 and 79 above. Earlier runtime
 and non-runtime coverage ledgers were written before the follow-up merge heads,
 so reconcile the added test seams, CMake/harness files and receipts against
 these complete file lists. No whole-head coverage claim is established yet.
@@ -161,7 +196,7 @@ these complete file lists. No whole-head coverage claim is established yet.
 Evidence reconciliation also found stale wording in both candidate ledgers:
 the follow-up files say all original inline threads are unresolved and old-head
 CI is pending. Those sentences describe the pre-merge state; the live state is
-the two open #755 storage threads and green merge-head runs above. Candidate
+the two open #755 storage threads and the exact merge-head run statuses above. Candidate
 PR titles have been corrected to say storage blockers are open. Update the
 branch ledgers with new exact-head receipts when the next fix changes either
 head; do not overwrite historical receipts without labeling them.
