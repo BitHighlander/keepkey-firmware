@@ -1,5 +1,45 @@
 # 7.14.3 and 7.15 candidate re-audit handoff — 2026-09-13
 
+## Release-owner scope decision — 2026-09-14
+
+The release owner subsequently classified the three inherited storage
+durability/fault paths as **deferred legacy debt**, tracked for 7.17 design and
+evidence. Their redesign is out of scope for 7.14.3 and 7.15. No feature
+requiring a new bootloader may ship in 7.14.3, 7.15, 7.16 or 7.17; a
+bootloader rollout requires a separate later release. Experimental pending
+storage may remain on alpha, but must not enter a release artifact. This
+supersedes only the storage-based hold and Copilot-entry prohibition in the
+historical handoff below. It does not certify that candidate storage changes
+are non-regressions, close the open review threads, or waive remaining audit,
+physical-device and dependency gates. A final Copilot review may proceed only
+after those remaining gates and a documented shipped-baseline comparison.
+
+## Historical hold decision — 2026-09-14
+
+The release owner excludes bootloader changes from 7.14.3 and 7.15 and holds
+both candidates while the storage-loss blockers remain. The current #755 head
+is `758746d772d7c927a0020dfd3a38415f1f121c35`, with successful
+[non-publishing CI 34805708476](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34805708476).
+The current #756 head is `5a3bc3760e81f58f8550f027d24b2440a1e777e3`,
+with successful
+[non-publishing CI 34806086729](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34806086729).
+The validated-workflow auto-lock fixes #766 and #767 are incorporated; the
+three storage blockers below remain open. Do not request another final Copilot
+review of either head.
+
+The scope repair already removed the earlier bootloader-coupled durability
+feature from both candidates. A separate firmware-only research prototype can
+preserve pending storage on an ordinary reboot, but the unchanged bootloader's
+firmware-update path erases storage when its marker cannot be installed. It
+therefore does not close the persistent-fault blocker and is outside both
+release PRs. See
+[storage-durability-boundary-20260914.md](audit-units/storage-durability-boundary-20260914.md)
+for the source-level transition and validation limits. Any design requiring
+new bootloader behavior belongs on a later line such as 4.17+.
+
+The frozen-head table and historical findings below remain the 2026-09-13
+receipt; their earlier heads are not the current candidates.
+
 Status: **re-audit found additional work; neither candidate is ready for another Copilot
 review, a `develop` merge, or release approval.** This document is the current
 handoff for independent Astra review. Follow

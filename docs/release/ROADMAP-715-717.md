@@ -26,6 +26,9 @@ They are one release, not two.
 
 7.17 answers "what if we get it wrong": rotation, revocation, freshness, and the
 distinction between what the device *derived* and what someone *asserted*.
+It also owns the design and fault-evidence backlog for inherited storage
+durability risks. A fix that needs new bootloader behavior is planned for a
+separate release after 7.17; none of these three gates ships a new bootloader.
 
 ## The single line that separates 7.15 from 7.16
 
