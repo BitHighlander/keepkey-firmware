@@ -1692,7 +1692,14 @@ void storage_commit(void) {
                    sizeof(flash_temp) / sizeof(uint32_t));
 
     if (shadow_flash_crc32 == shadow_ram_crc32) {
-      storage_protect_off();
+      /* A verified record is not bootable until its marker is durable.
+       * Do not return success, retry by erasing the wallet, or wipe on failure.
+       */
+      if (!storage_protect_off()) {
+        memzero(flash_temp, sizeof(flash_temp));
+        layout_warning_static("Storage Marker Failed. Reboot Device!");
+        shutdown();
+      }
       /* Commit successful, break to exit */
       break;
     }

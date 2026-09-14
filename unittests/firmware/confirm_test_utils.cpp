@@ -7,6 +7,8 @@ extern "C" {
 
 #include <arpa/inet.h>
 #include <cstring>
+#include <string>
+#include <vector>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -28,6 +30,20 @@ void kk_test_board_init(void);
  * This source is unconditional because both full and bitcoin-only suites now
  * exercise security disclosures through confirm_bytes().
  */
+
+static bool capture_screens;
+static std::vector<std::string> captured_screens;
+extern "C" void emulator_confirm_screen(const char*, const char* body) {
+  if (capture_screens) captured_screens.emplace_back(body ? body : "");
+}
+void kkconfirm_capture_start(void) {
+  captured_screens.clear();
+  capture_screens = true;
+}
+std::vector<std::string> kkconfirm_capture_finish(void) {
+  capture_screens = false;
+  return std::move(captured_screens);
+}
 
 static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
                                uint8_t len) {

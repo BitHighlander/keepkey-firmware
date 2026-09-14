@@ -138,6 +138,8 @@ bool random_buffer_checked(uint8_t* buf, size_t len);
 /// that failed its self-test, which is otherwise unreachable from a host build;
 /// `true` re-arms the continuous state.
 void rng_health_force_verdict(bool passed);
+/// Test-only: reset the statistical verdict to model a new boot.
+void rng_health_test_reset(void);
 #endif
 
 #endif

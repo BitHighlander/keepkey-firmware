@@ -178,12 +178,23 @@ static void swap_layout(ActiveLayout active_layout, volatile StateInfo* si,
 /// \param requesta_body  The body of the confirmation message.
 /// \param layout_notification_func  layout callback for displaying confirm
 /// message. \returns true iff the device confirmed.
+#ifdef EMULATOR
+__attribute__((weak)) void emulator_confirm_screen(const char* title,
+                                                   const char* body) {
+  (void)title;
+  (void)body;
+}
+#endif
+
 static bool confirm_screen(const char* request_title_param,
                            const char* request_body,
                            layout_notification_t layout_notification_func,
                            bool constant_power, IconType iconNum,
                            bool immediate) {
   bool ret_stat = false;
+#ifdef EMULATOR
+  emulator_confirm_screen(request_title_param, request_body);
+#endif
 #if DEBUG_LINK
   last_exit_was_debug_decision = false;
 #endif

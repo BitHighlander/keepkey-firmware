@@ -16,6 +16,13 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <algorithm>
+
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;
@@ -533,4 +540,29 @@ TEST(Ethereum, TransferTickerComesFromThisMessageNotTheLastOne) {
   ASSERT_TRUE(ethereumFormatTransferAmount(&eth, buf, sizeof(buf)));
   EXPECT_EQ(nullptr, strstr(buf, " WAN")) << buf;
   EXPECT_NE(nullptr, strstr(buf, " ETH")) << buf;
+}
+
+TEST(Ethereum, NativeThorConfirmationDisplaysValueInsteadOfAbiAmount) {
+  EthereumSignTx msg;
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  msg.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 0xa0;
+  // Native zero-address deposit: ABI amount is one ETH; msg.value is two.
+  const uint8_t one_eth[8] = {0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0, 0};
+  const uint8_t two_eth[8] = {0x1b, 0xc1, 0x6d, 0x67, 0x4e, 0xc8, 0, 0};
+  memcpy(msg.data_initial_chunk.bytes + 4 + 2 * 32 + 24, one_eth, 8);
+  msg.has_value = true;
+  msg.value.size = 8;
+  memcpy(msg.value.bytes, two_eth, 8);
+
+  // Accept router and vault, then reject the amount screen. Inspect the
+  // rendered body at the real screen boundary, independent of memo parsing.
+  ASSERT_TRUE(kkconfirm_preload(2, 1));
+  kkconfirm_capture_start();
+  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_NE(screens.end(),
+            std::find(screens.begin(), screens.end(), "Confirm sending 2 ETH"));
+  EXPECT_EQ(screens.end(),
+            std::find(screens.begin(), screens.end(), "Confirm sending 1 ETH"));
 }

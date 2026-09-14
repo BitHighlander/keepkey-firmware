@@ -534,6 +534,12 @@ void queue_u2f_pkt(const U2FHID_FRAME* u2f_pkt) {
 #endif
 }
 
+#ifdef EMULATOR
+void usb_test_receive(const void* buf, size_t len) {
+  if (user_rx_callback) user_rx_callback(buf, len);
+}
+#endif
+
 void usb_set_rx_callback(usb_rx_callback_t callback) {
   user_rx_callback = callback;
 }

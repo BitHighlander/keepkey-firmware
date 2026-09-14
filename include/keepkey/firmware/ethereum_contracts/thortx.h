@@ -36,7 +36,7 @@
 #define THOR_ROUTER "d37bbe5744d730a1d98d8dc97c42f0ca46ad7146"
 
 /* THORChain deploys its Router at a DIFFERENT address on every EVM chain, so
- * the pin must be chain-scoped (see thor_router_for_chain): a deposit on any
+ * the pin must be chain-scoped (see thor_router_label): a deposit on any
  * chain but mainnet can never match THOR_ROUTER and would fall to the
  * blind-sign gate. Avalanche C-Chain router, verified live against THORChain
  * /inbound_addresses via a Pioneer quote (2026-07). Lowercase, no 0x, to match

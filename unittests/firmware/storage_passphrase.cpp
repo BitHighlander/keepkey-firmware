@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <cstdlib>
 
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
@@ -15,6 +16,25 @@ extern "C" {
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/memzero.h"
+}
+
+static bool corrupt_commit_tail;
+static unsigned payload_writes;
+static int marker_fault;
+extern "C" bool emulator_flash_write_completed(Allocation group,
+                                               uint32_t offset, uint32_t len) {
+  if (offset == STORAGE_MAGIC_LEN && len > 2564) {
+    ++payload_writes;
+    if (corrupt_commit_tail) {
+      reinterpret_cast<uint8_t*>(flash_write_helper(group))[2568] ^= 1;
+      corrupt_commit_tail = false;
+    }
+  }
+  if (offset == 0 && len == sizeof(STORAGE_PROTECT_OFF_MAGIC) && marker_fault) {
+    if (marker_fault == 1) return false;
+    reinterpret_cast<uint8_t*>(flash_write_helper(group))[0] ^= 1;
+  }
+  return true;
 }
 
 namespace {
@@ -84,6 +104,44 @@ TEST_F(PassphraseTransition, FreshWalletSurvivesCommitAndReload) {
   storage_init();
   ASSERT_TRUE(storage_hasMnemonic());
   EXPECT_STREQ(kMnemonic, storage_getMnemonic());
+}
+
+TEST_F(PassphraseTransition, CommitDetectsCorruptionOfFinalSecretByte) {
+  payload_writes = 0;
+  corrupt_commit_tail = true;
+  storage_commit();
+  EXPECT_EQ(2u, payload_writes) << "the corrupted last byte must force a retry";
+  storage_init();
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_STREQ(kMnemonic, storage_getMnemonic());
+}
+
+TEST_F(PassphraseTransition, MarkerWriteFailureCannotReportCommitSuccess) {
+  EXPECT_EXIT(
+      {
+        std::atexit(+[]() {
+          Allocation active;
+          if (!find_active_storage(&active)) std::_Exit(2);
+        });
+        marker_fault = 1;
+        storage_commit();
+        std::exit(0);
+      },
+      ::testing::ExitedWithCode(1), "");
+}
+
+TEST_F(PassphraseTransition, MarkerReadbackFailureCannotReportCommitSuccess) {
+  EXPECT_EXIT(
+      {
+        std::atexit(+[]() {
+          Allocation active;
+          if (!find_active_storage(&active)) std::_Exit(2);
+        });
+        marker_fault = 2;
+        storage_commit();
+        std::exit(0);
+      },
+      ::testing::ExitedWithCode(1), "");
 }
 
 TEST_F(PassphraseTransition, ZeroCrcIsAValidCommittedRecord) {
