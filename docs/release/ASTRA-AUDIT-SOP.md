@@ -43,6 +43,18 @@ limit. Do not send the whole repository to every reviewer. Reviewers may read
 adjacent code to establish reachability, but must cite the changed line that
 introduces or preserves each finding.
 
+Use a fresh Astra context for the pre-Copilot re-audit. The author of a fix
+may explain the patch, but must not be its sole reviewer. Give the independent
+reviewer the actual base/head SHAs, the full prior finding ledger (including
+refutations and deferred findings), and the release invariants. Ask for
+counterexamples to the claimed fix and for defects outside the old finding
+list. Keep three separate assignments: (1) storage, bootloader and next-boot
+fault consequences; (2) signing, protocol and human-visible consent; and
+(3) CI provenance, pins, variant coverage and PR/receipt claims. Each report
+must distinguish known blockers, newly confirmed defects, and evidence gaps.
+The integrator verifies every material claim in source or a reproducible test;
+an empty model report does not close an unassigned file or a hardware gate.
+
 Each reviewer returns a compact table with:
 
 | Field | Required evidence |
@@ -95,6 +107,13 @@ actual PR diff again. A named reviewer must account for every runtime, test,
 CI, script, documentation, and submodule file. If documentation cites an old
 head or CI run, label it historical and require a new exact-head receipt.
 
+Prepare a dated re-audit handoff on the same PR or linked documentation PR.
+Include the frozen refs, exact-head CI links, prior review IDs and thread
+dispositions, test limitations, known blockers, assignment/coverage matrix,
+and the next Copilot entry criteria. Update it with independent Astra results
+before calling the round complete. If a re-audit finds a new issue, assign an
+owner and repeat only the affected patch/invariant verification after a fix.
+
 ## Spend a Copilot review only at a stable head
 
 After the Astra ledger has zero unresolved actionable findings and exact-head
@@ -103,8 +122,7 @@ reply to every existing review item with its fix commit and verification or
 specific technical refutation. Resolve only threads whose disposition is
 actually complete on the reviewed branch; preserve deferred or blocked threads
 as open and list them in the release gate. Record the previous Copilot review
-ID. Verify a
-new `review_requested` timeline event, then require a newer review whose
+ID. Verify a new `review_requested` timeline event, then require a newer review whose
 `commit_id` equals the frozen head. Read both inline comments and the review
 body; a comment with no inline thread is still a finding. Resolve a thread
 only after a pushed fix or a documented technical refutation.
