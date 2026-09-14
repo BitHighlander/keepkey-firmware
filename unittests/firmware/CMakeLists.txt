@@ -43,6 +43,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ripple.cpp
       signed_metadata.cpp
       solana.cpp
+      solana_token_confirm.cpp
       thorchain.cpp
       tron.cpp)
 else()
