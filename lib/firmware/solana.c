@@ -864,8 +864,11 @@ bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
     limit = non_budget_instructions * SOL_DEFAULT_CU_PER_INSTRUCTION +
             (tx->num_instructions - non_budget_instructions) *
                 SOL_BUILTIN_CU_PER_INSTRUCTION;
-    if (limit > SOL_MAX_CU_LIMIT) limit = SOL_MAX_CU_LIMIT;
   }
+
+  /* Solana caps explicit limits too; do not quote a host request above the
+   * runtime ceiling as a fee the signed transaction can incur. */
+  if (limit > SOL_MAX_CU_LIMIT) limit = SOL_MAX_CU_LIMIT;
 
   if (!seen_price || price == 0) return true;
 
