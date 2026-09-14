@@ -37,16 +37,10 @@ TEST(Solana, FormatTokenAmountUsesSignedDecimals) {
   EXPECT_STREQ(buf, "20.00 tokens");
 }
 
-/* SCOPE, so the next reader does not over-read these two tests: they are unit
-   coverage of solana.c helpers, NOT evidence of anything the signer does. The
-   unit suite is the only caller of solana_findKnownToken(),
-   solana_deriveAssociatedTokenAddress() and solana_findTokenRecipientOwner();
-   fsm_msg_solana.h invokes none of them, so the SPL transfer screen still
-   displays the raw destination account and the word "tokens", and
-   SolanaSignTx.token_recipient_owner is parsed and discarded. Wiring the
-   helpers into the SOL_INSTR_TOKEN_TRANSFER_CHECKED confirmation (or dropping
-   them with the proto field) is a firmware change; until it lands, the
-   device-level binding these names suggest does not exist. */
+/* These tests exercise helpers, not device screens. The verified signing
+ * path calls solana_findTokenRecipientOwner(), which derives the associated
+ * token address before showing its wallet owner. solana_findKnownToken()
+ * remains unit-only; the signing screen still uses the generic "tokens". */
 TEST(Solana, MainnetUsdcIsFirmwareKnown) {
   const uint8_t usdc_mint[32] = {
       0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
@@ -1759,10 +1753,8 @@ TEST(Solana, SchemaRejectsUndescribedValueInstruction) {
   EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
 }
 
-/* Control: an inert companion (SetComputeUnitPrice moves no value and grants
- * no authority) still applies, so the rejection above is about the unscreened
- * transfer and not about the message simply having two instructions. */
-TEST(Solana, SchemaAppliesBesideInertComputeBudget) {
+/* Unit price changes the fee. No schema screen discloses that charge. */
+TEST(Solana, SchemaRejectsUndisclosedComputeUnitPrice) {
   uint8_t program[32];
   memset(program, 0x42, sizeof(program));
   uint8_t d[48];
@@ -1782,6 +1774,15 @@ TEST(Solana, SchemaAppliesBesideInertComputeBudget) {
   SolanaInstrSchema s;
   ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
   uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+
+  /* Control: setting a limit without a unit price incurs no priority fee. */
+  const uint8_t unit_limit[5] = {2, 0x40, 0x0D, 0x03, 0};
+  pos = build_schema_plus_companion_tx(raw, program, d, sizeof(d),
+                                     SOL_COMPUTE_BUDGET_PROGRAM, 0,
+                                     unit_limit, sizeof(unit_limit));
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT);
   ASSERT_TRUE(solana_schemaApplies(&s, &tx, &idx));
   EXPECT_EQ(idx, 0);
 }

@@ -18,6 +18,7 @@ extern "C" {
 #include "keepkey/board/timer.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_confirm.h"
+#include "trezor/crypto/bip39_english.h"
 }
 
 TEST(Board, Shutdown) {
@@ -479,3 +480,19 @@ TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
             std::vector<uint8_t>(flash.begin() + end, flash.end()));
 }
 #endif
+
+/* Reset/BIP-85 emit two numbered BIP-39 words per newline-terminated row.
+ * Exercise every pair with the widest two-digit numbering: the narrow pager
+ * must consume at least that row and its rendering must contain all bytes. */
+TEST_F(BodyFits, EveryBip39WordPairFitsANarrowSubpage) {
+  char row[64];
+  for (size_t a = 0; a < 2048; a++) {
+    for (size_t b = 0; b < 2048; b++) {
+      snprintf(row, sizeof(row), "   23.%s   24.%s\n", wordlist[a], wordlist[b]);
+      ASSERT_EQ(strlen(row), confirm_constant_power_subpage_take(row)) << row;
+      ASSERT_TRUE(confirm_body_fits_constant_power(row,
+                                                  CONSTANT_POWER_BODY_WIDTH))
+          << row;
+    }
+  }
+}
