@@ -295,6 +295,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   if (!mayachain_signingIsFinished()) {
     RESP_INIT(MayachainMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_MayachainMsgRequest, resp);
     return;
   }
