@@ -496,6 +496,14 @@ TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
   EXPECT_TRUE(has_fee);
   EXPECT_EQ(fee, 70000000ULL);
 
+  /* Solana caps even an explicit request above 1.4M CU. The old screen
+   * multiplied the raw UINT32_MAX request by the price. */
+  tx.instructions[0].extra_value = UINT32_MAX;
+  tx.instructions[1].extra_value = 2000000;
+  ASSERT_TRUE(solana_calculatePriorityFee(&tx, &fee, &has_fee));
+  EXPECT_TRUE(has_fee);
+  EXPECT_EQ(fee, 2800000ULL);
+
   /* With no explicit limit, use the limit the RUNTIME will request: 200,000
      compute units per non-ComputeBudget instruction plus 3,000 for each
      ComputeBudget instruction, capped at 1,400,000.
