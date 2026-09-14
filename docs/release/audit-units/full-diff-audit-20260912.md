@@ -22,7 +22,10 @@ Status of each finding below:
   release pass. Not individually re-checked by the three-reviewer process.
 
 
-Counts: 78 fixed, 11 refuted on re-check, 0 open, 77 triaged by reading (166 findings touching this line).
+Initial-pass counts: 78 fixed, 11 refuted on re-check, 0 open within that pass,
+77 triaged by reading (166 findings touching this line). The subsequent Copilot
+review and renewed full-file audit are tracked separately; this count does not
+certify their closure.
 
 
 ## Fixed
@@ -89,7 +92,7 @@ Counts: 78 fixed, 11 refuted on re-check, 0 open, 77 triaged by reading (166 fin
 - **F198** (P3, `unittests/firmware/signed_metadata.cpp`) — Icon width cap (review finding 2) is asserted as a constant, never exercised against the code that enforces it
 - **F200** (P3, `unittests/firmware/ethereum.cpp`) — LiquiditySelectorChecksDeclaredCalldataLength never reaches the calldata-length guard it is named for
 - **F201** (P2, `unittests/firmware/thorchain.cpp`) — ConfirmThorTx memo tests never assert a screen count, so the disclosure they name is untested
-- **F208** (P3, `unittests/firmware/solana.cpp`) — New Solana tests are the only callers of the recipient-owner / known-token helpers; no signing path uses them
+- **F208** (P3, `unittests/firmware/solana.cpp`) — Original finding claimed the recipient-owner / known-token helpers had only test callers. Re-check found the signing path calls them; the original disposition was incorrect. Follow-up coverage belongs to the renewed audit.
 - **F215** (P3, `lib/firmware/ethereum_contracts/thortx.c`) — 7.14.2's THORChain ABI tail-padding zero check is missing on 7.15 (and on the new Maya path)
 - **F217** (P2, `lib/firmware/fsm_msg_mayachain.h`) — 7.14.2's denom-aware MAYAChain amount exponent is bypassed on 7.15's MsgSend path
 - **F218** (P2, `lib/firmware/ethereum_contracts/thortx.c`) — 7.14.2's THORChain memo ABI tail-padding zero check is missing on 7.15
