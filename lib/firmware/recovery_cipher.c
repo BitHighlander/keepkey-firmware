@@ -402,6 +402,30 @@ void next_character(void) {
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
+bool recovery_cipher_redraw(void) {
+  if (!setup_isArmedAs(SETUP_RECOVERY) || !awaiting_character || !cipher[0]) {
+    return false;
+  }
+
+  char word[CURRENT_WORD_BUF] = {0};
+  char formatted[CURRENT_WORD_BUF + 10] = {0};
+  get_current_word(word);
+  uint32_t word_pos = get_current_word_pos();
+  if (strlen(word) > 4 || word_pos + 1 != words_entered) {
+    memzero(word, sizeof(word));
+    return false;
+  }
+
+  bool auto_completed = strlen(word) >= 3 && attempt_auto_complete(word);
+  format_current_word(word_pos, word, auto_completed, &formatted);
+  /* Keep cipher unchanged: the host still encodes the next character using
+   * the mapping already shown before the unrelated packet arrived. */
+  layout_cipher(formatted, cipher);
+  memzero(word, sizeof(word));
+  memzero(formatted, sizeof(formatted));
+  return true;
+}
+
 /*
  * recovery_character() - Decodes character received from host
  *
