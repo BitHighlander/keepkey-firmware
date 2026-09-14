@@ -68,14 +68,18 @@ The independent runtime pass found two P2s on #756:
   This predates #756's base, but is a missing 7.14.3-to-7.15 fix.
 
 The storage pass reconfirmed both wallet-loss blockers. It also flagged a
-**candidate requiring reproduction**: if the old sector erase fails while
-its magic survives, first-magic active selection may cause
-`storage_protect_off()` to erase the newly verified sector, then report a
-successful marker write beside the old record. The erase primitive returns
-`void`, so the caller cannot detect this from its return value. Test the
-fault sequence and next boot on the exact heads before assigning severity or
-claiming a third confirmed defect. The independent storage pass ended before
-that reproduction was completed.
+third path: if the old sector erase fails while its magic survives,
+first-magic active selection can cause `storage_protect_off()` to erase the
+newly verified sector, then report a successful marker write beside the old
+record. The erase primitive returns `void`, so the caller cannot detect this
+from its return value. A temporary emulator fault-injection hook on the 7.15
+head made the first erase of active sector 1 fail; a native test forced that
+sector ordering, called `storage_commit()`, and failed because the replacement
+sector no longer contained `stor` (`/private/tmp/kk-storage-fault-proof.log`).
+The temporary hook/test were restored and are not in #764. This confirms a
+silent update-loss path in the emulator model; physical flash fault and
+next-boot evidence are still required, and the same 7.14.3 path needs its own
+test. Treat it as an additional open storage release blocker.
 
 The integrator must independently verify P1/P2 reports and maintain a
 changed-file coverage matrix. Current gaps include physical power-cut and
@@ -99,7 +103,7 @@ Poll deliberately, following the SOP's quota and three-request limits.
 
 | Pass | Frozen heads reviewed | Result / evidence | Remaining gap |
 | --- | --- | --- | --- |
-| Storage and boot | Both frozen heads | Both known wallet-loss paths reconfirmed in source; old-sector erase fault is a new hypothesis, not yet reproduced | Two release blockers plus fault-sequence verification |
+| Storage and boot | Both frozen heads | Both known wallet-loss paths reconfirmed in source; old-sector erase fault reproduced by temporary 7.15 emulator injection | Three storage blockers; physical fault/next-boot evidence and 7.14.3 reproduction |
 | Runtime and consent | Both frozen heads | Two #756 P2s above; native 7.15 chain test subset 155/155 passed | Fix and verify #756; full changed-file coverage still required |
 | Evidence and claims | Both frozen heads | Exact-head CI verified; four ARM variant ZIPs and 92 manifest file hashes checked | Physical gates and explicit CI skips remain |
 
@@ -122,8 +126,9 @@ substitution cipher after an unrelated transport failure. A redraw of the
 cipher animation and compares the entire one-byte-per-pixel framebuffer; an
 earlier partial-buffer version was rejected by the second Astra pass. The
 corrected 7.15 focused test passes locally. The 7.14.3 port's two-argument
-display API was checked and fixed before its latest push. #765 still needs
-exact-head CI and physical OLED verification.
+display API was checked and fixed before its latest push. Its isolated native
+build and focused recovery/FSM tests pass (2/2), as do 174/174 Mac-safe
+firmware tests. #765 still needs exact-head CI and physical OLED verification.
 
 A fresh Astra pass of both final patch heads found no remaining P1/P2 in this
 focused diff. It verified that the test advances the 300 ms cipher animation,
@@ -133,8 +138,8 @@ words, autocomplete and prior-word display are outside this regression.
 
 Neither draft is merged into its candidate. CI on a fix branch is not the
 post-merge candidate receipt. Merge only after green fix-head CI and review,
-then dispatch non-publishing CI on each new `audit/*` merge head. The two
-storage wallet-loss blockers, old-sector erase-failure fault reproduction,
+then dispatch non-publishing CI on each new `audit/*` merge head. The three
+storage blockers, 7.14.3 erase-failure reproduction,
 full changed-file coverage reconciliation, and physical gates remain open.
 
 The evidence pass checked all four ARM variant ZIPs against their manifests:
