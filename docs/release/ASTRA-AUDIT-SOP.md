@@ -69,6 +69,14 @@ both sides, duplicate definitions, lost guards, changed submodule pins, and
 comments that describe code no longer present. Preserve a before/after test
 or a concrete manual reproduction for security-sensitive fixes.
 
+For storage and boot changes, test the **next boot** as well as the return from
+the current call. A commit that reports failure while leaving an invalid boot
+marker can still destroy the wallet when the installed bootloader next runs.
+Inject both transient and persistent write/readback faults; count a finding
+closed only when the failure consequence, not merely the success response, is
+resolved. Keep a persistent-fault consequence as a separate open blocker if a
+bounded retry only repairs transient faults.
+
 One focused Astra verification round reviews the **new diff plus affected
 invariants**. It must check that fixes close the original findings without
 introducing regressions. Do not restart a full-file audit merely because the
