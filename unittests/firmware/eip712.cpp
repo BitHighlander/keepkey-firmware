@@ -189,3 +189,25 @@ TEST(EIP712, NegativeZeroHashesAsZero) {
   EXPECT_EQ(0, memcmp(zero, neg_zero, 32));
   EXPECT_NE(0, memcmp(zero, neg_one, 32));
 }
+
+/* Values outside parseVals()' signed range must fail before domain consent.
+ * A cancellation remains queued if the domain is rejected before a screen. */
+TEST(EIP712, DomainRejectsChainIdAboveEncoderRangeBeforeConsent) {
+  for (const char* chain : {"9223372036854775808", "18446744073709551615"}) {
+    char types_json[] =
+        "{\"types\":{\"EIP712Domain\":[{\"name\":\"chainId\",\"type\":\"uint256\"}]}}";
+    char values_json[96];
+    snprintf(values_json, sizeof(values_json),
+             "{\"domain\":{\"chainId\":\"%s\"}}", chain);
+    json_t type_nodes[16] = {};
+    json_t value_nodes[8] = {};
+    const json_t* types = json_create(types_json, type_nodes, 16);
+    const json_t* values = json_create(values_json, value_nodes, 8);
+    ASSERT_NE(nullptr, types);
+    ASSERT_NE(nullptr, values);
+    uint8_t hash[32] = {};
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    EXPECT_EQ(GENERAL_ERROR, encode(types, values, "EIP712Domain", hash));
+    EXPECT_EQ(2, kkconfirm_drain());
+  }
+}

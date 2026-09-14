@@ -887,12 +887,12 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
  * warning. So "firmware recognises it" is not enough: a recognised
  * SystemProgram Transfer beside the described instruction would be signed
  * without one screen naming its amount or destination. Only instructions that
- * move no value and grant no authority qualify. */
+ * move no value and grant no authority qualify. Unit price is excluded: it
+ * changes the fee, and the opaque schema path has no priority-fee screen. */
 static bool solana_schemaCompanionIsInert(SolanaInstrType type) {
   switch (type) {
     case SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME:
     case SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT:
-    case SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE:
     case SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE:
     case SOL_INSTR_MEMO:
       return true;

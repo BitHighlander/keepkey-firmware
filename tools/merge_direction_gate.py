@@ -43,13 +43,12 @@ def changed(a, b):
     return set(sh('diff', '--name-only', a, b).split())
 
 def blob(rev, f):
-    # None when the path does not exist at rev. A file one side deleted is a
-    # legitimate answer to "which side is this equal to" (the answer is
-    # "neither"), unlike a failed diff, which means the audit is broken -- so
-    # this one read is deliberately tolerant while sh() stays fatal.
-    p = subprocess.run(('git', '-C', ROOT, 'show', f'{rev}:{f}'),
-                       capture_output=True, text=True)
-    return p.stdout if p.returncode == 0 else None
+    # A missing tree entry is a deletion. Once an entry exists, a failed blob
+    # read (e.g. an absent/corrupt object in a partial clone) must abort.
+    entry = sh('ls-tree', '-z', rev, '--', f)
+    if not entry:
+        return None
+    return sh('show', f'{rev}:{f}')
 
 def churn(a, b, f):
     out = sh('diff', '--numstat', a, b, '--', f).split()

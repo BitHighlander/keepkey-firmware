@@ -409,7 +409,7 @@ static void kkemu_poll_body(void) {
 }
 
 int kkemu_poll(void) {
-  if (!libkkemu_initialized) return -1;
+  if (!libkkemu_initialized || g_poll_wedged) return -1;
   /* When the poll thread owns execution, the host must not also poll —
    * that would be two threads driving the single-threaded firmware core.
    * Treat a stray host poll as a no-op rather than a data race. */
@@ -585,11 +585,11 @@ void kkemu_stop(void) {
  * yield there instead. kkemu_lock() is retained for paths with no pending
  * confirm. */
 void kkemu_lock(void) {
-  if (POLL_RUNNING()) FW_LOCK();
+  if (POLL_RUNNING() || g_poll_wedged) FW_LOCK();
 }
 
 void kkemu_unlock(void) {
-  if (POLL_RUNNING()) FW_UNLOCK();
+  if (POLL_RUNNING() || g_poll_wedged) FW_UNLOCK();
 }
 
 /* Non-blocking acquire. Returns 1 if the firmware lock is now held by the
@@ -599,6 +599,8 @@ void kkemu_unlock(void) {
  * No-op success (returns 1, nothing to unlock) when the thread isn't running.
  */
 int kkemu_trylock(void) {
+  /* Stop requested is not proof that the detached writer has exited. */
+  if (g_poll_wedged) return 0;
   if (!POLL_RUNNING()) return 1;
 #ifdef _WIN32
   return TryEnterCriticalSection(&g_fw_lock) ? 1 : 0;
@@ -619,7 +621,7 @@ int kkemu_trylock(void) {
  * wire kkemu_get_display into a threaded host.
  */
 const uint8_t* kkemu_get_display(int* width, int* height) {
-  if (!libkkemu_initialized) {
+  if (!libkkemu_initialized || g_poll_wedged) {
     if (width) *width = 0;
     if (height) *height = 0;
     return NULL;

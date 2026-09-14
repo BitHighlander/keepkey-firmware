@@ -86,7 +86,7 @@ assert isinstance(ret, proto.EntropyRequest), ret
 ret = client.call_raw(proto.EntropyAck(entropy=b'E' * 32))
 
 assert isinstance(ret, proto.ButtonRequest), ret
-snap("06-backup-explainer.png")
+snap("05-backup-explainer.png")
 client.debug.press_yes()
 ret = client.call_raw(proto.ButtonAck())
 while isinstance(ret, proto.ButtonRequest):

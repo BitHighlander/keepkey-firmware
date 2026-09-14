@@ -72,8 +72,8 @@ it is *what the complement is*.
 - ColdCard's USB protocol has **no seed-creation or entropy command at all**.
   The host cannot contribute entropy, so the complement of anything shown is
   dice the user holds and never transmits.
-- Since 5.6.1 / 1.5.1Q user entropy is **mandatory** on every new seed: 50 d6
-  rolls, 128 coin flips, or 65 timed key presses.
+- Since 5.6.1 / 1.5.1Q user-supplied entropy is **mandatory** on every new
+  seed; the user may choose 50 d6 rolls, 128 coin flips, or 65 timed key presses.
 - The device shows the **full 32-byte** SHA-256 digest live while rolling, not a
   truncation.
 - **Dice-Rolls-Only** mode derives `seed = SHA256(rolls)` and nothing else, so a
@@ -94,18 +94,20 @@ cannot prove the rolls were used.
 
 ## Closing the gap
 
-Verifiability requires that the derivation contain nothing the user does not
-hold. Concretely that means a dice-only mode in which `seed = SHA256(rolls)`,
+Verifiability requires the user to know every derivation input, either from
+their own choices or a safe disclosure. With KeepKey's host-supplied entropy
+protocol, the practical path is a dice-only mode in which `seed = SHA256(rolls)`,
 with the device RNG and the host's `ext_entropy` excluded from the derivation
 rather than mixed in, and the full digest shown so the commitment is 256 bits
-rather than 64. That is ColdCard's Dice-Rolls-Only, and it is the only shape
-that yields an offline check.
+rather than 64. That mirrors ColdCard's Dice-Rolls-Only. ColdCard also verifies its mixed mode
+by safely disclosing its device input; KeepKey cannot copy that disclosure
+while a host supplies the other input.
 
 It carries a real cost, which is why it must be an explicit advanced choice and
 never a default: it stakes the wallet entirely on the quality and privacy of the
 user's dice. A biased die, a short sequence, or a photographed roll sheet is the
-whole seed. The mixed mode is safer for almost everyone and unverifiable; the
-dice-only mode is verifiable and less forgiving. Both are defensible; silently
+whole seed. KeepKey's current mixed mode is safer for almost everyone but cannot be
+independently verified; dice-only is verifiable and less forgiving. Both are defensible; silently
 shipping the second as the default would not be.
 
 ## Why the current mode has no verifier

@@ -496,3 +496,71 @@ TEST(Mayachain, TwoMessagesAreCommaSeparatedInTheSignedDocument) {
 
   mayachain_signAbort();
 }
+
+TEST(Mayachain, MixedSendDepositIsCommaSeparatedInTheSignedDocument) {
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  char from_address[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "maya", from_address));
+
+  MayachainSignTx tx = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 6359, true, "mayachain-mainnet-v1", true, 3000, true, 200000,
+      true, "",   true, 19,                     true, 2};
+  const char* const kTo = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(100, kTo, "cacao"));
+  MayachainMsgDeposit deposit = {};
+  deposit.amount = 200;
+  strcpy(deposit.asset, "MAYA.CACAO");
+  strcpy(deposit.signer, from_address);
+  strcpy(deposit.memo, "ADD:MAYA.CACAO");
+  ASSERT_TRUE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(mayachain_signTxFinalize(public_key, signature));
+
+  auto msg = [&](const char* amount) {
+    return std::string(
+               "{\"type\":\"mayachain/MsgSend\",\"value\":{\"amount\":[{"
+               "\"amount\":\"") +
+           amount + "\",\"denom\":\"cacao\"}],\"from_address\":\"" +
+           from_address + "\",\"to_address\":\"" + kTo + "\"}}";
+  };
+  const std::string doc =
+      std::string(
+          "{\"account_number\":\"6359\",\"chain_id\":\"mayachain-mainnet-v1\","
+          "\"fee\":{\"amount\":[{\"amount\":\"3000\",\"denom\":\"cacao\"}],"
+          "\"gas\":\"200000\"},\"memo\":\"\",\"msgs\":[") +
+      msg("100") +
+      ",{\"type\":\"mayachain/MsgDeposit\",\"value\":{\"coins\":[{"
+      "\"amount\":\"200\",\"asset\":\"MAYA.CACAO\"}],"
+      "\"memo\":\"ADD:MAYA.CACAO\",\"signer\":\"" + from_address +
+      "\"}}],\"sequence\":\"19\"}";
+
+  uint8_t expected_hash[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc.c_str(), doc.size(), expected_hash);
+  uint8_t expected_sig[64];
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, node.private_key, expected_hash,
+                                 expected_sig, NULL, NULL));
+  EXPECT_EQ(0, memcmp(signature, expected_sig, sizeof(expected_sig)))
+      << "the signed document is not the comma-separated msgs[] array";
+
+  mayachain_signAbort();
+}

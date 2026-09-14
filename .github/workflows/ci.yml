@@ -1015,6 +1015,13 @@ jobs:
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
           echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
+      - name: Test emulator timeout wedge
+        run: |
+          NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          export PATH="$PATH:$NANOPB_GENERATOR_DIR"
+          cmake --build build-emu --target emulator-wedge-unit -j"$(sysctl -n hw.ncpu)"
+          ./build-emu/bin/emulator-wedge-unit
+
       # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
       # Uses cmake/toolchains/mingw-w64-x86_64.cmake, so no Windows runner
       # is needed. BLOCKING on purpose: the DLL and the dylib are the same
@@ -1197,7 +1204,7 @@ jobs:
           KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
           KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
-          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/197
+          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/223
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report
@@ -1276,7 +1283,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   publish-emulator:
-    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware]
+    needs: [ci-gate]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.publish_emulator == 'true'

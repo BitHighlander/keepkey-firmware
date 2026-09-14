@@ -259,6 +259,10 @@ bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
     return false;
   }
 
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
+  }
+
   bool success = true;
 
   const char* const prelude = "{\"type\":\"mayachain/MsgDeposit\",\"value\":{";

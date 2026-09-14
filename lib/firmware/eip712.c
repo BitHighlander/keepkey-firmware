@@ -518,11 +518,10 @@ bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
   return true;
 }
 
-/* chainStr in dsConfirm() is written with a 32-byte bound and holds
-   "chain " + this + ",  ", so 20 digits is the widest value that reaches the
-   screen unclipped. It also covers the full range parseVals()' 64-bit integer
-   encoder can represent, so the bound turns away nothing the device could
-   have hashed correctly anyway. */
+/* chainStr in dsConfirm() has a 32-byte bound and holds
+ * "chain " + this + ",  ". The display cap accommodates the encoder's range:
+ * parseVals() uses signed strtoll() and rejects values above INT64_MAX BEFORE
+ * calling dsConfirm(). This is a display limit, not unsigned-u64 support. */
 #define DS_CHAINID_MAX_DIGITS 20
 
 /* The domain's chainId is only ever DISPLAYED -- dsConfirm() prints the host's
@@ -533,7 +532,7 @@ bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
    chains over a number that was discarded. Keep only the property the screen
    needs: canonical base-10 digits, so the string shown cannot disagree with
    the value parseVals() hashed (e.g. "0x1" displays as 0x1 but encodes as 0),
-   with no bound on magnitude. */
+   within the encoder range already checked by parseVals(). */
 static bool dsChainIdIsDisplayable(const char* text) {
   if (!text || text[0] == '\0') return false;
   if (text[0] == '0' && text[1] != '\0') return false;
@@ -626,7 +625,7 @@ int dsConfirm(void) {
     /* Merge note: the release branch parsed this with sscanf("%" SCNu32),
      * which accepts a trailing space, a leading '+', and non-canonical forms
      * like "007". dsChainIdIsDisplayable() rejects all of those and fails
-     * closed. It deliberately does NOT bound the magnitude -- see its comment.
+     * closed. parseVals() has already enforced the encoder magnitude bound.
      * See the cases in unittests/firmware/eip712.cpp. */
     if (!dsChainIdIsDisplayable(dschainId)) {
       clearDsVals();
