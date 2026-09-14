@@ -479,7 +479,7 @@ void recovery_character(const char* character) {
   const char* pos = strchr(cipher, character[0]);
 
   // If not a space and not a legitmate cipher character, send failure.
-  if (character[0] != ' ' && pos == NULL) {
+  if (character[0] == '\0' || (character[0] != ' ' && pos == NULL)) {
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Character must be from a to z");
@@ -575,6 +575,7 @@ void recovery_character(const char* character) {
   strlcat(mnemonic, decoded_character, MNEMONIC_BUF);
 
   next_character();
+  if (setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -636,6 +637,7 @@ void recovery_delete_character(void) {
   coded_word[wlen < sizeof(coded_word) ? wlen : sizeof(coded_word) - 1] = '\0';
 
   next_character();
+  if (len > 0 && setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*

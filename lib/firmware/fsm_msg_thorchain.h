@@ -310,6 +310,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   if (!thorchain_signingIsFinished()) {
     RESP_INIT(ThorchainMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_ThorchainMsgRequest, resp);
     return;
   }

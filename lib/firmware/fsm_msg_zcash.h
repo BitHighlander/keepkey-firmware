@@ -424,6 +424,7 @@ static void zcash_action_progress(uint32_t completed, uint32_t total,
 }
 
 static void zcash_send_action_ack(uint32_t next_index) {
+  note_workflow_progress();
   ZcashPCZTActionAck* resp_ack = (ZcashPCZTActionAck*)msg_resp;
   memset(resp_ack, 0, sizeof(ZcashPCZTActionAck));
   resp_ack->has_next_index = true;
@@ -444,6 +445,7 @@ static void zcash_send_action_ack(uint32_t next_index) {
 }
 
 static void zcash_send_transparent_output_ack(uint32_t next_index) {
+  note_workflow_progress();
   ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
   memset(resp, 0, sizeof(ZcashTransparentAck));
   resp->has_next_output_index = true;
@@ -452,6 +454,7 @@ static void zcash_send_transparent_output_ack(uint32_t next_index) {
 }
 
 static void zcash_send_transparent_input_ack(uint32_t next_index) {
+  note_workflow_progress();
   ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
   memset(resp, 0, sizeof(ZcashTransparentAck));
   resp->has_next_input_index = true;

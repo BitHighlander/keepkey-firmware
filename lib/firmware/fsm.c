@@ -320,15 +320,6 @@ static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_sendFailure(code, text);
 }
 
-/* Every host frame counts as activity, so a streamed ceremony or signing
- * session the user is still working through is not auto-locked mid-flight.
- * note_host_activity() ignores frames that arrive at the home screen, so a
- * polling host cannot hold an idle device unlocked. */
-static void fsm_usb_rx(const void* msg, size_t len) {
-  note_host_activity();
-  handle_usb_rx(msg, len);
-}
-
 void fsm_init(void) {
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
   set_msg_failure_handler(&sendFailureWrapper);
@@ -341,8 +332,6 @@ void fsm_init(void) {
 #endif
 
   msg_init();
-  /* after msg_init(), which installs the board's own rx callback */
-  usb_set_rx_callback(&fsm_usb_rx);
 
   txin_dgst_initialize();
 }
