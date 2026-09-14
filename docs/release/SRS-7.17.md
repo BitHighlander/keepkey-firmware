@@ -28,9 +28,10 @@ describers asserting facts the device cannot check, and chains where the signed
 bytes are structurally insufficient.
 
 ### 2.2 Constraints
-Inherits SRS-7.16 §2.2. Bootloader changes remain out of scope unless a
-root-rotation requirement forces one — and if it does, **that is its own
-release**, not a rider on this one.
+Inherits SRS-7.16 §2.2. Bootloader changes remain out of scope. Any
+requirement that needs one gets its own release after 7.17, not a rider on
+this one. This release designs and validates the legacy storage durability
+replacement, but does not ship a bootloader-dependent storage feature.
 
 ---
 
@@ -77,6 +78,14 @@ window) should be replaced by a deterministic handshake.
 **R-4.4** The token table (`solana-schemas-local.json` and the compiled-in
 ethereum/uniswap tables) should retire in favour of provider-signed schemas —
 see `docs/security/token-table-retirement.md`.
+**R-4.5** Inventory the inherited erase-before-replacement, persistent marker
+fault, and failed old-sector erase paths. Model every power-cut/fault state,
+compare against actual shipped firmware and installed bootloader artifacts,
+and retain wallet-survival evidence for ordinary boot and update mode.
+**R-4.6** Keep the experimental pending-record approach on alpha or a research
+branch only. Any transition that needs new bootloader behavior, including
+update-mode recovery, SHALL remain disabled in 7.17 release artifacts. Plan
+bootloader compatibility and rollout as a separate post-7.17 release.
 
 ---
 
@@ -87,6 +96,9 @@ survive every gate; if it ever needs editing, the change is wrong.
 **V-2** Rotation and revocation exercised end-to-end on hardware.
 **V-3** Attested-context rendering distinguishable from derived fact in
 screenshot evidence, judged by someone who did not write it.
+**V-4** Storage fault matrix and physical installed-bootloader results recorded
+for the later implementation; design evidence alone does not authorize it to
+ship in 7.17.
 
 ---
 

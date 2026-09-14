@@ -1,6 +1,20 @@
 # 7.14.3 and 7.15 candidate re-audit handoff — 2026-09-13
 
-## Hold decision — 2026-09-14
+## Release-owner scope decision — 2026-09-14
+
+The release owner subsequently classified the three inherited storage
+durability/fault paths as **deferred legacy debt**, tracked for 7.17 design and
+evidence. Their redesign is out of scope for 7.14.3 and 7.15. No feature
+requiring a new bootloader may ship in 7.14.3, 7.15, 7.16 or 7.17; a
+bootloader rollout requires a separate later release. Experimental pending
+storage may remain on alpha, but must not enter a release artifact. This
+supersedes only the storage-based hold and Copilot-entry prohibition in the
+historical handoff below. It does not certify that candidate storage changes
+are non-regressions, close the open review threads, or waive remaining audit,
+physical-device and dependency gates. A final Copilot review may proceed only
+after those remaining gates and a documented shipped-baseline comparison.
+
+## Historical hold decision — 2026-09-14
 
 The release owner excludes bootloader changes from 7.14.3 and 7.15 and holds
 both candidates while the storage-loss blockers remain. The current #755 head

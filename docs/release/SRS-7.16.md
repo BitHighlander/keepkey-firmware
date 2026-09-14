@@ -62,11 +62,12 @@ commit. Bitcoin-only isolation tests SHALL remain green.
 **R-0.4** Release artifacts SHALL retain signature verification and release
 product documentation. The final manifest SHALL record the firmware commit,
 every submodule commit, compiler/container identity, artifact hashes, storage
-version, and minimum bootloader security epoch.
+version, and the installed bootloader compatibility baseline. This release
+SHALL NOT require or ship a new bootloader.
 
-**R-0.5** `STORAGE_VERSION_LAST_SHIPPED` SHALL remain 17 in every rehearsal and
-unsigned candidate. It SHALL change to 20 only in the reviewed signed-release
-act, after the storage and downgrade evidence in §4.2 is accepted.
+**R-0.5** `STORAGE_VERSION_LAST_SHIPPED` SHALL remain 17 throughout 7.16.
+Storage V20 and features requiring it are deferred to a separate post-7.17
+release with a bootloader rollout plan.
 
 ---
 
@@ -143,6 +144,10 @@ exclude-list, allow-list, multi-account and GetNextAssertion state SHALL match
 the CTAP contract and SHALL not cross transport channels or timeouts.
 
 ### 3.4 Storage V20 and downgrade safety
+
+**Deferred from 7.16:** The requirements in this subsection specify the later
+bootloader-dependent release. They are not 7.16 ship criteria. Any feature
+that requires V20, including persistent passkey state, stays disabled in 7.16.
 
 **R-4.1** Storage version 20 SHALL contain the passkey state inside the bounded
 V17 reserved area. Versions 18 and 19 SHALL remain enumerated but SHALL never be
@@ -232,9 +237,10 @@ candidate. These cannot be waived by green unit tests:
    U2F credentials; PIN set/change/wrong-PIN/blocking; cancellation; timeout;
    exclude/allow lists; multiple accounts; power cycles; and repeated-write
    flash/RAM/stack soak.
-5. Exact-candidate V17-to-V20 migration, interrupted writes, wipe/recovery,
-   bootloader-update interruption, and signed downgrade refusal on every board
-   revision.
+5. For the later V20 release only: exact-candidate V17-to-V20 migration,
+   interrupted writes, wipe/recovery, bootloader-update interruption, and
+   signed downgrade refusal on every board revision. No V20 or dependent
+   passkey feature ships in 7.16.
 6. Streaming EIP-712 screen captures and independent hash/signature comparison
    for canonical positive vectors and malformed/cancelled negative vectors.
 7. Certified and runtime clear-sign screen evidence side by side, including

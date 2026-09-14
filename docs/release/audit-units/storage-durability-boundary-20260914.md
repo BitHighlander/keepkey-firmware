@@ -1,7 +1,18 @@
 # Storage durability boundary for 7.14.3 and 7.15
 
-Status: design analysis, not an accepted fix or release receipt. This applies to
-the storage implementation shared by the current #755 and #756 audit heads.
+Status: design analysis and deferred legacy risk, not an accepted fix or release
+receipt. The release owner deferred the three durability/fault paths described
+here from 7.14.3 and 7.15 on 2026-09-14. Track their design, fault matrix and
+physical evidence in 7.17; do not ship a feature needing new bootloader behavior
+in 7.14.3, 7.15, 7.16 or 7.17. Bootloader deployment needs a separate later
+release plan. This applies to the storage implementation shared by #755/#756.
+
+The underlying erase/rotate and bootloader-update behavior is present in the
+published v7.14.1 tag and the v7.15.0-rc29 tag. Candidate code changes can
+still alter failure consequences, so this inheritance finding is not a blanket
+"no regression" certification. Compare fault states against the actual shipped
+product artifacts before release. Keep unresolved review threads and risk
+acceptance visible; a green CI run does not prove power-cut safety.
 
 ## Bootloader compatibility invariant
 
@@ -76,21 +87,23 @@ at completed commit operations, partial write prefixes, marker faults and an
 old-sector erase fault. These are firmware and emulator results only; the
 update-mode wipe path above remains open.
 
-## Required decision and validation
+## Deferred design and validation
 
 The earlier scope repair explicitly excludes bootloader changes and withdrew
 the previous durability patch because it altered shared selection logic.
-The release owner has kept bootloader changes out of these release lines and
-directed that they be held when a storage fix needs a new bootloader. The
-firmware-private prototype does not satisfy the update-mode consequence
-above, so it must remain outside #755 and #756. The existing scope repair
-already removed the earlier shared-selector durability feature from those
-candidate diffs. Revisit a complete bootloader compatibility/deployment plan
-only on a later line such as 4.17+. An exploratory model review would not
-make these releases ready.
+The release owner has deferred the inherited durability redesign rather than
+holding these releases on its completion. The firmware-private prototype does
+not satisfy the update-mode consequence above, so it must remain outside #755
+and #756. Research code may remain on alpha; it is not evidence of release
+readiness and must not be carried into a release artifact accidentally. The
+existing scope repair removed the earlier shared-selector durability feature
+from both candidate diffs. 7.17 owns the design/evidence backlog, with any
+bootloader-dependent implementation and rollout after 7.17.
 
-Before a final Copilot round, verify transient and persistent erase/write/
-readback faults across every transition, reboot through the **installed**
-bootloader after each injection point, test V17 migration and rollback, and
-run both full and bitcoin-only product variants on exact candidate heads.
-Emulator source review alone does not close the physical next-boot gate.
+Before claiming the redesign is safe, verify transient and persistent
+erase/write/readback faults across every transition, reboot through the
+**installed** bootloader after each injection point, and test V17 migration
+and rollback. For 7.14.3/#755 and 7.15/#756, separately verify that their
+changed storage paths do not introduce a new or worse failure than the actual
+shipping baseline, and run both full and bitcoin-only variants on exact heads.
+Emulator source review alone does not establish the physical consequence.
