@@ -1908,10 +1908,6 @@ void storage_commit(void) {
     uint32_t shadow_ram_crc32 =
         calc_crc32(flash_temp, sizeof(flash_temp) / sizeof(uint32_t));
 
-    if (shadow_ram_crc32 == 0) {
-      continue; /* Retry */
-    }
-
     /* Make sure storage sector is valid before proceeding */
     if (storage_location < FLASH_STORAGE1 ||
         storage_location > FLASH_STORAGE3) {
@@ -1943,7 +1939,18 @@ void storage_commit(void) {
                    sizeof(flash_temp) / sizeof(uint32_t));
 
     if (shadow_flash_crc32 == shadow_ram_crc32) {
-      storage_protect_off();
+      bool marker_verified = false;
+      for (unsigned marker_attempt = 0; marker_attempt < 3; ++marker_attempt) {
+        if (storage_protect_off()) {
+          marker_verified = true;
+          break;
+        }
+      }
+      if (!marker_verified) {
+        memzero(flash_temp, sizeof(flash_temp));
+        layout_warning_static("Storage Unsafe. Keep Powered!");
+        shutdown();
+      }
       /* Commit successful, break to exit */
       break;
     }

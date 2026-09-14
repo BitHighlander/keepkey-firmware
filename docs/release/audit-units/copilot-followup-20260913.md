@@ -93,4 +93,20 @@ Open release gates / constraints:
 
 ## Integrator coverage status
 
+Independent storage verification found that a persistent failed boot-protection
+marker still causes the installed bootloader to erase all storage on reboot.
+The 7.15 carry-forward now accepts a valid CRC32 of zero, verifies marker
+readback, retries transient marker faults, and refuses to report Success on
+exhausted retries. The full native firmware suite passes 548/548, including
+six focused commit/reload and fault-injection regressions. The RNG boot gate
+also checks the hardware fault mirror after each sampled draw; a mid-sample
+fault regression passes. These are fixes to the 7.15 line itself, not an
+assumption that 7.14.3 coverage transfers.
+
+Persistent marker failure remains a separate OPEN release blocker from the
+erase-before-replacement power-loss P1. The exit tests prove only that an active
+record exists before shutdown; the installed bootloader's protection check
+still erases all sectors when the marker remains invalid. Neither candidate is
+release-ready.
+
 The integrator corrected the release receipt, Python-host PR URL, and dice screenshot numbering, and checked workflow YAML syntax, Python syntax, and the merge-symbol gate. Remaining metadata, report-generator, host-pin, and PR-description assertions require final evidence reconciliation on the eventual candidate head. A new Copilot review is blocked until this coverage and exact-head CI are complete.
