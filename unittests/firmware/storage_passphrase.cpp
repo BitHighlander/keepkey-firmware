@@ -4,6 +4,8 @@
 
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/keepkey_flash.h"
+#include "keepkey/board/memory.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
@@ -69,6 +71,77 @@ TEST_F(PassphraseTransition, DisableSelectsPlainWallet) {
   ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &node));
   ExpectWallet("", node);
   memzero(&node, sizeof(node));
+}
+
+TEST_F(PassphraseTransition, FreshWalletSurvivesCommitAndReload) {
+  storage_wipe();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, kMnemonic);
+  storage_loadDevice(&load);
+  storage_commit();
+
+  storage_init();
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_STREQ(kMnemonic, storage_getMnemonic());
+}
+
+TEST_F(PassphraseTransition, ZeroCrcIsAValidCommittedRecord) {
+  // The U2F counter is a legitimate caller-controlled field. Solve its 32
+  // bits against the CRC of an otherwise fixed, already committed V17 record.
+  // This exercises the full commit path rather than mocking calc_crc32().
+  alignas(uint32_t) uint8_t record[2572] = {};
+  bool found = false;
+  for (int sector = FLASH_STORAGE1; sector <= FLASH_STORAGE3; ++sector) {
+    const auto* flash = reinterpret_cast<const uint8_t*>(
+        flash_write_helper(static_cast<Allocation>(sector)));
+    if (std::memcmp(flash, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0) {
+      std::memcpy(record, flash, sizeof(record));
+      found = true;
+      break;
+    }
+  }
+  ASSERT_TRUE(found);
+
+  // Metadata occupies 44 bytes; V17's U2F counter is at public-data offset
+  // 401. Keep the rest of the serialized wallet byte-for-byte unchanged.
+  constexpr size_t kCounterOffset = 44 + 401;
+  auto checksum = [&](uint32_t counter) {
+    for (int byte = 0; byte < 4; ++byte)
+      record[kCounterOffset + byte] = static_cast<uint8_t>(counter >> (8 * byte));
+    return calc_crc32(record, sizeof(record) / sizeof(uint32_t));
+  };
+  const uint32_t baseline = checksum(0);
+  uint32_t pivots[32] = {}, masks[32] = {};
+  for (int bit = 0; bit < 32; ++bit) {
+    uint32_t delta = checksum(uint32_t{1} << bit) ^ baseline;
+    uint32_t mask = uint32_t{1} << bit;
+    for (int row = 31; row >= 0; --row) {
+      if (!(delta & (uint32_t{1} << row))) continue;
+      if (!pivots[row]) {
+        pivots[row] = delta;
+        masks[row] = mask;
+        break;
+      }
+      delta ^= pivots[row];
+      mask ^= masks[row];
+    }
+  }
+  uint32_t target = baseline, zeroCrcCounter = 0;
+  for (int row = 31; row >= 0; --row) {
+    if (!(target & (uint32_t{1} << row))) continue;
+    ASSERT_NE(0u, pivots[row]);
+    target ^= pivots[row];
+    zeroCrcCounter ^= masks[row];
+  }
+  ASSERT_EQ(0u, target);
+  ASSERT_EQ(0u, checksum(zeroCrcCounter));
+
+  storage_stageU2FCounter(zeroCrcCounter);
+  storage_commit();
+  storage_init();
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_STREQ(kMnemonic, storage_getMnemonic());
 }
 
 TEST_F(PassphraseTransition, EnableSelectsNewlyConfirmedWallet) {
