@@ -364,6 +364,8 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
     return;
   }
 
+  note_workflow_progress();
+
   SHA256_CTX ctx;
   sha256_Init(&ctx);
   sha256_Update(&ctx, int_entropy, 32);
