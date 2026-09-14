@@ -5,11 +5,14 @@ extern "C" {
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/messages.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/emulator/setup.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
+#include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/mayachain.h"
@@ -228,7 +231,10 @@ TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
 
   leave_home();
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  note_host_activity();
+  // A partial valid Ping frame reaches the registered callback without
+  // dispatching a handler that could independently reset the home timer.
+  const uint8_t frame[9] = {'?', '#', '#', 0, 1, 0, 0, 0, 100};
+  usb_test_receive(frame, sizeof(frame));
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   EXPECT_TRUE(signing_is_active())
@@ -240,6 +246,8 @@ TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
   EXPECT_FALSE(signing_is_active());
 
   layoutHomeForced();
+  const uint8_t invalid[9] = {};
+  usb_test_receive(invalid, sizeof(invalid));  // discard the partial frame
 }
 
 /* The control: at the home screen the same frames must not hold the device
@@ -252,12 +260,17 @@ TEST(Fsm, HostActivityAtHomeDoesNotDeferTheAutoLock) {
   ASSERT_EQ(AT_HOME, home_get_state());
 
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  note_host_activity();
+  // A partial valid Ping frame reaches the registered callback without
+  // dispatching a handler that could independently reset the home timer.
+  const uint8_t frame[9] = {'?', '#', '#', 0, 1, 0, 0, 0, 100};
+  usb_test_receive(frame, sizeof(frame));
   increment_idle_time(1);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
 
   layoutHomeForced();
+  const uint8_t invalid[9] = {};
+  usb_test_receive(invalid, sizeof(invalid));  // discard the partial frame
 }
 
 /* Clearing PIN authorization revokes signing, but must not discard a staged
@@ -487,3 +500,60 @@ TEST(Fsm, BitcoinOnlyLockRefusesSettingsHandlersBeforeAnyConfirm) {
   EXPECT_FALSE(storage_isBitcoinOnlyLocked());
   layoutHomeForced();
 }
+
+#if !BITCOIN_ONLY
+TEST(Fsm, EthereumTransferRecipientMismatchWipesDerivedNode) {
+  setup();
+  kk_test_board_init();
+  fsm_init();
+  storage_init();
+  storage_wipe();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  ASSERT_TRUE(storage_isInitialized());
+
+  const uint8_t usdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                            0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                            0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+  const TokenType* token = tokenByChainAddress(1, usdc);
+  ASSERT_NE(UnknownToken, token);
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_address_type = true;
+  msg.address_type = OutputAddressType_TRANSFER;
+  msg.to_address_n_count = 5;
+  const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+  memcpy(msg.to_address_n, path, sizeof(path));
+  msg.has_to = true;
+  msg.to.size = 20;
+  memcpy(msg.to.bytes, token->address, 20);
+  msg.has_data_length = true;
+  msg.data_length = 68;
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+
+  // The ABI recipient is zero; prove it differs from the derived account.
+  HDNode node = {};
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &node));
+  ASSERT_TRUE(hdnode_private_ckd_cached(&node, path, 5, nullptr));
+  uint8_t recipient[20] = {};
+  ASSERT_TRUE(hdnode_get_ethereum_pubkeyhash(&node, recipient));
+  const uint8_t zeros[20] = {};
+  ASSERT_NE(0, memcmp(recipient, zeros, sizeof(recipient)));
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  fsm_test_seedDerivedNode();
+  fsm_msgEthereumSignTx(&msg);
+  EXPECT_EQ(0, kkconfirm_drain()) << "must reach the transfer approval";
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+  storage_wipe();
+  storage_reset();
+  layoutHomeForced();
+}
+#endif

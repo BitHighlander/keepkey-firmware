@@ -22,13 +22,16 @@ Status of each finding below:
   release pass. Not individually re-checked by the three-reviewer process.
 
 
-Counts: 21 fixed, 2 refuted on re-check, 0 open, 23 triaged by reading (46 findings touching this line).
+Counts within this audit pass: 21 fixed, 2 refuted on re-check, 0 open, 23
+triaged by reading (46 findings touching this line). The separately tracked
+erase-before-replacement power-interruption defect remains OPEN under
+`scope-repair.md`; this count does not close or waive it.
 
 
 ## Fixed
 
 - **F028** (P3, `lib/rand/rng_health.c`) — random_buffer_checked() ignores a hardware seed/clock error latched during the draw itself
-- **F029** (P3, `.gitmodules`) — python-keepkey tracking branch does not contain the pinned commit; --remote silently rewinds the pin 5 commits
+- **F029** (P3, `.gitmodules`) — device-protocol tracking branch did not contain the pinned commit; `--remote` could silently rewind the pin. The branch now points to `up/release-protocol`.
 - **F034** (P3, `lib/firmware/solana.c`) — "Maximum priority fee" can be lower than the fee the runtime actually charges
 - **F035** (P3, `lib/firmware/ethereum.c`) — TRANSFER amount screen can show a stale WAN ticker left by an earlier request
 - **F059** (P3, `lib/firmware/fsm_msg_ethereum.h`) — process_ethereum_xfer() leaves a derived private key in the shared fsm_derived_node scratch on two error returns (raised on 7.15; this line carried the same code)

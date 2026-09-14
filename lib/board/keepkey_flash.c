@@ -39,6 +39,18 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifdef EMULATOR
+/* Fault injection after emulated programming; no production call sites. */
+__attribute__((weak)) bool emulator_flash_write_completed(Allocation group,
+                                                          uint32_t offset,
+                                                          uint32_t len) {
+  (void)group;
+  (void)offset;
+  (void)len;
+  return true;
+}
+#endif
+
 uint8_t HW_ENTROPY_DATA[HW_ENTROPY_LEN];
 
 /*
@@ -166,7 +178,7 @@ fww_exit:
   return (retval);
 #else
   memcpy((void*)(flash_write_helper(group) + offset), data, len);
-  return true;
+  return emulator_flash_write_completed(group, offset, len);
 #endif
 }
 
@@ -192,7 +204,7 @@ bool flash_write(Allocation group, uint32_t offset, uint32_t len,
   return (retval);
 #else
   memcpy((void*)(flash_write_helper(group) + offset), data, len);
-  return true;
+  return emulator_flash_write_completed(group, offset, len);
 #endif
 }
 

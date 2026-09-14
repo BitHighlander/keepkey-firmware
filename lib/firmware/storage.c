@@ -1652,19 +1652,14 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
-  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
-
   memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
 
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
     /* Capture CRC for verification at restore */
     uint32_t shadow_ram_crc32 =
         calc_crc32(flash_temp, sizeof(flash_temp) / sizeof(uint32_t));
-
-    if (shadow_ram_crc32 == 0) {
-      continue; /* Retry */
-    }
 
     /* Make sure storage sector is valid before proceeding */
     if (storage_location < FLASH_STORAGE1 ||
@@ -1697,7 +1692,21 @@ void storage_commit(void) {
                    sizeof(flash_temp) / sizeof(uint32_t));
 
     if (shadow_flash_crc32 == shadow_ram_crc32) {
-      storage_protect_off();
+      /* A verified record is not bootable until its marker is durable.
+       * Do not return success, retry by erasing the wallet, or wipe on failure.
+       */
+      bool marker_verified = false;
+      for (unsigned marker_attempt = 0; marker_attempt < 3; ++marker_attempt) {
+        if (storage_protect_off()) {
+          marker_verified = true;
+          break;
+        }
+      }
+      if (!marker_verified) {
+        memzero(flash_temp, sizeof(flash_temp));
+        layout_warning_static("Storage Unsafe. Keep Powered!");
+        shutdown();
+      }
       /* Commit successful, break to exit */
       break;
     }
