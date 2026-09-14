@@ -13,6 +13,9 @@ historical handoff below. It does not certify that candidate storage changes
 are non-regressions, close the open review threads, or waive remaining audit,
 physical-device and dependency gates. A final Copilot review may proceed only
 after those remaining gates and a documented shipped-baseline comparison.
+The source-level baseline comparison is recorded in
+[storage-baseline-disposition-20260914.md](audit-units/storage-baseline-disposition-20260914.md);
+it deliberately does not claim physical non-regression proof.
 
 ## Historical hold decision — 2026-09-14
 

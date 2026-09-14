@@ -128,7 +128,13 @@ body; a comment with no inline thread is still a finding. Resolve a thread
 only after a pushed fix or a documented technical refutation.
 
 Do not start this gate with a known open P1/P2, a deferred release-blocking
-finding, or incomplete file/claim coverage. A budget increase or a previous
+finding, or incomplete file/claim coverage. An inherited finding may be
+explicitly deferred by the release owner only after the ledger names the
+published baseline, the unchanged failure mechanism, the owner and target
+release, and a separate candidate-regression check. Keep its review thread
+open and tell Copilot the deferral scope. This exception does not apply to a
+new or worsened candidate failure, or waive hardware/coverage gates.
+A budget increase or a previous
 quota response changes billing availability, not audit readiness. If the
 release owner explicitly requests an exploratory Copilot review anyway, label
 it exploratory in the ledger and do not interpret it as a final-release round.
