@@ -44,6 +44,14 @@ against the code. Do not use a model vote as proof. A line ledger is coverage
 evidence; it is not a substitute for reading the runtime path. Record P3s too,
 including a short reason when no code change is warranted.
 
+**Coverage gate:** A subsystem pilot is not a whole-candidate audit. Before
+calling the Astra round complete, map every changed file to a reviewer and
+record a separate pass for tests, CI/release scripts, submodule pins, release
+receipts, and claims made in PR descriptions. Review each supported release
+line against its own exact base and head; coverage on 7.15 does not transfer to
+7.14.3 where their code differs. State any unassigned file or unreviewed claim
+as an open gap, even if all assigned reviewers found nothing.
+
 ## Fix and verify once per coherent batch
 
 Group related confirmed findings into one scoped patch. Test the affected
@@ -69,6 +77,12 @@ new `review_requested` timeline event, then require a newer review whose
 `commit_id` equals the frozen head. Read both inline comments and the review
 body; a comment with no inline thread is still a finding. Resolve a thread
 only after a pushed fix or a documented technical refutation.
+
+Do not start this gate with a known open P1/P2, a deferred release-blocking
+finding, or incomplete file/claim coverage. A budget increase or a previous
+quota response changes billing availability, not audit readiness. If the
+release owner explicitly requests an exploratory Copilot review anyway, label
+it exploratory in the ledger and do not interpret it as a final-release round.
 
 If Copilot reports a quota limit, fails to deliver, or reviews an old head,
 record **no review**. Do not retry in a loop or consume another request on an
