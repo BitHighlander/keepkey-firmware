@@ -21,6 +21,7 @@ extern "C" {
 static bool corrupt_commit_tail;
 static unsigned payload_writes;
 static int marker_fault;
+static unsigned marker_writes;
 extern "C" bool emulator_flash_write_completed(Allocation group,
                                                uint32_t offset, uint32_t len) {
   if (offset == STORAGE_MAGIC_LEN && len > 2564) {
@@ -31,7 +32,9 @@ extern "C" bool emulator_flash_write_completed(Allocation group,
     }
   }
   if (offset == 0 && len == sizeof(STORAGE_PROTECT_OFF_MAGIC) && marker_fault) {
+    ++marker_writes;
     if (marker_fault == 1) return false;
+    if (marker_fault == 3) return marker_writes > 2;
     reinterpret_cast<uint8_t*>(flash_write_helper(group))[0] ^= 1;
   }
   return true;
@@ -122,7 +125,9 @@ TEST_F(PassphraseTransition, MarkerWriteFailureCannotReportCommitSuccess) {
         std::atexit(+[]() {
           Allocation active;
           if (!find_active_storage(&active)) std::_Exit(2);
+          if (marker_writes != 3) std::_Exit(3);
         });
+        marker_writes = 0;
         marker_fault = 1;
         storage_commit();
         std::exit(0);
@@ -136,12 +141,31 @@ TEST_F(PassphraseTransition, MarkerReadbackFailureCannotReportCommitSuccess) {
         std::atexit(+[]() {
           Allocation active;
           if (!find_active_storage(&active)) std::_Exit(2);
+          if (marker_writes != 3) std::_Exit(3);
         });
+        marker_writes = 0;
         marker_fault = 2;
         storage_commit();
         std::exit(0);
       },
       ::testing::ExitedWithCode(1), "");
+}
+
+TEST_F(PassphraseTransition, TransientMarkerWriteFailureRecoversBeforeSuccess) {
+  marker_writes = 0;
+  marker_fault = 3;
+  storage_commit();
+  marker_fault = 0;
+  EXPECT_EQ(3u, marker_writes);
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(0, std::memcmp(reinterpret_cast<const void*>(
+                               flash_write_helper(next_storage(active))),
+                           STORAGE_PROTECT_OFF_MAGIC,
+                           sizeof(STORAGE_PROTECT_OFF_MAGIC)));
+  storage_init();
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_STREQ(kMnemonic, storage_getMnemonic());
 }
 
 TEST_F(PassphraseTransition, ZeroCrcIsAValidCommittedRecord) {

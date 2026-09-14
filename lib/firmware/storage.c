@@ -1695,9 +1695,17 @@ void storage_commit(void) {
       /* A verified record is not bootable until its marker is durable.
        * Do not return success, retry by erasing the wallet, or wipe on failure.
        */
-      if (!storage_protect_off()) {
+      bool marker_verified = false;
+      for (unsigned marker_attempt = 0; marker_attempt < 3;
+           ++marker_attempt) {
+        if (storage_protect_off()) {
+          marker_verified = true;
+          break;
+        }
+      }
+      if (!marker_verified) {
         memzero(flash_temp, sizeof(flash_temp));
-        layout_warning_static("Storage Marker Failed. Reboot Device!");
+        layout_warning_static("Storage Unsafe. Keep Powered!");
         shutdown();
       }
       /* Commit successful, break to exit */
