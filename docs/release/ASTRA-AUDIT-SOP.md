@@ -20,6 +20,14 @@ heads as described in [BRANCHING-SOP.md](BRANCHING-SOP.md).
 
 ## Astra discovery round
 
+If a Copilot review already exists, ingest **all** of its inline comments and
+review-body findings before starting another round. Assign each a stable ID in
+the ledger, including comments that have no thread. For each item record the
+review URL, exact reviewed SHA, affected release lines, owner, severity,
+reproduction, disposition, fix commit or refutation evidence, test, and reply
+URL. Do not collapse similar comments until each original ID has a traceable
+answer. Treat model findings as hypotheses until reproduced or refuted in code.
+
 Use `gpt-6-astra` with high reasoning effort for a **bounded, independent**
 review. Divide the changed runtime files by subsystem: storage and migration;
 signing and cryptography; transport, protocol and host pins; display and
@@ -68,11 +76,20 @@ head moved. If findings remain after two Astra rounds, stop the model loop and
 assign a human owner or split the candidate. Keep unresolved findings open in
 the ledger; do not label the candidate clean.
 
+Before publishing the patch, reconcile the changed-file ledger with the
+actual PR diff again. A named reviewer must account for every runtime, test,
+CI, script, documentation, and submodule file. If documentation cites an old
+head or CI run, label it historical and require a new exact-head receipt.
+
 ## Spend a Copilot review only at a stable head
 
 After the Astra ledger has zero unresolved actionable findings and exact-head
-CI is green, request **one** Copilot review of the current PR head. First clear
-existing review threads and record the previous Copilot review ID. Verify a
+CI is green, request **one** Copilot review of the current PR head. First
+reply to every existing review item with its fix commit and verification or
+specific technical refutation. Resolve only threads whose disposition is
+actually complete on the reviewed branch; preserve deferred or blocked threads
+as open and list them in the release gate. Record the previous Copilot review
+ID. Verify a
 new `review_requested` timeline event, then require a newer review whose
 `commit_id` equals the frozen head. Read both inline comments and the review
 body; a comment with no inline thread is still a finding. Resolve a thread
@@ -91,6 +108,11 @@ when service is available and the candidate is stable. A fresh review after
 fixes is useful, but cap Copilot at one request per stable head and stop after
 three total requests for a candidate. Escalate persistent findings to human
 review instead of chasing a green bot response.
+
+Use one deliberate status check after the review request, then wait for a
+notification or a reasonable interval before checking again. Polling more
+often does not accelerate the review and obscures the candidate's review ID
+and head identity.
 
 ## Release decision
 
