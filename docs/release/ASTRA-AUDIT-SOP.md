@@ -18,6 +18,12 @@ check is unavailable, record that gap. A green check on a different commit
 does not count. Pin dependency commits to resolvable upstream or review-branch
 heads as described in [BRANCHING-SOP.md](BRANCHING-SOP.md).
 
+After merging a fix PR into an `audit/*` candidate branch, check the workflow
+branch filters. If no automatic check runs, dispatch CI on that exact audit
+ref with `publish_emulator=false`, record the resulting run ID and its head
+SHA, and wait for the aggregate gate. A green run on the fix branch does not
+certify the merge commit. Never use a publishing dispatch for audit evidence.
+
 ## Astra discovery round
 
 If a Copilot review already exists, ingest **all** of its inline comments and
