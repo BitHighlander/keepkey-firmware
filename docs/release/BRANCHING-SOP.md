@@ -13,6 +13,9 @@ of tech debt here, and every rule below exists because something broke.
 
 Flow: `alpha` -> `develop` -> PR into upstream -> upstream `master`.
 
+For release-candidate review rounds, use [ASTRA-AUDIT-SOP.md](ASTRA-AUDIT-SOP.md)
+before requesting Copilot or making a release decision.
+
 ## The rule that prevents most of the pain
 
 **alpha pins fork masters. Not commits, not feature branches.**
