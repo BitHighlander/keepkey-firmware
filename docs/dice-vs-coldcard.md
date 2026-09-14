@@ -6,7 +6,8 @@ Comparison as of 2026-09-09, against ColdCard Mk4/Mk5 5.6.2 and Q 1.5.2Q
 The question this answers is narrow and it is the only one that matters for an
 advanced user: **can you prove to yourself that the device used your dice?**
 
-Today, on KeepKey: **no.** On ColdCard: **yes, in one of its two modes.** The
+Today, on KeepKey: **no.** On ColdCard: **yes, in both dice-only and mixed
+modes.** The
 gap is not the dice-entry UI, which is comparable. It is the derivation.
 
 ## Side by side
@@ -15,13 +16,13 @@ gap is not the dice-entry UI, which is comparable. It is the derivation.
 | --- | --- | --- |
 | Dice entered on-device | yes, single button, 7-cell 1-6+UNDO selector | yes, numeric keypad |
 | Rolls ever cross a wire | no | no |
-| Rolls required for a new seed | no, opt-in via `dice_entropy` | **yes, mandatory** since 5.6.1 / 1.5.1Q |
+| Rolls required for a new seed | no, opt-in via `dice_entropy` | no; dice, coin flips, or timed key presses are required alternatives since 5.6.1 / 1.5.1Q |
 | Roll count for 24 words | 99 | 99 |
 | Roll count for 12 words | 50 | 50 |
 | Bias rejection on rolls | none | rejects any face over 30% frequency |
 | Digest shown while rolling | after entry, **first 8 bytes** | live, **full 32 bytes** |
 | Digest is `SHA256(rolls)` | yes | yes |
-| Host can contribute entropy | **yes — `ResetDevice.external_entropy`, mandatory** | **no such command exists** |
+| Host can contribute entropy | **yes — `EntropyAck.entropy`, mandatory** | **no such command exists** |
 | Device pre-mix entropy disclosed | no | yes, opt-in `View TRNG Words`, 24 BIP-39 words |
 | Offline verifier published | no | yes, public-domain, stdlib-only |
 | **User can verify the seed came from their rolls** | **no** | **yes** |
@@ -37,11 +38,12 @@ protocol has no seed-creation or entropy command at all.** The complement of
 the displayed value is dice the user holds and never transmits, so disclosure
 costs nothing to anyone who is not already holding the roll sheet.
 
-KeepKey's complement is `ResetDevice.external_entropy`, which the host supplies
+KeepKey's complement is `EntropyAck.entropy`, which the host supplies
 on every reset. Our removed `display_random` screen therefore disclosed the one
 half whose other half the host itself chooses — and it was drawn *before*
-`EntropyRequest`, so a host could read it and then pick `external_entropy` to
-land on any seed it wanted.
+`EntropyRequest`, so a host that observed the screen and knew its own `external_entropy`
+could compute the resulting seed. Choosing an arbitrary target seed from a
+SHA-256 preimage is not implied.
 
 > The rule is about the complement, not about the act of showing.
 > A value may be rendered on the OLED only if the host does not hold its
@@ -76,8 +78,8 @@ seed = SHA256(rolls)
 ```
 
 One input, and the user holds it. They recompute the whole wallet offline and
-compare the fingerprint. That is a proof, and it is the only shape that yields
-one.
+compare the fingerprint. That is a proof without disclosing any device input. ColdCard's mixed mode
+is independently verifiable too, using its disclosed TRNG input.
 
 ColdCard's *mixed* mode is also verifiable:
 

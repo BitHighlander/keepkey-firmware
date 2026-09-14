@@ -93,3 +93,18 @@ Working directory: /private/tmp/kk-7143-copilot.
 ## Integrator coverage status
 
 The integrator corrected the Compose build gate, release receipt, submodule attribution, scope statement and dice screenshot numbering. Workflow YAML and Python syntax passed locally. Remaining metadata, dependency-pin and PR-description claims require final reconciliation at the eventual candidate head. A new Copilot review is blocked until this coverage and exact-head CI are complete.
+
+## GitHub response record
+
+- [Review-body dispositions](https://github.com/BitHighlander/keepkey-firmware/pull/755#issuecomment-5657824886); all body-only findings are answered there.
+- Inline finding `4001507721`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626376).
+- Inline finding `4001507735`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626460).
+- Inline finding `4001507746`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626520).
+- Inline finding `4001507759`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626623).
+- Inline finding `4001507766`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626667).
+- Inline finding `4001507777`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626777).
+- Inline finding `4001507790`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626916).
+- Inline finding `4001507806`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001626995).
+- Inline finding `4001507766`: [response](https://github.com/BitHighlander/keepkey-firmware/pull/755#discussion_r4001638382).
+
+All original inline threads remain unresolved while fixes are on follow-up PRs and storage blockers remain open. No new Copilot review has been requested.
