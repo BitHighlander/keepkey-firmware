@@ -4,8 +4,9 @@ Owner correction: bootloader changes are excluded. The durability batch crossed
 that boundary through the shared find_active_storage implementation and storage
 protection contract. Its integration acceptance is withdrawn.
 
-Restore the pre-durability implementation from 8ef50c146 for board memory/metadata,
-flash snapshot hooks, firmware commit/recovery and their durability-only tests.
+Restore the pre-durability implementation from 8ef50c146 for board memory/metadata
+and firmware commit/recovery. Remove the durability-only flash snapshot hooks
+and replay tests; they are retained only on the historical durability branches.
 The earlier emulator sector-erase correction remains. Preserve independent
 signing, credential cleanup, setup and transport fixes. On 7.14.3/7.15 preserve
 the uint32_t version classifier and its regression; pending-version recovery
