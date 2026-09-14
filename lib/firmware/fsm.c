@@ -309,7 +309,14 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
  * application asked for an Ethereum address. */
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_signing_workflows();
-  layoutHome();
+  if (setup_isArmedAs(SETUP_RECOVERY)) {
+    /* Signing aborts may already have replaced the OLED with home. Restore
+     * the same recovery cipher, without randomizing its mapping or accepting
+     * another character from the unrelated host packet. */
+    recovery_cipher_redraw();
+  } else if (!setup_isArmed()) {
+    layoutHome();
+  }
   fsm_sendFailure(code, text);
 }
 
