@@ -103,6 +103,40 @@ Poll deliberately, following the SOP's quota and three-request limits.
 | Runtime and consent | Both frozen heads | Two #756 P2s above; native 7.15 chain test subset 155/155 passed | Fix and verify #756; full changed-file coverage still required |
 | Evidence and claims | Both frozen heads | Exact-head CI verified; four ARM variant ZIPs and 92 manifest file hashes checked | Physical gates and explicit CI skips remain |
 
+### Follow-up round, 2026-09-13
+
+The two confirmed 7.15 P2 findings are addressed in draft
+[#764](https://github.com/BitHighlander/keepkey-firmware/pull/764), head
+`b805e7ca79187ce14027aabc3fb47709e1a457f0`. Its Solana confirmation
+states that a wallet address derives the destination ATA but the current
+token-account owner is **not verified**, while retaining the signed amount and
+destination. The 7.14.3 transport-abort fix and regression were carried into
+7.15. Focused native FSM/Solana tests passed (64/64), followed by 441/441
+Mac-safe firmware tests on the combined code; hosted exact-head CI is pending.
+
+Independent review then found that both lines kept recovery data but hid the
+substitution cipher after an unrelated transport failure. A redraw of the
+**same** mapping and a real recovery-screen regression are in #764 and draft
+[#765](https://github.com/BitHighlander/keepkey-firmware/pull/765), head
+`e69c3f70b72e33716bddae96d4a792bfa979b442`. The test now renders the
+cipher animation and compares the entire one-byte-per-pixel framebuffer; an
+earlier partial-buffer version was rejected by the second Astra pass. The
+corrected 7.15 focused test passes locally. The 7.14.3 port's two-argument
+display API was checked and fixed before its latest push. #765 still needs
+exact-head CI and physical OLED verification.
+
+A fresh Astra pass of both final patch heads found no remaining P1/P2 in this
+focused diff. It verified that the test advances the 300 ms cipher animation,
+checks a nonblank cipher area, and compares the full framebuffer after mixed
+signer cleanup. This is source review, not physical screen evidence; partial
+words, autocomplete and prior-word display are outside this regression.
+
+Neither draft is merged into its candidate. CI on a fix branch is not the
+post-merge candidate receipt. Merge only after green fix-head CI and review,
+then dispatch non-publishing CI on each new `audit/*` merge head. The two
+storage wallet-loss blockers, old-sector erase-failure fault reproduction,
+full changed-file coverage reconciliation, and physical gates remain open.
+
 The evidence pass checked all four ARM variant ZIPs against their manifests:
 92 file hashes matched. Both report-bundle PDF and merged-JUnit hashes also
 matched. #755 reports 1,021 cases (796 pass, 225 skip) and 389 OLED frames;
