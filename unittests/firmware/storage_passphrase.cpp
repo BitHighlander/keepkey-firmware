@@ -190,7 +190,8 @@ TEST_F(PassphraseTransition, ZeroCrcIsAValidCommittedRecord) {
   constexpr size_t kCounterOffset = 44 + 401;
   auto checksum = [&](uint32_t counter) {
     for (int byte = 0; byte < 4; ++byte)
-      record[kCounterOffset + byte] = static_cast<uint8_t>(counter >> (8 * byte));
+      record[kCounterOffset + byte] =
+          static_cast<uint8_t>(counter >> (8 * byte));
     return calc_crc32(record, sizeof(record) / sizeof(uint32_t));
   };
   const uint32_t baseline = checksum(0);

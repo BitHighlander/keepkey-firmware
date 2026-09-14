@@ -1696,8 +1696,7 @@ void storage_commit(void) {
        * Do not return success, retry by erasing the wallet, or wipe on failure.
        */
       bool marker_verified = false;
-      for (unsigned marker_attempt = 0; marker_attempt < 3;
-           ++marker_attempt) {
+      for (unsigned marker_attempt = 0; marker_attempt < 3; ++marker_attempt) {
         if (storage_protect_off()) {
           marker_verified = true;
           break;
