@@ -8,7 +8,7 @@ handoff for independent Astra review. Follow
 | Candidate | Actual PR base | Frozen candidate head | Exact-head non-publishing CI |
 | --- | --- | --- | --- |
 | [7.14.3 #755](https://github.com/BitHighlander/keepkey-firmware/pull/755) | `audit/7143-p03-pending-version-lock` `0f64f80323813e107c25b838d137cc0e65417d79` | `225eb80fddb6f351df64983515d74dec495855ca` | [run 34801670712](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34801670712), success at this SHA |
-| [7.15 #756](https://github.com/BitHighlander/keepkey-firmware/pull/756) | `audit/715-p03-pending-version-lock` `06b1d249ada75b53d06cb5b7f27512fd276ef83c` | `be9db9c4983e1a72486635a9a03d57647eef77ab` | [run 34802109009](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34802109009), in progress at this snapshot |
+| [7.15 #756](https://github.com/BitHighlander/keepkey-firmware/pull/756) | `audit/715-p03-pending-version-lock` `06b1d249ada75b53d06cb5b7f27512fd276ef83c` | `be9db9c4983e1a72486635a9a03d57647eef77ab` | [run 34802109009](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34802109009), success at this SHA |
 
 The previous Copilot review IDs were `5193039090` on #755 and `5193037080`
 on #756. Both reviewed older heads (`18606c1a...` and `4921cf91...`), not the
@@ -81,6 +81,18 @@ silent update-loss path in the emulator model; physical flash fault and
 next-boot evidence are still required, and the same 7.14.3 path needs its own
 test. Treat it as an additional open storage release blocker.
 
+Reproduction recipe: under `EMULATOR`, intercept `flash_erase_word(group)`
+immediately before its `memset` and skip only the first erase when `group ==
+FLASH_STORAGE1`. In `PassphraseTransition`, commit until
+`find_active_storage()` returns `FLASH_STORAGE1`, set the one-shot fault, call
+`storage_commit()`, then assert `next_storage(FLASH_STORAGE1)` still begins
+with `STORAGE_MAGIC_STR`. The assertion fails after `storage_commit()` returns:
+`memcmp(replacement, "stor", 4) == -66` (expected `0`), while the old sector
+still has `stor`. This was run against the local 7.15 combined code tree
+before the temporary test/hook were restored. The exact candidate code SHA is
+`b805e7ca` for this local reproduction; the later merge head has the same
+storage implementation.
+
 The integrator must independently verify P1/P2 reports and maintain a
 changed-file coverage matrix. Current gaps include physical power-cut and
 persistent-marker next-boot proof, physical OLED/device signing and recovery,
@@ -116,7 +128,8 @@ states that a wallet address derives the destination ATA but the current
 token-account owner is **not verified**, while retaining the signed amount and
 destination. The 7.14.3 transport-abort fix and regression were carried into
 7.15. Focused native FSM/Solana tests passed (64/64), followed by 441/441
-Mac-safe firmware tests on the combined code; hosted exact-head CI is pending.
+Mac-safe firmware tests on the combined code; exact fix-head and merge-head
+hosted CI later passed, as linked below.
 
 Independent review then found that both lines kept recovery data but hid the
 substitution cipher after an unrelated transport failure. A redraw of the
@@ -128,7 +141,8 @@ earlier partial-buffer version was rejected by the second Astra pass. The
 corrected 7.15 focused test passes locally. The 7.14.3 port's two-argument
 display API was checked and fixed before its latest push. Its isolated native
 build and focused recovery/FSM tests pass (2/2), as do 174/174 Mac-safe
-firmware tests. #765 still needs exact-head CI and physical OLED verification.
+firmware tests. #765's exact fix-head and subsequent merge-head CI passed;
+physical OLED verification remains required.
 
 A fresh Astra pass of both final patch heads found no remaining P1/P2 in this
 focused diff. It verified that the test advances the 300 ms cipher animation,
@@ -142,8 +156,8 @@ with [non-publishing run 34801670712](https://github.com/BitHighlander/keepkey-f
 **successful** on that merge head. #756 is now
 `be9db9c4983e1a72486635a9a03d57647eef77ab`, with
 [non-publishing run 34802109009](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34802109009)
-in progress at this snapshot. Fresh Astra whole-head coverage passes are in
-progress on both refs. The three storage blockers, 7.14.3 erase-failure
+**successful** on that merge head. Fresh Astra whole-head coverage passes
+completed on both refs. The three storage blockers, 7.14.3 erase-failure
 reproduction, full changed-file coverage reconciliation, and physical gates
 remain open. Do not spend the next Copilot request while those gates are open.
 
