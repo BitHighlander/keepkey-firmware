@@ -13,6 +13,16 @@ historical handoff below. It does not certify that candidate storage changes
 are non-regressions, close the open review threads, or waive remaining audit,
 physical-device and dependency gates. A final Copilot review may proceed only
 after those remaining gates and a documented shipped-baseline comparison.
+Current code heads after the focused Solana fee-cap merges are #755
+`4125e1c7409b1cb7b08ba595bc408e3128fc24ca` (nonpublishing CI
+[34895287978](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34895287978))
+and #756 `d33f1711c3b2b205f64c5dc35fdec02926a6dc63`
+([34895896789](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34895896789)).
+The #755 run passed its aggregate CI gate on 2026-09-14. The #756 run was
+started the same day; its aggregate outcome must be checked before claiming
+current-head validation. The merge commits changed no
+storage or bootloader source.
+
 The source-level baseline comparison is recorded in
 [storage-baseline-disposition-20260914.md](audit-units/storage-baseline-disposition-20260914.md);
 it deliberately does not claim physical non-regression proof.

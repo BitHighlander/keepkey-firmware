@@ -1,14 +1,15 @@
 # Exact-head changed-file inventory — 2026-09-14
 
 This is a reconciliation inventory, **not a clean audit certification**.
-It maps each current PR path to the earlier whole-head read or the later
-focused auto-lock review. The earlier whole-head reports inventoried all files
+It maps each current PR path to the earlier whole-head read, the later focused
+auto-lock review, or the Solana fee-cap before/after test. The earlier
+whole-head reports inventoried all files
 but did not establish a current-head non-runtime claim review for every row.
 The final Copilot gate remains open until those gaps, hardware screens and
 candidate-specific storage non-regression are dispositioned.
 
-## #755: 0f64f80323 → 758746d772
-65 changed paths; 17 paths changed after the earlier whole-head review at `225eb80fdd`.
+## #755: 0f64f80323 → 4125e1c740
+65 changed paths; 19 paths changed after the earlier whole-head review at `225eb80fdd`.
 
 | Path | Coverage assignment |
 | --- | --- |
@@ -61,7 +62,7 @@ candidate-specific storage non-regression are dispositioned.
 | `lib/firmware/reset.c` | focused auto-lock diff + earlier whole-head context |
 | `lib/firmware/ripple.c` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/firmware/signing.c` | focused auto-lock diff + earlier whole-head context |
-| `lib/firmware/solana.c` | earlier whole-head inventory; confirm current claim/evidence |
+| `lib/firmware/solana.c` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `lib/firmware/storage.c` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/firmware/tiny-json.c` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/rand/rng_health.c` | earlier whole-head inventory; confirm current claim/evidence |
@@ -75,11 +76,11 @@ candidate-specific storage non-regression are dispositioned.
 | `unittests/firmware/recovery.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 | `unittests/firmware/ripple.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 | `unittests/firmware/rng_health.cpp` | earlier whole-head inventory; confirm current claim/evidence |
-| `unittests/firmware/solana.cpp` | earlier whole-head inventory; confirm current claim/evidence |
+| `unittests/firmware/solana.cpp` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `unittests/firmware/storage_passphrase.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 
-## #756: 06b1d249ad → 5a3bc3760e
-87 changed paths; 19 paths changed after the earlier whole-head review at `be9db9c498`.
+## #756: 06b1d249ad → d33f1711c3
+87 changed paths; 21 paths changed after the earlier whole-head review at `be9db9c498`.
 
 | Path | Coverage assignment |
 | --- | --- |
@@ -139,7 +140,7 @@ candidate-specific storage non-regression are dispositioned.
 | `lib/firmware/ripple.c` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/firmware/signed_metadata.c` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/firmware/signing.c` | focused auto-lock diff + earlier whole-head context |
-| `lib/firmware/solana.c` | earlier whole-head inventory; confirm current claim/evidence |
+| `lib/firmware/solana.c` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `lib/firmware/solana_token_confirm.h` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/firmware/storage.c` | earlier whole-head inventory; confirm current claim/evidence |
 | `lib/firmware/thorchain.c` | earlier whole-head inventory; confirm current claim/evidence |
@@ -166,7 +167,7 @@ candidate-specific storage non-regression are dispositioned.
 | `unittests/firmware/rng_health.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 | `unittests/firmware/signed_metadata.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 | `unittests/firmware/signing.cpp` | earlier whole-head inventory; confirm current claim/evidence |
-| `unittests/firmware/solana.cpp` | earlier whole-head inventory; confirm current claim/evidence |
+| `unittests/firmware/solana.cpp` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `unittests/firmware/solana_token_confirm.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 | `unittests/firmware/storage_passphrase.cpp` | earlier whole-head inventory; confirm current claim/evidence |
 | `unittests/firmware/thorchain.cpp` | earlier whole-head inventory; confirm current claim/evidence |

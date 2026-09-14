@@ -10,7 +10,7 @@ storage may remain on alpha but is excluded from the release candidates.
 The latest published firmware in `keepkey/keepkey-firmware` is `v7.14.1`
 (published 2026-06-05). `release/7.14.2` is not a published GitHub release, and
 `v7.15.0-rc29` is a prerelease tag, so neither is evidence of what users have
-installed. Candidate heads: #755 `758746d77`; #756 `5a3bc376`.
+installed. Candidate heads: #755 `4125e1c74`; #756 `d33f1711c`. Their Solana fee-cap merges changed no storage or bootloader source relative to the preceding audit heads.
 
 | Failure path | Published `v7.14.1` | Candidate evidence | Disposition |
 | --- | --- | --- | --- |
