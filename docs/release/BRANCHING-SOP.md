@@ -13,6 +13,29 @@ of tech debt here, and every rule below exists because something broke.
 
 Flow: `alpha` -> `develop` -> PR into upstream -> upstream `master`.
 
+## Freeze the upstream PR topology before auditing
+
+Do this before an Astra or Copilot audit. The object being audited must already
+have the same base, head owner, and merge topology that reviewers will approve:
+
+1. Fetch both repositories and record immutable SHAs for fork `develop`,
+   upstream `develop`, the release head, and both submodule pins.
+2. Require fork `develop` to equal upstream `develop`. If it differs, preserve
+   any fork-only commits on a named branch, then synchronize fork `develop`.
+3. Base the canonical release branch on upstream `develop`, or merge the exact
+   upstream `develop` SHA into an existing audited release head and audit that
+   resulting merge commit.
+4. Verify the live PR with `gh pr view`: base must be `develop`, the head owner
+   must be the intended repository, and the returned `headRefOid` must equal the
+   local candidate SHA. Never infer the PR owner from a same-named local ref.
+5. Compare the final PR diff with the release ledger. Resolve merge conflicts
+   and silent overlapping edits before spending review credits.
+
+Fork and upstream branches with the same name are separate refs. Push using the
+remote verified by the live PR's `headRepositoryOwner`, with a lease when a
+non-fast-forward update is required. A rejected push is a stop condition: fetch
+and inspect the new remote head before writing again.
+
 For release-candidate review rounds, use [ASTRA-AUDIT-SOP.md](ASTRA-AUDIT-SOP.md)
 before requesting Copilot or making a release decision.
 
@@ -57,6 +80,17 @@ unrelated submodule bump. Base on the upstream branch you are targeting.
 **Fork-head PRs run the fork's CI.** A PR whose head lives on the fork runs the
 fork's CircleCI config, which can be red for reasons unrelated to the change.
 Push the branch to the upstream repo and PR from there.
+
+**Auditing before the final develop merge.** Merging `develop` after a clean
+review creates a new candidate and can introduce conflict resolutions, workflow
+changes, or silent overlap damage that no prior review covered. Establish the
+final PR topology first; every exact-head receipt and final review must name the
+post-merge SHA.
+
+**Same branch name, wrong repository.** `origin/release/7.15` and
+`upstream/release/7.15` may have unrelated histories. Read the live PR's head
+owner and OID before pushing. Do not force-update the other repository merely
+because its ref has the same name.
 
 **`--ours` / `--theirs` take the whole file.** They do not merge hunks. Taking a
 side to settle one conflict silently reverts every other change in that file.

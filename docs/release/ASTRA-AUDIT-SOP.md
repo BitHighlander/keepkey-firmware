@@ -6,6 +6,14 @@ loop. An AI review is evidence for reviewers, never release approval.
 
 ## Freeze the candidate
 
+Complete the topology gate in [BRANCHING-SOP.md](BRANCHING-SOP.md) first. Do
+not begin the discovery loop on a fork-only audit branch and merge `develop`
+afterward. The canonical upstream PR must already target `develop`, its live
+head owner and OID must match the candidate, and fork `develop` must equal
+upstream `develop`. Any later base merge or conflict resolution creates a new
+candidate that must pass changed-file reconciliation, exact-head CI, and review
+again.
+
 Record the repository, PR, actual base branch and SHA, head SHA, submodule SHAs,
 changed-file list, and CI run URLs in the release ledger. Compare the PR with
 its **actual base**, not an assumed `develop`. A changed head starts a new
