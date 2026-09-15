@@ -114,6 +114,7 @@ void fsm_msgMayachainSignTx(const MayachainSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_MayachainMsgRequest, resp);
   layoutHome();
 }

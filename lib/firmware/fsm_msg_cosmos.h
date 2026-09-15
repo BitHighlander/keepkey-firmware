@@ -124,6 +124,7 @@ void fsm_msgCosmosSignTx(const CosmosSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_CosmosMsgRequest, resp);
   layoutHome();
 }

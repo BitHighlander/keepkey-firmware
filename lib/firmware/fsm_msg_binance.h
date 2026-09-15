@@ -88,6 +88,7 @@ void fsm_msgBinanceSignTx(const BinanceSignTx* msg) {
   }
 
   layoutHome();
+  note_workflow_progress();
   msg_write(MessageType_MessageType_BinanceTxRequest, resp);
 }
 

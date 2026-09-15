@@ -582,6 +582,17 @@ void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg) {
 void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   RESP_INIT(SolanaSignedTx);
 
+  /* This release can decode the canonical certificate field but does not
+   * implement its KeepKey-root verification/binding contract. Never let a
+   * certificate-bearing request fall through to the unrelated runtime signer
+   * or ordinary blind-sign paths. */
+  if (msg->has_clearsign_certificate && msg->clearsign_certificate.size > 0) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Certified Solana signing is unsupported"));
+    layoutHome();
+    return;
+  }
+
   CHECK_INITIALIZED
   CHECK_PIN
 

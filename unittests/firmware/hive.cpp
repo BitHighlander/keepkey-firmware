@@ -1033,9 +1033,9 @@ TEST(Hive, TransferSignsTheWireAssetSymbol) {
   append_varint(expected, HIVE_OP_TRANSFER);
   append_string(expected, "alice");
   append_string(expected, "bob");
-  append_asset(expected, 1000, 3, "HIVE");  // hived writes "STEEM"
-  append_string(expected, "");              // memo
-  append_varint(expected, 0);               // extensions
+  append_asset(expected, 1000, 3, "STEEM");
+  append_string(expected, "");  // memo
+  append_varint(expected, 0);   // extensions
 
   HDNode node = hive_test_node();
   HiveSignTx msg = hive_test_transfer();  // asset_symbol absent -> HIVE
@@ -1150,7 +1150,7 @@ TEST(Hive, AccountCreateFeeUsesTheWireAssetSymbol) {
   ASSERT_GE(resp.serialized_tx.size, fee_offset + HIVE_ASSET_LEN);
 
   std::vector<uint8_t> expected_fee;
-  append_asset(expected_fee, 3000, 3, "HIVE");  // default fee, wire "STEEM"
+  append_asset(expected_fee, 3000, 3, "STEEM");
   const std::vector<uint8_t> actual_fee(
       resp.serialized_tx.bytes + fee_offset,
       resp.serialized_tx.bytes + fee_offset + HIVE_ASSET_LEN);
