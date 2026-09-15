@@ -17,5 +17,7 @@ Native USB-callback regressions reproduce the old GetFeatures/incomplete-frame
 bypass and verify real Bitcoin, Ethereum, EOS, and recovery progress across
 multiple idle periods, followed by lock when progress stalls. Invalid Bitcoin
 ACKs still terminate signing. The tests exercise completed protocol stages;
-individual fragments of a very slow message do not extend its deadline. Existing
-on-device confirmation and layout-transition timer behavior is unchanged.
+individual fragments of a very slow message do not extend its deadline.
+On-device confirmation remains unchanged. Host-driven `layoutHomeForced()` and
+`leave_home()` transitions no longer renew the timer; only validated workflow
+progress or physical button activity does.

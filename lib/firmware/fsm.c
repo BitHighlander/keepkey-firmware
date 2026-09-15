@@ -342,7 +342,9 @@ void fsm_init(void) {
 /* Only messages that advance an already established stream, plus bounded
  * read-only polls, may inherit a signing workflow. Every other top-level
  * request ends signing before its handler can block for host or user input.
- * New protocol messages therefore fail closed until classified here.
+ * New protocol messages therefore fail closed until classified here. An ACK
+ * inherits state only when its own workflow is active; message type alone is
+ * not authority to preserve some other signer.
  *
  * Deliberately NOT session_clear(true): that is a LOCK. It would drop the PIN,
  * passphrase and seed cache, disarm AdvancedMode and revoke ClearSign signers
@@ -355,24 +357,47 @@ void keepkey_before_message_dispatch(MessageType msg_id) {
     case MessageType_MessageType_GetFeatures:
     case MessageType_MessageType_GetCoinTable:
     case MessageType_MessageType_Ping:
+      return;
     case MessageType_MessageType_TxAck:
+      if (!signing_is_active()) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_EntropyAck:
+      if (!setup_isArmedAs(SETUP_RESET)) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_CharacterAck:
+      if (!setup_isArmedAs(SETUP_RECOVERY)) fsm_abort_signing_workflows();
+      return;
 #if !BITCOIN_ONLY
     case MessageType_MessageType_EthereumTxAck:
+      if (!ethereum_signing_isInProgress()) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_CosmosMsgAck:
+      if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
+        fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_OsmosisMsgAck:
+      if (!osmosis_signingIsInited()) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_BinanceTransferMsg:
+      if (!binance_signingIsInited()) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_EosTxActionAck:
+      if (!eos_signingIsInited()) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_ThorchainMsgAck:
+      if (!thorchain_signingIsInited()) fsm_abort_signing_workflows();
+      return;
     case MessageType_MessageType_MayachainMsgAck:
+      if (!mayachain_signingIsInited()) fsm_abort_signing_workflows();
+      return;
 #endif
 #if ZCASH_PRIVACY
     case MessageType_MessageType_ZcashPCZTAction:
     case MessageType_MessageType_ZcashTransparentOutput:
     case MessageType_MessageType_ZcashTransparentInput:
-#endif
+      if (!zcash_signing_is_active()) fsm_abort_signing_workflows();
       return;
+#endif
     default:
       /* A new signing operation may replace an old signer, but it must never
        * coexist with recovery/reset and borrow that ceremony's progress or

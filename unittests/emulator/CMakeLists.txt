@@ -4,6 +4,10 @@ if(APPLE)
 # Inject the post-timeout state into the real implementation in a standalone
 # translation unit, without exposing a production FFI for forcing a wedge.
 add_executable(emulator-wedge-unit wedged_poll.c
+    ${CMAKE_SOURCE_DIR}/lib/emulator/oled.c
+    ${CMAKE_SOURCE_DIR}/lib/emulator/udp.c
+    ${CMAKE_SOURCE_DIR}/lib/emulator/setup.c
+    ${CMAKE_SOURCE_DIR}/lib/emulator/random.c
     ${CMAKE_SOURCE_DIR}/lib/emulator/ringbuf.c)
 target_compile_definitions(emulator-wedge-unit PRIVATE KKEMU_DYLIB=1)
 target_include_directories(emulator-wedge-unit PRIVATE
@@ -21,7 +25,6 @@ target_link_libraries(emulator-wedge-unit
     qrcodegenerator
     SecAESSTM32
     kkrand
-    kkemulator
     kktransport)
 find_package(Threads REQUIRED)
 target_link_libraries(emulator-wedge-unit Threads::Threads)

@@ -134,6 +134,8 @@ void zcash_signing_abort(void) {
   memzero(&zcash_signing, sizeof(zcash_signing));
 }
 
+bool zcash_signing_is_active(void) { return zcash_signing.active; }
+
 static bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size) {
   return script && script_size == 25 && script[0] == 0x76 &&
          script[1] == 0xa9 && script[2] == 0x14 && script[23] == 0x88 &&

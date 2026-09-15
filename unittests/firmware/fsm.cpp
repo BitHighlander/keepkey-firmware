@@ -690,6 +690,80 @@ TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
 }
 
 #if !BITCOIN_ONLY
+TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
+  fsm_init();
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  BinanceSignTx binance = {};
+  binance.has_msg_count = true;
+  binance.msg_count = 1;
+  binance.has_account_number = true;
+  binance.has_chain_id = true;
+  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
+  binance.has_sequence = true;
+  binance.has_source = true;
+  ASSERT_TRUE(binance_signTxInit(&node, &binance));
+  ASSERT_TRUE(binance_signingIsInited());
+
+  CosmosMsgAck cosmos_ack = {};
+  receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
+                 &cosmos_ack);
+  EXPECT_FALSE(binance_signingIsInited());
+
+  TendermintSignTx cosmos = {};
+  cosmos.has_msg_count = true;
+  cosmos.msg_count = 1;
+  cosmos.has_chain_id = true;
+  std::strcpy(cosmos.chain_id, "cosmoshub-4");
+  ASSERT_TRUE(tendermint_signTxInit(&node, &cosmos, sizeof(cosmos), "uatom",
+                                    TENDERMINT_SIGNING_COSMOS));
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+
+  BinanceTransferMsg binance_ack = {};
+  receiveMessage(MessageType_MessageType_BinanceTransferMsg,
+                 BinanceTransferMsg_fields, &binance_ack);
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+}
+
+TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 32;  // Non-canonical spelling of zero.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(0u, msg.value.size)
+      << "the global ERC-20 classifier never saw canonical zero";
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())
+      << "a generic-signing confirmation ran before the global refusal";
+}
+#endif
+
+#if !BITCOIN_ONLY
 TEST(Fsm, MissingEosCommonTerminatesSigning) {
   fsm_init();
 
