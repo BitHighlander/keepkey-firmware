@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/transport/interface.h"
 #include "keepkey/board/usb.h"
+#include "keepkey/board/memory.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
 #include "keepkey/board/keepkey_board.h"
@@ -32,6 +33,7 @@ extern "C" {
 
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
@@ -361,6 +363,72 @@ TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
+
+TEST_F(AutoLockProgress, MalformedMultisigAddressCannotRenewTheDeadline) {
+  // Deriving the address caches the root seed and commits storage, so this
+  // test needs real emulated flash; firmware-unit never maps it otherwise.
+  struct ScopedFlash {
+    std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+    uint8_t* previous = emulator_flash_base;
+    ScopedFlash() {
+      emulator_flash_base = bytes.data();
+      storage_init();
+    }
+    ~ScopedFlash() {
+      storage_reset();
+      emulator_flash_base = previous;
+    }
+  } flash;
+
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  ASSERT_TRUE(signing_is_active());
+  leave_home();
+
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  GetAddress malformed = {};
+  malformed.has_multisig = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_GetAddress, GetAddress_fields,
+                 &malformed);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode())
+      << "the request must reach the multisig rejection, not an earlier gate";
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+#if !BITCOIN_ONLY
+TEST(Fsm, SolanaCertificateIsRejectedAtTheProductionHandler) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+
+  SolanaSignTx request = {};
+  request.has_clearsign_certificate = true;
+  request.clearsign_certificate.size = 1;
+  request.clearsign_certificate.bytes[0] = 0x01;
+  receiveMessage(MessageType_MessageType_SolanaSignTx, SolanaSignTx_fields,
+                 &request);
+
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+      << "a decoded certificate must not fall through to ordinary signing";
+  layoutHomeForced();
+}
+#endif
 
 TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
