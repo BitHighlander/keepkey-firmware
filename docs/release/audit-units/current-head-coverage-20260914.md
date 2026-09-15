@@ -8,15 +8,18 @@ only the explicitly assigned auto-lock and Solana paths below. No current path
 is left without a named coverage source. This is an audit-coverage receipt, not
 a release approval or a claim that inherited deferred risks are fixed.
 
-## #755: 0f64f80323 → 696abece09
-65 changed paths; 19 paths changed after the earlier whole-head review at `225eb80fdd`.
+## #755: 0f64f80323 → 213965a438
+68 changed paths; 23 paths changed after the earlier whole-head review at `225eb80fdd`.
 
 | Path | Coverage assignment |
 | --- | --- |
 | `.github/workflows/ci.yml` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `.github/workflows/release.yml` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `.gitmodules` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
+| `deps/device-protocol` | shared canonical PR #112 head; additive schema diff reviewed and exact-head generated-header/ARM/emulator CI passed |
 | `deps/python-keepkey` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
+| `include/keepkey/transport/messages-ethereum.options` | static bounds for shared canonical typed-data fields; exact-head generated-header/ARM/emulator CI passed |
+| `include/keepkey/transport/messages-solana.options` | static bound for shared canonical clear-sign certificate; exact-head generated-header/ARM/emulator CI passed |
 | `docs/DiceEntropy.md` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `docs/dice-vs-coldcard.md` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `docs/release/7.14.3-COMBINED-CANDIDATE.md` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
@@ -79,14 +82,17 @@ a release approval or a claim that inherited deferred risks are fixed.
 | `unittests/firmware/solana.cpp` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `unittests/firmware/storage_passphrase.cpp` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 
-## #756: 06b1d249ad → 5dd031e49b
-87 changed paths; 21 paths changed after the earlier whole-head review at `be9db9c498`.
+## #756: 06b1d249ad → e72f1daebf
+90 changed paths; 25 paths changed after the earlier whole-head review at `be9db9c498`.
 
 | Path | Coverage assignment |
 | --- | --- |
 | `.github/workflows/ci.yml` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `.gitmodules` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
+| `deps/device-protocol` | shared canonical PR #112 head; additive schema diff reviewed and exact-head generated-header/ARM/emulator CI passed |
 | `deps/python-keepkey` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
+| `include/keepkey/transport/messages-ethereum.options` | static bounds for shared canonical typed-data fields; exact-head generated-header/ARM/emulator CI passed |
+| `include/keepkey/transport/messages-solana.options` | static bound for shared canonical clear-sign certificate; exact-head generated-header/ARM/emulator CI passed |
 | `docs/DiceEntropy.md` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `docs/dice-vs-coldcard.md` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 | `docs/release/7.15-COMBINED-CANDIDATE.md` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
@@ -179,19 +185,22 @@ This table links those receipts; it does not replace them.
 
 ## Exact-head and dependency reconciliation
 
-- #755 head `696abece09f9c00b828f585280bbeff59b657693`: non-publishing CI
-  [34915987859](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34915987859)
-  passed its aggregate gate, release-evidence gate, full/bitcoin-only ARM and
-  emulator builds, native suites, and host integration.
-- #756 head `5dd031e49b4bd78948a9d8e52389f81b526a35f6`: non-publishing CI
-  [34915989436](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34915989436)
-  passed its aggregate gate, full/bitcoin-only ARM and emulator builds, native
+- #755 head `213965a43887995eb432bb237502ea426089f4aa`: non-publishing CI
+  [34919062803](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34919062803)
+  passed its aggregate gate, full/Bitcoin-only ARM and emulator builds, native
   suites, and host integration.
-- keepkey/python-keepkey#197 head
-  `b76ee610dd18934ee3aeeb36cfc541e8799eb46d` is open, mergeable, and green for
-  the 7.14.3 and 7.15 integration matrices. Both firmware candidates now pin that exact head. Canonical merge and re-pin remain
-  an upstream integration gate; they are not an unresolved firmware-code audit
-  finding.
+- #756 head `e72f1daebfaa3134b815d4de7bc605d8f5a02938`: non-publishing CI
+  [34919062845](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34919062845)
+  passed its aggregate gate, full/Bitcoin-only ARM and emulator builds, native
+  suites, crypto checks, and host integration. The failed report-upload attempt
+  was rerun successfully without changing the candidate head.
+- Both candidates pin the same open canonical keepkey/device-protocol#112 head
+  `27d3fa1f6215139cde6411f9a2882f36bb373fc9`. The canonical PR remains open
+  against upstream `master`; no release-specific protocol branch is used.
+- Both candidates pin the same open keepkey/python-keepkey#197 head
+  `b76ee610dd18934ee3aeeb36cfc541e8799eb46d`, whose 7.14.3 and 7.15 integration
+  matrices are green. The canonical dependency PRs remain upstream integration
+  gates and are not merged by this audit.
 
 ## Candidate-specific storage regression check
 
