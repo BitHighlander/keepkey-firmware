@@ -173,6 +173,8 @@ Run these searches as assignments, then inspect every result in context:
 | A ticker or human label changes | Compare every confirmation string with every serialized asset/symbol byte and update expected wire vectors separately |
 | A cleanup is copied between releases | Compare declaration counts, feature macros, dispatch maps and callers on both heads before applying it |
 | A test targets a helper predicate | Add a production-boundary case and mutate/remove the production guard to prove sensitivity |
+| A handler borrows shared confidential scratch | Enumerate every exit after acquisition and use the scratch owner's public scrub API; reject const-casts or alias-based clearing that duplicate ownership knowledge in callers |
+| A candidate adds a user-visible failure string | Apply the repository's translation/localization convention at the introduction site, including strings embedded in guard macros |
 | A dependency gitlink changes | Verify the live tracking branch contains the pin and update `.gitmodules`, PR provenance, generated reports and candidate documents together |
 | A synthetic emulator wakeup changes | Test queued input deterministically and exercise a real stop/start/restart lifecycle |
 | An emulator test selects behavior with a compile definition | Trace that definition through every linked translation unit; a target-level define does not recompile a separately linked library, so inspect the final binary for the intended backend symbols and forbidden socket/backend imports |

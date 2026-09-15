@@ -368,8 +368,18 @@ that exact head. Exact-head CI run
 completed successfully on that exact head.
 
 The same review request for #755 was registered in the GitHub timeline but did
-not deliver a new review within the 15-minute polling window. Record this as no
-review and do not re-request on the unchanged head. Both candidates have
+not deliver a new review within the 15-minute polling window. It later arrived
+as review `5207984554` on the requested `fc53c625ae097b00ad667eff829f406d72e16d81`
+head with zero inline comments and six body-only observations. Four restate the
+published storage power-loss/selection/endurance debt and retain the owner's
+explicit deferral. Commit `5897d7ea7b5b89a9e5c3bb4c03b6fed44f7cd6b8`
+addresses the other two: Ethereum transfer-to-account exits use the shared
+scratch owner's `fsm_clearDerivedNode()` API, and candidate-added failure
+strings use the repository translation macro. Focused Fsm/Ethereum/auto-lock
+suites passed 55/55; exact-head CI and two independent Astra verdicts are the
+remaining receipts for that repair.
+
+Both candidates have
 already exceeded the SOP's three-request candidate cap, so no further Copilot
 request is authorized by this audit cycle. A later asynchronous delivery may
 be ingested, but it does not justify another request.
