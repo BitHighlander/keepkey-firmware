@@ -19,6 +19,23 @@ installed. Candidate heads: #755 `4125e1c74`; #756 `d33f1711c`. Their Solana fee
 | Old active-sector erase fails while magic survives | The erase primitive returns void. The old record can remain the first active sector when `storage_protect_off()` chooses where to write the marker. | Both heads retain void-returning erase and first-magic selection. A one-shot emulator fault reproduced replacement loss on the 7.15 candidate; no equivalent published-build fault injection or physical reproduction yet. | Source-level inherited mechanism, candidate-specific consequence not fully certified. |
 | Firmware update from a no-active pending state | Published `tools/bootloader/usb_flash.c::usb_flash_firmware()` erases all storage if `storage_protect_off()` returns false. | Neither release head ships the pending-record protocol. The alpha/research prototype can enter a pending state where this unchanged bootloader path would wipe storage. | Exclude pending-storage feature from release; test later with bootloader rollout. |
 
+## Candidate regression disposition
+
+Exact-head full and bitcoin-only CI artifacts for both candidates were checked,
+not merely the aggregate job conclusion. All four `firmware.xml` files execute
+and pass the six focused commit/fault cases: fresh commit/reload, corruption of
+the final secret byte, marker-write failure, marker-readback failure, transient
+marker recovery, and a valid committed record whose CRC is zero. The artifact
+IDs are `10368770395`/`10368392593` for #755 and
+`10368462978`/`10369186070` for #756. The exact run and head bindings are in
+`current-head-coverage-20260914.md`.
+
+The candidate source diff improves detection/retry behavior and leaves the
+erase/rotate ordering that creates the inherited interruption window unchanged.
+This closes the candidate-specific source/test comparison required by the
+pre-Copilot exception. It does not claim physical power-cut safety, successful
+operation under permanent flash failure, or repair the inherited design.
+
 The candidate `storage_commit()` code also stamps `STORAGE_MAGIC_STR` before
 serializing the record, adds a marker-readback check in shared
 `lib/board/memory.c`, and changes the failure response. Those are **real
@@ -28,9 +45,8 @@ state no worse. Keep the two #755 storage threads open and carry their scope
 to #756's ledger. Do not call this a hardware finding or a clean bill of
 storage health.
 
-Before a final Copilot request, reconcile all changed storage paths against
-the actual release artifact and audit any candidate-specific new or worsened
-state. The owner-accepted legacy redesign is excluded from that gate; physical
-signing/recovery OLED evidence, dependency pins, full changed-file coverage,
-and exact-head CI remain separate gates. The detailed deferred fault matrix is
+The changed storage paths are now reconciled against the release artifacts and
+the candidate-specific checks above. The owner-accepted legacy redesign remains
+excluded. Physical signing/recovery OLED evidence and canonical dependency
+promotion remain separate release/upstream gates. The detailed deferred fault matrix is
 in [storage-durability-boundary-20260914.md](storage-durability-boundary-20260914.md).
