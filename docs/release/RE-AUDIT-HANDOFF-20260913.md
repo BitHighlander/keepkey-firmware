@@ -376,8 +376,13 @@ explicit deferral. Commit `5897d7ea7b5b89a9e5c3bb4c03b6fed44f7cd6b8`
 addresses the other two: Ethereum transfer-to-account exits use the shared
 scratch owner's `fsm_clearDerivedNode()` API, and candidate-added failure
 strings use the repository translation macro. Focused Fsm/Ethereum/auto-lock
-suites passed 55/55; exact-head CI and two independent Astra verdicts are the
-remaining receipts for that repair.
+suites passed 55/55, and two independent Astra gates returned GO with zero new
+actionable in-scope findings. Exact-head run
+[34952652336](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34952652336)
+failed before tests when PyPI timed out during the Bitcoin-only container
+build. The required fresh workflow
+[34953570068](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34953570068)
+then completed successfully on the same exact head.
 
 Both candidates have
 already exceeded the SOP's three-request candidate cap, so no further Copilot
