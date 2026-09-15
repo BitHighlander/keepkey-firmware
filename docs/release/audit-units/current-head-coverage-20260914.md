@@ -8,7 +8,7 @@ only the explicitly assigned auto-lock and Solana paths below. No current path
 is left without a named coverage source. This is an audit-coverage receipt, not
 a release approval or a claim that inherited deferred risks are fixed.
 
-## #755: 0f64f80323 → 4125e1c740
+## #755: 0f64f80323 → 696abece09
 65 changed paths; 19 paths changed after the earlier whole-head review at `225eb80fdd`.
 
 | Path | Coverage assignment |
@@ -79,7 +79,7 @@ a release approval or a claim that inherited deferred risks are fixed.
 | `unittests/firmware/solana.cpp` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `unittests/firmware/storage_passphrase.cpp` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 
-## #756: 06b1d249ad → d33f1711c3
+## #756: 06b1d249ad → 5dd031e49b
 87 changed paths; 21 paths changed after the earlier whole-head review at `be9db9c498`.
 
 | Path | Coverage assignment |
@@ -179,24 +179,23 @@ This table links those receipts; it does not replace them.
 
 ## Exact-head and dependency reconciliation
 
-- #755 head `4125e1c7409b1cb7b08ba595bc408e3128fc24ca`: non-publishing CI
-  [34895287978](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34895287978)
+- #755 head `696abece09f9c00b828f585280bbeff59b657693`: non-publishing CI
+  [34915987859](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34915987859)
   passed its aggregate gate, release-evidence gate, full/bitcoin-only ARM and
   emulator builds, native suites, and host integration.
-- #756 head `d33f1711c3b2b205f64c5dc35fdec02926a6dc63`: non-publishing CI
-  [34895896789](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34895896789)
+- #756 head `5dd031e49b4bd78948a9d8e52389f81b526a35f6`: non-publishing CI
+  [34915989436](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34915989436)
   passed its aggregate gate, full/bitcoin-only ARM and emulator builds, native
   suites, and host integration.
 - keepkey/python-keepkey#197 head
-  `b2edbffa60697556d01d94d255c63b548383274f` is open, mergeable, and green for
-  the 7.14.3 and 7.15 integration matrices. The firmware pins are ancestors of
-  that head by 26 and 22 commits respectively. Canonical merge and re-pin remain
+  `b76ee610dd18934ee3aeeb36cfc541e8799eb46d` is open, mergeable, and green for
+  the 7.14.3 and 7.15 integration matrices. Both firmware candidates now pin that exact head. Canonical merge and re-pin remain
   an upstream integration gate; they are not an unresolved firmware-code audit
   finding.
 
 ## Candidate-specific storage regression check
 
-The exact-head full and bitcoin-only firmware JUnit artifacts contain passing
+The prior code-identical full and bitcoin-only firmware JUnit artifacts contain passing
 regressions for `FreshWalletSurvivesCommitAndReload`, final-secret-byte
 corruption retry, marker write failure, marker readback failure, transient
 marker recovery, and a valid zero CRC record. Counts were read from artifacts

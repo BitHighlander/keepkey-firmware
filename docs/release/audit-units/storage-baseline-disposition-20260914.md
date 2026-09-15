@@ -27,7 +27,7 @@ and pass the six focused commit/fault cases: fresh commit/reload, corruption of
 the final secret byte, marker-write failure, marker-readback failure, transient
 marker recovery, and a valid committed record whose CRC is zero. The artifact
 IDs are `10368770395`/`10368392593` for #755 and
-`10368462978`/`10369186070` for #756. The exact run and head bindings are in
+`10368462978`/`10369186070` for #756. The current heads differ only by the Python gitlink and passed fresh full matrices; both prior artifact bindings and current run bindings are in
 `current-head-coverage-20260914.md`.
 
 The candidate source diff improves detection/retry behavior and leaves the
