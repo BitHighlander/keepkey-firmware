@@ -50,14 +50,14 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
 
   uint8_t to_bytes[20];
   if (!hdnode_get_ethereum_pubkeyhash(node, to_bytes)) {
-    memzero((void*)node, sizeof(HDNode));
+    fsm_clearDerivedNode();
     return TXOUT_COMPILE_ERROR;
   }
 
   if (ethereum_isStandardERC20Transfer(msg)) {
     if (memcmp(msg->data_initial_chunk.bytes + 4 + (32 - 20), to_bytes, 20) !=
         0) {
-      memzero((void*)node, sizeof(HDNode));
+      fsm_clearDerivedNode();
       return TXOUT_COMPILE_ERROR;
     }
   } else {
@@ -66,7 +66,7 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
     memcpy(msg->to.bytes, to_bytes, sizeof(to_bytes));
   }
 
-  memzero((void*)node, sizeof(HDNode));
+  fsm_clearDerivedNode();
   return TXOUT_OK;
 }
 

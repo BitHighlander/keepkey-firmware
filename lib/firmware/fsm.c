@@ -148,18 +148,18 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
  * seed. The same reasoning applies to every handler that expects its write to
  * survive a reboot, and those were missed. Refuse before doing the work rather
  * than reporting a success that did not happen. */
-#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                \
-  if (storage_isBitcoinOnlyLocked()) {                               \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
-                    "Bitcoin-only wallet present. Use Wipe first."); \
-    layoutHome();                                                    \
-    return;                                                          \
+#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                   \
+  if (storage_isBitcoinOnlyLocked()) {                                  \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,              \
+                    _("Bitcoin-only wallet present. Use Wipe first.")); \
+    layoutHome();                                                       \
+    return;                                                             \
   }
 
 #define CHECK_NOT_INITIALIZED                                              \
   if (storage_isInitialized()) {                                           \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
-                    "Device is already initialized. Use Wipe first.");     \
+                    _("Device is already initialized. Use Wipe first."));  \
     return;                                                                \
   }                                                                        \
   /* A locked bitcoin-only wallet leaves the device LOOKING uninitialized: \
@@ -169,7 +169,7 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
    * write and the handler reporting success anyway. */                    \
   if (storage_isBitcoinOnlyLocked()) {                                     \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
-                    "Bitcoin-only wallet present. Use Wipe first.");       \
+                    _("Bitcoin-only wallet present. Use Wipe first."));    \
     return;                                                                \
   }
 
@@ -177,13 +177,13 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
  * anything is handled structurally instead: storage_commit() aborts an armed
  * ceremony, so a handler that writes can never have its write consumed by
  * one -- the worst it can do is end it. */
-#define CHECK_NO_CEREMONY                                     \
-  if (setup_isArmed()) {                                      \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
-                    "Device is in the middle of setup. Send " \
-                    "Initialize or Cancel first.");           \
-    layoutHome();                                             \
-    return;                                                   \
+#define CHECK_NO_CEREMONY                                       \
+  if (setup_isArmed()) {                                        \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,      \
+                    _("Device is in the middle of setup. Send " \
+                      "Initialize or Cancel first."));          \
+    layoutHome();                                               \
+    return;                                                     \
   }
 
 #define CHECK_PIN              \
