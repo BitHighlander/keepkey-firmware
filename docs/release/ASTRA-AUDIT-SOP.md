@@ -24,6 +24,13 @@ ref with `publish_emulator=false`, record the resulting run ID and its head
 SHA, and wait for the aggregate gate. A green run on the fix branch does not
 certify the merge commit. Never use a publishing dispatch for audit evidence.
 
+Treat a job rerun as diagnostic evidence only when downstream jobs consume
+artifacts from that job. GitHub retains artifacts from the failed attempt, and
+a rerun can leave both generations under the same artifact name; a report job
+may then download the stale failing JUnit even though the rerun passed. After a
+test rerun succeeds, dispatch a fresh exact-head workflow and require its
+aggregate gate so every report and artifact comes from one attempt.
+
 ## Astra discovery round
 
 If a Copilot review already exists, ingest **all** of its inline comments and
@@ -127,6 +134,15 @@ fixture, a mutation proving the test fails without its guard, a cross-release
 drift check, or a scope/provenance gate. A clean pass records the new
 counterexample class it tested. Do not manufacture prose-only changes; the
 improvement must change a future assignment, query, test, or gate.
+
+Do not dismiss a randomized integration failure after one green retry. Repeat
+the exact test enough to establish whether it is stochastic, capture the seed
+or generated transaction/mnemonic and state transition at the first failure,
+and compare it with the candidate base. A retry can establish that the failure
+is intermittent; it cannot establish that the product path is correct. Keep
+the release gate open until the edge case is fixed, deterministically refuted,
+or explicitly classified as inherited test-harness debt with reproducible
+evidence and an owner.
 
 After each repair batch, run a focused adversarial pass and a separate
 cross-release pass before copying fixes between branches. Compare declarations,
