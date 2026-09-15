@@ -35,3 +35,4 @@ SolanaOffchainMessageSignature.signature max_size:64
 SolanaSignTx.lut_account max_count:8
 SolanaSignTx.lut_account max_size:32
 SolanaSignTx.lut_signature max_size:64
+SolanaSignTx.clearsign_certificate max_size:139
