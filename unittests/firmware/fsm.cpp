@@ -348,6 +348,19 @@ TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
+TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  Ping ping = {};
+  ping.has_button_protection = true;
+  ping.button_protection = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   layoutHome();

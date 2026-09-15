@@ -341,6 +341,17 @@ void fsm_msgPing(Ping* msg) {
     }
 
   } else {
+    /* A protected Ping can block inside its confirmation or PIN/passphrase
+     * prompt while the main-loop auto-lock check is suspended. Make that
+     * host-requested interaction a session boundary before it can wait, so a
+     * Cancel cannot resume an older signing stream with cached authority. */
+    if ((msg->has_button_protection && msg->button_protection) ||
+        (msg->has_pin_protection && msg->pin_protection) ||
+        (msg->has_passphrase_protection && msg->passphrase_protection)) {
+      fsm_abort_signing_workflows();
+      session_clear(/*clear_pin=*/true);
+    }
+
     if (msg->has_button_protection && msg->button_protection)
       if (!confirm(ButtonRequestType_ButtonRequest_Ping, "Ping", "%s",
                    msg->message)) {
