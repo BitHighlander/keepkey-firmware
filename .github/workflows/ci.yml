@@ -345,10 +345,9 @@ jobs:
         run: |
           # Two consumers, resolved differently:
           #
-          #  1. `docker build` for the emulator image uses the classic builder,
-          #     which reads the local daemon image store. Re-tagging the mirror
-          #     to the Docker Hub name satisfies the digest-pinned base image
-          #     in scripts/emulator/Dockerfile with no registry round-trip.
+          #  1. `docker build` for the emulator image uses the classic builder.
+          #     RESOLVED_BASE is passed as a build argument so the mirror can be
+          #     used without trying to create an invalid digest-form tag.
           #
           #  2. buildx (docker/build-push-action) uses the docker-container
           #     driver, which does NOT see daemon-local images and resolves
@@ -361,10 +360,11 @@ jobs:
           # stderr is deliberately not suppressed: the fallback stops a mirror
           # problem being fatal, but hiding the error makes auth vs missing tag
           # vs transient network indistinguishable.
-          if docker pull "${{ env.BASE_IMAGE_MIRROR }}"; then
-            docker tag "${{ env.BASE_IMAGE_MIRROR }}" "${{ env.BASE_IMAGE }}"
-            echo "RESOLVED_BASE=${{ env.BASE_IMAGE_MIRROR }}" >> "$GITHUB_ENV"
-            echo "base image: GHCR mirror"
+          EXPECTED_DIGEST="${BASE_IMAGE#*@}"
+          MIRROR_IMAGE="${BASE_IMAGE_MIRROR%:*}@$EXPECTED_DIGEST"
+          if docker pull "$MIRROR_IMAGE"; then
+            echo "RESOLVED_BASE=$MIRROR_IMAGE" >> "$GITHUB_ENV"
+            echo "base image: digest-pinned GHCR mirror"
           else
             echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
             docker pull "${{ env.BASE_IMAGE }}"
@@ -375,6 +375,7 @@ jobs:
       - name: Build emulator image
         run: |
           docker build \
+            --build-arg BASE_IMAGE="${RESOLVED_BASE}" \
             -t ${{ env.EMU_IMAGE }} \
             -f scripts/emulator/Dockerfile \
             .
@@ -623,20 +624,21 @@ jobs:
       - name: Pull base image
         run: |
           # This job runs the toolchain with `docker run`, so it only needs the
-          # image present in the local daemon store under its Docker Hub name.
-          # No buildx here, and so no RESOLVED_BASE -- see build-and-test,
-          # which does need both because buildx resolves FROM against a
-          # registry rather than the daemon.
+          # image present in the local daemon store. RESOLVED_BASE names the
+          # verified mirror image or the digest-pinned Docker Hub fallback.
           #
           # stderr is deliberately not suppressed: the fallback stops a mirror
           # problem being fatal, but hiding the error makes auth vs missing tag
           # vs transient network indistinguishable.
-          if docker pull "${{ env.BASE_IMAGE_MIRROR }}"; then
-            docker tag "${{ env.BASE_IMAGE_MIRROR }}" "${{ env.BASE_IMAGE }}"
-            echo "base image: GHCR mirror"
+          EXPECTED_DIGEST="${BASE_IMAGE#*@}"
+          MIRROR_IMAGE="${BASE_IMAGE_MIRROR%:*}@$EXPECTED_DIGEST"
+          if docker pull "$MIRROR_IMAGE"; then
+            echo "RESOLVED_BASE=$MIRROR_IMAGE" >> "$GITHUB_ENV"
+            echo "base image: digest-pinned GHCR mirror"
           else
             echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
             docker pull "${{ env.BASE_IMAGE }}"
+            echo "RESOLVED_BASE=${{ env.BASE_IMAGE }}" >> "$GITHUB_ENV"
             echo "base image: Docker Hub"
           fi
 
@@ -653,7 +655,7 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/root/keepkey-firmware:z \
-            ${{ env.BASE_IMAGE }} /bin/sh -c "\
+            "${RESOLVED_BASE}" /bin/sh -c "\
               mkdir /root/build && cd /root/build && \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
