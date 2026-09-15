@@ -695,6 +695,44 @@ TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
 }
 
 #if !BITCOIN_ONLY
+TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
+  fsm_init();
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  BinanceSignTx binance = {};
+  binance.has_msg_count = true;
+  binance.msg_count = 1;
+  binance.has_account_number = true;
+  binance.has_chain_id = true;
+  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
+  binance.has_sequence = true;
+  binance.has_source = true;
+  ASSERT_TRUE(binance_signTxInit(&node, &binance));
+  ASSERT_TRUE(binance_signingIsInited());
+
+  CosmosMsgAck cosmos_ack = {};
+  receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
+                 &cosmos_ack);
+  EXPECT_FALSE(binance_signingIsInited());
+
+  TendermintSignTx cosmos = {};
+  cosmos.has_msg_count = true;
+  cosmos.msg_count = 1;
+  cosmos.has_chain_id = true;
+  std::strcpy(cosmos.chain_id, "cosmoshub-4");
+  ASSERT_TRUE(tendermint_signTxInit(&node, &cosmos, sizeof(cosmos), "uatom",
+                                    TENDERMINT_SIGNING_COSMOS));
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+
+  BinanceTransferMsg binance_ack = {};
+  receiveMessage(MessageType_MessageType_BinanceTransferMsg,
+                 BinanceTransferMsg_fields, &binance_ack);
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+}
+#endif
+
+#if !BITCOIN_ONLY
 TEST(Fsm, MissingEosCommonTerminatesSigning) {
   fsm_init();
 
