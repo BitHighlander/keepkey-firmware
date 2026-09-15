@@ -339,6 +339,41 @@ void fsm_init(void) {
   txin_dgst_initialize();
 }
 
+/* Only messages that advance an already established stream, plus bounded
+ * read-only polls, may inherit a signing workflow. Every other top-level
+ * request is a session boundary before its handler can block for host or user
+ * input. New protocol messages therefore fail closed until classified here. */
+void keepkey_before_message_dispatch(MessageType msg_id) {
+  switch (msg_id) {
+    case MessageType_MessageType_GetFeatures:
+    case MessageType_MessageType_GetCoinTable:
+    case MessageType_MessageType_Ping:
+    case MessageType_MessageType_TxAck:
+    case MessageType_MessageType_EntropyAck:
+    case MessageType_MessageType_CharacterAck:
+#if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxAck:
+    case MessageType_MessageType_Ethereum712TypesValues:
+    case MessageType_MessageType_CosmosMsgAck:
+    case MessageType_MessageType_OsmosisMsgAck:
+    case MessageType_MessageType_BinanceTransferMsg:
+    case MessageType_MessageType_EosTxActionAck:
+    case MessageType_MessageType_ThorchainMsgAck:
+    case MessageType_MessageType_MayachainMsgAck:
+#endif
+#if ZCASH_PRIVACY
+    case MessageType_MessageType_ZcashPCZTAction:
+    case MessageType_MessageType_ZcashTransparentOutput:
+    case MessageType_MessageType_ZcashTransparentInput:
+#endif
+      return;
+    default:
+      fsm_abort_signing_workflows();
+      session_clear(/*clear_pin=*/true);
+      return;
+  }
+}
+
 void fsm_sendSuccess(const char* text) {
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);

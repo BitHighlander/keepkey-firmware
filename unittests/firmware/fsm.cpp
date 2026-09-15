@@ -361,6 +361,17 @@ TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  ChangePin request = {};
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_ChangePin, ChangePin_fields, &request);
+
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   layoutHome();
