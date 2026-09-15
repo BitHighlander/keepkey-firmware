@@ -145,6 +145,11 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   const char mainnetp[] = "thor";
   const char testnetp[] = "tthor";
   const char* pfix;
+  /* This scratch buffer never contains coin_denom: the fixed amount prefix is
+     formatted here, then the validated denom is streamed directly into the
+     hash below. The longest formatted fragment in this function is either
+     address field (63 bytes), so 64 bytes plus NUL is sufficient regardless
+     of the protocol's denom capacity. */
   char buffer[64 + 1];
 
   size_t decoded_len;

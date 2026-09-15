@@ -366,6 +366,43 @@ TEST(Thorchain, ThorchainSignTxInvalidDenom) {
   thorchain_signAbort();
 }
 
+/* The denom is streamed into the hash rather than formatted through the
+   signer's 65-byte scratch buffer.  Exercise the protobuf field's full
+   68-character payload so a future refactor cannot accept it for display and
+   then fail only after consent while serializing it. */
+TEST(Thorchain, MaxLengthDenomSerializesAndSigns) {
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+
+  const std::string denom(68, 'a');
+  ASSERT_TRUE(thorchain_signTxInit(&node, &kSignTx));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100000, kToAddr, denom.c_str()));
+  ASSERT_TRUE(thorchain_signingIsFinished());
+
+  char from_address[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "thor", from_address));
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(thorchain_signTxFinalize(public_key, signature));
+
+  const std::string doc =
+      std::string(
+          "{\"account_number\":\"0\",\"chain_id\":\"thorchain\","
+          "\"fee\":{\"amount\":[{\"amount\":\"5000\",\"denom\":"
+          "\"rune\"}],\"gas\":\"200000\"},\"memo\":\"\",\"msgs\":["
+          "{\"type\":\"thorchain/MsgSend\",\"value\":{\"amount\":[{"
+          "\"amount\":\"100000\",\"denom\":\"") +
+      denom + "\"}],\"from_address\":\"" + from_address +
+      "\",\"to_address\":\"" + kToAddr + "\"}}],\"sequence\":\"0\"}";
+
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc.data(), doc.size(), digest);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, public_key, signature, digest));
+
+  thorchain_signAbort();
+}
+
 /* The envelope has to be refused before anything is hashed. msg_count is the
    message budget, so an absent or zero count leaves the session with nothing
    to spend; chain_id is serialized into the sign doc and printed on the final
