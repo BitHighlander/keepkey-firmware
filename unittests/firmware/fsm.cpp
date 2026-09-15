@@ -245,6 +245,21 @@ void receiveMessage(MessageType type, const pb_field_t* fields,
   }
 }
 
+// firmware-unit never maps emulated flash; tests whose handlers commit storage
+// borrow a zeroed image for their duration.
+struct ScopedFlash {
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous = emulator_flash_base;
+  ScopedFlash() {
+    emulator_flash_base = bytes.data();
+    storage_init();
+  }
+  ~ScopedFlash() {
+    storage_reset();
+    emulator_flash_base = previous;
+  }
+};
+
 class AutoLockProgress : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -372,6 +387,41 @@ TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+TEST_F(AutoLockProgress, TopLevelBoundaryEndsSigningButIsNotALock) {
+  // AdvancedMode is the observable here: without a PIN, session_clear()
+  // re-caches the empty PIN, so a PIN-cache check would pass even under a lock.
+  ScopedFlash flash;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  ChangePin request = {};
+  receiveMessage(MessageType_MessageType_ChangePin, ChangePin_fields, &request);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  Ping ping = {};
+  ping.has_pin_protection = true;
+  ping.pin_protection = true;
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+
+  EXPECT_TRUE(storage_isPolicyEnabled("AdvancedMode"))
+      << "an ordinary request must not disarm AdvancedMode before signing";
+}
+
+TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
+  signing_abort();
+  setup_abort();
+  ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
+  setup_arm(SETUP_RECOVERY);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  SignTx invalid = {};
+  receiveMessage(MessageType_MessageType_SignTx, SignTx_fields, &invalid);
+
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_FALSE(signing_is_active());
+  layoutHomeForced();
+}
+
 TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   layoutHome();
@@ -383,20 +433,8 @@ TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
 }
 
 TEST_F(AutoLockProgress, MalformedMultisigAddressCannotRenewTheDeadline) {
-  // Deriving the address caches the root seed and commits storage, so this
-  // test needs real emulated flash; firmware-unit never maps it otherwise.
-  struct ScopedFlash {
-    std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
-    uint8_t* previous = emulator_flash_base;
-    ScopedFlash() {
-      emulator_flash_base = bytes.data();
-      storage_init();
-    }
-    ~ScopedFlash() {
-      storage_reset();
-      emulator_flash_base = previous;
-    }
-  } flash;
+  // Deriving the address caches the root seed and commits storage.
+  ScopedFlash flash;
 
   signing_abort();
   LoadDevice load = {};
