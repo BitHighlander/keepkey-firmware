@@ -13,6 +13,19 @@ historical handoff below. It does not certify that candidate storage changes
 are non-regressions, close the open review threads, or waive remaining audit,
 physical-device and dependency gates. A final Copilot review may proceed only
 after those remaining gates and a documented shipped-baseline comparison.
+Current code heads after the focused Solana fee-cap merges are #755
+`4125e1c7409b1cb7b08ba595bc408e3128fc24ca` (nonpublishing CI
+[34895287978](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34895287978))
+and #756 `d33f1711c3b2b205f64c5dc35fdec02926a6dc63`
+([34895896789](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34895896789)).
+The #755 run passed its aggregate CI gate on 2026-09-14. The #756 run was
+started the same day; its aggregate outcome must be checked before claiming
+current-head validation. The merge commits changed no
+storage or bootloader source.
+
+The source-level baseline comparison is recorded in
+[storage-baseline-disposition-20260914.md](audit-units/storage-baseline-disposition-20260914.md);
+it deliberately does not claim physical non-regression proof.
 
 ## Historical hold decision — 2026-09-14
 
@@ -254,3 +267,124 @@ the two open #755 storage threads and the exact merge-head run statuses above. C
 PR titles have been corrected to say storage blockers are open. Update the
 branch ledgers with new exact-head receipts when the next fix changes either
 head; do not overwrite historical receipts without labeling them.
+
+### Final pre-Copilot snapshot, 2026-09-15
+
+The release-owner storage and bootloader deferral above remains unchanged. The
+in-scope candidates are frozen at #755 `703e4937888f1e677e189979406cf00103aa7204`
+and #756 `8477dabdf4970f8900f37cf2467659b9c25fbbf2`. Both pin device-protocol
+`27d3fa1f6215139cde6411f9a2882f36bb373fc9` and python-keepkey
+`b76ee610dd18934ee3aeeb36cfc541e8799eb46d`.
+
+The final dispatch boundary ends stale signing before unrelated blocking
+handlers without calling `session_clear(true)`: PIN/passphrase cache,
+AdvancedMode and pre-sign runtime ClearSign state survive. Signing starts also
+end any staged setup ceremony. Protected Ping follows the same rule. Production
+tests cover stale protected Ping, unrelated confirmation, non-lock behavior,
+signing-versus-recovery exclusion, malformed multisig, auto-lock progress and
+Solana certificate rejection. Focused exact-head native suites passed 72/72 on
+#755 and 77/77 on #756; mutation controls fail when the relevant abort, lock or
+timer behavior is restored.
+
+Two independent Astra gates reported zero actionable in-scope findings on each
+frozen head. #756 exact-head non-publishing CI
+[34942075216](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34942075216)
+passed. #755 exact-head non-publishing CI
+[34944212410](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34944212410)
+passed after an explicit optional-Zcash macro guard fixed both ARM variants.
+Both aggregate gates include full and Bitcoin-only ARM/emulator builds, native
+and host suites, report generation and release-evidence checks.
+
+One earlier #755 attempt hit the intermittent character-cipher recovery test:
+the same test later failed once in 35 isolated repetitions, then passed 200
+instrumented repetitions, a complete 535-test local host run and the fresh
+exact-head CI above. This is recorded as stochastic test evidence, not a
+firmware refutation. The SOP now requires a fresh workflow after job reruns so
+stale JUnit artifacts cannot contaminate an otherwise green retry report.
+
+The prior #756 Solana-certificate thread is fixed at the decoded production
+handler and resolved. The Hive thread is resolved as a false positive: expected
+wire vectors already use `STEEM`, the helper maps both accepted host spellings
+to `STEEM`, and adjacent assertions require `STEEM` while excluding `HIVE`.
+The unresolved-thread count is zero before the next review request.
+
+### Post-Copilot repair snapshot, 2026-09-15
+
+Copilot reviews `5207390098` (#755) and `5207370820` (#756) found three
+actionable implementation defects and one stale-documentation statement. The
+repairs are frozen at #755 `fc53c625ae097b00ad667eff829f406d72e16d81` and
+#756 `c3ec59c35c1f44c1d80e97cfe1c4424118cbccaa`; the shared dependency pins
+remain unchanged.
+
+Continuation messages now preserve a signing stream only when both the message
+type and its owning workflow are active. Cross-workflow ACKs terminate retained
+signing state before their handler rejects them. Production-dispatch regression
+coverage crosses Binance and Cosmos, and a mutation that removed the Cosmos
+ownership check failed the new state assertions. The dispatch boundary still
+does not clear the PIN/passphrase session or AdvancedMode.
+
+On #756, explicit all-zero Ethereum values are canonicalized before contract
+and global-allowance classification. A padded-zero unlimited approval therefore
+reaches the global refusal instead of the generic transaction path. The test
+also asserts that the production message value was canonicalized, making it
+sensitive to removal of the normalization.
+
+The #756 emulator wedge target now compiles its transport sources directly with
+`KKEMU_DYLIB=1` instead of linking the normal socket-backed emulator library.
+The resulting UDP object imports only `libkkemu_socket*`; the executable has no
+`bind`, `recvfrom` or `sendto` imports and exits successfully. The auto-lock
+audit document now correctly says host-driven layout transitions do not renew
+the timer.
+
+Focused native suites passed 73/73 on #755 and 107/107 on #756. Two independent
+post-repair Astra gates returned GO with zero actionable in-scope findings on
+both exact heads, including full and Bitcoin-only undefined-macro checks and
+independent wedge target provenance. Exact-head CI runs
+[34947671627](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34947671627)
+and
+[34947674574](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34947674574)
+both completed successfully on their recorded exact heads. All three inline Copilot threads
+were answered with repair evidence and resolved. The body-only documentation
+findings were answered in PR comments.
+
+### Final review follow-up, 2026-09-15
+
+The next #756 Copilot review `5207863966`, delivered on
+`c3ec59c35c1f44c1d80e97cfe1c4424118cbccaa`, reported a body-only THORChain
+maximum-denom concern. Source tracing refuted its premise: `coin_denom` is
+validated and then streamed directly into SHA-256, while the 65-byte scratch
+buffer holds only bounded amount/address fragments whose largest use is 64
+bytes including NUL. Commit `e019e89d7021a247ed784f34f1c8f4fc8a7c092a`
+documents that data flow and adds a 68-character protocol-maximum regression
+that finalizes the signature and verifies it against an independently built
+sign document. The complete THOR/MAYA sibling suite passed 69/69.
+
+That sibling audit found stale MAYA prose which incorrectly said the denom was
+formatted into its scratch buffer. Documentation-only commit
+`7e091af157131897adc5514de392570c32088946` corrects the explanation; both
+independent Astra gates carried GO with zero actionable in-scope findings to
+that exact head. Exact-head CI run
+[34951131013](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34951131013)
+completed successfully on that exact head.
+
+The same review request for #755 was registered in the GitHub timeline but did
+not deliver a new review within the 15-minute polling window. It later arrived
+as review `5207984554` on the requested `fc53c625ae097b00ad667eff829f406d72e16d81`
+head with zero inline comments and six body-only observations. Four restate the
+published storage power-loss/selection/endurance debt and retain the owner's
+explicit deferral. Commit `5897d7ea7b5b89a9e5c3bb4c03b6fed44f7cd6b8`
+addresses the other two: Ethereum transfer-to-account exits use the shared
+scratch owner's `fsm_clearDerivedNode()` API, and candidate-added failure
+strings use the repository translation macro. Focused Fsm/Ethereum/auto-lock
+suites passed 55/55, and two independent Astra gates returned GO with zero new
+actionable in-scope findings. Exact-head run
+[34952652336](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34952652336)
+failed before tests when PyPI timed out during the Bitcoin-only container
+build. The required fresh workflow
+[34953570068](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34953570068)
+then completed successfully on the same exact head.
+
+Both candidates have
+already exceeded the SOP's three-request candidate cap, so no further Copilot
+request is authorized by this audit cycle. A later asynchronous delivery may
+be ingested, but it does not justify another request.
