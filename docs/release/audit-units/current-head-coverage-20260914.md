@@ -8,8 +8,8 @@ only the explicitly assigned auto-lock and Solana paths below. No current path
 is left without a named coverage source. This is an audit-coverage receipt, not
 a release approval or a claim that inherited deferred risks are fixed.
 
-## #755: 0f64f80323 → 213965a438
-68 changed paths; 23 paths changed after the earlier whole-head review at `225eb80fdd`.
+## #755: 0f64f80323 → 3838e72a3b
+68 changed paths; 26 paths changed after the earlier whole-head review at `225eb80fdd`.
 
 | Path | Coverage assignment |
 | --- | --- |
@@ -82,8 +82,8 @@ a release approval or a claim that inherited deferred risks are fixed.
 | `unittests/firmware/solana.cpp` | focused Solana fee-cap red/green test + earlier whole-head context |
 | `unittests/firmware/storage_passphrase.cpp` | covered by whole-head runtime/non-runtime audits; unchanged after checkpoint |
 
-## #756: 06b1d249ad → e72f1daebf
-90 changed paths; 25 paths changed after the earlier whole-head review at `be9db9c498`.
+## #756: 06b1d249ad → 110ed9def4
+91 changed paths; 36 paths changed after the earlier whole-head review at `be9db9c498`.
 
 | Path | Coverage assignment |
 | --- | --- |
@@ -185,22 +185,28 @@ This table links those receipts; it does not replace them.
 
 ## Exact-head and dependency reconciliation
 
-- #755 head `213965a43887995eb432bb237502ea426089f4aa`: non-publishing CI
-  [34919062803](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34919062803)
+- #755 head `3838e72a3b839d580ff973d0d835cfc320c8e8e2`: non-publishing CI
+  [34924385070](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34924385070)
   passed its aggregate gate, full/Bitcoin-only ARM and emulator builds, native
   suites, and host integration.
-- #756 head `e72f1daebfaa3134b815d4de7bc605d8f5a02938`: non-publishing CI
-  [34919062845](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34919062845)
+- #756 head `110ed9def4c54ec726f4191c47b9cc566e204a2e`: non-publishing CI
+  [34924779790](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34924779790)
   passed its aggregate gate, full/Bitcoin-only ARM and emulator builds, native
-  suites, crypto checks, and host integration. The failed report-upload attempt
-  was rerun successfully without changing the candidate head.
+  suites, crypto checks, and host integration.
+- Independent Astra reviews covered every changed path at the remediation heads,
+  then a cross-release gate checked twin drift, canonical branch tracking,
+  prior Copilot inline/body-only findings, and regression sensitivity. Its one
+  detected 7.15 USB declaration regression was repaired before the final CI
+  receipt. All repaired inline review threads are resolved; the deferred legacy
+  storage risks remain preserved in the written disposition rather than counted
+  as live unresolved threads.
 - Both candidates pin the same open canonical keepkey/device-protocol#112 head
-  `27d3fa1f6215139cde6411f9a2882f36bb373fc9`. The canonical PR remains open
-  against upstream `master`; no release-specific protocol branch is used.
+  `27d3fa1f6215139cde6411f9a2882f36bb373fc9` and track
+  `up/release-protocol`.
 - Both candidates pin the same open keepkey/python-keepkey#197 head
-  `b76ee610dd18934ee3aeeb36cfc541e8799eb46d`, whose 7.14.3 and 7.15 integration
-  matrices are green. The canonical dependency PRs remain upstream integration
-  gates and are not merged by this audit.
+  `b76ee610dd18934ee3aeeb36cfc541e8799eb46d` and track
+  `reconcile/upstream-sync`. Both dependency PRs remain open against upstream
+  `master`; this audit performs no upstream merge.
 
 ## Candidate-specific storage regression check
 
