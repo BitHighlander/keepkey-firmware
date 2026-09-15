@@ -360,7 +360,7 @@ void keepkey_before_message_dispatch(MessageType msg_id) {
     case MessageType_MessageType_ThorchainMsgAck:
     case MessageType_MessageType_MayachainMsgAck:
 #endif
-#if ZCASH_PRIVACY
+#if defined(ZCASH_PRIVACY) && ZCASH_PRIVACY
     case MessageType_MessageType_ZcashPCZTAction:
     case MessageType_MessageType_ZcashTransparentOutput:
     case MessageType_MessageType_ZcashTransparentInput:
@@ -403,7 +403,7 @@ void keepkey_before_message_dispatch(MessageType msg_id) {
         case MessageType_MessageType_HiveSignOperations:
         case MessageType_MessageType_ClearsignAttestorSign:
 #endif
-#if ZCASH_PRIVACY
+#if defined(ZCASH_PRIVACY) && ZCASH_PRIVACY
         case MessageType_MessageType_ZcashSignPCZT:
 #endif
           setup_abort();
