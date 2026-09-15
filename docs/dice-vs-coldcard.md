@@ -38,12 +38,13 @@ protocol has no seed-creation or entropy command at all.** The complement of
 the displayed value is dice the user holds and never transmits, so disclosure
 costs nothing to anyone who is not already holding the roll sheet.
 
-KeepKey's complement is `EntropyAck.entropy`, which the host supplies
-on every reset. Our removed `display_random` screen therefore disclosed the one
-half whose other half the host itself chooses — and it was drawn *before*
-`EntropyRequest`, so a host that observed the screen and knew its own `external_entropy`
-could compute the resulting seed. Choosing an arbitrary target seed from a
-SHA-256 preimage is not implied.
+KeepKey's complement is optional `EntropyAck.entropy`, which the host may
+supply; omission contributes zero host bytes. When supplied, our removed
+`display_random` screen therefore disclosed the one half whose other half the
+host itself chooses — and it was drawn *before* `EntropyRequest`, so a host
+that observed the screen and knew its own `external_entropy` could compute the
+resulting seed. Choosing an arbitrary target seed from a SHA-256 preimage is
+not implied.
 
 > The rule is about the complement, not about the act of showing.
 > A value may be rendered on the OLED only if the host does not hold its

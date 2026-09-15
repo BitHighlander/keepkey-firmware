@@ -3,10 +3,33 @@
  * Link against the normal native firmware libraries; no initialized wallet
  * or live firmware thread is needed to test these public API boundaries. */
 #include "../../lib/emulator/libkkemu.c"
-#undef NDEBUG  /* This executable must check its assertions in release builds. */
+#undef NDEBUG /* This executable must check its assertions in release builds. \
+               */
 #include <assert.h>
 
 int main(void) {
+  static uint8_t flash[KKEMU_FLASH_SIZE];
+  memset(flash, 0xFF, sizeof(flash));
+  assert(kkemu_init(flash, sizeof(flash)) == 0);
+
+  /* A clean thread-driven stop may inject Cancel after the poll loop has
+   * already observed POLL_SET(0). The stop contract must remove that wakeup
+   * before a later start, or the next confirmation consumes stale input. */
+  assert(kkemu_start() == 0);
+  kkemu_sleep_ms(KKEMU_POLL_INTERVAL_MS * 2);
+  kkemu_stop();
+  assert(!POLL_RUNNING());
+  assert(ringbuf_empty(&rb_main_in));
+
+  /* Prove the same initialized emulator can start and stop again with a clean
+   * input boundary. Removing the post-join ring reset makes one of these
+   * assertions observe the synthetic Cancel. */
+  assert(kkemu_start() == 0);
+  kkemu_sleep_ms(KKEMU_POLL_INTERVAL_MS * 2);
+  kkemu_stop();
+  assert(!POLL_RUNNING());
+  assert(ringbuf_empty(&rb_main_in));
+
   libkkemu_initialized = 1;
   g_poll_wedged = 1;
   POLL_SET(0);
