@@ -70,6 +70,21 @@ against the code. Do not use a model vote as proof. A line ledger is coverage
 evidence; it is not a substitute for reading the runtime path. Record P3s too,
 including a short reason when no code change is warranted.
 
+### Build the invariant matrix before asking for silence
+
+The changed-file ledger answers *where* review occurred. It does not prove the
+same security rule was checked at every implementation site. Maintain a second
+ledger keyed by invariant, including workflow start/continuation/cancellation;
+decoded optional fields that must be consumed or rejected; displayed values
+versus signed bytes; setup state after malformed or stale messages; storage
+serialization and next-boot consequences; emulator restart isolation; product
+variants; and canonical dependency/provenance metadata.
+
+Enumerate every implementation of each invariant with a mechanical search and
+record positive and negative cases. One missed sibling reopens the invariant
+across every sibling. Fixing only the file named by a reviewer does not close
+the finding.
+
 **Coverage gate:** A subsystem pilot is not a whole-candidate audit. Before
 calling the Astra round complete, map every changed file to a reviewer and
 record a separate pass for tests, CI/release scripts, submodule pins, release
@@ -78,7 +93,7 @@ line against its own exact base and head; coverage on 7.15 does not transfer to
 7.14.3 where their code differs. State any unassigned file or unreviewed claim
 as an open gap, even if all assigned reviewers found nothing.
 
-## Fix and verify once per coherent batch
+## Internal learning loop: fix, verify, and improve the SOP
 
 Group related confirmed findings into one scoped patch. Test the affected
 behavior on the candidate, run the required release variants, and repeat
@@ -97,10 +112,47 @@ bounded retry only repairs transient faults.
 
 One focused Astra verification round reviews the **new diff plus affected
 invariants**. It must check that fixes close the original findings without
-introducing regressions. Do not restart a full-file audit merely because the
-head moved. If findings remain after two Astra rounds, stop the model loop and
-assign a human owner or split the candidate. Keep unresolved findings open in
-the ledger; do not label the candidate clean.
+introducing regressions. Restart whole-head coverage when a finding exposes a
+missing invariant, an unassigned sibling implementation, or an incorrect scope
+or dependency assumption.
+
+There is no fixed limit on internal Astra passes before Copilot. An additional
+pass is valid only when its assignment differs materially through a new
+invariant, counterexample, mutation, release-line comparison, or unreviewed
+surface. Repeating the same prompt over the same head is not another audit.
+
+Every pass must leave the audit system stronger. Record at least one reusable
+improvement: a new invariant or sibling search, a production-boundary negative
+fixture, a mutation proving the test fails without its guard, a cross-release
+drift check, or a scope/provenance gate. A clean pass records the new
+counterexample class it tested. Do not manufacture prose-only changes; the
+improvement must change a future assignment, query, test, or gate.
+
+After each repair batch, run a focused adversarial pass and a separate
+cross-release pass before copying fixes between branches. Compare declarations,
+feature availability, dispatch maps and tests, not just similar text. For
+security-sensitive guards, locally remove or bypass the intended production
+check and require the regression to fail for the expected reason. If mutation
+is impractical, record why and trace the production path independently.
+
+Internal convergence requires two consecutive independent Astra gates on the
+same frozen head with zero new actionable findings: one invariant/whole-head
+gate and one cross-release/evidence gate. Both must explicitly cover tests, CI,
+documentation, dependency metadata, and prior review-body findings.
+
+### Required sibling searches learned from release audits
+
+Run these searches as assignments, then inspect every result in context:
+
+| Trigger | Required expansion |
+| --- | --- |
+| An auto-lock progress hook changes | Enumerate every signing start and continuation handler; require accepted starts and real continuation progress to renew, while polls and incomplete frames do not |
+| A protobuf field becomes decodable | Prove the release consumes and validates it, or explicitly rejects non-empty input; generated bounds alone are not handling |
+| A ticker or human label changes | Compare every confirmation string with every serialized asset/symbol byte and update expected wire vectors separately |
+| A cleanup is copied between releases | Compare declaration counts, feature macros, dispatch maps and callers on both heads before applying it |
+| A test targets a helper predicate | Add a production-boundary case and mutate/remove the production guard to prove sensitivity |
+| A dependency gitlink changes | Verify the live tracking branch contains the pin and update `.gitmodules`, PR provenance, generated reports and candidate documents together |
+| A synthetic emulator wakeup changes | Test queued input deterministically and exercise a real stop/start/restart lifecycle |
 
 Before publishing the patch, reconcile the changed-file ledger with the
 actual PR diff again. A named reviewer must account for every runtime, test,
@@ -116,8 +168,9 @@ owner and repeat only the affected patch/invariant verification after a fix.
 
 ## Spend a Copilot review only at a stable head
 
-After the Astra ledger has zero unresolved actionable findings and exact-head
-CI is green, request **one** Copilot review of the current PR head. First
+After the Astra ledger has zero unresolved actionable findings, exact-head CI
+is green, and the two-pass internal convergence rule is satisfied, request
+**one** Copilot review of the current PR head. First
 reply to every existing review item with its fix commit and verification or
 specific technical refutation. Resolve only threads whose disposition is
 actually complete on the reviewed branch; preserve deferred or blocked threads
@@ -144,8 +197,12 @@ record **no review**. Do not retry in a loop or consume another request on an
 unchanged head. Continue human and hardware gates; request Copilot again only
 when service is available and the candidate is stable. A fresh review after
 fixes is useful, but cap Copilot at one request per stable head and stop after
-three total requests for a candidate. Escalate persistent findings to human
-review instead of chasing a green bot response.
+three total requests for a candidate. Any Copilot finding reopens the internal
+invariant loop; do not immediately ask Copilot to review its repair. Add the
+missed rule to the matrix, iterate materially distinct Astra passes, and obtain
+two clean internal gates on the final head before spending another request.
+Escalate persistent findings to human review instead of chasing a green bot
+response.
 
 Use one deliberate status check after the review request, then wait for a
 notification or a reasonable interval before checking again. Polling more
@@ -167,9 +224,11 @@ output alone; the release owner closes those gates against the same head.
 ```text
 PR / actual base SHA / candidate head SHA:
 Dependency pins and changed-file ledger:
+Invariant matrix and mechanical sibling searches:
 CI runs (full, bitcoin-only, ARM, native and host):
-Astra round 1: assigned subsystems; findings; dispositions:
-Astra verification round: changed files; old findings rechecked; new findings:
+Astra rounds: distinct assignment/counterexample; findings; dispositions:
+SOP/test/query improvement contributed by each round:
+Two-pass convergence: invariant/whole-head gate; cross-release/evidence gate:
 Copilot: request event; review ID and commit; inline/body findings, or no review:
 Human review and physical-device evidence:
 Open blockers and release-owner decision:
