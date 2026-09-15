@@ -22,7 +22,7 @@ gap is not the dice-entry UI, which is comparable. It is the derivation.
 | Bias rejection on rolls | none | rejects any face over 30% frequency |
 | Digest shown while rolling | after entry, **first 8 bytes** | live, **full 32 bytes** |
 | Digest is `SHA256(rolls)` | yes | yes |
-| Host can contribute entropy | **yes — `EntropyAck.entropy`, mandatory** | **no such command exists** |
+| Host can contribute entropy | **yes — optional `EntropyAck.entropy`; omission contributes zero host bytes** | **no such command exists** |
 | Device pre-mix entropy disclosed | no | yes, opt-in `View TRNG Words`, 24 BIP-39 words |
 | Offline verifier published | no | yes, public-domain, stdlib-only |
 | **User can verify the seed came from their rolls** | **no** | **yes** |

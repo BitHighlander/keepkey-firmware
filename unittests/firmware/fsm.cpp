@@ -610,7 +610,7 @@ TEST(Fsm, LowLevelSoftClearPreservesSigning) {
  * reaches the same handler, and on bitcoin-only firmware that is every
  * multi-chain message a host probes with, so a routine EthereumGetAddress
  * would otherwise memzero a recovery the user is 20 words into. */
-TEST(Fsm, TransportFailureEndsSigningButKeepsASetupCeremony) {
+TEST(Fsm, TransportFailureEndsSigningButKeepsRecoveryCeremony) {
   kk_test_board_init();
   fsm_init();
   setup_abort();
@@ -639,6 +639,23 @@ TEST(Fsm, TransportFailureEndsSigningButKeepsASetupCeremony) {
       << "an unmapped host probe tore down the ceremony the user was in";
 
   setup_abort();
+  layoutHomeForced();
+}
+
+TEST(Fsm, TransportFailureDisarmsResetBeforeAStaleEntropyAck) {
+  kk_test_board_init();
+  fsm_init();
+  setup_abort();
+
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+
+  call_msg_failure_handler(FailureType_Failure_UnexpectedMessage,
+                           "Malformed frame");
+
+  EXPECT_FALSE(setup_isArmed())
+      << "a rejected frame left reset armed for a stale EntropyAck";
   layoutHomeForced();
 }
 

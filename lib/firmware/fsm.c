@@ -292,14 +292,10 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
  * resume one: a malformed EthereumTxAck or TxAck is rejected here, and without
  * this the half-advanced session is still live for the next ack.
  *
- * NOT fsm_abort_workflows(): a setup ceremony cannot be resumed by a rejected
- * frame -- it advances only on on-device input, setup_stage() refuses to
- * restage over an armed ceremony (#429) and storage_commit() disarms one --
- * so tearing it down here buys nothing and costs the user real work. Every
- * unmapped message id lands in this handler, and on bitcoin-only firmware that
- * is every multi-chain message a host probes with: setup_abort() would
- * memzero a recovery 20 words into its seed, mid-entry, because a wallet
- * application asked for an Ethereum address. */
+ * Recovery advances only through on-device word entry, so unrelated host
+ * probes must not destroy it. Reset is different: EntropyAck is a host message
+ * and may arrive after a malformed frame. Disarm reset before reporting the
+ * transport failure so a stale EntropyAck cannot commit the ceremony. */
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_signing_workflows();
   if (setup_isArmedAs(SETUP_RECOVERY)) {
@@ -307,7 +303,8 @@ static void sendFailureWrapper(FailureType code, const char* text) {
      * the same recovery cipher, without randomizing its mapping or accepting
      * another character from the unrelated host packet. */
     recovery_cipher_redraw();
-  } else if (!setup_isArmed()) {
+  } else {
+    setup_abort();
     layoutHome();
   }
   fsm_sendFailure(code, text);
