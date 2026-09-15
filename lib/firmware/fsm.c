@@ -119,6 +119,8 @@ void fsm_clearDerivedNode(void) {
 }
 
 #if DEBUG_LINK
+static FailureType fsm_test_failure_code;
+
 void fsm_test_seedDerivedNode(void) {
   memset(&fsm_derived_node, 0xA5, sizeof(fsm_derived_node));
 }
@@ -129,6 +131,10 @@ bool fsm_test_derivedNodeIsZero(void) {
   for (size_t i = 0; i < sizeof(fsm_derived_node); i++) aggregate |= bytes[i];
   return aggregate == 0;
 }
+
+void fsm_test_clearLastFailure(void) { fsm_test_failure_code = (FailureType)0; }
+
+FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
 #endif
 
 #define CHECK_INITIALIZED                               \
@@ -360,6 +366,9 @@ void fsm_sendFailure(FailureType code, const char* text) {
   RESP_INIT(Failure);
   resp->has_code = true;
   resp->code = code;
+#if DEBUG_LINK
+  fsm_test_failure_code = code;
+#endif
 
   if (text) {
     resp->has_message = true;

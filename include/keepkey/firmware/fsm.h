@@ -28,6 +28,8 @@ void fsm_clearDerivedNode(void);
 #if DEBUG_LINK
 void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
+void fsm_test_clearLastFailure(void);
+FailureType fsm_test_lastFailureCode(void);
 #endif
 
 #define RESP_INIT(TYPE)                                                    \
