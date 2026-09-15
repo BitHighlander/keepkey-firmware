@@ -10,9 +10,10 @@ and replay tests; they are retained only on the historical durability branches.
 The earlier emulator sector-erase correction remains. Preserve independent
 signing, credential cleanup, setup and transport fixes. On 7.14.3/7.15 preserve
 the uint32_t version classifier and its regression; pending-version recovery
-no longer exists. 7.14.3 retains the emulator-only CRC correction (hardware
-branch unchanged). Host pins remain unchanged: optional CRC fixture support
-also handles unframed records and will be revalidated.
+no longer exists. 7.14.3 retains the shared firmware CRC correction: the V17
+commit buffer and CRC cover every serialized byte in emulator and hardware
+builds. Host pins remain unchanged: optional CRC fixture support also handles
+unframed records and will be revalidated.
 
 This restores the storage selector and on-flash format to the named predecessor;
 it does not claim byte-identical bootloader artifacts for the entire historical

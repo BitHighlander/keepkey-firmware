@@ -160,6 +160,7 @@ void fsm_msgOsmosisSignTx(const OsmosisSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_OsmosisMsgRequest, resp);
   layoutHome();
 }

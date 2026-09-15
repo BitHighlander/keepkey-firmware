@@ -101,6 +101,7 @@ void fsm_msgEosSignTx(const EosSignTx* msg) {
 
   memzero(root, sizeof(*root));
   RESP_INIT(EosTxActionRequest);
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EosTxActionRequest, resp);
 }
 
