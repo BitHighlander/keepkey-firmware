@@ -8,6 +8,18 @@
 #include <assert.h>
 
 int main(void) {
+  /* Deterministic sensitivity check for the production cleanup used after a
+   * clean join: model the wakeup that lost the race with poll-loop exit. */
+  uint8_t stale_cancel[KKEMU_PACKET_SIZE] = {0};
+  stale_cancel[0] = 0x3F;
+  stale_cancel[1] = stale_cancel[2] = 0x23;
+  stale_cancel[4] = 0x14;
+  ringbuf_init(&rb_main_in);
+  assert(ringbuf_push(&rb_main_in, stale_cancel, sizeof(stale_cancel)));
+  assert(!ringbuf_empty(&rb_main_in));
+  kkemu_clear_stopped_input();
+  assert(ringbuf_empty(&rb_main_in));
+
   static uint8_t flash[KKEMU_FLASH_SIZE];
   memset(flash, 0xFF, sizeof(flash));
   assert(kkemu_init(flash, sizeof(flash)) == 0);

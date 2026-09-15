@@ -492,6 +492,8 @@ static void kkemu_inject_cancel(void) {
       "not exit\n");
 }
 
+static void kkemu_clear_stopped_input(void) { ringbuf_init(&rb_main_in); }
+
 int kkemu_start(void) {
   if (!libkkemu_initialized) return -1;
   if (POLL_RUNNING()) return 0; /* idempotent */
@@ -575,7 +577,7 @@ void kkemu_stop(void) {
      * consumed. A stopped session has no valid pending host request, so clear
      * the input ring after the clean join; otherwise start/stop/start can feed
      * that stale Cancel to the next confirmation. */
-    ringbuf_init(&rb_main_in);
+    kkemu_clear_stopped_input();
   }
 }
 
