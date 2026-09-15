@@ -346,3 +346,30 @@ and
 both completed successfully on their recorded exact heads. All three inline Copilot threads
 were answered with repair evidence and resolved. The body-only documentation
 findings were answered in PR comments.
+
+### Final review follow-up, 2026-09-15
+
+The next #756 Copilot review `5207863966`, delivered on
+`c3ec59c35c1f44c1d80e97cfe1c4424118cbccaa`, reported a body-only THORChain
+maximum-denom concern. Source tracing refuted its premise: `coin_denom` is
+validated and then streamed directly into SHA-256, while the 65-byte scratch
+buffer holds only bounded amount/address fragments whose largest use is 64
+bytes including NUL. Commit `e019e89d7021a247ed784f34f1c8f4fc8a7c092a`
+documents that data flow and adds a 68-character protocol-maximum regression
+that finalizes the signature and verifies it against an independently built
+sign document. The complete THOR/MAYA sibling suite passed 69/69.
+
+That sibling audit found stale MAYA prose which incorrectly said the denom was
+formatted into its scratch buffer. Documentation-only commit
+`7e091af157131897adc5514de392570c32088946` corrects the explanation; both
+independent Astra gates carried GO with zero actionable in-scope findings to
+that exact head. Exact-head CI run
+[34951131013](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34951131013)
+completed successfully on that exact head.
+
+The same review request for #755 was registered in the GitHub timeline but did
+not deliver a new review within the 15-minute polling window. Record this as no
+review and do not re-request on the unchanged head. Both candidates have
+already exceeded the SOP's three-request candidate cap, so no further Copilot
+request is authorized by this audit cycle. A later asynchronous delivery may
+be ingested, but it does not justify another request.
