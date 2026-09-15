@@ -307,3 +307,42 @@ handler and resolved. The Hive thread is resolved as a false positive: expected
 wire vectors already use `STEEM`, the helper maps both accepted host spellings
 to `STEEM`, and adjacent assertions require `STEEM` while excluding `HIVE`.
 The unresolved-thread count is zero before the next review request.
+
+### Post-Copilot repair snapshot, 2026-09-15
+
+Copilot reviews `5207390098` (#755) and `5207370820` (#756) found three
+actionable implementation defects and one stale-documentation statement. The
+repairs are frozen at #755 `fc53c625ae097b00ad667eff829f406d72e16d81` and
+#756 `c3ec59c35c1f44c1d80e97cfe1c4424118cbccaa`; the shared dependency pins
+remain unchanged.
+
+Continuation messages now preserve a signing stream only when both the message
+type and its owning workflow are active. Cross-workflow ACKs terminate retained
+signing state before their handler rejects them. Production-dispatch regression
+coverage crosses Binance and Cosmos, and a mutation that removed the Cosmos
+ownership check failed the new state assertions. The dispatch boundary still
+does not clear the PIN/passphrase session or AdvancedMode.
+
+On #756, explicit all-zero Ethereum values are canonicalized before contract
+and global-allowance classification. A padded-zero unlimited approval therefore
+reaches the global refusal instead of the generic transaction path. The test
+also asserts that the production message value was canonicalized, making it
+sensitive to removal of the normalization.
+
+The #756 emulator wedge target now compiles its transport sources directly with
+`KKEMU_DYLIB=1` instead of linking the normal socket-backed emulator library.
+The resulting UDP object imports only `libkkemu_socket*`; the executable has no
+`bind`, `recvfrom` or `sendto` imports and exits successfully. The auto-lock
+audit document now correctly says host-driven layout transitions do not renew
+the timer.
+
+Focused native suites passed 73/73 on #755 and 107/107 on #756. Two independent
+post-repair Astra gates returned GO with zero actionable in-scope findings on
+both exact heads, including full and Bitcoin-only undefined-macro checks and
+independent wedge target provenance. Exact-head CI runs
+[34947671627](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34947671627)
+and
+[34947674574](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34947674574)
+both completed successfully on their recorded exact heads. All three inline Copilot threads
+were answered with repair evidence and resolved. The body-only documentation
+findings were answered in PR comments.
