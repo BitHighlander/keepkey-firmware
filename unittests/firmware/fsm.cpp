@@ -336,6 +336,26 @@ TEST_F(AutoLockProgress, FeaturePollingAtHomeDoesNotRenewTheIdleDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
+TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  layoutHome();
+  leave_home();
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
 TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   TxAck invalid = {};
