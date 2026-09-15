@@ -36,6 +36,20 @@ remote verified by the live PR's `headRepositoryOwner`, with a lease when a
 non-fast-forward update is required. A rejected push is a stop condition: fetch
 and inspect the new remote head before writing again.
 
+## Present the release for review
+
+Before the final exact-head audit, squash the release branch to one release
+commit based directly on upstream `develop`, unless separate commits materially
+help a reviewer understand or revert independent behavior. Preserve the old
+head on a named audit ref, record both tree hashes, and require the squashed
+tree to equal the audited tree before updating the PR with force-with-lease.
+
+Keep the PR title and description short. State the behavior shipped, the major
+validation performed, exact dependency pins when they matter, and any approved
+release boundary such as excluded bootloader work. Put investigation history,
+finding ledgers, polling notes, and superseded SHAs in the linked audit record.
+Do not make the reviewer reconstruct the release outcome from the audit diary.
+
 For release-candidate review rounds, use [ASTRA-AUDIT-SOP.md](ASTRA-AUDIT-SOP.md)
 before requesting Copilot or making a release decision.
 
