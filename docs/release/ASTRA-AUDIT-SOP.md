@@ -147,7 +147,9 @@ Run these searches as assignments, then inspect every result in context:
 | Trigger | Required expansion |
 | --- | --- |
 | An auto-lock progress hook changes | Enumerate every signing start and continuation handler; require accepted starts and real continuation progress to renew, while polls and incomplete frames do not |
+| An auto-lock invariant changes | Enumerate every deadline writer with `rg -n 'reset_idle_time|layoutHomeForced|leave_home|call_leaving_handler|note_workflow_progress' lib`; cross `{AT_HOME, AWAY_FROM_HOME}` with polls, malformed requests, rejected ACKs and accepted progress |
 | A protobuf field becomes decodable | Prove the release consumes and validates it, or explicitly rejects non-empty input; generated bounds alone are not handling |
+| A protocol gitlink adds fields or messages | For every release, record its local nanopb bound, dispatch-map entry, handler disposition and negative test; coverage on one release never transfers to its sibling |
 | A ticker or human label changes | Compare every confirmation string with every serialized asset/symbol byte and update expected wire vectors separately |
 | A cleanup is copied between releases | Compare declaration counts, feature macros, dispatch maps and callers on both heads before applying it |
 | A test targets a helper predicate | Add a production-boundary case and mutate/remove the production guard to prove sensitivity |
