@@ -360,7 +360,6 @@ void keepkey_before_message_dispatch(MessageType msg_id) {
     case MessageType_MessageType_CharacterAck:
 #if !BITCOIN_ONLY
     case MessageType_MessageType_EthereumTxAck:
-    case MessageType_MessageType_Ethereum712TypesValues:
     case MessageType_MessageType_CosmosMsgAck:
     case MessageType_MessageType_OsmosisMsgAck:
     case MessageType_MessageType_BinanceTransferMsg:
