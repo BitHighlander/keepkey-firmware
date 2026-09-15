@@ -165,6 +165,7 @@ Run these searches as assignments, then inspect every result in context:
 | An auto-lock progress hook changes | Enumerate every signing start and continuation handler; require accepted starts and real continuation progress to renew, while polls and incomplete frames do not |
 | An auto-lock invariant changes | Enumerate every deadline writer with `rg -n 'reset_idle_time|layoutHomeForced|leave_home|call_leaving_handler|note_workflow_progress' lib`; cross `{AT_HOME, AWAY_FROM_HOME}` with polls, malformed requests, rejected ACKs and accepted progress |
 | A handler can block for host or user input | Start an unrelated signing stream first, leave the prompt pending past the deadline, cancel it, then prove a retained ACK cannot resume; enforce this at dispatch with an explicit continuation/poll allowlist so new messages fail closed |
+| A continuation is allowed through dispatch | Require both the continuation message type and its matching active engine/setup state; cross every ACK with at least one different live signer and prove the mismatch terminates signing before the handler returns its protocol error |
 | A dispatch/session boundary changes | Cross every request class with previously granted PIN/passphrase, AdvancedMode, runtime signer and staged-ceremony state; ending a stale signer must not silently become a full lock, and a new signing request must not coexist with setup |
 | A protobuf field becomes decodable | Prove the release consumes and validates it, or explicitly rejects non-empty input; generated bounds alone are not handling |
 | A protocol gitlink adds fields or messages | For every release, record its local nanopb bound, dispatch-map entry, handler disposition and negative test; coverage on one release never transfers to its sibling |
@@ -173,6 +174,7 @@ Run these searches as assignments, then inspect every result in context:
 | A test targets a helper predicate | Add a production-boundary case and mutate/remove the production guard to prove sensitivity |
 | A dependency gitlink changes | Verify the live tracking branch contains the pin and update `.gitmodules`, PR provenance, generated reports and candidate documents together |
 | A synthetic emulator wakeup changes | Test queued input deterministically and exercise a real stop/start/restart lifecycle |
+| An emulator test selects behavior with a compile definition | Trace that definition through every linked translation unit; a target-level define does not recompile a separately linked library, so inspect the final binary for the intended backend symbols and forbidden socket/backend imports |
 
 Before publishing the patch, reconcile the changed-file ledger with the
 actual PR diff again. A named reviewer must account for every runtime, test,
