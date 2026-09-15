@@ -267,3 +267,43 @@ the two open #755 storage threads and the exact merge-head run statuses above. C
 PR titles have been corrected to say storage blockers are open. Update the
 branch ledgers with new exact-head receipts when the next fix changes either
 head; do not overwrite historical receipts without labeling them.
+
+### Final pre-Copilot snapshot, 2026-09-15
+
+The release-owner storage and bootloader deferral above remains unchanged. The
+in-scope candidates are frozen at #755 `703e4937888f1e677e189979406cf00103aa7204`
+and #756 `8477dabdf4970f8900f37cf2467659b9c25fbbf2`. Both pin device-protocol
+`27d3fa1f6215139cde6411f9a2882f36bb373fc9` and python-keepkey
+`b76ee610dd18934ee3aeeb36cfc541e8799eb46d`.
+
+The final dispatch boundary ends stale signing before unrelated blocking
+handlers without calling `session_clear(true)`: PIN/passphrase cache,
+AdvancedMode and pre-sign runtime ClearSign state survive. Signing starts also
+end any staged setup ceremony. Protected Ping follows the same rule. Production
+tests cover stale protected Ping, unrelated confirmation, non-lock behavior,
+signing-versus-recovery exclusion, malformed multisig, auto-lock progress and
+Solana certificate rejection. Focused exact-head native suites passed 72/72 on
+#755 and 77/77 on #756; mutation controls fail when the relevant abort, lock or
+timer behavior is restored.
+
+Two independent Astra gates reported zero actionable in-scope findings on each
+frozen head. #756 exact-head non-publishing CI
+[34942075216](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34942075216)
+passed. #755 exact-head non-publishing CI
+[34944212410](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34944212410)
+passed after an explicit optional-Zcash macro guard fixed both ARM variants.
+Both aggregate gates include full and Bitcoin-only ARM/emulator builds, native
+and host suites, report generation and release-evidence checks.
+
+One earlier #755 attempt hit the intermittent character-cipher recovery test:
+the same test later failed once in 35 isolated repetitions, then passed 200
+instrumented repetitions, a complete 535-test local host run and the fresh
+exact-head CI above. This is recorded as stochastic test evidence, not a
+firmware refutation. The SOP now requires a fresh workflow after job reruns so
+stale JUnit artifacts cannot contaminate an otherwise green retry report.
+
+The prior #756 Solana-certificate thread is fixed at the decoded production
+handler and resolved. The Hive thread is resolved as a false positive: expected
+wire vectors already use `STEEM`, the helper maps both accepted host spellings
+to `STEEM`, and adjacent assertions require `STEEM` while excluding `HIVE`.
+The unresolved-thread count is zero before the next review request.
