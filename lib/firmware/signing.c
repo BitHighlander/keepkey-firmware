@@ -974,6 +974,12 @@ static bool signing_validate_input(const TxInputType* txinput) {
   return true;
 }
 
+#ifdef EMULATOR
+bool signing_test_validate_input(const TxInputType* txinput) {
+  return signing_validate_input(txinput);
+}
+#endif
+
 static bool signing_validate_output(const TxOutputType* txoutput) {
   if (!signing_output_multisig_quorum_is_valid(txoutput)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,

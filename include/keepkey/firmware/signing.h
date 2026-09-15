@@ -38,6 +38,11 @@ bool isCrossAccountSegwitChangeForbidden(const uint32_t* lhs_address_n,
 /// the Bitcoin transaction-consistency checksum on every target ABI.
 void signing_encode_script_type(InputScriptType script_type, uint8_t out[4]);
 
+#ifdef EMULATOR
+/// Exercise the production input-validation boundary in native regressions.
+bool signing_test_validate_input(const TxInputType* txinput);
+#endif
+
 void signing_init(const SignTx* msg, const CoinType* _coin,
                   const HDNode* _root);
 void signing_abort(void);

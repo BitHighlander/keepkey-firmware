@@ -570,6 +570,12 @@ void kkemu_stop(void) {
             "g_fw_lock. Abandoning it instead of joining forever; this "
             "emulator session is dead and the host must exit the process.\n",
             KKEMU_STOP_JOIN_TIMEOUT_MS);
+  } else {
+    /* A Cancel injected while the poll thread was leaving may not have been
+     * consumed. A stopped session has no valid pending host request, so clear
+     * the input ring after the clean join; otherwise start/stop/start can feed
+     * that stale Cancel to the next confirmation. */
+    ringbuf_init(&rb_main_in);
   }
 }
 

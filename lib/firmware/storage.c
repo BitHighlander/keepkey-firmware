@@ -1371,14 +1371,22 @@ void storage_writeV16(char* flash, size_t len, const ConfigFlash* src) {
   storage_writeStorageV16(flash + 44, len - 44, &src->storage);
 }
 
+#define STORAGE_META_SERIALIZED_LEN 44
+#define STORAGE_V17_DATA_SERIALIZED_LEN (1501 + V17_ENCSEC_SIZE)
+#define STORAGE_V17_SERIALIZED_LEN \
+  (STORAGE_META_SERIALIZED_LEN + STORAGE_V17_DATA_SERIALIZED_LEN)
+#define STORAGE_V17_FLASH_BUFFER_LEN                     \
+  ((STORAGE_V17_SERIALIZED_LEN + sizeof(uint32_t) - 1) & \
+   ~(sizeof(uint32_t) - 1))
+
 void storage_readV17(ConfigFlash* dst, const char* flash, size_t len) {
-  if (len < 44 + 1501 + sizeof(dst->storage.encrypted_sec)) return;
+  if (len < STORAGE_V17_SERIALIZED_LEN) return;
   storage_readMeta(&dst->meta, flash, 44);
   storage_readStorageV17(&dst->storage, flash + 44, len - 44);
 }
 
 void storage_writeV17(char* flash, size_t len, const ConfigFlash* src) {
-  if (len < 44 + 1501 + sizeof(src->storage.encrypted_sec)) return;
+  if (len < STORAGE_V17_SERIALIZED_LEN) return;
   storage_writeMeta(flash, 44, &src->meta);
   storage_writeStorageV17(flash + 44, len - 44, &src->storage);
 }
@@ -1873,10 +1881,11 @@ void storage_commit(void) {
   // __attribute__((aligned)) rather than C11 _Alignas -- the ARM toolchain
   // rejects _Alignas here, and this is the form the rest of the tree already
   // uses (fsm.c msg_resp, usb.c buffers).
-  static char flash_temp[2572] __attribute__((aligned(4)));
+  static char flash_temp[STORAGE_V17_FLASH_BUFFER_LEN]
+      __attribute__((aligned(4)));
   _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
                  "flash_temp must be word-sized or the CRC drops its tail");
-  _Static_assert(sizeof(flash_temp) >= 2569,
+  _Static_assert(sizeof(flash_temp) >= STORAGE_V17_SERIALIZED_LEN,
                  "flash_temp must cover the whole V17 record");
 
   memzero(flash_temp, sizeof(flash_temp));

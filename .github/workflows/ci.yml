@@ -401,7 +401,7 @@ jobs:
 
   build-emulator:
     name: build-emulator${{ matrix.label }}
-    needs: [lint-format, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -474,7 +474,7 @@ jobs:
 
   build-arm-firmware:
     name: build-arm-firmware${{ matrix.label }}
-    needs: [lint-format, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -712,7 +712,7 @@ jobs:
           retention-days: 30
 
   python-integration-tests:
-    needs: [lint-format, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -889,7 +889,7 @@ jobs:
   #     fsm_msgDebugLinkGetState is excluded from the build and any
   #     read_layout() call hangs the test).
   python-dylib-tests:
-    needs: [lint-format, check-submodules, secret-scan]
+    needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -1223,7 +1223,7 @@ jobs:
   # GATE: one authoritative answer for the whole graph
   # ═══════════════════════════════════════════════════════════
   #
-  # Every build and test job declares `needs: [lint-format,
+  # Every build and test job declares `needs: [lint-format, static-analysis,
   # check-submodules, secret-scan]`. When one of those gate jobs fails, GitHub
   # marks the whole downstream graph SKIPPED rather than failed -- and a skipped
   # job is not a red check. The run summary then shows green ticks on whatever

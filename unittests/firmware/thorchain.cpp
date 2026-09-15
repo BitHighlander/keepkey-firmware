@@ -11,7 +11,6 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
-
 }
 
 // Share the one-time bootstrap with the restored FSM tests.
@@ -98,8 +97,8 @@ bool kkconfirm_preload(int nYes, int nNo) {
   static bool initialized = false;
   if (!initialized) {
     kk_test_board_init();  // canvas + runnable queues for confirm's draw path
-    fsm_init();       // registers the usb rx callback + message maps
-    usbInit("");      // binds the emulator UDP ports
+    fsm_init();            // registers the usb rx callback + message maps
+    usbInit("");           // binds the emulator UDP ports
     initialized = true;
   }
 
@@ -460,6 +459,50 @@ TEST(Thorchain, TwoMessagesAreCommaSeparatedInTheSignedDocument) {
   sha256_Raw((const uint8_t*)doc.data(), doc.size(), digest);
   EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, public_key, signature, digest));
 
+  thorchain_signAbort();
+}
+
+TEST(Thorchain, MixedSendDepositIsCommaSeparatedInTheSignedDocument) {
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+
+  char from_address[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "thor", from_address));
+
+  ThorchainSignTx tx = kSignTx;
+  tx.msg_count = 2;
+  ASSERT_TRUE(thorchain_signTxInit(&node, &tx));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100, kToAddr, "rune"));
+
+  ThorchainMsgDeposit deposit = {};
+  deposit.amount = 200;
+  strcpy(deposit.asset, "THOR.RUNE");
+  strcpy(deposit.signer, from_address);
+  strcpy(deposit.memo, "ADD:THOR.RUNE");
+  ASSERT_TRUE(thorchain_signTxUpdateMsgDeposit(&deposit));
+  EXPECT_TRUE(thorchain_signingIsFinished());
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(thorchain_signTxFinalize(public_key, signature));
+
+  const std::string doc =
+      std::string(
+          "{\"account_number\":\"0\",\"chain_id\":\"thorchain\","
+          "\"fee\":{\"amount\":[{\"amount\":\"5000\",\"denom\":"
+          "\"rune\"}],\"gas\":\"200000\"},\"memo\":\"\","
+          "\"msgs\":[{\"type\":\"thorchain/MsgSend\",\"value\":{"
+          "\"amount\":[{\"amount\":\"100\",\"denom\":\"rune\"}],"
+          "\"from_address\":\"") +
+      from_address + "\",\"to_address\":\"" + kToAddr +
+      "\"}},{\"type\":\"thorchain/MsgDeposit\",\"value\":{\"coins\":[{"
+      "\"amount\":\"200\",\"asset\":\"THOR.RUNE\"}],"
+      "\"memo\":\"ADD:THOR.RUNE\",\"signer\":\"" +
+      from_address + "\"}}],\"sequence\":\"0\"}";
+
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc.data(), doc.size(), digest);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, public_key, signature, digest));
   thorchain_signAbort();
 }
 
@@ -836,12 +879,12 @@ TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
   // Decisions can arrive before acknowledgements on the separate debug link.
   for (size_t page = 0; page < pages; page++) {
     ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision,
-                                  yes, sizeof(yes)));
+                                   yes, sizeof(yes)));
     ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0));
   }
   ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0));
-  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision,
-                                no, sizeof(no)));
+  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, no,
+                                 sizeof(no)));
   EXPECT_TRUE(confirm_constant_power_paged(
       ButtonRequestType_ButtonRequest_ConfirmWord, "Backup", body));
   EXPECT_EQ(0, kkconfirm_drain());
