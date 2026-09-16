@@ -250,6 +250,12 @@ Run these searches as assignments, then inspect every result in context:
 | A dependency gitlink changes | Verify the live tracking branch contains the pin and update `.gitmodules`, PR provenance, generated reports and candidate documents together |
 | A synthetic emulator wakeup changes | Test queued input deterministically and exercise stop/start plus shutdown/init in one loaded library. Rebuild intrusive timer, animation and transport queues from their backing arrays; re-pushing nodes onto retained lists can create cycles or preserve callbacks from the prior wallet |
 | An emulator test selects behavior with a compile definition | Trace that definition through every linked translation unit; a target-level define does not recompile a separately linked library, so inspect the final binary for the intended backend symbols and forbidden socket/backend imports |
+| A formatter can fail or emit a fallback label | Trace its result through every caller and screen-suppression branch. A fallback such as `Unknown` must not count as verified decoding or suppress the raw review. Mutate the formatter result and prove signing either stops or shows all execution bytes |
+| A generic operation contains mandatory security fields | Write the canonical wire schema and byte count before reviewing its UI. If the device cannot prove that a key, authority, recipient, asset or amount is unchanged, reject the whole operation rather than displaying a safe-looking subset |
+| A serialized field identifier changes | Compare the implementation with the canonical protocol table and an independently constructed byte vector. Assert the exact field header and full encoded suffix; a self-consistent encoder/decoder pair is insufficient |
+| Signing state contains key-derived material | Mark the owning aggregate confidential, not only selected members, and audit copies, callbacks, aborts and terminal exits for scrubbing. Treat proof nonces, spend authorization material and pre-signature state as secrets |
+| A hardware status loop waits for readiness | Give every poll a fixed upper bound, check peripheral error flags on each iteration and fail closed. Exercise timeout and error injection; preflight success does not prove later draws cannot hang |
+| A CI gate parses compiler or tool output | Reject malformed and nonnumeric records with file and line context, but preserve valid tool qualifiers such as bounded numeric `dynamic`. Test one malformed record and one real qualified record so the gate cannot become silently permissive or reject supported output |
 
 Run the repository's exact static-analysis command locally after the final
 preprocessor and control-flow edit. A compiler build is not a substitute:
@@ -280,6 +286,10 @@ reproduce:
 
 - replay every prior inline and review-body finding against the frozen head,
   with a fix, code-backed refutation, or explicit release-owner deferral;
+- build a semantic-risk matrix for each changed parser, formatter, signer and
+  hardware loop: canonical schema/source, security-relevant fields, displayed
+  fields, serialized fields, failure result, timeout, secret lifetime and raw
+  fallback. An empty cell is an open gate;
 - run every changed test that touches process-global board, timer, FSM, flash,
   storage, transport, or signer state alone in a fresh test process;
 - inspect direct board/timer/FSM initialization in tests and use the shared
