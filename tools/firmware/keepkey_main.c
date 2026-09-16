@@ -176,11 +176,7 @@ int main(void) {
   { // limit sigRet lifetime to this block
     int sigRet = SIG_FAIL;
     sigRet = signatures_ok();
-    if (!flash_collectHWEntropy(SIG_OK == sigRet)) {
-      /* No display or USB exists yet. Fail closed before storage_init() can
-       * derive a PIN key from an erased or otherwise untrusted OTP block. */
-      shutdown();
-    }
+    flash_collectHWEntropy(SIG_OK == sigRet);
 
     /* Drop privileges */
     drop_privs();

@@ -1319,8 +1319,7 @@ static bool checkreturn pb_dec_bytes(pb_istream_t *stream,
     bdest = *(pb_bytes_array_t **)dest;
 #endif
   } else {
-    /* Keep schema capacity separate from aligned repeated-field stride. */
-    if (size > field->bytes_capacity || alloc_size > field->data_size)
+    if (alloc_size > field->data_size)
       PB_RETURN_ERROR(stream, "bytes overflow");
     bdest = (pb_bytes_array_t *)dest;
   }
