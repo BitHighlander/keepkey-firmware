@@ -28,6 +28,10 @@ class PreflightTest(unittest.TestCase):
         (self.root / "a").write_text("base\n")
         self.git("add", "a")
         self.git("commit", "-qm", "base")
+        dependency = self.git("rev-parse", "HEAD")
+        self.git("update-index", "--add", "--cacheinfo", "160000", dependency, "dep")
+        self.git("commit", "--amend", "--no-edit", "-q")
+        (self.root / "dep").mkdir()
         self.base = self.git("rev-parse", "HEAD")
         (self.root / "a").write_text("candidate\n")
         self.git("commit", "-am", "candidate", "-q")
@@ -41,8 +45,9 @@ class PreflightTest(unittest.TestCase):
             "tree": self.tree,
             "ci": [{"name": "release", "head": self.head, "conclusion": "success", "url": "https://example.invalid/1"}],
             "threads": [{"repository": "keepkey/keepkey-firmware", "pr": 1, "unresolved": 0, "queried_at": "2026-09-16T00:00:00Z"}],
-            "findings": [{"id": "F1", "disposition": "fixed", "evidence": "test"}],
-            "coverage": [{"path": "a", "invariants": ["storage"], "variants": ["full"], "reviewer": "Astra"}],
+            "findings": [{"id": "F1", "reviewed_sha": self.head, "disposition": "fixed", "evidence": "test"}],
+            "dependencies": {"dep": dependency},
+            "coverage": [{"path": "a", "invariants": ["storage"], "variants": ["full"], "tests": ["storage-unit"], "reviewer": "Astra"}],
             "required_test_kinds": ["isolated", "shuffled", "mutation"],
             "tests": [{"name": kind, "kind": kind, "head": self.head, "status": "pass", "evidence": "log"}
                       for kind in ("isolated", "shuffled", "mutation")],

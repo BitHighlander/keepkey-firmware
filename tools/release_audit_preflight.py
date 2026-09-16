@@ -45,6 +45,29 @@ def validate(root, receipt):
 
     require(receipt.get("tree") == tree, "candidate tree does not match head", errors)
 
+    dependencies = receipt.get("dependencies", {})
+    require(bool(dependencies), "dependency gitlink evidence is required", errors)
+    try:
+        gitlinks = {}
+        for line in git(root, "ls-tree", "-r", head).splitlines():
+            metadata, path = line.split("\t", 1)
+            mode, kind, oid = metadata.split()
+            if mode == "160000" and kind == "commit":
+                gitlinks[path] = oid
+        require(dependencies == gitlinks,
+                "dependency receipt does not equal candidate gitlinks", errors)
+    except (ValueError, TypeError) as exc:
+        errors.append(f"dependency inventory failed: {exc}")
+    for path, expected in dependencies.items():
+        try:
+            entry = git(root, "ls-tree", head, "--", path).split()
+            require(len(entry) >= 3 and entry[1] == "commit",
+                    f"{path}: candidate entry is not a gitlink", errors)
+            require(len(entry) >= 3 and entry[2] == expected,
+                    f"{path}: dependency pin does not match candidate", errors)
+        except ValueError as exc:
+            errors.append(str(exc))
+
     checks = receipt.get("ci", [])
     require(bool(checks), "CI evidence is required", errors)
     for check in checks:
@@ -66,6 +89,7 @@ def validate(root, receipt):
     require(len(finding_ids) == len(set(finding_ids)), "finding IDs are not unique", errors)
     for item in findings:
         label = f"finding {item.get('id', '?')}"
+        require(bool(item.get("reviewed_sha")), f"{label}: reviewed SHA is required", errors)
         require(item.get("disposition") in {"fixed", "refuted", "deferred"},
                 f"{label}: invalid disposition", errors)
         require(bool(item.get("evidence")), f"{label}: evidence is required", errors)
@@ -83,6 +107,7 @@ def validate(root, receipt):
         label = item.get("path", "unnamed path")
         require(bool(item.get("invariants")), f"{label}: no invariant assignment", errors)
         require(bool(item.get("variants")), f"{label}: no variant assignment", errors)
+        require(bool(item.get("tests")), f"{label}: no test assignment", errors)
         require(bool(item.get("reviewer")), f"{label}: no reviewer assignment", errors)
 
     tests = receipt.get("tests", [])
