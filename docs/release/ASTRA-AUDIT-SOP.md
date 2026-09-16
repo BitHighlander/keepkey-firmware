@@ -248,7 +248,7 @@ Run these searches as assignments, then inspect every result in context:
 | A decoder argument index is repaired | Write the complete ABI word map beside the fix and audit every sibling overload. Compile success cannot detect a valid pointer to the wrong 32-byte word; reject any index greater than or equal to the matched arity |
 | A candidate adds a user-visible failure string | Apply the repository's translation/localization convention at the introduction site, including strings embedded in guard macros |
 | A dependency gitlink changes | Verify the live tracking branch contains the pin and update `.gitmodules`, PR provenance, generated reports and candidate documents together |
-| A synthetic emulator wakeup changes | Test queued input deterministically and exercise a real stop/start/restart lifecycle |
+| A synthetic emulator wakeup changes | Test queued input deterministically and exercise stop/start plus shutdown/init in one loaded library. Rebuild intrusive timer, animation and transport queues from their backing arrays; re-pushing nodes onto retained lists can create cycles or preserve callbacks from the prior wallet |
 | An emulator test selects behavior with a compile definition | Trace that definition through every linked translation unit; a target-level define does not recompile a separately linked library, so inspect the final binary for the intended backend symbols and forbidden socket/backend imports |
 
 Run the repository's exact static-analysis command locally after the final

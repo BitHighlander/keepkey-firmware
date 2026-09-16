@@ -139,3 +139,11 @@ without a protocol reply. Python integration tests then waited for their
 wire contract. The continuation matrix now requires inactive and mismatched
 ACK cases to assert a terminal response, preserved unrelated setup state, and
 terminated stale signing.
+
+## Follow-up: emulator reinitialization corrupted global queues
+
+The idle-deadline repair was present, but its missing shutdown/init regression
+exposed a deeper failure: board initialization pushed the same static timer and
+animation nodes onto retained intrusive lists. The second home render looped
+forever. Emulator lifecycle coverage now requires a full shutdown/init in one
+loaded library and explicit reconstruction of process-global queues.
