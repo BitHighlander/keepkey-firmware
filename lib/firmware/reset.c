@@ -438,8 +438,10 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
     snprintf(mnemonic_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
              formatted_mnemonic[page_count], formatted_word);
 
-    if (calc_str_line(get_body_font(), mnemonic_display,
-                      CONSTANT_POWER_BODY_WIDTH) > 3) {
+    /* Keep the six legacy host-visible word groups. The constant-power
+     * renderer splits each group into safe 124px local subpages below, without
+     * allocating more confidential page buffers or changing ButtonRequests. */
+    if (calc_str_line(get_body_font(), mnemonic_display, BODY_WIDTH) > 3) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {
