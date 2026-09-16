@@ -17,6 +17,13 @@ def git(root, *args):
     return result.stdout.strip()
 
 
+def gh_json(*args):
+    result = subprocess.run(("gh", *args), text=True, capture_output=True)
+    if result.returncode:
+        raise ValueError(f"gh {' '.join(args)}: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
 def require(condition, message, errors):
     if not condition:
         errors.append(message)
@@ -117,13 +124,65 @@ def validate(root, receipt):
     return errors
 
 
+def validate_github(receipt):
+    """Re-query mutable GitHub facts instead of trusting receipt snapshots."""
+    errors = []
+    repository = receipt.get("repository")
+    canonical_pr = receipt.get("canonical_pr")
+    if not repository or not canonical_pr:
+        return ["repository and canonical_pr are required for live GitHub validation"]
+    try:
+        pull = gh_json("api", f"repos/{repository}/pulls/{canonical_pr}")
+        require(pull["head"]["sha"] == receipt.get("head"),
+                "canonical PR head changed", errors)
+        require(pull["base"]["sha"] == receipt.get("base"),
+                "canonical PR base changed", errors)
+
+        check_runs = gh_json(
+            "api", f"repos/{repository}/commits/{receipt['head']}/check-runs?per_page=100"
+        ).get("check_runs", [])
+        for expected in receipt.get("ci", []):
+            matches = [run for run in check_runs if run.get("name") == expected.get("name")]
+            require(bool(matches), f"{expected.get('name')}: live CI check not found", errors)
+            require(any(run.get("conclusion") == "success" for run in matches),
+                    f"{expected.get('name')}: no successful live CI check", errors)
+
+        query = """
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$number) {
+      reviewThreads(first:100) { nodes { isResolved } pageInfo { hasNextPage } }
+    }
+  }
+}
+"""
+        for item in receipt.get("threads", []):
+            thread_repo = item.get("repository", repository)
+            owner, name = thread_repo.split("/", 1)
+            response = gh_json(
+                "api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}",
+                "-F", f"name={name}", "-F", f"number={item['pr']}"
+            )
+            connection = response["data"]["repository"]["pullRequest"]["reviewThreads"]
+            require(not connection["pageInfo"]["hasNextPage"],
+                    f"PR {item['pr']}: more than 100 threads; paginated query required", errors)
+            unresolved = sum(not node["isResolved"] for node in connection["nodes"])
+            require(unresolved == 0, f"PR {item['pr']}: {unresolved} live unresolved threads", errors)
+    except (KeyError, TypeError, ValueError) as exc:
+        errors.append(f"live GitHub validation failed: {exc}")
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("receipt", type=Path)
     parser.add_argument("--repo", type=Path, default=Path.cwd())
+    parser.add_argument("--verify-github", action="store_true")
     args = parser.parse_args()
     receipt = json.loads(args.receipt.read_text())
     errors = validate(args.repo, receipt)
+    if args.verify_github:
+        errors.extend(validate_github(receipt))
     if errors:
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)

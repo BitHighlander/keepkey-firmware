@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("release_audit_preflight.py")
@@ -33,11 +34,13 @@ class PreflightTest(unittest.TestCase):
         self.head = self.git("rev-parse", "HEAD")
         self.tree = self.git("rev-parse", "HEAD^{tree}")
         self.receipt = {
+            "repository": "keepkey/keepkey-firmware",
+            "canonical_pr": 476,
             "base": self.base,
             "head": self.head,
             "tree": self.tree,
             "ci": [{"name": "release", "head": self.head, "conclusion": "success", "url": "https://example.invalid/1"}],
-            "threads": [{"pr": 1, "unresolved": 0, "queried_at": "2026-09-16T00:00:00Z"}],
+            "threads": [{"repository": "keepkey/keepkey-firmware", "pr": 1, "unresolved": 0, "queried_at": "2026-09-16T00:00:00Z"}],
             "findings": [{"id": "F1", "disposition": "fixed", "evidence": "test"}],
             "coverage": [{"path": "a", "invariants": ["storage"], "variants": ["full"], "reviewer": "Astra"}],
             "required_test_kinds": ["isolated", "shuffled", "mutation"],
@@ -70,6 +73,33 @@ class PreflightTest(unittest.TestCase):
         errors = MODULE.validate(self.root, broken)
         self.assertIn("coverage does not equal the candidate diff", errors)
         self.assertIn("projection union does not equal candidate diff", errors)
+
+    def test_live_github_facts_pass(self):
+        responses = [
+            {"head": {"sha": self.head}, "base": {"sha": self.base}},
+            {"check_runs": [{"name": "release", "conclusion": "success"}]},
+            {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": [{"isResolved": True}],
+                "pageInfo": {"hasNextPage": False},
+            }}}}},
+        ]
+        with mock.patch.object(MODULE, "gh_json", side_effect=responses):
+            self.assertEqual([], MODULE.validate_github(self.receipt))
+
+    def test_live_github_facts_fail_closed(self):
+        responses = [
+            {"head": {"sha": self.base}, "base": {"sha": self.base}},
+            {"check_runs": [{"name": "release", "conclusion": "failure"}]},
+            {"data": {"repository": {"pullRequest": {"reviewThreads": {
+                "nodes": [{"isResolved": False}],
+                "pageInfo": {"hasNextPage": False},
+            }}}}},
+        ]
+        with mock.patch.object(MODULE, "gh_json", side_effect=responses):
+            errors = MODULE.validate_github(self.receipt)
+        self.assertIn("canonical PR head changed", errors)
+        self.assertIn("release: no successful live CI check", errors)
+        self.assertIn("PR 1: 1 live unresolved threads", errors)
 
 
 if __name__ == "__main__":

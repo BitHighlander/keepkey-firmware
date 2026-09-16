@@ -311,10 +311,12 @@ objects:
 
 ```sh
 python3 tools/release_audit_preflight.py \
+  --verify-github \
   docs/release/audit-units/<candidate>-prediction.json
 ```
 
-The validator checks the candidate tree and diff, exact-head CI records,
+The validator re-queries the canonical PR head and base, CI checks and review
+threads from GitHub, then checks the candidate tree and diff,
 finding dispositions, changed-file assignments, required test-evidence kinds,
 thread counts, projection parents and trees, manifest equality and union, and
 explicit residual risks. Its successful JSON output is the packet's readiness
