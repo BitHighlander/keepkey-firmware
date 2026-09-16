@@ -71,8 +71,10 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
     snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
              mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
 
-    if (calc_str_line(get_body_font(), mnemonic_scratch_display,
-                      CONSTANT_POWER_BODY_WIDTH) > 3) {
+    /* Pack the six logical word groups at the legacy width. The confirmation
+     * helper below splits each group into safe 124px local subpages. */
+    if (calc_str_line(get_body_font(), mnemonic_scratch_display, BODY_WIDTH) >
+        3) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {
@@ -113,13 +115,9 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
       snprintf(title, MEDIUM_STR_BUF, "BIP-85 Seed");
     }
 
-    /* Paged, exactly as reset.c's backup pager is: these pages are packed
-     * against the same constant-power width used by the renderer
-     * (124 px), and the unpaged renderer stops at the first glyph that will not
-     * fit and drops everything after it -- silently, including whole words. A
-     * BIP-85 child seed exists only on the paper the user is writing, so a
-     * dropped word is an unrecoverable wallet. The paged variant splits inside
-     * this one ButtonRequest, so the host protocol is unchanged. */
+    /* Paged exactly as reset.c's backup pager is. Logical groups retain the
+     * legacy width and six-buffer bound; this helper splits them at row
+     * boundaries for the narrower renderer inside one ButtonRequest. */
     if (!confirm_constant_power_paged(
             ButtonRequestType_ButtonRequest_ConfirmWord, title,
             mnemonic_scratch_formatted[current_page])) {
