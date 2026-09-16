@@ -306,6 +306,20 @@ The human-facing packet should summarize only failures, gaps, residual risk and
 links to that receipt. Generated evidence is immutable for its head SHA. A head
 change invalidates the packet and requires regeneration.
 
+Validate the receipt from a checkout containing the candidate and projection
+objects:
+
+```sh
+python3 tools/release_audit_preflight.py \
+  docs/release/audit-units/<candidate>-prediction.json
+```
+
+The validator checks the candidate tree and diff, exact-head CI records,
+finding dispositions, changed-file assignments, required test-evidence kinds,
+thread counts, projection parents and trees, manifest equality and union, and
+explicit residual risks. Its successful JSON output is the packet's readiness
+result; handwritten claims cannot override a failure.
+
 ### Review the prediction, not the desired outcome
 
 Before requesting Copilot, a reviewer who did not author the last repair batch
