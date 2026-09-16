@@ -201,6 +201,51 @@ owner and repeat only the affected patch/invariant verification after a fix.
 
 ## Spend a Copilot review only at a stable head
 
+### Preflight the review envelope
+
+Measure the live PR before requesting Copilot. Record additions, deletions,
+changed files, and the exact base/head pair. Copilot's hard refusal threshold
+is 20,000 changed lines; use 15,000 lines and 120 files as the operating limit
+so generated statistics and late cleanup do not cross the service boundary.
+Documentation cleanup does not make an oversized runtime review complete.
+
+When a candidate exceeds either operating limit, create a linear set of audit
+PRs whose diffs are disjoint and whose final tree hash equals the canonical
+candidate tree. Each audit PR targets the preceding audit ref, stays under both limits,
+and carries a machine-generated path manifest. The union of the manifests must
+equal the canonical base-to-head diff with no missing or repeated path. Review
+every segment; a review of the last segment alone is not a whole-candidate
+review. Record the synthetic audit head-to-canonical tree equality explicitly;
+commit OIDs differ because the audit stack has different history. Keep the
+canonical release PR as one concise release commit.
+
+Copilot's result must state that it reviewed the full segment. A response that
+reports `Files reviewed: X/Y` with `X < Y`, Lite coverage, a line-limit refusal,
+or any other truncation is incomplete coverage even when it contains useful
+findings. Ingest its findings, but do not record a clean review.
+
+Before spending the request, run these mechanical assignments in addition to
+the subsystem review:
+
+- **Boot-order closure:** enumerate every new boot-path call and all services it
+  transitively uses before entropy collection, DRBG initialization, storage
+  initialization, and display/USB setup. Inject each failure and trace whether
+  boot, storage, or signature verification consumes untrusted state afterward.
+- **Platform build closure:** for each newly claimed platform, configure and
+  link every target enabled by that platform with the documented minimum CMake
+  version and compiler. Enumerate every compiled translation unit and reject
+  forbidden platform headers, symbols, and libraries in the final binaries.
+- **Test execution closure:** prove that each new test executable is invoked by
+  the command CI actually runs and appears by name in the resulting JUnit or
+  CTest inventory. Compiling or registering a target is not execution evidence.
+- **Instrumentation closure:** inspect macro interposition, wrappers, and test
+  probes for recursion or self-calls. Run the probe through the observed real
+  implementation and use a failing control or sanitizer where practical.
+
+These checks are release-line specific. A Linux emulator build does not prove
+Windows support, and a release-audit side job does not prove that `make xunit`
+or the canonical aggregate report includes a test.
+
 After the Astra ledger has zero unresolved actionable findings, exact-head CI
 is green, and the two-pass internal convergence rule is satisfied, request
 **one** Copilot review of the current PR head. First
@@ -212,6 +257,15 @@ ID. Verify a new `review_requested` timeline event, then require a newer review 
 `commit_id` equals the frozen head. Read both inline comments and the review
 body; a comment with no inline thread is still a finding. Resolve a thread
 only after a pushed fix or a documented technical refutation.
+
+After requesting review, record three distinct states: requested, queued, and
+delivered. A `review_requested` event proves only the first. An empty requested
+reviewer list is not proof of failure or completion; immediately inspect the
+reviews endpoint and timeline before interpreting it. Before force-pushing or
+replacing a requested head, perform one final review fetch. Ingest any delayed
+review of the old head and apply every finding whose code is unchanged on the
+new head. Review-body `Suppressed comments` are findings and receive stable
+ledger IDs exactly like inline comments.
 
 Do not start this gate with a known open P1/P2, a deferred release-blocking
 finding, or incomplete file/claim coverage. An inherited finding may be
