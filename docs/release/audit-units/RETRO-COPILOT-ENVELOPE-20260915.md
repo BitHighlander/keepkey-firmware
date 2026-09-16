@@ -130,3 +130,12 @@ for isolated global-state fixtures, shuffled interaction runs, dispatch/session
 state matrices, fault injection and failing mutations. Future retrospectives
 must convert a missed defect class into a test, query or executable gate; prose
 alone does not count as process improvement.
+
+## Follow-up: fail-closed dispatch left the host waiting
+
+The stale-continuation boundary correctly cleared signing state but returned
+without a protocol reply. Python integration tests then waited for their
+60-second timeout. State-transition tests had proved cleanup while omitting the
+wire contract. The continuation matrix now requires inactive and mismatched
+ACK cases to assert a terminal response, preserved unrelated setup state, and
+terminated stale signing.
