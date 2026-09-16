@@ -115,3 +115,18 @@ alone in a fresh process, then in shuffled company, with a control that makes
 the test fail for the expected reason. It also requires replay of every prior
 finding and an explicit residual-risk statement before forecasting a clean
 Copilot result.
+
+## Follow-up: confidence was communicated as a promise
+
+Restored Copilot budget was confused with increased confidence in the
+candidate, while refusal to guarantee a zero-finding result sounded like low
+confidence. Billing only controls whether an external review can run. Candidate
+confidence comes from reproducible evidence, and no independent review outcome
+can be promised.
+
+The SOP now names four release-audit states and requires an independently
+challenged, machine-generated prediction packet. It also adds permanent gates
+for isolated global-state fixtures, shuffled interaction runs, dispatch/session
+state matrices, fault injection and failing mutations. Future retrospectives
+must convert a missed defect class into a test, query or executable gate; prose
+alone does not count as process improvement.

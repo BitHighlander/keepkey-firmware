@@ -123,6 +123,60 @@ both sides, duplicate definitions, lost guards, changed submodule pins, and
 comments that describe code no longer present. Preserve a before/after test
 or a concrete manual reproduction for security-sensitive fixes.
 
+### Make the harness prove test independence
+
+Any test that touches board, timer, flash, storage, FSM, transport, wallet,
+PIN/passphrase, signer, or confirmation state must own that state explicitly.
+Use shared setup and teardown helpers that initialize each required subsystem,
+restore replaced flash, clear storage and wallet state, abort live workflows,
+and restore callbacks. Do not depend on test order or state left by another
+fixture. Guard one-per-process initialization such as board and timer startup;
+reinitializing intrusive global lists is a harness defect.
+
+For every new or changed global-state regression:
+
+1. run it alone in a fresh process;
+2. prove it reaches the intended production boundary rather than an earlier
+   setup, decoding, storage, or authorization failure;
+3. run it with its neighboring suites in at least three recorded shuffled
+   orders; and
+4. retain a control that removes or reverses the production guard and makes the
+   test fail for the expected assertion.
+
+CI must run the isolated and shuffled gates for security-sensitive fixtures.
+A combined-suite pass cannot replace either gate.
+
+### Audit protocol state transitions as a matrix
+
+Handler-level coverage is insufficient when dispatch, session, or auto-lock
+code changes. Build a table-driven matrix whose rows are existing states and
+whose columns are incoming message classes. Include at least:
+
+- locked and unlocked wallets with PIN and passphrase caches;
+- each active streaming signer and every continuation, poll, unrelated start,
+  cancellation, timeout, malformed frame, and stale ACK class;
+- AdvancedMode, runtime ClearSign metadata, and staged setup ceremonies; and
+- home, confirmation, screensaver, and expired auto-lock states.
+
+For each cell record whether the message is accepted, rejected, terminates the
+old workflow, renews the idle deadline, clears credentials, or changes visible
+state. Tests must assert the permitted side effects as well as the response.
+Generate the matrix from the dispatch map where possible so a newly registered
+message cannot silently escape coverage.
+
+### Use faults and mutations as closure evidence
+
+Exercise security boundaries with malformed protobufs, absent optional fields,
+maximum-length fields, short buffers, stale continuations, interrupted writes,
+readback mismatches, and transient and persistent hardware failures. Trace the
+bytes displayed, serialized, signed, stored, and consumed after reboot.
+
+For each security-sensitive fix, prefer a small mutation that deletes, bypasses,
+or inverts the guard. The regression must then fail at the intended assertion.
+Record the mutation and failure in the audit receipt; never commit the mutated
+production code. When mutation is impractical, record the reason and provide an
+independent production-path trace.
+
 For storage and boot changes, test the **next boot** as well as the return from
 the current call. A commit that reports failure while leaving an invalid boot
 marker can still destroy the wallet when the installed bootloader next runs.
@@ -234,6 +288,42 @@ If an isolated test fails after passing in a suite, treat the fixture as
 invalid until its own setup is complete. A crash before the intended guard,
 an assertion on unrelated storage state, or success caused by a preceding test
 is not evidence for the production invariant.
+
+Generate this packet with a repository script rather than assembling it from
+memory. The script must exit nonzero when any required datum is absent or
+inconsistent. Its machine-readable receipt must contain:
+
+- repository, actual base and candidate head SHAs, dependency gitlinks and
+  candidate tree hash;
+- canonical CI run IDs and conclusions for every required product variant;
+- canonical and audit-PR review IDs and unresolved-thread counts;
+- every prior finding ID, reviewed SHA, disposition and verification evidence;
+- changed-file-to-invariant, test, variant and reviewer assignments;
+- isolated, shuffled, fault-injection and mutation results; and
+- projection direct-parent, tree, manifest-union and duplicate-path checks.
+
+The human-facing packet should summarize only failures, gaps, residual risk and
+links to that receipt. Generated evidence is immutable for its head SHA. A head
+change invalidates the packet and requires regeneration.
+
+### Review the prediction, not the desired outcome
+
+Before requesting Copilot, a reviewer who did not author the last repair batch
+must try to falsify the packet. They sample finding dispositions, rerun at least
+one isolated fixture and mutation, inspect one state-matrix row end to end, and
+verify one projection mechanically. Record discrepancies as findings.
+
+Use confidence language precisely:
+
+- **blocked:** a known release defect or required gate is open;
+- **incomplete:** no known defect, but required evidence is missing;
+- **ready for external challenge:** all required evidence is present, no known
+  actionable defect remains, and residual uncertainty is listed; and
+- **externally clean:** a new complete exact-head review has no actionable
+  inline or body-only finding and no unresolved thread.
+
+Payment, quota availability, elapsed time, or a prior partial review never
+changes these states.
 
 ### Preflight the review envelope
 
