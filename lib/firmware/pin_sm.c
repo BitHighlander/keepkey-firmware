@@ -81,7 +81,6 @@ static void check_for_pin_ack(PINInfo* pin_info) {
     default:
       break;
   }
-  memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
 }
 
 /// Request and receive PIN from user over USB port
@@ -238,13 +237,12 @@ bool pin_protect(const char* prompt) {
 
   // Set request type
   PINInfo pin_info;
-  bool ret = false;
   pin_info.type = PinMatrixRequestType_PinMatrixRequestType_Current;
 
   // Get PIN
   if (!pin_request(prompt, &pin_info)) {
     // PIN entry has been canceled by the user
-    goto done;
+    return false;
   }
 
   // Preincrement the failed counter before authentication
@@ -253,25 +251,20 @@ bool pin_protect(const char* prompt) {
 
   // Check if PIN entered is wipe code
   if (storage_isWipeCodeCorrect(pin_info.pin)) {
-    fsm_abort_workflows();
     session_clear(false);
     storage_clearKeys();
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
-    goto done;
+    return false;
   }
 
   // Authenticate user PIN
   if (!storage_isPinCorrect(pin_info.pin) || pre_increment_cnt_flg) {
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
-    goto done;
+    return false;
   }
 
   storage_resetPinFails();
-  ret = true;
-
-done:
-  memzero(&pin_info, sizeof(pin_info));
-  return ret;
+  return true;
 }
 
 bool pin_protect_cached(void) {
@@ -284,45 +277,31 @@ bool pin_protect_cached(void) {
 
 bool pin_protect_uncached(void) { return pin_protect("Enter\nYour PIN"); }
 
-bool change_pin_staged(char* out, size_t out_len) {
-  /* Not CONFIDENTIAL: that macro expands to a section attribute, which the
-     ARM toolchain rejects on locals. Both structs are memzero'd on every
-     exit path below, including the failure ones. */
+bool change_pin(void) {
   PINInfo pin_info_first, pin_info_second;
-  bool ret = false;
 
   /* Set request types */
   pin_info_first.type = PinMatrixRequestType_PinMatrixRequestType_NewFirst;
   pin_info_second.type = PinMatrixRequestType_PinMatrixRequestType_NewSecond;
 
-  if (!pin_request("Enter New\nPIN", &pin_info_first)) goto done;
+  if (!pin_request("Enter New\nPIN", &pin_info_first)) {
+    return false;
+  }
 
-  if (!pin_request("Re-Enter\nNew PIN", &pin_info_second)) goto done;
+  if (!pin_request("Re-Enter\nNew PIN", &pin_info_second)) {
+    return false;
+  }
 
-  if (strcmp(pin_info_first.pin, pin_info_second.pin) != 0) goto done;
+  if (strcmp(pin_info_first.pin, pin_info_second.pin) != 0) {
+    return false;
+  }
 
-  strlcpy(out, pin_info_first.pin, out_len);
-  ret = true;
-
-done:
-  memzero(&pin_info_first, sizeof(pin_info_first));
-  memzero(&pin_info_second, sizeof(pin_info_second));
-  return ret;
-}
-
-bool change_pin(void) {
-  char pin[PIN_BUF]; /* memzero'd below; see change_pin_staged() */
-  bool ret = change_pin_staged(pin, sizeof(pin));
-
-  if (ret) storage_setPin(pin);
-
-  memzero(pin, sizeof(pin));
-  return ret;
+  storage_setPin(pin_info_first.pin);
+  return true;
 }
 
 bool change_wipe_code(void) {
   PINInfo wipe_code_info_first, wipe_code_info_second;
-  bool ret = false;
 
   /* Set request types */
   wipe_code_info_first.type =
@@ -331,24 +310,19 @@ bool change_wipe_code(void) {
       PinMatrixRequestType_PinMatrixRequestType_NewSecond;
 
   if (!pin_request("Enter New Wipe Code", &wipe_code_info_first)) {
-    goto done;
+    return false;
   }
 
   if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second)) {
-    goto done;
+    return false;
   }
 
   if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0) {
-    goto done;
+    return false;
   }
 
   storage_setWipeCode(wipe_code_info_first.pin);
-  ret = true;
-
-done:
-  memzero(&wipe_code_info_first, sizeof(wipe_code_info_first));
-  memzero(&wipe_code_info_second, sizeof(wipe_code_info_second));
-  return ret;
+  return true;
 }
 
 #if DEBUG_LINK

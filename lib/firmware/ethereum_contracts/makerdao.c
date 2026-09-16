@@ -296,8 +296,8 @@ bool makerdao_confirmClose(const EthereumSignTx* msg) {
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x79\x20\x37\xe3", 3)) {
-    if (!confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
-                                   &otcProvider))
+    if (confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
+                                  &otcProvider))
       return false;
   }
 
@@ -349,9 +349,8 @@ bool makerdao_confirmLockAndDraw2(const EthereumSignTx* msg) {
   getETHValue(msg, &deposit_val);
 
   char deposit[32];
-  if (!ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
-                            sizeof(deposit)))
-    return false;
+  ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
+                       sizeof(deposit));
 
   const TokenType* DAI;
   if (!tokenByTicker(msg->chain_id, "DAI", &DAI)) return false;
@@ -360,9 +359,8 @@ bool makerdao_confirmLockAndDraw2(const EthereumSignTx* msg) {
   bn_from_bytes(getParam(msg, 1), 32, &withdraw_val);
 
   char withdraw[32];
-  if (!ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
-                            sizeof(withdraw)))
-    return false;
+  ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
+                       sizeof(withdraw));
 
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
                  "Create CDP, deposit %s, and generate %s from it?", deposit,
@@ -386,9 +384,8 @@ bool makerdao_confirmCreateOpenLockAndDraw(const EthereumSignTx* msg) {
   getETHValue(msg, &deposit_val);
 
   char deposit[32];
-  if (!ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
-                            sizeof(deposit)))
-    return false;
+  ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
+                       sizeof(deposit));
 
   const TokenType* DAI;
   if (!tokenByTicker(msg->chain_id, "DAI", &DAI)) return false;
@@ -397,9 +394,8 @@ bool makerdao_confirmCreateOpenLockAndDraw(const EthereumSignTx* msg) {
   bn_from_bytes(getParam(msg, 2), 32, &withdraw_val);
 
   char withdraw[32];
-  if (!ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
-                            sizeof(withdraw)))
-    return false;
+  ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
+                       sizeof(withdraw));
 
   return confirm(
       ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
@@ -424,9 +420,8 @@ bool makerdao_confirmLock(const EthereumSignTx* msg) {
   getETHValue(msg, &deposit_val);
 
   char deposit[32];
-  if (!ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
-                            sizeof(deposit)))
-    return false;
+  ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
+                       sizeof(deposit));
 
   uint32_t cupId;
   if (!getCupId(getParam(msg, 1), &cupId)) return false;
@@ -460,9 +455,8 @@ bool makerdao_confirmDraw(const EthereumSignTx* msg) {
   if (!tokenByTicker(msg->chain_id, "DAI", &DAI)) return false;
 
   char withdraw[32];
-  if (!ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
-                            sizeof(withdraw)))
-    return false;
+  ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
+                       sizeof(withdraw));
 
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
                  "Generate %s from CDP %" PRIu32 "?", withdraw, cupId);
@@ -485,9 +479,8 @@ bool makerdao_confirmLockAndDraw3(const EthereumSignTx* msg) {
   getETHValue(msg, &deposit_val);
 
   char deposit[32];
-  if (!ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
-                            sizeof(deposit)))
-    return false;
+  ethereumFormatAmount(&deposit_val, NULL, msg->chain_id, deposit,
+                       sizeof(deposit));
 
   uint32_t cupId;
   if (!getCupId(getParam(msg, 1), &cupId)) return false;
@@ -499,9 +492,8 @@ bool makerdao_confirmLockAndDraw3(const EthereumSignTx* msg) {
   if (!tokenByTicker(msg->chain_id, "DAI", &DAI)) return false;
 
   char withdraw[32];
-  if (!ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
-                            sizeof(withdraw)))
-    return false;
+  ethereumFormatAmount(&withdraw_val, DAI, msg->chain_id, withdraw,
+                       sizeof(withdraw));
 
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
                  "Deposit %s into CDP %" PRIu32 " and generate %s?", deposit,
@@ -530,9 +522,8 @@ bool makerdao_confirmFree(const EthereumSignTx* msg) {
   bn_from_bytes(getParam(msg, 2), 32, &withdraw_val);
 
   char withdraw[32];
-  if (!ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw,
-                            sizeof(withdraw)))
-    return false;
+  ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw,
+                       sizeof(withdraw));
 
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "MakerDAO",
                  "Withdraw %s from CDP %" PRIu32 "?", withdraw, cupId);
@@ -566,14 +557,13 @@ bool makerdao_confirmWipe(const EthereumSignTx* msg) {
   if (!tokenByTicker(msg->chain_id, "DAI", &DAI)) return false;
 
   char deposit[32];
-  if (!ethereumFormatAmount(&deposit_val, DAI, msg->chain_id, deposit,
-                            sizeof(deposit)))
-    return false;
+  ethereumFormatAmount(&deposit_val, DAI, msg->chain_id, deposit,
+                       sizeof(deposit));
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x8a\x9f\xc4\x75", 4)) {
-    if (!confirmParamIsOTCProvider(getParam(msg, 3), msg->chain_id,
-                                   &otcProvider))
+    if (confirmParamIsOTCProvider(getParam(msg, 2), msg->chain_id,
+                                  &otcProvider))
       return false;
   }
 
@@ -610,17 +600,15 @@ bool makerdao_confirmWipeAndFree(const EthereumSignTx* msg) {
   if (!tokenByTicker(msg->chain_id, "DAI", &DAI)) return false;
 
   char deposit[32];
-  if (!ethereumFormatAmount(&deposit_val, DAI, msg->chain_id, deposit,
-                            sizeof(deposit)))
-    return false;
+  ethereumFormatAmount(&deposit_val, DAI, msg->chain_id, deposit,
+                       sizeof(deposit));
 
   bignum256 withdraw_val;
-  bn_from_bytes(getParam(msg, 3), 32, &withdraw_val);
+  bn_from_bytes(getParam(msg, 2), 32, &withdraw_val);
 
   char withdraw[32];
-  if (!ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw,
-                            sizeof(withdraw)))
-    return false;
+  ethereumFormatAmount(&withdraw_val, NULL, msg->chain_id, withdraw,
+                       sizeof(withdraw));
 
   const char* otcProvider = "";
   if (isMethod(msg, "\x1b\x96\x81\x60", 5)) {
