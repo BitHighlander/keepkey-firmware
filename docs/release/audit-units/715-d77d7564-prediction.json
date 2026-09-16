@@ -1,0 +1,4558 @@
+{
+  "base": "fc1e93746132553ad98ed60f4847c8d770732bf9",
+  "canonical_pr": 476,
+  "ci": [
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "lint-format",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932659506"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "static-analysis",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932659535"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "secret-scan",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932659613"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "check-submodules",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932659318"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "crypto-tests",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932659654"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "build-arm-firmware",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273265/job/104932796692"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "build-arm-firmware (bitcoin-only)",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932828375"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "build-emulator",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932828390"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "build-emulator (bitcoin-only)",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932828598"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "python-dylib-tests",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273265/job/104932796700"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "python-integration-tests (full, kkci-full, python-test-results, oled-screenshots)",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932828355"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "python-integration-tests (bitcoin-only, kkci-bitcoin-only, python-test-results-bitcoin-only, oled...",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104932828356"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "unit-tests",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104933871760"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "unit-tests (bitcoin-only)",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104933871634"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "build-and-test",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273265/job/104932796806"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "generate-test-report",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104936847943"
+    },
+    {
+      "conclusion": "success",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "name": "Release audit gate",
+      "url": "https://github.com/keepkey/keepkey-firmware/actions/runs/35137273202/job/104936963282"
+    }
+  ],
+  "coverage": [
+    {
+      "invariants": [
+        "CI provenance and release gates"
+      ],
+      "path": ".github/workflows/ci.yml",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "CI provenance and release gates"
+      ],
+      "path": ".github/workflows/mirror-base-image.yml",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "CI provenance and release gates"
+      ],
+      "path": ".github/workflows/release-candidate-audit.yml",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "CI provenance and release gates"
+      ],
+      "path": ".github/workflows/release.yml",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": ".gitignore",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": ".gitleaks.toml",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": ".gitmodules",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "Makefile",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "cmake/caches/device.cmake",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "cmake/toolchains/mingw-w64-x86_64.cmake",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "canonical dependency pin"
+      ],
+      "path": "deps/crypto/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "canonical dependency pin"
+      ],
+      "path": "deps/crypto/trezor-firmware",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "canonical dependency pin"
+      ],
+      "path": "deps/device-protocol",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "canonical dependency pin"
+      ],
+      "path": "deps/python-keepkey",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/Build.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/DiceEntropy.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/README.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/Release.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/StorageVersionGate.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/coin-integration/README.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/coin-integration/zcash-on-device-ua.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/coin-integration/zcash-pczt-clearsign.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/dice-vs-coldcard.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/release/7.15-COMBINED-CANDIDATE.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/security/clearsign-provider-tier.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/security/pin-kdf-v19-migration.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/security/storage-version-downgrade-policy.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "release claim accuracy"
+      ],
+      "path": "docs/testing/ATLAS-GUIDE.md",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "fuzzer/firmware/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/bsd_compat.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/confirm_sm.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/draw.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/font.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/keepkey_board.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/keepkey_display.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/keepkey_flash.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/layout.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/messages.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/usb.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "include/keepkey/board/util.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/emulator/libkkemu.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/app_confirm.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/app_layout.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/authenticator.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/binance.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/bip85.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/coins.def",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/coins.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/dice_input.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/eip712.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/eos.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ethereum.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ethereum_contracts.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ethereum_contracts/saproxy.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ethereum_contracts/thortx.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ethereum_contracts/zxliquidtx.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ethereum_tokens.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/fsm.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/hive.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/home_sm.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/mayachain.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/osmosis.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/pin_sm.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/policy.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/recovery_cipher.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/reset.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/ripple.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/signed_metadata.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/signing.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/signtx_tendermint.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/solana.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "storage compatibility within released bootloader contract"
+      ],
+      "path": "include/keepkey/firmware/storage.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/tendermint.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/thorchain.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/tiny-json.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/tokens.def",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/transaction.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/tron.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/txin_check.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/firmware/zcash.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "entropy failure closes safely"
+      ],
+      "path": "include/keepkey/rand/rng.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "entropy failure closes safely"
+      ],
+      "path": "include/keepkey/rand/rng_health.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/interface.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages-ethereum.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages-hive.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages-ripple.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages-solana.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages-thorchain.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages-zcash.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/keepkey/transport/messages.options",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "include/pb.h",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/confirm_sm.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/draw.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/font.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/keepkey_board.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/keepkey_button.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/keepkey_flash.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/layout.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix",
+        "emulator shutdown/init lifecycle"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/memory.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/messages.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/signatures.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/timer.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix",
+        "emulator shutdown/init lifecycle",
+        "timer reinitialization isolated fixture",
+        "timer queue-reset sensitivity"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/udp.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/usb.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/util.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/board/variant.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/emulator/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/emulator/libkkemu.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/emulator/random.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/emulator/setup.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "board and emulator lifecycle safety"
+      ],
+      "path": "lib/emulator/udp.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/app_confirm.c",
+      "reviewer": "Astra audit projection PR #778",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/app_layout.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/authenticator.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/binance.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/bip85.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/coins.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/dice_input.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/eip712.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/eos-contracts/eosio.system.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/eos.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/makerdao.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/saproxy.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/thortx.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/zxappliquid.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/zxliquidtx.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/zxswap.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_contracts/zxtransERC20.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ethereum_tokens.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_binance.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_bip85.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_clearsign_attestor.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_coin.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_common.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_cosmos.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_crypto.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_debug.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_eos.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_ethereum.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_hive.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_mayachain.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_osmosis.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_ripple.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_solana.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_tendermint.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_thorchain.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_ton.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_tron.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/fsm_msg_zcash.h",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/hive.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/home_sm.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/mayachain.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/messagemap.def",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/nano.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/osmosis.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/passphrase_sm.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/pin_sm.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/recovery_cipher.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/reset.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ripple.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/signed_metadata.c",
+      "reviewer": "Astra audit projection PR #779",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/signing.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/signtx_tendermint.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/solana.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/solana_token_confirm.h",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "storage compatibility within released bootloader contract"
+      ],
+      "path": "lib/firmware/storage.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "storage compatibility within released bootloader contract"
+      ],
+      "path": "lib/firmware/storage.h",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/tendermint.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/thorchain.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/tiny-json.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/ton.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/transaction.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/tron.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/txin_check.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/u2f.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/firmware/zcash.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "entropy failure closes safely"
+      ],
+      "path": "lib/rand/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "entropy failure closes safely"
+      ],
+      "path": "lib/rand/rng.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "entropy failure closes safely"
+      ],
+      "path": "lib/rand/rng_health.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/transport/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "protocol dispatch, signing state, and displayed intent"
+      ],
+      "path": "lib/transport/pb_decode.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/build/docker/device/debug.sh",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/build/docker/device/release.sh",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/build/docker/emulator/debug.sh",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/Dockerfile",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/capture-clearsign-attestor.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/capture-dice-flow.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/capture-thor-percent.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/docker-compose.bitcoin-only.yml",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/firmware-unit.sh",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/python-keepkey-tests.sh",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/emulator/python-keepkey.Dockerfile",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/generate-test-report.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/release/hash-manifest.sh",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/release/verify-signatures.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "scripts/verify-token-def.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/blupdater/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/bootloader/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/bootstrap/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/check_pallas_api_boundary.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/check_pallas_ct_disassembly.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/check_sram_budget.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/display_test/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/emulator/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/emulator/main.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/firmware/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/firmware/keepkey.ld",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/firmware/keepkey_main.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "ARM"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/merge-direction-adjudicated.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/merge_direction_gate.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/merge_symbol_gate.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/sram-budgets.json",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "reproducible full and bitcoin-only builds"
+      ],
+      "path": "tools/test_merge_direction_gate.py",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/board/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/board/board.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/crypto/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/crypto/bip340.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/crypto/pallas_ct.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/emulator/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix",
+        "emulator shutdown/init lifecycle"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/emulator/wedged_poll.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix",
+        "emulator shutdown/init lifecycle"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only",
+        "emulator"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/CMakeLists.txt",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/authenticator.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/binance.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/coins.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/confirm_test_utils.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/cosmos.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/dice.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/eip712.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/eos.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/eos_authorization.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/eos_authorization_probe.c",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/ethereum.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/fsm.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/hive.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/mayachain.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/nanopb_bounds.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/osmosis.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/recovery.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/ripple.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/rng_health.cpp",
+      "reviewer": "Astra audit projection PR #780",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/setup_ceremony.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/signed_metadata.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/signing.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/solana.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/solana_token_confirm.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/storage.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/storage_cipher_probe.c",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/storage_cipher_probe.h",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/storage_passphrase.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix",
+        "stateful suites shuffled three times"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/test_board.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/thorchain.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/transaction.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/tron.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/usb_rx.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    },
+    {
+      "invariants": [
+        "regression and negative-test coverage"
+      ],
+      "path": "unittests/firmware/zcash.cpp",
+      "reviewer": "Astra audit projection PR #781",
+      "tests": [
+        "current-head canonical CI matrix"
+      ],
+      "variants": [
+        "full",
+        "bitcoin-only"
+      ]
+    }
+  ],
+  "dependencies": {
+    "code-signing-keys": "a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec",
+    "deps/crypto/trezor-firmware": "8a392f70a5d5575ece3dfb35f115d4a4b27f497c",
+    "deps/device-protocol": "27d3fa1f6215139cde6411f9a2882f36bb373fc9",
+    "deps/googletest": "7888184f28509dba839e3683409443e0b5bb8948",
+    "deps/python-keepkey": "b76ee610dd18934ee3aeeb36cfc541e8799eb46d",
+    "deps/qrenc/QR-Code-generator": "6dfbfdad5d9303ed190d1c3cb7bec34b565b6ce8",
+    "deps/sca-hardening/SecAESSTM32": "71d356a1141624994cf613bd2d2583892e8e6d5a"
+  },
+  "findings": [
+    {
+      "disposition": "fixed",
+      "evidence": "Tag release now runs the Pallas constant-time and bitcoin-only symbol gate; resolved thread https://github.com/keepkey/keepkey-firmware/pull/476#discussion_r4020925691",
+      "id": "copilot-4020925691",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "OTP entropy read stops after failed RNG draw; resolved thread https://github.com/keepkey/keepkey-firmware/pull/476#discussion_r4020925743",
+      "id": "copilot-4020925743",
+      "release_blocking": false,
+      "reviewed_sha": "6ce57553a0c184e7e35e97f00f5efef205e951bb"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "Firmware-only marker regression removed; bootloader redesign deferred outside 7.15; resolved thread https://github.com/keepkey/keepkey-firmware/pull/476#discussion_r4020925807",
+      "id": "copilot-4020925807",
+      "release_blocking": false,
+      "reviewed_sha": "a96cc5445e4d90c1baeca6df699809939345c3de"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "RNG reset no longer recurses through random32; resolved thread https://github.com/keepkey/keepkey-firmware/pull/476#discussion_r4020925853",
+      "id": "copilot-4020925853",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41"
+    },
+    {
+      "disposition": "refuted",
+      "evidence": "Receipt pins match the canonical committed gitlinks; resolved thread https://github.com/keepkey/keepkey-firmware/pull/476#discussion_r4020925907",
+      "id": "copilot-4020925907",
+      "release_blocking": false,
+      "reviewed_sha": "614425a2a14d0113de251e7944118e47f31f5265"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "xunit depends on and executes zcash-crypto-unit; disposition https://github.com/keepkey/keepkey-firmware/pull/476#issuecomment-5691280430",
+      "id": "copilot-5216628493-body-zcash",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "kkemu_init resets idle time and emulator lifecycle regression covers shutdown/init",
+      "id": "astra-emulator-idle-deadline",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "layout and timer queues rebuild on init; mutation caused deterministic lifecycle hang",
+      "id": "internal-emulator-intrusive-queues",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "inactive continuation messages terminate stale signing and return Failure_UnexpectedMessage; seven prior timeout cases pass",
+      "id": "internal-stale-continuations",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41"
+    },
+    {
+      "disposition": "deferred",
+      "evidence": "Requires coordinated bootloader rollout; 7.15 retains released bootloader-compatible behavior",
+      "id": "bootloader-marker-atomicity",
+      "owner": "release owner",
+      "release_blocking": false,
+      "reviewed_sha": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "target_release": "7.17"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#discussion_r4023297022",
+      "id": "copilot-4022553643",
+      "release_blocking": false,
+      "reviewed_sha": "4714c7bd4dd3448b7a436c0906b5bf5e6d284480"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#discussion_r4023297221",
+      "id": "copilot-4022553667",
+      "release_blocking": false,
+      "reviewed_sha": "4714c7bd4dd3448b7a436c0906b5bf5e6d284480"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#discussion_r4023297417",
+      "id": "copilot-4022553683",
+      "release_blocking": false,
+      "reviewed_sha": "4714c7bd4dd3448b7a436c0906b5bf5e6d284480"
+    },
+    {
+      "disposition": "refuted",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#discussion_r4023297625",
+      "id": "copilot-4022553706",
+      "release_blocking": false,
+      "reviewed_sha": "0dcaa029a5e0ca71fe820d272642441aed08bea1"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#discussion_r4023297872",
+      "id": "copilot-4022553735",
+      "release_blocking": false,
+      "reviewed_sha": "0dcaa029a5e0ca71fe820d272642441aed08bea1"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#discussion_r4023298084",
+      "id": "copilot-4022553763",
+      "release_blocking": false,
+      "reviewed_sha": "0dcaa029a5e0ca71fe820d272642441aed08bea1"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023298314",
+      "id": "copilot-4022581819",
+      "release_blocking": false,
+      "reviewed_sha": "2ce7426b5b1d9c314f63458b01d1bbf705dcbe07"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023298486",
+      "id": "copilot-4022581840",
+      "release_blocking": false,
+      "reviewed_sha": "5b9592b86f34d55560da9e5ca6ffbfcc9a55685e"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023298659",
+      "id": "copilot-4022581868",
+      "release_blocking": false,
+      "reviewed_sha": "aa65712455b1f3cc3be36600ce4c6b2bf70a937f"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023298847",
+      "id": "copilot-4022581900",
+      "release_blocking": false,
+      "reviewed_sha": "5b9592b86f34d55560da9e5ca6ffbfcc9a55685e"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023299036",
+      "id": "copilot-4022581922",
+      "release_blocking": false,
+      "reviewed_sha": "5b9592b86f34d55560da9e5ca6ffbfcc9a55685e"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023299189",
+      "id": "copilot-4022581940",
+      "release_blocking": false,
+      "reviewed_sha": "5b9592b86f34d55560da9e5ca6ffbfcc9a55685e"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#discussion_r4023299370",
+      "id": "copilot-4022581973",
+      "release_blocking": false,
+      "reviewed_sha": "2ce7426b5b1d9c314f63458b01d1bbf705dcbe07"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/780#discussion_r4023299532",
+      "id": "copilot-4022544230",
+      "release_blocking": false,
+      "reviewed_sha": "4eff9de77947fe2d8dc2a79c2ee51aaf1a97d4f8"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/780#discussion_r4023299783",
+      "id": "copilot-4022544280",
+      "release_blocking": false,
+      "reviewed_sha": "4eff9de77947fe2d8dc2a79c2ee51aaf1a97d4f8"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/780#discussion_r4023299989",
+      "id": "copilot-4022544310",
+      "release_blocking": false,
+      "reviewed_sha": "4eff9de77947fe2d8dc2a79c2ee51aaf1a97d4f8"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/778#issuecomment-5693351054",
+      "id": "copilot-5218570558-body",
+      "release_blocking": false,
+      "reviewed_sha": "4714c7bd4dd3448b7a436c0906b5bf5e6d284480"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/779#issuecomment-5693351259",
+      "id": "copilot-5218600489-body",
+      "release_blocking": false,
+      "reviewed_sha": "2ce7426b5b1d9c314f63458b01d1bbf705dcbe07"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/780#issuecomment-5693351434",
+      "id": "copilot-5218559661-body",
+      "release_blocking": false,
+      "reviewed_sha": "da62bd8c6bf8a2da77c6e56e2fcf3a17a591c228"
+    },
+    {
+      "disposition": "fixed",
+      "evidence": "https://github.com/BitHighlander/keepkey-firmware/pull/781#issuecomment-5693351575",
+      "id": "copilot-5218566270-body",
+      "release_blocking": false,
+      "reviewed_sha": "fedbd9124a09946f57f67088b2cd99283fb7cec9"
+    }
+  ],
+  "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+  "projections": [
+    {
+      "base": "3bc0f3504b9a8ec44ef8f20464add93f81119630",
+      "head": "0dcaa029a5e0ca71fe820d272642441aed08bea1",
+      "manifest": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/mirror-base-image.yml",
+        ".github/workflows/release-candidate-audit.yml",
+        ".github/workflows/release.yml",
+        ".gitignore",
+        ".gitleaks.toml",
+        ".gitmodules",
+        "CMakeLists.txt",
+        "Makefile",
+        "cmake/caches/device.cmake",
+        "cmake/toolchains/mingw-w64-x86_64.cmake",
+        "deps/crypto/CMakeLists.txt",
+        "deps/crypto/trezor-firmware",
+        "deps/device-protocol",
+        "deps/python-keepkey",
+        "docs/Build.md",
+        "docs/DiceEntropy.md",
+        "docs/README.md",
+        "docs/Release.md",
+        "docs/StorageVersionGate.md",
+        "docs/coin-integration/README.md",
+        "docs/coin-integration/zcash-on-device-ua.md",
+        "docs/coin-integration/zcash-pczt-clearsign.md",
+        "docs/dice-vs-coldcard.md",
+        "docs/release/7.15-COMBINED-CANDIDATE.md",
+        "docs/security/clearsign-provider-tier.md",
+        "docs/security/pin-kdf-v19-migration.md",
+        "docs/security/storage-version-downgrade-policy.md",
+        "docs/testing/ATLAS-GUIDE.md",
+        "fuzzer/firmware/CMakeLists.txt",
+        "include/keepkey/board/bsd_compat.h",
+        "include/keepkey/board/confirm_sm.h",
+        "include/keepkey/board/draw.h",
+        "include/keepkey/board/font.h",
+        "include/keepkey/board/keepkey_board.h",
+        "include/keepkey/board/keepkey_display.h",
+        "include/keepkey/board/keepkey_flash.h",
+        "include/keepkey/board/layout.h",
+        "include/keepkey/board/messages.h",
+        "include/keepkey/board/usb.h",
+        "include/keepkey/board/util.h",
+        "include/keepkey/emulator/libkkemu.h",
+        "include/keepkey/firmware/app_confirm.h",
+        "include/keepkey/firmware/app_layout.h",
+        "include/keepkey/firmware/authenticator.h",
+        "include/keepkey/firmware/binance.h",
+        "include/keepkey/firmware/bip85.h",
+        "include/keepkey/firmware/coins.def",
+        "include/keepkey/firmware/coins.h",
+        "include/keepkey/firmware/dice_input.h",
+        "include/keepkey/firmware/eip712.h",
+        "include/keepkey/firmware/eos.h",
+        "include/keepkey/firmware/ethereum.h",
+        "include/keepkey/firmware/ethereum_contracts.h",
+        "include/keepkey/firmware/ethereum_contracts/saproxy.h",
+        "include/keepkey/firmware/ethereum_contracts/thortx.h",
+        "include/keepkey/firmware/ethereum_contracts/zxliquidtx.h",
+        "include/keepkey/firmware/ethereum_tokens.h",
+        "include/keepkey/firmware/fsm.h",
+        "include/keepkey/firmware/hive.h",
+        "include/keepkey/firmware/home_sm.h",
+        "include/keepkey/firmware/mayachain.h",
+        "include/keepkey/firmware/osmosis.h",
+        "include/keepkey/firmware/pin_sm.h",
+        "include/keepkey/firmware/policy.h",
+        "include/keepkey/firmware/recovery_cipher.h",
+        "include/keepkey/firmware/reset.h",
+        "include/keepkey/firmware/ripple.h",
+        "include/keepkey/firmware/signed_metadata.h",
+        "include/keepkey/firmware/signing.h",
+        "include/keepkey/firmware/signtx_tendermint.h",
+        "include/keepkey/firmware/solana.h",
+        "include/keepkey/firmware/storage.h",
+        "include/keepkey/firmware/tendermint.h",
+        "include/keepkey/firmware/thorchain.h",
+        "include/keepkey/firmware/tiny-json.h",
+        "include/keepkey/firmware/tokens.def",
+        "include/keepkey/firmware/transaction.h",
+        "include/keepkey/firmware/tron.h",
+        "include/keepkey/firmware/txin_check.h",
+        "include/keepkey/firmware/zcash.h",
+        "include/keepkey/rand/rng.h",
+        "include/keepkey/rand/rng_health.h",
+        "include/keepkey/transport/interface.h",
+        "include/keepkey/transport/messages-ethereum.options",
+        "include/keepkey/transport/messages-hive.options",
+        "include/keepkey/transport/messages-ripple.options",
+        "include/keepkey/transport/messages-solana.options",
+        "include/keepkey/transport/messages-thorchain.options",
+        "include/keepkey/transport/messages-zcash.options",
+        "include/keepkey/transport/messages.options",
+        "include/pb.h",
+        "lib/board/CMakeLists.txt",
+        "lib/board/confirm_sm.c",
+        "lib/board/draw.c",
+        "lib/board/font.c",
+        "lib/board/keepkey_board.c",
+        "lib/board/keepkey_button.c",
+        "lib/board/keepkey_flash.c",
+        "lib/board/layout.c",
+        "lib/board/memory.c",
+        "lib/board/messages.c",
+        "lib/board/signatures.c",
+        "lib/board/timer.c",
+        "lib/board/udp.c",
+        "lib/board/usb.c",
+        "lib/board/util.c",
+        "lib/board/variant.c",
+        "lib/emulator/CMakeLists.txt",
+        "lib/emulator/libkkemu.c",
+        "lib/emulator/random.c",
+        "lib/emulator/setup.c",
+        "lib/emulator/udp.c",
+        "lib/firmware/CMakeLists.txt",
+        "lib/firmware/app_confirm.c"
+      ],
+      "pr": 778
+    },
+    {
+      "base": "2379e03beab1f620bcaca91f9a630bfbc69fcb50",
+      "head": "5b9592b86f34d55560da9e5ca6ffbfcc9a55685e",
+      "manifest": [
+        "lib/firmware/app_layout.c",
+        "lib/firmware/authenticator.c",
+        "lib/firmware/binance.c",
+        "lib/firmware/bip85.c",
+        "lib/firmware/coins.c",
+        "lib/firmware/dice_input.c",
+        "lib/firmware/eip712.c",
+        "lib/firmware/eos-contracts/eosio.system.c",
+        "lib/firmware/eos.c",
+        "lib/firmware/ethereum.c",
+        "lib/firmware/ethereum_contracts.c",
+        "lib/firmware/ethereum_contracts/makerdao.c",
+        "lib/firmware/ethereum_contracts/saproxy.c",
+        "lib/firmware/ethereum_contracts/thortx.c",
+        "lib/firmware/ethereum_contracts/zxappliquid.c",
+        "lib/firmware/ethereum_contracts/zxliquidtx.c",
+        "lib/firmware/ethereum_contracts/zxswap.c",
+        "lib/firmware/ethereum_contracts/zxtransERC20.c",
+        "lib/firmware/ethereum_tokens.c",
+        "lib/firmware/fsm.c",
+        "lib/firmware/fsm_msg_binance.h",
+        "lib/firmware/fsm_msg_bip85.h",
+        "lib/firmware/fsm_msg_clearsign_attestor.h",
+        "lib/firmware/fsm_msg_coin.h",
+        "lib/firmware/fsm_msg_common.h",
+        "lib/firmware/fsm_msg_cosmos.h",
+        "lib/firmware/fsm_msg_crypto.h",
+        "lib/firmware/fsm_msg_debug.h",
+        "lib/firmware/fsm_msg_eos.h",
+        "lib/firmware/fsm_msg_ethereum.h",
+        "lib/firmware/fsm_msg_hive.h",
+        "lib/firmware/fsm_msg_mayachain.h",
+        "lib/firmware/fsm_msg_osmosis.h",
+        "lib/firmware/fsm_msg_ripple.h",
+        "lib/firmware/fsm_msg_solana.h",
+        "lib/firmware/fsm_msg_tendermint.h",
+        "lib/firmware/fsm_msg_thorchain.h",
+        "lib/firmware/fsm_msg_ton.h",
+        "lib/firmware/fsm_msg_tron.h",
+        "lib/firmware/fsm_msg_zcash.h",
+        "lib/firmware/hive.c",
+        "lib/firmware/home_sm.c",
+        "lib/firmware/mayachain.c",
+        "lib/firmware/messagemap.def",
+        "lib/firmware/nano.c",
+        "lib/firmware/osmosis.c",
+        "lib/firmware/passphrase_sm.c",
+        "lib/firmware/pin_sm.c",
+        "lib/firmware/recovery_cipher.c",
+        "lib/firmware/reset.c",
+        "lib/firmware/ripple.c",
+        "lib/firmware/signed_metadata.c"
+      ],
+      "pr": 779
+    },
+    {
+      "base": "dac9d89f30ca478ac57aafbdfb117cbd11159548",
+      "head": "4eff9de77947fe2d8dc2a79c2ee51aaf1a97d4f8",
+      "manifest": [
+        "lib/firmware/signing.c",
+        "lib/firmware/signtx_tendermint.c",
+        "lib/firmware/solana.c",
+        "lib/firmware/solana_token_confirm.h",
+        "lib/firmware/storage.c",
+        "lib/firmware/storage.h",
+        "lib/firmware/tendermint.c",
+        "lib/firmware/thorchain.c",
+        "lib/firmware/tiny-json.c",
+        "lib/firmware/ton.c",
+        "lib/firmware/transaction.c",
+        "lib/firmware/tron.c",
+        "lib/firmware/txin_check.c",
+        "lib/firmware/u2f.c",
+        "lib/firmware/zcash.c",
+        "lib/rand/CMakeLists.txt",
+        "lib/rand/rng.c",
+        "lib/rand/rng_health.c",
+        "lib/transport/CMakeLists.txt",
+        "lib/transport/pb_decode.c",
+        "scripts/build/docker/device/debug.sh",
+        "scripts/build/docker/device/release.sh",
+        "scripts/build/docker/emulator/debug.sh",
+        "scripts/emulator/Dockerfile",
+        "scripts/emulator/capture-clearsign-attestor.py",
+        "scripts/emulator/capture-dice-flow.py",
+        "scripts/emulator/capture-thor-percent.py",
+        "scripts/emulator/docker-compose.bitcoin-only.yml",
+        "scripts/emulator/firmware-unit.sh",
+        "scripts/emulator/python-keepkey-tests.sh",
+        "scripts/emulator/python-keepkey.Dockerfile",
+        "scripts/generate-test-report.py",
+        "scripts/release/hash-manifest.sh",
+        "scripts/release/verify-signatures.py",
+        "scripts/verify-token-def.py",
+        "tools/blupdater/CMakeLists.txt",
+        "tools/bootloader/CMakeLists.txt",
+        "tools/bootstrap/CMakeLists.txt",
+        "tools/check_pallas_api_boundary.py",
+        "tools/check_pallas_ct_disassembly.py",
+        "tools/check_sram_budget.py",
+        "tools/display_test/CMakeLists.txt",
+        "tools/emulator/CMakeLists.txt",
+        "tools/emulator/main.cpp",
+        "tools/firmware/CMakeLists.txt",
+        "tools/firmware/keepkey.ld",
+        "tools/firmware/keepkey_main.c",
+        "tools/merge-direction-adjudicated.txt",
+        "tools/merge_direction_gate.py",
+        "tools/merge_symbol_gate.py",
+        "tools/sram-budgets.json",
+        "tools/test_merge_direction_gate.py",
+        "unittests/CMakeLists.txt",
+        "unittests/board/CMakeLists.txt",
+        "unittests/board/board.cpp",
+        "unittests/crypto/CMakeLists.txt",
+        "unittests/crypto/bip340.cpp",
+        "unittests/crypto/pallas_ct.cpp",
+        "unittests/emulator/CMakeLists.txt",
+        "unittests/emulator/wedged_poll.c",
+        "unittests/firmware/CMakeLists.txt",
+        "unittests/firmware/authenticator.cpp",
+        "unittests/firmware/binance.cpp",
+        "unittests/firmware/coins.cpp",
+        "unittests/firmware/confirm_test_utils.cpp",
+        "unittests/firmware/cosmos.cpp",
+        "unittests/firmware/dice.cpp",
+        "unittests/firmware/eip712.cpp",
+        "unittests/firmware/eos.cpp",
+        "unittests/firmware/eos_authorization.cpp",
+        "unittests/firmware/eos_authorization_probe.c",
+        "unittests/firmware/ethereum.cpp",
+        "unittests/firmware/fsm.cpp",
+        "unittests/firmware/hive.cpp",
+        "unittests/firmware/mayachain.cpp",
+        "unittests/firmware/nanopb_bounds.cpp",
+        "unittests/firmware/osmosis.cpp",
+        "unittests/firmware/recovery.cpp",
+        "unittests/firmware/ripple.cpp",
+        "unittests/firmware/rng_health.cpp"
+      ],
+      "pr": 780
+    },
+    {
+      "base": "1b56eba0a45b5d5a3e13ad7d57cd2060081f8585",
+      "head": "82446971798bb9b0d4482f2ab419f4686632da93",
+      "manifest": [
+        "unittests/firmware/setup_ceremony.cpp",
+        "unittests/firmware/signed_metadata.cpp",
+        "unittests/firmware/signing.cpp",
+        "unittests/firmware/solana.cpp",
+        "unittests/firmware/solana_token_confirm.cpp",
+        "unittests/firmware/storage.cpp",
+        "unittests/firmware/storage_cipher_probe.c",
+        "unittests/firmware/storage_cipher_probe.h",
+        "unittests/firmware/storage_passphrase.cpp",
+        "unittests/firmware/test_board.cpp",
+        "unittests/firmware/thorchain.cpp",
+        "unittests/firmware/transaction.cpp",
+        "unittests/firmware/tron.cpp",
+        "unittests/firmware/usb_rx.cpp",
+        "unittests/firmware/zcash.cpp"
+      ],
+      "pr": 781
+    }
+  ],
+  "repository": "keepkey/keepkey-firmware",
+  "required_test_kinds": [
+    "exact-head-ci",
+    "full-context-build",
+    "isolated",
+    "shuffled",
+    "mutation",
+    "fault-injection"
+  ],
+  "residual_risks": [
+    "Physical power-cut atomicity remains constrained by the released bootloader and is deferred to 7.17.",
+    "Physical-device QA is a release gate after external code review; emulator and ARM build evidence do not replace final device smoke testing."
+  ],
+  "tests": [
+    {
+      "evidence": "17 immutable GitHub check-run URLs in ci[]",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "exact-head-ci",
+      "name": "current-head canonical CI matrix",
+      "status": "pass"
+    },
+    {
+      "evidence": "Exact-head unit-tests check-run URL in ci[]; 580/580 native full firmware suite",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "full-context-build",
+      "name": "firmware-unit 580 tests",
+      "status": "pass"
+    },
+    {
+      "evidence": "Exact-head macOS build-and-test URLs in ci[] execute emulator-wedge-unit through xunit; wedged_poll.c performs kkemu_shutdown/kkemu_init in one loaded library",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "full-context-build",
+      "name": "emulator shutdown/init lifecycle",
+      "status": "pass"
+    },
+    {
+      "evidence": "docs/release/audit-units/715-d77d7564-evidence/timer-reinit.json sha256 45e799ccc9c8058e3c0986ba7bc4a8eef815816818d32ef6f203f01ae21a08ef",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "isolated",
+      "name": "timer reinitialization isolated fixture",
+      "status": "pass"
+    },
+    {
+      "evidence": "docs/release/audit-units/715-d77d7564-evidence/shuffled.log sha256 7013ebfaef7ec9e097db988526943d0d2c870ecf8f48b68b055ed4601a10e61b; 62/62 x3, seeds 715-717",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "shuffled",
+      "name": "stateful suites shuffled three times",
+      "status": "pass"
+    },
+    {
+      "evidence": "docs/release/audit-units/715-d77d7564-evidence/timer-reinit.json: fixed exit 0, timer queue-reset mutant SIGABRT -6; source sha256 e8009e74e31ecec0e6b752642322f3573a7e85a7482390f0b5b23954eb8d8892",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "mutation",
+      "name": "timer queue-reset sensitivity",
+      "status": "pass"
+    },
+    {
+      "evidence": "Exact-head unit-tests and Release audit gate URLs in ci[]",
+      "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+      "kind": "fault-injection",
+      "name": "RNG and storage failure paths",
+      "status": "pass"
+    }
+  ],
+  "threads": [
+    {
+      "pr": 476,
+      "queried_at": "2026-09-16T19:23:18.210365+00:00",
+      "repository": "keepkey/keepkey-firmware",
+      "unresolved": 0
+    },
+    {
+      "pr": 778,
+      "queried_at": "2026-09-16T19:23:18.210365+00:00",
+      "repository": "BitHighlander/keepkey-firmware",
+      "unresolved": 0
+    },
+    {
+      "pr": 779,
+      "queried_at": "2026-09-16T19:23:18.210365+00:00",
+      "repository": "BitHighlander/keepkey-firmware",
+      "unresolved": 0
+    },
+    {
+      "pr": 780,
+      "queried_at": "2026-09-16T19:23:18.210365+00:00",
+      "repository": "BitHighlander/keepkey-firmware",
+      "unresolved": 0
+    },
+    {
+      "pr": 781,
+      "queried_at": "2026-09-16T19:23:18.210365+00:00",
+      "repository": "BitHighlander/keepkey-firmware",
+      "unresolved": 0
+    }
+  ],
+  "tree": "9436897e6792179a6331ba6744539413c4204140"
+}

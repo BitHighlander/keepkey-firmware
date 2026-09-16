@@ -1,0 +1,52 @@
+{
+  "head": "d77d75647b05db4b8f2e150ef2a525339b534d41",
+  "production_source_sha256": "e8009e74e31ecec0e6b752642322f3573a7e85a7482390f0b5b23954eb8d8892",
+  "fixture_sha256": "65999f18fb69a19888a54014fc4d8d11664af22cd0fb9e43a0e5e14ec61de0eb",
+  "mutation": "Remove active_queue and free_queue assignment statements in kk_timer_init only",
+  "runs": [
+    {
+      "name": "fixed",
+      "compile_command": [
+        "cc",
+        "-std=c11",
+        "-D_DEFAULT_SOURCE",
+        "-DEMULATOR=1",
+        "-DKKEMU_DYLIB=1",
+        "-DTIMER_SOURCE=\"/private/tmp/kk-715-develop-integration/lib/board/timer.c\"",
+        "-I/private/tmp/kk-715-develop-integration/include",
+        "-I/private/tmp/kk-715-develop-integration/deps/crypto/trezor-firmware",
+        "/private/tmp/astra715-independent-timer/fixture.c",
+        "-o",
+        "/private/tmp/astra715-independent-timer/fixed"
+      ],
+      "run_command": [
+        "/private/tmp/astra715-independent-timer/fixed"
+      ],
+      "exit": 0,
+      "stdout": "PASS timer reinit: no stale callbacks; acyclic full free list; fresh callback fires\n",
+      "stderr": ""
+    },
+    {
+      "name": "mutant",
+      "compile_command": [
+        "cc",
+        "-std=c11",
+        "-D_DEFAULT_SOURCE",
+        "-DEMULATOR=1",
+        "-DKKEMU_DYLIB=1",
+        "-DTIMER_SOURCE=\"/private/tmp/astra715-independent-timer/timer-mutant.c\"",
+        "-I/private/tmp/kk-715-develop-integration/include",
+        "-I/private/tmp/kk-715-develop-integration/deps/crypto/trezor-firmware",
+        "/private/tmp/astra715-independent-timer/fixture.c",
+        "-o",
+        "/private/tmp/astra715-independent-timer/mutant"
+      ],
+      "run_command": [
+        "/private/tmp/astra715-independent-timer/mutant"
+      ],
+      "exit": -6,
+      "stdout": "",
+      "stderr": "Assertion failed: (active_queue.head == NULL && active_queue.size == 0), function main, file fixture.c, line 16.\n"
+    }
+  ]
+}

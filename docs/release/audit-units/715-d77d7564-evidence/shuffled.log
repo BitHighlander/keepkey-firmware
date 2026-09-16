@@ -1,0 +1,433 @@
+WARNING: The requested image's platform (linux/amd64) does not match the detected host platform (linux/arm64/v8) and no specific platform was requested
+Running main() from gmock_main.cc
+
+Repeating all tests (iteration 1) . . .
+
+Note: Google Test filter = PassphraseTransition.*:AutoLockProgress.*:Storage*.*
+Note: Randomizing tests' orders with a seed of 715 .
+[==========] Running 62 tests from 3 test cases.
+[----------] Global test environment set-up.
+[----------] 38 tests from Storage
+[ RUN      ] Storage.WriteMeta
+[       OK ] Storage.WriteMeta (1 ms)
+[ RUN      ] Storage.ReadPolicyV1
+[       OK ] Storage.ReadPolicyV1 (0 ms)
+[ RUN      ] Storage.WriteCacheV1
+[       OK ] Storage.WriteCacheV1 (0 ms)
+[ RUN      ] Storage.SessionClearDisarmsAdvancedMode
+[       OK ] Storage.SessionClearDisarmsAdvancedMode (3 ms)
+[ RUN      ] Storage.VersionedWritersRejectShortBuffersWithoutWriting
+[       OK ] Storage.VersionedWritersRejectShortBuffersWithoutWriting (1 ms)
+[ RUN      ] Storage.ResetPolicies
+[       OK ] Storage.ResetPolicies (0 ms)
+[ RUN      ] Storage.DumpNode
+[       OK ] Storage.DumpNode (2 ms)
+[ RUN      ] Storage.SetPolicy
+[       OK ] Storage.SetPolicy (0 ms)
+[ RUN      ] Storage.PinKdfRewrapsToActiveVersionAfterCorrectPin
+[       OK ] Storage.PinKdfRewrapsToActiveVersionAfterCorrectPin (2 ms)
+[ RUN      ] Storage.StorageRoundTrip
+[       OK ] Storage.StorageRoundTrip (4 ms)
+[ RUN      ] Storage.WritePolicyV1
+[       OK ] Storage.WritePolicyV1 (0 ms)
+[ RUN      ] Storage.BitcoinOnlyBandInitializationLeavesFlashUntouched
+[       OK ] Storage.BitcoinOnlyBandInitializationLeavesFlashUntouched (2 ms)
+[ RUN      ] Storage.AdvancedModeStaleBitIsCommittedOutOfRealFlash
+[       OK ] Storage.AdvancedModeStaleBitIsCommittedOutOfRealFlash (1 ms)
+[ RUN      ] Storage.Vuln1996
+[       OK ] Storage.Vuln1996 (3 ms)
+[ RUN      ] Storage.ResetCache
+[       OK ] Storage.ResetCache (0 ms)
+[ RUN      ] Storage.IsPinCorrect
+[       OK ] Storage.IsPinCorrect (1 ms)
+[ RUN      ] Storage.EncryptionClearsMigrationCipherSecrets
+[       OK ] Storage.EncryptionClearsMigrationCipherSecrets (0 ms)
+[ RUN      ] Storage.PinKdfV2FlagIsVersionedInV19
+[       OK ] Storage.PinKdfV2FlagIsVersionedInV19 (0 ms)
+[ RUN      ] Storage.EncryptionClearsAuthdataCipherSecrets
+[       OK ] Storage.EncryptionClearsAuthdataCipherSecrets (0 ms)
+[ RUN      ] Storage.ReadMeta
+[       OK ] Storage.ReadMeta (0 ms)
+[ RUN      ] Storage.IsWipeCodeCorrect
+[       OK ] Storage.IsWipeCodeCorrect (1 ms)
+[ RUN      ] Storage.Reset
+[       OK ] Storage.Reset (1 ms)
+[ RUN      ] Storage.ReadCacheV1
+[       OK ] Storage.ReadCacheV1 (0 ms)
+[ RUN      ] Storage.UpgradePolicies
+[       OK ] Storage.UpgradePolicies (0 ms)
+[ RUN      ] Storage.StorageUpgrade_Normal
+[       OK ] Storage.StorageUpgrade_Normal (4 ms)
+[ RUN      ] Storage.FutureBitcoinBandValuesNeverFallThroughToWipe
+[       OK ] Storage.FutureBitcoinBandValuesNeverFallThroughToWipe (0 ms)
+[ RUN      ] Storage.DecryptionClearsMigrationCipherSecrets
+[       OK ] Storage.DecryptionClearsMigrationCipherSecrets (0 ms)
+[ RUN      ] Storage.BitcoinOnlyBandRefused
+[       OK ] Storage.BitcoinOnlyBandRefused (0 ms)
+[ RUN      ] Storage.NoopSecMigrate
+[       OK ] Storage.NoopSecMigrate (0 ms)
+[ RUN      ] Storage.AdvancedModeIsNeverRestoredFromFlash
+[       OK ] Storage.AdvancedModeIsNeverRestoredFromFlash (1 ms)
+[ RUN      ] Storage.FutureBitcoinBandInitializationLeavesFlashUntouched
+[       OK ] Storage.FutureBitcoinBandInitializationLeavesFlashUntouched (1 ms)
+[ RUN      ] Storage.DecryptionClearsAuthdataCipherSecrets
+[       OK ] Storage.DecryptionClearsAuthdataCipherSecrets (0 ms)
+[ RUN      ] Storage.ReadStorageV1
+[       OK ] Storage.ReadStorageV1 (5 ms)
+[ RUN      ] Storage.ClearsignIdentityV18RecordsAreRetired
+[       OK ] Storage.ClearsignIdentityV18RecordsAreRetired (0 ms)
+[ RUN      ] Storage.VersionedReadersTerminateStoredStrings
+[       OK ] Storage.VersionedReadersTerminateStoredStrings (0 ms)
+[ RUN      ] Storage.PinUnlocksAfterRebootUnderV17
+[       OK ] Storage.PinUnlocksAfterRebootUnderV17 (1 ms)
+[ RUN      ] Storage.VersionedReadersRejectShortBuffersWithoutChangingState
+[       OK ] Storage.VersionedReadersRejectShortBuffersWithoutChangingState (0 ms)
+[ RUN      ] Storage.LegacyPolicyRecordCannotNameAdvancedMode
+[       OK ] Storage.LegacyPolicyRecordCannotNameAdvancedMode (1 ms)
+[----------] 38 tests from Storage (35 ms total)
+
+[----------] 9 tests from PassphraseTransition
+[ RUN      ] PassphraseTransition.FreshWalletSurvivesCommitAndReload
+[       OK ] PassphraseTransition.FreshWalletSurvivesCommitAndReload (8 ms)
+[ RUN      ] PassphraseTransition.ZeroCrcIsAValidCommittedRecord
+[       OK ] PassphraseTransition.ZeroCrcIsAValidCommittedRecord (6 ms)
+[ RUN      ] PassphraseTransition.CommitDetectsCorruptionOfFinalSecretByte
+[       OK ] PassphraseTransition.CommitDetectsCorruptionOfFinalSecretByte (4 ms)
+[ RUN      ] PassphraseTransition.StagingIsInertAndForeignCommitAborts
+[       OK ] PassphraseTransition.StagingIsInertAndForeignCommitAborts (4 ms)
+[ RUN      ] PassphraseTransition.UnchangedSettingPreservesConfirmedPassphrase
+[       OK ] PassphraseTransition.UnchangedSettingPreservesConfirmedPassphrase (6 ms)
+[ RUN      ] PassphraseTransition.DisableSelectsPlainWallet
+[       OK ] PassphraseTransition.DisableSelectsPlainWallet (6 ms)
+[ RUN      ] PassphraseTransition.SettingChangePreservesStagedSetup
+[       OK ] PassphraseTransition.SettingChangePreservesStagedSetup (4 ms)
+[ RUN      ] PassphraseTransition.EnableSelectsNewlyConfirmedWallet
+[       OK ] PassphraseTransition.EnableSelectsNewlyConfirmedWallet (6 ms)
+[ RUN      ] PassphraseTransition.SettingChangePreservesPinAuthorization
+[       OK ] PassphraseTransition.SettingChangePreservesPinAuthorization (3 ms)
+[----------] 9 tests from PassphraseTransition (47 ms total)
+
+[----------] 15 tests from AutoLockProgress
+[ RUN      ] AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked
+[       OK ] AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked (2 ms)
+[ RUN      ] AutoLockProgress.PingCannotRenewAStalledSigningDeadline
+[       OK ] AutoLockProgress.PingCannotRenewAStalledSigningDeadline (0 ms)
+[ RUN      ] AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot
+[       OK ] AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot (2 ms)
+[ RUN      ] AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession
+Emulator listening on UDP ports 11044 (main) and 11045 (debug)
+Failed to write socket: Invalid argument
+[       OK ] AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession (234 ms)
+[ RUN      ] AutoLockProgress.NewSigningRequestCannotCoexistWithRecovery
+[       OK ] AutoLockProgress.NewSigningRequestCannotCoexistWithRecovery (0 ms)
+[ RUN      ] AutoLockProgress.HostDrivenLayoutChangesDoNotRenewTheDeadline
+[       OK ] AutoLockProgress.HostDrivenLayoutChangesDoNotRenewTheDeadline (1 ms)
+[ RUN      ] AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession
+[       OK ] AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession (234 ms)
+[ RUN      ] AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot
+[       OK ] AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot (236 ms)
+[ RUN      ] AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot
+[       OK ] AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot (236 ms)
+[ RUN      ] AutoLockProgress.MalformedMultisigAddressCannotRenewTheDeadline
+[       OK ] AutoLockProgress.MalformedMultisigAddressCannotRenewTheDeadline (8 ms)
+[ RUN      ] AutoLockProgress.TopLevelBoundaryEndsSigningButIsNotALock
+[       OK ] AutoLockProgress.TopLevelBoundaryEndsSigningButIsNotALock (235 ms)
+[ RUN      ] AutoLockProgress.FeaturePollingAtHomeDoesNotRenewTheIdleDeadline
+[       OK ] AutoLockProgress.FeaturePollingAtHomeDoesNotRenewTheIdleDeadline (0 ms)
+[ RUN      ] AutoLockProgress.InvalidBitcoinAckEndsTheStream
+[       OK ] AutoLockProgress.InvalidBitcoinAckEndsTheStream (1 ms)
+[ RUN      ] AutoLockProgress.IncompleteFrameCannotKeepStalledSigningUnlocked
+[       OK ] AutoLockProgress.IncompleteFrameCannotKeepStalledSigningUnlocked (1 ms)
+[ RUN      ] AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline
+[       OK ] AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline (4 ms)
+[----------] 15 tests from AutoLockProgress (1198 ms total)
+
+[----------] Global test environment tear-down
+[==========] 62 tests from 3 test cases ran. (1282 ms total)
+[  PASSED  ] 62 tests.
+
+Repeating all tests (iteration 2) . . .
+
+Note: Google Test filter = PassphraseTransition.*:AutoLockProgress.*:Storage*.*
+Note: Randomizing tests' orders with a seed of 716 .
+[==========] Running 62 tests from 3 test cases.
+[----------] Global test environment set-up.
+[----------] 9 tests from PassphraseTransition
+[ RUN      ] PassphraseTransition.EnableSelectsNewlyConfirmedWallet
+[       OK ] PassphraseTransition.EnableSelectsNewlyConfirmedWallet (6 ms)
+[ RUN      ] PassphraseTransition.UnchangedSettingPreservesConfirmedPassphrase
+[       OK ] PassphraseTransition.UnchangedSettingPreservesConfirmedPassphrase (7 ms)
+[ RUN      ] PassphraseTransition.SettingChangePreservesPinAuthorization
+[       OK ] PassphraseTransition.SettingChangePreservesPinAuthorization (3 ms)
+[ RUN      ] PassphraseTransition.SettingChangePreservesStagedSetup
+[       OK ] PassphraseTransition.SettingChangePreservesStagedSetup (3 ms)
+[ RUN      ] PassphraseTransition.DisableSelectsPlainWallet
+[       OK ] PassphraseTransition.DisableSelectsPlainWallet (7 ms)
+[ RUN      ] PassphraseTransition.ZeroCrcIsAValidCommittedRecord
+[       OK ] PassphraseTransition.ZeroCrcIsAValidCommittedRecord (6 ms)
+[ RUN      ] PassphraseTransition.StagingIsInertAndForeignCommitAborts
+[       OK ] PassphraseTransition.StagingIsInertAndForeignCommitAborts (3 ms)
+[ RUN      ] PassphraseTransition.FreshWalletSurvivesCommitAndReload
+[       OK ] PassphraseTransition.FreshWalletSurvivesCommitAndReload (7 ms)
+[ RUN      ] PassphraseTransition.CommitDetectsCorruptionOfFinalSecretByte
+[       OK ] PassphraseTransition.CommitDetectsCorruptionOfFinalSecretByte (4 ms)
+[----------] 9 tests from PassphraseTransition (46 ms total)
+
+[----------] 15 tests from AutoLockProgress
+[ RUN      ] AutoLockProgress.IncompleteFrameCannotKeepStalledSigningUnlocked
+[       OK ] AutoLockProgress.IncompleteFrameCannotKeepStalledSigningUnlocked (1 ms)
+[ RUN      ] AutoLockProgress.FeaturePollingAtHomeDoesNotRenewTheIdleDeadline
+[       OK ] AutoLockProgress.FeaturePollingAtHomeDoesNotRenewTheIdleDeadline (1 ms)
+[ RUN      ] AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot
+[       OK ] AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot (0 ms)
+[ RUN      ] AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession
+[       OK ] AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession (234 ms)
+[ RUN      ] AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline
+[       OK ] AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline (4 ms)
+[ RUN      ] AutoLockProgress.MalformedMultisigAddressCannotRenewTheDeadline
+[       OK ] AutoLockProgress.MalformedMultisigAddressCannotRenewTheDeadline (7 ms)
+[ RUN      ] AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession
+[       OK ] AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession (235 ms)
+[ RUN      ] AutoLockProgress.InvalidBitcoinAckEndsTheStream
+[       OK ] AutoLockProgress.InvalidBitcoinAckEndsTheStream (1 ms)
+[ RUN      ] AutoLockProgress.PingCannotRenewAStalledSigningDeadline
+[       OK ] AutoLockProgress.PingCannotRenewAStalledSigningDeadline (1 ms)
+[ RUN      ] AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked
+[       OK ] AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked (1 ms)
+[ RUN      ] AutoLockProgress.HostDrivenLayoutChangesDoNotRenewTheDeadline
+[       OK ] AutoLockProgress.HostDrivenLayoutChangesDoNotRenewTheDeadline (0 ms)
+[ RUN      ] AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot
+[       OK ] AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot (235 ms)
+[ RUN      ] AutoLockProgress.TopLevelBoundaryEndsSigningButIsNotALock
+[       OK ] AutoLockProgress.TopLevelBoundaryEndsSigningButIsNotALock (235 ms)
+[ RUN      ] AutoLockProgress.NewSigningRequestCannotCoexistWithRecovery
+[       OK ] AutoLockProgress.NewSigningRequestCannotCoexistWithRecovery (0 ms)
+[ RUN      ] AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot
+[       OK ] AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot (235 ms)
+[----------] 15 tests from AutoLockProgress (1190 ms total)
+
+[----------] 38 tests from Storage
+[ RUN      ] Storage.ResetCache
+[       OK ] Storage.ResetCache (0 ms)
+[ RUN      ] Storage.ReadStorageV1
+[       OK ] Storage.ReadStorageV1 (4 ms)
+[ RUN      ] Storage.ClearsignIdentityV18RecordsAreRetired
+[       OK ] Storage.ClearsignIdentityV18RecordsAreRetired (0 ms)
+[ RUN      ] Storage.DumpNode
+[       OK ] Storage.DumpNode (0 ms)
+[ RUN      ] Storage.ReadCacheV1
+[       OK ] Storage.ReadCacheV1 (0 ms)
+[ RUN      ] Storage.ResetPolicies
+[       OK ] Storage.ResetPolicies (0 ms)
+[ RUN      ] Storage.ReadPolicyV1
+[       OK ] Storage.ReadPolicyV1 (0 ms)
+[ RUN      ] Storage.StorageUpgrade_Normal
+[       OK ] Storage.StorageUpgrade_Normal (3 ms)
+[ RUN      ] Storage.Vuln1996
+[       OK ] Storage.Vuln1996 (2 ms)
+[ RUN      ] Storage.BitcoinOnlyBandRefused
+[       OK ] Storage.BitcoinOnlyBandRefused (0 ms)
+[ RUN      ] Storage.PinUnlocksAfterRebootUnderV17
+[       OK ] Storage.PinUnlocksAfterRebootUnderV17 (1 ms)
+[ RUN      ] Storage.StorageRoundTrip
+[       OK ] Storage.StorageRoundTrip (3 ms)
+[ RUN      ] Storage.AdvancedModeIsNeverRestoredFromFlash
+[       OK ] Storage.AdvancedModeIsNeverRestoredFromFlash (0 ms)
+[ RUN      ] Storage.DecryptionClearsAuthdataCipherSecrets
+[       OK ] Storage.DecryptionClearsAuthdataCipherSecrets (0 ms)
+[ RUN      ] Storage.LegacyPolicyRecordCannotNameAdvancedMode
+[       OK ] Storage.LegacyPolicyRecordCannotNameAdvancedMode (1 ms)
+[ RUN      ] Storage.IsWipeCodeCorrect
+[       OK ] Storage.IsWipeCodeCorrect (0 ms)
+[ RUN      ] Storage.BitcoinOnlyBandInitializationLeavesFlashUntouched
+[       OK ] Storage.BitcoinOnlyBandInitializationLeavesFlashUntouched (1 ms)
+[ RUN      ] Storage.NoopSecMigrate
+[       OK ] Storage.NoopSecMigrate (0 ms)
+[ RUN      ] Storage.VersionedReadersTerminateStoredStrings
+[       OK ] Storage.VersionedReadersTerminateStoredStrings (0 ms)
+[ RUN      ] Storage.PinKdfRewrapsToActiveVersionAfterCorrectPin
+[       OK ] Storage.PinKdfRewrapsToActiveVersionAfterCorrectPin (1 ms)
+[ RUN      ] Storage.VersionedWritersRejectShortBuffersWithoutWriting
+[       OK ] Storage.VersionedWritersRejectShortBuffersWithoutWriting (1 ms)
+[ RUN      ] Storage.SessionClearDisarmsAdvancedMode
+[       OK ] Storage.SessionClearDisarmsAdvancedMode (0 ms)
+[ RUN      ] Storage.UpgradePolicies
+[       OK ] Storage.UpgradePolicies (0 ms)
+[ RUN      ] Storage.SetPolicy
+[       OK ] Storage.SetPolicy (0 ms)
+[ RUN      ] Storage.AdvancedModeStaleBitIsCommittedOutOfRealFlash
+[       OK ] Storage.AdvancedModeStaleBitIsCommittedOutOfRealFlash (1 ms)
+[ RUN      ] Storage.WritePolicyV1
+[       OK ] Storage.WritePolicyV1 (0 ms)
+[ RUN      ] Storage.PinKdfV2FlagIsVersionedInV19
+[       OK ] Storage.PinKdfV2FlagIsVersionedInV19 (0 ms)
+[ RUN      ] Storage.FutureBitcoinBandValuesNeverFallThroughToWipe
+[       OK ] Storage.FutureBitcoinBandValuesNeverFallThroughToWipe (0 ms)
+[ RUN      ] Storage.ReadMeta
+[       OK ] Storage.ReadMeta (0 ms)
+[ RUN      ] Storage.WriteMeta
+[       OK ] Storage.WriteMeta (0 ms)
+[ RUN      ] Storage.DecryptionClearsMigrationCipherSecrets
+[       OK ] Storage.DecryptionClearsMigrationCipherSecrets (0 ms)
+[ RUN      ] Storage.Reset
+[       OK ] Storage.Reset (2 ms)
+[ RUN      ] Storage.FutureBitcoinBandInitializationLeavesFlashUntouched
+[       OK ] Storage.FutureBitcoinBandInitializationLeavesFlashUntouched (1 ms)
+[ RUN      ] Storage.IsPinCorrect
+[       OK ] Storage.IsPinCorrect (0 ms)
+[ RUN      ] Storage.EncryptionClearsAuthdataCipherSecrets
+[       OK ] Storage.EncryptionClearsAuthdataCipherSecrets (0 ms)
+[ RUN      ] Storage.WriteCacheV1
+[       OK ] Storage.WriteCacheV1 (0 ms)
+[ RUN      ] Storage.VersionedReadersRejectShortBuffersWithoutChangingState
+[       OK ] Storage.VersionedReadersRejectShortBuffersWithoutChangingState (0 ms)
+[ RUN      ] Storage.EncryptionClearsMigrationCipherSecrets
+[       OK ] Storage.EncryptionClearsMigrationCipherSecrets (1 ms)
+[----------] 38 tests from Storage (22 ms total)
+
+[----------] Global test environment tear-down
+[==========] 62 tests from 3 test cases ran. (1258 ms total)
+[  PASSED  ] 62 tests.
+
+Repeating all tests (iteration 3) . . .
+
+Note: Google Test filter = PassphraseTransition.*:AutoLockProgress.*:Storage*.*
+Note: Randomizing tests' orders with a seed of 717 .
+[==========] Running 62 tests from 3 test cases.
+[----------] Global test environment set-up.
+[----------] 15 tests from AutoLockProgress
+[ RUN      ] AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked
+[       OK ] AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked (1 ms)
+[ RUN      ] AutoLockProgress.PingCannotRenewAStalledSigningDeadline
+[       OK ] AutoLockProgress.PingCannotRenewAStalledSigningDeadline (0 ms)
+[ RUN      ] AutoLockProgress.MalformedMultisigAddressCannotRenewTheDeadline
+[       OK ] AutoLockProgress.MalformedMultisigAddressCannotRenewTheDeadline (7 ms)
+[ RUN      ] AutoLockProgress.InvalidBitcoinAckEndsTheStream
+[       OK ] AutoLockProgress.InvalidBitcoinAckEndsTheStream (1 ms)
+[ RUN      ] AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession
+[       OK ] AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession (235 ms)
+[ RUN      ] AutoLockProgress.HostDrivenLayoutChangesDoNotRenewTheDeadline
+[       OK ] AutoLockProgress.HostDrivenLayoutChangesDoNotRenewTheDeadline (0 ms)
+[ RUN      ] AutoLockProgress.NewSigningRequestCannotCoexistWithRecovery
+[       OK ] AutoLockProgress.NewSigningRequestCannotCoexistWithRecovery (0 ms)
+[ RUN      ] AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession
+[       OK ] AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession (236 ms)
+[ RUN      ] AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot
+[       OK ] AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot (1 ms)
+[ RUN      ] AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot
+[       OK ] AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot (235 ms)
+[ RUN      ] AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline
+[       OK ] AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline (3 ms)
+[ RUN      ] AutoLockProgress.IncompleteFrameCannotKeepStalledSigningUnlocked
+[       OK ] AutoLockProgress.IncompleteFrameCannotKeepStalledSigningUnlocked (1 ms)
+[ RUN      ] AutoLockProgress.FeaturePollingAtHomeDoesNotRenewTheIdleDeadline
+[       OK ] AutoLockProgress.FeaturePollingAtHomeDoesNotRenewTheIdleDeadline (1 ms)
+[ RUN      ] AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot
+[       OK ] AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot (237 ms)
+[ RUN      ] AutoLockProgress.TopLevelBoundaryEndsSigningButIsNotALock
+[       OK ] AutoLockProgress.TopLevelBoundaryEndsSigningButIsNotALock (236 ms)
+[----------] 15 tests from AutoLockProgress (1195 ms total)
+
+[----------] 9 tests from PassphraseTransition
+[ RUN      ] PassphraseTransition.FreshWalletSurvivesCommitAndReload
+[       OK ] PassphraseTransition.FreshWalletSurvivesCommitAndReload (7 ms)
+[ RUN      ] PassphraseTransition.UnchangedSettingPreservesConfirmedPassphrase
+[       OK ] PassphraseTransition.UnchangedSettingPreservesConfirmedPassphrase (6 ms)
+[ RUN      ] PassphraseTransition.EnableSelectsNewlyConfirmedWallet
+[       OK ] PassphraseTransition.EnableSelectsNewlyConfirmedWallet (6 ms)
+[ RUN      ] PassphraseTransition.CommitDetectsCorruptionOfFinalSecretByte
+[       OK ] PassphraseTransition.CommitDetectsCorruptionOfFinalSecretByte (4 ms)
+[ RUN      ] PassphraseTransition.ZeroCrcIsAValidCommittedRecord
+[       OK ] PassphraseTransition.ZeroCrcIsAValidCommittedRecord (7 ms)
+[ RUN      ] PassphraseTransition.SettingChangePreservesStagedSetup
+[       OK ] PassphraseTransition.SettingChangePreservesStagedSetup (3 ms)
+[ RUN      ] PassphraseTransition.StagingIsInertAndForeignCommitAborts
+[       OK ] PassphraseTransition.StagingIsInertAndForeignCommitAborts (4 ms)
+[ RUN      ] PassphraseTransition.SettingChangePreservesPinAuthorization
+[       OK ] PassphraseTransition.SettingChangePreservesPinAuthorization (4 ms)
+[ RUN      ] PassphraseTransition.DisableSelectsPlainWallet
+[       OK ] PassphraseTransition.DisableSelectsPlainWallet (6 ms)
+[----------] 9 tests from PassphraseTransition (47 ms total)
+
+[----------] 38 tests from Storage
+[ RUN      ] Storage.AdvancedModeStaleBitIsCommittedOutOfRealFlash
+[       OK ] Storage.AdvancedModeStaleBitIsCommittedOutOfRealFlash (1 ms)
+[ RUN      ] Storage.DecryptionClearsMigrationCipherSecrets
+[       OK ] Storage.DecryptionClearsMigrationCipherSecrets (1 ms)
+[ RUN      ] Storage.WritePolicyV1
+[       OK ] Storage.WritePolicyV1 (0 ms)
+[ RUN      ] Storage.SessionClearDisarmsAdvancedMode
+[       OK ] Storage.SessionClearDisarmsAdvancedMode (0 ms)
+[ RUN      ] Storage.WriteMeta
+[       OK ] Storage.WriteMeta (0 ms)
+[ RUN      ] Storage.LegacyPolicyRecordCannotNameAdvancedMode
+[       OK ] Storage.LegacyPolicyRecordCannotNameAdvancedMode (0 ms)
+[ RUN      ] Storage.Vuln1996
+[       OK ] Storage.Vuln1996 (2 ms)
+[ RUN      ] Storage.StorageUpgrade_Normal
+[       OK ] Storage.StorageUpgrade_Normal (3 ms)
+[ RUN      ] Storage.BitcoinOnlyBandInitializationLeavesFlashUntouched
+[       OK ] Storage.BitcoinOnlyBandInitializationLeavesFlashUntouched (2 ms)
+[ RUN      ] Storage.ReadMeta
+[       OK ] Storage.ReadMeta (0 ms)
+[ RUN      ] Storage.DecryptionClearsAuthdataCipherSecrets
+[       OK ] Storage.DecryptionClearsAuthdataCipherSecrets (0 ms)
+[ RUN      ] Storage.NoopSecMigrate
+[       OK ] Storage.NoopSecMigrate (0 ms)
+[ RUN      ] Storage.DumpNode
+[       OK ] Storage.DumpNode (0 ms)
+[ RUN      ] Storage.ReadPolicyV1
+[       OK ] Storage.ReadPolicyV1 (0 ms)
+[ RUN      ] Storage.IsPinCorrect
+[       OK ] Storage.IsPinCorrect (0 ms)
+[ RUN      ] Storage.VersionedReadersTerminateStoredStrings
+[       OK ] Storage.VersionedReadersTerminateStoredStrings (1 ms)
+[ RUN      ] Storage.FutureBitcoinBandInitializationLeavesFlashUntouched
+[       OK ] Storage.FutureBitcoinBandInitializationLeavesFlashUntouched (1 ms)
+[ RUN      ] Storage.ReadStorageV1
+[       OK ] Storage.ReadStorageV1 (4 ms)
+[ RUN      ] Storage.PinKdfV2FlagIsVersionedInV19
+[       OK ] Storage.PinKdfV2FlagIsVersionedInV19 (0 ms)
+[ RUN      ] Storage.VersionedWritersRejectShortBuffersWithoutWriting
+[       OK ] Storage.VersionedWritersRejectShortBuffersWithoutWriting (0 ms)
+[ RUN      ] Storage.IsWipeCodeCorrect
+[       OK ] Storage.IsWipeCodeCorrect (1 ms)
+[ RUN      ] Storage.EncryptionClearsAuthdataCipherSecrets
+[       OK ] Storage.EncryptionClearsAuthdataCipherSecrets (0 ms)
+[ RUN      ] Storage.WriteCacheV1
+[       OK ] Storage.WriteCacheV1 (0 ms)
+[ RUN      ] Storage.EncryptionClearsMigrationCipherSecrets
+[       OK ] Storage.EncryptionClearsMigrationCipherSecrets (0 ms)
+[ RUN      ] Storage.FutureBitcoinBandValuesNeverFallThroughToWipe
+[       OK ] Storage.FutureBitcoinBandValuesNeverFallThroughToWipe (0 ms)
+[ RUN      ] Storage.UpgradePolicies
+[       OK ] Storage.UpgradePolicies (0 ms)
+[ RUN      ] Storage.ResetPolicies
+[       OK ] Storage.ResetPolicies (0 ms)
+[ RUN      ] Storage.ReadCacheV1
+[       OK ] Storage.ReadCacheV1 (0 ms)
+[ RUN      ] Storage.AdvancedModeIsNeverRestoredFromFlash
+[       OK ] Storage.AdvancedModeIsNeverRestoredFromFlash (0 ms)
+[ RUN      ] Storage.ResetCache
+[       OK ] Storage.ResetCache (0 ms)
+[ RUN      ] Storage.SetPolicy
+[       OK ] Storage.SetPolicy (0 ms)
+[ RUN      ] Storage.PinKdfRewrapsToActiveVersionAfterCorrectPin
+[       OK ] Storage.PinKdfRewrapsToActiveVersionAfterCorrectPin (1 ms)
+[ RUN      ] Storage.Reset
+[       OK ] Storage.Reset (1 ms)
+[ RUN      ] Storage.BitcoinOnlyBandRefused
+[       OK ] Storage.BitcoinOnlyBandRefused (0 ms)
+[ RUN      ] Storage.ClearsignIdentityV18RecordsAreRetired
+[       OK ] Storage.ClearsignIdentityV18RecordsAreRetired (0 ms)
+[ RUN      ] Storage.StorageRoundTrip
+[       OK ] Storage.StorageRoundTrip (3 ms)
+[ RUN      ] Storage.VersionedReadersRejectShortBuffersWithoutChangingState
+[       OK ] Storage.VersionedReadersRejectShortBuffersWithoutChangingState (0 ms)
+[ RUN      ] Storage.PinUnlocksAfterRebootUnderV17
+[       OK ] Storage.PinUnlocksAfterRebootUnderV17 (1 ms)
+[----------] 38 tests from Storage (22 ms total)
+
+[----------] Global test environment tear-down
+[==========] 62 tests from 3 test cases ran. (1264 ms total)
+[  PASSED  ] 62 tests.
