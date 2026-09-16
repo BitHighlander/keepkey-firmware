@@ -3,7 +3,6 @@ build
 .DS_Store
 .vscode/
 
-build-btconly-check/
 .claude/
 
 # cppcheck output (static-analysis writes this at repo root in CI)
