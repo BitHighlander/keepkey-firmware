@@ -208,6 +208,33 @@ owner and repeat only the affected patch/invariant verification after a fix.
 
 ## Spend a Copilot review only at a stable head
 
+### Produce a review-prediction packet
+
+Do not predict a clean external review from a green aggregate alone. Before
+spending the request, publish one compact packet that another reviewer can
+reproduce:
+
+- replay every prior inline and review-body finding against the frozen head,
+  with a fix, code-backed refutation, or explicit release-owner deferral;
+- run every changed test that touches process-global board, timer, FSM, flash,
+  storage, transport, or signer state alone in a fresh test process;
+- inspect direct board/timer/FSM initialization in tests and use the shared
+  bootstrap where repeated initialization can corrupt global state;
+- run the affected fixtures together in shuffled order after the isolated
+  runs, and preserve a failing mutation for each security guard where
+  practical;
+- record exact-head CI, canonical and audit-PR unresolved-thread counts, audit
+  projection tree/parent/manifest equalities, and the full-context build result;
+  and
+- state the remaining uncertainty. A reviewer may forecast zero findings only
+  when that list contains no known actionable defect or unverified claimed
+  closure.
+
+If an isolated test fails after passing in a suite, treat the fixture as
+invalid until its own setup is complete. A crash before the intended guard,
+an assertion on unrelated storage state, or success caused by a preceding test
+is not evidence for the production invariant.
+
 ### Preflight the review envelope
 
 Measure the live PR before requesting Copilot. Record additions, deletions,

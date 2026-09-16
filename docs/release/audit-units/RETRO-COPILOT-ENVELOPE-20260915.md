@@ -51,8 +51,8 @@ of initialization.
 The audit SOP now requires:
 
 - a 15,000-line and 120-file operating envelope for each Copilot audit PR;
-- linear, disjoint audit segments whose final tree hash equals the canonical
-  tree, with the synthetic head mapping recorded;
+- independent, disjoint full-context projections whose head tree equals the
+  canonical tree, with direct-parent and manifest equality recorded;
 - rejection of partial `X/Y`, Lite, or limit-refusal results as clean reviews;
 - boot-order, platform-build, minimum-tool, test-execution, and instrumentation
   closure assignments;
@@ -98,3 +98,20 @@ shows one disjoint manifest against a synthetic parent that already contains
 the rest of the canonical candidate. This preserves bounded review size without
 hiding cross-file context. A projection must also compile before a review is
 requested; tree equality alone is insufficient.
+
+## Follow-up: combined test success hid invalid fixtures
+
+The repair batch passed focused groups, but several new tests depended on
+board, timer, FSM, flash, or storage state established elsewhere in the same
+process. One malformed multisig test crashed in storage before reaching the
+guard it claimed to test. A second review also found that a broad session clear
+would have locked ordinary requests even though the stale-stream test passed.
+
+This exposed two prediction errors. We treated aggregate test success as proof
+that each regression reached its intended production boundary, and we treated
+a focused fix review as sufficient without replaying the broader session-state
+matrix. The pre-review packet now requires every global-state fixture to pass
+alone in a fresh process, then in shuffled company, with a control that makes
+the test fail for the expected reason. It also requires replay of every prior
+finding and an explicit residual-risk statement before forecasting a clean
+Copilot result.
