@@ -19,14 +19,16 @@ Usage:
 """
 
 import argparse
+import io
 import json
 import sys
 import tarfile
-
-from elftools.elf.elffile import ELFFile  # pip install pyelftools
+import tempfile
 
 
 def read_symbols(elf_path):
+    from elftools.elf.elffile import ELFFile  # pip install pyelftools
+
     with open(elf_path, "rb") as f:
         elf = ELFFile(f)
         symtab = elf.get_section_by_name(".symtab")
@@ -56,7 +58,9 @@ def largest_frames(su_tar_path, top_n=15):
             for line in data.splitlines():
                 parts = line.rsplit("\t", 2)
                 if len(parts) != 3:
-                    continue
+                    sys.exit("ERROR: malformed stack-usage record in "
+                             f"{member.name}: {line!r}; expected three "
+                             "tab-separated fields")
                 loc, size, qual = parts
                 try:
                     frames.append((int(size), loc.split("/")[-1], qual))
@@ -68,7 +72,36 @@ def largest_frames(su_tar_path, top_n=15):
     return frames[:top_n]
 
 
+def self_test():
+    def archive(line):
+        tmp = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
+        tmp.close()
+        payload = line.encode("utf-8")
+        with tarfile.open(tmp.name, "w") as tar:
+            info = tarfile.TarInfo("fixture.su")
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+        return tmp.name
+
+    valid = archive("src.c:1:1:bounded\t32\tdynamic,bounded\n")
+    assert largest_frames(valid) == [
+        (32, "src.c:1:1:bounded", "dynamic,bounded")]
+
+    malformed = archive("src.c:1:1:missing-fields\t32\n")
+    try:
+        largest_frames(malformed)
+    except SystemExit as exc:
+        assert "malformed stack-usage record" in str(exc)
+    else:
+        raise AssertionError("malformed stack-usage record was silently ignored")
+    print("self-test: ok")
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        self_test()
+        return
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--elf", required=True)
     ap.add_argument("--su-tar", required=True)

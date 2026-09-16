@@ -85,6 +85,10 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
 #define ETHEREUM_TX_TYPE_EIP_2930 1UL
 #define ETHEREUM_TX_TYPE_EIP_1559 2UL
 
+#if ETHEREUM_CONFIRM_BODY_SIZE != BODY_CHAR_MAX
+#error "Ethereum confirmation capacity must match the confirmation renderer"
+#endif
+
 static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
 /* Arbitrary calldata can continue across EthereumTxAck messages.  This second
@@ -193,6 +197,41 @@ bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
   bignum256 value;
   bn_from_bytes(value_bytes, value_size, &value);
   return ethereumFormatAmount(&value, token, msg->chain_id, buf, buflen);
+}
+
+bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
+                                      size_t buflen) {
+  if (msg == NULL || buf == NULL || buflen == 0 || !msg->has_to ||
+      msg->to.size != 20 || msg->data_initial_chunk.size != 68 ||
+      (!ethereum_isStandardERC20Transfer(msg) &&
+       !ethereum_isStandardERC20Approve(msg))) {
+    return false;
+  }
+
+  char contract[43] = "0x";
+  char counterparty[43] = "0x";
+  ethereum_address_checksum(msg->to.bytes, contract + 2, false, msg->chain_id);
+  ethereum_address_checksum(msg->data_initial_chunk.bytes + 16,
+                            counterparty + 2, false, msg->chain_id);
+
+  bignum256 raw_value;
+  bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
+  char amount[96];
+  if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
+                sizeof(amount)) == 0) {
+    return false;
+  }
+
+  const bool approve = ethereum_isStandardERC20Approve(msg);
+  const int written =
+      approve
+          ? snprintf(buf, buflen,
+                     "Unknown token contract %s\nAllow %s to withdraw up to "
+                     "%s?",
+                     contract, counterparty, amount)
+          : snprintf(buf, buflen, "Unknown token contract %s\nSend %s to %s?",
+                     contract, amount, counterparty);
+  return written >= 0 && (size_t)written < buflen;
 }
 
 static inline void hash_data(const uint8_t* buf, size_t size) {
@@ -780,7 +819,7 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
 
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
-  char confirm_body_message[121] = {0};
+  char confirm_body_message[ETHEREUM_CONFIRM_BODY_SIZE] = {0};
 
   ethereum_signing = true;
   data_hash_pending = false;
@@ -1009,8 +1048,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   if (needs_confirm) {
     if (token == UnknownToken) {
-      strlcpy(confirm_body_message, "Unknown token value",
-              sizeof(confirm_body_message));
+      if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
+                                            sizeof(confirm_body_message))) {
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Ethereum amount too large"));
+        ethereum_signing_abort();
+        return;
+      }
     } else if (token != NULL) {
       if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
                                    msg->data_initial_chunk.bytes + 36, 32,
