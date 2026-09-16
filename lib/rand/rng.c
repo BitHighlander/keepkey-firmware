@@ -64,6 +64,17 @@ static volatile bool rng_seed_error_seen = false;
 #ifndef EMULATOR
 static volatile bool rng_discard_next = false;
 #endif
+static uint32_t rng_last_word = 0;
+
+/* Preserve the STM32 continuous random-number generator test across every
+ * production draw path. A repeated 32-bit word must be discarded before it
+ * can reach the byte-level RCT/APT; a short seed buffer can otherwise return
+ * several copies of a stuck non-uniform word before the APT window trips. */
+static bool rng_word_is_fresh(uint32_t sample) {
+  if (sample == rng_last_word) return false;
+  rng_last_word = sample;
+  return true;
+}
 
 bool rng_seed_error_latched(void) { return rng_seed_error_seen; }
 
@@ -74,6 +85,7 @@ static bool rng_test_bounded_failure = false;
 void rng_test_power_on_reset(void) {
   rng_seed_error_seen = false;
   rng_test_bounded_failure = false;
+  rng_last_word = 0;
 }
 void rng_test_observe_transient_error(void) { rng_latch_seed_error(); }
 void rng_test_observe_persistent_error(void) {
@@ -132,15 +144,19 @@ bool random32_bounded(uint32_t* out, uint32_t max_polls) {
         rng_discard_next = false;
         continue;
       }
-      *out = sample;
-      return true;
+      if (rng_word_is_fresh(sample)) {
+        *out = sample;
+        return true;
+      }
     }
   }
   return false;
 #else
   (void)max_polls;
   if (rng_test_bounded_failure) return false;
-  *out = random32();
+  const uint32_t sample = random32();
+  if (!rng_word_is_fresh(sample)) return false;
+  *out = sample;
   return true;
 #endif
 }
@@ -148,14 +164,13 @@ bool random32_bounded(uint32_t* out, uint32_t max_polls) {
 uint32_t random32(void) {
 #ifndef EMULATOR
   uint32_t rng_samples = 0, rng_sr_img;
-  static uint32_t last = 0, new = 0;
 
-  while (new == last) {
+  for (;;) {
     /* Capture the RNG status register */
     rng_sr_img = RNG_SR;
     if ((rng_sr_img & (RNG_SR_SEIS | RNG_SR_CEIS)) == 0) {
       if (rng_sr_img & RNG_SR_DRDY) {
-        uint32_t sample = RNG_DR;
+        const uint32_t sample = RNG_DR;
         /* STM32F205 section 20.3.1 requires discarding the first sample after
          * enabling RNGEN. Do it in this loop so reset_rng() never recurses
          * through random32() when the peripheral remains unavailable. */
@@ -163,7 +178,7 @@ uint32_t random32(void) {
           rng_discard_next = false;
           continue;
         }
-        new = sample;
+        if (rng_word_is_fresh(sample)) return sample;
       }
     } else if ((rng_sr_img & (RNG_SR_SECS | RNG_SR_CECS)) == 0) {
       /* Reset RNG interrupt status bits (SECS, CECS errors no longer
@@ -180,8 +195,6 @@ uint32_t random32(void) {
       }
     }
   }
-  last = new;
-  return new;
 #else
   /* Emulator cryptography uses the existing host OS CSPRNG implementation,
    * which reads /dev/urandom and aborts on failure. */

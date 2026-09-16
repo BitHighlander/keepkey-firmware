@@ -566,6 +566,7 @@ jobs:
       - name: SRAM budget gate (${{ matrix.variant }})
         run: |
           pip install --quiet pyelftools
+          python3 tools/check_sram_budget.py --self-test
           # Mirror the report into the run summary. The gate has always
           # enforced correctly, but its numbers only ever existed in a job
           # log nobody opens, so the frame-arena fix had no reviewable
