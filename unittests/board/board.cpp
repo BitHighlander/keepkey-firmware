@@ -18,6 +18,7 @@ extern "C" {
 #include "keepkey/board/timer.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/reset.h"
 #include "trezor/crypto/bip39_english.h"
 }
 
@@ -234,7 +235,7 @@ TEST_F(BodyFits, ConstantPowerBodyFitsMeasuresFromItsOwnOrigin) {
   // has when it is drawn at CONSTANT_POWER_BODY_WIDTH. Measured, not assumed.
   static const char kWidestPackedPage[] =
       "  17.household  18.household\n  19.household  20.household\n"
-      "  21.household  22.household\n";
+      "  21.household  22.household";
   EXPECT_TRUE(confirm_body_fits(kWidestPackedPage, BODY_WIDTH))
       << "the packer measures at BODY_WIDTH, which is how this reaches the "
          "constant-power renderer as one page";
@@ -255,6 +256,36 @@ TEST_F(BodyFits, ConstantPowerBodyFitsMeasuresFromItsOwnOrigin) {
   // is not simply refusing everything.
   EXPECT_TRUE(confirm_body_fits("   1.abandon", BODY_WIDTH));
   EXPECT_TRUE(confirm_body_fits_constant_power("   1.abandon", BODY_WIDTH));
+}
+
+TEST_F(BodyFits, MnemonicGroupsKeepTheLegacyPackingWidth) {
+  static const char *const words[] = {
+      "twist",    "brief",    "demise", "quick",   "original", "express",
+      "chunk",    "gospel",   "pledge", "play",    "vacant",   "hover",
+      "script",   "crater",   "melt",   "lens",    "film",     "goose",
+      "decorate", "marriage", "helmet", "between", "hire",     "dust"};
+
+  const auto page_count = [](uint16_t width) {
+    std::string page;
+    size_t pages = 1;
+    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
+      char numbered[32];
+      snprintf(numbered, sizeof(numbered), (i & 1) ? "%zu.%s\n" : "%zu.%s",
+               i + 1, words[i]);
+      const std::string candidate = page + "   " + numbered;
+      if (calc_str_line(get_body_font(), candidate.c_str(), width) > 3) {
+        pages++;
+        page = std::string("   ") + numbered;
+      } else {
+        page = candidate;
+      }
+    }
+    return pages;
+  };
+
+  EXPECT_LE(page_count(BODY_WIDTH), static_cast<size_t>(MAX_PAGES));
+  EXPECT_GT(page_count(CONSTANT_POWER_BODY_WIDTH),
+            static_cast<size_t>(MAX_PAGES));
 }
 
 // Regression: calc_str_line() accumulated into a uint8_t while returning
@@ -312,21 +343,18 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
     if (fits) {
       EXPECT_TRUE(confirm_body_fits(("HEAD" + std::string(pad, ' ')).c_str(),
                                     BODY_WIDTH))
-          << "dropping the tail made a fitting body stop fitting, pad="
-          << pad;
+          << "dropping the tail made a fitting body stop fitting, pad=" << pad;
     } else {
       EXPECT_FALSE(confirm_body_fits(padded.c_str(), BODY_WIDTH_WITH_ICON))
-          << "less room turned a clipped body into a fitting one, pad="
-          << pad;
+          << "less room turned a clipped body into a fitting one, pad=" << pad;
     }
   }
 
   // A body of pure newlines draws nothing at all. The body starts on row 24
-  // and each newline steps 14, so the third lands the cursor at 66 -- past
-  // the last row that can hold a 10px glyph. Up to and including that third
-  // newline every character is still consumed, and nothing has been dropped,
-  // so the body is blank but complete.
-  EXPECT_TRUE(confirm_body_fits("\n\n\n", BODY_WIDTH));
+  // and each newline steps 14, so the third requests row 66 -- past the last
+  // row that can hold a 10px glyph. That newline is not displayed and must be
+  // rejected even when no printable character follows it.
+  EXPECT_FALSE(confirm_body_fits("\n\n\n", BODY_WIDTH));
 
   // From the fourth onwards there are characters the screen cannot reach. A
   // completeness test that only asked "did we walk to the NUL" would call
@@ -336,9 +364,8 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
         << n << " newlines strand characters off screen";
   }
 
-  // A trailing newline after a body that fits is harmless: there is nothing
-  // after it to lose.
-  EXPECT_TRUE(confirm_body_fits("one\ntwo\nthree\n", BODY_WIDTH));
+  // A trailing newline that requests a clipped row is itself undisplayed.
+  EXPECT_FALSE(confirm_body_fits("one\ntwo\nthree\n", BODY_WIDTH));
 
   // Narrowing the canvas must never turn a clipped body into a fitting one.
   const std::string wide(200, 'W');
@@ -354,18 +381,18 @@ TEST_F(BodyFits, PagerCanExceedItsOwnPageCap) {
   //
   // That bound is reachable, which is the point of this test: page_take() sizes
   // a page by the largest prefix confirm_body_fits() accepts, and for newlines
-  // that is three -- they consume rows without drawing a glyph. A body filling
-  // BODY_CHAR_MAX therefore needs ceil(351 / 3) = 117 pages.
+  // that is two -- the third requests an off-screen row. A body filling
+  // BODY_CHAR_MAX therefore needs ceil(351 / 2) = 176 pages.
   //
   // The refusal itself cannot be asserted here: page_body_confirm() is static
   // and reaching it means driving real confirm screens, which this binary has
   // no canvas or input for. What is asserted is the arithmetic the cap depends
   // on, so that a future change to BODY_ROWS or BODY_CHAR_MAX that quietly
   // moves the bound fails here rather than in the field.
-  EXPECT_TRUE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
-  EXPECT_FALSE(confirm_body_fits(std::string(4, '\n').c_str(), BODY_WIDTH));
+  EXPECT_TRUE(confirm_body_fits(std::string(2, '\n').c_str(), BODY_WIDTH));
+  EXPECT_FALSE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
 
-  const size_t chars_per_page = 3;
+  const size_t chars_per_page = 2;
   const size_t worst_case_body = BODY_CHAR_MAX - 1;
   const size_t pages_needed =
       (worst_case_body + chars_per_page - 1) / chars_per_page;
@@ -424,25 +451,24 @@ TEST(Board, BaseToPrecisionKeepsEveryDigit) {
 
   // Fewer digits than the precision: zero-padded fraction, no digit lost.
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0,
-            base_to_precision(out, (const uint8_t *)"1", sizeof(out), 1, 6));
+  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"1", sizeof(out), 1, 6));
   EXPECT_EQ(std::string((char *)out), "0.000001");
 
   // Exactly at the boundary.
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"123456", sizeof(out),
-                                 6, 6));
+  ASSERT_EQ(
+      0, base_to_precision(out, (const uint8_t *)"123456", sizeof(out), 6, 6));
   EXPECT_EQ(std::string((char *)out), "0.123456");
 
   // One past the boundary: the last digit must survive.
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"1234567", sizeof(out),
-                                 7, 6));
+  ASSERT_EQ(
+      0, base_to_precision(out, (const uint8_t *)"1234567", sizeof(out), 7, 6));
   EXPECT_EQ(std::string((char *)out), "1.234567");
 
   memset(out, 0xAA, sizeof(out));
-  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"100000000",
-                                 sizeof(out), 9, 6));
+  ASSERT_EQ(0, base_to_precision(out, (const uint8_t *)"100000000", sizeof(out),
+                                 9, 6));
   EXPECT_EQ(std::string((char *)out), "100.000000");
 }
 
@@ -468,7 +494,7 @@ TEST(Board, BaseToPrecisionRespectsCapacity) {
 #ifdef EMULATOR
 TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
   std::vector<uint8_t> flash(FLASH_TOTAL_SIZE, 0x42);
-  uint8_t* previous = emulator_flash_base;
+  uint8_t *previous = emulator_flash_base;
   emulator_flash_base = flash.data();
   flash_erase_word(FLASH_STORAGE2);
   emulator_flash_base = previous;
@@ -491,10 +517,11 @@ TEST_F(BodyFits, EveryBip39WordPairFitsANarrowSubpage) {
   char row[64];
   for (size_t a = 0; a < 2048; a++) {
     for (size_t b = 0; b < 2048; b++) {
-      snprintf(row, sizeof(row), "   23.%s   24.%s\n", wordlist[a], wordlist[b]);
+      snprintf(row, sizeof(row), "   23.%s   24.%s\n", wordlist[a],
+               wordlist[b]);
       ASSERT_EQ(strlen(row), confirm_constant_power_subpage_take(row)) << row;
-      ASSERT_TRUE(confirm_body_fits_constant_power(row,
-                                                  CONSTANT_POWER_BODY_WIDTH))
+      ASSERT_TRUE(
+          confirm_body_fits_constant_power(row, CONSTANT_POWER_BODY_WIDTH))
           << row;
     }
   }
