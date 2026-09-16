@@ -68,3 +68,17 @@ dispositions, affected invariants have been re-audited, exact-head CI is green,
 and the candidate is represented by bounded audit segments with complete path
 coverage. The current green release CI is necessary evidence, but it does not
 close these review findings.
+
+## Follow-up: canonical backlog omitted from handoff
+
+The first remediation handoff listed the seven findings from the fork audit PR
+but omitted five unresolved threads already present on canonical upstream PR
+#476. Three were independent P1s: the tag workflow skipped the Pallas
+disassembly gate, storage marker failure forced a destructive reboot path, and
+hardware RNG recovery could recurse indefinitely. Work had started waiting for
+CI before a direct GraphQL thread inventory exposed them.
+
+This was a provenance failure. A summarized ledger from one PR cannot stand in
+for querying every review channel on the canonical PR. The SOP now requires a
+direct canonical-plus-audit inventory at discovery, in every re-audit handoff,
+and again after a head replacement.

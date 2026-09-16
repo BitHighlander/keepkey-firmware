@@ -49,6 +49,12 @@ reproduction, disposition, fix commit or refutation evidence, test, and reply
 URL. Do not collapse similar comments until each original ID has a traceable
 answer. Treat model findings as hypotheses until reproduced or refuted in code.
 
+Query review threads and review bodies directly on the **canonical upstream
+release PR** and every fork audit PR. Do not use a handoff summary as the
+backlog source. Record the canonical PR's unresolved-thread count and latest
+review ID in the handoff, then repeat the query after each head replacement;
+an audit PR can be clean while the upstream PR still holds actionable findings.
+
 Use `gpt-6-astra` with high reasoning effort for a **bounded, independent**
 review. Divide the changed runtime files by subsystem: storage and migration;
 signing and cryptography; transport, protocol and host pins; display and
@@ -194,8 +200,9 @@ head or CI run, label it historical and require a new exact-head receipt.
 
 Prepare a dated re-audit handoff on the same PR or linked documentation PR.
 Include the frozen refs, exact-head CI links, prior review IDs and thread
-dispositions, test limitations, known blockers, assignment/coverage matrix,
-and the next Copilot entry criteria. Update it with independent Astra results
+dispositions from both the canonical and audit PRs, their independently queried
+unresolved-thread counts, test limitations, known blockers,
+assignment/coverage matrix, and the next Copilot entry criteria. Update it with independent Astra results
 before calling the round complete. If a re-audit finds a new issue, assign an
 owner and repeat only the affected patch/invariant verification after a fix.
 
