@@ -242,10 +242,20 @@ Run these searches as assignments, then inspect every result in context:
 | A cleanup is copied between releases | Compare declaration counts, feature macros, dispatch maps and callers on both heads before applying it |
 | A test targets a helper predicate | Add a production-boundary case and mutate/remove the production guard to prove sensitivity |
 | A handler borrows shared confidential scratch | Enumerate every exit after acquisition and use the scratch owner's public scrub API; reject const-casts or alias-based clearing that duplicate ownership knowledge in callers |
+| A public protocol integer is narrowed | Range-check in the original protocol width before any cast; add a value such as 256 that aliases a valid narrow slot after truncation |
+| A runtime trust decision is displayed | Repeat the trust tier at the final signing screen; a warning shown only when metadata is loaded is not signing-time consent |
+| A clear-sign decoder accepts dynamic calldata | Parse and display every execution-affecting tail element, or route the whole request to raw-calldata review |
+| A decoder argument index is repaired | Write the complete ABI word map beside the fix and audit every sibling overload. Compile success cannot detect a valid pointer to the wrong 32-byte word; reject any index greater than or equal to the matched arity |
 | A candidate adds a user-visible failure string | Apply the repository's translation/localization convention at the introduction site, including strings embedded in guard macros |
 | A dependency gitlink changes | Verify the live tracking branch contains the pin and update `.gitmodules`, PR provenance, generated reports and candidate documents together |
 | A synthetic emulator wakeup changes | Test queued input deterministically and exercise a real stop/start/restart lifecycle |
 | An emulator test selects behavior with a compile definition | Trace that definition through every linked translation unit; a target-level define does not recompile a separately linked library, so inspect the final binary for the intended backend symbols and forbidden socket/backend imports |
+
+Run the repository's exact static-analysis command locally after the final
+preprocessor and control-flow edit. A compiler build is not a substitute:
+cppcheck evaluates alternate macro configurations and can expose unreachable
+branches that the selected build removes. Record the command and exit status
+in the prediction packet.
 
 Before publishing the patch, reconcile the changed-file ledger with the
 actual PR diff again. A named reviewer must account for every runtime, test,
