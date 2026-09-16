@@ -155,6 +155,7 @@ jobs:
       - name: SRAM budget gate (${{ matrix.variant }})
         run: |
           pip install --quiet pyelftools
+          python3 tools/check_sram_budget.py --self-test
           python3 tools/check_sram_budget.py \
             --elf release/firmware.keepkey.elf \
             --su-tar release/stack-usage.tgz \
