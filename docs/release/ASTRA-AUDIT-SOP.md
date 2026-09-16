@@ -216,15 +216,24 @@ is 20,000 changed lines; use 15,000 lines and 120 files as the operating limit
 so generated statistics and late cleanup do not cross the service boundary.
 Documentation cleanup does not make an oversized runtime review complete.
 
-When a candidate exceeds either operating limit, create a linear set of audit
-PRs whose diffs are disjoint and whose final tree hash equals the canonical
-candidate tree. Each audit PR targets the preceding audit ref, stays under both limits,
-and carries a machine-generated path manifest. The union of the manifests must
-equal the canonical base-to-head diff with no missing or repeated path. Review
-every segment; a review of the last segment alone is not a whole-candidate
-review. Record the synthetic audit head-to-canonical tree equality explicitly;
-commit OIDs differ because the audit stack has different history. Keep the
-canonical release PR as one concise release commit.
+When a candidate exceeds either operating limit, create independent,
+full-context audit projections with disjoint diffs. For each segment, build an
+audit base whose tree equals the complete canonical candidate except that the
+segment's manifest paths are restored to the canonical base. Its child audit
+head restores those paths to the candidate. The PR therefore shows only the
+bounded segment while every header, implementation, build target, and test
+outside that segment is already present for analysis and compilation. Do not
+use an alphabetical linear stack: early segments omit later counterparts and
+turn dependency-order artifacts into false API and build findings.
+
+Each audit PR stays under both limits and carries a machine-generated path
+manifest. The union of the manifests must equal the canonical base-to-head
+diff with no missing or repeated path. Every audit head tree must equal the
+canonical candidate tree; every audit base-to-head diff must equal its manifest
+and the base must be the audit head's direct parent. Review every segment; a
+review of one projection is not a whole-candidate review. Record all tree and
+manifest equalities explicitly. Keep the canonical release PR as one concise
+release commit.
 
 Copilot's result must state that it reviewed the full segment. A response that
 reports `Files reviewed: X/Y` with `X < Y`, Lite coverage, a line-limit refusal,

@@ -82,3 +82,19 @@ This was a provenance failure. A summarized ledger from one PR cannot stand in
 for querying every review channel on the canonical PR. The SOP now requires a
 direct canonical-plus-audit inventory at discovery, in every re-audit handoff,
 and again after a head replacement.
+
+## Follow-up: segmented review removed its own context
+
+The first bounded 7.15 audit used an alphabetical linear stack. Segment 1
+contained public headers and top-level CMake changes while their implementations
+and target definitions appeared only in later segments. Copilot consequently
+reported dozens of missing definitions, conflicting APIs, and undefined targets
+that were present in the canonical tree and had already built in full and
+Bitcoin-only CI. Those comments were useful as evidence that the projection
+was invalid, but they did not provide an efficient audit of the release.
+
+The envelope rule now requires independent full-context projections. Each PR
+shows one disjoint manifest against a synthetic parent that already contains
+the rest of the canonical candidate. This preserves bounded review size without
+hiding cross-file context. A projection must also compile before a review is
+requested; tree equality alone is insufficient.
