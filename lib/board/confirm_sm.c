@@ -472,8 +472,8 @@ static bool page_body_confirm(const char* request_title, const char* body,
    * unread left `pages` at 100 while the body ran on, and the render loop then
    * treats page 100 as the last one -- so the hold that means "I approve this"
    * lands on a prefix, with the tail neither shown nor accounted for. A body of
-   * 351 newlines reaches that: confirm_body_fits() accepts three newlines and
-   * rejects four, so page_take() returns 3 and the body needs 117 pages.
+   * 351 newlines reaches that: confirm_body_fits() accepts two newlines and
+   * rejects three, so page_take() returns 2 and the body needs 176 pages.
    *
    * Returning false instead is not a lost capability. BODY_CHAR_MAX is 352, and
    * a body needing more than 99 pages is one averaging under four characters a
@@ -594,12 +594,9 @@ static bool confirm_helper(const char* request_title, const char* request_body,
    * duplicated words. That is a protocol change for every host, not just a test
    * artifact, and it silently corrupts the thing the user is writing down.
    *
-   * So the measurement stays available and honest -- see
-   * confirm_body_fits_constant_power(), and the test that pins a real clipped
-   * backup page -- but it does not silently change the flow. Fixing the
-   * clipping properly means packing reset.c's pages against the width they are
-   * actually drawn at, which needs MAX_PAGES raised (~3.7 KB more static SRAM)
-   * and on-device OLED verification. Tracked in #519. */
+   * So the generic helper does not silently change the flow. Seed backup and
+   * BIP-85 use confirm_constant_power_paged(), which splits a logical word
+   * group locally while preserving its single ButtonRequest. */
   const bool render_incomplete =
       (layout_notification_func == &layout_standard_notification) &&
       !confirm_body_fits(request_body, body_width);

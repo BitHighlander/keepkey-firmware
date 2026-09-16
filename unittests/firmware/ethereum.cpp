@@ -115,9 +115,36 @@ TEST(Ethereum, UnknownErc20CannotBePresentedAsAReviewedTransfer) {
   msg.data_initial_chunk.size = 68;
   const uint8_t selector[4] = {0xa9, 0x05, 0x9c, 0xbb};
   memcpy(msg.data_initial_chunk.bytes, selector, sizeof(selector));
+  memset(msg.data_initial_chunk.bytes + 16, 0x24, 20);
+  msg.data_initial_chunk.bytes[67] = 1;
   EXPECT_TRUE(ethereum_isStandardERC20Transfer(&msg));
-  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered,
-                                            sizeof(rendered)));
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+
+  char first_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, first_review,
+                                               sizeof(first_review)));
+  EXPECT_NE(std::string::npos,
+            std::string(first_review).find("Unknown token contract 0x"));
+  EXPECT_NE(std::string::npos,
+            std::string(first_review).find("Send 1 base units to 0x"));
+
+  /* Contract substitution must change what the user sees even when calldata,
+   * fee and every later data-hash screen are identical. */
+  memset(msg.to.bytes, 0x43, msg.to.size);
+  char substituted_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, substituted_review,
+                                               sizeof(substituted_review)));
+  EXPECT_STRNE(first_review, substituted_review);
+
+  const uint8_t approve_selector[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  memcpy(msg.data_initial_chunk.bytes, approve_selector,
+         sizeof(approve_selector));
+  char approval_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, approval_review,
+                                               sizeof(approval_review)));
+  EXPECT_NE(std::string::npos, std::string(approval_review).find("Allow 0x"));
+  EXPECT_NE(std::string::npos,
+            std::string(approval_review).find("withdraw up to 1 base units"));
 }
 
 TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
