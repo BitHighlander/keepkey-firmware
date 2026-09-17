@@ -183,6 +183,15 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
                                         size_t data_len, const uint8_t* sig,
                                         size_t sig_len);
 
+/* Verify an attestation only when `pubkey` exactly matches a runtime-loaded
+ * signer. This is for protocols whose signed envelope carries the delegate
+ * key rather than a keyring slot (ERC-7730). AdvancedMode is enforced here,
+ * and the user-approved runtime alias is returned on success. */
+bool signed_metadata_verify_runtime_attestation_for_pubkey(
+    const uint8_t pubkey[33], const uint8_t* data, size_t data_len,
+    const uint8_t* sig, size_t sig_len,
+    char out_alias[METADATA_ALIAS_MAX_LEN + 1]);
+
 /* Fingerprint (hex of sha256(pubkey)[0:4]) of the signer loaded/pinned in
  * `key_id`, written NUL-terminated to `out`. Returns false if no signer is
  * present. Lets non-EVM callers disambiguate signers (aliases are not unique)
