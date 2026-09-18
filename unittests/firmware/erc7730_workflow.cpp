@@ -49,7 +49,11 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 }
 
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
-  EXPECT_LE(sizeof(Erc7730Workflow), 4096u);
+  /* Fixed cap, independent of any descriptor. 4096 -> 4112 on the 64-bit host
+   * when the calldata stream started holding its Erc7730AbiProgram by value
+   * (use-after-return fix): +8 host bytes, +4 on ARM. The device budget is the
+   * linker's 16 KiB stack-reserve assert, not this number. */
+  EXPECT_LE(sizeof(Erc7730Workflow), 4112u);
 }
 
 TEST(Erc7730Workflow, ResolvesAndBoundsNestedArrayDisplayPaths) {
