@@ -146,7 +146,11 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
           s->capture.node = f->node;
           s->capture_found = true;
         }
-        if (s->elements > ERC7730_ABI_MAX_ARRAY_ELEMENTS - n->array_length)
+        /* Check the length first: with array_length > MAX the subtraction
+         * goes negative and, converted to unsigned, would skip the limit. */
+        if (n->array_length > ERC7730_ABI_MAX_ARRAY_ELEMENTS ||
+            s->elements >
+                (uint32_t)(ERC7730_ABI_MAX_ARRAY_ELEMENTS - n->array_length))
           return ERC7730_ABI_RESOURCE_LIMIT;
         s->elements += n->array_length;
         Erc7730AbiResult r = make_sequence(s, f, n->first_child,
