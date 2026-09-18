@@ -566,7 +566,7 @@ bool erc7730_workflow_execute_embedded_calldata(Erc7730Workflow* workflow,
           ERC7730_ABI_OK)
     return false;
   if (path) {
-    int32_t components[ERC7730_ABI_MAX_DEPTH];
+    int32_t components[ERC7730_ABI_MAX_DEPTH] = {0};
     for (uint8_t i = 0; i < path->step_count; i++) {
       if (path->steps[i].opcode != 1) {
         memzero(components, sizeof(components));
@@ -1279,19 +1279,20 @@ bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,
     return true;
   }
   if (!erc7730_abi_stream_captured(&workflow->calldata, &capture)) return false;
-  Erc7730AbiNode container_node;
+  Erc7730AbiNode container_node[1];
   if (workflow->container_source != 0) {
-    memzero(&container_node, sizeof(container_node));
+    memzero(container_node, sizeof(container_node));
     if (workflow->container_source <= 2)
-      container_node.kind = ERC7730_ABI_ADDRESS;
+      container_node[0].kind = ERC7730_ABI_ADDRESS;
     else if (workflow->container_source <= 4)
-      container_node.kind = ERC7730_ABI_UINT;
+      container_node[0].kind = ERC7730_ABI_UINT;
     else {
-      container_node.kind = ERC7730_ABI_FIXED_BYTES;
-      container_node.size = 32;
+      container_node[0].kind = ERC7730_ABI_FIXED_BYTES;
+      container_node[0].size = 32;
     }
-    if (container_node.kind == ERC7730_ABI_UINT) container_node.size = 256;
-    program.nodes = &container_node;
+    if (container_node[0].kind == ERC7730_ABI_UINT)
+      container_node[0].size = 256;
+    program.nodes = container_node;
     program.node_count = 1;
     program.root = 0;
     capture.node = 0;

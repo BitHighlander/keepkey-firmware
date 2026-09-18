@@ -95,7 +95,7 @@ static void pop_frame(Erc7730AbiStream* s) {
   s->depth--;
 }
 
-static Erc7730AbiResult make_sequence(Erc7730AbiStream* s,
+static Erc7730AbiResult make_sequence(const Erc7730AbiStream* s,
                                       Erc7730AbiStreamFrame* f,
                                       uint16_t first_child,
                                       uint16_t child_count, bool repeated,

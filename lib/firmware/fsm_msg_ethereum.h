@@ -229,7 +229,7 @@ static void continue_ethereum_sign_tx(EthereumSignTx* msg) {
 }
 
 static bool select_erc7730_token_metadata(Erc7730Workflow* workflow,
-                                          EthereumSignTx* tx) {
+                                          const EthereumSignTx* tx) {
   uint64_t chain_id = 0;
   if (workflow->condition_literals[48]) {
     for (size_t i = 40; i < 48; i++)
@@ -550,8 +550,6 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
       return;
     }
     memzero(formatted, sizeof(formatted));
-  }
-  if (had_field) {
     if (!erc7730_workflow_advance_display(workflow)) {
       if (typed_data) eip712_stream_abort();
       erc7730_workflow_abort(workflow);
@@ -1578,11 +1576,11 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     if (workflow->display_stage == ERC7730_DISPLAY_CONDITION_LITERAL) {
-      bool complete = false;
+      bool literal_complete = false;
       bool visible = false;
       uint16_t next_literal = UINT16_MAX;
       if (!erc7730_workflow_observe_membership_literal(
-              workflow, &literal, &complete, &visible, &next_literal)) {
+              workflow, &literal, &literal_complete, &visible, &next_literal)) {
         memzero(&literal, sizeof(literal));
         erc7730_workflow_abort(workflow);
         fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1591,7 +1589,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         return;
       }
       memzero(&literal, sizeof(literal));
-      if (!complete) {
+      if (!literal_complete) {
         if (!erc7730_workflow_select_literal(workflow, next_literal)) {
           erc7730_workflow_abort(workflow);
           fsm_sendFailure(FailureType_Failure_SyntaxError,
