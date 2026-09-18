@@ -361,6 +361,15 @@ static int ethereum_is_canonic(uint8_t v, uint8_t signature[64]) {
   return (v & 2) == 0;
 }
 
+/* #821: the calldata signed must be the calldata the ERC-7730 review decoded.
+ * Only meaningful for a reviewed (COMPLETE) calldata flow; otherwise true. */
+static bool erc7730_signed_calldata_ok(void) {
+  Erc7730Workflow* erc7730 = erc7730_workflow_state();
+  if (erc7730->phase != ERC7730_WORKFLOW_COMPLETE || erc7730->typed_data)
+    return true;
+  return erc7730_workflow_signing_calldata_verify(erc7730);
+}
+
 static void send_signature(void) {
   uint8_t hash[32], sig[64];
   uint8_t v;
@@ -1240,6 +1249,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_signing_abort();
     return;
   }
+  if (erc7730->phase == ERC7730_WORKFLOW_COMPLETE && !erc7730->typed_data)
+    erc7730_workflow_signing_calldata_begin(erc7730);
+
+  if (data_left == 0 && !erc7730_signed_calldata_ok()) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Signed calldata differs from reviewed calldata"));
+    ethereum_signing_abort();
+    return;
+  }
 
   if (data_left == 0 && data_hash_pending && !confirm_ethereum_data_hash()) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1289,9 +1307,19 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
     ethereum_signing_abort();
     return;
   }
+  if (erc7730->phase == ERC7730_WORKFLOW_COMPLETE && !erc7730->typed_data)
+    erc7730_workflow_signing_calldata_chunk(erc7730, tx->data_chunk.bytes,
+                                            tx->data_chunk.size);
   hash_data(tx->data_chunk.bytes, tx->data_chunk.size);
 
   data_left -= tx->data_chunk.size;
+
+  if (data_left == 0 && !erc7730_signed_calldata_ok()) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Signed calldata differs from reviewed calldata"));
+    ethereum_signing_abort();
+    return;
+  }
 
   if (erc7730->phase == ERC7730_WORKFLOW_CALLDATA && data_left == 0 &&
       erc7730_workflow_calldata_finish(erc7730) != ERC7730_ABI_OK) {
