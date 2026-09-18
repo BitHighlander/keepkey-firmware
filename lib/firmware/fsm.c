@@ -245,6 +245,31 @@ static const MessagesMap_t MessagesMap[] = {
 
 #include "messagemap.def"
 
+/* MessagesMap is dense (see messages.h), so a duplicated message ID no longer
+ * collides by construction. Duplicate case labels fail the build instead. */
+#undef MSG_IN
+#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef MSG_OUT
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef RAW_IN
+#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef DEBUG_IN
+#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef DEBUG_OUT
+#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
+  switch (id) {
+#include "messagemap.def"
+    default:
+      break;
+  }
+}
+
 /* msg_resp is sized to the largest registered response instead of
  * MAX_FRAME_SIZE, which over-allocated ~4 KiB the 16 KiB stack reserve needs.
  * RESP_INIT static-asserts that every writer fits, so a response outgrowing
