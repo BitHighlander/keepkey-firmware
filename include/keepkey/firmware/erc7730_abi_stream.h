@@ -43,7 +43,10 @@ typedef struct {
 } Erc7730AbiCapture;
 
 typedef struct {
-  const Erc7730AbiProgram* program;
+  /* Held by value: the top-level stream is fed by later TxAck messages, long
+   * after the caller that began it (and any Erc7730AbiProgram on its stack)
+   * has returned. The node array it points at lives in the workflow loader. */
+  Erc7730AbiProgram program;
   Erc7730AbiStreamFrame frames[ERC7730_ABI_MAX_DEPTH];
   Erc7730AbiPending pending[ERC7730_ABI_STREAM_MAX_PENDING];
   uint8_t word[32];

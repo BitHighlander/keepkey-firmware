@@ -5,6 +5,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -61,6 +62,33 @@ TEST(Erc7730AbiStream, AcceptsAtomicArgumentsAtEveryChunkBoundary) {
 
   encoded[0] = 1;
   EXPECT_EQ(stream(&program, encoded, 13), ERC7730_ABI_NON_CANONICAL);
+}
+
+/* The top-level calldata stream is begun in one handler and fed by later
+ * TxAck messages, after the Erc7730AbiProgram the caller passed has gone out
+ * of scope. The stream must not depend on that object: clobber it after
+ * begin() and the feed must still walk the real type tree. */
+TEST(Erc7730AbiStream, OutlivesTheProgramPassedToBegin) {
+  const Erc7730AbiNode nodes[] = {
+      {ERC7730_ABI_TUPLE, 0, 1, 3, 0},
+      {ERC7730_ABI_ADDRESS, 0, 0, 0, 0},
+      {ERC7730_ABI_UINT, 16, 0, 0, 0},
+      {ERC7730_ABI_BOOL, 0, 0, 0, 0},
+  };
+  std::vector<uint8_t> encoded;
+  word(encoded, 0x1234);
+  word(encoded, 65535);
+  word(encoded, 1);
+
+  Erc7730AbiProgram program{nodes, 4, 0};
+  Erc7730AbiStream state{};
+  ASSERT_EQ(erc7730_abi_stream_begin(&state, &program, encoded.size()),
+            ERC7730_ABI_OK);
+  memset(&program, 0xFF, sizeof(program));  // caller's frame is gone
+  EXPECT_EQ(erc7730_abi_stream_feed(&state, 0, encoded.data(), encoded.size()),
+            ERC7730_ABI_OK);
+  EXPECT_EQ(erc7730_abi_stream_finish(&state), ERC7730_ABI_OK);
+  erc7730_abi_stream_clear(&state);
 }
 
 TEST(Erc7730AbiStream, AcceptsCanonicalRecursiveDynamicValues) {
