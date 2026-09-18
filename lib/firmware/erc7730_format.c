@@ -271,8 +271,7 @@ bool erc7730_format_unit(const Erc7730AbiProgram* program,
   if (negative) {
     uint16_t carry = 1;
     for (size_t i = sizeof(magnitude); i > 0; i--) {
-      const uint16_t converted =
-          (uint16_t)(magnitude[i - 1] ^ 0xffu) + carry;
+      const uint16_t converted = (uint16_t)(magnitude[i - 1] ^ 0xffu) + carry;
       magnitude[i - 1] = (uint8_t)converted;
       carry = converted >> 8;
     }
@@ -286,8 +285,8 @@ bool erc7730_format_unit(const Erc7730AbiProgram* program,
   const size_t digit_count = strlen(digits);
   int16_t exponent = 0;
   if (prefix && !zero) {
-    exponent = floor_multiple_of_three(
-        (int16_t)digit_count - 1 - (int16_t)decimals);
+    exponent =
+        floor_multiple_of_three((int16_t)digit_count - 1 - (int16_t)decimals);
     if (exponent < -30) exponent = -30;
     if (exponent > 30) exponent = 30;
   }
@@ -302,8 +301,7 @@ bool erc7730_format_unit(const Erc7730AbiProgram* program,
     if (digit_count > (size_t)scale) {
       integer_digits = digit_count - (size_t)scale;
       fractional = (size_t)scale;
-      while (fractional != 0 &&
-             digits[integer_digits + fractional - 1u] == '0')
+      while (fractional != 0 && digits[integer_digits + fractional - 1u] == '0')
         fractional--;
     } else if (!zero) {
       integer_digits = 1;
@@ -321,8 +319,8 @@ bool erc7730_format_unit(const Erc7730AbiProgram* program,
   const size_t symbol_length = strlen(symbol);
   const size_t number_length =
       integer_digits + appended_zeroes + (fractional ? 1u + fractional : 0u);
-  const size_t required = (negative ? 1u : 0u) + number_length +
-                          symbol_length + base_length + 1u;
+  const size_t required =
+      (negative ? 1u : 0u) + number_length + symbol_length + base_length + 1u;
   if (required > output_size) {
     output[0] = '\0';
     memzero(magnitude, sizeof(magnitude));
@@ -451,15 +449,13 @@ bool erc7730_format_timestamp(const Erc7730AbiProgram* program,
       return false;
     }
   uint64_t encoded = 0;
-  for (size_t i = 24; i < 32; i++)
-    encoded = (encoded << 8) | capture->data[i];
+  for (size_t i = 24; i < 32; i++) encoded = (encoded << 8) | capture->data[i];
   int64_t timestamp = 0;
   if (negative) {
     const uint64_t magnitude = ~encoded + 1u;
     if (magnitude > UINT64_C(0x8000000000000000)) return false;
-    timestamp = magnitude == UINT64_C(0x8000000000000000)
-                    ? INT64_MIN
-                    : -(int64_t)magnitude;
+    timestamp = magnitude == UINT64_C(0x8000000000000000) ? INT64_MIN
+                                                          : -(int64_t)magnitude;
   } else {
     if (encoded > INT64_MAX) return false;
     timestamp = (int64_t)encoded;
@@ -477,12 +473,10 @@ bool erc7730_format_timestamp(const Erc7730AbiProgram* program,
   const uint32_t yoe =
       (doe - doe / 1460u + doe / 36524u - doe / 146096u) / 365u;
   int64_t year = (int64_t)yoe + era * 400;
-  const uint32_t doy =
-      doe - (365u * yoe + yoe / 4u - yoe / 100u);
+  const uint32_t doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
   const uint32_t mp = (5u * doy + 2u) / 153u;
   const uint32_t day = doy - (153u * mp + 2u) / 5u + 1u;
-  const uint32_t month =
-      (uint32_t)((int32_t)mp + (mp < 10 ? 3 : -9));
+  const uint32_t month = (uint32_t)((int32_t)mp + (mp < 10 ? 3 : -9));
   year += month <= 2;
   if (year < 0 || year > 9999) {
     output[0] = '\0';

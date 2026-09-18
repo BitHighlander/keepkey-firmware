@@ -703,9 +703,10 @@ void erc7730_program_condition_clear(Erc7730ProgramCondition* condition) {
   if (condition) memzero(condition, sizeof(*condition));
 }
 
-void erc7730_program_token_metadata_begin(
-    Erc7730ProgramTokenMetadata* metadata, uint32_t section_length,
-    uint64_t chain_id, const uint8_t address[20]) {
+void erc7730_program_token_metadata_begin(Erc7730ProgramTokenMetadata* metadata,
+                                          uint32_t section_length,
+                                          uint64_t chain_id,
+                                          const uint8_t address[20]) {
   if (!metadata) return;
   memzero(metadata, sizeof(*metadata));
   metadata->section_length = section_length;
@@ -726,9 +727,9 @@ void erc7730_program_network_metadata_begin(
   if (chain_id == 0 || section_length < 2) metadata->failed = true;
 }
 
-bool erc7730_program_token_metadata_feed(
-    Erc7730ProgramTokenMetadata* metadata, uint32_t section_offset,
-    const uint8_t* data, size_t data_len) {
+bool erc7730_program_token_metadata_feed(Erc7730ProgramTokenMetadata* metadata,
+                                         uint32_t section_offset,
+                                         const uint8_t* data, size_t data_len) {
   if (!metadata || !data || data_len == 0 || metadata->failed ||
       metadata->complete || section_offset != metadata->received ||
       data_len > metadata->section_length - metadata->received) {
@@ -799,8 +800,7 @@ bool erc7730_program_token_metadata_feed(
 }
 
 bool erc7730_program_token_metadata_complete(
-    const Erc7730ProgramTokenMetadata* metadata,
-    Erc7730TokenMetadata* result) {
+    const Erc7730ProgramTokenMetadata* metadata, Erc7730TokenMetadata* result) {
   if (!metadata || !result || !metadata->complete || metadata->failed)
     return false;
   *result = metadata->selected;
