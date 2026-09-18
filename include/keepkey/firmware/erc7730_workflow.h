@@ -9,6 +9,7 @@
 #include "keepkey/firmware/erc7730_format.h"
 #include "keepkey/firmware/erc7730_program.h"
 #include "keepkey/firmware/erc7730_tx.h"
+#include "trezor/crypto/sha2.h"
 
 typedef enum {
   ERC7730_WORKFLOW_IDLE = 0,
@@ -141,6 +142,14 @@ typedef struct {
   uint8_t array_depth : 4;
   uint8_t array_elements;
   uint8_t embedded_depth;
+  /* Calldata binding (#821). The host streams calldata[4:] once per field
+   * capture, once for the end-of-display pass, and once for signing. Every
+   * host pass must hash to the digest of the first one, or signing refuses. */
+  SHA256_CTX calldata_sha;
+  uint8_t calldata_digest[SHA256_DIGEST_LENGTH];
+  uint32_t signing_calldata_bytes;
+  bool calldata_digest_set;
+  bool host_calldata_stream;
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM
@@ -257,6 +266,15 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len);
 Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow);
+/* Signing pass of an ERC-7730 calldata flow: absorb the calldata[4:] chunks
+ * the host sends for the signature hash, then check they match the reviewed
+ * digest. verify() is true only when no reviewed calldata exists and none was
+ * signed, or both digests are equal. */
+void erc7730_workflow_signing_calldata_begin(Erc7730Workflow* workflow);
+void erc7730_workflow_signing_calldata_chunk(Erc7730Workflow* workflow,
+                                             const uint8_t* data, size_t len);
+bool erc7730_workflow_signing_calldata_verify(Erc7730Workflow* workflow);
+
 bool erc7730_workflow_active(const Erc7730Workflow* workflow);
 bool erc7730_workflow_complete(const Erc7730Workflow* workflow);
 bool erc7730_workflow_calldata_waiting(const Erc7730Workflow* workflow,

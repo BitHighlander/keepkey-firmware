@@ -496,6 +496,8 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
     fail(workflow);
     return false;
   }
+  sha256_Init(&workflow->calldata_sha);
+  workflow->host_calldata_stream = true;
   workflow->phase = ERC7730_WORKFLOW_CALLDATA;
   return true;
 }
@@ -579,6 +581,7 @@ bool erc7730_workflow_execute_embedded_calldata(Erc7730Workflow* workflow,
     memzero(components, sizeof(components));
     if (capture != ERC7730_ABI_OK) return false;
   }
+  workflow->host_calldata_stream = false;
   workflow->phase = ERC7730_WORKFLOW_CALLDATA;
   if (erc7730_workflow_calldata_feed(workflow,
                                      workflow->embedded_calldata[depth] + 4u,
@@ -1144,7 +1147,12 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   }
   const Erc7730AbiResult result = erc7730_abi_stream_feed(
       &workflow->calldata, workflow->calldata.received, data, data_len);
-  if (result != ERC7730_ABI_OK) fail(workflow);
+  if (result != ERC7730_ABI_OK) {
+    fail(workflow);
+    return result;
+  }
+  if (workflow->host_calldata_stream)
+    sha256_Update(&workflow->calldata_sha, data, data_len);
   return result;
 }
 
@@ -1159,8 +1167,50 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
     fail(workflow);
     return result;
   }
+  if (workflow->host_calldata_stream) {
+    uint8_t digest[SHA256_DIGEST_LENGTH];
+    sha256_Final(&workflow->calldata_sha, digest);
+    workflow->host_calldata_stream = false;
+    const bool mismatch =
+        workflow->calldata_digest_set &&
+        memcmp(digest, workflow->calldata_digest, sizeof(digest)) != 0;
+    if (!workflow->calldata_digest_set) {
+      memcpy(workflow->calldata_digest, digest, sizeof(digest));
+      workflow->calldata_digest_set = true;
+    }
+    memzero(digest, sizeof(digest));
+    if (mismatch) {
+      fail(workflow);
+      return ERC7730_ABI_BOUNDS;
+    }
+  }
   workflow->phase = ERC7730_WORKFLOW_COMPLETE;
   return ERC7730_ABI_OK;
+}
+
+void erc7730_workflow_signing_calldata_begin(Erc7730Workflow* workflow) {
+  if (!workflow) return;
+  sha256_Init(&workflow->calldata_sha);
+  workflow->signing_calldata_bytes = 0;
+}
+
+void erc7730_workflow_signing_calldata_chunk(Erc7730Workflow* workflow,
+                                             const uint8_t* data, size_t len) {
+  if (!workflow || !data) return;
+  sha256_Update(&workflow->calldata_sha, data, len);
+  workflow->signing_calldata_bytes += (uint32_t)len;
+}
+
+bool erc7730_workflow_signing_calldata_verify(Erc7730Workflow* workflow) {
+  if (!workflow) return false;
+  uint8_t digest[SHA256_DIGEST_LENGTH];
+  sha256_Final(&workflow->calldata_sha, digest);
+  const bool ok =
+      workflow->calldata_digest_set
+          ? memcmp(digest, workflow->calldata_digest, sizeof(digest)) == 0
+          : workflow->signing_calldata_bytes == 0;
+  memzero(digest, sizeof(digest));
+  return ok;
 }
 
 bool erc7730_workflow_active(const Erc7730Workflow* workflow) {
