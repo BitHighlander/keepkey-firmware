@@ -863,8 +863,8 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
 }
 
 bool eip712_stream_replay(void) {
-  if (!e712.active || !e712.definition_accepted ||
-      !e712.have_expected_hashes || next_step.kind != EIP712_REQ_DONE)
+  if (!e712.active || !e712.definition_accepted || !e712.have_expected_hashes ||
+      next_step.kind != EIP712_REQ_DONE)
     return false;
   e712.root = 0;
   e712.have_domain_separator = false;

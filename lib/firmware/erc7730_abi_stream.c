@@ -292,9 +292,8 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
     uint8_t path_depth = 0;
     bool target_prefix = false;
     child_target(s, f, n, item_index, &path_depth, &target_prefix);
-    s->pending[s->pending_used++] =
-        (Erc7730AbiPending){child, (uint32_t)declared, path_depth,
-                            target_prefix};
+    s->pending[s->pending_used++] = (Erc7730AbiPending){
+        child, (uint32_t)declared, path_depth, target_prefix};
     f->pending_count++;
   } else if (f->mode == STREAM_BYTES_LENGTH) {
     size_t length = 0;
@@ -302,8 +301,7 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
     size_t rounded = 0;
     if (!add_size(length, 31, &rounded)) return ERC7730_ABI_BOUNDS;
     rounded &= ~(size_t)31;
-    if (length > UINT32_MAX || rounded > UINT32_MAX)
-      return ERC7730_ABI_BOUNDS;
+    if (length > UINT32_MAX || rounded > UINT32_MAX) return ERC7730_ABI_BOUNDS;
     f->payload_remaining = (uint32_t)length;
     f->base = (uint32_t)rounded;
     f->mode = STREAM_BYTES_PAYLOAD;

@@ -192,17 +192,18 @@ bool erc7730_workflow_selected_condition(const Erc7730Workflow* workflow,
                                          Erc7730Condition* condition);
 bool erc7730_workflow_selected_literal(const Erc7730Workflow* workflow,
                                        Erc7730Literal* literal);
-bool erc7730_workflow_selected_token_metadata(
-    const Erc7730Workflow* workflow, Erc7730TokenMetadata* metadata);
-bool erc7730_workflow_selected_network_metadata(
-    const Erc7730Workflow* workflow, Erc7730TokenMetadata* metadata);
+bool erc7730_workflow_selected_token_metadata(const Erc7730Workflow* workflow,
+                                              Erc7730TokenMetadata* metadata);
+bool erc7730_workflow_selected_network_metadata(const Erc7730Workflow* workflow,
+                                                Erc7730TokenMetadata* metadata);
 bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
                                                  EthereumSignTx* tx);
 bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
-                                                 EthereumSignTx* tx,
-                                                 const Erc7730Path* path);
-bool erc7730_workflow_restore_and_start_array_capture(
-    Erc7730Workflow* workflow, EthereumSignTx* tx, const Erc7730Path* path);
+                                                EthereumSignTx* tx,
+                                                const Erc7730Path* path);
+bool erc7730_workflow_restore_and_start_array_capture(Erc7730Workflow* workflow,
+                                                      EthereumSignTx* tx,
+                                                      const Erc7730Path* path);
 bool erc7730_workflow_execute_embedded_calldata(Erc7730Workflow* workflow,
                                                 const Erc7730Path* path);
 bool erc7730_workflow_capture_tx_container(Erc7730Workflow* workflow,
@@ -218,16 +219,17 @@ bool erc7730_workflow_condition_capture_pending(
     const Erc7730Workflow* workflow);
 bool erc7730_workflow_resolve_captured_condition(Erc7730Workflow* workflow,
                                                  bool* visible);
-bool erc7730_workflow_prepare_captured_membership(
-    Erc7730Workflow* workflow, uint16_t* literal_set);
+bool erc7730_workflow_prepare_captured_membership(Erc7730Workflow* workflow,
+                                                  uint16_t* literal_set);
 bool erc7730_workflow_load_membership_set(Erc7730Workflow* workflow,
                                           const Erc7730Literal* set,
                                           uint16_t* first_literal);
 bool erc7730_workflow_finish_empty_membership(Erc7730Workflow* workflow,
                                               bool* visible);
-bool erc7730_workflow_observe_membership_literal(
-    Erc7730Workflow* workflow, const Erc7730Literal* literal, bool* complete,
-    bool* visible, uint16_t* next_literal);
+bool erc7730_workflow_observe_membership_literal(Erc7730Workflow* workflow,
+                                                 const Erc7730Literal* literal,
+                                                 bool* complete, bool* visible,
+                                                 uint16_t* next_literal);
 bool erc7730_workflow_prepare_enum(Erc7730Workflow* workflow,
                                    uint16_t map_literal);
 bool erc7730_workflow_enum_map_next(Erc7730Workflow* workflow,
@@ -235,8 +237,8 @@ bool erc7730_workflow_enum_map_next(Erc7730Workflow* workflow,
                                     uint16_t* key_literal,
                                     uint16_t* value_string, bool* exhausted);
 bool erc7730_workflow_enum_observe_key(Erc7730Workflow* workflow,
-                                       const Erc7730Literal* key,
-                                       bool* matched, bool* exhausted);
+                                       const Erc7730Literal* key, bool* matched,
+                                       bool* exhausted);
 bool erc7730_workflow_enum_fallback_raw(Erc7730Workflow* workflow);
 bool erc7730_workflow_complete_enum(Erc7730Workflow* workflow,
                                     const char* value, size_t value_len);
@@ -287,8 +289,7 @@ bool erc7730_workflow_push_array(Erc7730Workflow* workflow, uint16_t path,
                                  uint16_t end_instruction, uint8_t count);
 bool erc7730_workflow_repeat_or_pop_array(Erc7730Workflow* workflow,
                                           uint16_t begin_instruction,
-                                          uint16_t separator,
-                                          bool* repeat);
+                                          uint16_t separator, bool* repeat);
 bool erc7730_workflow_repeat_array_display(Erc7730Workflow* workflow);
 bool erc7730_workflow_enter_embedded(Erc7730Workflow* workflow,
                                      const uint8_t callee[20],
@@ -300,14 +301,16 @@ bool erc7730_workflow_accept_embedded_definition(
     const Erc7730CatalogIdentity* child_identity);
 bool erc7730_workflow_begin_embedded_auth(Erc7730Workflow* workflow);
 bool erc7730_workflow_begin_parent_auth(Erc7730Workflow* workflow);
-bool erc7730_workflow_embedded_request(
-    const Erc7730Workflow* workflow, uint8_t definition_id[32],
-    bool* has_definition_id, uint64_t* chain_id, uint8_t callee[20],
-    uint8_t selector[4], uint32_t* offset, uint32_t* length,
-    uint8_t* recursion_depth);
+bool erc7730_workflow_embedded_request(const Erc7730Workflow* workflow,
+                                       uint8_t definition_id[32],
+                                       bool* has_definition_id,
+                                       uint64_t* chain_id, uint8_t callee[20],
+                                       uint8_t selector[4], uint32_t* offset,
+                                       uint32_t* length,
+                                       uint8_t* recursion_depth);
 Erc7730CatalogResult erc7730_workflow_embedded_auth_feed(
-    Erc7730Workflow* workflow,
-    const EthereumClearSignDefinitionChunk* chunk, bool* complete);
+    Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,
+    bool* complete);
 bool erc7730_workflow_leave_embedded(Erc7730Workflow* workflow,
                                      uint8_t parent_definition_id[32],
                                      uint16_t* resume_instruction);

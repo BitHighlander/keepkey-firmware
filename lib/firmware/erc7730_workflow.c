@@ -416,8 +416,8 @@ bool erc7730_workflow_selected_literal(const Erc7730Workflow* workflow,
                                           literal);
 }
 
-bool erc7730_workflow_selected_token_metadata(
-    const Erc7730Workflow* workflow, Erc7730TokenMetadata* metadata) {
+bool erc7730_workflow_selected_token_metadata(const Erc7730Workflow* workflow,
+                                              Erc7730TokenMetadata* metadata) {
   return workflow && workflow->phase != ERC7730_WORKFLOW_IDLE &&
          workflow->phase != ERC7730_WORKFLOW_FAILED &&
          workflow->selection_kind == ERC7730_SELECTION_TOKEN_METADATA &&
@@ -525,10 +525,11 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
   return true;
 }
 
-bool erc7730_workflow_restore_and_start_array_capture(
-    Erc7730Workflow* workflow, EthereumSignTx* tx, const Erc7730Path* path) {
-  if (!workflow || !tx || !path || path->source != 1 ||
-      path->step_count == 0 || path->step_count >= ERC7730_ABI_MAX_DEPTH)
+bool erc7730_workflow_restore_and_start_array_capture(Erc7730Workflow* workflow,
+                                                      EthereumSignTx* tx,
+                                                      const Erc7730Path* path) {
+  if (!workflow || !tx || !path || path->source != 1 || path->step_count == 0 ||
+      path->step_count >= ERC7730_ABI_MAX_DEPTH)
     return false;
   int32_t components[ERC7730_ABI_MAX_DEPTH];
   for (uint8_t i = 0; i < path->step_count; i++) {
@@ -579,9 +580,9 @@ bool erc7730_workflow_execute_embedded_calldata(Erc7730Workflow* workflow,
     if (capture != ERC7730_ABI_OK) return false;
   }
   workflow->phase = ERC7730_WORKFLOW_CALLDATA;
-  if (erc7730_workflow_calldata_feed(
-          workflow, workflow->embedded_calldata[depth] + 4u, length - 4u) !=
-          ERC7730_ABI_OK ||
+  if (erc7730_workflow_calldata_feed(workflow,
+                                     workflow->embedded_calldata[depth] + 4u,
+                                     length - 4u) != ERC7730_ABI_OK ||
       erc7730_workflow_calldata_finish(workflow) != ERC7730_ABI_OK)
     return false;
   return !path || workflow->calldata.capture_found;
@@ -648,12 +649,10 @@ bool erc7730_workflow_capture_eip712_container(Erc7730Workflow* workflow,
 
 bool erc7730_workflow_begin_condition_capture(
     Erc7730Workflow* workflow, const Erc7730Condition* condition) {
-  if (!workflow || !condition ||
-      workflow->phase != ERC7730_WORKFLOW_READY ||
+  if (!workflow || !condition || workflow->phase != ERC7730_WORKFLOW_READY ||
       condition->opcode < 4 || condition->opcode > 8 ||
       condition->path == UINT16_MAX ||
-      ((condition->opcode <= 5) !=
-       (condition->literal_set == UINT16_MAX)) ||
+      ((condition->opcode <= 5) != (condition->literal_set == UINT16_MAX)) ||
       condition->flags != 0 || workflow->condition_capture)
     return false;
   workflow->pending_condition = *condition;
@@ -661,8 +660,8 @@ bool erc7730_workflow_begin_condition_capture(
   return true;
 }
 
-bool erc7730_workflow_prepare_captured_membership(
-    Erc7730Workflow* workflow, uint16_t* literal_set) {
+bool erc7730_workflow_prepare_captured_membership(Erc7730Workflow* workflow,
+                                                  uint16_t* literal_set) {
   if (!workflow || !literal_set || !workflow->condition_capture ||
       workflow->pending_condition.opcode < 6 ||
       workflow->pending_condition.opcode > 8 ||
@@ -690,8 +689,7 @@ bool erc7730_workflow_load_membership_set(Erc7730Workflow* workflow,
     return false;
   for (uint16_t i = 0; i < count; i++) {
     uint16_t index = UINT16_MAX;
-    if (!erc7730_literal_set_index(set, i, &index) || index >= 64)
-      return false;
+    if (!erc7730_literal_set_index(set, i, &index) || index >= 64) return false;
     workflow->condition_literals[i] = (uint8_t)index;
   }
   workflow->condition_literal_count = count;
@@ -733,23 +731,23 @@ bool erc7730_workflow_finish_empty_membership(Erc7730Workflow* workflow,
          finish_membership(workflow, false, visible);
 }
 
-bool erc7730_workflow_observe_membership_literal(
-    Erc7730Workflow* workflow, const Erc7730Literal* literal, bool* complete,
-    bool* visible, uint16_t* next_literal) {
+bool erc7730_workflow_observe_membership_literal(Erc7730Workflow* workflow,
+                                                 const Erc7730Literal* literal,
+                                                 bool* complete, bool* visible,
+                                                 uint16_t* next_literal) {
   Erc7730AbiProgram program;
   Erc7730AbiNode container_node;
   if (complete) *complete = false;
   if (!workflow || !literal || !complete || !visible || !next_literal ||
-      !workflow->condition_capture ||
-      workflow->condition_literal_count == 0 ||
-      workflow->condition_literal_position >= workflow->condition_literal_count ||
+      !workflow->condition_capture || workflow->condition_literal_count == 0 ||
+      workflow->condition_literal_position >=
+          workflow->condition_literal_count ||
       workflow->phase != ERC7730_WORKFLOW_READY)
     return false;
   if (workflow->container_source != 0) {
     memzero(&container_node, sizeof(container_node));
-    container_node.kind = workflow->container_source <= 2
-                              ? ERC7730_ABI_ADDRESS
-                              : ERC7730_ABI_UINT;
+    container_node.kind = workflow->container_source <= 2 ? ERC7730_ABI_ADDRESS
+                                                          : ERC7730_ABI_UINT;
     container_node.size = container_node.kind == ERC7730_ABI_UINT ? 256 : 0;
     program.nodes = &container_node;
     program.node_count = 1;
@@ -761,7 +759,8 @@ bool erc7730_workflow_observe_membership_literal(
   workflow->condition_matched |= erc7730_capture_equals_literal(
       &program, &workflow->value_scratch.condition_value, literal);
   workflow->condition_literal_position++;
-  if (workflow->condition_literal_position < workflow->condition_literal_count) {
+  if (workflow->condition_literal_position <
+      workflow->condition_literal_count) {
     *next_literal =
         workflow->condition_literals[workflow->condition_literal_position];
     memzero(&container_node, sizeof(container_node));
@@ -781,8 +780,8 @@ bool erc7730_workflow_prepare_enum(Erc7730Workflow* workflow,
                                    uint16_t map_literal) {
   if (!workflow || workflow->current_formatter_kind != 8 ||
       workflow->phase != ERC7730_WORKFLOW_COMPLETE || map_literal >= 64 ||
-      !erc7730_abi_stream_captured(
-          &workflow->calldata, &workflow->value_scratch.condition_value))
+      !erc7730_abi_stream_captured(&workflow->calldata,
+                                   &workflow->value_scratch.condition_value))
     return false;
   erc7730_abi_stream_clear(&workflow->calldata);
   workflow->condition_literals[0] = (uint8_t)map_literal;
@@ -816,8 +815,8 @@ bool erc7730_workflow_enum_map_next(Erc7730Workflow* workflow,
 }
 
 bool erc7730_workflow_enum_observe_key(Erc7730Workflow* workflow,
-                                       const Erc7730Literal* key,
-                                       bool* matched, bool* exhausted) {
+                                       const Erc7730Literal* key, bool* matched,
+                                       bool* exhausted) {
   Erc7730AbiProgram program;
   Erc7730AbiNode container_node;
   if (matched) *matched = false;
@@ -829,9 +828,8 @@ bool erc7730_workflow_enum_observe_key(Erc7730Workflow* workflow,
     return false;
   if (workflow->container_source != 0) {
     memzero(&container_node, sizeof(container_node));
-    container_node.kind = workflow->container_source <= 2
-                              ? ERC7730_ABI_ADDRESS
-                              : ERC7730_ABI_UINT;
+    container_node.kind = workflow->container_source <= 2 ? ERC7730_ABI_ADDRESS
+                                                          : ERC7730_ABI_UINT;
     container_node.size = container_node.kind == ERC7730_ABI_UINT ? 256 : 0;
     program.nodes = &container_node;
     program.node_count = 1;
@@ -898,9 +896,8 @@ bool erc7730_workflow_resolve_captured_condition(Erc7730Workflow* workflow,
   }
   if (workflow->container_source != 0) {
     memzero(&container_node, sizeof(container_node));
-    container_node.kind = workflow->container_source <= 2
-                              ? ERC7730_ABI_ADDRESS
-                              : ERC7730_ABI_UINT;
+    container_node.kind = workflow->container_source <= 2 ? ERC7730_ABI_ADDRESS
+                                                          : ERC7730_ABI_UINT;
     container_node.size = container_node.kind == ERC7730_ABI_UINT ? 256 : 0;
     program.nodes = &container_node;
     program.node_count = 1;
@@ -1064,8 +1061,8 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
       member_path_count == workflow->calldata.capture_path_count + 1u) {
     bool matches = true;
     for (size_t i = 0; i < workflow->calldata.capture_path_count; i++)
-      matches &= member_path[i + 1u] ==
-                 (uint32_t)workflow->calldata.capture_path[i];
+      matches &=
+          member_path[i + 1u] == (uint32_t)workflow->calldata.capture_path[i];
     if (matches) {
       Erc7730AbiProgram program;
       const uint16_t node = workflow->calldata.capture.node;
@@ -1217,7 +1214,8 @@ bool erc7730_workflow_append_interpolated_string(Erc7730Workflow* workflow) {
       !erc7730_workflow_selected_string(workflow, &value, &length))
     return false;
   char* candidate = workflow->label;
-  const size_t used = strnlen(candidate, ERC7730_PROGRAM_MAX_STRING_LENGTH + 1u);
+  const size_t used =
+      strnlen(candidate, ERC7730_PROGRAM_MAX_STRING_LENGTH + 1u);
   if (used > ERC7730_PROGRAM_MAX_STRING_LENGTH || length == 0 ||
       length > ERC7730_PROGRAM_MAX_STRING_LENGTH - used) {
     workflow->condition_matched = true;
@@ -1271,8 +1269,8 @@ bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,
     return false;
   if (workflow->current_formatter_kind == 8) {
     const char* value = workflow->value_scratch.formatter_parameters.base;
-    const size_t length = strnlen(value, sizeof(workflow->value_scratch
-                                                    .formatter_parameters.base));
+    const size_t length = strnlen(
+        value, sizeof(workflow->value_scratch.formatter_parameters.base));
     if (length == 0 ||
         length >= sizeof(workflow->value_scratch.formatter_parameters.base) ||
         length >= output_size)
@@ -1280,9 +1278,7 @@ bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,
     memcpy(output, value, length + 1u);
     return true;
   }
-  if (
-      !erc7730_abi_stream_captured(&workflow->calldata, &capture))
-    return false;
+  if (!erc7730_abi_stream_captured(&workflow->calldata, &capture)) return false;
   Erc7730AbiNode container_node;
   if (workflow->container_source != 0) {
     memzero(&container_node, sizeof(container_node));
@@ -1447,8 +1443,7 @@ bool erc7730_workflow_captured_uint64(const Erc7730Workflow* workflow,
     }
   }
   uint64_t decoded = 0;
-  for (size_t i = 24; i < 32; i++)
-    decoded = (decoded << 8) | capture.data[i];
+  for (size_t i = 24; i < 32; i++) decoded = (decoded << 8) | capture.data[i];
   *value = decoded;
   memzero(&capture, sizeof(capture));
   return true;
@@ -1513,8 +1508,7 @@ bool erc7730_workflow_push_array(Erc7730Workflow* workflow, uint16_t path,
       workflow->array_elements > ERC7730_ABI_MAX_ARRAY_ELEMENTS - count ||
       end_instruction <= workflow->display_index)
     return false;
-  Erc7730ArrayFrame* frame =
-      &workflow->array_frames[workflow->array_depth++];
+  Erc7730ArrayFrame* frame = &workflow->array_frames[workflow->array_depth++];
   frame->begin_instruction = workflow->display_index;
   frame->end_instruction = end_instruction;
   frame->path = path;
@@ -1637,11 +1631,13 @@ bool erc7730_workflow_begin_parent_auth(Erc7730Workflow* workflow) {
   return true;
 }
 
-bool erc7730_workflow_embedded_request(
-    const Erc7730Workflow* workflow, uint8_t definition_id[32],
-    bool* has_definition_id, uint64_t* chain_id, uint8_t callee[20],
-    uint8_t selector[4], uint32_t* offset, uint32_t* length,
-    uint8_t* recursion_depth) {
+bool erc7730_workflow_embedded_request(const Erc7730Workflow* workflow,
+                                       uint8_t definition_id[32],
+                                       bool* has_definition_id,
+                                       uint64_t* chain_id, uint8_t callee[20],
+                                       uint8_t selector[4], uint32_t* offset,
+                                       uint32_t* length,
+                                       uint8_t* recursion_depth) {
   if (!workflow || !definition_id || !has_definition_id || !chain_id ||
       !callee || !selector || !offset || !length || !recursion_depth ||
       (workflow->phase != ERC7730_WORKFLOW_EMBEDDED_AUTH &&
@@ -1672,8 +1668,8 @@ bool erc7730_workflow_embedded_request(
 }
 
 Erc7730CatalogResult erc7730_workflow_embedded_auth_feed(
-    Erc7730Workflow* workflow,
-    const EthereumClearSignDefinitionChunk* chunk, bool* complete) {
+    Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,
+    bool* complete) {
   if (complete) *complete = false;
   if (!workflow || !chunk || !complete ||
       (workflow->phase != ERC7730_WORKFLOW_EMBEDDED_AUTH &&
@@ -1715,7 +1711,7 @@ Erc7730CatalogResult erc7730_workflow_embedded_auth_feed(
       (parent ? (accepted.kind != ERC7730_DEFINITION_CALLDATA ||
                  accepted.chain_id != workflow->identity.chain_id)
               : !erc7730_workflow_accept_embedded_definition(workflow,
-                                                              &accepted))) {
+                                                             &accepted))) {
     memzero(&accepted, sizeof(accepted));
     fail(workflow);
     return ERC7730_CATALOG_BAD_PROGRAM;
