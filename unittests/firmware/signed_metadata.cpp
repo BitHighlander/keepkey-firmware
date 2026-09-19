@@ -1740,6 +1740,282 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   set_advanced_mode_for_test(false);
 }
 
+/* Sign a "KeepKeySolanaTokenDef/1" definition with TEST_PRIV (slot 3). */
+void sign_token_def_v1(SolanaTokenInfo* ti) {
+  std::vector<uint8_t> pre;
+  const char* tag = "KeepKeySolanaTokenDef/1";
+  pre.insert(pre.end(), tag, tag + strlen(tag));
+  pre.insert(pre.end(), ti->mint.bytes, ti->mint.bytes + 32);
+  for (int i = 0; i < 4; i++) pre.push_back((uint8_t)(ti->decimals >> (8 * i)));
+  pre.insert(pre.end(), ti->symbol, ti->symbol + strlen(ti->symbol));
+  uint8_t digest[32];
+  sha256_Raw(pre.data(), pre.size(), digest);
+  uint8_t pby;
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest,
+                                 ti->signature.bytes, &pby, nullptr));
+  ti->has_signature = true;
+  ti->signature.size = 64;
+}
+
+/* A schema TOKEN_AMOUNT takes its scale and symbol only from a definition
+ * trusted in the review's own tier. The runtime signer's definition works on
+ * the runtime (AdvancedMode) review -- the positive control -- and is refused
+ * on the certified one, whose authority is the root certificate alone. The
+ * display-shape rules (decimals <= 9, bare ticker) refuse definitions the
+ * signature alone would accept. */
+TEST(SolanaTokenDef, SchemaTokenTrustStaysInItsTier) {
+  set_advanced_mode_for_test(true);
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               nullptr, 0, 0, 0, false);
+
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.has_schema_signer_key_id = true;
+  msg.schema_signer_key_id = TEST_KEY_ID;
+  msg.token_info_count = 1;
+  SolanaTokenInfo* ti = &msg.token_info[0];
+  ti->has_mint = true;
+  ti->mint.size = 32;
+  memset(ti->mint.bytes, 0xAB, 32);
+  ti->has_symbol = true;
+  strcpy(ti->symbol, "SDICE");
+  ti->has_decimals = true;
+  ti->decimals = 6;
+  ti->has_signer_key_id = true;
+  ti->signer_key_id = TEST_KEY_ID;
+  sign_token_def_v1(ti);
+  const uint8_t* mint = ti->mint.bytes;
+
+  ASSERT_TRUE(solana_token_info_trusted(ti));
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, mint, false), ti);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, mint, true), nullptr);
+
+  char buf[96];
+  ASSERT_TRUE(solana_formatSchemaTokenAmount(
+      buf, sizeof(buf), 1000000000ULL, mint,
+      solana_schemaTrustedToken(&msg, mint, false)));
+  EXPECT_STREQ(buf,
+               "1000.000000 SDICE\n"
+               "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t");
+
+  // Validly signed, but not displayable as a bare ticker / exact scale.
+  const struct {
+    const char* symbol;
+    uint32_t decimals;
+  } unsafe[] = {{"SD ICE", 6}, {"SDICE\n", 6}, {".SDICE", 6}, {"SDICE", 10}};
+  for (const auto& u : unsafe) {
+    strcpy(ti->symbol, u.symbol);
+    ti->decimals = u.decimals;
+    sign_token_def_v1(ti);
+    ASSERT_TRUE(solana_token_info_trusted(ti)) << u.symbol;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, mint, false), nullptr)
+        << u.symbol << " " << u.decimals;
+  }
+
+  // Without AdvancedMode the runtime signer vouches for nothing.
+  strcpy(ti->symbol, "SDICE");
+  ti->decimals = 6;
+  sign_token_def_v1(ti);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, mint, false), ti);
+  set_advanced_mode_for_test(false);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, mint, false), nullptr);
+
+  signed_metadata_clear_signers();
+}
+
+/* Base58 of the test mints below: 0xAB x32 and 0xCD x32. */
+const char* const kMintAB58 = "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t";
+const char* const kMintCD58 = "ErNbLjU6E8tSbZH3REsMeTDP3Z8G52k6YedWwvBpAJ7v";
+
+/* A schema instruction whose accounts 0 and 1 are the mints 0xAB.. and
+ * 0xCD.., held at message keys 2 and 1 (key 0 is a payer, 0x11..), so reading
+ * instruction account 0 against the message's list names a different key; its
+ * data is three u64 amounts: 1,000,000, 2,000,000 and 3,000,000 base units. */
+struct TwoMintInstruction {
+  SolanaParsedTx tx;
+  uint8_t acct_indices[2];
+  uint8_t data[24];
+};
+
+void build_two_mint_instruction(TwoMintInstruction* t) {
+  memset(t, 0, sizeof(*t));
+  t->tx.num_accounts = 3;
+  t->tx.num_static_accounts = 3;
+  memset(t->tx.accounts[0], 0x11, 32);
+  memset(t->tx.accounts[1], 0xCD, 32);
+  memset(t->tx.accounts[2], 0xAB, 32);
+  t->acct_indices[0] = 2;
+  t->acct_indices[1] = 1;
+  for (int a = 0; a < 3; a++) {
+    const uint64_t v = 1000000ULL * (uint64_t)(a + 1);
+    for (int b = 0; b < 8; b++) t->data[8 * a + b] = (uint8_t)(v >> (8 * b));
+  }
+  t->tx.num_instructions = 1;
+  SolanaParsedInstruction* ix = &t->tx.instructions[0];
+  ix->type = SOL_INSTR_UNKNOWN;
+  ix->acct_indices = t->acct_indices;
+  ix->num_acct_indices = 2;
+  ix->data = t->data;
+  ix->data_len = sizeof(t->data);
+}
+
+void fill_token_def(SolanaTokenInfo* ti, uint8_t mint_byte, const char* symbol,
+                    uint32_t decimals) {
+  memset(ti, 0, sizeof(*ti));
+  ti->has_mint = true;
+  ti->mint.size = 32;
+  memset(ti->mint.bytes, mint_byte, 32);
+  ti->has_symbol = true;
+  strcpy(ti->symbol, symbol);
+  ti->has_decimals = true;
+  ti->decimals = decimals;
+  ti->has_signer_key_id = true;
+  ti->signer_key_id = TEST_KEY_ID;
+  sign_token_def_v1(ti);
+}
+
+/* A signed definition binds a symbol to a mint, not the symbol to a token:
+ * anyone can mint a token named "USDC" and have its definition signed. So a
+ * trusted TOKEN_AMOUNT is never shown by symbol alone -- the renderer names
+ * the mint it actually read from the transaction. */
+TEST(SolanaTokenDef, SchemaTrustedSymbolIsAlwaysShownWithItsMint) {
+  set_advanced_mode_for_test(true);
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               nullptr, 0, 0, 0, false);
+
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.has_schema_signer_key_id = true;
+  msg.schema_signer_key_id = TEST_KEY_ID;
+  msg.token_info_count = 1;
+  fill_token_def(&msg.token_info[0], 0xAB, "USDC", 6); /* not USDC's mint */
+
+  static TwoMintInstruction t;
+  build_two_mint_instruction(&t);
+  const SolanaParsedInstruction* ix = &t.tx.instructions[0];
+  ASSERT_EQ(solana_schemaTrustedToken(&msg, t.tx.accounts[2], false),
+            &msg.token_info[0]);
+
+  const SolanaSchemaArg arg = {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 0};
+  SolanaSchemaTokenCache cache = {nullptr, nullptr};
+  char value[96];
+  ASSERT_TRUE(solana_schemaArgValue(&msg, false, &t.tx, ix, &arg, t.data,
+                                    &cache, value, sizeof(value)));
+  EXPECT_EQ(std::string(value), std::string("1.000000 USDC\n") + kMintAB58);
+
+  signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
+}
+
+/* One review, three TOKEN_AMOUNTs: mint A (trusted), mint B (definition
+ * present but its signature broken), mint A again. Each is rendered from its
+ * own mint's definition; A's symbol never reaches B. On a certified review the
+ * runtime signer's definition counts for nothing, so all three are raw. */
+TEST(SolanaTokenDef, SchemaTokenDefinitionNeverCarriesAcrossMints) {
+  set_advanced_mode_for_test(true);
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               nullptr, 0, 0, 0, false);
+
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.has_schema_signer_key_id = true;
+  msg.schema_signer_key_id = TEST_KEY_ID;
+  msg.token_info_count = 2;
+  fill_token_def(&msg.token_info[0], 0xAB, "SDICE", 6);
+  fill_token_def(&msg.token_info[1], 0xCD, "SDICE", 6);
+  msg.token_info[1].signature.bytes[10] ^= 0x40;
+
+  static TwoMintInstruction t;
+  build_two_mint_instruction(&t);
+  const SolanaParsedInstruction* ix = &t.tx.instructions[0];
+  const SolanaSchemaArg args[3] = {
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 0},
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 1},
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 0},
+  };
+  const std::string runtime[3] = {
+      std::string("1.000000 SDICE\n") + kMintAB58,
+      std::string("2000000 base units of mint\n") + kMintCD58,
+      std::string("3.000000 SDICE\n") + kMintAB58,
+  };
+  const std::string certified[3] = {
+      std::string("1000000 base units of mint\n") + kMintAB58,
+      std::string("2000000 base units of mint\n") + kMintCD58,
+      std::string("3000000 base units of mint\n") + kMintAB58,
+  };
+
+  for (bool is_certified : {false, true}) {
+    SolanaSchemaTokenCache cache = {nullptr, nullptr};
+    for (int a = 0; a < 3; a++) {
+      char value[96];
+      ASSERT_TRUE(solana_schemaArgValue(&msg, is_certified, &t.tx, ix, &args[a],
+                                        t.data + 8 * a, &cache, value,
+                                        sizeof(value)));
+      EXPECT_EQ(std::string(value), is_certified ? certified[a] : runtime[a])
+          << args[a].label << " certified=" << is_certified;
+    }
+  }
+
+  signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
+}
+
+/* The runtime review names the schema's signer on its first screen. A
+ * definition from any other slot -- however validly signed -- does not scale
+ * or name the amounts shown under that name. Nor does any runtime definition
+ * count on a request addressed to the certificate delegate (0x80), which is
+ * what the certified path requires of every request it renders. */
+TEST(SolanaTokenDef, SchemaRuntimeTokenMustComeFromTheSchemaSigner) {
+  set_advanced_mode_for_test(true);
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               nullptr, 0, 0, 0, false);
+
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.token_info_count = 1;
+  fill_token_def(&msg.token_info[0], 0xAB, "SDICE", 6);
+  ASSERT_TRUE(solana_token_info_trusted(&msg.token_info[0]));
+
+  static TwoMintInstruction t;
+  build_two_mint_instruction(&t);
+  const SolanaParsedInstruction* ix = &t.tx.instructions[0];
+  const uint8_t* mint = t.tx.accounts[2];
+  const SolanaSchemaArg arg = {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 0};
+  const std::string raw =
+      std::string("1000000 base units of mint\n") + kMintAB58;
+
+  const struct {
+    bool has;
+    uint32_t schema_signer;
+    bool trusted;
+  } cases[] = {
+      {true, TEST_KEY_ID, true},      /* the positive control */
+      {true, TEST_KEY_ID - 1, false}, /* another runtime slot */
+      {false, TEST_KEY_ID, false},    /* no schema signer named */
+      {true, 0x80, false},            /* certified-shaped request */
+  };
+  for (const auto& c : cases) {
+    msg.has_schema_signer_key_id = c.has;
+    msg.schema_signer_key_id = c.schema_signer;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, mint, false) != nullptr,
+              c.trusted)
+        << c.has << " " << c.schema_signer;
+    SolanaSchemaTokenCache cache = {nullptr, nullptr};
+    char value[96];
+    ASSERT_TRUE(solana_schemaArgValue(&msg, false, &t.tx, ix, &arg, t.data,
+                                      &cache, value, sizeof(value)));
+    EXPECT_EQ(std::string(value) == raw, !c.trusted)
+        << c.has << " " << c.schema_signer << ": " << value;
+  }
+
+  signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
+}
+
 /* ===================================================================== *
  *  v4 firmware-owned dynamic schemas
  * ===================================================================== */

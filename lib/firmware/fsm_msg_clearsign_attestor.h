@@ -76,6 +76,10 @@ static const char* attestor_schemaArgTypeName(SolanaSchemaArgType type) {
       return "bytes32 hex";
     case SOL_SCHEMA_ARG_LAMPORTS:
       return "lamports (u64 LE)";
+    case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
+      return "token amount (u64 LE)";
+    case SOL_SCHEMA_ARG_DURATION:
+      return "seconds (u64 LE)";
   }
   return "invalid"; /* Parser rejects unknown values; defense in depth. */
 }
@@ -159,6 +163,14 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
                         "Arg %u: %s\n%s", (unsigned)(i + 1),
                         attestor_schemaArgTypeName(schema.args[i].type),
                         schema.args[i].label);
+    /* The mint account decides which token definition may name and scale the
+     * amount, so it is attested as deliberately as the label. */
+    if (confirmed && schema.args[i].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) {
+      confirmed =
+          confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                  "Arg %u token mint is\naccount #%u", (unsigned)(i + 1),
+                  (unsigned)schema.args[i].mint_account);
+    }
   }
   for (uint8_t i = 0; confirmed && i < schema.num_accounts; i++) {
     confirmed =
