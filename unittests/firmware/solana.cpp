@@ -2403,7 +2403,7 @@ static const uint8_t kSdiceMint[32] = {
  *
  * kCert501Hex: the public scope-501 delegate certificate, the same bytes as
  * python-keepkey's CERT_501. Alias "KeepKey Vault", MAY_SUPPRESS_RAW,
- * not_after 1818806400. It verifies only against the alpha root.
+ * not_after 1818806400. It verifies against the 7.16 ClearSign root.
  *
  * kSoltoshiJoinSchemaSigHex: the delegate's signature over
  * sha256(kSoltoshiJoinSchemaHex), signer_key_id 0x80.
@@ -2867,8 +2867,8 @@ TEST(Solana, CertifiedSoltoshiJoinSchemaSignatureVerifies) {
   std::vector<uint8_t> sig = solana_unhex(kSoltoshiJoinSchemaSigHex);
   ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
   ASSERT_EQ(sig.size(), 64U);
-  /* The certificate needs the alpha root this suite is built with
-   * (ClearsignRoot.RootKeyIsPresentInThisBuild). */
+  /* The certificate needs the root every 7.16 build embeds
+   * (ClearsignRoot.TheRootIsTheMarkedRootKeepKeysKey). */
   ASSERT_TRUE(clearsign_root_verify_cert(cert.data(), cert.size()));
   const auto verifies = [&](uint32_t scope) {
     return clearsign_root_verify_delegate_attestation(
