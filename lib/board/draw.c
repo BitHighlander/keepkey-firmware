@@ -170,7 +170,6 @@ static bool draw_string_walk(Canvas* canvas, const Font* font,
     if (*str_write == '\n') {
       char_params.y += line_height;
       x_offset = 0;
-      str_write++;
       /* A newline that puts the cursor below the canvas has not been honoured
        * -- nothing can be placed on the row it asked for. Stop here rather
        * than walking a cursor that is off screen, so the completeness test
@@ -179,6 +178,8 @@ static bool draw_string_walk(Canvas* canvas, const Font* font,
        * report as fully shown. */
       if (char_params.y + font_height(font) > canvas->height) {
         have_space = false;
+      } else {
+        str_write++;
       }
       continue;
     }

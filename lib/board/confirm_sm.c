@@ -472,8 +472,8 @@ static bool page_body_confirm(const char* request_title, const char* body,
    * unread left `pages` at 100 while the body ran on, and the render loop then
    * treats page 100 as the last one -- so the hold that means "I approve this"
    * lands on a prefix, with the tail neither shown nor accounted for. A body of
-   * 351 newlines reaches that: confirm_body_fits() accepts three newlines and
-   * rejects four, so page_take() returns 3 and the body needs 117 pages.
+   * 351 newlines reaches that: confirm_body_fits() accepts two newlines and
+   * rejects three, so page_take() returns 2 and the body needs 176 pages.
    *
    * Returning false instead is not a lost capability. BODY_CHAR_MAX is 352, and
    * a body needing more than 99 pages is one averaging under four characters a
