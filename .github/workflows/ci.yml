@@ -983,6 +983,13 @@ jobs:
           #
           # KK_DEBUG_LINK=ON is REQUIRED for screenshot tests — without
           # it fsm_msgDebugLinkGetState is excluded from the build.
+          # KK_CLEARSIGN_ALPHA_ROOT compiles in the alpha ClearSign root -- ON
+          # only for alpha runs (a push to alpha, or a PR into it), so the
+          # certified ClearSign paths are reachable in alpha's dylib/DLL.
+          # Everywhere else it is OFF: this artifact is what release.yml
+          # ships as a tagged release's emulator libs, and release.yml refuses
+          # libs that carry the alpha root. The Windows DLL below uses the
+          # same expression.
           # CMAKE_POLICY_VERSION_MINIMUM works around vendored
           # googletest's pre-3.5 policy declaration.
           NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
@@ -994,6 +1001,7 @@ jobs:
             -DKK_EMULATOR=1 \
             -DKK_BUILD_DYLIB=1 \
             -DKK_DEBUG_LINK=ON \
+            -DKK_CLEARSIGN_ALPHA_ROOT=${{ (github.ref == 'refs/heads/alpha' || github.base_ref == 'alpha') && 'ON' || 'OFF' }} \
             -DPROTOC_GEN_NANOPB_EXECUTABLE="$NANOPB_PLUGIN" \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -B build-emu .
@@ -1034,6 +1042,7 @@ jobs:
             -DKK_EMULATOR=1 \
             -DKK_BUILD_DYLIB=1 \
             -DKK_DEBUG_LINK=ON \
+            -DKK_CLEARSIGN_ALPHA_ROOT=${{ (github.ref == 'refs/heads/alpha' || github.base_ref == 'alpha') && 'ON' || 'OFF' }} \
             -DNANOPB_DIR="$NANOPB_DIR" \
             -DPROTOC_GEN_NANOPB_EXECUTABLE="$NANOPB_PLUGIN" \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

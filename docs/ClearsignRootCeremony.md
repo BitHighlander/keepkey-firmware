@@ -560,9 +560,22 @@ reconstruct the reasoning from a word count.
 
 What must be true before a release carrying a root key is signed:
 
-1. **`KK_CLEARSIGN_ALPHA_ROOT` is OFF.** It is `OFF` by default
-   (`lib/firmware/CMakeLists.txt`) and only `scripts/emulator/Dockerfile` turns
-   it on. Grep the release build command; the flag must not appear.
+1. **`KK_CLEARSIGN_ALPHA_ROOT` is OFF in everything the release ships.** It is
+   `OFF` by default (`lib/firmware/CMakeLists.txt`). Only alpha builds turn it
+   on: `scripts/emulator/Dockerfile` and `scripts/build/docker/emulator/debug.sh`,
+   the full ARM variant in `ci.yml`, and the `python-dylib-tests` emulator
+   libs, which pass `ON` only when the run is for alpha (`github.ref ==
+   'refs/heads/alpha'` or `github.base_ref == 'alpha'`) and `OFF` otherwise.
+   Grep the release build command; the flag must not appear.
+
+   A release ships two kinds of binary, and each has its own gate. The
+   firmware is rebuilt by `release.yml` with `cmake_flags: ""` (item 2). The
+   emulator libs are **not** rebuilt: `release.yml` downloads the
+   `libkkemu-<sha>` artifact of the tagged commit's CI run, and its "Attach
+   emulator libraries" step fails the release if either library contains the
+   alpha root's 33 bytes (`02de9231…dae7`). So the CI run a release takes its
+   libs from must not be an alpha run; if the newest green run for the tagged
+   commit ran on alpha, re-run CI for that commit on its release branch.
 2. **The binary root product-boundary gate was changed for production and
    passed.** Alpha CI requires this root in the full artifact and forbids it in
    bitcoin-only. Production must forbid the alpha root and independently prove
@@ -633,6 +646,8 @@ something they have to take on trust.
 - [ ] It rejects the certificate with any single byte of `cert[0..74]` flipped
 - [ ] The ARM binary contains the production root (§4.6b)
 - [ ] The ARM binary does **not** contain the alpha root
+- [ ] The emulator libs (`libkkemu-macos-arm64.dylib`, `libkkemu-win-x64.dll`)
+      do **not** contain the alpha root — `release.yml` refuses them if they do
 - [ ] `KK_CLEARSIGN_ALPHA_ROOT` appears nowhere in the production release build command
 - [ ] `KK_CLEARSIGN_MIN_EXPIRY` was reviewed for this cut
 - [ ] Atlas section F passed unchanged

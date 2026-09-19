@@ -354,6 +354,23 @@ jobs:
             test -f "emulator-libs/$asset" || \
               (echo "::error::$asset missing from CI artifact — refusing to publish a partial emulator set." && exit 1)
           done
+
+          # Alpha ClearSign root boundary, the emulator-libs side of the ARM
+          # gate in ci.yml. CI compiles the alpha root into these libs only
+          # for alpha runs; a release built with cmake_flags "" ships no root,
+          # so an emulator that trusts it would clear-sign what the released
+          # firmware refuses. A tag whose CI run was an alpha run fails here.
+          python3 - <<'EOF'
+          import sys
+          ALPHA_ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
+              blob = open("emulator-libs/" + name, "rb").read()
+              if ALPHA_ROOT in blob:
+                  sys.exit("::error::%s contains the alpha ClearSign root -- "
+                           "refusing to publish alpha emulator libs." % name)
+              print("Alpha root absent: %s" % name)
+          EOF
           cp emulator-libs/libkkemu-macos-arm64.dylib \
              emulator-libs/libkkemu-win-x64.dll release-assets/
           ls -lh release-assets/
