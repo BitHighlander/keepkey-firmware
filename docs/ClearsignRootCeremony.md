@@ -606,6 +606,17 @@ What must be true before a release carrying a root key is signed:
    replacement lands, every 7.16 tag fails here, release candidates included.
    That is intended: production gets its own root after the 7.15 re-release,
    not before.
+
+   Two paths are NOT byte-gated, and both are deliberate:
+   - `ci.yml` `publish-emulator` (manual `workflow_dispatch` with
+     `publish_emulator=true`) pushes the `scripts/emulator/Dockerfile` image to
+     DockerHub as `kktech/kkemu`. A published kkemu image therefore trusts the
+     alpha root. It is an emulator, never a device build, but do not treat its
+     version tag as a production artifact.
+   - A key holder can build outside `release.yml`. The signing-path tools
+     refuse the alpha bytes for that case: `scripts/release/hash-manifest.sh
+     --require-signed` and `scripts/release/verify-signatures.py` both fail on
+     an image containing them, each with its own self-test.
 2. **Every 7.16 build carries a root.** There is no rootless build and no flag.
    What proves it:
    - `firmware-unit`: `ClearsignRoot.SevenSixteenAlwaysShipsTheRoot` fails a

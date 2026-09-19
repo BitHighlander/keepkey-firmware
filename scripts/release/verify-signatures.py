@@ -57,6 +57,13 @@ PUBKEYS_H = REPO / "include" / "keepkey" / "board" / "pubkeys.h"
 # secp256k1 group order, for the low-S report.
 N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 
+# Every 7.16 build embeds a ClearSign root (there is no build flag). The ALPHA
+# root below is alpha-only: production gets its own root from a new ceremony
+# after the 7.15 re-release. release.yml refuses it, but a signer can build and
+# sign outside that workflow, so the signing-path tools refuse it too.
+ALPHA_CLEARSIGN_ROOT = bytes.fromhex(
+    "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+
 
 def load_pubkeys(path=PUBKEYS_H):
     """Parse the pubkey table out of pubkeys.h. Uncompressed, 65 bytes, 0x04."""
@@ -88,6 +95,12 @@ def verify_image(path, keys):
 
     if blob[OFF_MAGIC:OFF_MAGIC + 4] != MAGIC:
         return False, [f"  bad magic {blob[OFF_MAGIC:OFF_MAGIC + 4]!r}, expected {MAGIC!r}"]
+
+    if ALPHA_CLEARSIGN_ROOT in blob:
+        return False, [
+            "  alpha ClearSign root present: production needs its own root",
+            "  (new ceremony after the 7.15 re-release). Do not sign or publish this image.",
+        ]
 
     codelen = int.from_bytes(blob[OFF_CODELEN:OFF_CODELEN + 4], "little")
     if codelen == 0 or META_LEN + codelen > len(blob):
@@ -174,6 +187,16 @@ def self_test():
         blob = bytearray(build([1, 2, 3]))
         blob[OFF_SIG[2]:OFF_SIG[2] + SIG_LEN] = b"\x01" * SIG_LEN
         check("a non-zero placeholder signature fails", bytes(blob), False)
+        # A correctly signed image that still carries the alpha ClearSign root
+        # is refused: the alpha root must never reach a production release.
+        blob = bytearray(build([1, 2, 3]))
+        blob[META_LEN:META_LEN + len(ALPHA_CLEARSIGN_ROOT)] = ALPHA_CLEARSIGN_ROOT
+        img = bytes(blob[:META_LEN]) + bytes(blob[META_LEN:])
+        d2 = hashlib.sha256(img[META_LEN:META_LEN + len(code)]).digest()
+        img = bytearray(img)
+        for off, idx in zip(OFF_SIG, [1, 2, 3]):
+            img[off:off + SIG_LEN] = sks[idx - 1].sign_digest(d2, sigencode=sigencode_string)
+        check("an image carrying the alpha ClearSign root is refused", bytes(img), False)
 
     for f in failures:
         print(f"  FAIL {f}")
