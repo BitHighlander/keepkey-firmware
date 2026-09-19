@@ -35,7 +35,8 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
+static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg,
+                                 bool* needs_confirm) {
   if (!ethereum_isStandardERC20Transfer(msg) && msg->data_length != 0)
     return TXOUT_COMPILE_ERROR;
 
@@ -46,13 +47,15 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
     return TXOUT_COMPILE_ERROR;
 
   char amount_str[128 + sizeof(msg->token_shortcut) + 3];
-  if (!ethereumFormatTransferAmount(msg, amount_str, sizeof(amount_str)))
-    return TXOUT_COMPILE_ERROR;
-
-  if (!confirm_transfer_output(
-          ButtonRequestType_ButtonRequest_ConfirmTransferToAccount, amount_str,
-          node_str))
-    return TXOUT_CANCEL;
+  const bool amount_is_reviewable =
+      ethereumFormatTransferAmount(msg, amount_str, sizeof(amount_str));
+  if (amount_is_reviewable) {
+    if (!confirm_transfer_output(
+            ButtonRequestType_ButtonRequest_ConfirmTransferToAccount,
+            amount_str, node_str))
+      return TXOUT_CANCEL;
+    *needs_confirm = false;
+  }
 
   /* `node` is the shared fsm_derived_node scratch, scrubbed only by the NEXT
    * derivation or by fsm_abort_workflows(). Neither runs on the error paths
@@ -93,8 +96,7 @@ static int process_ethereum_msg(EthereumSignTx* msg, bool* needs_confirm) {
   switch (msg->address_type) {
     case OutputAddressType_TRANSFER: {
       // prep transfer type transaction
-      *needs_confirm = false;
-      return process_ethereum_xfer(coin, msg);
+      return process_ethereum_xfer(coin, msg, needs_confirm);
     }
     default:
       return TXOUT_OK;
