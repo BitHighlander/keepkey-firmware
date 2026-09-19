@@ -156,8 +156,8 @@ bool erc7730_enum_map_count(const Erc7730Literal* map, uint16_t* count) {
 bool erc7730_enum_map_index(const Erc7730Literal* map, uint16_t position,
                             uint16_t* key_literal, uint16_t* value_string) {
   uint16_t count = 0;
-  if (!key_literal || !value_string ||
-      !erc7730_enum_map_count(map, &count) || position >= count)
+  if (!key_literal || !value_string || !erc7730_enum_map_count(map, &count) ||
+      position >= count)
     return false;
   const size_t offset = 2u + 4u * position;
   const uint16_t key =

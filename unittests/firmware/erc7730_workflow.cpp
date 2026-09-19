@@ -49,7 +49,222 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 }
 
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
-  EXPECT_LE(sizeof(Erc7730Workflow), 4096u);
+  /* Fixed cap, independent of any descriptor. 4096 -> 4112 on the 64-bit host
+   * when the calldata stream started holding its Erc7730AbiProgram by value
+   * (use-after-return fix): +8 host bytes, +4 on ARM. The device budget is the
+   * linker's 16 KiB stack-reserve assert, not this number. */
+  EXPECT_LE(sizeof(Erc7730Workflow), 4112u);
+}
+
+TEST(Erc7730Workflow, ResolvesAndBoundsNestedArrayDisplayPaths) {
+  Erc7730Workflow workflow{};
+  workflow.display_index = 4;
+  ASSERT_TRUE(erc7730_workflow_push_array(&workflow, 2, 12, 3));
+  workflow.array_frames[0].index = 1;
+  workflow.display_index = 6;
+  ASSERT_TRUE(erc7730_workflow_push_array(&workflow, 5, 10, 2));
+
+  Erc7730Path path{};
+  path.source = 1;
+  path.source_index = UINT16_MAX;
+  path.step_count = 5;
+  path.steps[0].opcode = 1;
+  path.steps[0].first = 0;
+  path.steps[1].opcode = 2;
+  path.steps[2].opcode = 1;
+  path.steps[2].first = 1;
+  path.steps[3].opcode = 2;
+  path.steps[4].opcode = 1;
+  path.steps[4].first = 2;
+  Erc7730Path resolved{};
+  ASSERT_TRUE(erc7730_workflow_resolve_array_path(&workflow, &path, false,
+                                                   &resolved));
+  ASSERT_EQ(resolved.step_count, 5u);
+  EXPECT_EQ(resolved.steps[1].opcode, 1u);
+  EXPECT_EQ(resolved.steps[1].first, 1);
+  EXPECT_EQ(resolved.steps[3].opcode, 1u);
+  EXPECT_EQ(resolved.steps[3].first, 0);
+
+  workflow.display_index = 10;
+  bool repeat = false;
+  ASSERT_TRUE(erc7730_workflow_repeat_or_pop_array(&workflow, 6, 9,
+                                                   &repeat));
+  EXPECT_TRUE(repeat);
+  EXPECT_EQ(workflow.array_frames[1].index, 1u);
+  ASSERT_TRUE(erc7730_workflow_repeat_or_pop_array(&workflow, 6, 9,
+                                                   &repeat));
+  EXPECT_FALSE(repeat);
+  EXPECT_EQ(workflow.array_depth, 1u);
+
+  workflow.array_elements = ERC7730_ABI_MAX_ARRAY_ELEMENTS;
+  workflow.display_index = 7;
+  EXPECT_FALSE(erc7730_workflow_push_array(&workflow, 7, 8, 1));
+}
+
+TEST(Erc7730Workflow, CapturesDeviceStreamedTypedArrayLength) {
+  Erc7730Workflow workflow{};
+  prepareTypedUintWorkflow(&workflow);
+  workflow.loader.abi.node_count = 3;
+  workflow.loader.abi.nodes[1].kind = ERC7730_ABI_ARRAY;
+  workflow.loader.abi.nodes[1].first_child = 2;
+  workflow.loader.abi.nodes[1].child_count = 1;
+  workflow.loader.abi.nodes[1].array_length = ERC7730_ABI_DYNAMIC_ARRAY;
+  workflow.loader.abi.nodes[2].kind = ERC7730_ABI_UINT;
+  workflow.loader.abi.nodes[2].size = 256;
+  Erc7730Path path{};
+  path.source = 1;
+  path.source_index = UINT16_MAX;
+  path.step_count = 1;
+  path.steps[0].opcode = 1;
+  path.steps[0].first = 0;
+  ASSERT_TRUE(erc7730_workflow_start_eip712_array_capture(&workflow, &path));
+  const uint32_t member_path[] = {1, 0};
+  const uint8_t length[] = {0, 3};
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(
+      &workflow, member_path, 2, length, sizeof(length)));
+  ASSERT_TRUE(erc7730_workflow_eip712_finish(&workflow));
+  uint8_t captured = 0;
+  ASSERT_TRUE(erc7730_workflow_captured_array_length(&workflow, &captured));
+  EXPECT_EQ(captured, 3u);
+}
+
+TEST(Erc7730Workflow, BoundsAndAuthenticatesEmbeddedCallStack) {
+  Erc7730Workflow workflow{};
+  workflow.identity.kind = ERC7730_DEFINITION_CALLDATA;
+  workflow.identity.chain_id = 1;
+  memset(workflow.identity.definition_id, 0x11, 32);
+  uint8_t callee[20];
+  memset(callee, 0x42, sizeof(callee));
+  const uint8_t calldata[] = {0xde, 0xad, 0xbe, 0xef, 1, 2, 3};
+  ASSERT_TRUE(erc7730_workflow_enter_embedded(
+      &workflow, callee, calldata, sizeof(calldata), 9));
+
+  Erc7730CatalogIdentity child{};
+  child.kind = ERC7730_DEFINITION_CALLDATA;
+  child.chain_id = 1;
+  memcpy(child.contract_address, callee, sizeof(callee));
+  memcpy(child.selector_or_type_hash, calldata, 4);
+  memset(child.definition_id, 0x22, 32);
+  EXPECT_TRUE(erc7730_workflow_accept_embedded_definition(&workflow, &child));
+
+  child.chain_id = 137;
+  EXPECT_FALSE(erc7730_workflow_accept_embedded_definition(&workflow, &child));
+  child.chain_id = 1;
+  child.selector_or_type_hash[0] ^= 1;
+  EXPECT_FALSE(erc7730_workflow_accept_embedded_definition(&workflow, &child));
+  child.selector_or_type_hash[0] ^= 1;
+  memcpy(child.definition_id, workflow.identity.definition_id, 32);
+  EXPECT_FALSE(erc7730_workflow_accept_embedded_definition(&workflow, &child));
+
+  uint8_t parent[32];
+  uint16_t resume = 0;
+  ASSERT_TRUE(erc7730_workflow_leave_embedded(&workflow, parent, &resume));
+  EXPECT_EQ(memcmp(parent, workflow.identity.definition_id, 32), 0);
+  EXPECT_EQ(resume, 9u);
+  EXPECT_EQ(workflow.embedded_depth, 0u);
+
+  for (uint8_t i = 0; i < ERC7730_EMBEDDED_MAX_DEPTH; i++) {
+    workflow.identity.definition_id[0] = (uint8_t)(i + 1u);
+    ASSERT_TRUE(erc7730_workflow_enter_embedded(
+        &workflow, callee, calldata, sizeof(calldata), i));
+  }
+  EXPECT_FALSE(erc7730_workflow_enter_embedded(
+      &workflow, callee, calldata, sizeof(calldata), 5));
+}
+
+TEST(Erc7730Workflow, DerivesEmbeddedLookupAndParentRestoreRequests) {
+  Erc7730Workflow workflow{};
+  workflow.phase = ERC7730_WORKFLOW_READY;
+  workflow.identity.kind = ERC7730_DEFINITION_CALLDATA;
+  workflow.identity.chain_id = 42161;
+  memset(workflow.identity.definition_id, 0x11, 32);
+  uint8_t callee[20];
+  memset(callee, 0x42, sizeof(callee));
+  const uint8_t calldata[] = {0xde, 0xad, 0xbe, 0xef, 1, 2, 3};
+  ASSERT_TRUE(erc7730_workflow_enter_embedded(
+      &workflow, callee, calldata, sizeof(calldata), 17));
+  ASSERT_TRUE(erc7730_workflow_begin_embedded_auth(&workflow));
+  EXPECT_TRUE(erc7730_workflow_active(&workflow));
+
+  uint8_t requested_id[32], requested_callee[20], selector[4], depth = 0;
+  bool has_id = true;
+  uint64_t chain_id = 0;
+  uint32_t offset = 99, length = 0;
+  ASSERT_TRUE(erc7730_workflow_embedded_request(
+      &workflow, requested_id, &has_id, &chain_id, requested_callee,
+      selector, &offset, &length, &depth));
+  EXPECT_FALSE(has_id);
+  EXPECT_EQ(chain_id, 42161u);
+  EXPECT_EQ(memcmp(requested_callee, callee, sizeof(callee)), 0);
+  EXPECT_EQ(memcmp(selector, calldata, sizeof(selector)), 0);
+  EXPECT_EQ(offset, 0u);
+  EXPECT_EQ(length, ERC7730_TRANSPORT_CHUNK_MAX);
+  EXPECT_EQ(depth, 1u);
+
+  workflow.phase = ERC7730_WORKFLOW_READY;
+  uint8_t parent_id[32];
+  memcpy(parent_id, workflow.embedded_frames[0].parent_definition_id,
+         sizeof(parent_id));
+  ASSERT_TRUE(erc7730_workflow_begin_parent_auth(&workflow));
+  ASSERT_TRUE(erc7730_workflow_embedded_request(
+      &workflow, requested_id, &has_id, &chain_id, requested_callee,
+      selector, &offset, &length, &depth));
+  EXPECT_TRUE(has_id);
+  EXPECT_EQ(memcmp(requested_id, parent_id, sizeof(requested_id)), 0);
+  for (uint8_t byte : requested_callee) EXPECT_EQ(byte, 0u);
+  for (uint8_t byte : selector) EXPECT_EQ(byte, 0u);
+  EXPECT_EQ(depth, 1u);
+  EXPECT_EQ(workflow.embedded_resume_instruction, 17u);
+}
+
+TEST(Erc7730Workflow, RejectsDefinitionIdChangesDuringEmbeddedAuth) {
+  Erc7730Workflow workflow{};
+  workflow.phase = ERC7730_WORKFLOW_EMBEDDED_AUTH;
+  workflow.embedded_depth = 1;
+  workflow.embedded_next_offset = 12;
+  memset(workflow.embedded_definition_id, 0x55, 32);
+  EthereumClearSignDefinitionChunk chunk{};
+  chunk.definition_id.size = 32;
+  memset(chunk.definition_id.bytes, 0x56, 32);
+  chunk.offset = 12;
+  chunk.total_length = 100;
+  chunk.data.size = 1;
+  bool complete = false;
+  EXPECT_EQ(erc7730_workflow_embedded_auth_feed(&workflow, &chunk, &complete),
+            ERC7730_CATALOG_BAD_SEQUENCE);
+  EXPECT_FALSE(complete);
+  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+  EXPECT_EQ(workflow.embedded_depth, 0u);
+}
+
+TEST(Erc7730Workflow, DecodesEmbeddedFieldsOnlyFromCapturedCalldata) {
+  Erc7730Workflow workflow{};
+  prepareTypedUintWorkflow(&workflow);
+  workflow.typed_data = false;
+  workflow.identity.kind = ERC7730_DEFINITION_CALLDATA;
+  workflow.embedded_depth = 1;
+  workflow.embedded_lengths[0] = 36;
+  workflow.embedded_calldata[0][0] = 0xde;
+  workflow.embedded_calldata[0][1] = 0xad;
+  workflow.embedded_calldata[0][2] = 0xbe;
+  workflow.embedded_calldata[0][3] = 0xef;
+  workflow.embedded_calldata[0][35] = 42;
+  Erc7730Path path{};
+  path.source = 1;
+  path.source_index = UINT16_MAX;
+  path.step_count = 1;
+  path.steps[0].opcode = 1;
+  path.steps[0].first = 0;
+  ASSERT_TRUE(erc7730_workflow_execute_embedded_calldata(&workflow, &path));
+  uint64_t value = 0;
+  ASSERT_TRUE(erc7730_workflow_captured_uint64(&workflow, &value));
+  EXPECT_EQ(value, 42u);
+
+  workflow.phase = ERC7730_WORKFLOW_READY;
+  ASSERT_TRUE(erc7730_workflow_execute_embedded_calldata(&workflow, nullptr));
+  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_COMPLETE);
+  workflow.embedded_calldata[0][35] = 43;
+  EXPECT_EQ(value, 42u);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {
@@ -174,9 +389,57 @@ TEST(Erc7730Workflow, FormatsTokenAmountOnlyFromAuthenticatedMetadata) {
                                                    sizeof(formatted)));
   EXPECT_STREQ(formatted, "1.234567 USDC");
 
+  workflow.formatter_auxiliary = UINT16_MAX;
+  memcpy(workflow.condition_literals, value, sizeof(value));
+  ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
+                                                   sizeof(formatted)));
+  EXPECT_STREQ(formatted, "Unlimited USDC");
+
+  workflow.condition_literals[31]++;
+  ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
+                                                   sizeof(formatted)));
+  EXPECT_STREQ(formatted, "1.234567 USDC");
+
+  memcpy(workflow.condition_literals, value, sizeof(value));
+  memcpy(workflow.condition_literals + 32, "Approve all", 11);
+  workflow.formatter_auxiliary = 11;
+  ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
+                                                   sizeof(formatted)));
+  EXPECT_STREQ(formatted, "Approve all USDC");
+
   workflow.value_scratch.formatter_parameters.base[0] = '\0';
   EXPECT_FALSE(erc7730_workflow_format_captured_raw(&workflow, formatted,
                                                     sizeof(formatted)));
+}
+
+TEST(Erc7730Workflow, CapturesBoundedTokenChainId) {
+  Erc7730Workflow workflow{};
+  prepareTypedUintWorkflow(&workflow);
+  Erc7730Path path{};
+  path.source = 1;
+  path.step_count = 1;
+  path.source_index = UINT16_MAX;
+  path.steps[0].opcode = 1;
+  path.steps[0].first = 0;
+  ASSERT_TRUE(erc7730_workflow_start_eip712_capture(&workflow, &path));
+  const uint32_t member_path[2] = {1, 0};
+  uint8_t value[32] = {0};
+  value[24] = 1;
+  value[31] = 0x89;
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(&workflow, member_path, 2, value,
+                                              sizeof(value)));
+  ASSERT_TRUE(erc7730_workflow_eip712_finish(&workflow));
+  uint64_t chain_id = 0;
+  ASSERT_TRUE(erc7730_workflow_captured_uint64(&workflow, &chain_id));
+  EXPECT_EQ(chain_id, UINT64_C(0x0100000000000089));
+
+  value[0] = 1;
+  prepareTypedUintWorkflow(&workflow);
+  ASSERT_TRUE(erc7730_workflow_start_eip712_capture(&workflow, &path));
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(&workflow, member_path, 2, value,
+                                              sizeof(value)));
+  ASSERT_TRUE(erc7730_workflow_eip712_finish(&workflow));
+  EXPECT_FALSE(erc7730_workflow_captured_uint64(&workflow, &chain_id));
 }
 
 TEST(Erc7730Workflow, FormatsCapturedTimestampExactly) {
@@ -669,6 +932,41 @@ TEST(Erc7730Workflow, UsesHonestRawFallbacksForUnavailableExternalNames) {
   ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
                                                    sizeof(formatted)));
   EXPECT_STREQ(formatted, "0x2222222222222222222222222222222222222222");
+  workflow.current_formatter_kind = 12;
+  ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
+                                                   sizeof(formatted)));
+  EXPECT_STREQ(formatted, "0x2222222222222222222222222222222222222222");
+}
+
+TEST(Erc7730Workflow, PreservesInteroperableAddressBytesWithoutLiveResolver) {
+  Erc7730Workflow workflow{};
+  workflow.typed_data = true;
+  workflow.phase = ERC7730_WORKFLOW_READY;
+  workflow.current_formatter_kind = 12;
+  workflow.loader.abi_started = true;
+  workflow.loader.index.complete = true;
+  workflow.loader.abi.complete = true;
+  workflow.loader.abi.node_count = 2;
+  workflow.loader.abi.nodes[0].kind = ERC7730_ABI_TUPLE;
+  workflow.loader.abi.nodes[0].first_child = 1;
+  workflow.loader.abi.nodes[0].child_count = 1;
+  workflow.loader.abi.nodes[1].kind = ERC7730_ABI_BYTES;
+  const uint8_t encoded[] = {0x00, 0x01, 0x00, 0x14, 0xaa, 0xbb};
+  Erc7730Path path{};
+  path.source = 1;
+  path.step_count = 1;
+  path.source_index = UINT16_MAX;
+  path.steps[0].opcode = 1;
+  path.steps[0].first = 0;
+  ASSERT_TRUE(erc7730_workflow_start_eip712_capture(&workflow, &path));
+  const uint32_t member_path[2] = {1, 0};
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(
+      &workflow, member_path, 2, encoded, sizeof(encoded)));
+  ASSERT_TRUE(erc7730_workflow_eip712_finish(&workflow));
+  char formatted[32];
+  ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
+                                                   sizeof(formatted)));
+  EXPECT_STREQ(formatted, "0x00010014aabb");
 }
 
 TEST(Erc7730Workflow, NeverClaimsUnverifiedEncryptedPlaintext) {

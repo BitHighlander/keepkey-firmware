@@ -290,6 +290,13 @@ TEST(Erc7730Catalog, RejectsMalformedOrAliasedAbiGraphsWhileStreaming) {
   EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
+TEST(Erc7730Catalog, AcceptsCanonicalEmptyRootTupleForArgumentlessCall) {
+  auto p = replaceTable(minimalProgram(), 2,
+                        {8, 0, 0, 0, 0, 0, 0, 0, 0}, 1);
+  p[p.size() - 6] = 1;  // exact ABI depth for the empty root tuple
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+}
+
 TEST(Erc7730Catalog, RecomputesSignedResourceDeclaration) {
   auto p = minimalProgram();
   p[p.size() - 22] = 1;  // claims 256 strings instead of zero
@@ -337,8 +344,8 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
 
   entries = {1, 2, 0xff, 0xff, 2, 2};
-  p = programWithPaths(entries, 1);  // two full-array selectors
-  EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithPaths(entries, 1);  // nested full-array selectors
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
   entries = {2, 1, 0, 2, 1, 0, 0, 0, 0};
   p = programWithPaths(entries, 1);  // container paths have no steps
@@ -382,6 +389,14 @@ TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
       4,  0, 0,    0,    0,    0,    0xff, 0xff,  // field
       10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,  // end
   };
+  p = replaceTable(p, 7, display, 3);
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+
+  // tokenAmount without a token operand is canonical and displays the
+  // device-decoded integer as an unknown-token fallback.
+  const std::vector<uint8_t> unknown_token = {3, 0, 1, 1, 1, 0, 0};
+  p = programWithPaths(path, 1);
+  p = replaceTable(p, 6, unknown_token, 1);
   p = replaceTable(p, 7, display, 3);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 

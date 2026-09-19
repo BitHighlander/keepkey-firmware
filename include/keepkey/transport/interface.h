@@ -67,8 +67,11 @@
  * because that is a permanent, user-visible product limit (4 is already low
  * against a YubiKey's 25+) while this is protocol headroom nobody sees, and
  * every registered message is static-asserted against it -- outgrowing it
- * fails the BUILD, not the field. */
-#define MAX_DECODE_SIZE (11 * 1024)
+ * fails the BUILD, not the field.
+ *
+ * ERC-7730 v2 spent that margin again; sizing to the largest inbound message
+ * (TxAck, 10,832 B on ARM) takes back the remaining 432 B of slack. */
+#define MAX_DECODE_SIZE sizeof(TxAck)
 #else
 #define MAX_DECODE_SIZE (26 * 1024)
 #endif
