@@ -27,8 +27,10 @@
 /* ── The KeepKey delegation root ─────────────────────────────────────
  *
  * This translation unit exists so that "who can reach the root key" is a
- * one-line grep. Exactly one function reads it. Adding a second caller is a
- * SECURITY CHANGE, not a refactor, and should be reviewed as one.
+ * one-line grep. Exactly one function trusts it: clearsign_root_verify_cert.
+ * The other two readers only copy it out or test it for zero, and make no
+ * trust decision. Adding a second function that verifies against the root is
+ * a SECURITY CHANGE, not a refactor, and should be reviewed as one.
  *
  * The root key is what separates 7.16 from 7.15. In 7.15 a describer can
  * mislabel a transaction but cannot conceal it, because the raw review always
@@ -124,7 +126,7 @@
  * path -- never to a refusal. A stale or unverifiable describer is one we no
  * longer trust, and an undescribed transaction is what 7.15 already handles.
  *
- * THE ONLY FUNCTION THAT READS THE ROOT KEY. */
+ * THE ONLY FUNCTION THAT TRUSTS THE ROOT KEY. */
 bool clearsign_root_verify_cert(const uint8_t* cert, size_t cert_len);
 
 /* Verify a suppression-capable certificate and require its network scope. On
@@ -152,9 +154,14 @@ bool clearsign_root_verify_erc7730_catalog(
     const uint8_t catalog_root[32], const uint8_t* sig, size_t sig_len,
     char out_alias[CLEARSIGN_ALIAS_LEN + 1]);
 
-/* True when the firmware carries no root key at all -- the mechanical 7.15
- * release gate, kept queryable so a test can assert it rather than a human
- * grepping for key bytes. */
+/* True when the compiled-in root is not all zero. Every 7.16 build embeds the
+ * root unconditionally, so this is always true; it stays as a conjunct of the
+ * suppression decision and so the unit suite can tie the firmware version to
+ * the root. */
 bool clearsign_root_is_present(void);
+
+/* Copy out the compiled-in root public key. It makes no trust decision; the
+ * unit suite uses it to pin the exact 33 bytes this release trusts. */
+void clearsign_root_pubkey(uint8_t out[CLEARSIGN_PUBKEY_LEN]);
 
 #endif

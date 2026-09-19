@@ -147,6 +147,24 @@ jobs:
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/release/stack-usage.tgz --null -T - && \
               chmod -R a+rw /root/keepkey-firmware/release"
 
+      # 7.16 always embeds the ClearSign root (lib/firmware/clearsign_root.c,
+      # no build flag). A full image without its 33 bytes would refuse every
+      # certificate Vault sends, so the release fails instead. Bitcoin-only
+      # does not link clearsign_root.c (lib/firmware/CMakeLists.txt), so
+      # there is nothing to assert for it.
+      - name: Assert ClearSign root present (full)
+        if: matrix.variant == 'full'
+        run: |
+          python3 - <<'EOF'
+          import sys
+          ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          if ROOT not in open("release/firmware.keepkey.bin", "rb").read():
+              sys.exit("::error::firmware.keepkey.bin does not contain the "
+                       "ClearSign root -- refusing to release it.")
+          print("ClearSign root present: firmware.keepkey.bin")
+          EOF
+
       # Same SRAM budget gate CI enforces (rc8 boot-fault class): release
       # artifacts must clear it too, not just the 16 KiB linker ASSERT.
       - name: SRAM budget gate (${{ matrix.variant }})
@@ -354,6 +372,21 @@ jobs:
             test -f "emulator-libs/$asset" || \
               (echo "::error::$asset missing from CI artifact — refusing to publish a partial emulator set." && exit 1)
           done
+
+          # 7.16 always embeds the ClearSign root, the emulator libs included,
+          # and Vault enables certified ClearSign from the firmware version
+          # alone. Libs without the root's 33 bytes would refuse every
+          # certificate the released firmware accepts: refuse to ship them.
+          python3 - <<'EOF'
+          import sys
+          ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
+              if ROOT not in open("emulator-libs/" + name, "rb").read():
+                  sys.exit("::error::%s does not contain the ClearSign root -- "
+                           "refusing to publish it." % name)
+              print("ClearSign root present: %s" % name)
+          EOF
           cp emulator-libs/libkkemu-macos-arm64.dylib \
              emulator-libs/libkkemu-win-x64.dll release-assets/
           ls -lh release-assets/

@@ -80,13 +80,6 @@ include_directories(
 
 add_library(kkfirmware ${sources})
 
-# Root inclusion is an explicit product choice. OFF remains fail-closed for
-# production/release builds. Alpha artifacts and emulator/unit builds opt into
-# the hardware-held alpha root whose certificates Vault currently serves.
-option(KK_CLEARSIGN_ALPHA_ROOT "Compile in the hardware-held alpha ClearSign root" OFF)
-if(KK_CLEARSIGN_ALPHA_ROOT)
-  target_compile_definitions(kkfirmware PRIVATE KK_CLEARSIGN_ALPHA_ROOT=1)
-endif()
 add_dependencies(kkfirmware kktransport.pb trezorcrypto qrcodegenerator ethereum_tokens.def)
 
 set(ETHEREUM_TOKENS ${CMAKE_BINARY_DIR}/include/keepkey/firmware/ethereum_tokens)

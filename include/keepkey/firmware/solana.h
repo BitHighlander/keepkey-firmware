@@ -185,6 +185,10 @@ typedef struct {
   uint8_t num_readonly_signed;
   uint8_t num_readonly_unsigned;
   uint8_t num_accounts;
+  /* How many of `accounts` are the message's own static keys. The rest, when
+   * a certified parse appended them, are lookup-table keys the signed bytes
+   * reference only by index. */
+  uint8_t num_static_accounts;
   uint8_t accounts[SOL_MAX_ACCOUNTS][SOL_PUBKEY_SIZE];
   uint8_t recent_blockhash[SOL_PUBKEY_SIZE];
   /* True when a v0 message contains at least one serialized address lookup
@@ -232,22 +236,29 @@ typedef struct {
  *
  * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
  *   magic          8   "KKSOLSC1"
- *   version        1   = 1
+ *   version        1   1 or 2
  *   program_id    32
  *   disc_len       1   1..8
  *   discriminator  disc_len
  *   program name   1 + 1..SOL_SCHEMA_NAME_MAX
  *   instr name     1 + 1..SOL_SCHEMA_NAME_MAX
- *   n_args         1   0..SOL_SCHEMA_MAX_ARGS
+ *   n_args         1   0..SOL_SCHEMA_V1_MAX_ARGS (version 1)
+ *                      0..SOL_SCHEMA_MAX_ARGS    (version 2)
  *     per arg:     type(1) label_len(1) label
+ *     TOKEN_AMOUNT (v2) then appends mint_account(1): the index, in THIS
+ *     instruction's account list, of the token's mint
  *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
  *     per account: index(1) label_len(1) label
- * No bytes may follow. Args are laid out sequentially from the end of the
- * discriminator, in declaration order.
+ * No bytes may follow, and the whole payload fits SolanaSignTx.schema_payload
+ * (256 bytes). Version 1 accepts arg types 1..5 only, so every v1 payload
+ * parses exactly as before v2 existed; version 2 adds types 6..7. Args are
+ * laid out sequentially from the end of the discriminator, in declaration
+ * order; multi-byte args are little-endian in the instruction data.
  */
 #define SOL_SCHEMA_NAME_MAX 20
 #define SOL_SCHEMA_LABEL_MAX 16
-#define SOL_SCHEMA_MAX_ARGS 4
+#define SOL_SCHEMA_V1_MAX_ARGS 4
+#define SOL_SCHEMA_MAX_ARGS 8
 #define SOL_SCHEMA_MAX_ACCOUNTS 4
 #define SOL_SCHEMA_DISC_MAX 8
 
@@ -257,11 +268,17 @@ typedef enum {
   SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
   SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown in full over pages */
   SOL_SCHEMA_ARG_LAMPORTS = 5, /* 8 bytes, shown as decimal SOL */
+  /* v2: 8-byte raw amount of the token whose mint is instruction account
+   * mint_account. Scaled and named only by a trusted token definition for
+   * that mint; otherwise shown raw beside the full mint address. */
+  SOL_SCHEMA_ARG_TOKEN_AMOUNT = 6,
+  SOL_SCHEMA_ARG_DURATION = 7, /* v2: 8-byte seconds, shown in exact units */
 } SolanaSchemaArgType;
 
 typedef struct {
   SolanaSchemaArgType type;
   char label[SOL_SCHEMA_LABEL_MAX + 1];
+  uint8_t mint_account; /* TOKEN_AMOUNT only; fits the struct's padding */
 } SolanaSchemaArg;
 
 typedef struct {
@@ -292,11 +309,74 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
 
 /* Find the instruction this schema describes and prove it may be trusted:
  * program id + discriminator match, the schema accounts for the instruction
- * data exactly, its account indices are in range, the instruction is not
- * lookup-table backed, and every other instruction in `tx` is a program
- * firmware already decodes. Returns the matching index via `out_index`. */
+ * data exactly, its account indices (including every TOKEN_AMOUNT mint) are in
+ * range, the instruction is not lookup-table backed, and every other
+ * instruction in `tx` is inert (compute budget or memo). Returns the matching
+ * index via `out_index`. */
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index);
+
+/* The same proof for a root-certified schema, of either version, which
+ * additionally admits SystemProgram Transfer companions whose every account is
+ * one of the message's static keys: the certified review renders each one in
+ * full (funding account, amount, destination) through
+ * solana_confirmInstruction, and its destination is then always a key the
+ * signed bytes contain, never one a lookup-table proof resolved. */
+bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
+                                   const SolanaParsedTx* tx,
+                                   uint8_t* out_index);
+
+/* DURATION display in exact units: whole days, else whole hours, else whole
+ * minutes, else seconds ("N d", "N h", "N min", "N s"). */
+void solana_formatDuration(char* buf, size_t len, uint64_t seconds);
+
+/* The token definition that may name and scale a schema TOKEN_AMOUNT for
+ * `mint`, or NULL. Each review tier keeps its own trust root: a certified
+ * review accepts only a definition signed by the certificate's delegate
+ * ("KeepKeySolanaTokenDef/2", the certified Pump token attestation, for the
+ * SPL Token or Token-2022 program); a runtime review only one attested by the
+ * user-loaded signer that signed the schema (solana_token_info_trusted, and
+ * signer_key_id == msg->schema_signer_key_id). Either way the decimals must be
+ * displayable (<= SOL_MAX_DISPLAY_DECIMALS), the symbol a bare ticker, and the
+ * symbol not one the firmware's known-token table gives to another mint
+ * (compared ignoring case): a "USDC" definition for any mint but Circle's is
+ * not trusted, and the amount is shown raw beside its mint. */
+const SolanaTokenInfo* solana_schemaTrustedToken(
+    const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE],
+    bool certified);
+
+/* TOKEN_AMOUNT display, always ending in the full mint address on its own
+ * row. With a trusted definition: the amount scaled by its decimals and
+ * labelled with its symbol ("1000.000000 SDICE\n<mint>") -- a symbol names a
+ * token but does not identify one, since anyone can mint a "USDC". Without
+ * one: the raw integer ("N base units of mint\n<mint>") -- never a guessed
+ * scale or symbol. False only when the mint cannot be encoded, and the caller
+ * must then refuse. */
+bool solana_formatSchemaTokenAmount(char* buf, size_t len, uint64_t amount,
+                                    const uint8_t mint[SOL_PUBKEY_SIZE],
+                                    const SolanaTokenInfo* trusted);
+
+/* The token definition resolved for the last TOKEN_AMOUNT mint of one review,
+ * so each mint's definition is verified once. Zero it before the first arg. */
+typedef struct {
+  const uint8_t* mint;
+  const SolanaTokenInfo* token;
+} SolanaSchemaTokenCache;
+
+/* The display text of schema arg `arg` of instruction `ix`, whose value
+ * starts at `data` (inside ix->data; the applies check proved the whole arg
+ * is there). A TOKEN_AMOUNT's mint is the tx key of the instruction's own
+ * account arg->mint_account -- parsed->accounts[ix->acct_indices[...]] -- and
+ * only a definition trusted in this review's tier (`certified`) may scale and
+ * name it. OPAQUE32 has no text form: the caller pages its bytes instead of
+ * calling this. False for OPAQUE32 and for any value that cannot be shown;
+ * the caller must then refuse. */
+bool solana_schemaArgValue(const SolanaSignTx* msg, bool certified,
+                           const SolanaParsedTx* parsed,
+                           const SolanaParsedInstruction* ix,
+                           const SolanaSchemaArg* arg, const uint8_t* data,
+                           SolanaSchemaTokenCache* cache, char* buf,
+                           size_t len);
 
 /* A certified request carries resolved LUT accounts if and only if the signed
  * message contains address-lookup entries. Self-contained messages must not

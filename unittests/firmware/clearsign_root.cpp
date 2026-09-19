@@ -62,11 +62,27 @@ TEST(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
                                            alias));
 }
 
-TEST(ClearsignRoot, RootKeyIsPresentInThisBuild) {
-  // The 7.15 release gate is the INVERSE of this: no root key compiled in, so
-  // the suppression branch cannot be reached. Queryable so a release test can
-  // assert it rather than a human grepping for key bytes.
-  EXPECT_TRUE(clearsign_root_is_present());
+TEST(ClearsignRoot, SevenSixteenAlwaysShipsTheRoot) {
+  // Vault turns certified ClearSign on from the firmware version alone
+  // (>= 7.16.0). A 7.16+ build without the root would refuse every
+  // certificate Vault sends, so the version and the root move together.
+  const bool certified_by_version =
+      MAJOR_VERSION > 7 || (MAJOR_VERSION == 7 && MINOR_VERSION >= 16);
+  EXPECT_TRUE(!certified_by_version || clearsign_root_is_present())
+      << "firmware " << MAJOR_VERSION << "." << MINOR_VERSION
+      << " ships without a ClearSign root";
+}
+
+TEST(ClearsignRoot, TheRootIsTheMarkedRootKeepKeysKey) {
+  // m/44'/60'/0'/0/0 on the marked root KeepKey, device
+  // 393137350D4736341B003900. Replacing the root is a reviewed diff to
+  // clearsign_root.c AND to this line, never a side effect of anything else.
+  const auto expected = unhex(
+      "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7");
+  ASSERT_EQ(expected.size(), (size_t)CLEARSIGN_PUBKEY_LEN);
+  uint8_t embedded[CLEARSIGN_PUBKEY_LEN] = {0};
+  clearsign_root_pubkey(embedded);
+  EXPECT_EQ(0, memcmp(embedded, expected.data(), CLEARSIGN_PUBKEY_LEN));
 }
 
 TEST(ClearsignRoot, RejectsAnyMutatedByte) {
