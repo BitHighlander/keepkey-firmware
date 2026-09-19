@@ -995,8 +995,12 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
-  if (tx_review == SOL_TX_REVIEW_VERIFIED &&
-      !solana_validatePriorityFee(&parsed)) {
+  /* Every clear-signing review binds the compute-budget fields to the SOL at
+   * risk: a fully verified one, and a root-certified one, which is OPAQUE
+   * because its schema instruction is unknown to the parser. */
+  const bool review_binds_fee =
+      tx_review == SOL_TX_REVIEW_VERIFIED || certified;
+  if (review_binds_fee && !solana_validatePriorityFee(&parsed)) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_SyntaxError, _("Invalid priority fee"));
@@ -1154,10 +1158,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
-  /* Bind the raw compute-budget fields above to the actual SOL at risk. This
-   * is required for every fully verified path, including certified schemas. */
-  if (tx_review == SOL_TX_REVIEW_VERIFIED &&
-      !solana_confirmPriorityFee(&parsed)) {
+  /* Bind the raw compute-budget fields above to the actual SOL at risk, on
+   * every fully verified review and every certified one. */
+  if (review_binds_fee && !solana_confirmPriorityFee(&parsed)) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
