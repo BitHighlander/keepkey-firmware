@@ -993,12 +993,15 @@ static bool solana_schemaCompanionIsInert(SolanaInstrType type) {
   }
 }
 
-/* A certified Transfer companion must name only the message's static keys. A
- * certified lookup-table proof clears `external`, but the keys it resolves
- * are the service's attestation, not bytes the user signs; the SOL-send
- * screen must never take its destination from one. */
+/* A certified Transfer companion must name exactly two accounts, both static
+ * keys of the message. A certified lookup-table proof clears `external`, but
+ * the keys it resolves are the service's attestation, not bytes the user
+ * signs; the SOL-send screen must never take its destination from one. The
+ * count is the Vault/Worker rule (isCertifiedCompanion), so both sides certify
+ * the same transactions. */
 static bool schema_transferIsStatic(const SolanaParsedTx* tx,
                                     const SolanaParsedInstruction* ix) {
+  if (ix->num_acct_indices != 2) return false;
   for (uint8_t j = 0; j < ix->num_acct_indices; j++) {
     if (ix->acct_indices[j] >= tx->num_static_accounts) return false;
   }

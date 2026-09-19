@@ -2853,6 +2853,39 @@ TEST(Solana, SchemaV1CertifiedAdmitsStaticTransferCompanion) {
   EXPECT_EQ(idx, 0xFF);
 }
 
+/* Parity with the Vault/Worker (isCertifiedCompanion): a certified Transfer
+ * companion names exactly two accounts. The same Transfer with a third static
+ * account still parses as a SystemProgram Transfer, and the certified path
+ * refuses it; with two it is admitted. */
+TEST(Solana, SchemaCertifiedTransferCompanionNeedsExactlyTwoAccounts) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+  const uint8_t system_program[32] = {0};
+  uint8_t blob[256];
+  const size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+
+  for (uint8_t accts : {(uint8_t)3, (uint8_t)2}) {
+    uint8_t raw[512];
+    const size_t pos = build_schema_plus_companion_tx(
+        raw, program, d, sizeof(d), system_program, accts, kSystemTransfer12,
+        sizeof(kSystemTransfer12));
+    SolanaParsedTx tx;
+    ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+    ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_SYSTEM_TRANSFER);
+    ASSERT_EQ(tx.instructions[1].num_acct_indices, accts);
+    ASSERT_EQ(tx.num_static_accounts, tx.num_accounts);
+
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), accts == 2)
+        << (unsigned)accts;
+    EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)accts;
+  }
+}
+
 /* v0 message: static keys [signer, schema program, System program, 0x33..];
  * one lookup table resolving one key. ix0 is the Relay-shaped call, ix1 a
  * System Transfer from the signer to message key `to_index`. */
