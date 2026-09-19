@@ -147,6 +147,24 @@ jobs:
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/release/stack-usage.tgz --null -T - && \
               chmod -R a+rw /root/keepkey-firmware/release"
 
+      # 7.16 always embeds the ClearSign root (lib/firmware/clearsign_root.c,
+      # no build flag). A full image without its 33 bytes would refuse every
+      # certificate Vault sends, so the release fails instead. Bitcoin-only
+      # does not link clearsign_root.c (lib/firmware/CMakeLists.txt), so
+      # there is nothing to assert for it.
+      - name: Assert ClearSign root present (full)
+        if: matrix.variant == 'full'
+        run: |
+          python3 - <<'EOF'
+          import sys
+          ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          if ROOT not in open("release/firmware.keepkey.bin", "rb").read():
+              sys.exit("::error::firmware.keepkey.bin does not contain the "
+                       "ClearSign root -- refusing to release it.")
+          print("ClearSign root present: firmware.keepkey.bin")
+          EOF
+
       # Same SRAM budget gate CI enforces (rc8 boot-fault class): release
       # artifacts must clear it too, not just the 16 KiB linker ASSERT.
       - name: SRAM budget gate (${{ matrix.variant }})
@@ -333,17 +351,12 @@ jobs:
           # validate/ already required that run to be green. Reusing that
           # artifact means the published binaries are the ones that were
           # tested, not a lookalike from a second build.
-          #
-          # Only a push run on a branch other than alpha qualifies: alpha
-          # runs, and PR runs into alpha, compile the alpha ClearSign root
-          # into these libs. A re-run keeps its run's event and branch, so
-          # re-running an alpha run never qualifies either.
           RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
             --workflow CI --commit "$GITHUB_SHA" \
-            --json status,conclusion,databaseId,event,headBranch \
-            --jq '[.[] | select(.status == "completed" and .conclusion == "success" and .event == "push" and .headBranch != "alpha")] | map(.databaseId) | first')
+            --json status,conclusion,databaseId \
+            --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | map(.databaseId) | first')
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "::error::No successful non-alpha push CI run for ${GITHUB_SHA} — cannot source emulator libraries. Push the commit to its release branch and let CI pass there."
+            echo "::error::No successful CI run for ${GITHUB_SHA} — cannot source emulator libraries."
             exit 1
           fi
           echo "Sourcing emulator libraries from CI run ${RUN_ID}"
@@ -360,22 +373,19 @@ jobs:
               (echo "::error::$asset missing from CI artifact — refusing to publish a partial emulator set." && exit 1)
           done
 
-          # Alpha ClearSign root boundary, the emulator-libs side of the ARM
-          # gate in ci.yml. CI compiles the alpha root into these libs only
-          # for alpha runs; a release built with cmake_flags "" ships no root,
-          # so an emulator that trusts it would clear-sign what the released
-          # firmware refuses. The run chosen above is never an alpha run; this
-          # checks the bytes anyway.
+          # 7.16 always embeds the ClearSign root, the emulator libs included,
+          # and Vault enables certified ClearSign from the firmware version
+          # alone. Libs without the root's 33 bytes would refuse every
+          # certificate the released firmware accepts: refuse to ship them.
           python3 - <<'EOF'
           import sys
-          ALPHA_ROOT = bytes.fromhex(
+          ROOT = bytes.fromhex(
               "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
           for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
-              blob = open("emulator-libs/" + name, "rb").read()
-              if ALPHA_ROOT in blob:
-                  sys.exit("::error::%s contains the alpha ClearSign root -- "
-                           "refusing to publish alpha emulator libs." % name)
-              print("Alpha root absent: %s" % name)
+              if ROOT not in open("emulator-libs/" + name, "rb").read():
+                  sys.exit("::error::%s does not contain the ClearSign root -- "
+                           "refusing to publish it." % name)
+              print("ClearSign root present: %s" % name)
           EOF
           cp emulator-libs/libkkemu-macos-arm64.dylib \
              emulator-libs/libkkemu-win-x64.dll release-assets/
