@@ -52,8 +52,9 @@ TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
   /* Fixed cap, independent of any descriptor. 4096 -> 4112 on the 64-bit host
    * when the calldata stream started holding its Erc7730AbiProgram by value
    * (use-after-return fix): +8 host bytes, +4 on ARM. The device budget is the
-   * linker's 16 KiB stack-reserve assert, not this number. */
-  EXPECT_LE(sizeof(Erc7730Workflow), 4112u);
+   * linker's 16 KiB stack-reserve assert, not this number. -> 4248 for the
+   * #821 calldata binding (SHA256_CTX + reviewed digest). */
+  EXPECT_LE(sizeof(Erc7730Workflow), 4248u);
 }
 
 TEST(Erc7730Workflow, ResolvesAndBoundsNestedArrayDisplayPaths) {
@@ -1024,4 +1025,59 @@ TEST(Erc7730Workflow, BuildsInterpolatedTextAtomicallyOrKeepsFallback) {
   EXPECT_FALSE(erc7730_workflow_append_interpolated_string(&workflow));
   erc7730_workflow_finalize_interpolation(&workflow);
   EXPECT_STREQ(workflow.intent, "Safe fallback");
+}
+
+/* #821: every host-streamed calldata pass must carry the same bytes, and the
+ * signing pass must match them. A hostile host that shows benign arguments and
+ * signs different ones of the same length must be refused. */
+static const Erc7730AbiNode kBindNodes[] = {
+    {ERC7730_ABI_TUPLE, 0, 1, 1, 0},
+    {ERC7730_ABI_UINT, 256, 0, 0, 0},
+};
+
+static Erc7730AbiResult hostPass(Erc7730Workflow* workflow, uint8_t fill) {
+  const Erc7730AbiProgram program{kBindNodes, 2, 0};
+  uint8_t word[32] = {0};
+  word[31] = fill;
+  if (erc7730_abi_stream_begin(&workflow->calldata, &program, sizeof(word)) !=
+      ERC7730_ABI_OK)
+    return ERC7730_ABI_BAD_PROGRAM;
+  sha256_Init(&workflow->calldata_sha);
+  workflow->host_calldata_stream = true;
+  workflow->phase = ERC7730_WORKFLOW_CALLDATA;
+  const Erc7730AbiResult fed =
+      erc7730_workflow_calldata_feed(workflow, word, sizeof(word));
+  if (fed != ERC7730_ABI_OK) return fed;
+  return erc7730_workflow_calldata_finish(workflow);
+}
+
+static bool signingPass(Erc7730Workflow* workflow, uint8_t fill) {
+  uint8_t word[32] = {0};
+  word[31] = fill;
+  erc7730_workflow_signing_calldata_begin(workflow);
+  erc7730_workflow_signing_calldata_chunk(workflow, word, 16);
+  erc7730_workflow_signing_calldata_chunk(workflow, word + 16, 16);
+  return erc7730_workflow_signing_calldata_verify(workflow);
+}
+
+TEST(Erc7730Workflow, DisplayPassesMustCarryTheSameCalldata) {
+  Erc7730Workflow workflow{};
+  ASSERT_EQ(hostPass(&workflow, 1), ERC7730_ABI_OK);  // field capture
+  ASSERT_EQ(hostPass(&workflow, 1), ERC7730_ABI_OK);  // end-of-display pass
+  EXPECT_NE(hostPass(&workflow, 2), ERC7730_ABI_OK);  // swapped arguments
+  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+}
+
+TEST(Erc7730Workflow, SigningPassMustMatchReviewedCalldata) {
+  Erc7730Workflow workflow{};
+  ASSERT_EQ(hostPass(&workflow, 7), ERC7730_ABI_OK);
+  EXPECT_TRUE(signingPass(&workflow, 7));
+  EXPECT_FALSE(signingPass(&workflow, 8));  // benign review, malicious sign
+}
+
+TEST(Erc7730Workflow, NoReviewedCalldataMeansNoneMayBeSigned) {
+  Erc7730Workflow workflow{};
+  erc7730_workflow_signing_calldata_begin(&workflow);
+  EXPECT_TRUE(erc7730_workflow_signing_calldata_verify(&workflow));
+  EXPECT_FALSE(signingPass(&workflow, 1));
 }
