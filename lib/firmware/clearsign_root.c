@@ -29,32 +29,27 @@
 
 /* ── The root public key ─────────────────────────────────────────────
  *
- * A RELEASE BUILD SHIPS NO ROOT. The array is all-zero unless the build
- * explicitly asks for the alpha root, which is the 7.15 posture carried
- * forward: with no root, no certificate can ever verify, so the suppression
- * branch is unreachable rather than merely unused. clearsign_root_is_present()
- * exposes that so a release test asserts it instead of a human grepping key
- * bytes.
+ * THE ALPHA ROOT, IN EVERY 7.16 BUILD. There is no build flag and no rootless
+ * variant: device, emulator and dylib/DLL builds all compile in these 33
+ * bytes. Vault enables certified ClearSign from the firmware version alone
+ * (>= 7.16.0), so a 7.16 build without a root would refuse every certificate
+ * it is sent. ClearsignRoot.SevenSixteenAlwaysShipsTheRoot fails the unit
+ * suite if the version and the root ever come apart.
  *
- * The real root will be generated on a KeepKey, will never exist as a file,
- * and gets pasted in at the release cut as a reviewable one-line diff. Making
- * the DEFAULT empty means forgetting that step produces a device that
- * clear-signs nothing -- the safe failure -- rather than one that trusts a key
- * whose private half sits in a scratch directory.
- */
-#if defined(KK_CLEARSIGN_ALPHA_ROOT)
-/* ALPHA KEY. Generated 2026-08-21 on a marked KeepKey; its private half never
- * left that device. This is the root that issued the public alpha delegate
- * certificates used by Vault. Production must perform a separate ceremony.
- * m/44'/60'/0'/0/0, device 393137350D4736341B003900, reseeded 2026-08-21. */
+ * ALPHA-ONLY. Generated 2026-08-21 on the marked root KeepKey (device
+ * 393137350D4736341B003900, m/44'/60'/0'/0/0); the private half has never
+ * left that device. It issued the public alpha delegate certificates Vault
+ * serves. It must never ship in a production release. Production gets its
+ * own root from a new ceremony after the 7.15 re-release, not before, and
+ * those bytes replace these before any 7.16 production release
+ * (docs/ClearsignRootCeremony.md 4.4). release.yml fails any release whose
+ * firmware image or emulator libraries contain these bytes, so no 7.16
+ * release can go out until that replacement lands. */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
     0x02, 0xde, 0x92, 0x31, 0xb2, 0x09, 0x44, 0x33, 0x23, 0x55, 0x32,
     0xfb, 0x19, 0x32, 0xe3, 0x24, 0xa2, 0xc7, 0x30, 0x41, 0x95, 0xe1,
     0x2e, 0x61, 0x0c, 0x67, 0x5c, 0xcc, 0xbb, 0xd6, 0x06, 0xda, 0xe7,
 };
-#else
-static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {0};
-#endif
 
 bool clearsign_root_is_present(void) {
   for (size_t i = 0; i < CLEARSIGN_PUBKEY_LEN; i++) {

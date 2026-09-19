@@ -2867,8 +2867,8 @@ TEST(Solana, CertifiedSoltoshiJoinSchemaSignatureVerifies) {
   std::vector<uint8_t> sig = solana_unhex(kSoltoshiJoinSchemaSigHex);
   ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
   ASSERT_EQ(sig.size(), 64U);
-  /* The certificate needs the alpha root this suite is built with
-   * (ClearsignRoot.RootKeyIsPresentInThisBuild). */
+  /* The certificate needs the alpha root every 7.16 build embeds
+   * (ClearsignRoot.TheEmbeddedRootIsTheAlphaRoot). */
   ASSERT_TRUE(clearsign_root_verify_cert(cert.data(), cert.size()));
   const auto verifies = [&](uint32_t scope) {
     return clearsign_root_verify_delegate_attestation(

@@ -944,8 +944,8 @@ static MetadataClassification process_certified(const uint8_t* payload,
 
   const uint8_t* cert = payload + 1;
   if (!clearsign_root_verify_cert(cert, CLEARSIGN_CERT_LEN)) {
-    /* Unverifiable, expired, wrong chain shape, or no root compiled in. The
-     * CALLER degrades to the additive path -- this is not a refusal. */
+    /* Unverifiable, expired, or wrong chain shape. The CALLER degrades to
+     * the additive path -- this is not a refusal. */
     return METADATA_MALFORMED;
   }
 

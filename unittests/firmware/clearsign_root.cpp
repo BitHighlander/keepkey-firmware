@@ -31,6 +31,20 @@ const char *kValidCertHex =
     "1afe68565a0bb73b9622f52f56bbb60a8c1a3cc17e70e53aff2b99bb7430f92a"
     "1bcb28e4cb6503ef7b46e7";
 
+// The Solana suite's scope-501 certificate (kCert501Hex in solana.cpp,
+// python-keepkey's CERT_501), signed by the same root over a different body.
+//
+//   alias      KeepKey Vault
+//   chain_id   501
+//   not_after  1818806400
+//   flags      MAY_SUPPRESS_RAW
+const char *kCert501Hex =
+    "0101000001f56c68c8804b6565704b6579205661756c74000000000000000000"
+    "000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b"
+    "2dc9f48abcd2e46d4850cfa2753fac6068a45747a32a4a39f249af72b55370f3"
+    "491913b7fb9a80207d619b3b4fca6750fc1fdc790da5562b42a351e12cde3c0f"
+    "084056a24ca8d1bf2c36b5";
+
 std::vector<uint8_t> unhex(const std::string &h) {
   std::vector<uint8_t> out;
   for (size_t i = 0; i + 1 < h.size(); i += 2)
@@ -62,11 +76,36 @@ TEST(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
                                            alias));
 }
 
-TEST(ClearsignRoot, RootKeyIsPresentInThisBuild) {
-  // The 7.15 release gate is the INVERSE of this: no root key compiled in, so
-  // the suppression branch cannot be reached. Queryable so a release test can
-  // assert it rather than a human grepping for key bytes.
-  EXPECT_TRUE(clearsign_root_is_present());
+TEST(ClearsignRoot, SevenSixteenAlwaysShipsTheRoot) {
+  // Vault turns certified ClearSign on from the firmware version alone
+  // (>= 7.16.0). A 7.16+ build without the root would refuse every
+  // certificate Vault sends, so the version and the root move together.
+  const bool certified_by_version =
+      MAJOR_VERSION > 7 || (MAJOR_VERSION == 7 && MINOR_VERSION >= 16);
+  EXPECT_TRUE(!certified_by_version || clearsign_root_is_present())
+      << "firmware " << MAJOR_VERSION << "." << MINOR_VERSION
+      << " ships without a ClearSign root";
+}
+
+TEST(ClearsignRoot, TheEmbeddedRootIsTheAlphaRoot) {
+  // Pins the embedded root to exactly the alpha root,
+  // 02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7
+  // (the marked root KeepKey, device 393137350D4736341B003900), without a
+  // second reader of the key: clearsign_root_verify_cert stays the only
+  // function that reads it.
+  //
+  // One certificate is not enough. An ECDSA signature verifies under two
+  // public keys, one for each point R with x(R) = r, so kValidCertHex alone
+  // also verifies under 0389126d...0c94e9. kCert501Hex's other key is
+  // 02d6c172...c720bd. The alpha root is the only key both verify under.
+  //
+  // A production root replaces these bytes, and both fixtures are re-minted
+  // by it, in one change (docs/ClearsignRootCeremony.md 4.4).
+  auto a = validCert();
+  auto b = unhex(kCert501Hex);
+  ASSERT_EQ(b.size(), (size_t)CLEARSIGN_CERT_LEN);
+  EXPECT_TRUE(clearsign_root_verify_cert(a.data(), a.size()));
+  EXPECT_TRUE(clearsign_root_verify_cert(b.data(), b.size()));
 }
 
 TEST(ClearsignRoot, RejectsAnyMutatedByte) {
