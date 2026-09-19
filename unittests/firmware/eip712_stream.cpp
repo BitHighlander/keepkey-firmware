@@ -9,6 +9,7 @@ extern "C" {
 #include <cstring>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -676,4 +677,83 @@ TEST(Eip712Stream, TypeHashTerminatesOnACycle) {
   // Terminates. The value is not the interesting part; not hanging is.
   std::string h = typeHashHex(f, "A");
   EXPECT_EQ(h, keccakHex("A(B b)B(A a)"));
+}
+
+// ── declared array dimensions ───────────────────────────────────────
+//
+// Solidity nests right to left: int16[2][4] is 4 rows of int16[2]. The wire
+// carries the dimensions in written order ({2, 4}), so the walk, which starts
+// at the outermost array, must check them from the end.
+
+namespace {
+
+// Walk Matrix { int16<written_levels> values } through the device-driven loop,
+// answering the outer length with `rows` and every inner length with `cols`.
+// Returns the request the walk ends on.
+Eip712ReqKind walkMatrix(const std::vector<uint32_t>& written_levels,
+                         uint16_t rows, uint16_t cols) {
+  EthereumTypedDataStructAck domain{};
+  EthereumTypedDataStructAck matrix{};
+  Field values = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 2);
+  values.array_levels_count = written_levels.size();
+  for (size_t i = 0; i < written_levels.size(); i++)
+    values.array_levels[i] = written_levels[i];
+  addMember(matrix, "values", values);
+
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "Matrix");
+  // Certified, so accepted leaves are hashed without a confirm screen.
+  eip712_stream_begin(&begin, true);
+  for (int step = 0; step < 100; step++) {
+    const Eip712Next* next = eip712_stream_next();
+    switch (next->kind) {
+      case EIP712_REQ_STRUCT:
+        eip712_stream_on_struct(
+            strcmp(next->struct_name, "Matrix") == 0 ? &matrix : &domain);
+        break;
+      case EIP712_REQ_DEFINITION:
+        eip712_stream_definition_accepted();
+        break;
+      case EIP712_REQ_VALUE: {
+        // Path [root, member] is the outer length, [root, member, row] an
+        // inner length, and [root, member, row, col] a leaf.
+        EthereumTypedDataValueAck ack{};
+        uint16_t v = next->member_path_len == 2   ? rows
+                     : next->member_path_len == 3 ? cols
+                                                  : 1;
+        ack.value.size = 2;
+        ack.value.bytes[0] = v >> 8;
+        ack.value.bytes[1] = v & 0xff;
+        eip712_stream_on_value(&ack);
+        break;
+      }
+      default: {
+        Eip712ReqKind kind = next->kind;
+        eip712_stream_abort();
+        return kind;
+      }
+    }
+  }
+  eip712_stream_abort();
+  return EIP712_REQ_NONE;
+}
+
+}  // namespace
+
+TEST(Eip712Stream, FixedDimensionsAreCheckedOutermostFirst) {
+  // int16[2][4]: four rows of two is the only shape the type declares.
+  EXPECT_EQ(walkMatrix({2, 4}, 4, 2), EIP712_REQ_DONE);
+  // Two rows used to pass, because the outer length was checked against the
+  // INNER declared size.
+  EXPECT_EQ(walkMatrix({2, 4}, 2, 2), EIP712_REQ_FAIL);
+  EXPECT_EQ(walkMatrix({2, 4}, 4, 4), EIP712_REQ_FAIL);
+}
+
+TEST(Eip712Stream, InnerDimensionsAreCheckedToo) {
+  // int16[2][]: any number of rows, but every row is exactly two.
+  EXPECT_EQ(walkMatrix({2, 0}, 3, 2), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({2, 0}, 3, 1), EIP712_REQ_FAIL);
+  // int16[][4]: exactly four rows, of any width.
+  EXPECT_EQ(walkMatrix({0, 4}, 4, 3), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({0, 4}, 3, 3), EIP712_REQ_FAIL);
 }

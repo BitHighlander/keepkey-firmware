@@ -398,11 +398,10 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
   }
 
   // A body of pure newlines draws nothing at all. The body starts on row 24
-  // and each newline steps 14, so the third lands the cursor at 66 -- past
-  // the last row that can hold a 10px glyph. Up to and including that third
-  // newline every character is still consumed, and nothing has been dropped,
-  // so the body is blank but complete.
-  EXPECT_TRUE(confirm_body_fits("\n\n\n", BODY_WIDTH));
+  // and each newline steps 14, so the third requests row 66 -- past the last
+  // row that can hold a 10px glyph. That newline is not displayed and must be
+  // rejected even when no printable character follows it.
+  EXPECT_FALSE(confirm_body_fits("\n\n\n", BODY_WIDTH));
 
   // From the fourth onwards there are characters the screen cannot reach. A
   // completeness test that only asked "did we walk to the NUL" would call
@@ -412,9 +411,8 @@ TEST_F(BodyFits, MeasurementTracksTheRendererNotALineCount) {
         << n << " newlines strand characters off screen";
   }
 
-  // A trailing newline after a body that fits is harmless: there is nothing
-  // after it to lose.
-  EXPECT_TRUE(confirm_body_fits("one\ntwo\nthree\n", BODY_WIDTH));
+  // A trailing newline that requests a clipped row is itself undisplayed.
+  EXPECT_FALSE(confirm_body_fits("one\ntwo\nthree\n", BODY_WIDTH));
 
   // Narrowing the canvas must never turn a clipped body into a fitting one.
   const std::string wide(200, 'W');
@@ -544,18 +542,18 @@ TEST_F(BodyFits, PagerCanExceedItsOwnPageCap) {
   //
   // That bound is reachable, which is the point of this test: page_take() sizes
   // a page by the largest prefix confirm_body_fits() accepts, and for newlines
-  // that is three -- they consume rows without drawing a glyph. A body filling
-  // BODY_CHAR_MAX therefore needs ceil(351 / 3) = 117 pages.
+  // that is two -- the third requests an off-screen row. A body filling
+  // BODY_CHAR_MAX therefore needs ceil(351 / 2) = 176 pages.
   //
   // The refusal itself cannot be asserted here: page_body_confirm() is static
   // and reaching it means driving real confirm screens, which this binary has
   // no canvas or input for. What is asserted is the arithmetic the cap depends
   // on, so that a future change to BODY_ROWS or BODY_CHAR_MAX that quietly
   // moves the bound fails here rather than in the field.
-  EXPECT_TRUE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
-  EXPECT_FALSE(confirm_body_fits(std::string(4, '\n').c_str(), BODY_WIDTH));
+  EXPECT_TRUE(confirm_body_fits(std::string(2, '\n').c_str(), BODY_WIDTH));
+  EXPECT_FALSE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
 
-  const size_t chars_per_page = 3;
+  const size_t chars_per_page = 2;
   const size_t worst_case_body = BODY_CHAR_MAX - 1;
   const size_t pages_needed =
       (worst_case_body + chars_per_page - 1) / chars_per_page;
