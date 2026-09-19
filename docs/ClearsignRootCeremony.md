@@ -7,12 +7,20 @@ KeepKey has vouched for omit that review. The key that does the vouching is not
 adjacent work to the release; it *is* the release, and this document is how it
 comes into existence.
 
-The ceremony below was executed end to end on hardware on **2026-08-21** with
-the alpha root. The certificate it produced is the fixture
-`unittests/firmware/clearsign_root.cpp` verifies against, so every step here has
-been run at least once. What changes for the production root is which device
-executes it — and two decisions that are still open (§7). Those are presented as
-decisions, not as recommendations wearing a fact's clothes.
+The ceremony below was executed end to end on hardware on **2026-08-21**. The
+root it produced, `02de9231…dae7`, is the **alpha root**: every 7.16 alpha build
+embeds it, and its private half is on the marked root KeepKey (device
+`393137350D4736341B003900`, `m/44'/60'/0'/0/0`). The certificate it produced is
+the fixture `unittests/firmware/clearsign_root.cpp` verifies against, so every
+step here has been run at least once.
+
+**The alpha root is alpha-only.** Production gets its own root from a new run of
+this ceremony after the 7.15 re-release, not before, and that root replaces the
+alpha bytes before any 7.16 production release (§4.4). The release pipeline
+enforces it: `release.yml` fails any release whose firmware image or emulator
+libraries contain the alpha root (§8). The two decisions in §7 are still open.
+They are presented as decisions, not as recommendations wearing a fact's
+clothes.
 
 Read with `security/DESIGN-716-reductive.md` (why one branch is the whole
 feature), `release/SRS-7.16.md` (the requirements), and
@@ -26,14 +34,28 @@ runbook inherits and extends).
 | | |
 |---|---|
 | the key | secp256k1 at `m/44'/60'/0'/0/0` of a seed generated **on a KeepKey** |
-| what ships | the 33-byte compressed **public** half, compiled into `lib/firmware/clearsign_root.c` |
+| what ships | the 33-byte compressed **public** half, compiled into `lib/firmware/clearsign_root.c` in **every** 7.16 build — there is no build flag and no rootless variant. Today that is the alpha root, which no release may carry (§8) |
 | what it signs | 139-byte delegate certificates, and nothing else |
-| who reads it | `clearsign_root_verify_cert()` — the only function in the firmware that touches the array |
+| who reads it | `clearsign_root_verify_cert()` — the only function in the firmware that trusts the array. `clearsign_root_is_present()` only tests it for zero. |
 | the private half | on the device, and on its paper backup. Never a file, never in CI, never on a laptop. |
 
 `clearsign_root.c` exists as its own translation unit so that "who can reach the
 root key" is a one-line grep. **Adding a second reader is a security change, not
 a refactor**, and must be reviewed as one.
+
+**Why there is no flag.** Vault enables certified ClearSign from the firmware
+version alone (`>= 7.16.0`). A 7.16 build without a root refuses every
+certificate it is sent — which is exactly what happened when the emulator
+library Vault installs was built without the old `KK_CLEARSIGN_ALPHA_ROOT`
+option: every certified description came back `MALFORMED`. So the root is not a
+build option. The version and the root move together, and
+`ClearsignRoot.SevenSixteenAlwaysShipsTheRoot` fails the unit suite if they ever
+come apart.
+
+**What keeps the alpha root out of production is the release gate, not a
+flag.** `release.yml` refuses the alpha root's bytes in every release artifact.
+Production gets its own root after the 7.15 re-release, not before, so no 7.16
+production release can go out until that root has replaced the alpha one.
 
 ### 1.1 Why the root is a stock KeepKey and not an HSM
 
@@ -266,39 +288,59 @@ on that screen that ties the signature to the key you are about to compile in.
 
 ### 4.4 Compile the public key in
 
-`lib/firmware/clearsign_root.c` ships an all-zero root by default. The
-production key replaces the zeros in the `#else` arm:
+`lib/firmware/clearsign_root.c` holds exactly one root, unconditionally. Today
+it is the alpha root:
 
 ```c
-#else
-/* PRODUCTION delegation root. Generated <date> on device <device_id>
- * running <version>, m/44'/60'/0'/0/0. See docs/ClearsignRootCeremony.md. */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
-    0x02, 0x??, /* … 33 bytes … */
+    0x02, 0xde, 0x92, 0x31, /* … 33 bytes … */ 0x06, 0xda, 0xe7,
 };
-#endif
 ```
 
-That diff is the entire promotion. Before it, `clearsign_root_is_present()` is
-false on hardware, every certificate fails to verify, the suppression branch is
-unreachable and the release is 7.15 posture no matter what else is in it. After
-it, the branch is live.
+There is no `#if`, no all-zero arm and no CMake option: every 7.16 build —
+device, emulator, dylib/DLL — carries these bytes.
+
+**The alpha root is alpha-only.** Production gets its own root from a new run
+of this ceremony after the 7.15 re-release, not before, and that root replaces
+the alpha bytes before any 7.16 production release. Until it does, no 7.16
+release can go out: `release.yml` fails any release whose firmware image or
+emulator libraries contain the alpha bytes (§8). That is intended.
+
+The replacement is one reviewed diff. The production root's 33 bytes go in four
+places, and nowhere else:
+
+- the array in `lib/firmware/clearsign_root.c`, with its comment naming the new
+  device id, version and date, and no longer calling it the alpha root;
+- the root constant in the three `ci.yml` checks that require the embedded root
+  in every full build and emulator library: the ARM product-boundary gate,
+  `python-dylib-tests`, and the `publish-emulator-libs` stage step.
+
+`release.yml`'s two checks do **not** change. They keep refusing the alpha
+root's bytes, which keeps the alpha root out of every later release as well.
+
+The unit fixtures signed by the alpha root (`kValidCertHex` and `kCert501Hex` in
+`clearsign_root.cpp`, `kCert501Hex` in `solana.cpp`, python-keepkey's
+`CERT_501`) stop verifying and must be re-minted by the new root in the same
+change — see §4.6(a). `ClearsignRoot.TheEmbeddedRootIsTheAlphaRoot` pins the
+embedded key through two of those certificates instead of reading the key. It
+needs two: an ECDSA signature verifies under two public keys, and only the
+intended root verifies both. The replacement re-mints both and renames the
+test.
 
 What a reviewer checks on this diff, and can actually check:
 
-- exactly 33 bytes, first byte `0x02` or `0x03`;
+- exactly 33 bytes, first byte `0x02` or `0x03`, identical in all four places;
 - the bytes equal the pubkey recorded in the ceremony log — **both** readings
   from §4.3;
 - the comment names a real device id, version and date, and the log corroborates
   all three;
-- nothing else in the file changed. In particular the `#if
-  defined(KK_CLEARSIGN_ALPHA_ROOT)` arm still holds the alpha key and is still
-  guarded.
+- nothing else in `clearsign_root.c` changed, and `release.yml` still refuses
+  `02de9231…dae7`.
 
 A reviewer with no independent record of the bytes is not reviewing anything and
 should not approve. Nothing validates that the array is a point on the curve; a
-mistyped key simply fails every verification, which is the safe direction but is
-indistinguishable from "the feature is off".
+mistyped key simply fails every verification, and the certified fixtures in the
+unit suite then fail by name.
 
 ### 4.5 Sign the delegate certificate
 
@@ -356,30 +398,26 @@ only if the fixture comes from the *other* side of the pipeline: a certificate
 produced by the ceremony, verified by the firmware's own code. A fixture
 generated by the code under test proves self-consistency and nothing else.
 
-Today the run looks like this — with the hardware-held **alpha** root and its
-certificate:
+The run needs no flag, because every build carries the root:
 
 ```sh
 docker run --rm --platform linux/amd64 -v "$PWD":/root/keepkey-firmware:z \
   kktech/firmware:v15 /bin/sh -c "\
     mkdir -p /root/ut && cd /root/ut && \
     cmake /root/keepkey-firmware -DCMAKE_BUILD_TYPE=Debug -DKK_EMULATOR=ON \
-      -DKK_CLEARSIGN_ALPHA_ROOT=ON >/dev/null 2>&1 && \
+      >/dev/null 2>&1 && \
     make -j4 firmware-unit >/dev/null 2>&1; \
     ./bin/firmware-unit --gtest_filter='ClearsignRoot*'"
 ```
 
-**OPEN — how the production certificate becomes a fixture.** As written, the
-fixture in `unittests/firmware/clearsign_root.cpp` and the alpha root are wired
-together by `KK_CLEARSIGN_ALPHA_ROOT`: build without the flag and
-`TheCeremonysCertificateVerifies` fails, because it is checking an alpha-root
-signature against a production root. Either the file grows a second fixture
-guarded by `#ifndef KK_CLEARSIGN_ALPHA_ROOT`, or the release cut gets a
-standalone verifier that links `clearsign_root.c` as built for the release. Not
-decided. **Whatever is chosen, the requirement is the same: the compiled release
-verifier accepts the production certificate, and rejects it under single-byte
-mutation.** Do not substitute a host-side check — that is the ceremony marking
-its own homework.
+The fixture in `unittests/firmware/clearsign_root.cpp` was signed by the root
+this firmware embeds (today the alpha root), so
+`TheCeremonysCertificateVerifies` exercises the exact verifier and root the
+build carries. The production ceremony also produces the certificates that
+replace these fixtures, in the same change as the §4.4 diff. **The requirement
+does not change: the compiled release verifier accepts the ceremony's
+certificate, and rejects it under single-byte mutation.** Do not substitute a
+host-side check — that is the ceremony marking its own homework.
 
 **(b) The ARM release binary contains the production root and not the alpha
 root.**
@@ -395,27 +433,20 @@ print("alpha root present     :", ALPHA in blob)
 EOF
 ```
 
-The first line must be `True` and the second `False`. Alpha CI deliberately
-enforces the inverse for its full artifact, so production promotion must change
-that product-boundary gate along with the root. A release that forgot §4.4 can
-otherwise pass cleanly and
-ships with suppression unreachable. That is the safe failure, but it is still a
-failure, and only this check finds it.
+The first line must be `True` and the second `False`. `release.yml` enforces
+the second on both firmware images and both emulator libraries. `ci.yml`'s
+gates enforce the first once §4.4 has put the production bytes in them.
 
 **(c) End-to-end on an emulator carrying the production root.**
 
-Build the emulator from the release source **without**
-`-DKK_CLEARSIGN_ALPHA_ROOT`, feed it a certified envelope and an
+Build the emulator from the release source (it carries the same root as the
+device image; there is no flag to pass), feed it a certified envelope and an
 `EthereumSignTx`, and observe on screen: `Verified by KeepKey`, the delegate
 alias and fingerprint, and **no raw-data review**. Then flip one byte of the
 certificate and observe the raw-data review return.
 
-Two traps here, both of which produce a green result that means nothing:
+One trap here, which produces a green result that means nothing:
 
-- `scripts/emulator/Dockerfile` hardcodes `-DKK_CLEARSIGN_ALPHA_ROOT=ON`. An
-  image built from it carries the **alpha** root, so certificates from the
-  production ceremony will not verify on it and certificates from the practice
-  ceremony will. Neither outcome says anything about the release.
 - **OPEN — there is no host tool that builds a `[0x03][cert][inner v2]`
   envelope.** `METADATA_VERSION_CERTIFIED` appears only in firmware sources.
   Until one exists and is reviewed, (c) cannot be run at all, and (a) plus (b)
@@ -560,54 +591,61 @@ reconstruct the reasoning from a word count.
 
 What must be true before a release carrying a root key is signed:
 
-1. **`KK_CLEARSIGN_ALPHA_ROOT` is OFF in everything the release ships.** It is
-   `OFF` by default (`lib/firmware/CMakeLists.txt`). Grep the release build
-   command; the flag must not appear.
+1. **No release carries the alpha root.** `02de9231…dae7` is embedded in every
+   7.16 alpha build, and it is alpha-only. The gates check the bytes, not the
+   source:
+   - `release.yml` `build-firmware`, "Refuse the alpha ClearSign root": fails
+     the release if the full or the bitcoin-only firmware image contains the
+     alpha bytes.
+   - `release.yml` "Attach emulator libraries": fails the release if either
+     emulator library contains them. The libraries are not rebuilt; they come
+     from the newest green CI run for the tagged commit.
 
-   Three builds turn it on **unconditionally, on every branch**, and are test
-   builds that no release ships: the emulator image from
-   `scripts/emulator/Dockerfile` (CI's `build-emulator` and `unit-tests`, the
-   docker-compose `python-integration-tests`, and `release.yml`'s own `test`
-   job), `scripts/build/docker/emulator/debug.sh`, and the full ARM variant in
-   `ci.yml`'s `build-arm-firmware`, a downloadable CI artifact that
-   `release.yml` never uses. One exception to "never leaves CI": the manual
-   `publish-emulator` job (`workflow_dispatch` with `publish_emulator`) pushes
-   that Dockerfile image to DockerHub as `kktech/kkemu`, so a published kkemu
-   image trusts the alpha root.
+   Both fail with `alpha ClearSign root in a release artifact: production needs
+   its own root (new ceremony after the 7.15 re-release)`. Until the §4.4
+   replacement lands, every 7.16 tag fails here, release candidates included.
+   That is intended: production gets its own root after the 7.15 re-release,
+   not before.
 
-   The `python-dylib-tests` emulator libs are the conditional build: `ON` only
-   when the run is for alpha (`github.ref == 'refs/heads/alpha'` or
-   `github.base_ref == 'alpha'`), `OFF` otherwise. The rolling
-   `emulator-dylib-latest` prerelease takes them from pushes to both `develop`
-   and `alpha`, so its `VERSION.txt` and release notes carry
-   `clearsign_alpha_root=ON|OFF`, read from the library bytes.
-
-   A release ships two kinds of binary, and each has its own gate. The
-   firmware is rebuilt by `release.yml` with `cmake_flags: ""` (item 2). The
-   emulator libs are **not** rebuilt: `release.yml` downloads the
-   `libkkemu-<sha>` artifact of the newest green CI run for the tagged commit
-   whose event is `push` and whose branch is not `alpha`, and its "Attach
-   emulator libraries" step still fails the release if either library
-   contains the alpha root's 33 bytes (`02de9231…dae7`). If the tagged commit
-   has no such run (it was only built on alpha, or only by a PR or
-   `workflow_dispatch` run), push the commit to its release branch, wait for
-   CI to pass there, then re-run the release workflow. Re-running an alpha run
-   does not help: a re-run keeps its event and branch.
-2. **The binary root product-boundary gate was changed for production and
-   passed.** Alpha CI requires this root in the full artifact and forbids it in
-   bitcoin-only. Production must forbid the alpha root and independently prove
-   the promoted production root is present. §4.6(b) covers both assertions.
-3. **The `clearsign_root.c` diff was reviewed against the ceremony log**, per
-   §4.4, by someone with an independent copy of the recorded pubkey.
-4. **§4.6(a) passed on the release commit** — the compiled verifier accepts the
+   Two paths are NOT byte-gated, and both are deliberate:
+   - `ci.yml` `publish-emulator` (manual `workflow_dispatch` with
+     `publish_emulator=true`) pushes the `scripts/emulator/Dockerfile` image to
+     DockerHub as `kktech/kkemu`. A published kkemu image therefore trusts the
+     alpha root. It is an emulator, never a device build, but do not treat its
+     version tag as a production artifact.
+   - A key holder can build outside `release.yml`. The signing-path tools
+     refuse the alpha bytes for that case: `scripts/release/hash-manifest.sh
+     --require-signed` and `scripts/release/verify-signatures.py` both fail on
+     an image containing them, each with its own self-test.
+2. **Every 7.16 build carries a root.** There is no rootless build and no flag.
+   What proves it:
+   - `firmware-unit`: `ClearsignRoot.SevenSixteenAlwaysShipsTheRoot` fails a
+     7.16+ build whose root is all zero, and
+     `ClearsignRoot.TheEmbeddedRootIsTheAlphaRoot` pins the exact key through
+     two certificates the alpha root signed.
+   - `ci.yml` `build-arm-firmware`, on every push and PR run: the full image must
+     contain the alpha root and the bitcoin-only image must not (bitcoin-only
+     does not link `clearsign_root.c`; `lib/firmware/CMakeLists.txt` lists it
+     under `NOT KK_BITCOIN_ONLY`).
+   - `ci.yml` `python-dylib-tests`: fails when the dylib or DLL it built (the
+     libraries Vault installs) lacks the alpha root, and then does not upload
+     them as the commit's `libkkemu-<sha>` artifact.
+   - `ci.yml` `publish-emulator-libs`: refuses to publish a dylib or DLL
+     without the alpha root to the rolling `emulator-dylib-latest` prerelease.
+3. **The production root has replaced the alpha root.** It comes from a new run
+   of this ceremony, after the 7.15 re-release, on its own device; §4.4 lists
+   what the diff changes.
+4. **Any change to the root was reviewed against the ceremony log**, per §4.4,
+   by someone with an independent copy of the recorded pubkey.
+5. **§4.6(a) passed on the release commit** — the compiled verifier accepts the
    production certificate and rejects it under single-byte mutation.
-5. **`KK_CLEARSIGN_MIN_EXPIRY` was set deliberately for this cut**, and the
+6. **`KK_CLEARSIGN_MIN_EXPIRY` was set deliberately for this cut**, and the
    value appears in the release diff whether or not it changed.
-6. **The 7.15 additive invariant still holds.** Atlas section F must pass
+7. **The 7.15 additive invariant still holds.** Atlas section F must pass
    unchanged against 7.16 firmware: a runtime provider never suppresses. This is
    the single most important regression in the release — 7.16 must not promote
    self-service providers by accident.
-7. **Gate 3 OLED evidence for both tiers**, captured side by side, so a human
+8. **Gate 3 OLED evidence for both tiers**, captured side by side, so a human
    can see the difference the design claims to make.
 
 A failed early CI gate skips the whole downstream graph and the run summary
@@ -642,7 +680,9 @@ something they have to take on trust.
 **Compilation**
 
 - [ ] The 33 bytes in the `clearsign_root.c` diff equal both recorded readings
-- [ ] The `#if defined(KK_CLEARSIGN_ALPHA_ROOT)` arm is unchanged, still guarded
+- [ ] The same 33 bytes replaced the alpha root in the three `ci.yml` checks,
+      and `release.yml` still refuses the alpha bytes (§4.4)
+- [ ] The unit fixtures signed by the alpha root were re-minted by the new root
 - [ ] Nothing else in `clearsign_root.c` changed
 
 **Signing**
@@ -661,12 +701,10 @@ something they have to take on trust.
 
 - [ ] The compiled release verifier accepts the certificate (§4.6a)
 - [ ] It rejects the certificate with any single byte of `cert[0..74]` flipped
-- [ ] The ARM binary contains the production root (§4.6b)
-- [ ] The ARM binary does **not** contain the alpha root
-- [ ] The emulator libs (`libkkemu-macos-arm64.dylib`, `libkkemu-win-x64.dll`)
-      come from a non-alpha push CI run and do **not** contain the alpha
-      root — `release.yml` refuses them if they do
-- [ ] `KK_CLEARSIGN_ALPHA_ROOT` appears nowhere in the production release build command
+- [ ] The full ARM binary contains the production root (§4.6b)
+- [ ] No release artifact contains the alpha root: neither firmware image and
+      neither emulator lib (`libkkemu-macos-arm64.dylib`,
+      `libkkemu-win-x64.dll`) — `release.yml` refuses them otherwise
 - [ ] `KK_CLEARSIGN_MIN_EXPIRY` was reviewed for this cut
 - [ ] Atlas section F passed unchanged
 

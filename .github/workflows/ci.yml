@@ -467,7 +467,7 @@ jobs:
           - variant: full
             label: ""
             suffix: ""
-            cmake_flags: "-DKK_CLEARSIGN_ALPHA_ROOT=ON"
+            cmake_flags: ""
           - variant: bitcoin-only
             label: " (bitcoin-only)"
             suffix: "-bitcoin-only"
@@ -555,11 +555,12 @@ jobs:
 
       - name: Assert alpha ClearSign root product boundary
         run: |
-          # Full alpha must carry the hardware-held root that issued Vault's
-          # alpha certificates. Bitcoin-only excludes all non-Bitcoin signing
-          # code and must not carry it. Assert both sides using the CURRENT key;
-          # the prior gate still searched for the superseded 02be... root and
-          # could not detect the 02de... key this source actually compiled.
+          # Every full 7.16 build embeds the alpha ClearSign root
+          # (lib/firmware/clearsign_root.c, no build flag), the hardware-held
+          # root that issued Vault's alpha certificates. Bitcoin-only does not
+          # link clearsign_root.c (lib/firmware/CMakeLists.txt) and must not
+          # carry it. The alpha root is alpha-only: release.yml fails any
+          # release artifact that contains these bytes.
           python3 - <<'EOF'
           import sys
           ALPHA_ROOT = bytes.fromhex(
@@ -983,13 +984,6 @@ jobs:
           #
           # KK_DEBUG_LINK=ON is REQUIRED for screenshot tests — without
           # it fsm_msgDebugLinkGetState is excluded from the build.
-          # KK_CLEARSIGN_ALPHA_ROOT compiles in the alpha ClearSign root -- ON
-          # only for alpha runs (a push to alpha, or a PR into it), so the
-          # certified ClearSign paths are reachable in alpha's dylib/DLL.
-          # Everywhere else it is OFF: this artifact is what release.yml
-          # ships as a tagged release's emulator libs, and release.yml refuses
-          # libs that carry the alpha root. The Windows DLL below uses the
-          # same expression.
           # CMAKE_POLICY_VERSION_MINIMUM works around vendored
           # googletest's pre-3.5 policy declaration.
           NANOPB_GENERATOR_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
@@ -1001,7 +995,6 @@ jobs:
             -DKK_EMULATOR=1 \
             -DKK_BUILD_DYLIB=1 \
             -DKK_DEBUG_LINK=ON \
-            -DKK_CLEARSIGN_ALPHA_ROOT=${{ (github.ref == 'refs/heads/alpha' || github.base_ref == 'alpha') && 'ON' || 'OFF' }} \
             -DPROTOC_GEN_NANOPB_EXECUTABLE="$NANOPB_PLUGIN" \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -B build-emu .
@@ -1042,7 +1035,6 @@ jobs:
             -DKK_EMULATOR=1 \
             -DKK_BUILD_DYLIB=1 \
             -DKK_DEBUG_LINK=ON \
-            -DKK_CLEARSIGN_ALPHA_ROOT=${{ (github.ref == 'refs/heads/alpha' || github.base_ref == 'alpha') && 'ON' || 'OFF' }} \
             -DNANOPB_DIR="$NANOPB_DIR" \
             -DPROTOC_GEN_NANOPB_EXECUTABLE="$NANOPB_PLUGIN" \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -1064,6 +1056,25 @@ jobs:
           cp "$WIN_DLL_PATH" emulator-libs/libkkemu-win-x64.dll
           ls -lh emulator-libs/
 
+      - name: Assert ClearSign root in emulator libraries
+        id: root_assert
+        # Every 7.16 build embeds the alpha ClearSign root. These libs are
+        # what Vault installs, and Vault turns certified ClearSign on from the
+        # firmware version alone, so a lib without the root refuses every
+        # certificate -- and this job's dylib tests never send one.
+        # publish-emulator-libs checks the same bytes again; release.yml
+        # refuses them, because the alpha root never ships in a release.
+        run: |
+          python3 - <<'EOF'
+          import sys
+          ALPHA_ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
+              if ALPHA_ROOT not in open("emulator-libs/" + name, "rb").read():
+                  sys.exit("::error::%s does not contain the alpha ClearSign root" % name)
+              print("Alpha ClearSign root present: %s" % name)
+          EOF
+
       - name: Upload emulator libraries
         # Always upload, even on later test failure — the binaries are
         # what vault and external auditors actually consume from this
@@ -1073,8 +1084,10 @@ jobs:
         # Gated on BOTH paths: a partial artifact carrying only the dylib
         # is exactly the silent drop this coupling exists to prevent, and
         # release.yml treats this artifact as the source of truth for a
-        # tagged release's emulator assets.
-        if: always() && env.DYLIB_PATH != '' && env.WIN_DLL_PATH != ''
+        # tagged release's emulator assets. Also gated on the root assert
+        # above: a lib without the root is not uploaded as this commit's
+        # artifact.
+        if: always() && steps.root_assert.outcome == 'success' && env.DYLIB_PATH != '' && env.WIN_DLL_PATH != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: libkkemu-${{ github.event.pull_request.head.sha || github.sha }}
@@ -1362,7 +1375,6 @@ jobs:
           path: release-dylib
 
       - name: Stage release assets
-        id: stage
         run: |
           FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+')
           # Both binaries or no publish. The upload side already enforces
@@ -1372,51 +1384,47 @@ jobs:
             test -f "release-dylib/$asset" || \
               (echo "::error::$asset missing — refusing to publish a partial emulator release" && exit 1)
           done
-          # alpha and develop share this one rolling tag, and only alpha's
-          # libs trust the alpha ClearSign root. Read it from the bytes (the
-          # same 33 bytes release.yml refuses) so the label describes the
-          # binaries actually published; two libs that disagree are refused.
-          ROOT=$(python3 - <<'EOF'
+          # Every 7.16 build embeds the alpha ClearSign root, and Vault turns
+          # certified ClearSign on from the firmware version alone, so a lib
+          # without the root's 33 bytes would refuse every certificate. Refuse
+          # to publish it. (release.yml does the opposite: the alpha root
+          # never ships in a release.)
+          python3 - <<'EOF'
           import sys
           ALPHA_ROOT = bytes.fromhex(
               "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
-          found = {ALPHA_ROOT in open("release-dylib/" + name, "rb").read()
-                   for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll")}
-          if len(found) != 1:
-              sys.exit("::error::only one emulator library carries the alpha ClearSign root")
-          print("ON" if found.pop() else "OFF")
+          for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
+              if ALPHA_ROOT not in open("release-dylib/" + name, "rb").read():
+                  sys.exit("::error::%s does not contain the alpha ClearSign "
+                           "root -- refusing to publish it." % name)
+              print("Alpha ClearSign root present: %s" % name)
           EOF
-          )
           # Traceability — which firmware/commit these binaries correspond to.
           {
             echo "firmware_version=${FW_VERSION}"
             echo "commit=${GITHUB_SHA}"
             echo "branch=${GITHUB_REF_NAME}"
-            echo "clearsign_alpha_root=${ROOT}"
             echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } > release-dylib/VERSION.txt
-          echo "clearsign_alpha_root=${ROOT}" >> "$GITHUB_OUTPUT"
           cat release-dylib/VERSION.txt
           echo "=== Assets ===" && ls -lh release-dylib/
 
       - name: Publish to rolling prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          ROOT: ${{ steps.stage.outputs.clearsign_alpha_root }}
         run: |
           # Idempotent: create the rolling tag on first use, then replace
           # its assets in place. The notes are rewritten on every publish
-          # because they name the branch, commit and root setting of the libs
-          # now attached.
+          # because they name the branch and commit of the libs now attached.
           NOTES="Rolling build of the KeepKey emulator native libraries.
 
           - \`libkkemu-macos-arm64.dylib\` — macOS Apple Silicon
           - \`libkkemu-win-x64.dll\` — Windows x86_64 (MinGW cross-build)
           - \`VERSION.txt\` — firmware version + commit these correspond to
 
-          Current build: \`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA}\`,
-          \`clearsign_alpha_root=${ROOT}\`. ON means the libs trust the alpha
-          ClearSign root (alpha pushes only); a release never ships that.
+          Current build: \`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA}\`.
+          The libs trust the alpha ClearSign root, which is alpha-only; a
+          tagged firmware release never ships it.
 
           Both platforms are published together; CI fails rather than
           shipping one without the other. Updated on every push to

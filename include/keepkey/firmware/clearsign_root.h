@@ -152,9 +152,9 @@ bool clearsign_root_verify_erc7730_catalog(
     const uint8_t catalog_root[32], const uint8_t* sig, size_t sig_len,
     char out_alias[CLEARSIGN_ALIAS_LEN + 1]);
 
-/* True when the firmware carries no root key at all -- the mechanical 7.15
- * release gate, kept queryable so a test can assert it rather than a human
- * grepping for key bytes. */
+/* True when the compiled-in root is not all zero. Every 7.16 build embeds a
+ * root, so this is always true; it stays as a conjunct of the suppression
+ * decision and so the unit suite can tie the firmware version to the root. */
 bool clearsign_root_is_present(void);
 
 #endif

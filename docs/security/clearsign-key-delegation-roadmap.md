@@ -388,8 +388,15 @@ one is a way for the scheme to fail quietly if left implicit:
 
 **These parameters commit the organisation to an operational programme, so they
 are not decided in this document.** What is decided here is that no root may be
-pinned before they are, because pinning is the irreversible step: a root in
-shipped firmware cannot be un-shipped.
+pinned in a release before they are, because pinning is the irreversible step: a
+root in shipped firmware cannot be un-shipped.
+
+The alpha root (`02de9231…dae7`, `docs/ClearsignRootCeremony.md`) is not such a
+pin. It is embedded in every 7.16 alpha build and is alpha-only: `release.yml`
+fails any release whose firmware image or emulator libraries contain it.
+Production gets its own root from a new ceremony after the 7.15 re-release, not
+before, and that root replaces the alpha bytes before any 7.16 production
+release.
 
 ### Both roots are irreversible, and the schema root is not the lighter case
 

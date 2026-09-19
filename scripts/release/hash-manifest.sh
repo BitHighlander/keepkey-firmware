@@ -73,6 +73,16 @@ has_quorum() {
 }
 signer_slots() { printf '%s,%s,%s' "$(u8 "$1" 8)" "$(u8 "$1" 9)" "$(u8 "$1" 10)"; }
 
+# Every 7.16 build embeds a ClearSign root; the ALPHA root below is alpha-only.
+# Production gets its own root from a new ceremony after the 7.15 re-release.
+# release.yml refuses it, but a key holder can build and sign outside that
+# workflow -- so the signing-path manifest refuses it too.
+ALPHA_CLEARSIGN_ROOT_HEX=02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7
+has_alpha_clearsign_root() {
+  od -v -An -tx1 "$1" | tr -d ' \n' | grep -q "$ALPHA_CLEARSIGN_ROOT_HEX"
+}
+
+
 fail() { echo "self-test: $1"; exit 1; }
 
 # Writes 64 non-zero bytes into signature slot $2 (0..2) of $1.
@@ -133,6 +143,32 @@ self_test() {
     fi
     rm "$e/firmware.keepkey.v0.0.0.bin"
   done
+  # A SIGNED application carrying the alpha ClearSign root is refused: the
+  # alpha root is alpha-only and must never reach a production release.
+  printf 'KPKY\100\000\000\000' > "$e/firmware.keepkey.v0.0.0.bin"
+  dd if=/dev/zero bs=1 count=248 >> "$e/firmware.keepkey.v0.0.0.bin" 2>/dev/null
+  printf '\001\002\003' | dd of="$e/firmware.keepkey.v0.0.0.bin" bs=1 seek=8 conv=notrunc 2>/dev/null
+  sign_slot "$e/firmware.keepkey.v0.0.0.bin" 0
+  sign_slot "$e/firmware.keepkey.v0.0.0.bin" 1
+  sign_slot "$e/firmware.keepkey.v0.0.0.bin" 2
+  printf '%s' "$ALPHA_CLEARSIGN_ROOT_HEX" | xxd -r -p >> "$e/firmware.keepkey.v0.0.0.bin"
+  dd if=/dev/zero bs=1 count=31 2>/dev/null | tr '\000' '\061' >> "$e/firmware.keepkey.v0.0.0.bin"
+  sh "$0" --require-signed "$e" 0.0.0 full "" >/dev/null 2>&1 && {
+    rm -rf "$e"; fail "signed image carrying the alpha ClearSign root was published"
+  }
+  # The same image without those bytes passes, so the refusal is the root, not the shape.
+  printf 'KPKY\100\000\000\000' > "$e/firmware.keepkey.v0.0.0.bin"
+  dd if=/dev/zero bs=1 count=248 >> "$e/firmware.keepkey.v0.0.0.bin" 2>/dev/null
+  printf '\001\002\003' | dd of="$e/firmware.keepkey.v0.0.0.bin" bs=1 seek=8 conv=notrunc 2>/dev/null
+  sign_slot "$e/firmware.keepkey.v0.0.0.bin" 0
+  sign_slot "$e/firmware.keepkey.v0.0.0.bin" 1
+  sign_slot "$e/firmware.keepkey.v0.0.0.bin" 2
+  dd if=/dev/zero bs=1 count=64 2>/dev/null | tr '\000' '\061' >> "$e/firmware.keepkey.v0.0.0.bin"
+  sh "$0" --require-signed "$e" 0.0.0 full "" >/dev/null 2>&1 || {
+    rm -rf "$e"; fail "signed image without the alpha root was refused"
+  }
+  rm -f "$e/firmware.keepkey.v0.0.0.bin" "$e/HASHES.txt"
+
   # A normal unsigned application still produces an explicitly unsigned manifest.
   printf 'KPKY\004\000\000\000' > "$e/firmware.keepkey.v0.0.0.bin"
   dd if=/dev/zero bs=1 count=248 >> "$e/firmware.keepkey.v0.0.0.bin" 2>/dev/null
@@ -183,6 +219,12 @@ for f in *.bin; do
     exit 1
   fi
   APPS=$((APPS + 1))
+  if [ "$REQUIRE_SIGNED" -eq 1 ] && has_alpha_clearsign_root "$f"; then
+    echo "ERROR: alpha ClearSign root in a release artifact: production needs" >&2
+    echo "       its own root (new ceremony after the 7.15 re-release)." >&2
+    echo "       Artifact: $f" >&2
+    exit 1
+  fi
   has_quorum "$f" || UNSIGNED=1
 done
 
