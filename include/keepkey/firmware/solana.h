@@ -320,6 +320,15 @@ SolanaTxReview solana_inspectTxWithTrustedLut(
     const uint8_t (*lut_accounts)[SOL_PUBKEY_SIZE], size_t num_lut_accounts,
     SolanaParsedTx* tx);
 
+/* True when a raw SolanaSignMessage payload is plain text that cannot
+ * authorize a transaction for `pubkey`: every byte is printable ASCII or '\n',
+ * and the 32-byte key appears nowhere in it. A transaction signature only
+ * verifies when the signer's key is among the message's static account keys,
+ * so a payload without the key cannot be (or be spliced into) a transaction
+ * this key signs. Such messages need no AdvancedMode. */
+bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
+                                  const uint8_t pubkey[SOL_PUBKEY_SIZE]);
+
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 

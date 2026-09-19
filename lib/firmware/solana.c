@@ -1039,6 +1039,19 @@ bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
                                  : lut_account_count == 0;
 }
 
+bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
+                                  const uint8_t pubkey[SOL_PUBKEY_SIZE]) {
+  if (!msg || !pubkey || len == 0) return false;
+  /* ponytail: '\r' / '\t' / UTF-8 fall back to the AdvancedMode path. */
+  for (size_t i = 0; i < len; i++) {
+    if ((msg[i] < 0x20 || msg[i] > 0x7e) && msg[i] != '\n') return false;
+  }
+  for (size_t i = 0; i + SOL_PUBKEY_SIZE <= len; i++) {
+    if (memcmp(msg + i, pubkey, SOL_PUBKEY_SIZE) == 0) return false;
+  }
+  return true;
+}
+
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {
   return solana_inspectTx(raw, raw_len, tx) == SOL_TX_REVIEW_VERIFIED;
 }

@@ -2276,3 +2276,71 @@ TEST(Solana, SchemaAppliesBesideInertComputeBudget) {
   ASSERT_TRUE(solana_schemaApplies(&s, &tx, &idx));
   EXPECT_EQ(idx, 0);
 }
+
+/* Raw SolanaSignMessage skips AdvancedMode only for printable text that never
+   contains the signer's key. The two real messages are dApp logins captured on
+   2026-09-17 (soltoshidice.wtf); a transaction signature only verifies when
+   the signer's key is in the message, so their absence of the key is the whole
+   safety argument. */
+TEST(Solana, RawMessagePlainTextNeedsNoAdvancedMode) {
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 0xAB, sizeof(key));  // not printable, like any real key
+
+  const std::string login =
+      "SoltoshiDICE wallet\n"
+      "Network: mainnet-beta:CuTLp7pDmNGkFgi4aoh8Ef1YSjc2BzECQRLzYqaoVWBR:"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump\n"
+      "Session: ca5ed7a8-5df1-41bf-91ca-c3de4c1c56f6\n"
+      "Nonce: 37c40667-576d-4054-9064-618614ab88c1";
+  EXPECT_EQ(login.size(), 221u);
+  EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)login.data(),
+                                           login.size(), key));
+
+  const std::string siws =
+      "soltoshidice.wtf wants you to sign in with your Solana account:\n"
+      "Gu83nVMD8qh948D1vqe8UPoUHaFuSwcHrvNHetcM4Xux\n\n"
+      "Sign in to Hash Holdem.\n\n"
+      "URI: https://soltoshidice.wtf\nVersion: 1\n"
+      "Nonce: 9d9972a1f2ed0aaa6a86be6734139e69\n"
+      "Issued At: 2026-09-18T01:04:18.687Z";
+  EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)siws.data(),
+                                           siws.size(), key));
+}
+
+TEST(Solana, RawMessageNotPlainTextKeepsAdvancedMode) {
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 0xAB, sizeof(key));
+
+  // A legacy transaction-message header is binary.
+  const uint8_t tx_header[] = {0x01, 0x00, 0x01, 0x02, 0x00, 0x00};
+  EXPECT_FALSE(solana_rawMessageIsPlainText(tx_header, sizeof(tx_header), key));
+
+  // Tab, CR, DEL and UTF-8 fall back to the AdvancedMode path.
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\tb", 3, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\rb", 3, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\x7f", 2, key));
+  EXPECT_FALSE(
+      solana_rawMessageIsPlainText((const uint8_t*)"caf\xc3\xa9", 5, key));
+
+  EXPECT_FALSE(solana_rawMessageIsPlainText(nullptr, 3, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a", 0, key));
+}
+
+/* The key clause, isolated: a (synthetic) printable key embedded in printable
+   text must keep the gate, at the start, the end, and mid-string. */
+TEST(Solana, RawMessageContainingSignerKeyKeepsAdvancedMode) {
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 'K', sizeof(key));
+  const std::string k(32, 'K');
+
+  for (const std::string& text :
+       {k, k + " tail", "head " + k, "head " + k + " tail"}) {
+    EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)text.data(),
+                                              text.size(), key))
+        << text;
+  }
+  // 31 matching bytes are not the key.
+  const std::string near(31, 'K');
+  EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)near.data(),
+                                           near.size(), key));
+}
