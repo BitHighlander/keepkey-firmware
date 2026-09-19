@@ -92,6 +92,10 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
 #define ETHEREUM_TX_TYPE_EIP_2930 1UL
 #define ETHEREUM_TX_TYPE_EIP_1559 2UL
 
+#if ETHEREUM_CONFIRM_BODY_SIZE != BODY_CHAR_MAX
+#error "Ethereum confirmation capacity must match the confirmation renderer"
+#endif
+
 static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
 /* Arbitrary calldata can arrive over several EthereumTxAck messages.  Keep a
@@ -183,6 +187,7 @@ bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
     value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
     value_size = 32;
     token = tokenByChainAddress(msg->chain_id, msg->to.bytes);
+    if (token == UnknownToken) return false;
   } else {
     value_bytes = msg->value.bytes;
     value_size = msg->value.size;
@@ -200,6 +205,41 @@ void bn_from_bytes(const uint8_t* value, size_t value_len, bignum256* val) {
   memcpy(pad_val + (32 - value_len), value, value_len);
   bn_read_be(pad_val, val);
   memzero(pad_val, sizeof(pad_val));
+}
+
+bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
+                                      size_t buflen) {
+  if (msg == NULL || buf == NULL || buflen == 0 || !msg->has_to ||
+      msg->to.size != 20 || msg->data_initial_chunk.size != 68 ||
+      (!ethereum_isStandardERC20Transfer(msg) &&
+       !ethereum_isStandardERC20Approve(msg))) {
+    return false;
+  }
+
+  char contract[43] = "0x";
+  char counterparty[43] = "0x";
+  ethereum_address_checksum(msg->to.bytes, contract + 2, false, msg->chain_id);
+  ethereum_address_checksum(msg->data_initial_chunk.bytes + 16,
+                            counterparty + 2, false, msg->chain_id);
+
+  bignum256 raw_value;
+  bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
+  char amount[96];
+  if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
+                sizeof(amount)) == 0) {
+    return false;
+  }
+
+  const bool approve = ethereum_isStandardERC20Approve(msg);
+  const int written =
+      approve
+          ? snprintf(buf, buflen,
+                     "Unknown token contract %s\nAllow %s to withdraw up to "
+                     "%s?",
+                     contract, counterparty, amount)
+          : snprintf(buf, buflen, "Unknown token contract %s\nSend %s to %s?",
+                     contract, amount, counterparty);
+  return written >= 0 && (size_t)written < buflen;
 }
 
 static inline void hash_data(const uint8_t* buf, size_t size) {
@@ -794,15 +834,7 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
 
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
-  /* layoutEthereumConfirmTx's amount[96] buffer (95 usable chars: 60 integer
-   * digits + '.' + 18 fractional + a suffix, sized to hold any 256-bit
-   * amount) is composed into this buffer via templates up to
-   * "Approve withdrawal of up to %s by %s?" (34 literal chars) plus a
-   * 42-char "0x"+40-hex address: 34 + 95 + 42 + 1 (NUL) = 172. The old
-   * 121-byte size predates amount's enlargement and could silently blank
-   * the whole confirmation body for an ordinary large-but-valid transfer;
-   * size for the real worst case with headroom. */
-  char confirm_body_message[176] = {0};
+  char confirm_body_message[ETHEREUM_CONFIRM_BODY_SIZE] = {0};
 
   ethereum_signing = true;
   data_hash_pending = false;
@@ -996,7 +1028,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   if (needs_confirm) {
-    if (token != NULL) {
+    if (token == UnknownToken) {
+      if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
+                                            sizeof(confirm_body_message))) {
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Ethereum amount too large"));
+        ethereum_signing_abort();
+        return;
+      }
+    } else if (token != NULL) {
       if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
                                    msg->data_initial_chunk.bytes + 36, 32,
                                    token, confirm_body_message,
