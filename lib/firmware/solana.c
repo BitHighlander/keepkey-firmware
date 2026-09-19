@@ -1392,13 +1392,35 @@ static bool solana_tokenDefCertified(const SolanaSignTx* msg,
   return false;
 }
 
+/* A symbol the firmware already binds to another mint ("USDC", in any case).
+ * A signed definition proves only that its signer named this mint so; it must
+ * not borrow a name the device itself assigns to a different token. */
+static bool solana_symbolNamesOtherKnownToken(
+    const char* symbol, const uint8_t mint[SOL_PUBKEY_SIZE]) {
+  for (size_t i = 0; i < sizeof(SOL_KNOWN_TOKENS) / sizeof(SOL_KNOWN_TOKENS[0]);
+       i++) {
+    const SolanaKnownToken* k = &SOL_KNOWN_TOKENS[i];
+    if (memcmp(k->mint, mint, SOL_PUBKEY_SIZE) == 0) continue;
+    for (size_t j = 0;; j++) {
+      char a = symbol[j];
+      char b = k->symbol[j];
+      if (a >= 'a' && a <= 'z') a = (char)(a - 'a' + 'A');
+      if (b >= 'a' && b <= 'z') b = (char)(b - 'a' + 'A');
+      if (a != b) break;
+      if (a == '\0') return true;
+    }
+  }
+  return false;
+}
+
 const SolanaTokenInfo* solana_schemaTrustedToken(
     const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE],
     bool certified) {
   if (!msg || !mint) return NULL;
   const SolanaTokenInfo* ti = solana_findTokenInfo(msg, mint);
   if (!ti || !ti->has_decimals || ti->decimals > SOL_MAX_DISPLAY_DECIMALS ||
-      !solana_tokenSymbolOk(ti)) {
+      !solana_tokenSymbolOk(ti) ||
+      solana_symbolNamesOtherKnownToken(ti->symbol, mint)) {
     return NULL;
   }
   /* Never across tiers: a runtime-loaded signer must not scale an amount on a

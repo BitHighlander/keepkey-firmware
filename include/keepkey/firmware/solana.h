@@ -337,7 +337,10 @@ void solana_formatDuration(char* buf, size_t len, uint64_t seconds);
  * SPL Token or Token-2022 program); a runtime review only one attested by the
  * user-loaded signer that signed the schema (solana_token_info_trusted, and
  * signer_key_id == msg->schema_signer_key_id). Either way the decimals must be
- * displayable (<= SOL_MAX_DISPLAY_DECIMALS) and the symbol a bare ticker. */
+ * displayable (<= SOL_MAX_DISPLAY_DECIMALS), the symbol a bare ticker, and the
+ * symbol not one the firmware's known-token table gives to another mint
+ * (compared ignoring case): a "USDC" definition for any mint but Circle's is
+ * not trusted, and the amount is shown raw beside its mint. */
 const SolanaTokenInfo* solana_schemaTrustedToken(
     const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE],
     bool certified);

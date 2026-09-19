@@ -1876,9 +1876,10 @@ void fill_token_def(SolanaTokenInfo* ti, uint8_t mint_byte, const char* symbol,
 }
 
 /* A signed definition binds a symbol to a mint, not the symbol to a token:
- * anyone can mint a token named "USDC" and have its definition signed. So a
+ * anyone can mint a token named "USDT" and have its definition signed. So a
  * trusted TOKEN_AMOUNT is never shown by symbol alone -- the renderer names
- * the mint it actually read from the transaction. */
+ * the mint it actually read from the transaction. ("USDC" itself is refused
+ * outright on any mint but Circle's; see the next test.) */
 TEST(SolanaTokenDef, SchemaTrustedSymbolIsAlwaysShownWithItsMint) {
   set_advanced_mode_for_test(true);
   signed_metadata_clear_signers();
@@ -1890,7 +1891,7 @@ TEST(SolanaTokenDef, SchemaTrustedSymbolIsAlwaysShownWithItsMint) {
   msg.has_schema_signer_key_id = true;
   msg.schema_signer_key_id = TEST_KEY_ID;
   msg.token_info_count = 1;
-  fill_token_def(&msg.token_info[0], 0xAB, "USDC", 6); /* not USDC's mint */
+  fill_token_def(&msg.token_info[0], 0xAB, "USDT", 6);
 
   static TwoMintInstruction t;
   build_two_mint_instruction(&t);
@@ -1903,7 +1904,72 @@ TEST(SolanaTokenDef, SchemaTrustedSymbolIsAlwaysShownWithItsMint) {
   char value[96];
   ASSERT_TRUE(solana_schemaArgValue(&msg, false, &t.tx, ix, &arg, t.data,
                                     &cache, value, sizeof(value)));
-  EXPECT_EQ(std::string(value), std::string("1.000000 USDC\n") + kMintAB58);
+  EXPECT_EQ(std::string(value), std::string("1.000000 USDT\n") + kMintAB58);
+
+  signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
+}
+
+/* A definition may not take a name the firmware's known-token table gives to
+ * another mint. "USDC", in any case, signed for the mint 0xAB.. is trusted on
+ * neither tier: the amount is shown raw beside the mint it was read from. On
+ * the certified tier no definition here is delegate-signed, so that half
+ * cannot tell this rule from a missing signature; the runtime half can. The
+ * controls: a longer symbol is only a lookalike, and "usdc" for Circle's own
+ * mint is trusted. */
+TEST(SolanaTokenDef, SchemaKnownSymbolOnAnotherMintIsNotTrusted) {
+  set_advanced_mode_for_test(true);
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               nullptr, 0, 0, 0, false);
+
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.has_schema_signer_key_id = true;
+  msg.schema_signer_key_id = TEST_KEY_ID;
+  msg.token_info_count = 1;
+  SolanaTokenInfo* ti = &msg.token_info[0];
+
+  static TwoMintInstruction t;
+  build_two_mint_instruction(&t);
+  const SolanaParsedInstruction* ix = &t.tx.instructions[0];
+  const SolanaSchemaArg arg = {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 0};
+  const auto render = [&](bool certified) {
+    SolanaSchemaTokenCache cache = {nullptr, nullptr};
+    char value[96] = {0};
+    EXPECT_TRUE(solana_schemaArgValue(&msg, certified, &t.tx, ix, &arg, t.data,
+                                      &cache, value, sizeof(value)));
+    return std::string(value);
+  };
+  const std::string raw =
+      std::string("1000000 base units of mint\n") + kMintAB58;
+
+  for (const char* symbol : {"USDC", "usdc", "UsDc"}) {
+    fill_token_def(ti, 0xAB, symbol, 6);
+    ASSERT_TRUE(solana_token_info_trusted(ti)) << symbol;
+    for (bool certified : {false, true}) {
+      EXPECT_EQ(solana_schemaTrustedToken(&msg, t.tx.accounts[2], certified),
+                nullptr)
+          << symbol << " certified=" << certified;
+      EXPECT_EQ(render(certified), raw) << symbol << " certified=" << certified;
+    }
+  }
+
+  fill_token_def(ti, 0xAB, "USDCX", 6);
+  EXPECT_EQ(render(false), std::string("1.000000 USDCX\n") + kMintAB58);
+
+  /* EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v */
+  static const uint8_t kCircleUsdc[32] = {
+      0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
+      0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
+      0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61};
+  fill_token_def(ti, 0xAB, "usdc", 6);
+  memcpy(ti->mint.bytes, kCircleUsdc, 32);
+  sign_token_def_v1(ti);
+  memcpy(t.tx.accounts[2], kCircleUsdc, 32);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, t.tx.accounts[2], false), ti);
+  EXPECT_EQ(render(false),
+            "1.000000 usdc\nEPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
