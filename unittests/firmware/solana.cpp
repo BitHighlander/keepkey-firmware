@@ -1,4 +1,5 @@
 extern "C" {
+#include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/solana.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/ed25519-donna/ed25519-donna.h"
@@ -2393,6 +2394,37 @@ static const uint8_t kSdiceMint[32] = {
     0x5f, 0x7a, 0xd2, 0x12, 0x3b, 0xad, 0x32, 0xb3, 0x3a, 0x54, 0x02,
     0x34, 0x07, 0x39, 0xaf, 0x8a, 0xe5, 0xd8, 0x4c, 0xac, 0xef};
 
+/* The production ClearSign Worker's certify response for this join
+ * (keepkey-clearsign.bithighlander.workers.dev, source ee1488807, version
+ * dc2adba8). None of it is secret, and none of it is bound to one
+ * transaction: the schema signature covers only kSoltoshiJoinSchemaHex (the
+ * Worker returned those exact 154 bytes), and the token signature covers only
+ * the SDICE definition.
+ *
+ * kCert501Hex: the public scope-501 delegate certificate, the same bytes as
+ * python-keepkey's CERT_501. Alias "KeepKey Vault", MAY_SUPPRESS_RAW,
+ * not_after 1818806400. It verifies only against the alpha root.
+ *
+ * kSoltoshiJoinSchemaSigHex: the delegate's signature over
+ * sha256(kSoltoshiJoinSchemaHex), signer_key_id 0x80.
+ *
+ * kSdiceTokenDefSigHex: the delegate's signature over sha256 of
+ *   "KeepKeySolanaTokenDef/2" || kSdiceMint || Token-2022 program
+ *     || le32(6) || "SDICE"
+ * signer_key_id 0x80. */
+static const char* kCert501Hex =
+    "0101000001f56c68c8804b6565704b6579205661756c74000000000000000000"
+    "000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b"
+    "2dc9f48abcd2e46d4850cfa2753fac6068a45747a32a4a39f249af72b55370f3"
+    "491913b7fb9a80207d619b3b4fca6750fc1fdc790da5562b42a351e12cde3c0f"
+    "084056a24ca8d1bf2c36b5";
+static const char* kSoltoshiJoinSchemaSigHex =
+    "7302c703ce5fee498427bf87801384c21660f4d3451aef18549f2a31d8cd2561"
+    "1d99c94afcaeafcbd6a8d04c3c1b49232a77a2b949451ba84ff217c590c14700";
+static const char* kSdiceTokenDefSigHex =
+    "36ed412ef38eb9ade9a7ac3e5b60841f9d032ea870c7886b87155c202f2ecfa1"
+    "1fc87848280fea855881f9e34127fbd2dfb91c4ed556dbd54cd1fb18e279d41a";
+
 struct SchemaArgSpec {
   uint8_t type;
   const char* label;
@@ -2776,6 +2808,204 @@ TEST(Solana, SchemaV2SoltoshiDiceJoinRendersEachArg) {
                                         sizeof(value)))
           << s.args[a].label;
       EXPECT_STREQ(value, want[a]) << s.args[a].label << " " << certified;
+      off += solana_schemaArgWidth(s.args[a].type);
+    }
+    EXPECT_EQ(off, ix->data_len);
+  }
+}
+
+/* A certified request for the real join as Vault sends it: the Worker's
+ * certificate, the schema with its delegate signature, and the SDICE
+ * definition addressed to the delegate (0x80, METADATA_KEYID_DELEGATE). */
+static void fill_certified_soltoshi_join(SolanaSignTx* msg) {
+  memset(msg, 0, sizeof(*msg));
+  const std::vector<uint8_t> cert = solana_unhex(kCert501Hex);
+  const std::vector<uint8_t> schema = solana_unhex(kSoltoshiJoinSchemaHex);
+  const std::vector<uint8_t> schema_sig =
+      solana_unhex(kSoltoshiJoinSchemaSigHex);
+  const std::vector<uint8_t> token_sig = solana_unhex(kSdiceTokenDefSigHex);
+  ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
+  ASSERT_EQ(schema.size(), 154U);
+  ASSERT_EQ(schema_sig.size(), 64U);
+  ASSERT_EQ(token_sig.size(), 64U);
+
+  msg->has_clearsign_certificate = true;
+  msg->clearsign_certificate.size = cert.size();
+  memcpy(msg->clearsign_certificate.bytes, cert.data(), cert.size());
+  msg->has_schema_payload = true;
+  msg->schema_payload.size = schema.size();
+  memcpy(msg->schema_payload.bytes, schema.data(), schema.size());
+  msg->has_schema_signature = true;
+  msg->schema_signature.size = schema_sig.size();
+  memcpy(msg->schema_signature.bytes, schema_sig.data(), schema_sig.size());
+  msg->has_schema_signer_key_id = true;
+  msg->schema_signer_key_id = 0x80;
+
+  msg->token_info_count = 1;
+  SolanaTokenInfo* ti = &msg->token_info[0];
+  ti->has_mint = true;
+  ti->mint.size = 32;
+  memcpy(ti->mint.bytes, kSdiceMint, 32);
+  ti->has_symbol = true;
+  strcpy(ti->symbol, "SDICE");
+  ti->has_decimals = true;
+  ti->decimals = 6;
+  ti->has_signature = true;
+  ti->signature.size = token_sig.size();
+  memcpy(ti->signature.bytes, token_sig.data(), token_sig.size());
+  ti->has_signer_key_id = true;
+  ti->signer_key_id = 0x80;
+}
+
+/* The Worker's schema signature verifies the way fsm_msgSolanaSignTx checks
+ * it: clearsign_root_verify_delegate_attestation gets the raw schema_payload
+ * and verifies sha256(payload) with the scope-501 certificate's delegate. A
+ * flipped byte in the signature or the schema, or another scope, fails. */
+TEST(Solana, CertifiedSoltoshiJoinSchemaSignatureVerifies) {
+  const std::vector<uint8_t> cert = solana_unhex(kCert501Hex);
+  std::vector<uint8_t> schema = solana_unhex(kSoltoshiJoinSchemaHex);
+  std::vector<uint8_t> sig = solana_unhex(kSoltoshiJoinSchemaSigHex);
+  ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
+  ASSERT_EQ(sig.size(), 64U);
+  /* The certificate needs the alpha root this suite is built with
+   * (ClearsignRoot.RootKeyIsPresentInThisBuild). */
+  ASSERT_TRUE(clearsign_root_verify_cert(cert.data(), cert.size()));
+  const auto verifies = [&](uint32_t scope) {
+    return clearsign_root_verify_delegate_attestation(
+        cert.data(), cert.size(), scope, schema.data(), schema.size(),
+        sig.data(), sig.size());
+  };
+  EXPECT_TRUE(verifies(501));
+  EXPECT_FALSE(verifies(1));
+
+  for (size_t i = 0; i < sig.size(); i++) {
+    sig[i] ^= 0x01;
+    EXPECT_FALSE(verifies(501)) << "signature byte " << i;
+    sig[i] ^= 0x01;
+  }
+  /* The join's discriminator byte: the same signature over a schema for
+   * another instruction of the program. */
+  const size_t disc_at = 9 + 32 + 1;
+  ASSERT_EQ(schema[disc_at], 0x51);
+  schema[disc_at] ^= 0x01;
+  EXPECT_FALSE(verifies(501));
+  schema[disc_at] ^= 0x01;
+  EXPECT_TRUE(verifies(501));
+}
+
+/* The Worker's SDICE definition (KeepKeySolanaTokenDef/2, signer 0x80) is
+ * trusted on the certified review, through the request's certificate. The
+ * same entry is not trusted on the runtime tier, whose signers never include
+ * the certificate's delegate. Nor is it trusted under another key id, without
+ * the certificate, or after a one-byte change to its signature, symbol,
+ * decimals or mint. */
+TEST(Solana, CertifiedSdiceTokenDefinitionTrustedOnlyAsSigned) {
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  SolanaTokenInfo* ti = &msg.token_info[0];
+  ASSERT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), ti);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, false), nullptr);
+
+  for (uint32_t key_id : {0U, 3U, 0x7FU, 0x81U}) {
+    ti->signer_key_id = key_id;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << "signer_key_id " << key_id;
+  }
+  ti->signer_key_id = 0x80;
+  ti->has_signer_key_id = false;
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr);
+  ti->has_signer_key_id = true;
+
+  msg.has_clearsign_certificate = false;
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr);
+  msg.has_clearsign_certificate = true;
+
+  for (size_t i = 0; i < ti->signature.size; i++) {
+    ti->signature.bytes[i] ^= 0x01;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << "signature byte " << i;
+    ti->signature.bytes[i] ^= 0x01;
+  }
+  /* Each flip leaves a well-formed ticker ("RDICE", "SEICE", ...), so the
+   * signature is what refuses it. */
+  for (size_t i = 0; i < strlen("SDICE"); i++) {
+    ti->symbol[i] ^= 0x01;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << ti->symbol;
+    ti->symbol[i] ^= 0x01;
+  }
+  /* 7, 4 and 2 stay within the display cap of 9 decimals, so again the
+   * signature refuses them, not the cap. */
+  for (uint32_t flip : {0x01U, 0x02U, 0x04U}) {
+    ti->decimals ^= flip;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << "decimals " << ti->decimals;
+    ti->decimals ^= flip;
+  }
+  /* Looked up by the altered mint, so the entry is found and the signature
+   * refuses it. */
+  for (size_t i = 0; i < SOL_PUBKEY_SIZE; i++) {
+    ti->mint.bytes[i] ^= 0x01;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, ti->mint.bytes, true), nullptr)
+        << "mint byte " << i;
+    ti->mint.bytes[i] ^= 0x01;
+  }
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), ti);
+}
+
+/* The certified review of the real join with the Worker's envelope, arg by
+ * arg, through the renderer. Each TOKEN_AMOUNT is scaled and named by the
+ * SDICE definition and still shows the mint. The same request on the runtime
+ * tier renders the raw base units. */
+TEST(Solana, CertifiedSoltoshiJoinRendersSdiceAmounts) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(msg.schema_payload.bytes,
+                                      msg.schema_payload.size, &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  const SolanaParsedInstruction* ix = &tx.instructions[idx];
+
+  const char* sdice =
+      "1000.000000 SDICE\n"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+  const char* raw_sdice =
+      "1000000000 base units of mint\n"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+  const char* session = "BqtZ8PRQywD9Z5xXeB5112wtPG3xtj7TqF56hroicGjX";
+  const struct {
+    const char* label;
+    const char* certified;
+    const char* runtime;
+  } want[] = {
+      {"Round", "86", "86"},
+      {"Revision", "980", "980"},
+      {"Seat", "1", "1"},
+      {"Buy-in", sdice, raw_sdice},
+      {"Session key", session, session},
+      {"Expires in", "1 h", "1 h"},
+      {"Allowance", sdice, raw_sdice},
+      {"Max wager", sdice, raw_sdice},
+  };
+  ASSERT_EQ(s.num_args, sizeof(want) / sizeof(want[0]));
+
+  for (bool certified : {true, false}) {
+    SolanaSchemaTokenCache cache = {nullptr, nullptr};
+    size_t off = s.disc_len;
+    for (uint8_t a = 0; a < s.num_args; a++) {
+      EXPECT_STREQ(s.args[a].label, want[a].label);
+      char value[96];
+      ASSERT_TRUE(solana_schemaArgValue(&msg, certified, &tx, ix, &s.args[a],
+                                        ix->data + off, &cache, value,
+                                        sizeof(value)))
+          << want[a].label;
+      EXPECT_STREQ(value, certified ? want[a].certified : want[a].runtime)
+          << want[a].label << " certified=" << certified;
       off += solana_schemaArgWidth(s.args[a].type);
     }
     EXPECT_EQ(off, ix->data_len);
