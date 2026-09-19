@@ -32,7 +32,12 @@ and named in the final manifest.
 ### Definitions
 
 - **Root key** — the KeepKey clear-sign key whose public half is compiled into
-  firmware. The private half never exists on a device or in CI.
+  firmware. The private half is generated on, and never leaves, a dedicated
+  KeepKey; it never exists as a file or in CI. Every 7.16 alpha build embeds the
+  alpha root (`02de9231…dae7`), which is alpha-only: `release.yml` fails any
+  release artifact that contains it. The production root comes from a new
+  ceremony after the 7.15 re-release, not before, and replaces the alpha bytes
+  before any 7.16 production release.
 - **Delegate certificate** — a root-signed, scoped and expiring authorization
   for a provider key.
 - **Runtime schema** — a user-loaded schema trusted for the current session.
