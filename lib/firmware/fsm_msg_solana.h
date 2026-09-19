@@ -512,12 +512,15 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
 /* Render one structurally-complete schema instruction. Every value below is
  * read from the transaction bytes (or from the certified canonical LUT list
  * already installed in parsed.accounts); alias/fingerprint come from the root
- * certificate and are shown before the description. */
+ * certificate and are shown before the description. A TOKEN_AMOUNT is scaled
+ * and named only by a token definition trusted in this review's own tier
+ * (`certified`), and always shown with its mint; see solana_schemaArgValue. */
 static bool solana_confirmSchemaInstruction(
-    const SolanaInstrSchema* schema, const SolanaParsedTx* parsed,
-    uint8_t ix_index, const char* alias,
+    const SolanaSignTx* msg, bool certified, const SolanaInstrSchema* schema,
+    const SolanaParsedTx* parsed, uint8_t ix_index, const char* alias,
     const char fingerprint[METADATA_FINGERPRINT_LEN]) {
   const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
+  SolanaSchemaTokenCache token_cache = {NULL, NULL};
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                "KeepKey ClearSign", "%s\nSigner %s", alias, fingerprint)) {
@@ -531,43 +534,20 @@ static bool solana_confirmSchemaInstruction(
   uint16_t off = schema->disc_len;
   for (uint8_t a = 0; a < schema->num_args; a++) {
     const SolanaSchemaArg* arg = &schema->args[a];
-    char value[64] = {0};
-    switch (arg->type) {
-      case SOL_SCHEMA_ARG_U64:
-      case SOL_SCHEMA_ARG_LAMPORTS: {
-        uint64_t v = 0;
-        for (uint8_t b = 0; b < 8; b++) {
-          v |= ((uint64_t)ix->data[off + b]) << (8 * b);
-        }
-        if (arg->type == SOL_SCHEMA_ARG_LAMPORTS) {
-          solana_formatAmount(value, sizeof(value), v);
-        } else {
-          snprintf(value, sizeof(value), "%llu", (unsigned long long)v);
-        }
-        break;
+    if (arg->type == SOL_SCHEMA_ARG_OPAQUE32) {
+      if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                         arg->label, ix->data + off, 32)) {
+        return false;
       }
-      case SOL_SCHEMA_ARG_U8:
-        snprintf(value, sizeof(value), "%u", (unsigned)ix->data[off]);
-        break;
-      case SOL_SCHEMA_ARG_PUBKEY: {
-        size_t enc = sizeof(value);
-        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value,
-                                  &enc)) {
-          return false;
-        }
-        break;
+    } else {
+      char value[96];
+      if (!solana_schemaArgValue(msg, certified, parsed, ix, arg,
+                                 ix->data + off, &token_cache, value,
+                                 sizeof(value)) ||
+          !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
+                   "%s", value)) {
+        return false;
       }
-      case SOL_SCHEMA_ARG_OPAQUE32:
-        if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                           arg->label, ix->data + off, 32)) {
-          return false;
-        }
-        off += 32;
-        continue;
-    }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
-                 "%s", value)) {
-      return false;
     }
     off += solana_schemaArgWidth(arg->type);
   }
@@ -589,15 +569,16 @@ static bool solana_confirmSchemaInstruction(
 }
 
 static bool solana_confirmSchemaTransaction(
-    const SolanaInstrSchema* schema, const SolanaParsedTx* parsed,
-    uint8_t schema_ix, const char* alias,
+    const SolanaSignTx* msg, bool certified, const SolanaInstrSchema* schema,
+    const SolanaParsedTx* parsed, uint8_t schema_ix, const char* alias,
     const char fingerprint[METADATA_FINGERPRINT_LEN]) {
   for (uint8_t i = 0; i < parsed->num_instructions; i++) {
-    const bool ok = i == schema_ix ? solana_confirmSchemaInstruction(
-                                         schema, parsed, i, alias, fingerprint)
-                                   : solana_confirmInstruction(
-                                         &parsed->instructions[i], i,
-                                         parsed->num_instructions, NULL);
+    const bool ok =
+        i == schema_ix
+            ? solana_confirmSchemaInstruction(msg, certified, schema, parsed, i,
+                                              alias, fingerprint)
+            : solana_confirmInstruction(&parsed->instructions[i], i,
+                                        parsed->num_instructions, NULL);
     if (!ok) return false;
   }
   return true;
@@ -739,6 +720,12 @@ static SolanaSchemaReviewResult solana_confirmAttestedSchema(
         approved = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
                                  schema.args[i].label, arg, 32);
         arg += 32;
+        break;
+      case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
+      case SOL_SCHEMA_ARG_DURATION:
+        /* v2 types render only in solana_confirmSchemaInstruction. Refuse
+         * here rather than show them without their token/unit rules. */
+        approved = false;
         break;
     }
   }
@@ -939,7 +926,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
             msg->clearsign_certificate.bytes, msg->clearsign_certificate.size,
             501, msg->schema_payload.bytes, msg->schema_payload.size,
             msg->schema_signature.bytes, msg->schema_signature.size) ||
-        !solana_schemaApplies(&schema, &parsed, &schema_ix)) {
+        !solana_schemaAppliesCertified(&schema, &parsed, &schema_ix)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1008,8 +995,12 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
-  if (tx_review == SOL_TX_REVIEW_VERIFIED &&
-      !solana_validatePriorityFee(&parsed)) {
+  /* Every clear-signing review binds the compute-budget fields to the SOL at
+   * risk: a fully verified one, and a root-certified one, which is OPAQUE
+   * because its schema instruction is unknown to the parser. */
+  const bool review_binds_fee =
+      tx_review == SOL_TX_REVIEW_VERIFIED || certified;
+  if (review_binds_fee && !solana_validatePriorityFee(&parsed)) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_SyntaxError, _("Invalid priority fee"));
@@ -1018,7 +1009,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   if (certified) {
-    if (!solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
+    if (!solana_confirmSchemaTransaction(msg, true, &schema, &parsed, schema_ix,
                                          signer_alias, signer_fp)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
@@ -1056,8 +1047,8 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   } else if (runtime_schema) {
     if (!storage_isPolicyEnabled("AdvancedMode") ||
-        !solana_confirmSchemaTransaction(&schema, &parsed, schema_ix,
-                                         signer_alias, signer_fp) ||
+        !solana_confirmSchemaTransaction(msg, false, &schema, &parsed,
+                                         schema_ix, signer_alias, signer_fp) ||
         !confirm(ButtonRequestType_ButtonRequest_SignTx, "Advanced Mode",
                  "Sign provider-described Solana transaction?")) {
       memzero(node, sizeof(*node));
@@ -1167,10 +1158,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
-  /* Bind the raw compute-budget fields above to the actual SOL at risk. This
-   * is required for every fully verified path, including certified schemas. */
-  if (tx_review == SOL_TX_REVIEW_VERIFIED &&
-      !solana_confirmPriorityFee(&parsed)) {
+  /* Bind the raw compute-budget fields above to the actual SOL at risk, on
+   * every fully verified review and every certified one. */
+  if (review_binds_fee && !solana_confirmPriorityFee(&parsed)) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
