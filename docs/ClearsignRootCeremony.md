@@ -561,21 +561,38 @@ reconstruct the reasoning from a word count.
 What must be true before a release carrying a root key is signed:
 
 1. **`KK_CLEARSIGN_ALPHA_ROOT` is OFF in everything the release ships.** It is
-   `OFF` by default (`lib/firmware/CMakeLists.txt`). Only alpha builds turn it
-   on: `scripts/emulator/Dockerfile` and `scripts/build/docker/emulator/debug.sh`,
-   the full ARM variant in `ci.yml`, and the `python-dylib-tests` emulator
-   libs, which pass `ON` only when the run is for alpha (`github.ref ==
-   'refs/heads/alpha'` or `github.base_ref == 'alpha'`) and `OFF` otherwise.
-   Grep the release build command; the flag must not appear.
+   `OFF` by default (`lib/firmware/CMakeLists.txt`). Grep the release build
+   command; the flag must not appear.
+
+   Three builds turn it on **unconditionally, on every branch**, and are test
+   builds that no release ships: the emulator image from
+   `scripts/emulator/Dockerfile` (CI's `build-emulator` and `unit-tests`, the
+   docker-compose `python-integration-tests`, and `release.yml`'s own `test`
+   job), `scripts/build/docker/emulator/debug.sh`, and the full ARM variant in
+   `ci.yml`'s `build-arm-firmware`, a downloadable CI artifact that
+   `release.yml` never uses. One exception to "never leaves CI": the manual
+   `publish-emulator` job (`workflow_dispatch` with `publish_emulator`) pushes
+   that Dockerfile image to DockerHub as `kktech/kkemu`, so a published kkemu
+   image trusts the alpha root.
+
+   The `python-dylib-tests` emulator libs are the conditional build: `ON` only
+   when the run is for alpha (`github.ref == 'refs/heads/alpha'` or
+   `github.base_ref == 'alpha'`), `OFF` otherwise. The rolling
+   `emulator-dylib-latest` prerelease takes them from pushes to both `develop`
+   and `alpha`, so its `VERSION.txt` and release notes carry
+   `clearsign_alpha_root=ON|OFF`, read from the library bytes.
 
    A release ships two kinds of binary, and each has its own gate. The
    firmware is rebuilt by `release.yml` with `cmake_flags: ""` (item 2). The
    emulator libs are **not** rebuilt: `release.yml` downloads the
-   `libkkemu-<sha>` artifact of the tagged commit's CI run, and its "Attach
-   emulator libraries" step fails the release if either library contains the
-   alpha root's 33 bytes (`02de9231…dae7`). So the CI run a release takes its
-   libs from must not be an alpha run; if the newest green run for the tagged
-   commit ran on alpha, re-run CI for that commit on its release branch.
+   `libkkemu-<sha>` artifact of the newest green CI run for the tagged commit
+   whose event is `push` and whose branch is not `alpha`, and its "Attach
+   emulator libraries" step still fails the release if either library
+   contains the alpha root's 33 bytes (`02de9231…dae7`). If the tagged commit
+   has no such run (it was only built on alpha, or only by a PR or
+   `workflow_dispatch` run), push the commit to its release branch, wait for
+   CI to pass there, then re-run the release workflow. Re-running an alpha run
+   does not help: a re-run keeps its event and branch.
 2. **The binary root product-boundary gate was changed for production and
    passed.** Alpha CI requires this root in the full artifact and forbids it in
    bitcoin-only. Production must forbid the alpha root and independently prove
@@ -647,7 +664,8 @@ something they have to take on trust.
 - [ ] The ARM binary contains the production root (§4.6b)
 - [ ] The ARM binary does **not** contain the alpha root
 - [ ] The emulator libs (`libkkemu-macos-arm64.dylib`, `libkkemu-win-x64.dll`)
-      do **not** contain the alpha root — `release.yml` refuses them if they do
+      come from a non-alpha push CI run and do **not** contain the alpha
+      root — `release.yml` refuses them if they do
 - [ ] `KK_CLEARSIGN_ALPHA_ROOT` appears nowhere in the production release build command
 - [ ] `KK_CLEARSIGN_MIN_EXPIRY` was reviewed for this cut
 - [ ] Atlas section F passed unchanged

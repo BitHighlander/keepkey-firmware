@@ -333,12 +333,17 @@ jobs:
           # validate/ already required that run to be green. Reusing that
           # artifact means the published binaries are the ones that were
           # tested, not a lookalike from a second build.
+          #
+          # Only a push run on a branch other than alpha qualifies: alpha
+          # runs, and PR runs into alpha, compile the alpha ClearSign root
+          # into these libs. A re-run keeps its run's event and branch, so
+          # re-running an alpha run never qualifies either.
           RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" \
             --workflow CI --commit "$GITHUB_SHA" \
-            --json status,conclusion,databaseId \
-            --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | map(.databaseId) | first')
+            --json status,conclusion,databaseId,event,headBranch \
+            --jq '[.[] | select(.status == "completed" and .conclusion == "success" and .event == "push" and .headBranch != "alpha")] | map(.databaseId) | first')
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "::error::No successful CI run for ${GITHUB_SHA} — cannot source emulator libraries."
+            echo "::error::No successful non-alpha push CI run for ${GITHUB_SHA} — cannot source emulator libraries. Push the commit to its release branch and let CI pass there."
             exit 1
           fi
           echo "Sourcing emulator libraries from CI run ${RUN_ID}"
@@ -359,7 +364,8 @@ jobs:
           # gate in ci.yml. CI compiles the alpha root into these libs only
           # for alpha runs; a release built with cmake_flags "" ships no root,
           # so an emulator that trusts it would clear-sign what the released
-          # firmware refuses. A tag whose CI run was an alpha run fails here.
+          # firmware refuses. The run chosen above is never an alpha run; this
+          # checks the bytes anyway.
           python3 - <<'EOF'
           import sys
           ALPHA_ROOT = bytes.fromhex(

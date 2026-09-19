@@ -1362,16 +1362,9 @@ jobs:
           path: release-dylib
 
       - name: Stage release assets
+        id: stage
         run: |
           FW_VERSION=$(sed -n '/^project/,/)/p' CMakeLists.txt | grep -oP '\d+\.\d+\.\d+')
-          # Traceability — which firmware/commit these binaries correspond to.
-          {
-            echo "firmware_version=${FW_VERSION}"
-            echo "commit=${GITHUB_SHA}"
-            echo "branch=${GITHUB_REF_NAME}"
-            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          } > release-dylib/VERSION.txt
-          echo "=== Assets ===" && ls -lh release-dylib/
           # Both binaries or no publish. The upload side already enforces
           # this; asserting again here means a hand-crafted or partially
           # expired artifact cannot slip a one-platform release through.
@@ -1379,27 +1372,61 @@ jobs:
             test -f "release-dylib/$asset" || \
               (echo "::error::$asset missing — refusing to publish a partial emulator release" && exit 1)
           done
+          # alpha and develop share this one rolling tag, and only alpha's
+          # libs trust the alpha ClearSign root. Read it from the bytes (the
+          # same 33 bytes release.yml refuses) so the label describes the
+          # binaries actually published; two libs that disagree are refused.
+          ROOT=$(python3 - <<'EOF'
+          import sys
+          ALPHA_ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          found = {ALPHA_ROOT in open("release-dylib/" + name, "rb").read()
+                   for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll")}
+          if len(found) != 1:
+              sys.exit("::error::only one emulator library carries the alpha ClearSign root")
+          print("ON" if found.pop() else "OFF")
+          EOF
+          )
+          # Traceability — which firmware/commit these binaries correspond to.
+          {
+            echo "firmware_version=${FW_VERSION}"
+            echo "commit=${GITHUB_SHA}"
+            echo "branch=${GITHUB_REF_NAME}"
+            echo "clearsign_alpha_root=${ROOT}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > release-dylib/VERSION.txt
+          echo "clearsign_alpha_root=${ROOT}" >> "$GITHUB_OUTPUT"
+          cat release-dylib/VERSION.txt
+          echo "=== Assets ===" && ls -lh release-dylib/
 
       - name: Publish to rolling prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          ROOT: ${{ steps.stage.outputs.clearsign_alpha_root }}
         run: |
           # Idempotent: create the rolling tag on first use, then replace
-          # its assets in place. `gh release upload --clobber` is used
-          # rather than an action that rewrites the release body, so the
-          # description stays stable across every update.
-          if ! gh release view emulator-dylib-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create emulator-dylib-latest --repo "$GITHUB_REPOSITORY" \
-              --prerelease --title "Emulator libraries (rolling)" \
-              --notes "Rolling build of the KeepKey emulator native libraries.
+          # its assets in place. The notes are rewritten on every publish
+          # because they name the branch, commit and root setting of the libs
+          # now attached.
+          NOTES="Rolling build of the KeepKey emulator native libraries.
 
           - \`libkkemu-macos-arm64.dylib\` — macOS Apple Silicon
           - \`libkkemu-win-x64.dll\` — Windows x86_64 (MinGW cross-build)
           - \`VERSION.txt\` — firmware version + commit these correspond to
 
+          Current build: \`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA}\`,
+          \`clearsign_alpha_root=${ROOT}\`. ON means the libs trust the alpha
+          ClearSign root (alpha pushes only); a release never ships that.
+
           Both platforms are published together; CI fails rather than
           shipping one without the other. Updated on every push to
           \`develop\` and \`alpha\`. Not a signed firmware release."
+          if ! gh release view emulator-dylib-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create emulator-dylib-latest --repo "$GITHUB_REPOSITORY" \
+              --prerelease --title "Emulator libraries (rolling)" --notes "$NOTES"
+          else
+            gh release edit emulator-dylib-latest --repo "$GITHUB_REPOSITORY" \
+              --notes "$NOTES"
           fi
           gh release upload emulator-dylib-latest release-dylib/* \
             --repo "$GITHUB_REPOSITORY" --clobber
