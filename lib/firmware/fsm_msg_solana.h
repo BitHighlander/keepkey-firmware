@@ -924,7 +924,8 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
 
   /* Ed25519 sign */
   uint8_t sig[SOL_SIG_SIZE];
-  ed25519_sign(msg->message.bytes, msg->message.size, node->private_key, sig);
+  ed25519_sign(msg->message.bytes, msg->message.size, node->private_key,
+               node->public_key + 1, sig);
 
   resp->has_signature = true;
   resp->signature.size = SOL_SIG_SIZE;
