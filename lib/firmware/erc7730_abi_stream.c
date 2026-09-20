@@ -396,8 +396,9 @@ Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* stream,
   return ERC7730_ABI_OK;
 }
 
-Erc7730AbiResult erc7730_abi_stream_capture_array_path(
-    Erc7730AbiStream* stream, const int32_t* path, size_t path_count) {
+Erc7730AbiResult erc7730_abi_stream_capture_array_path(Erc7730AbiStream* stream,
+                                                       const int32_t* path,
+                                                       size_t path_count) {
   const Erc7730AbiResult result =
       erc7730_abi_stream_capture_path(stream, path, path_count);
   if (result == ERC7730_ABI_OK) stream->capture_array_length = true;
