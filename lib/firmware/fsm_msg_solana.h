@@ -1051,21 +1051,6 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
                         solana_inspectTx(msg->message.bytes, msg->message.size,
                                          &parsed) == SOL_TX_REVIEW_VERIFIED;
 
-  /* AdvancedMode gate for anything we cannot verify: a malicious dApp
-   * could craft a "message" that is also a valid tx.
-   * See: https://github.com/trezor/trezor-firmware/issues/4371
-   * Same gate as ETH blind-signing. Fully verified transactions are
-   * clear-signed below and need no gate — the user sees the contents. */
-  if (!is_verified_tx && !storage_isPolicyEnabled("AdvancedMode")) {
-    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
-                 "Solana message signing is experimental. "
-                 "Enable AdvancedMode in device settings.");
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Message signing disabled by policy"));
-    layoutHome();
-    return;
-  }
-
   /* Path validation: warn on non-standard derivation */
   if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
@@ -1108,16 +1093,38 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
       layoutHome();
       return;
     }
-  } else if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
-                            "Sign Solana Message", msg->message.bytes,
-                            msg->message.size)) {
-    /* AdvancedMode permits the opaque primitive, but every signed byte still
-     * has to be reviewable; previews recreate the hidden-suffix bug. */
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Signing cancelled"));
-    layoutHome();
-    return;
+  } else {
+    /* Raw Ed25519 has no domain separation, so a signed message can also be a
+     * signed transaction. Printable text that never contains this key cannot
+     * be one: Solana verifies a transaction signature only for keys present in
+     * its static account list. Everything else retains the AdvancedMode
+     * gate. */
+    const bool plain_text = solana_rawMessageIsPlainText(
+        msg->message.bytes, msg->message.size, node->public_key + 1);
+    if (!plain_text && !storage_isPolicyEnabled("AdvancedMode")) {
+      memzero(node, sizeof(*node));
+      (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                   "This Solana message is not plain text. "
+                   "Enable AdvancedMode in device settings to sign it.");
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Message signing disabled by policy"));
+      layoutHome();
+      return;
+    }
+
+    if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Message",
+                 plain_text
+                     ? "Plain text. It cannot authorize a transaction."
+                     : "Format: raw Ed25519. Version: none. Domain: none.") ||
+        !confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                       plain_text ? "Message" : "Raw Message",
+                       msg->message.bytes, msg->message.size)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
   }
 
   /* Ed25519 sign */

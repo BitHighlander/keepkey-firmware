@@ -291,6 +291,12 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
                                 SolanaParsedTx* tx);
 
+/* True when a raw SolanaSignMessage payload is plain text that cannot
+ * authorize a transaction for `pubkey`: every byte is printable ASCII or '\n',
+ * and the 32-byte key appears nowhere in it. */
+bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
+                                  const uint8_t pubkey[SOL_PUBKEY_SIZE]);
+
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 

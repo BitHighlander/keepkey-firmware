@@ -1501,3 +1501,61 @@ TEST(Solana, AtaUnknownInstructionStillOpaque) {
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
 }
+
+/* Plain SolanaSignMessage payloads skip AdvancedMode only when they cannot be
+ * transaction messages for the signing key. */
+TEST(Solana, RawMessagePlainTextNeedsNoAdvancedMode) {
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 0xAB, sizeof(key));
+
+  const std::string login =
+      "SoltoshiDICE wallet\n"
+      "Network: mainnet-beta:CuTLp7pDmNGkFgi4aoh8Ef1YSjc2BzECQRLzYqaoVWBR:"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump\n"
+      "Session: ca5ed7a8-5df1-41bf-91ca-c3de4c1c56f6\n"
+      "Nonce: 37c40667-576d-4054-9064-618614ab88c1";
+  EXPECT_EQ(login.size(), 221u);
+  EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)login.data(),
+                                           login.size(), key));
+
+  const std::string siws =
+      "soltoshidice.wtf wants you to sign in with your Solana account:\n"
+      "Gu83nVMD8qh948D1vqe8UPoUHaFuSwcHrvNHetcM4Xux\n\n"
+      "Sign in to Hash Holdem.\n\n"
+      "URI: https://soltoshidice.wtf\nVersion: 1\n"
+      "Nonce: 9d9972a1f2ed0aaa6a86be6734139e69\n"
+      "Issued At: 2026-09-18T01:04:18.687Z";
+  EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)siws.data(),
+                                           siws.size(), key));
+}
+
+TEST(Solana, RawMessageNotPlainTextKeepsAdvancedMode) {
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 0xAB, sizeof(key));
+
+  const uint8_t tx_header[] = {0x01, 0x00, 0x01, 0x02, 0x00, 0x00};
+  EXPECT_FALSE(solana_rawMessageIsPlainText(tx_header, sizeof(tx_header), key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\tb", 3, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\rb", 3, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\x7f", 2, key));
+  EXPECT_FALSE(
+      solana_rawMessageIsPlainText((const uint8_t*)"caf\xc3\xa9", 5, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText(nullptr, 3, key));
+  EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a", 0, key));
+}
+
+TEST(Solana, RawMessageContainingSignerKeyKeepsAdvancedMode) {
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 'K', sizeof(key));
+  const std::string k(32, 'K');
+
+  for (const std::string& text :
+       {k, k + " tail", "head " + k, "head " + k + " tail"}) {
+    EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)text.data(),
+                                              text.size(), key))
+        << text;
+  }
+  const std::string near(31, 'K');
+  EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)near.data(),
+                                           near.size(), key));
+}
