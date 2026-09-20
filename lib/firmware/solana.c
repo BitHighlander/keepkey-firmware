@@ -753,6 +753,9 @@ static bool schema_read_text(const uint8_t** cur, const uint8_t* end, char* out,
 uint16_t solana_schemaArgWidth(SolanaSchemaArgType t) {
   switch (t) {
     case SOL_SCHEMA_ARG_U64:
+    case SOL_SCHEMA_ARG_LAMPORTS:
+    case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
+    case SOL_SCHEMA_ARG_DURATION:
       return 8;
     case SOL_SCHEMA_ARG_U8:
       return 1;
@@ -776,7 +779,8 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
 
   if (memcmp(cur, magic, sizeof(magic)) != 0) return false;
   cur += sizeof(magic);
-  if (*cur++ != 1) return false; /* version */
+  const uint8_t version = *cur++;
+  if (version != 1 && version != 2) return false;
 
   if ((size_t)(end - cur) < SOL_PUBKEY_SIZE + 1) return false;
   memcpy(out->program_id, cur, SOL_PUBKEY_SIZE);
@@ -798,15 +802,25 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
   }
 
   out->num_args = *cur++;
-  if (out->num_args > SOL_SCHEMA_MAX_ARGS) return false;
+  if (out->num_args >
+      (version == 1 ? SOL_SCHEMA_V1_MAX_ARGS : SOL_SCHEMA_MAX_ARGS)) {
+    return false;
+  }
   for (uint8_t i = 0; i < out->num_args; i++) {
     if (cur >= end) return false;
     uint8_t type = *cur++;
-    if (solana_schemaArgWidth((SolanaSchemaArgType)type) == 0) return false;
+    if (solana_schemaArgWidth((SolanaSchemaArgType)type) == 0 ||
+        (version == 1 && type > SOL_SCHEMA_ARG_LAMPORTS)) {
+      return false;
+    }
     out->args[i].type = (SolanaSchemaArgType)type;
     if (!schema_read_text(&cur, end, out->args[i].label,
                           SOL_SCHEMA_LABEL_MAX)) {
       return false;
+    }
+    if (type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) {
+      if (cur >= end) return false;
+      out->args[i].mint_account = *cur++;
     }
   }
 
@@ -859,6 +873,12 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
         break;
       }
     }
+    for (uint8_t a = 0; accounts_ok && a < schema->num_args; a++) {
+      if (schema->args[a].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT &&
+          schema->args[a].mint_account >= ix->num_acct_indices) {
+        accounts_ok = false;
+      }
+    }
     if (!accounts_ok) continue;
 
     if (found) return false; /* ambiguous: two instructions match */
@@ -867,13 +887,18 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
   }
   if (!found) return false;
 
-  /* A schema explains ONE instruction. Every other instruction must be one
-   * firmware already decodes, or the message could move funds through a path
-   * no screen described. */
+  /* Runtime schemas are annotation-only and do not render companion
+   * instructions. Admit only inert companions; a recognised transfer would
+   * otherwise move value without a corresponding screen. */
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     if (i == match) continue;
+    const SolanaInstrType type = tx->instructions[i].type;
     if (tx->instructions[i].external ||
-        tx->instructions[i].type == SOL_INSTR_UNKNOWN) {
+        (type != SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME &&
+         type != SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT &&
+         type != SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE &&
+         type != SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE &&
+         type != SOL_INSTR_MEMO)) {
       return false;
     }
   }

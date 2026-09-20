@@ -641,7 +641,72 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
 /* Render a schema-decoded instruction: who attested the schema, then the
  * program/instruction it describes, then every labelled arg and account with
  * values read from the transaction being signed. */
-static bool solana_confirm_schema(const SolanaInstrSchema* schema,
+static uint64_t solana_schema_read_le64(const uint8_t* data) {
+  uint64_t value = 0;
+  for (uint8_t i = 0; i < 8; i++) value |= ((uint64_t)data[i]) << (8 * i);
+  return value;
+}
+
+static void solana_schema_format_duration(char* value, size_t value_len,
+                                          uint64_t seconds) {
+  static const uint32_t divisors[] = {86400, 3600, 60, 1};
+  static const char* const units[] = {"d", "h", "min", "s"};
+  size_t i = 0;
+  while (seconds % divisors[i] != 0) i++;
+  snprintf(value, value_len, "%" PRIu64 " %s", seconds / divisors[i], units[i]);
+}
+
+static bool solana_schema_token_symbol_ok(const SolanaTokenInfo* token) {
+  if (!token || !token->has_symbol) return false;
+  const size_t len = strnlen(token->symbol, sizeof(token->symbol));
+  if (len == 0 || len >= sizeof(token->symbol)) return false;
+  for (size_t i = 0; i < len; i++) {
+    const char c = token->symbol[i];
+    const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9');
+    if (!alnum && (i == 0 || (c != '.' && c != '_' && c != '-'))) return false;
+  }
+  return true;
+}
+
+static bool solana_schema_format_token_amount(const SolanaSignTx* msg,
+                                              uint8_t schema_signer_key_id,
+                                              const SolanaParsedTx* parsed,
+                                              const SolanaParsedInstruction* ix,
+                                              const SolanaSchemaArg* arg,
+                                              const uint8_t* data, char* value,
+                                              size_t value_len) {
+  if (arg->mint_account >= ix->num_acct_indices) return false;
+  const uint8_t mint_index = ix->acct_indices[arg->mint_account];
+  if (mint_index >= parsed->num_accounts) return false;
+  const uint8_t* mint = parsed->accounts[mint_index];
+  char mint_text[45];
+  size_t mint_text_len = sizeof(mint_text);
+  if (!solana_base58_encode(mint, SOL_PUBKEY_SIZE, mint_text, &mint_text_len)) {
+    return false;
+  }
+
+  const SolanaTokenInfo* token = solana_findTokenInfo(msg, mint);
+  const bool trusted =
+      token && token->has_signer_key_id &&
+      token->signer_key_id == schema_signer_key_id && token->has_decimals &&
+      token->decimals <= SOL_MAX_DISPLAY_DECIMALS &&
+      solana_schema_token_symbol_ok(token) && solana_token_info_trusted(token);
+  if (trusted) {
+    char amount[48];
+    solana_formatTokenAmount(amount, sizeof(amount),
+                             solana_schema_read_le64(data), token->symbol,
+                             (uint8_t)token->decimals);
+    snprintf(value, value_len, "%s\n%s", amount, mint_text);
+  } else {
+    snprintf(value, value_len, "%" PRIu64 " base units of mint\n%s",
+             solana_schema_read_le64(data), mint_text);
+  }
+  return true;
+}
+
+static bool solana_confirm_schema(const SolanaSignTx* msg,
+                                  const SolanaInstrSchema* schema,
                                   const SolanaParsedTx* parsed,
                                   uint8_t ix_index, uint8_t signer_key_id) {
   const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
@@ -665,7 +730,7 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
   uint16_t off = schema->disc_len;
   for (uint8_t a = 0; a < schema->num_args; a++) {
     const SolanaSchemaArg* arg = &schema->args[a];
-    char value[64] = {0};
+    char value[96] = {0};
     switch (arg->type) {
       case SOL_SCHEMA_ARG_U64: {
         uint64_t v = 0;
@@ -685,14 +750,28 @@ static bool solana_confirm_schema(const SolanaInstrSchema* schema,
         }
         break;
       }
-      case SOL_SCHEMA_ARG_OPAQUE32:
-        /* Opaque bytes have no meaning to show — abbreviate so the screen
-         * stays readable while still binding the user to a distinct value. */
-        snprintf(value, sizeof(value), "%02x%02x%02x%02x…%02x%02x%02x%02x",
-                 ix->data[off], ix->data[off + 1], ix->data[off + 2],
-                 ix->data[off + 3], ix->data[off + 28], ix->data[off + 29],
-                 ix->data[off + 30], ix->data[off + 31]);
+      case SOL_SCHEMA_ARG_LAMPORTS:
+        solana_formatAmount(value, sizeof(value),
+                            solana_schema_read_le64(ix->data + off));
         break;
+      case SOL_SCHEMA_ARG_DURATION:
+        solana_schema_format_duration(value, sizeof(value),
+                                      solana_schema_read_le64(ix->data + off));
+        break;
+      case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
+        if (!solana_schema_format_token_amount(msg, signer_key_id, parsed, ix,
+                                               arg, ix->data + off, value,
+                                               sizeof(value))) {
+          return false;
+        }
+        break;
+      case SOL_SCHEMA_ARG_OPAQUE32:
+        if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           arg->label, ix->data + off, 32)) {
+          return false;
+        }
+        off += solana_schemaArgWidth(arg->type);
+        continue;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
                  "%s", value)) {
@@ -840,9 +919,11 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   bool has_any_schema = msg->has_schema_payload || msg->has_schema_signature ||
                         msg->has_schema_signer_key_id;
   if (has_any_schema) {
-    if (!msg->has_schema_payload || !msg->has_schema_signature ||
-        !msg->has_schema_signer_key_id ||
+    if (!storage_isPolicyEnabled("AdvancedMode") || !msg->has_schema_payload ||
+        !msg->has_schema_signature || !msg->has_schema_signer_key_id ||
         msg->schema_signer_key_id >= METADATA_MAX_KEYS ||
+        !signed_metadata_signer_is_runtime(
+            (uint8_t)msg->schema_signer_key_id) ||
         !solana_parseInstrSchema(msg->schema_payload.bytes,
                                  msg->schema_payload.size, &schema) ||
         !signed_metadata_verify_attestation(
@@ -874,7 +955,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     /* Opaque only because of the schema'd program: first show the attested
      * decode. Runtime/self-service signers are annotation-only, so the normal
      * Advanced-mode blind-sign warning still follows the decoded screens. */
-    if (!solana_confirm_schema(&schema, &parsed, schema_ix,
+    if (!solana_confirm_schema(msg, &schema, &parsed, schema_ix,
                                (uint8_t)msg->schema_signer_key_id)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));

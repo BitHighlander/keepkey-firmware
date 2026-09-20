@@ -1204,6 +1204,42 @@ TEST(Solana, SchemaParsesCanonicalPayload) {
   EXPECT_STREQ(s.args[0].label, "Amount");
 }
 
+TEST(Solana, SchemaV2ParsesTokenDurationAndEightArgs) {
+  uint8_t blob[256] = {};
+  size_t p = 0;
+  memcpy(blob + p, "KKSOLSC1", 8);
+  p += 8;
+  blob[p++] = 2;
+  memset(blob + p, 0x42, 32);
+  p += 32;
+  blob[p++] = 1;
+  blob[p++] = 0xaa;
+  blob[p++] = 1;
+  blob[p++] = 'P';
+  blob[p++] = 1;
+  blob[p++] = 'I';
+  blob[p++] = 8;
+  for (uint8_t i = 0; i < 8; i++) {
+    blob[p++] = i == 0   ? SOL_SCHEMA_ARG_TOKEN_AMOUNT
+                : i == 1 ? SOL_SCHEMA_ARG_DURATION
+                         : SOL_SCHEMA_ARG_U8;
+    blob[p++] = 1;
+    blob[p++] = (uint8_t)('A' + i);
+    if (i == 0) blob[p++] = 1;
+  }
+  blob[p++] = 0;
+
+  SolanaInstrSchema schema{};
+  ASSERT_TRUE(solana_parseInstrSchema(blob, p, &schema));
+  EXPECT_EQ(schema.num_args, 8);
+  EXPECT_EQ(schema.args[0].type, SOL_SCHEMA_ARG_TOKEN_AMOUNT);
+  EXPECT_EQ(schema.args[0].mint_account, 1);
+  EXPECT_EQ(schema.args[1].type, SOL_SCHEMA_ARG_DURATION);
+
+  blob[8] = 1;
+  EXPECT_FALSE(solana_parseInstrSchema(blob, p, &schema));
+}
+
 TEST(Solana, SchemaRejectsTrailingBytes) {
   uint8_t program[32];
   memset(program, 0x42, sizeof(program));

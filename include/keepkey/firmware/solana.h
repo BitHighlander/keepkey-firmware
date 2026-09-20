@@ -216,14 +216,15 @@ typedef struct {
  *
  * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
  *   magic          8   "KKSOLSC1"
- *   version        1   = 1
+ *   version        1   1 or 2
  *   program_id    32
  *   disc_len       1   1..8
  *   discriminator  disc_len
  *   program name   1 + 1..SOL_SCHEMA_NAME_MAX
  *   instr name     1 + 1..SOL_SCHEMA_NAME_MAX
- *   n_args         1   0..SOL_SCHEMA_MAX_ARGS
+ *   n_args         1   0..4 (v1), 0..SOL_SCHEMA_MAX_ARGS (v2)
  *     per arg:     type(1) label_len(1) label
+ *     TOKEN_AMOUNT (v2) appends mint_account(1)
  *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
  *     per account: index(1) label_len(1) label
  * No bytes may follow. Args are laid out sequentially from the end of the
@@ -231,20 +232,25 @@ typedef struct {
  */
 #define SOL_SCHEMA_NAME_MAX 20
 #define SOL_SCHEMA_LABEL_MAX 16
-#define SOL_SCHEMA_MAX_ARGS 4
+#define SOL_SCHEMA_V1_MAX_ARGS 4
+#define SOL_SCHEMA_MAX_ARGS 8
 #define SOL_SCHEMA_MAX_ACCOUNTS 4
 #define SOL_SCHEMA_DISC_MAX 8
 
 typedef enum {
-  SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
-  SOL_SCHEMA_ARG_U8 = 2,       /* 1 byte */
-  SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
-  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown truncated hex */
+  SOL_SCHEMA_ARG_U64 = 1,          /* 8 bytes, shown as a decimal integer */
+  SOL_SCHEMA_ARG_U8 = 2,           /* 1 byte */
+  SOL_SCHEMA_ARG_PUBKEY = 3,       /* 32 bytes, shown base58 */
+  SOL_SCHEMA_ARG_OPAQUE32 = 4,     /* 32 bytes, shown truncated hex */
+  SOL_SCHEMA_ARG_LAMPORTS = 5,     /* 8 bytes, shown as SOL */
+  SOL_SCHEMA_ARG_TOKEN_AMOUNT = 6, /* 8 bytes; mint is an ix account */
+  SOL_SCHEMA_ARG_DURATION = 7,     /* 8-byte seconds */
 } SolanaSchemaArgType;
 
 typedef struct {
   SolanaSchemaArgType type;
   char label[SOL_SCHEMA_LABEL_MAX + 1];
+  uint8_t mint_account;
 } SolanaSchemaArg;
 
 typedef struct {
