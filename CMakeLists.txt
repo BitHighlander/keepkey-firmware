@@ -9,7 +9,7 @@ endif()
 
 project(
   KeepKeyFirmware
-  VERSION 7.14.3
+  VERSION 7.15.0
   LANGUAGES C CXX ASM)
 
 set(BOOTLOADER_MAJOR_VERSION 2)
@@ -22,6 +22,14 @@ option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
+
+# Regular 7.15 includes every supported chain, including Zcash Orchard.
+# Bitcoin-only is the sole reduced release product.
+if(KK_BITCOIN_ONLY)
+  set(KK_ZCASH_PRIVACY OFF)
+else()
+  set(KK_ZCASH_PRIVACY ON)
+endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
@@ -139,13 +147,6 @@ add_definitions(-DAES_128=1)
 
 # The Zcash Orchard engine (added in this PR) pulls the Pallas curve
 # arithmetic into the image, and the per-chain clear-sign code stacked on top
-# leaves it over the STM32 flash budget with the fast FOUR_TABLES AES. Shrink
-# the Gladman AES lookup tables from 4 KB to 1 KB each (-15,360 bytes ROM, a
-# modest AES cycle cost) so the whole 7.15 feature set links. The variant
-# split in a later PR removes Zcash (and this constraint) from the default
-# image, where FOUR_TABLES is restored.
-add_definitions(-DAES_SMALL_TABLES)
-
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
@@ -160,6 +161,15 @@ if(${KK_BITCOIN_ONLY})
   add_definitions(-DBITCOIN_ONLY=1)
 else()
   add_definitions(-DBITCOIN_ONLY=0)
+endif()
+
+if(${KK_ZCASH_PRIVACY})
+  add_definitions(-DZCASH_PRIVACY=1)
+  # Orchard leaves the regular image tightest on flash; shrink the Gladman
+  # AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM).
+  add_definitions(-DAES_SMALL_TABLES)
+else()
+  add_definitions(-DZCASH_PRIVACY=0)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")

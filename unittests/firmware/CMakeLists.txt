@@ -7,7 +7,6 @@ set(sources
     recovery.cpp
     rng_health.cpp
     setup_ceremony.cpp
-    signed_metadata.cpp
     signing.cpp
     storage.cpp
     storage_cipher_probe.c
@@ -15,9 +14,7 @@ set(sources
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
-    tron.cpp
-    u2f.cpp
-    zcash.cpp)
+    u2f.cpp)
 
 # Suites for the coin engines the bitcoin-only image compiles out. Building
 # them against that image fails at the first reference to an absent symbol
@@ -37,8 +34,14 @@ if(NOT ${KK_BITCOIN_ONLY})
       nano.cpp
       osmosis.cpp
       ripple.cpp
+      signed_metadata.cpp
       solana.cpp
-      thorchain.cpp)
+      thorchain.cpp
+      tron.cpp)
+endif()
+
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.cpp)
 endif()
 
 include_directories(

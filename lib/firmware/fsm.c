@@ -457,13 +457,5 @@ void signed_metadata_clear_signers(void) {}
 #endif  // !BITCOIN_ONLY
 #if ZCASH_PRIVACY
 #include "fsm_msg_zcash.h"
-#else
-// The coin engines above are compiled out, but the always-on
-// Initialize/Cancel handlers still call each engine's abort hook. With no
-// engine state to roll back, no-ops are the correct definitions -- and
-// defining them here keeps those handlers free of build-variant branches.
-void ethereum_signing_abort(void) {}
-void tendermint_signAbort(void) {}
-void eos_signingAbort(void) {}
-#endif  // !BITCOIN_ONLY
+#endif
 #include "fsm_msg_bip85.h"

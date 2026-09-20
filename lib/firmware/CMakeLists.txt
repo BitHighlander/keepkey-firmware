@@ -13,7 +13,6 @@ set(sources
     policy.c
     recovery_cipher.c
     reset.c
-    signed_metadata.c
     signing.c
     storage.c
     tiny-json.c
@@ -39,6 +38,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts/zxtransERC20.c
       ethereum_contracts/zxswap.c
       ethereum_tokens.c
+      signed_metadata.c
       mayachain.c
       nano.c
       osmosis.c
@@ -47,11 +47,15 @@ if(NOT ${KK_BITCOIN_ONLY})
       signtx_tendermint.c
       solana.c
       hive.c
-      zcash.c
       tron.c
       ton.c
       tendermint.c
       thorchain.c)
+endif()
+
+# Zcash shielded/Orchard engine -- transparent Zcash needs none of this.
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.c)
 endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
