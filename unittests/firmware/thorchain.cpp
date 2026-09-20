@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include "kkconfirm_driver.h"
 #include <cstring>
 
 // Mirrors THORCHAIN_MEMO_MAX inside thorchain_parseConfirmMemo().
