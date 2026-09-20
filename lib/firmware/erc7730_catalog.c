@@ -51,10 +51,9 @@ static bool all_zero(const uint8_t* p, size_t n) {
   return value == 0;
 }
 
-static bool verify_runtime_delegate(const Erc7730CatalogVerifier* v,
-                                    uint32_t expected_scope,
-                                    char out_alias[ERC7730_DELEGATE_ALIAS_LEN +
-                                                   1]) {
+static bool verify_runtime_delegate(
+    const Erc7730CatalogVerifier* v, uint32_t expected_scope,
+    char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1]) {
   const uint8_t* record = v->cert;
   if (record[ERC7730_DELEGATE_OFF_VERSION] != 1 || expected_scope == 0 ||
       read_be32(record + ERC7730_DELEGATE_OFF_SCOPE) != expected_scope) {

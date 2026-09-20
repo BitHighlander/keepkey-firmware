@@ -690,9 +690,8 @@ bool signed_metadata_verify_runtime_attestation_for_pubkey(
     }
     uint8_t digest[32];
     sha256_Raw(data, data_len, digest);
-    const bool ok =
-        ecdsa_verify_digest(&secp256k1, loaded_pubkeys[key_id], sig, digest) ==
-        0;
+    const bool ok = ecdsa_verify_digest(&secp256k1, loaded_pubkeys[key_id], sig,
+                                        digest) == 0;
     memzero(digest, sizeof(digest));
     if (!ok) return false;
     strlcpy(out_alias, loaded_aliases[key_id], METADATA_ALIAS_MAX_LEN + 1);
