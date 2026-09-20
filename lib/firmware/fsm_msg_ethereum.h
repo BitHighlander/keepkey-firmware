@@ -213,8 +213,6 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
       return;
     }
     memzero(formatted, sizeof(formatted));
-  }
-  if (had_field) {
     if (!erc7730_workflow_advance_display(workflow)) {
       erc7730_workflow_abort(workflow);
       fsm_sendFailure(FailureType_Failure_SyntaxError,

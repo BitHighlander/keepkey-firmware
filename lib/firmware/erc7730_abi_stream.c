@@ -95,7 +95,7 @@ static void pop_frame(Erc7730AbiStream* s) {
   s->depth--;
 }
 
-static Erc7730AbiResult make_sequence(Erc7730AbiStream* s,
+static Erc7730AbiResult make_sequence(const Erc7730AbiStream* s,
                                       Erc7730AbiStreamFrame* f,
                                       uint16_t first_child,
                                       uint16_t child_count, bool repeated,
@@ -339,9 +339,10 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
   return r;
 }
 
-Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* s,
+Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
                                           const Erc7730AbiProgram* program,
                                           size_t total_length) {
+  Erc7730AbiStream* s = stream;
   if (!s) return ERC7730_ABI_BAD_PROGRAM;
   memzero(s, sizeof(*s));
   Erc7730AbiResult r = erc7730_abi_validate_program(program);
@@ -356,9 +357,10 @@ Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* s,
   return r;
 }
 
-Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* s,
+Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* stream,
                                                  const int32_t* path,
                                                  size_t path_count) {
+  Erc7730AbiStream* s = stream;
   if (!s || !path || path_count == 0 || path_count >= ERC7730_ABI_MAX_DEPTH ||
       s->failed || s->complete || s->received != 0 || s->capture_enabled) {
     if (s) s->failed = true;
@@ -370,8 +372,9 @@ Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* s,
   return ERC7730_ABI_OK;
 }
 
-Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* s, size_t offset,
+Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream, size_t offset,
                                          const uint8_t* data, size_t data_len) {
+  Erc7730AbiStream* s = stream;
   if (!s || !data || data_len == 0 || s->failed || s->complete ||
       offset != s->received || data_len > s->total_length - s->received) {
     if (s) s->failed = true;
@@ -393,7 +396,8 @@ Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* s, size_t offset,
   return ERC7730_ABI_OK;
 }
 
-Erc7730AbiResult erc7730_abi_stream_finish(Erc7730AbiStream* s) {
+Erc7730AbiResult erc7730_abi_stream_finish(Erc7730AbiStream* stream) {
+  Erc7730AbiStream* s = stream;
   if (!s || s->failed || s->received != s->total_length ||
       s->word_received != 0) {
     if (s) s->failed = true;
@@ -412,8 +416,9 @@ Erc7730AbiResult erc7730_abi_stream_finish(Erc7730AbiStream* s) {
   return ERC7730_ABI_OK;
 }
 
-bool erc7730_abi_stream_captured(const Erc7730AbiStream* s,
+bool erc7730_abi_stream_captured(const Erc7730AbiStream* stream,
                                  Erc7730AbiCapture* capture) {
+  const Erc7730AbiStream* s = stream;
   if (!s || !capture || !s->complete || s->failed || !s->capture_enabled ||
       !s->capture_found)
     return false;
@@ -421,6 +426,7 @@ bool erc7730_abi_stream_captured(const Erc7730AbiStream* s,
   return true;
 }
 
-void erc7730_abi_stream_clear(Erc7730AbiStream* s) {
+void erc7730_abi_stream_clear(Erc7730AbiStream* stream) {
+  Erc7730AbiStream* s = stream;
   if (s) memzero(s, sizeof(*s));
 }

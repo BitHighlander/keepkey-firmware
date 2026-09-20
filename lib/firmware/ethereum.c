@@ -373,7 +373,7 @@ static void send_signature(void) {
   uint8_t v;
   layoutProgress(_("Signing"), 1000);
 
-  Erc7730Workflow* erc7730 = erc7730_workflow_state();
+  const Erc7730Workflow* const erc7730 = erc7730_workflow_state();
   if (erc7730->phase != ERC7730_WORKFLOW_IDLE &&
       !erc7730_workflow_complete(erc7730)) {
     fsm_sendFailure(FailureType_Failure_Other,
