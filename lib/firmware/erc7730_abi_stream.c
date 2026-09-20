@@ -137,7 +137,8 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
           f->mode = STREAM_ARRAY_LENGTH;
           return ERC7730_ABI_OK;
         }
-        if (s->elements > ERC7730_ABI_MAX_ARRAY_ELEMENTS - n->array_length)
+        if (s->elements >
+            (uint32_t)ERC7730_ABI_MAX_ARRAY_ELEMENTS - n->array_length)
           return ERC7730_ABI_RESOURCE_LIMIT;
         s->elements += n->array_length;
         Erc7730AbiResult r = make_sequence(s, f, n->first_child,
