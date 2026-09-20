@@ -69,8 +69,9 @@ typedef struct {
 Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
                                           const Erc7730AbiProgram* program,
                                           size_t total_length);
-Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream, size_t offset,
-                                         const uint8_t* data, size_t data_len);
+Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream,
+                                         size_t offset, const uint8_t* data,
+                                         size_t data_len);
 Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* stream,
                                                  const int32_t* path,
                                                  size_t path_count);
