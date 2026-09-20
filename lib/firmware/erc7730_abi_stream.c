@@ -372,8 +372,9 @@ Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* stream,
   return ERC7730_ABI_OK;
 }
 
-Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream, size_t offset,
-                                         const uint8_t* data, size_t data_len) {
+Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream,
+                                         size_t offset, const uint8_t* data,
+                                         size_t data_len) {
   Erc7730AbiStream* s = stream;
   if (!s || !data || data_len == 0 || s->failed || s->complete ||
       offset != s->received || data_len > s->total_length - s->received) {
