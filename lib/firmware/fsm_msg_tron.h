@@ -130,72 +130,72 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     return;
   }
 
-    char to_str[TRON_ADDRESS_MAX_LEN];
-    if (!tron_addressFromBytes(parsed.to, to_str, sizeof(to_str))) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_Other, _("Address encoding failed"));
-      layoutHome();
-      return;
-    }
-
-    bool confirmed = false;
-    if (tx_type == TRON_TX_TRANSFER) {
-      char amount_str[32];
-      tron_formatAmount(amount_str, sizeof(amount_str), parsed.amount);
-      confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "TRON",
-                          "Send %s to %s?", amount_str, to_str);
-    } else { /* TRON_TX_TRC20_TRANSFER */
-      char contract_str[TRON_ADDRESS_MAX_LEN];
-      char amount_str[90];
-      confirmed =
-          tron_addressFromBytes(parsed.contract, contract_str,
-                                sizeof(contract_str)) &&
-          tron_formatTrc20Amount(parsed.trc20_amount, amount_str,
-                                 sizeof(amount_str)) &&
-          confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                  "TRC-20 Transfer", "Token contract %s", contract_str) &&
-          /* Token decimals are not known on-device; show base units. */
-          confirm(ButtonRequestType_ButtonRequest_SignTx, "TRC-20 Transfer",
-                  "Send %s base units to %s?", amount_str, to_str);
-    }
-
-    if (confirmed && parsed.has_fee_limit) {
-      char fee_str[32];
-      tron_formatAmount(fee_str, sizeof(fee_str), parsed.fee_limit);
-      confirmed = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TRON",
-                          "Max network fee %s", fee_str);
-    }
-
-    if (confirmed && parsed.memo_len > 0) {
-      /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
-       * other memo surface. The old single-screen path showed up to 114 chars
-       * unpaged, but 3 OLED lines only guarantee ~84 chars with wide glyphs —
-       * an 85..114-char memo could have its signed tail (affiliate bps,
-       * destination tail) silently clipped. The pager also discloses
-       * non-printable memos as complete hex instead of a byte-count summary. */
-      confirmed = thorchain_confirm_full_memo("Memo", (const char*)parsed.memo,
-                                              parsed.memo_len);
-    }
-
-    if (!confirmed) {
-      memzero(node, sizeof(*node));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
-      layoutHome();
-      return;
-    }
-  }
-
-  // Sign the transaction with secp256k1
-  if (!tron_signTx(node, msg, resp)) {
+  char to_str[TRON_ADDRESS_MAX_LEN];
+  if (!tron_addressFromBytes(parsed.to, to_str, sizeof(to_str))) {
     memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_Other, _("TRON signing failed"));
+    fsm_sendFailure(FailureType_Failure_Other, _("Address encoding failed"));
     layoutHome();
     return;
   }
 
+  bool confirmed = false;
+  if (tx_type == TRON_TX_TRANSFER) {
+    char amount_str[32];
+    tron_formatAmount(amount_str, sizeof(amount_str), parsed.amount);
+    confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "TRON",
+                        "Send %s to %s?", amount_str, to_str);
+  } else { /* TRON_TX_TRC20_TRANSFER */
+    char contract_str[TRON_ADDRESS_MAX_LEN];
+    char amount_str[90];
+    confirmed =
+        tron_addressFromBytes(parsed.contract, contract_str,
+                              sizeof(contract_str)) &&
+        tron_formatTrc20Amount(parsed.trc20_amount, amount_str,
+                               sizeof(amount_str)) &&
+        confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                "TRC-20 Transfer", "Token contract %s", contract_str) &&
+        /* Token decimals are not known on-device; show base units. */
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "TRC-20 Transfer",
+                "Send %s base units to %s?", amount_str, to_str);
+  }
+
+  if (confirmed && parsed.has_fee_limit) {
+    char fee_str[32];
+    tron_formatAmount(fee_str, sizeof(fee_str), parsed.fee_limit);
+    confirmed = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TRON",
+                        "Max network fee %s", fee_str);
+  }
+
+  if (confirmed && parsed.memo_len > 0) {
+    /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
+     * other memo surface. The old single-screen path showed up to 114 chars
+     * unpaged, but 3 OLED lines only guarantee ~84 chars with wide glyphs —
+     * an 85..114-char memo could have its signed tail (affiliate bps,
+     * destination tail) silently clipped. The pager also discloses
+     * non-printable memos as complete hex instead of a byte-count summary. */
+    confirmed = thorchain_confirm_full_memo("Memo", (const char*)parsed.memo,
+                                            parsed.memo_len);
+  }
+
+  if (!confirmed) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+    layoutHome();
+    return;
+  }
+}
+
+// Sign the transaction with secp256k1
+if (!tron_signTx(node, msg, resp)) {
   memzero(node, sizeof(*node));
-  msg_write(MessageType_MessageType_TronSignedTx, resp);
+  fsm_sendFailure(FailureType_Failure_Other, _("TRON signing failed"));
   layoutHome();
+  return;
+}
+
+memzero(node, sizeof(*node));
+msg_write(MessageType_MessageType_TronSignedTx, resp);
+layoutHome();
 }
 
 void fsm_msgTronSignMessage(TronSignMessage* msg) {
