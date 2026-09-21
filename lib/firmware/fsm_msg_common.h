@@ -554,6 +554,7 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 }
 
 void fsm_msgLoadDevice(LoadDevice* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
 
   if (!confirm_load_device(msg->has_node)) {
@@ -582,6 +583,7 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 }
 
 void fsm_msgResetDevice(ResetDevice* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
 
