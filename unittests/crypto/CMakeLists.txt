@@ -6,7 +6,7 @@ set(sources
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_BINARY_DIR}/include
-    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto)
+    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
 
 add_executable(crypto-unit ${sources})
 target_link_libraries(crypto-unit
@@ -26,7 +26,8 @@ target_link_libraries(crypto-unit
 
 add_executable(zcash-crypto-unit
     ../firmware/zcash.cpp
-    ${CMAKE_SOURCE_DIR}/lib/firmware/zcash.c)
+    ${CMAKE_SOURCE_DIR}/lib/firmware/zcash.c
+    emulator_random.c)
 target_include_directories(zcash-crypto-unit PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/lib/firmware
