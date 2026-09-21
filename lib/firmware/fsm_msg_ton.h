@@ -135,7 +135,7 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
   snprintf(blind_msg, sizeof(blind_msg), "Sign %u-byte TON transaction?",
            (unsigned)msg->raw_tx.size);
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TON Blind Sign", "%s",
-                blind_msg)) {
+               blind_msg)) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
     layoutHome();
