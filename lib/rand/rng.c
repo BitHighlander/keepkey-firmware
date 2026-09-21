@@ -138,6 +138,16 @@ uint32_t random32(void) {
   }
   last = new;
   return new;
+#elif defined(_WIN32)
+  /* Windows has no POSIX random(); use the system CSPRNG (stronger than the
+   * macOS/Linux emulator's random() PRNG anyway). Resolves via the bcrypt link
+   * on kkemulator_dylib (tools/emulator/CMakeLists.txt). */
+  uint32_t v = 0;
+  if (BCryptGenRandom(NULL, (PUCHAR)&v, (ULONG)sizeof(v),
+                      BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+    abort();
+  }
+  return v;
 #else
   /* Emulator cryptography uses the existing host OS CSPRNG implementation,
    * which reads /dev/urandom and aborts on failure. */

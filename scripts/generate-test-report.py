@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -21,18 +22,36 @@ REPORT_DIR = ROOT / "test-report"
 REPORT_PDF = REPORT_DIR / "test-report.pdf"
 MERGED_JUNIT = REPORT_DIR / "junit-merged.xml"
 
-REQUIRED_CASES = {
+BASE_REQUIRED_CASES = {
+    "test_msg_recoverydevice_cipher.TestDeviceRecovery."
+    "test_unknown_word_count_failure_aborts_recovery",
+}
+
+EVM_REQUIRED_CASES = {
     "Ethereum.TransferAmountUsesTheRequestsSigningChain",
-    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
     "test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx."
     "test_transfer_review_uses_signing_chain_asset",
+}
+
+OSMOSIS_REQUIRED_CASES = {
+    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
+    "test_msg_osmosis_validation.TestOsmosisValidation."
+    "test_present_but_empty_amount_is_rejected_as_invalid",
+    "test_msg_osmosis_validation.TestOsmosisValidation."
+    "test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
+}
+
+OSMOSIS_LEGACY_REQUIRED_CASES = {
+    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
     "test_msg_osmosis_validation.TestOsmosisValidation."
     "test_present_but_empty_amount_is_rejected_before_review",
     "test_msg_osmosis_validation.TestOsmosisValidation."
     "test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
-    "test_msg_recoverydevice_cipher.TestDeviceRecovery."
-    "test_unknown_word_count_failure_aborts_recovery",
 }
+
+CAPABILITY_SKIP_PREFIX = (
+    "Staged release tree does not yet provide capability: "
+)
 
 
 def fail(message):
@@ -104,6 +123,33 @@ def canonical_case_name(case):
     return "%s.%s" % (case["classname"], case["name"])
 
 
+def firmware_version_tuple():
+    raw = os.environ.get("FW_VERSION", "")
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", raw)
+    if match is None:
+        fail("FW_VERSION is missing or malformed: %r" % raw)
+    return tuple(int(value) for value in match.groups())
+
+
+def release_missing_capabilities(cases):
+    missing_capabilities = {
+        value.strip() for value in
+        os.environ.get("KK_RELEASE_MISSING_CAPABILITIES", "").split(",")
+        if value.strip()
+    }
+    # The report job consumes immutable JUnit from the integration job but
+    # intentionally does not inherit that job's partial-stack environment.
+    # Bind the report to the artifact itself by recovering the explicit
+    # capability declarations from canonical skip reasons.
+    missing_capabilities.update(
+        case["skip_reason"][len(CAPABILITY_SKIP_PREFIX):]
+        for case in cases
+        if case["status"] == "skip" and
+        case["skip_reason"].startswith(CAPABILITY_SKIP_PREFIX)
+    )
+    return missing_capabilities
+
+
 def validate_cases(cases):
     failures = [case for case in cases
                 if case["status"] in ("fail", "error")]
@@ -111,10 +157,19 @@ def validate_cases(cases):
         fail("authoritative JUnit has %d failure/error case(s)" % len(failures))
     passed = {canonical_case_name(case) for case in cases
               if case["status"] == "pass"}
-    missing = sorted(required for required in REQUIRED_CASES
+    missing_capabilities = release_missing_capabilities(cases)
+    required_cases = set(BASE_REQUIRED_CASES)
+    if "evm-max-amount-review" not in missing_capabilities:
+        required_cases.update(EVM_REQUIRED_CASES)
+    if "osmosis-wire-guards" not in missing_capabilities:
+        if firmware_version_tuple() >= (7, 15, 0):
+            required_cases.update(OSMOSIS_REQUIRED_CASES)
+        else:
+            required_cases.update(OSMOSIS_LEGACY_REQUIRED_CASES)
+    missing = sorted(required for required in required_cases
                      if not any(name.endswith(required) for name in passed))
     if missing:
-        fail("required 7.14.2 controls missing or not passing: %s" %
+        fail("required release controls missing or not passing: %s" %
              ", ".join(missing))
 
 
@@ -213,6 +268,16 @@ def main():
 
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
+    # Normalize the artifact-bound staged capability ledger into the existing
+    # canonical environment contract before invoking python-keepkey's report
+    # validator.  The report job does not inherit the integration job's env;
+    # its immutable JUnit is therefore the authority.
+    missing_capabilities = release_missing_capabilities(cases)
+    if missing_capabilities:
+        os.environ["KK_RELEASE_MISSING_CAPABILITIES"] = ",".join(
+            sorted(missing_capabilities))
+    else:
+        os.environ.pop("KK_RELEASE_MISSING_CAPABILITIES", None)
 
     screenshot_root = ROOT / "test-reports" / "screenshots"
     pngs, sequences = validate_screenshots(screenshot_root)

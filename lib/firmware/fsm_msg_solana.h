@@ -40,33 +40,90 @@ static void solana_pubkeyToStr(const uint8_t key[SOL_PUBKEY_SIZE], char* out,
            key[31]);
 }
 
+/* Confirm one labelled account address on its own screen. Factoring this keeps
+ * the many "which account is being acted on" disclosures small (ROM matters on
+ * the zcash-privacy variant). Returns false if the user rejects. */
 static bool solana_confirm_account(const char* title, const char* label,
                                    const uint8_t key[SOL_PUBKEY_SIZE]) {
-  char address[45];
-  solana_pubkeyToStr(key, address, sizeof(address));
+  char s[45];
+  solana_pubkeyToStr(key, s, sizeof(s));
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s\n%s",
-                 label, address);
+                 label, s);
 }
 
-static bool solana_confirm_priority_fee(const SolanaParsedTx* tx, uint64_t fee,
-                                        bool has_fee) {
-  if (!has_fee) return true;
+/* A host-supplied token symbol is untrusted and only length-capped by the
+ * proto. Reject anything but printable ASCII so it cannot inject newlines or
+ * control bytes that push the mint or recipient off the confirm screen. */
+static bool solana_symbol_is_safe(const char* sym) {
+  if (!sym || sym[0] == '\0') return false;
+  for (const char* p = sym; *p; p++) {
+    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return false;
+  }
+  return true;
+}
 
-  if (!solana_confirm_account("Fee", "Fee payer", tx->accounts[0]))
+static bool solana_confirm_memo(const char* title, const uint8_t* s,
+                                uint16_t len) {
+  return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, title, s,
+                       len);
+}
+
+/* Priority fee = ceil(cu_price_micro_lamports * cu_limit / 1e6) lamports, and
+ * it is charged even if the transaction fails. Compute-budget instructions show
+ * only raw CU price/limit with no units, so a malicious host could bury a large
+ * SOL loss there. When the tx sets a CU price, show the fee payer and the
+ * MAXIMUM priority fee in SOL (using the 1.4M-CU protocol cap when no explicit
+ * limit is set, so the figure is never an understatement). Returns false on
+ * user reject. */
+static bool solana_confirm_priority_fee(const SolanaParsedTx* tx,
+                                        const uint8_t* fee_payer) {
+  uint64_t price = 0;
+  bool have_price = false;
+  uint64_t cu_limit = 0;
+  bool have_limit = false;
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    const SolanaParsedInstruction* pi = &tx->instructions[i];
+    if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE) {
+      price = pi->extra_value;
+      have_price = true;
+    } else if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT) {
+      cu_limit = pi->extra_value;
+      have_limit = true;
+    }
+  }
+  if (!have_price || price == 0) {
+    return true; /* no priority fee to disclose */
+  }
+  const uint64_t kMaxCuLimit = 1400000u; /* Solana per-tx CU cap */
+  uint64_t limit = have_limit ? cu_limit : kMaxCuLimit;
+
+  /* Overflow-safe ceil(price*limit/1e6); false => the fee exceeds u64 lamports
+   * (>1.8e10 SOL) — refuse to sign rather than display a wrapped/zero figure.
+   */
+  uint64_t lamports = 0;
+  if (!solana_priority_fee_lamports(price, limit, &lamports)) {
+    (void)confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee",
+                  "Priority fee too large to display. Refusing to sign.");
     return false;
-  char fee_str[32];
-  solana_formatAmount(fee_str, sizeof(fee_str), fee);
+  }
+  char fee_str[40];
+  solana_formatAmount(fee_str, sizeof(fee_str), lamports);
+  if (fee_payer) {
+    char payer_str[45];
+    solana_pubkeyToStr(fee_payer, payer_str, sizeof(payer_str));
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee",
+                 "Fee payer\n%s", payer_str)) {
+      return false;
+    }
+  }
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee",
-                 "Maximum priority fee\n%s", fee_str);
+                 "Max priority fee\n%s", fee_str);
 }
 
-/* Confirm a single parsed instruction.
- *
- * Takes no SolanaSignTx on purpose: every value on these screens is decoded
- * from the bytes being signed. Nothing the host merely asserts is displayed,
- * so there is no untrusted string left to sanitise. */
+/* Confirm a single parsed instruction */
 static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
-                                      uint8_t idx, uint8_t total) {
+                                      const SolanaSignTx* msg, uint8_t idx,
+                                      uint8_t total) {
   char title[32];
   snprintf(title, sizeof(title), "Instr %d/%d", idx + 1, total);
 
@@ -104,7 +161,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       return solana_confirm_account(title, "Advance nonce account", pi->from);
 
     case SOL_INSTR_SYSTEM_WITHDRAW_NONCE: {
-      if (!solana_confirm_account(title, "Withdraw from nonce", pi->from)) {
+      /* Withdrawing the full balance can destroy the nonce account — show it.
+       */
+      if (!solana_confirm_account(title, "Nonce account", pi->from)) {
         return false;
       }
       char amount_str[32];
@@ -115,14 +174,20 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Withdraw nonce %s to %s?", amount_str, to_str);
     }
 
-    case SOL_INSTR_SYSTEM_INITIALIZE_NONCE:
+    case SOL_INSTR_SYSTEM_INITIALIZE_NONCE: {
       if (!solana_confirm_account(title, "Initialize nonce account",
                                   pi->from)) {
         return false;
       }
-      return solana_confirm_account(title, "Nonce authority", pi->authority);
+      /* Show the nonce authority being set — it can later advance/withdraw. */
+      char auth_str[45];
+      solana_pubkeyToStr(pi->authority, auth_str, sizeof(auth_str));
+      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Nonce authority %s?", auth_str);
+    }
 
     case SOL_INSTR_SYSTEM_AUTHORIZE_NONCE: {
+      /* Show WHICH nonce account is rekeyed, not just the new authority. */
       if (!solana_confirm_account(title, "Nonce account", pi->from)) {
         return false;
       }
@@ -133,33 +198,39 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     }
 
     case SOL_INSTR_SYSTEM_ASSIGN: {
+      /* Assign hands control of an account to a program — show WHICH account,
+       * not just the new owner. */
       if (!solana_confirm_account(title, "Assign account", pi->from)) {
         return false;
       }
-      char prog_str[45];
-      solana_pubkeyToStr(pi->extra, prog_str, sizeof(prog_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Assign account to %s?", prog_str);
+      return solana_confirm_account(title, "to owner program", pi->extra);
     }
 
-    case SOL_INSTR_SYSTEM_ALLOCATE:
+    case SOL_INSTR_SYSTEM_ALLOCATE: {
       if (!solana_confirm_account(title, "Allocate for account", pi->from)) {
         return false;
       }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Allocate %llu bytes?",
                      (unsigned long long)pi->extra_value);
+    }
 
-    case SOL_INSTR_TOKEN_TRANSFER:
-    case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
-      if (!solana_confirm_account(title, "Source token account", pi->from)) {
+    case SOL_INSTR_TOKEN_TRANSFER: {
+      if (!solana_confirm_account(title, "Transfer from token account",
+                                  pi->from)) {
         return false;
       }
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
 
-      /* The mint is the only token identity the signed bytes carry, so it is
-       * the only one shown. Its own screen, its own hold. */
+      const SolanaTokenInfo* ti = NULL;
+      if (pi->has_mint && msg) {
+        ti = solana_findTokenInfo(msg, pi->mint);
+      }
+
+      /* The mint is the only authenticated token identity. Show it on its own
+       * screen — a host-controlled symbol shares no line with it, so it cannot
+       * push the mint off-view. */
       if (pi->has_mint) {
         char mint_str[45];
         solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
@@ -169,28 +240,153 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         }
       }
 
-      /* Scale by the signed instruction's decimals (pi->extra_u8), and label
-       * with the generic unit -- never with SolanaSignTx.token_info.symbol.
-       *
-       * This device has no on-device Solana mint table. The only token tables
-       * it carries are tokens.def, ethereum_tokens.def and uniswap_tokens.def,
-       * all ERC-20 and keyed by 20-byte Ethereum addresses, so there is
-       * nothing here to authenticate a label such as "USDC" against.
-       *
-       * Requiring the host's claimed decimals to equal the signed ones
-       * authenticates the exponent, not the identity: an attacker picks a mint
-       * whose decimals already match the ones they declare, and the label then
-       * rides through as device-verified fact. Nor can the label be shown with
-       * a caveat -- the host controls up to 12 printable-ASCII characters
-       * immediately beside it, enough to write its own parenthetical.
-       *
-       * The mint above plus a plain token count is everything the device can
-       * honestly assert. */
-      /* UINT64_MAX with a three-digit decimals count needs 54 bytes including
-       * the terminator in the exact base-unit fallback. */
-      char amount_str[64];
+      /* Use the claimed symbol only when it is safe printable text; otherwise a
+       * raw token count, so an unvalidated symbol cannot manipulate the amount
+       * screen (the mint above still identifies the token). */
+      if (ti && ti->has_symbol && ti->has_decimals &&
+          solana_symbol_is_safe(ti->symbol)) {
+        char amount_str[48];
+        solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
+                                 ti->symbol, (uint8_t)ti->decimals);
+        return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                       "Send %s to %s?", amount_str, to_str);
+      }
+      char amount_str[32];
+      snprintf(amount_str, sizeof(amount_str), "%llu tokens",
+               (unsigned long long)pi->amount);
+      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Send %s to %s?", amount_str, to_str);
+    }
+
+    case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
+      if (!solana_confirm_account(title, "Transfer from token account",
+                                  pi->from)) {
+        return false;
+      }
+      /* For TransferChecked, decimals come from the signed instruction
+       * bytes (pi->extra_u8) — host-supplied ti->decimals is untrusted. */
+      const SolanaTokenInfo* ti = NULL;
+      const SolanaKnownToken* known = NULL;
+      if (pi->has_mint && msg) {
+        ti = solana_findTokenInfo(msg, pi->mint);
+      }
+      if (pi->has_mint) {
+        known = solana_findKnownToken(pi->mint);
+      }
+
+      /* A known mint has firmware-owned decimals. A signed TransferChecked
+       * that claims a different scale would turn 0.002 USDC into (for example)
+       * 20.00 USDC. Refuse it instead of rendering an attacker-chosen scale. */
+      if (known && known->decimals != pi->extra_u8) {
+        (void)confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blocked",
+                      "%s decimals mismatch. Refusing to sign.", known->symbol);
+        return false;
+      }
+
+      /* Decide symbol trust before drawing the mint screen so its label can say
+       * whether the symbol is attested. Trust rules:
+       *  - attestation present + verifies against a loaded signer -> trusted;
+       *  - attestation present + INVALID -> reject the symbol entirely (an
+       *    attacker offered a bad signature; never fall back to the claim);
+       *  - no attestation (today's hosts) -> show the symbol next to the
+       *    always-authenticated mint (unchanged behavior). */
+      const char* symbol = NULL;
+      bool symbol_verified = false;
+      if (known) {
+        symbol = known->symbol;
+      } else if (ti && ti->has_symbol && solana_symbol_is_safe(ti->symbol)) {
+        if (ti->has_signature) {
+          /* Trust the symbol only if the attestation verifies AND the attested
+           * decimals equal the signed instruction's decimals (pi->extra_u8) —
+           * otherwise the attested (mint,decimals,symbol) tuple disagrees with
+           * the transaction being signed and must not earn "verified". */
+          if (solana_token_info_trusted(ti) && ti->decimals == pi->extra_u8) {
+            symbol = ti->symbol;
+            symbol_verified = true;
+          }
+        } else {
+          symbol = ti->symbol;
+        }
+      }
+
+      /* Mint on its own screen (see TOKEN_TRANSFER): the authenticated identity
+       * cannot be pushed off-view by a host-controlled symbol. */
+      if (pi->has_mint) {
+        char mint_str[45];
+        solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
+        const bool mint_ok =
+            known
+                ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                          "Known token %s\n%s", known->symbol, mint_str)
+                : confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                          "Token mint\n%s", mint_str);
+        if (!mint_ok) {
+          return false;
+        }
+      }
+
+      /* x402 names the merchant owner while the transaction names that
+       * owner's associated token account. Display the owner only after the
+       * device derives ATA(owner, token_program, mint) and matches the signed
+       * destination. No RPC or host assertion participates in this check. */
+      uint8_t recipient_owner[SOL_PUBKEY_SIZE];
+      const bool recipient_verified =
+          pi->has_mint &&
+          solana_findTokenRecipientOwner(msg, pi->program_id, pi->mint, pi->to,
+                                         recipient_owner);
+      if (recipient_verified) {
+        if (!solana_confirm_account(title, "Verified recipient owner",
+                                    recipient_owner)) {
+          return false;
+        }
+      } else if (msg && msg->token_recipient_owner_count > 0) {
+        /* A supplied payTo that does not own the signed ATA is suspicious.
+         * Warn, then keep the existing honest fallback: show the raw token
+         * account rather than the unverified owner claim. */
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Warning",
+                     "Recipient owner does not match signed token account.")) {
+          return false;
+        }
+      }
+
+      /* Name WHO attested the symbol, with the signer's fingerprint — aliases
+       * are host-chosen and not unique, so the fingerprint is what actually
+       * identifies the key. symbol_verified implies a signer is loaded for this
+       * key_id (solana_token_info_trusted verified against it), so both
+       * resolve; there is no "unknown" verified case. */
+      if (symbol_verified) {
+        const char* alias = signed_metadata_signer_alias(ti->signer_key_id);
+        char fp[METADATA_FINGERPRINT_LEN] = {0};
+        signed_metadata_signer_fingerprint((uint8_t)ti->signer_key_id, fp);
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Token \"%s\"\nby %s %s", symbol, alias ? alias : "",
+                     fp)) {
+          return false;
+        }
+      }
+
+      if (symbol) {
+        char amount_str[48];
+        solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
+                                 symbol, pi->extra_u8);
+        if (recipient_verified) {
+          return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                         "Send %s?", amount_str);
+        }
+        char to_str[45];
+        solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
+        return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                       "Send %s to %s?", amount_str, to_str);
+      }
+      char amount_str[48];
       solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
                                "tokens", pi->extra_u8);
+      if (recipient_verified) {
+        return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                       "Send %s?", amount_str);
+      }
+      char to_str[45];
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Send %s to %s?", amount_str, to_str);
     }
@@ -214,52 +410,77 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Set token authority to %s?", auth_str);
     }
 
-    case SOL_INSTR_TOKEN_MINT_TO:
-      if (!solana_confirm_account(title, "Mint token", pi->mint) ||
-          !solana_confirm_account(title, "Mint to account", pi->to)) {
+    case SOL_INSTR_TOKEN_MINT_TO: {
+      /* Show the mint (which token) and the recipient, not just the amount. */
+      char mint_str[45];
+      char to_str[45];
+      solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                   "Mint token\n%s", mint_str)) {
         return false;
       }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Mint %llu tokens?", (unsigned long long)pi->amount);
+                     "Mint %llu\nto %s?", (unsigned long long)pi->amount,
+                     to_str);
+    }
 
-    case SOL_INSTR_TOKEN_BURN:
-      if (!solana_confirm_account(title, "Burn token", pi->mint) ||
-          !solana_confirm_account(title, "Burn from account", pi->from)) {
+    case SOL_INSTR_TOKEN_BURN: {
+      /* Show the mint (which token) and the source account burned from. */
+      char mint_str[45];
+      char from_str[45];
+      solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
+      solana_pubkeyToStr(pi->from, from_str, sizeof(from_str));
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                   "Burn token\n%s", mint_str)) {
         return false;
       }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Burn %llu tokens?", (unsigned long long)pi->amount);
+                     "Burn %llu\nfrom %s?", (unsigned long long)pi->amount,
+                     from_str);
+    }
 
-    case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
+    case SOL_INSTR_TOKEN_CLOSE_ACCOUNT: {
+      /* Closing sweeps the account's ENTIRE lamport balance (which the device
+       * cannot see, e.g. wrapped SOL) to the destination — show both the
+       * account being closed and where its balance goes. */
       if (!solana_confirm_account(title, "Close token account", pi->from)) {
         return false;
       }
-      return solana_confirm_account(title, "Send balance to", pi->to);
+      return solana_confirm_account(title, "send balance to", pi->to);
+    }
 
-    case SOL_INSTR_TOKEN_FREEZE_ACCOUNT:
+    case SOL_INSTR_TOKEN_FREEZE_ACCOUNT: {
+      /* Show the account frozen AND its mint (freeze authority is per-mint). */
       if (!solana_confirm_account(title, "Freeze token account", pi->from)) {
         return false;
       }
-      return solana_confirm_account(title, "Token mint", pi->mint);
+      return solana_confirm_account(title, "of mint", pi->mint);
+    }
 
-    case SOL_INSTR_TOKEN_THAW_ACCOUNT:
+    case SOL_INSTR_TOKEN_THAW_ACCOUNT: {
       if (!solana_confirm_account(title, "Thaw token account", pi->from)) {
         return false;
       }
-      return solana_confirm_account(title, "Token mint", pi->mint);
+      return solana_confirm_account(title, "of mint", pi->mint);
+    }
 
     case SOL_INSTR_TOKEN_SYNC_NATIVE:
       return solana_confirm_account(title, "Sync wrapped SOL account",
                                     pi->from);
 
     case SOL_INSTR_STAKE_DELEGATE: {
+      /* Show which stake account is delegated, not just the vote account — a
+       * host could delegate a different stake account of the same authority. */
       if (!solana_confirm_account(title, "Delegate stake account", pi->from)) {
         return false;
       }
-      return solana_confirm_account(title, "To vote account", pi->to);
+      return solana_confirm_account(title, "to vote account", pi->to);
     }
 
     case SOL_INSTR_STAKE_WITHDRAW: {
+      /* Show WHICH stake account is drained (a host could substitute another of
+       * the same authority) and the recipient. */
       if (!solana_confirm_account(title, "Withdraw from stake", pi->from)) {
         return false;
       }
@@ -268,10 +489,13 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Withdraw %s from stake to %s?", amount_str, to_str);
+                     "Withdraw %s\nto %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_STAKE_AUTHORIZE: {
+      /* Show WHICH stake account is rekeyed (a host could substitute another of
+       * the same signer) and which power is handed over (staker vs withdrawer).
+       */
       if (!solana_confirm_account(title, "Stake account", pi->from)) {
         return false;
       }
@@ -279,10 +503,11 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       const char* role = pi->extra_u8 == 0 ? "staker" : "withdrawer";
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Authorize %s to %s?", role, auth_str);
+                     "Authorize %s\nto %s?", role, auth_str);
     }
 
     case SOL_INSTR_STAKE_SPLIT: {
+      /* Show the source stake account being split, and the destination. */
       if (!solana_confirm_account(title, "Split from stake", pi->from)) {
         return false;
       }
@@ -291,30 +516,43 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Split %s to %s?", amount_str, to_str);
+                     "Split %s\nto %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_STAKE_DEACTIVATE:
       return solana_confirm_account(title, "Deactivate stake account",
                                     pi->from);
 
-    case SOL_INSTR_STAKE_MERGE:
-      if (!solana_confirm_account(title, "Merge stake from", pi->from)) {
+    case SOL_INSTR_STAKE_MERGE: {
+      /* Show source and destination — merge moves the source's stake into the
+       * destination account. */
+      char from_str[45];
+      char to_str[45];
+      solana_pubkeyToStr(pi->from, from_str, sizeof(from_str));
+      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                   "Merge stake from\n%s", from_str)) {
         return false;
       }
-      return solana_confirm_account(title, "Merge stake into", pi->to);
+      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Merge stake into\n%s?", to_str);
+    }
 
     case SOL_INSTR_VOTE_AUTHORIZE: {
-      if (!solana_confirm_account(title, "Vote account", pi->from))
+      /* Show WHICH vote account is rekeyed; Voter vs Withdrawer both matter
+       * (the withdrawer can move the vote account's SOL). */
+      if (!solana_confirm_account(title, "Vote account", pi->from)) {
         return false;
+      }
       char auth_str[45];
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       const char* role = pi->extra_u8 == 0 ? "voter" : "withdrawer";
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Authorize vote %s to %s?", role, auth_str);
+                     "Authorize vote %s\nto %s?", role, auth_str);
     }
 
     case SOL_INSTR_VOTE_WITHDRAW: {
+      /* Show the source vote account and the recipient. */
       if (!solana_confirm_account(title, "Withdraw from vote", pi->from)) {
         return false;
       }
@@ -323,30 +561,33 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Withdraw vote %s to %s?", amount_str, to_str);
+                     "Withdraw vote %s\nto %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_VOTE_UPDATE_VALIDATOR: {
-      if (!solana_confirm_account(title, "Vote account", pi->from))
+      /* The new validator is the account (pi->extra now holds account index 1,
+       * not fabricated instruction bytes); show the vote account too. */
+      if (!solana_confirm_account(title, "Vote account", pi->from)) {
         return false;
-      char validator_str[45];
-      solana_pubkeyToStr(pi->extra, validator_str, sizeof(validator_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Update validator to %s?", validator_str);
+      }
+      return solana_confirm_account(title, "New validator identity", pi->extra);
     }
 
-    case SOL_INSTR_VOTE_UPDATE_COMMISSION:
-      if (!solana_confirm_account(title, "Vote account", pi->from))
+    case SOL_INSTR_VOTE_UPDATE_COMMISSION: {
+      if (!solana_confirm_account(title, "Vote account", pi->from)) {
         return false;
+      }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Set vote commission to %u%%?", pi->extra_u8);
+    }
 
-    case SOL_INSTR_ATA_CREATE:
+    case SOL_INSTR_ATA_CREATE: {
       if (!solana_confirm_account(title, "Create token account", pi->to) ||
           !solana_confirm_account(title, "For wallet owner", pi->authority)) {
         return false;
       }
       return solana_confirm_account(title, "Token mint", pi->mint);
+    }
 
     case SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME:
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -369,11 +610,11 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      (unsigned long long)pi->extra_value);
 
     case SOL_INSTR_MEMO:
-      /* Memo is variable-length signed instruction data. A generic
-       * "attached" notice does not bind the user's approval to its contents,
-       * so page the exact bounded slice retained by the parser. */
-      return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
-                           "Solana Memo", pi->data, pi->data_len);
+      /* Page the FULL memo — swap intents (e.g. THORChain '=:ETH.ETH:...') ride
+       * in the memo, so a byte-count summary would hide where the funds go.
+       * Printable memos page as text, binary memos page as hex; nothing is
+       * hidden and the tx stays clear-signable regardless of length. */
+      return solana_confirm_memo(title, pi->data, pi->data_len);
 
     case SOL_INSTR_UNKNOWN:
     default: {
@@ -387,8 +628,6 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
   }
 }
 
-/* Validate Solana derivation path: m/44'/501'/account'[/change'] */
-/* Off-chain message format 0: restricted ASCII -- printable, space included. */
 static bool solana_offchain_payload_is_ascii(const uint8_t* data, size_t size) {
   for (size_t i = 0; i < size; i++) {
     if (data[i] < 0x20 || data[i] > 0x7e) return false;
@@ -396,16 +635,12 @@ static bool solana_offchain_payload_is_ascii(const uint8_t* data, size_t size) {
   return true;
 }
 
-/* Off-chain message format 1: well-formed UTF-8. Rejects overlong encodings,
-   surrogate halves, and anything above U+10FFFF, so the bytes the device
-   signs really are the text the screen claims they are. */
 static bool solana_offchain_payload_is_utf8(const uint8_t* data, size_t size) {
   size_t i = 0;
   while (i < size) {
     const uint8_t c = data[i];
     size_t extra;
     uint32_t cp;
-
     if (c < 0x80) {
       i++;
       continue;
@@ -419,28 +654,25 @@ static bool solana_offchain_payload_is_utf8(const uint8_t* data, size_t size) {
       extra = 3;
       cp = c & 0x07u;
     } else {
-      return false; /* continuation byte or 5+ byte lead */
+      return false;
     }
-
     if (i + extra >= size) return false;
     for (size_t k = 1; k <= extra; k++) {
       const uint8_t cc = data[i + k];
       if ((cc & 0xc0) != 0x80) return false;
       cp = (cp << 6) | (cc & 0x3fu);
     }
-
-    /* Shortest form only, no surrogates, within Unicode range. */
-    if (extra == 1 && cp < 0x80u) return false;
-    if (extra == 2 && cp < 0x800u) return false;
-    if (extra == 3 && cp < 0x10000u) return false;
-    if (cp > 0x10ffffu) return false;
-    if (cp >= 0xd800u && cp <= 0xdfffu) return false;
-
+    if ((extra == 1 && cp < 0x80u) || (extra == 2 && cp < 0x800u) ||
+        (extra == 3 && cp < 0x10000u) || cp > 0x10ffffu ||
+        (cp >= 0xd800u && cp <= 0xdfffu)) {
+      return false;
+    }
     i += extra + 1;
   }
   return true;
 }
 
+/* Validate Solana derivation path: m/44'/501'/account'[/change'] */
 static bool solana_pathIsStandard(const uint32_t* path, size_t count) {
   if (count < 3 || count > 4) return false;
   if (path[0] != (0x80000000 | 44)) return false;  /* 44' */
@@ -457,6 +689,183 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
     if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0) return true;
   }
   return false;
+}
+
+/* The single verified-transaction confirmation flow shared by BOTH
+ * SolanaSignTx and SolanaSignMessage (transaction-shaped messages are equally
+ * broadcastable), so their security screens — per-instruction disclosure AND
+ * the priority-fee screen — cannot drift apart. `msg` is NULL on the
+ * SignMessage path (host token symbols are unavailable there). Returns false if
+ * the user rejects any screen. */
+/* Render a schema-decoded instruction: who attested the schema, then the
+ * program/instruction it describes, then every labelled arg and account with
+ * values read from the transaction being signed. */
+static uint64_t solana_schema_read_le64(const uint8_t* data) {
+  uint64_t value = 0;
+  for (uint8_t i = 0; i < 8; i++) value |= ((uint64_t)data[i]) << (8 * i);
+  return value;
+}
+
+static void solana_schema_format_duration(char* value, size_t value_len,
+                                          uint64_t seconds) {
+  static const uint32_t divisors[] = {86400, 3600, 60, 1};
+  static const char* const units[] = {"d", "h", "min", "s"};
+  size_t i = 0;
+  while (seconds % divisors[i] != 0) i++;
+  snprintf(value, value_len, "%" PRIu64 " %s", seconds / divisors[i], units[i]);
+}
+
+static bool solana_schema_token_symbol_ok(const SolanaTokenInfo* token) {
+  if (!token || !token->has_symbol) return false;
+  const size_t len = strnlen(token->symbol, sizeof(token->symbol));
+  if (len == 0 || len >= sizeof(token->symbol)) return false;
+  for (size_t i = 0; i < len; i++) {
+    const char c = token->symbol[i];
+    const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9');
+    if (!alnum && (i == 0 || (c != '.' && c != '_' && c != '-'))) return false;
+  }
+  return true;
+}
+
+static bool solana_schema_format_token_amount(const SolanaSignTx* msg,
+                                              uint8_t schema_signer_key_id,
+                                              const SolanaParsedTx* parsed,
+                                              const SolanaParsedInstruction* ix,
+                                              const SolanaSchemaArg* arg,
+                                              const uint8_t* data, char* value,
+                                              size_t value_len) {
+  if (arg->mint_account >= ix->num_acct_indices) return false;
+  const uint8_t mint_index = ix->acct_indices[arg->mint_account];
+  if (mint_index >= parsed->num_accounts) return false;
+  const uint8_t* mint = parsed->accounts[mint_index];
+  char mint_text[45];
+  size_t mint_text_len = sizeof(mint_text);
+  if (!solana_base58_encode(mint, SOL_PUBKEY_SIZE, mint_text, &mint_text_len)) {
+    return false;
+  }
+
+  const SolanaTokenInfo* token = solana_findTokenInfo(msg, mint);
+  const bool trusted =
+      token && token->has_signer_key_id &&
+      token->signer_key_id == schema_signer_key_id && token->has_decimals &&
+      token->decimals <= SOL_MAX_DISPLAY_DECIMALS &&
+      solana_schema_token_symbol_ok(token) && solana_token_info_trusted(token);
+  if (trusted) {
+    char amount[48];
+    solana_formatTokenAmount(amount, sizeof(amount),
+                             solana_schema_read_le64(data), token->symbol,
+                             (uint8_t)token->decimals);
+    snprintf(value, value_len, "%s\n%s", amount, mint_text);
+  } else {
+    snprintf(value, value_len, "%" PRIu64 " base units of mint\n%s",
+             solana_schema_read_le64(data), mint_text);
+  }
+  return true;
+}
+
+static bool solana_confirm_schema(const SolanaSignTx* msg,
+                                  const SolanaInstrSchema* schema,
+                                  const SolanaParsedTx* parsed,
+                                  uint8_t ix_index, uint8_t signer_key_id) {
+  const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
+
+  /* Aliases are host-chosen and not unique; the fingerprint identifies the
+   * key that actually vouched for this decode. */
+  const char* alias = signed_metadata_signer_alias(signer_key_id);
+  char fp[METADATA_FINGERPRINT_LEN] = {0};
+  if (!signed_metadata_signer_fingerprint(signer_key_id, fp)) return false;
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Schema Signer",
+               "%s\n%s", alias ? alias : "", fp)) {
+    return false;
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               schema->program_name, "%s", schema->instruction_name)) {
+    return false;
+  }
+
+  /* Args sit sequentially after the discriminator, in declaration order. */
+  uint16_t off = schema->disc_len;
+  for (uint8_t a = 0; a < schema->num_args; a++) {
+    const SolanaSchemaArg* arg = &schema->args[a];
+    char value[96] = {0};
+    switch (arg->type) {
+      case SOL_SCHEMA_ARG_U64: {
+        uint64_t v = 0;
+        for (int b = 0; b < 8; b++)
+          v |= ((uint64_t)ix->data[off + b]) << (8 * b);
+        snprintf(value, sizeof(value), "%" PRIu64, v);
+        break;
+      }
+      case SOL_SCHEMA_ARG_U8:
+        snprintf(value, sizeof(value), "%u", (unsigned)ix->data[off]);
+        break;
+      case SOL_SCHEMA_ARG_PUBKEY: {
+        size_t enc = sizeof(value);
+        if (!solana_base58_encode(ix->data + off, SOL_PUBKEY_SIZE, value,
+                                  &enc)) {
+          return false;
+        }
+        break;
+      }
+      case SOL_SCHEMA_ARG_LAMPORTS:
+        solana_formatAmount(value, sizeof(value),
+                            solana_schema_read_le64(ix->data + off));
+        break;
+      case SOL_SCHEMA_ARG_DURATION:
+        solana_schema_format_duration(value, sizeof(value),
+                                      solana_schema_read_le64(ix->data + off));
+        break;
+      case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
+        if (!solana_schema_format_token_amount(msg, signer_key_id, parsed, ix,
+                                               arg, ix->data + off, value,
+                                               sizeof(value))) {
+          return false;
+        }
+        break;
+      case SOL_SCHEMA_ARG_OPAQUE32:
+        if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           arg->label, ix->data + off, 32)) {
+          return false;
+        }
+        off += solana_schemaArgWidth(arg->type);
+        continue;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
+                 "%s", value)) {
+      return false;
+    }
+    off += solana_schemaArgWidth(arg->type);
+  }
+
+  for (uint8_t a = 0; a < schema->num_accounts; a++) {
+    const SolanaSchemaAccount* sa = &schema->accounts[a];
+    const uint8_t* pubkey = parsed->accounts[ix->acct_indices[sa->index]];
+    char addr[64];
+    size_t enc = sizeof(addr);
+    if (!solana_base58_encode(pubkey, SOL_PUBKEY_SIZE, addr, &enc))
+      return false;
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, sa->label, "%s",
+                 addr)) {
+      return false;
+    }
+  }
+
+  return solana_confirm_priority_fee(
+      parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
+}
+
+static bool solana_confirm_verified_tx(const SolanaParsedTx* parsed,
+                                       const SolanaSignTx* msg) {
+  for (uint8_t i = 0; i < parsed->num_instructions; i++) {
+    if (!solana_confirmInstruction(&parsed->instructions[i], msg, i,
+                                   parsed->num_instructions)) {
+      return false;
+    }
+  }
+  return solana_confirm_priority_fee(
+      parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
 }
 
 void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg) {
@@ -514,6 +923,17 @@ void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg) {
 void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   RESP_INIT(SolanaSignedTx);
 
+  /* The wire field is decoded for compatibility, but this release deliberately
+   * excludes the KeepKey trusted root and therefore cannot verify or bind its
+   * certificate contract. Never downgrade a certificate-bearing request into
+   * an unrelated runtime-signer or blind-sign path. */
+  if (msg->has_clearsign_certificate && msg->clearsign_certificate.size > 0) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Certified Solana signing is unsupported"));
+    layoutHome();
+    return;
+  }
+
   CHECK_INITIALIZED
   CHECK_PIN
 
@@ -557,34 +977,69 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
-  if (tx_review == SOL_TX_REVIEW_VERIFIED) {
-    /* Reject duplicate or unrepresentable compute-budget fields before the
-     * first consent screen. A later failure cannot retract approval already
-     * given for preceding instructions. */
-    uint64_t priority_fee = 0;
-    bool has_priority_fee = false;
-    if (!solana_calculatePriorityFee(&parsed, &priority_fee,
-                                     &has_priority_fee)) {
+  /* KKSOLSC1: a signed, REUSABLE instruction schema can rescue a transaction
+   * that is opaque only because one program is unrecognised. The schema names
+   * no amounts and no transaction — the device reads the values out of the
+   * bytes it is about to sign — so one attestation covers every future
+   * transaction to that program. Present-but-invalid schema material fails
+   * the request; it never silently degrades to blind signing. */
+  SolanaInstrSchema schema;
+  uint8_t schema_ix = 0;
+  bool schema_verified = false;
+  bool has_any_schema = msg->has_schema_payload || msg->has_schema_signature ||
+                        msg->has_schema_signer_key_id;
+  if (has_any_schema) {
+    if (!storage_isPolicyEnabled("AdvancedMode") || !msg->has_schema_payload ||
+        !msg->has_schema_signature || !msg->has_schema_signer_key_id ||
+        msg->schema_signer_key_id >= METADATA_MAX_KEYS ||
+        !signed_metadata_signer_is_runtime(
+            (uint8_t)msg->schema_signer_key_id) ||
+        !solana_parseInstrSchema(msg->schema_payload.bytes,
+                                 msg->schema_payload.size, &schema) ||
+        !signed_metadata_verify_attestation(
+            (uint8_t)msg->schema_signer_key_id, msg->schema_payload.bytes,
+            msg->schema_payload.size, msg->schema_signature.bytes,
+            msg->schema_signature.size) ||
+        !solana_schemaApplies(&schema, &parsed, &schema_ix)) {
       memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid priority fee"));
+                      _("Invalid Solana instruction schema"));
       layoutHome();
       return;
     }
+    schema_verified = true;
+  }
 
-    /* Per-instruction confirmation for fully verified messages */
-    for (uint8_t i = 0; i < parsed.num_instructions; i++) {
-      if (!solana_confirmInstruction(&parsed.instructions[i], i,
-                                     parsed.num_instructions)) {
-        memzero(node, sizeof(*node));
-        fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                        _("Signing cancelled"));
-        layoutHome();
-        return;
-      }
-    }
-    if (!solana_confirm_priority_fee(&parsed, priority_fee, has_priority_fee)) {
+  if (tx_review == SOL_TX_REVIEW_VERIFIED) {
+    /* Per-instruction disclosure + priority fee, shared with SignMessage. */
+    if (!solana_confirm_verified_tx(&parsed, msg)) {
       memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+  } else if (schema_verified) {
+    /* Opaque only because of the schema'd program: first show the attested
+     * decode. Runtime/self-service signers are annotation-only, so the normal
+     * Advanced-mode blind-sign warning still follows the decoded screens. */
+    if (!solana_confirm_schema(msg, &schema, &parsed, schema_ix,
+                               (uint8_t)msg->schema_signer_key_id)) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+    if (signed_metadata_signer_is_runtime((uint8_t)msg->schema_signer_key_id) &&
+        !confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
+                 "Sign unverified Solana transaction? "
+                 "The device cannot fully verify the contents.")) {
+      memzero(node, sizeof(*node));
+      memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
       layoutHome();
@@ -651,21 +1106,20 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
     return;
   }
 
-  /* AdvancedMode gate: Solana message signing has no domain separation.
-   * A signed message is indistinguishable from a signed transaction on
-   * the Solana network (both are raw Ed25519 over arbitrary bytes).
-   * A malicious dApp could craft a message that is also a valid tx.
-   * See: https://github.com/trezor/trezor-firmware/issues/4371
-   * Require AdvancedMode to proceed — same gate as ETH blind-signing. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
-    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
-                 "Solana message signing is experimental. "
-                 "Enable AdvancedMode in device settings.");
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Message signing disabled by policy"));
-    layoutHome();
-    return;
-  }
+  /* Solana "message" signing has no domain separation: the signed bytes
+   * are indistinguishable from a transaction message on the network.
+   * If the payload actually parses as a fully-verifiable Solana
+   * transaction, treat it as one — clear-sign it per instruction instead
+   * of blind-signing a hex blob. Wallet integrations sign versioned (v0)
+   * swap transactions through this message, so this is the path that
+   * turns swap blind-signing into clear-signing. */
+  /* Note: solana_inspectTx tolerates a 0x00 signature-count prefix, but
+   * here the signature covers the exact message bytes — only a payload
+   * that IS a tx message from byte 0 may be displayed as one. */
+  SolanaParsedTx parsed;
+  bool is_verified_tx = msg->message.bytes[0] != 0 &&
+                        solana_inspectTx(msg->message.bytes, msg->message.size,
+                                         &parsed) == SOL_TX_REVIEW_VERIFIED;
 
   /* Path validation: warn on non-standard derivation */
   if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
@@ -682,18 +1136,65 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* Bind consent to the signing scheme before displaying every signed byte.
-   * This raw Ed25519 form has no version or domain separator and therefore
-   * remains behind AdvancedMode. */
-  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Message",
-               "Format: raw Ed25519. Version: none. Domain: none.") ||
-      !confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall, "Raw Message",
-                     msg->message.bytes, msg->message.size)) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Signing cancelled"));
-    layoutHome();
-    return;
+  if (is_verified_tx) {
+    /* Clear-sign path: same rules as SolanaSignTx. */
+    if (!solana_signerInTx(node->public_key + 1, &parsed)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Derived key is not a signer for this tx"));
+      layoutHome();
+      return;
+    }
+    /* Same verified-tx flow as SolanaSignTx (incl. the priority-fee screen), so
+     * a broadcastable transaction-shaped message can't dodge a security screen.
+     * msg=NULL: host token symbols aren't provided on the message path. */
+    if (!solana_confirm_verified_tx(&parsed, NULL)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Solana",
+                 "Sign this Solana transaction?")) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
+  } else {
+    /* Raw Ed25519 has no domain separation, so a signed message can also be a
+     * signed transaction. Printable text that never contains this key cannot
+     * be one: Solana verifies a transaction signature only for keys present in
+     * its static account list. Everything else retains the AdvancedMode
+     * gate. */
+    const bool plain_text = solana_rawMessageIsPlainText(
+        msg->message.bytes, msg->message.size, node->public_key + 1);
+    if (!plain_text && !storage_isPolicyEnabled("AdvancedMode")) {
+      memzero(node, sizeof(*node));
+      (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                   "This Solana message is not plain text. "
+                   "Enable AdvancedMode in device settings to sign it.");
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Message signing disabled by policy"));
+      layoutHome();
+      return;
+    }
+
+    if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Message",
+                 plain_text
+                     ? "Plain text. It cannot authorize a transaction."
+                     : "Format: raw Ed25519. Version: none. Domain: none.") ||
+        !confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                       plain_text ? "Message" : "Raw Message",
+                       msg->message.bytes, msg->message.size)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
+      layoutHome();
+      return;
+    }
   }
 
   /* Ed25519 sign */
@@ -754,22 +1255,14 @@ void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg) {
     return;
   }
 
-  /* The format tag is part of the signed envelope and is named on the
-     confirmation screen ("Format: ASCII"), but nothing checked that the
-     payload actually is that format. A host could declare restricted ASCII
-     and sign arbitrary binary, or declare UTF-8 and sign malformed UTF-8, and
-     the device would vouch for the label either way. Check the bytes against
-     the tag they travel under, before anything is confirmed or signed. */
   const bool payload_matches_format =
-      (format == 0) ? solana_offchain_payload_is_ascii(msg->message.bytes,
-                                                       msg->message.size)
-                    : solana_offchain_payload_is_utf8(msg->message.bytes,
-                                                      msg->message.size);
+      format == 0 ? solana_offchain_payload_is_ascii(msg->message.bytes,
+                                                     msg->message.size)
+                  : solana_offchain_payload_is_utf8(msg->message.bytes,
+                                                    msg->message.size);
   if (!payload_matches_format) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    format == 0
-                        ? _("Message is not restricted ASCII (format 0)")
-                        : _("Message is not valid UTF-8 (format 1)"));
+                    _("Message does not match declared off-chain format"));
     layoutHome();
     return;
   }
@@ -790,9 +1283,6 @@ void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* The envelope signs both fields below and every message byte. Show the
-   * fields explicitly, then page the complete payload; never substitute a
-   * prefix-plus-length preview for signed content. */
   const char* format_label = format == 0 ? "ASCII" : "UTF-8 limited";
   if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Off-chain",
                "Version: 0. Format: %s.", format_label) ||
