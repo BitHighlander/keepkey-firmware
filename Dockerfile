@@ -19,7 +19,7 @@ RUN apk add --update --no-cache \
 RUN pip3 install \
     "MarkupSafe==1.1.1" \
     "ecdsa>=0.9" \
-    "protobuf>=3.0.0" \
+    "protobuf==3.19.6" \
     "mnemonic>=0.8" \
     requests \
     flask \
