@@ -29,7 +29,7 @@ on:
     # firmware/integration leg without adding an independent signal.
     branches: [master, develop]
   pull_request:
-    branches: [master, develop]
+    branches: [master, develop, 'release/715-stack-*']
   workflow_dispatch:
     inputs:
       publish_emulator:
