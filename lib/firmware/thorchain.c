@@ -20,8 +20,8 @@
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
-#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/secp256k1.h"
@@ -33,29 +33,18 @@
 #include <string.h>
 #include <time.h>
 
-// Allow lowercase alpha, digits, and the punctuation used in THORChain asset
-// identifiers (e.g. "eth.eth", "btc/btc", cross-chain synthetic prefixes).
-// Rejects anything that needs JSON escaping (backslash, quote).
+bool thorchain_confirm_full_memo(const char* title, const char* memo,
+                                 size_t len) {
+  return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                       (const uint8_t*)memo, len);
+}
+
 bool thorchain_isValidDenom(const char* denom) {
   if (!denom || !denom[0]) return false;
   for (size_t i = 0; denom[i]; i++) {
-    char c = denom[i];
+    const char c = denom[i];
     if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
           c == '/' || c == '-')) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Deposit assets share the denom grammar but are conventionally uppercase
-// (e.g. ETH.USDT-0XDAC1...); allow both cases, digits, and . / - only.
-bool thorchain_isValidAsset(const char* asset) {
-  if (!asset || !asset[0]) return false;
-  for (size_t i = 0; asset[i]; i++) {
-    char c = asset[i];
-    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-          (c >= '0' && c <= '9') || c == '.' || c == '/' || c == '-')) {
       return false;
     }
   }
@@ -65,26 +54,31 @@ bool thorchain_isValidAsset(const char* asset) {
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
+static bool has_message;
 static uint32_t msgs_remaining;
 static ThorchainSignTx msg;
 static bool testnet;
 
-// Deposit signer is host-supplied; require a valid bech32 address with the
-// HRP of the active network before it is displayed or signed.
-bool thorchain_isValidSigner(const char* signer) {
-  size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
-  if (!signer || !bech32_decode(hrp, decoded, &decoded_len, signer)) {
-    return false;
-  }
-  return 0 == strcmp(hrp, testnet ? "tthor" : "thor");
-}
-
 const ThorchainSignTx* thorchain_getThorchainSignTx(void) { return &msg; }
 
+bool thorchain_formatAmount(uint64_t amount, const char* asset, char* out,
+                            size_t out_len) {
+  if (!tendermint_validateSafeText(asset) || !out || out_len == 0) return false;
+
+  char suffix[THORCHAIN_ASSET_SUFFIX_LEN + 2];
+  const int suffix_len = snprintf(suffix, sizeof(suffix), " %s", asset);
+  if (suffix_len <= 0 || (size_t)suffix_len >= sizeof(suffix)) return false;
+
+  return bn_format_uint64(amount, NULL, suffix, 8, 0, false, out, out_len) != 0;
+}
+
 bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
-  initialized = true;
+  thorchain_signAbort();
+  if (!_node || !_msg || !_msg->has_msg_count || _msg->msg_count == 0 ||
+      !_msg->has_chain_id || !tendermint_validateSafeText(_msg->chain_id)) {
+    return false;
+  }
+
   msgs_remaining = _msg->msg_count;
   testnet = false;
 
@@ -134,22 +128,22 @@ bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
   // 10
   sha256_Update(&ctx, (uint8_t*)"\",\"msgs\":[", 10);
 
-  return success;
+  if (!success) {
+    thorchain_signAbort();
+    return false;
+  }
+  initialized = true;
+  return true;
 }
 
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
                                    const char* to_address, const char* denom) {
+  if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "thor";
   const char testnetp[] = "tthor";
   const char* pfix;
   char buffer[64 + 1];
-
-  size_t decoded_len;
-  char hrp[45];
-  uint8_t decoded[38];
-  if (!bech32_decode(hrp, decoded, &decoded_len, to_address)) {
-    return false;
-  }
 
   char from_address[46];
 
@@ -158,15 +152,27 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
     pfix = testnetp;
   }
 
+  /* Validate the recipient against THIS network's prefix and the 20-byte
+     account length, before it reaches the bare "%s" JSON serialization below.
+     This used to be a bare bech32_decode() into hrp[45]/decoded[38], which
+     both overflowed on host-chosen input and checked neither the network nor
+     the payload length -- so a wrong-chain address, a module or operator
+     address, or a punctuation-bearing HRP all passed straight into the signed
+     document. Select the prefix first so there is something to check against.
+   */
+  if (!tendermint_validateBech32Address(to_address, pfix)) {
+    return false;
+  }
+
   if (!tendermint_getAddress(&node, pfix, from_address)) {
     return false;
   }
 
-  // Default to "rune" for backward compatibility; validate all non-default
-  // denoms
   const char* coin_denom = (denom && denom[0]) ? denom : "rune";
-  if (!thorchain_isValidDenom(coin_denom)) {
-    return false;
+  if (!thorchain_isValidDenom(coin_denom)) return false;
+
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -174,13 +180,11 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
   sha256_Update(&ctx, (uint8_t*)prelude, strlen(prelude));
 
-  // Write amount prefix: 21 + ^20 = ^41
+  // Serialize the host-provided denomination exactly as reviewed.
   success &= tendermint_snprintf(
       &ctx, buffer, sizeof(buffer),
       "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"", amount);
-  // Use escaping as defense-in-depth; valid denoms have no escapable chars
   tendermint_sha256UpdateEscaped(&ctx, coin_denom, strlen(coin_denom));
-  // Close coins array: 3 bytes
   sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
   // 17 + 45 + 1 = 63
@@ -191,18 +195,25 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  ",\"to_address\":\"%s\"}}", to_address);
 
+  if (success) has_message = true;
   msgs_remaining--;
   return success;
 }
 
 bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
+  if (!initialized || msgs_remaining == 0) return false;
+
+  const char* const signer_prefix = testnet ? "tthor" : "thor";
+  if (!depmsg || !depmsg->has_asset ||
+      !tendermint_validateSafeText(depmsg->asset) || !depmsg->has_signer ||
+      !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
+    return false;
+  }
+
   char buffer[64 + 1];
 
-  // Defended here too (not just by the FSM caller) so this signing path is
-  // safe even if called directly or reused elsewhere later.
-  if (!thorchain_isValidAsset(depmsg->asset) ||
-      !thorchain_isValidSigner(depmsg->signer)) {
-    return false;
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -215,11 +226,9 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
                                  "\"coins\":[{\"amount\":\"%" PRIu64 "\"",
                                  depmsg->amount);
 
-  // Use escaping as defense-in-depth; valid assets have no escapable chars
-  const char* const asset_prefix = ",\"asset\":\"";
-  sha256_Update(&ctx, (uint8_t*)asset_prefix, strlen(asset_prefix));
-  tendermint_sha256UpdateEscaped(&ctx, depmsg->asset, strlen(depmsg->asset));
-  sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
+  // 10 + ^20 + 3 = ^33
+  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
+                                 ",\"asset\":\"%s\"}]", depmsg->asset);
 
   // <escape memo>
   const char* const memo_prefix = ",\"memo\":\"";
@@ -230,6 +239,7 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
                                  "\",\"signer\":\"%s\"}}", depmsg->signer);
 
+  if (success) has_message = true;
   msgs_remaining--;
   return success;
 }
@@ -251,172 +261,335 @@ bool thorchain_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
                            NULL) == 0;
 }
 
+/* The account this session's key signs as.
+ *
+ * MsgDeposit's `signer` is serialized verbatim as the message authority, so a
+ * merely well-formed thor/maya address let the device sign a document for an
+ * account it cannot represent -- and the confirmation labels that address as
+ * though it were a destination. There is exactly one authority a session can
+ * act as; require the host to name it. */
+bool thorchain_addressIsSigner(const char* address) {
+  if (!initialized || !address) return false;
+
+  char expected[46] = {0};
+  if (!tendermint_getAddress(&node, testnet ? "tthor" : "thor", expected))
+    return false;
+  return strcmp(address, expected) == 0;
+}
+
 bool thorchain_signingIsInited(void) { return initialized; }
 
-bool thorchain_signingIsFinished(void) { return msgs_remaining == 0; }
+bool thorchain_signingIsFinished(void) {
+  return msgs_remaining == 0 && has_message;
+}
 
 void thorchain_signAbort(void) {
   initialized = false;
+  has_message = false;
   msgs_remaining = 0;
   memzero(&msg, sizeof(msg));
   memzero(&node, sizeof(node));
 }
 
-/* Page the COMPLETE raw memo so nothing is truncated behind confirm()'s body
- * budget. THORChain memos are ASCII; a non-printable byte gets a hex page so
- * even a malformed memo is fully disclosed rather than hidden. Shared with the
- * MAYA path (mayachain memos use the same grammar) and the native signing
- * handlers, which page this as the authoritative disclosure after any
- * best-effort structured summary. */
-bool thorchain_confirm_full_memo(const char* title, const char* memo,
-                                 size_t len) {
-  return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                       (const uint8_t*)memo, len);
+/* strtok() discards empty delimiter-separated components. Empty memo fields
+ * are positional and meaningful -- for example, an omitted swap limit before
+ * an affiliate is encoded as `::`. Structured review cannot use a tokenizer
+ * that turns that memo into the same token sequence as one with no empty
+ * position, because it can label the affiliate as the limit or otherwise
+ * shift every field that follows.
+ *
+ * Treat any empty `:` or `.` component as non-canonical for this legacy
+ * parser. Callers either disclose the raw memo (UTXO) or refuse the structured
+ * EVM path. This is deliberately fail-closed until the parser is replaced by
+ * one that preserves and understands every position in the current grammar. */
+static bool thorchain_memo_has_empty_component(const char* memo, size_t size) {
+  if (!memo || size == 0) return true;
+
+  for (size_t i = 0; i < size; i++) {
+    if (memo[i] != ':' && memo[i] != '.') continue;
+
+    if (i == 0 || i + 1 == size || memo[i - 1] == ':' || memo[i - 1] == '.' ||
+        memo[i + 1] == ':' || memo[i + 1] == '.') {
+      return true;
+    }
+  }
+
+  return false;
 }
 
-bool thorchain_parseConfirmMemo(const char* swapStr, size_t size) {
+static bool thorchain_memo_has_canonical_separators(const char* memo,
+                                                    size_t size) {
+  /* The grammar is  OP:CHAIN.ASSET:DEST:LIMIT[:AFFILIATE:BPS]  -- ':' between
+     fields, '.' only inside the chain/asset pair.
+
+     The tokenizer below cannot tell the two apart. After splitting the
+     operation on ':' it calls strtok(NULL, ":.") three times, so ':' and '.'
+     are interchangeable for everything it reads. A memo that puts a colon
+     where the dot belongs,
+
+         SWAP:ETH:USDT:dest:limit
+
+     therefore produces exactly the same three tokens as SWAP:ETH.USDT:... and
+     is reviewed as "asset USDT on chain ETH", while THORChain/MAYAChain read
+     that same memo with USDT as the DESTINATION -- every field after the
+     operation shifts by one, including the address the funds go to. The screen
+     and the protocol disagree about a memo the signature covers.
+
+     Require the dot exactly once and only inside the second colon-delimited
+     field. Anything else is not this grammar, so it goes to the raw-byte path
+     rather than through a parser that would mislabel it. A destination that
+     legitimately contains a dot is refused here too; disclosure of the exact
+     bytes is the safe direction, and this parser is fail-closed by design. */
+  if (!memo || size == 0) return false;
+
+  size_t field = 0;
+  size_t dots_total = 0;
+  size_t dots_in_asset_field = 0;
+
+  for (size_t i = 0; i < size; i++) {
+    if (memo[i] == ':') {
+      field++;
+      continue;
+    }
+    if (memo[i] == '.') {
+      dots_total++;
+      if (field == 1) dots_in_asset_field++;
+    }
+  }
+
+  return dots_total == 1 && dots_in_asset_field == 1;
+}
+
+static bool thorchain_memo_is_structured_text(const char* memo, size_t size) {
+  if (!memo || size == 0) return false;
+
+  for (size_t i = 0; i < size; i++) {
+    const unsigned char c = (unsigned char)memo[i];
+    if (c < 0x21 || c > 0x7e) return false;
+  }
+  return true;
+}
+
+static bool thorchain_parse_bps(const char* text, uint16_t* bps) {
+  if (!text || !bps || text[0] == '\0') return false;
+  if (text[0] == '0' && text[1] != '\0') return false;
+
+  uint32_t value = 0;
+  for (const char* p = text; *p; p++) {
+    if (*p < '0' || *p > '9') return false;
+    const uint32_t digit = (uint32_t)(*p - '0');
+    if (value > (10000u - digit) / 10u) return false;
+    value = value * 10u + digit;
+  }
+
+  *bps = (uint16_t)value;
+  return true;
+}
+
+ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
+                                               size_t size) {
   /*
     Input: swapStr is candidate thorchain data
            size is the size of swapStr (<= 256)
     Memos should be of the form:
-    transaction:chain.ticker-id:destination:limit:affiliate:fee_bps
+    transaction:chain.ticker-id:destination:limit[:affiliate:fee_bps...]
                 ^^^^^^^^^^^^^^----------asset
 
-    So, swap USDT to dest address 0x41e55..., limit 420, affiliate "kk"
-    skimming 75 basis points:
-    SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75
+    So, swap USDT to dest address 0x41e55..., limit 420
+    SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:0x41e5560054824ea6b0732e656e3ad64e20e94e45:420
 
     Swap transactions can be indicated by "SWAP" or "s" or "="
 
-    Fields are split on ':' PRESERVING empty fields so a blank field (e.g.
-    an empty limit in "=:ETH.ETH:0xdest::kk:75") can never shift a later
-    field (e.g. the affiliate) into an earlier display slot.
+    Fields past the ones labelled below (affiliate, affiliate fee, aggregator
+    routing) are executed by THORChain, so each branch pages whatever is left
+    rather than signing it unseen.
   */
 
-  char* fields[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
-  /* Memos are documented/accepted up to 256 bytes; memoBuf reserves one
-   * extra byte so a full 256-byte memo still leaves a guaranteed NUL
-   * terminator, instead of the copy silently dropping its last byte. */
-  enum { MEMO_MAX = 256 };
-  char memoBuf[MEMO_MAX + 1];
-  size_t nfields, i;
-  char *chain, *asset;
+  // THORChain's memo maximum, and the largest `size` any caller can pass.
+  enum { THORCHAIN_MEMO_MAX = 256 };
+
+  char* parseTokPtrs[5] = {NULL, NULL, NULL, NULL,
+                           NULL};  // we can parse up to 5 labelled tokens
+  char* tok;
+  // One byte past the maximum, so a full-length memo is still NUL terminated
+  // by the memzero below.
+  char memoBuf[THORCHAIN_MEMO_MAX + 1];
+  uint16_t ctr;
 
   // check if memo data is recognized
 
-  if (size > MEMO_MAX) return false;
+  if (size > THORCHAIN_MEMO_MAX ||
+      thorchain_memo_has_empty_component(swapStr, size) ||
+      !thorchain_memo_is_structured_text(swapStr, size) ||
+      !thorchain_memo_has_canonical_separators(swapStr, size)) {
+    return THORCHAIN_MEMO_UNPARSED;
+  }
   memzero(memoBuf, sizeof(memoBuf));
-  /* size is a byte count, not necessarily including a NUL: the BTC
-   * OP_RETURN caller passes raw memo bytes with no terminator. strlcpy
-   * would copy only size-1 bytes and silently drop the memo's last
-   * character (turning an affiliate fee of "75" bps into "7"). Copy the
-   * bytes exactly (size <= MEMO_MAX < sizeof(memoBuf), so this never
-   * overflows and always leaves at least one zeroed terminator byte);
-   * the zeroed buffer provides termination. */
+  /* `size` is a byte count and swapStr is NOT guaranteed to be NUL
+     terminated - the BTC OP_RETURN caller hands us raw script bytes. strlcpy
+     copies only size-1 of them, silently dropping the memo's last character
+     (an affiliate fee of "75" bps renders as "7"), and then walks past the end
+     of the source looking for a terminator. Copy exactly `size` bytes; the
+     memzero'd tail terminates them. */
   memcpy(memoBuf, swapStr, size);
 
-  // Split on ':', keeping empty fields
-  nfields = 0;
-  fields[nfields++] = memoBuf;
-  for (i = 0; memoBuf[i] != '\0' && nfields < 8; i++) {
-    if (memoBuf[i] == ':') {
-      memoBuf[i] = '\0';
-      fields[nfields++] = &memoBuf[i + 1];
+  /* strtok below treats memoBuf as a C string, so it stops at the first NUL --
+     but `size` bytes were copied and ALL of them are covered by the signature.
+     A memo such as "=:ETH.ETH:<dest>:0\0:affiliate:75" would parse and confirm
+     as if it ended at the zero byte while the suffix stayed in the signed
+     calldata. The EVM caller passes the true ABI length, so those bytes are
+     real.
+
+     Reject ANY NUL inside the declared length, including a trailing one.
+
+     An earlier version of this check exempted trailing NULs on the grounds
+     that nothing is hidden behind them. That was wrong twice over. It was
+     adopted to make two test fixtures pass -- fixtures that declare 59 bytes
+     for a 58-byte memo -- which is the one thing the release invariant forbids:
+     tests adapt to disclosure, disclosure never weakens for a test. And it
+     accepts a length word that does not describe its own content, which is the
+     same non-canonical ABI encoding that the offset-word validation already
+     refuses. A declaration the device cannot trust is not made trustworthy by
+     the bytes it misdescribes happening to be zero.
+
+     The caller's UNPARSED path discloses the raw bytes with a length-aware
+     writer, so nothing is lost by refusing to parse. */
+  for (uint16_t i = 0; i < size; i++) {
+    if (memoBuf[i] == '\0') return THORCHAIN_MEMO_UNPARSED;
+  }
+
+  tok = strtok(memoBuf, ":");
+
+  // get transaction and asset
+  for (ctr = 0; ctr < 3; ctr++) {
+    if (tok != NULL) {
+      parseTokPtrs[ctr] = tok;
+      tok = strtok(NULL, ":.");
+    } else {
+      break;
     }
   }
 
-  if (nfields < 2) {
-    // Must have at least transaction and chain.asset. If not, just confirm
-    // data
-    return false;
+  if (ctr != 3) {
+    // Must have three tokens at this point: transaction, chain, asset. If
+    // not, just confirm data
+    return THORCHAIN_MEMO_UNPARSED;
   }
-
-  // Split chain.asset at the first '.'
-  chain = fields[1];
-  asset = strchr(chain, '.');
-  if (asset == NULL) {
-    // No chain.asset pair; not recognizable thorchain data, just confirm data
-    return false;
-  }
-  *asset = '\0';
-  asset++;
 
   // Check for swap
-  if (strncmp(fields[0], "SWAP", 4) == 0 || *fields[0] == 's' ||
-      *fields[0] == '=') {
+  if (strcmp(parseTokPtrs[0], "SWAP") == 0 ||
+      strcmp(parseTokPtrs[0], "s") == 0 || strcmp(parseTokPtrs[0], "=") == 0) {
     // This is a swap, set up destination and limit
-    // The dest may be blank which means swap to self
-    const char* dest =
-        (nfields > 2 && fields[2][0] != '\0') ? fields[2] : "self";
-    const char* limit =
-        (nfields > 3 && fields[3][0] != '\0') ? fields[3] : "none";
-    const char* affiliate =
-        (nfields > 4 && fields[4][0] != '\0') ? fields[4] : NULL;
-    const char* fee_bps =
-        (nfields > 5 && fields[5][0] != '\0') ? fields[5] : "unspecified";
-
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Thorchain swap", "Confirm swap asset %s\n on chain %s", asset,
-                 chain)) {
-      return false;
-    }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Thorchain swap", "Confirm to %s", dest)) {
-      return false;
-    }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Thorchain swap", "Confirm limit %s", limit)) {
-      return false;
-    }
-    // Never hide the affiliate fee skim from the user
-    if (affiliate != NULL) {
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Thorchain swap", "Affiliate fee %s bps to %s", fee_bps,
-                   affiliate)) {
-        return false;
+    // This is the dest, may be blank which means swap to self
+    parseTokPtrs[3] = "self";
+    parseTokPtrs[4] = "none";
+    if (tok != NULL) {
+      if ((uint32_t)(tok - (parseTokPtrs[2] + strlen(parseTokPtrs[2]))) == 1) {
+        // has dest address
+        parseTokPtrs[3] = tok;
+        tok = strtok(NULL, ":");
+      }
+      if (tok != NULL) {
+        // has limit
+        parseTokPtrs[4] = tok;
       }
     }
-    return true;
+
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Thorchain swap", "Confirm swap asset %s\n on chain %s",
+                 parseTokPtrs[2], parseTokPtrs[1])) {
+      return THORCHAIN_MEMO_CANCELLED;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Thorchain swap", "Confirm to %s", parseTokPtrs[3])) {
+      return THORCHAIN_MEMO_CANCELLED;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Thorchain swap", "Confirm limit %s", parseTokPtrs[4])) {
+      return THORCHAIN_MEMO_CANCELLED;
+    }
+    /* Everything after the limit - affiliate, affiliate fee in basis points,
+       DEX-aggregator routing - is executed by THORChain but was never shown.
+       Page each remaining field rather than sign it unseen. */
+    while ((tok = strtok(NULL, ":")) != NULL) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Thorchain swap", "Additional memo field\n%s", tok)) {
+        return THORCHAIN_MEMO_CANCELLED;
+      }
+    }
+    return THORCHAIN_MEMO_CONFIRMED;
   }
 
   // Check for add liquidity
-  else if (strncmp(fields[0], "ADD", 3) == 0 || *fields[0] == 'a' ||
-           *fields[0] == '+') {
-    // add liquidity pool address (optional)
-    const char* pool = (nfields > 2 && fields[2][0] != '\0') ? fields[2] : NULL;
+  else if (strcmp(parseTokPtrs[0], "ADD") == 0 ||
+           strcmp(parseTokPtrs[0], "a") == 0 ||
+           strcmp(parseTokPtrs[0], "+") == 0) {
+    if (tok != NULL) {
+      // add liquidity pool address
+      parseTokPtrs[3] = tok;
+    }
 
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain add liquidity",
-                 "Confirm add asset %s\n on chain %s pool", asset, chain)) {
-      return false;
+                 "Confirm add asset %s\n on chain %s pool", parseTokPtrs[2],
+                 parseTokPtrs[1])) {
+      return THORCHAIN_MEMO_CANCELLED;
     }
-    if (pool != NULL) {
+    if (tok != NULL) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Thorchain add liquidity", "Confirm to %s", pool)) {
-        return false;
+                   "Thorchain add liquidity", "Confirm to %s",
+                   parseTokPtrs[3])) {
+        return THORCHAIN_MEMO_CANCELLED;
       }
     }
-    return true;
+    /* ADD:POOL:PAIREDADDR:AFFILIATE:FEE - the affiliate and its fee are
+       optional but router-executed, so neither may be hidden. */
+    while ((tok = strtok(NULL, ":")) != NULL) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Thorchain add liquidity", "Additional memo field\n%s",
+                   tok)) {
+        return THORCHAIN_MEMO_CANCELLED;
+      }
+    }
+    return THORCHAIN_MEMO_CONFIRMED;
   }
 
   // Check for withdraw liquidity
-  else if (strncmp(fields[0], "WITHDRAW", 8) == 0 ||
-           strncmp(fields[0], "wd", 2) == 0 || *fields[0] == '-') {
-    if (nfields < 3 || fields[2][0] == '\0') {
-      return false;  // malformed memo
+  else if (strcmp(parseTokPtrs[0], "WITHDRAW") == 0 ||
+           strcmp(parseTokPtrs[0], "wd") == 0 ||
+           strcmp(parseTokPtrs[0], "-") == 0) {
+    if (tok != NULL) {
+      // add liquidity pool address
+      parseTokPtrs[3] = tok;
+    } else {
+      return THORCHAIN_MEMO_UNPARSED;  // malformed memo
     }
 
-    float percent = (float)(atoi(fields[2])) / 100;
+    uint16_t bps = 0;
+    if (!thorchain_parse_bps(parseTokPtrs[3], &bps)) {
+      return THORCHAIN_MEMO_UNPARSED;
+    }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain withdraw liquidity",
-                 "Confirm withdraw %3.2f%% of asset %s on chain %s", percent,
-                 asset, chain)) {
-      return false;
+                 "Confirm withdraw %u.%02u%% of asset %s on chain %s",
+                 (unsigned)(bps / 100u), (unsigned)(bps % 100u),
+                 parseTokPtrs[2], parseTokPtrs[1])) {
+      return THORCHAIN_MEMO_CANCELLED;
     }
-    return true;
+    /* WD:POOL:BPS:ASSET - the optional 4th field pays the whole withdrawal
+       out single-sided in ASSET instead of the symmetric split. It directs
+       money and the screens are otherwise identical, so it must be shown. */
+    while ((tok = strtok(NULL, ":")) != NULL) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Thorchain withdraw liquidity", "Additional memo field\n%s",
+                   tok)) {
+        return THORCHAIN_MEMO_CANCELLED;
+      }
+    }
+    return THORCHAIN_MEMO_CONFIRMED;
 
   } else {
     // Just confirm whatever coin data if no thorchain intention data parsable
-    return false;
+    return THORCHAIN_MEMO_UNPARSED;
   }
 }

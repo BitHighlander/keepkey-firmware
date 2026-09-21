@@ -209,7 +209,9 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
      * NULL token so the ticker is the CHAIN's native asset (ETH on mainnet,
      * AVAX on Avalanche); the 0xEE pseudo-token entry is pinned to " ETH" and
      * would mislabel every other chain's native deposit. */
-    ethereumFormatAmount(&Value, NULL, msg->chain_id, confStr, sizeof(confStr));
+    if (!ethereumFormatAmount(&Value, NULL, msg->chain_id, confStr,
+                              sizeof(confStr)))
+      return false;
 
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
                  "Confirm sending %s", confStr)) {
@@ -246,8 +248,9 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
       }
 
     } else {
-      ethereumFormatAmount(&Amount, assetToken, msg->chain_id, confStr,
-                           sizeof(confStr));
+      if (!ethereumFormatAmount(&Amount, assetToken, msg->chain_id, confStr,
+                                sizeof(confStr)))
+        return false;
 
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    protocol_label, "Confirm sending %s", confStr)) {
@@ -256,7 +259,9 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
     }
   }
 
-  if (!thorchain_parseConfirmMemo((const char*)thorchainData, memo_len))
+  const ThorchainMemoResult memo_result =
+      thorchain_parseConfirmMemo((const char*)thorchainData, memo_len);
+  if (memo_result == THORCHAIN_MEMO_CANCELLED)
     return false;
 
   /* Page the complete raw memo as the authoritative disclosure: a long
