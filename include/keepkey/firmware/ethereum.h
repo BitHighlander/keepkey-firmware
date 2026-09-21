@@ -45,7 +45,6 @@ bool ethereum_chainIdIsValid(const EthereumSignTx* msg);
 bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
                                   int buflen);
 bool ethereum_streamed_eip712_enabled(void);
-bool ethereum_structured_eip712_enabled(void);
 
 /// \pre requires that `ethereum_isStandardERC20Transfer(msg)`
 /// \returns true iff successful
