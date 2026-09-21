@@ -280,11 +280,11 @@ jobs:
       matrix:
         include:
           # Pin the full leg to the shipped multi-coin configuration. The CMake
-          # default enables the non-release zcash-privacy experiment, so an
-          # empty flag would test and publish bytes that cannot ship as 7.15.
+          # The regular 7.15 product includes every supported chain, including
+          # Zcash Orchard. Only the bitcoin-only product removes other chains.
           - variant: full
             label: ""
-            cmake_flags: "-DKK_ZCASH_PRIVACY=OFF"
+            cmake_flags: ""
           - variant: bitcoin-only
             label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
