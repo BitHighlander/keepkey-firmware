@@ -43,7 +43,7 @@ bool msg_handler_rejected(void);
    PARSABLE,                                  \
    NORMAL_MSG,                                \
    IN_MSG,                                    \
-    (ID)},
+   (ID)},
 
 #define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) \
   {(STRUCT_NAME##_fields),                     \

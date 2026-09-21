@@ -75,7 +75,6 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
   return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
 }
 
-
 /* The EIP-155 legacy recovery id is v + 2 * chain_id + 35, computed below in
  * a uint32_t, where v is 0 or 1. The bound is the largest chain id whose
  * WORST case still fits:
