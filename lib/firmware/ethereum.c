@@ -202,41 +202,6 @@ void bn_from_bytes(const uint8_t* value, size_t value_len, bignum256* val) {
   memzero(pad_val, sizeof(pad_val));
 }
 
-bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
-                                  int buflen) {
-  if (!msg || !buf || buflen <= 0 || !ethereum_chainIdIsValid(msg)) {
-    return false;
-  }
-
-  const uint8_t* value_bytes;
-  size_t value_size;
-  const TokenType* token;
-
-  /* ethereumFormatAmount() keys the " WAN" ticker off the module's
-   * wanchain_tx_type, which ethereum_signing_init() sets -- and on the
-   * transfer path that has not run yet. Set it from THIS message, or a
-   * previous Wanchain transaction's type names the asset on this one's amount
-   * screen. signing_init() assigns the same value again later. */
-  wanchain_tx_type =
-      (msg->has_tx_type && (msg->tx_type == 1 || msg->tx_type == 6))
-          ? msg->tx_type
-          : 0;
-
-  if (ethereum_isStandardERC20Transfer(msg)) {
-    value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
-    value_size = 32;
-    token = tokenByChainAddress(msg->chain_id, msg->to.bytes);
-  } else {
-    value_bytes = msg->value.bytes;
-    value_size = msg->value.size;
-    token = NULL;
-  }
-
-  bignum256 value;
-  bn_from_bytes(value_bytes, value_size, &value);
-  return ethereumFormatAmount(&value, token, msg->chain_id, buf, buflen);
-}
-
 static inline void hash_data(const uint8_t* buf, size_t size) {
   sha3_Update(&keccak_ctx, buf, size);
 }

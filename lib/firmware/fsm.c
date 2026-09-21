@@ -107,7 +107,6 @@
 
 #define _(X) (X)
 
-static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
 /* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
  * derived private key after any chain handler, so session revocation scrubs it
  * centrally. */
