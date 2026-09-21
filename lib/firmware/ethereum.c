@@ -75,7 +75,6 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
   return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
 }
 
-
 /* The EIP-155 legacy recovery id is v + 2 * chain_id + 35, computed below in
  * a uint32_t, where v is 0 or 1. The bound is the largest chain id whose
  * WORST case still fits:
@@ -804,21 +803,6 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
   size_t fee_per_gas_size = msg->has_max_fee_per_gas ? msg->max_fee_per_gas.size
                                                      : msg->gas_price.size;
   if (fee_per_gas_size + msg->gas_limit.size > 30) {
-    return false;
-  }
-
-  /* The same sanity check, for the field the EIP-1559 fee screen actually
-     multiplies. confirmEthereumTx() feeds max_fee_per_gas into
-     bn_multiply(&val, &gas, &secp256k1.prime), which reduces its product
-     modulo the curve prime. The legacy bound above never reaches it: a 1559
-     transaction carries no gas_price, so gas_price.size is 0 and a 32-byte
-     max_fee_per_gas paired with a 32-byte gas_limit passes untouched. The
-     product then wraps and the approval screen names a gas cost that is not
-     the one being signed -- the display diverges from the signature, which is
-     the one thing this release line exists to prevent. Hold the 1559 pair to
-     the same 30-byte budget. */
-  if (msg->has_max_fee_per_gas &&
-      msg->max_fee_per_gas.size + msg->gas_limit.size > 30) {
     return false;
   }
 
