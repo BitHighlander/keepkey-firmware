@@ -120,14 +120,16 @@ bool contact_book_parse_request(
     if (off + 5 > data_len) return false;
     uint8_t network_len = data[off++];
     if (off + network_len + 3 > data_len ||
-        !network_valid(data + off, network_len)) return false;
+        !network_valid(data + off, network_len))
+      return false;
     memcpy(entries[i].network, data + off, network_len);
     off += network_len;
     entries[i].destination_type = data[off++];
     entries[i].destination_len = data[off++];
     if (entries[i].destination_type == 0 || entries[i].destination_len == 0 ||
         entries[i].destination_len > CONTACT_BOOK_DESTINATION_MAX ||
-        off + entries[i].destination_len + 1 > data_len) return false;
+        off + entries[i].destination_len + 1 > data_len)
+      return false;
     memcpy(entries[i].destination, data + off, entries[i].destination_len);
     off += entries[i].destination_len;
     uint8_t len = data[off++];
@@ -179,14 +181,16 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
   memset(&entry, 0, sizeof(entry));
   uint8_t network_len = data[off++];
   if (off + network_len + 3 > data_len ||
-      !network_valid(data + off, network_len)) return false;
+      !network_valid(data + off, network_len))
+    return false;
   memcpy(entry.network, data + off, network_len);
   off += network_len;
   entry.destination_type = data[off++];
   entry.destination_len = data[off++];
   if (entry.destination_type == 0 || entry.destination_len == 0 ||
       entry.destination_len > CONTACT_BOOK_DESTINATION_MAX ||
-      off + entry.destination_len + 1 > data_len) return false;
+      off + entry.destination_len + 1 > data_len)
+    return false;
   memcpy(entry.destination, data + off, entry.destination_len);
   off += entry.destination_len;
   uint8_t label_len = data[off++];
