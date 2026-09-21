@@ -338,6 +338,7 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   RESP_INIT(EthereumMessageSignature);
 
