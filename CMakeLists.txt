@@ -86,6 +86,13 @@ endif()
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
   add_definitions(-DCONFIDENTIAL=)
+  # macOS/BSD declare strlcpy/strlcat in <string.h>; glibc (Linux) and MinGW
+  # (Windows) do not. Force-include the prototypes so the ~20 call sites build
+  # without -Werror=implicit-function-declaration (definitions come from
+  # lib/board/strlcpy.c + strlcat.c). Apple already has them in <string.h>.
+  if(NOT APPLE)
+    add_compile_options(-include ${CMAKE_SOURCE_DIR}/include/keepkey/board/bsd_compat.h)
+  endif()
 else()
   add_definitions(-DCONFIDENTIAL=__attribute__\(\(section\("confidential"\)\)\))
 endif()
@@ -137,6 +144,11 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
+# NOTE: AES table size is selected per-variant below. This PR splits Zcash
+# (and its Pallas curve arithmetic) into the zcash-privacy variant, so the
+# default and bitcoin-only images regain flash headroom and keep the fast
+# FOUR_TABLES AES; only zcash-privacy opts into AES_SMALL_TABLES.
+
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
@@ -184,6 +196,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 if(NOT ${KK_EMULATOR})
   link_directories(${LIBOPENCM3_PATH}/lib)
   include_directories(${LIBOPENCM3_PATH}/include)
+
+  # Emit per-function stack-frame sizes (.su files) on device builds. CI's
+  # SRAM budget gate (tools/check_sram_budget.py) reports the largest frames
+  # and fails when the linker-asserted stack reserve minus the largest frame
+  # leaves less than the configured margin. See tools/firmware/keepkey.ld.
+  add_compile_options(-fstack-usage)
 
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.
