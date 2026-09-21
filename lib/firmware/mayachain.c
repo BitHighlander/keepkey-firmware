@@ -485,7 +485,7 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
      non-canonical encoding and the device should not clear-sign one. And it
      keeps this parser safe by construction if Maya ever gains a length-passing
      caller of its own, which is exactly how THORChain acquired the real bug. */
-  for (uint16_t i = 0; i < size; i++) {
+  for (i = 0; i < size; i++) {
     if (memoBuf[i] == '\0') return MAYACHAIN_MEMO_UNPARSED;
   }
 
