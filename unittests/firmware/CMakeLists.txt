@@ -36,7 +36,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       ripple.cpp
       signed_metadata.cpp
       solana.cpp
-      thorchain.cpp)
+      thorchain.cpp
+      tron.cpp)
 endif()
 
 if(${KK_ZCASH_PRIVACY})

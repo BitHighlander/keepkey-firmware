@@ -218,14 +218,6 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
-                     "%s", coin_denom)) {
-          mayachain_signAbort();
-          fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-          layoutHome();
-          return;
-        }
-
         break;
       }
     }
