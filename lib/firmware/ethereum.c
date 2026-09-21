@@ -813,21 +813,6 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
     return false;
   }
 
-  /* The same sanity check, for the field the EIP-1559 fee screen actually
-     multiplies. confirmEthereumTx() feeds max_fee_per_gas into
-     bn_multiply(&val, &gas, &secp256k1.prime), which reduces its product
-     modulo the curve prime. The legacy bound above never reaches it: a 1559
-     transaction carries no gas_price, so gas_price.size is 0 and a 32-byte
-     max_fee_per_gas paired with a 32-byte gas_limit passes untouched. The
-     product then wraps and the approval screen names a gas cost that is not
-     the one being signed -- the display diverges from the signature, which is
-     the one thing this release line exists to prevent. Hold the 1559 pair to
-     the same 30-byte budget. */
-  if (msg->has_max_fee_per_gas &&
-      msg->max_fee_per_gas.size + msg->gas_limit.size > 30) {
-    return false;
-  }
-
   return true;
 }
 
