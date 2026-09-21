@@ -2597,7 +2597,6 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   layoutHome();
 }
 
-
 void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   RESP_INIT(EthereumAddress);
 
