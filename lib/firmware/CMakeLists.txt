@@ -44,7 +44,6 @@ if(NOT ${KK_BITCOIN_ONLY})
       osmosis.c
       ripple.c
       ripple_base58.c
-      signed_metadata.c
       signtx_tendermint.c
       solana.c
       hive.c
