@@ -194,6 +194,16 @@ jobs:
             suffix: "-bitcoin-only"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            cmake_flags: ""
+          - variant: bitcoin-only
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
+          - variant: zcash-privacy
+            cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
@@ -292,6 +302,16 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            cmake_flags: ""
+          - variant: bitcoin-only
+            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
+          - variant: zcash-privacy
+            cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -314,10 +334,12 @@ jobs:
         if: steps.cache-base.outputs.cache-hit == 'true'
         run: docker load -i /tmp/base-image.tar
 
-      - name: Build and test emulator
+      - name: Build and test emulator (${{ matrix.variant }})
         run: |
-          docker build -t kkemu-release -f scripts/emulator/Dockerfile .
-          docker run --rm --entrypoint /bin/sh kkemu-release \
+          docker build -t kkemu-release-${{ matrix.variant }} \
+            --build-arg coinsupport="${{ matrix.cmake_flags }}" \
+            -f scripts/emulator/Dockerfile .
+          docker run --rm --entrypoint /bin/sh kkemu-release-${{ matrix.variant }} \
             -c "make xunit; RC=\$?; exit \$RC"
 
   create-release:
@@ -347,10 +369,20 @@ jobs:
           cat > release-body.md <<EOF
           ## KeepKey Firmware v${VER}
 
+          ### Variants
+          - **full** — \`firmware.keepkey.v${VER}-full.bin\` — all supported chains
+          - **bitcoin-only** — \`firmware.keepkey.v${VER}-bitcoin-only.bin\` — BTC-only, non-BTC coins stripped
+          - **zcash-privacy** — \`firmware.keepkey.v${VER}-zcash-privacy.bin\` — adds the Zcash shielded/Orchard engine
+
           ### Reproducible Build Verification
           \`\`\`bash
           ./scripts/build/docker/device/release.sh
           tail -c +257 bin/firmware.keepkey.bin | shasum -a 256
+          # bitcoin-only / zcash-privacy variants:
+          #   ./scripts/build/docker/device/release.sh -DKK_BITCOIN_ONLY=ON
+          #   ./scripts/build/docker/device/release.sh -DKK_ZCASH_PRIVACY=ON
+          # (extra args pass through to cmake) and compare against the
+          # matching HASHES-<variant>.txt
           \`\`\`
 
           Presign evidence and its exact audited binary manifest are attached.
@@ -358,7 +390,7 @@ jobs:
 
           > **DRAFT** — firmware must be signed by 3/5 key holders before publishing.
 
-          ### Signing Checklist
+          ### Signing Checklist (per variant)
           - [ ] Built on multiple machines, hashes match
           - [ ] Signed on air-gapped machine (3/5 signers)
           - [ ] Storage upgrade tested on production device

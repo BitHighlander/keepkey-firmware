@@ -1,5 +1,9 @@
 extern "C" {
+#include "keepkey/board/messages.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/ecdsa.h"
@@ -9,6 +13,95 @@ extern "C" {
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
+#include <vector>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+/*
+ * confirm() auto-accept driver for unit tests.
+ *
+ * In the emulator/unittest build (always DEBUG_LINK), confirm_helper()
+ * busy-polls the emulator's UDP "usb" port for tiny messages and returns
+ * once it has seen a ButtonAck plus a DebugLinkDecision. Each confirm
+ * screen therefore consumes exactly one ButtonAck + one DebugLinkDecision
+ * from the socket queue. Preloading exactly N accept pairs before invoking
+ * the code under test auto-accepts exactly N screens, and
+ * kkconfirm_drain() == 0 afterwards proves exactly N screens were shown
+ * (fewer screens leave packets queued; more screens would hang the test).
+ *
+ * These helpers have external linkage so mayachain.cpp can share the
+ * one-time board/usb initialization.
+ */
+
+static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
+                               uint8_t len) {
+  static int fd = -1;
+  if (fd < 0) fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (fd < 0) return false;
+
+  uint8_t frame[64] = {0};
+  frame[0] = '?';
+  frame[1] = '#';
+  frame[2] = '#';
+  frame[3] = msgId >> 8;
+  frame[4] = msgId & 0xff;
+  frame[8] = len;  // bytes 5..7 are the high bits of the big-endian size
+  if (len) memcpy(&frame[9], payload, len);
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(11044);  // emulator main "usb" port
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  return sendto(fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
+                sizeof(addr)) == (ssize_t)sizeof(frame);
+}
+
+// Queue nYes accepted screens followed by nNo rejected screens.
+bool kkconfirm_preload(int nYes, int nNo) {
+  static bool initialized = false;
+  if (!initialized) {
+    kk_board_init();  // canvas + runnable queues for confirm's draw path
+    fsm_init();       // registers the usb rx callback + message maps
+    usbInit("");      // binds the emulator UDP ports
+    initialized = true;
+  }
+
+  static const uint8_t yes[] = {0x08, 0x01};  // DebugLinkDecision.yes_no
+  static const uint8_t no[] = {0x08, 0x00};
+  for (int i = 0; i < nYes + nNo; i++) {
+    if (!kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0))
+      return false;
+    const uint8_t* decision = (i < nYes) ? yes : no;
+    if (!kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, decision,
+                            2))
+      return false;
+  }
+  return true;
+}
+
+// Consume and count any tiny messages left in the queue.
+int kkconfirm_drain(void) {
+  uint8_t buf[MSG_TINY_BFR_SZ];
+  int n = 0;
+  for (;;) {
+    // volatile: 0xFFFF (MSG_TINY_TYPE_ERROR) is outside the MessageType
+    // enum range, so an unguarded comparison is a tautology the compiler
+    // may fold away.
+    volatile uint16_t id = (uint16_t)check_for_tiny_msg(buf);
+    if (id == MSG_TINY_TYPE_ERROR) break;
+    n++;
+  }
+  return n;
+}
+
+// Vectors computed with the trezor-crypto library directly (see
+// unittests/firmware/thorchain.cpp notes). The test file was previously
+// absent from CMakeLists.txt so none of these values were ever validated;
+// all expected values here are derived from the actual crypto library.
 
 // Mirrors THORCHAIN_MEMO_MAX inside thorchain_parseConfirmMemo().
 static const size_t THORCHAIN_MEMO_MAX_FOR_TEST = 256;
@@ -176,20 +269,53 @@ TEST(Thorchain, ThorchainGetAddress) {
   EXPECT_EQ(std::string("thor1am058pdux3hyulcmfgj4m3hhrlfn8nzmpq9u6l"), addr);
 }
 
-TEST(Thorchain, ThorchainSignTx) {
-  HDNode node = {
-      0,
-      0,
-      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-      {0x04, 0xde, 0xc0, 0xcc, 0x01, 0x3c, 0xd8, 0xab, 0x70, 0x87, 0xca,
-       0x14, 0x96, 0x0b, 0x76, 0x8c, 0x3d, 0x83, 0x45, 0x24, 0x48, 0xaa,
-       0x00, 0x64, 0xda, 0xe6, 0xfb, 0x04, 0xb5, 0xd9, 0x34, 0x76},
-      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-      &secp256k1_info};
+// Shared fixtures
+static const HDNode kSignNode = {
+    0,
+    0,
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0x04, 0xde, 0xc0, 0xcc, 0x01, 0x3c, 0xd8, 0xab, 0x70, 0x87, 0xca,
+     0x14, 0x96, 0x0b, 0x76, 0x8c, 0x3d, 0x83, 0x45, 0x24, 0x48, 0xaa,
+     0x00, 0x64, 0xda, 0xe6, 0xfb, 0x04, 0xb5, 0xd9, 0x34, 0x76},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    &secp256k1_info};
+
+static const ThorchainSignTx kSignTx = {
+    5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+    true, 0,
+    true, "thorchain",
+    true, 5000,
+    true, 200000,
+    true, "",
+    true, 0,
+    true, 1};
+
+static const char* kToAddr = "thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v";
+
+// Denom validation: only [a-z0-9./\-] is allowed; anything else is rejected
+TEST(Thorchain, ThorchainDenomValidation) {
+  EXPECT_TRUE(thorchain_isValidDenom("rune"));
+  EXPECT_TRUE(thorchain_isValidDenom("tcy"));
+  EXPECT_TRUE(thorchain_isValidDenom("rujira"));
+  EXPECT_TRUE(thorchain_isValidDenom("eth.eth"));
+  EXPECT_TRUE(thorchain_isValidDenom("btc/btc"));
+  EXPECT_TRUE(thorchain_isValidDenom("cross-chain"));
+
+  EXPECT_FALSE(thorchain_isValidDenom(""));        // empty → caller uses "rune"
+  EXPECT_FALSE(thorchain_isValidDenom("RUNE"));    // uppercase rejected
+  EXPECT_FALSE(thorchain_isValidDenom("rune\""));  // quote injection
+  EXPECT_FALSE(thorchain_isValidDenom("rune\\n"));  // backslash injection
+  EXPECT_FALSE(thorchain_isValidDenom(" rune"));    // leading space
+  EXPECT_FALSE(thorchain_isValidDenom("ru ne"));    // embedded space
+}
+
+// Invalid denom must cause thorchain_signTxUpdateMsgSend to return false
+TEST(Thorchain, ThorchainSignTxInvalidDenom) {
+  HDNode node = kSignNode;
   hdnode_fill_public_key(&node);
 
   const ThorchainSignTx msg = {

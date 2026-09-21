@@ -9,6 +9,13 @@ extern "C" {
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
+
+// confirm() auto-accept driver, defined in thorchain.cpp (same binary).
+// kkconfirm_preload(nYes, nNo) queues nYes accepted confirm screens then
+// nNo rejected ones; kkconfirm_drain() == 0 proves the exact screen count.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
 
 TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
   char rendered[96];

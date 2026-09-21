@@ -41,11 +41,12 @@ bool thor_is_expiry_variant(const EthereumSignTx* msg) {
                 THOR_SELECTOR_DEPOSIT_WITH_EXPIRY, 4) == 0;
 }
 
-bool thor_isThorchainTx(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && thor_has_deposit_selector(msg)) {
-    return true;
+/* Format msg->to as lowercase hex string (40 chars + NUL) */
+static void thor_format_to_addr(const EthereumSignTx* msg, char out[41]) {
+  for (uint32_t i = 0; i < 20; i++) {
+    snprintf(&out[i * 2], 3, "%02x", msg->to.bytes[i]);
   }
-  return false;
+  out[40] = '\0';
 }
 
 bool thor_assetIsNative(const uint8_t asset_address[20]) {
@@ -130,7 +131,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   const TokenType* assetToken;
   uint8_t* thorchainData;
   const uint8_t* contractAssetAddress;
-  const uint8_t *vaultAddress, *assetAddress;
+  const uint8_t* vaultAddress;
   uint32_t ctr;
   bignum256 Amount;
 
@@ -228,10 +229,12 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   if (msg->has_chain_id && msg->chain_id == 1 &&
       strncmp(confStr, THOR_ROUTER, sizeof(THOR_ROUTER)) == 0) {
     conf = "Thorchain router";
+  } else if (strncmp(confStr, MAYA_ROUTER, 40) == 0) {
+    conf = router_label;
   } else {
     conf = confStr;
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Thorchain data",
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
                "Routing through %s", conf)) {
     return false;
   }
@@ -240,7 +243,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   for (ctr = 0; ctr < 20; ctr++) {
     snprintf(&confStr[ctr * 2], 3, "%02x", vaultAddress[ctr]);
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Thorchain data",
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
                "Using Asgard vault %s", confStr)) {
     return false;
   }
@@ -282,4 +285,13 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   }
 
   return true;
+}
+
+bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
+  return thor_confirm_deposit_tx(data_total, msg, "Thorchain data",
+                                 "Thorchain router");
+}
+
+bool thor_confirmMayaTx(uint32_t data_total, const EthereumSignTx* msg) {
+  return thor_confirm_deposit_tx(data_total, msg, "Maya data", "Maya router");
 }

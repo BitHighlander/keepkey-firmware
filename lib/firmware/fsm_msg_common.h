@@ -351,6 +351,7 @@ void fsm_msgPing(Ping* msg) {
 }
 
 void fsm_msgChangePin(ChangePin* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -401,6 +402,7 @@ void fsm_msgChangePin(ChangePin* msg) {
 }
 
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -500,6 +502,9 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_reset();
   storage_resetUuid();
   storage_commit();
+  /* Factory reset drops runtime trust anchors too: loaded clearsign
+   * signers (and any metadata they verified) must not survive a wipe. */
+  signed_metadata_clear_signers();
 
   fsm_sendSuccess("Device wiped");
   layoutHome();
@@ -540,6 +545,7 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 }
 
 void fsm_msgLoadDevice(LoadDevice* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
 
   if (!confirm_load_device(msg->has_node)) {
@@ -568,6 +574,7 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 }
 
 void fsm_msgResetDevice(ResetDevice* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
 
@@ -603,6 +610,7 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
                  "Do you want to change the label to \"%s\"?", msg->label)) {
@@ -735,6 +743,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 
   for (size_t i = 0; i < msg->policy_count; ++i) {

@@ -29,7 +29,16 @@
 #include "trezor/crypto/segwit_addr.h"
 
 #include <stdbool.h>
+#include <string.h>
 #include <time.h>
+
+bool thorchain_isValidDenom(const char* denom) {
+  return tendermint_isValidDenom(denom);
+}
+
+bool thorchain_isValidAsset(const char* asset) {
+  return tendermint_isValidAsset(asset);
+}
 
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
@@ -38,6 +47,10 @@ static bool has_message;
 static uint32_t msgs_remaining;
 static ThorchainSignTx msg;
 static bool testnet;
+
+bool thorchain_isValidSigner(const char* signer) {
+  return tendermint_isValidSigner(signer, testnet ? "tthor" : "thor");
+}
 
 const ThorchainSignTx* thorchain_getThorchainSignTx(void) { return &msg; }
 
@@ -157,10 +170,14 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
   sha256_Update(&ctx, (uint8_t*)prelude, strlen(prelude));
 
-  // 21 + ^20 + 19 = ^60
+  // Write amount prefix: 21 + ^20 = ^41
   success &= tendermint_snprintf(
       &ctx, buffer, sizeof(buffer),
-      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"rune\"}]", amount);
+      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"", amount);
+  // Use escaping as defense-in-depth; valid denoms have no escapable chars
+  tendermint_sha256UpdateEscaped(&ctx, coin_denom, strlen(coin_denom));
+  // Close coins array: 3 bytes
+  sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
   // 17 + 45 + 1 = 63
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
@@ -201,9 +218,11 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
                                  "\"coins\":[{\"amount\":\"%" PRIu64 "\"",
                                  depmsg->amount);
 
-  // 10 + ^20 + 3 = ^33
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 ",\"asset\":\"%s\"}]", depmsg->asset);
+  // Use escaping as defense-in-depth; valid assets have no escapable chars
+  const char* const asset_prefix = ",\"asset\":\"";
+  sha256_Update(&ctx, (uint8_t*)asset_prefix, strlen(asset_prefix));
+  tendermint_sha256UpdateEscaped(&ctx, depmsg->asset, strlen(depmsg->asset));
+  sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
   // <escape memo>
   const char* const memo_prefix = ",\"memo\":\"";
@@ -370,8 +389,9 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
     transaction:chain.ticker-id:destination:limit[:affiliate:fee_bps...]
                 ^^^^^^^^^^^^^^----------asset
 
-    So, swap USDT to dest address 0x41e55..., limit 420
-    SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:0x41e5560054824ea6b0732e656e3ad64e20e94e45:420
+    So, swap USDT to dest address 0x41e55..., limit 420, affiliate "kk"
+    skimming 75 basis points:
+    SWAP:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:0x41e5560054824ea6b0732e656e3ad64e20e94e45:420:kk:75
 
     Swap transactions can be indicated by "SWAP" or "s" or "="
 
@@ -435,13 +455,13 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
 
   tok = strtok(memoBuf, ":");
 
-  // get transaction and asset
-  for (ctr = 0; ctr < 3; ctr++) {
-    if (tok != NULL) {
-      parseTokPtrs[ctr] = tok;
-      tok = strtok(NULL, ":.");
-    } else {
-      break;
+  // Split on ':', keeping empty fields
+  nfields = 0;
+  fields[nfields++] = memoBuf;
+  for (i = 0; memoBuf[i] != '\0' && nfields < 10; i++) {
+    if (memoBuf[i] == ':') {
+      memoBuf[i] = '\0';
+      fields[nfields++] = &memoBuf[i + 1];
     }
   }
 
@@ -451,23 +471,42 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
     return THORCHAIN_MEMO_UNPARSED;
   }
 
+  // Split chain.asset at the first '.'
+  chain = fields[1];
+  asset = strchr(chain, '.');
+  if (asset == NULL) {
+    // No chain.asset pair; not recognizable thorchain data, just confirm data
+    return false;
+  }
+  *asset = '\0';
+  asset++;
+
   // Check for swap
   if (strcmp(parseTokPtrs[0], "SWAP") == 0 ||
       strcmp(parseTokPtrs[0], "s") == 0 || strcmp(parseTokPtrs[0], "=") == 0) {
     // This is a swap, set up destination and limit
-    // This is the dest, may be blank which means swap to self
-    parseTokPtrs[3] = "self";
-    parseTokPtrs[4] = "none";
-    if (tok != NULL) {
-      if ((uint32_t)(tok - (parseTokPtrs[2] + strlen(parseTokPtrs[2]))) == 1) {
-        // has dest address
-        parseTokPtrs[3] = tok;
-        tok = strtok(NULL, ":");
-      }
-      if (tok != NULL) {
-        // has limit
-        parseTokPtrs[4] = tok;
-      }
+    // The dest may be blank which means swap to self
+    const char* dest =
+        (nfields > 2 && fields[2][0] != '\0') ? fields[2] : "self";
+    const char* limit =
+        (nfields > 3 && fields[3][0] != '\0') ? fields[3] : "none";
+    const char* affiliate =
+        (nfields > 4 && fields[4][0] != '\0') ? fields[4] : NULL;
+    const char* fee_bps =
+        (nfields > 5 && fields[5][0] != '\0') ? fields[5] : "unspecified";
+    /* DEX-aggregator swap-out fields — all router-executed, so all displayed.
+     */
+    const char* agg_addr =
+        (nfields > 6 && fields[6][0] != '\0') ? fields[6] : NULL;
+    const char* final_token =
+        (nfields > 7 && fields[7][0] != '\0') ? fields[7] : NULL;
+    const char* min_out =
+        (nfields > 8 && fields[8][0] != '\0') ? fields[8] : NULL;
+
+    /* Refuse only genuinely-unknown structure — more fields than any THORChain
+     * swap grammar defines (>9), which we cannot label and must not hide. */
+    if (nfields > 9) {
+      return false;
     }
 
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
@@ -510,7 +549,7 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                  parseTokPtrs[1])) {
       return THORCHAIN_MEMO_CANCELLED;
     }
-    if (tok != NULL) {
+    if (pool != NULL) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Thorchain add liquidity", "Confirm to %s",
                    parseTokPtrs[3])) {
@@ -538,6 +577,11 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
       parseTokPtrs[3] = tok;
     } else {
       return THORCHAIN_MEMO_UNPARSED;  // malformed memo
+    }
+    /* WD:POOL:BPS[:ASSET] — refuse only genuinely-unknown structure (>4
+     * fields), mirroring the SWAP (>9) and ADD (>5) caps. */
+    if (nfields > 4) {
+      return false;
     }
 
     uint16_t bps = 0;

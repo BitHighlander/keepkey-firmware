@@ -95,8 +95,9 @@ typedef enum { DOMAIN = 1, MESSAGE } dm;
 #define JSON_TYPE_T_NOVAL 31
 #define ADDR_STRING_NULL 32
 #define JSON_TYPE_WNOVAL 33
+#define USER_CANCELLED 34
 
-#define LAST_ERROR JSON_TYPE_WNOVAL
+#define LAST_ERROR USER_CANCELLED
 
 /* A review screen was not confirmed. Deliberately above LAST_ERROR and outside
    the failMsgReturn[] table in ethereum.c, which is sized LAST_ERROR - 2 and

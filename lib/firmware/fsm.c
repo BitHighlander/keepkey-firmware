@@ -35,6 +35,7 @@
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
 #include "keepkey/firmware/binance.h"
@@ -56,7 +57,10 @@
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
+#include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -91,6 +95,8 @@
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
+#include "messages-zcash.pb.h"
+#include "messages-hive.pb.h"
 
 #include <stdio.h>
 /* strnlen: the THORChain memo paths measure fixed arrays rather than
@@ -158,6 +164,15 @@ bool fsm_test_derivedNodeIsZero(void) {
                     "Initialize or Cancel first.");           \
     layoutHome();                                             \
     return;                                                   \
+  }
+
+#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
+  if (storage_isBitcoinOnlyLocked()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Device holds a bitcoin-only wallet. Wipe the " \
+                    "device to use multi-chain firmware.");         \
+    layoutHome();                                                   \
+    return;                                                         \
   }
 
 #define CHECK_PIN              \
