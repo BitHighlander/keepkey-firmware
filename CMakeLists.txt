@@ -9,7 +9,7 @@ endif()
 
 project(
   KeepKeyFirmware
-  VERSION 7.14.3
+  VERSION 7.15.0
   LANGUAGES C CXX ASM)
 
 set(BOOTLOADER_MAJOR_VERSION 2)
@@ -154,13 +154,6 @@ add_definitions(-DAES_128=1)
 
 # The Zcash Orchard engine (added in this PR) pulls the Pallas curve
 # arithmetic into the image, and the per-chain clear-sign code stacked on top
-# leaves it over the STM32 flash budget with the fast FOUR_TABLES AES. Shrink
-# the Gladman AES lookup tables from 4 KB to 1 KB each (-15,360 bytes ROM, a
-# modest AES cycle cost) so the whole 7.15 feature set links. The variant
-# split in a later PR removes Zcash (and this constraint) from the default
-# image, where FOUR_TABLES is restored.
-add_definitions(-DAES_SMALL_TABLES)
-
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
