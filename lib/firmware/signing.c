@@ -2298,8 +2298,6 @@ void signing_abort(void) {
   memzero(&signing_update_ctr, sizeof(signing_update_ctr));
 }
 
-bool signing_is_active(void) { return signing; }
-
 #if DEBUG_LINK
 static CoinType signing_test_coin;
 static curve_info signing_test_curve;

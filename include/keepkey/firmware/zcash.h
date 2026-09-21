@@ -350,6 +350,9 @@ bool zcash_derive_orchard_unified_address(const uint8_t* seed,
 bool zcash_calculate_seed_fingerprint(const uint8_t* seed, uint32_t seed_len,
                                       uint8_t fingerprint_out[32]);
 
+/* Omission is valid; a present host assertion must be exactly 32 bytes. */
+bool zcash_seed_fingerprint_request_valid(bool present, size_t size);
+
 /* ── Storage-scoped wrappers ───────────────────────────────────────────
  *
  * The two functions below own the seed access. Implementations live in
