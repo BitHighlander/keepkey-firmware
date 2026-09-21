@@ -21,17 +21,8 @@
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/sha3.h"
 
-bool zx_confirmApproveLiquidity(uint32_t data_total,
-                                const EthereumSignTx *msg) {
-  (void)data_total;
-  const char *to, *tikstr, *poolstr, *allowance, *amt;
-  unsigned char data[40];
-  uint8_t digest[SHA3_256_DIGEST_LENGTH] = {0};
-  uint8_t tokdigest[SHA3_256_DIGEST_LENGTH] = {0};
-  char digestStr[2 * SHA3_256_DIGEST_LENGTH + 1], amtStr[2 * 32 + 1] = {0};
-  int32_t ctr, tokctr;
-  uint32_t wethord;
-  const TokenType *WETH, *ttoken;
+#include <stdio.h>
+#include <string.h>
 
 #define UNISWAP_APPROVE_CALL_SIZE (4 + 2 * 32)
 #define UNISWAP_AMOUNT_TEXT_SIZE 96
@@ -52,58 +43,102 @@ static bool tx_value_is_zero(const EthereumSignTx* msg) {
   for (size_t i = 0; i < msg->value.size; i++) {
     if (msg->value.bytes[i] != 0) return false;
   }
-
-  if (tokctr != -1) {
-    for (ctr = 0; ctr < SHA3_256_DIGEST_LENGTH; ctr++) {
-      snprintf(&digestStr[ctr * 2], 3, "%02x", digest[ctr]);
-    }
-    tikstr = ttoken->ticker;
-    poolstr = &digestStr[12 * 2];
-  } else {
-    for (ctr = 0; ctr < 20; ctr++) {
-      snprintf(&digestStr[ctr * 2], 3, "%02x", to[ctr]);
-    }
-    tikstr = "";
-    poolstr = digestStr;
-  }
-
-  allowance = (char *)(msg->data_initial_chunk.bytes + 4 + 32);
-  if (memcmp(allowance, (uint8_t *)&MAX_ALLOWANCE, 32) == 0) {
-    amt = "full balance";
-  } else {
-    for (ctr = 0; ctr < 32; ctr++) {
-      snprintf(&amtStr[ctr * 2], 3, "%02x", allowance[ctr]);
-    }
-    amt = amtStr;
-  }
-
-  const char *appStr = "uniswap approve liquidity";
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, appStr,
-               "Amount: %s", amt)) {
-    return false;
-  }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, appStr,
-               "approve for pool %s %s", tikstr, poolstr)) {
-    return false;
-  }
   return true;
 }
 
-bool zx_isZxApproveLiquid(const EthereumSignTx *msg) {
-  /* UNISWAP_ROUTER_ADDRESS (as ERC20 approve spender) is an Ethereum-mainnet
-   * identity. See GH #431. */
-  if (!msg->has_chain_id || msg->chain_id != 1) return false;
-  /* approve(address,uint256) is exactly 68 bytes and has no dynamic argument.
-   * Check the extent BEFORE reading the spender word at offset 16: the chunk
-   * buffer keeps bytes from an earlier message past .size, so on a short
-   * calldata the comparison below would be made against stale data. And a
-   * longer calldata is hashed in full while only the allowance is drawn, so
-   * the tail would be signed unseen -- refusing sends it to the raw-calldata
-   * path instead. */
-  if (msg->data_initial_chunk.size != 4 + 2 * 32) return false;
-  if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0)
-    if (memcmp((uint8_t *)(msg->data_initial_chunk.bytes + 4 + 32 - 20),
-               UNISWAP_ROUTER_ADDRESS, 20) == 0)
-      return true;
-  return false;
+static bool spender_word_is_router(const EthereumSignTx* msg) {
+  const uint8_t* word = msg->data_initial_chunk.bytes + 4;
+  for (size_t i = 0; i < 12; i++) {
+    if (word[i] != 0) return false;
+  }
+  return memcmp(word + 12, UNISWAP_ROUTER_ADDRESS, 20) == 0;
+}
+
+static void derive_pair_address(const uint8_t* token_a, const uint8_t* token_b,
+                                uint8_t pair[20]) {
+  uint8_t ordered[40];
+  if (memcmp(token_a, token_b, 20) < 0) {
+    memcpy(ordered, token_a, 20);
+    memcpy(ordered + 20, token_b, 20);
+  } else {
+    memcpy(ordered, token_b, 20);
+    memcpy(ordered + 20, token_a, 20);
+  }
+
+  uint8_t salt[SHA3_256_DIGEST_LENGTH];
+  uint8_t digest[SHA3_256_DIGEST_LENGTH];
+  keccak_256(ordered, sizeof(ordered), salt);
+  SHA3_CTX ctx = {0};
+  keccak_256_Init(&ctx);
+  const uint8_t prefix = 0xff;
+  keccak_Update(&ctx, &prefix, 1);
+  keccak_Update(&ctx, UNISWAP_FACTORY_ADDRESS, sizeof(UNISWAP_FACTORY_ADDRESS));
+  keccak_Update(&ctx, salt, sizeof(salt));
+  keccak_Update(&ctx, UNISWAP_PAIR_INIT_CODE_HASH,
+                sizeof(UNISWAP_PAIR_INIT_CODE_HASH));
+  keccak_Final(&ctx, digest);
+  memcpy(pair, digest + 12, 20);
+}
+
+static const TokenType* pool_underlying_token(const EthereumSignTx* msg) {
+  int32_t token_index = 0;
+  while (token_index >= 0) {
+    const TokenType* token = tokenIter(&token_index);
+    if (token == UnknownToken) break;
+    if (token->chain_id != 1 ||
+        memcmp(token->address, WETH_MAINNET_ADDRESS, 20) == 0)
+      continue;
+    uint8_t pair[20];
+    derive_pair_address((const uint8_t*)token->address, WETH_MAINNET_ADDRESS,
+                        pair);
+    if (memcmp(msg->to.bytes, pair, 20) == 0) return token;
+  }
+  return NULL;
+}
+
+static bool approve_shape_is_clear_signable(const EthereumSignTx* msg) {
+  if (!msg->has_chain_id || msg->chain_id != 1 || !msg->has_to ||
+      msg->to.size != 20 || !msg->has_data_initial_chunk ||
+      msg->data_initial_chunk.size != UNISWAP_APPROVE_CALL_SIZE ||
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) != 0 ||
+      msg->value.size > 32 || !tx_value_is_zero(msg) ||
+      !spender_word_is_router(msg))
+    return false;
+  return pool_underlying_token(msg) != NULL;
+}
+
+bool zx_confirmApproveLiquidity(uint32_t data_total,
+                                const EthereumSignTx* msg) {
+  if (data_total != UNISWAP_APPROVE_CALL_SIZE ||
+      !approve_shape_is_clear_signable(msg))
+    return false;
+
+  const TokenType* token = pool_underlying_token(msg);
+  const uint8_t* allowance = msg->data_initial_chunk.bytes + 4 + 32;
+  char amount_text[UNISWAP_AMOUNT_TEXT_SIZE];
+  if (memcmp(allowance, (const uint8_t*)MAX_ALLOWANCE, 32) == 0) {
+    strlcpy(amount_text, "full LP balance", sizeof(amount_text));
+  } else {
+    bignum256 amount;
+    bn_from_bytes(allowance, 32, &amount);
+    if (bn_format(&amount, NULL, " LP", 18, 0, false, amount_text,
+                  sizeof(amount_text)) == 0 ||
+        calc_str_line(get_body_font(), amount_text, BODY_WIDTH) > BODY_ROWS)
+      return false;
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               "Uniswap LP Approval", "%s", amount_text))
+    return false;
+
+  char pair_text[43] = {'0', 'x', '\0'};
+  for (size_t i = 0; i < 20; i++) {
+    snprintf(pair_text + 2 + i * 2, 3, "%02x", msg->to.bytes[i]);
+  }
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Uniswap LP Pool", "%s\n%s", token->ticker, pair_text);
+}
+
+bool zx_isZxApproveLiquid(const EthereumSignTx* msg) {
+  return approve_shape_is_clear_signable(msg);
 }
