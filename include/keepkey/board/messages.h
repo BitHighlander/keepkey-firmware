@@ -32,6 +32,8 @@
 
 /* True while unwinding a handler already answered by a tiny receive Failure. */
 bool msg_handler_rejected(void);
+bool keepkey_before_message_dispatch(MessageType msg_id);
+void keepkey_after_message_dispatch(void);
 
 /* Dense table entries, looked up by linear scan (message_map_entry). The
  * previous [ID]-designated form sized the table by the highest message ID:

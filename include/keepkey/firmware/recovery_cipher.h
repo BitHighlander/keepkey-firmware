@@ -35,6 +35,7 @@ void recovery_cipher_init(uint32_t _word_count, bool passphrase_protection,
                           bool _dry_run);
 void next_character(void);
 void recovery_character(const char* character);
+bool recovery_cipher_redraw(void);
 void recovery_delete_character(void);
 void recovery_cipher_finalize(void);
 

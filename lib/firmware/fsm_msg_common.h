@@ -147,7 +147,6 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   msg_write(MessageType_MessageType_Features, resp);
 }
 
-// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
   RESP_INIT(CoinTable);
 
@@ -267,6 +266,13 @@ void fsm_msgPing(Ping* msg) {
     }
   }
 
+  if (authMsg < NUM_AUTHMESSAGES ||
+      (msg->has_button_protection && msg->button_protection) ||
+      (msg->has_pin_protection && msg->pin_protection) ||
+      (msg->has_passphrase_protection && msg->passphrase_protection)) {
+    fsm_abort_signing_workflows();
+  }
+
   if (authMsg < NUM_AUTHMESSAGES) {
     // this is an authenticator message
     unsigned errcode;
@@ -362,7 +368,6 @@ void fsm_msgPing(Ping* msg) {
   layoutHome();
 }
 
-// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangePin(ChangePin* msg) {
   CHECK_NOT_BITCOIN_ONLY_LOCKED
 
@@ -415,7 +420,6 @@ void fsm_msgChangePin(ChangePin* msg) {
   layoutHome();
 }
 
-// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
   CHECK_NOT_BITCOIN_ONLY_LOCKED
 
@@ -489,6 +493,15 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
 #endif
 }
 
+/* An uninitialized device has no seed to disclose, so permit exactly 64 KiB
+ * of press-free RNG health sampling. The budget is bytes, not requests. */
+#define ENTROPY_AUDIT_BUDGET (64 * 1024)
+static uint32_t entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+
+static void fsm_entropyAuditBudgetReset(void) {
+  entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+}
+
 void fsm_msgWipeDevice(WipeDevice* msg) {
   (void)msg;
 
@@ -520,9 +533,8 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_commit();
   /* Factory reset drops runtime trust anchors too: loaded clearsign
    * signers (and any metadata they verified) must not survive a wipe. */
-#if !BITCOIN_ONLY
   signed_metadata_clear_signers();
-#endif
+  fsm_entropyAuditBudgetReset();
 
   fsm_sendSuccess("Device wiped");
   layoutHome();
@@ -540,23 +552,24 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
                   "Not in bootloader mode");
 }
 
-// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
-               "Do you want to generate and return entropy using the hardware "
-               "RNG?")) {
+  uint32_t len = msg->size;
+  if (len > ENTROPY_BUF) len = ENTROPY_BUF;
+
+  const bool press_free =
+      !storage_isInitialized() && len <= entropy_audit_remaining;
+  if (press_free) {
+    entropy_audit_remaining -= len;
+  } else if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy,
+                      "Generate Entropy",
+                      "Do you want to generate and return entropy using the "
+                      "hardware RNG?")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
     layoutHome();
     return;
   }
 
   RESP_INIT(Entropy);
-  uint32_t len = msg->size;
-
-  if (len > ENTROPY_BUF) {
-    len = ENTROPY_BUF;
-  }
-
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
   msg_write(MessageType_MessageType_Entropy, resp);
@@ -613,7 +626,6 @@ void fsm_msgResetDevice(ResetDevice* msg) {
              msg->has_dice_only && msg->dice_only);
 }
 
-// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgEntropyAck(EntropyAck* msg) {
   if (msg->has_entropy) {
     reset_entropy(msg->entropy.bytes, msg->entropy.size);

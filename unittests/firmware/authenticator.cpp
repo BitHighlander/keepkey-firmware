@@ -64,6 +64,8 @@ TEST(Authenticator, AuthorizationLossClearsAndReloadsPersistentCache) {
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   ASSERT_EQ(NOERR, wipeAuthData());
   ASSERT_EQ(0, kkconfirm_drain());
+  session_clear(/*clear_pin=*/true);
+  storage_reset();
 }
 
 TEST(Authenticator, RejectedOtpReviewReturnsNoOtp) {
@@ -89,4 +91,6 @@ TEST(Authenticator, RejectedOtpReviewReturnsNoOtp) {
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   EXPECT_EQ(NOERR, wipeAuthData());
   EXPECT_EQ(0, kkconfirm_drain());
+  session_clear(/*clear_pin=*/true);
+  storage_reset();
 }

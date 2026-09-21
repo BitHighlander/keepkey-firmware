@@ -252,6 +252,7 @@ void fsm_msgTendermintMsgAck(const TendermintMsgAck* msg) {
 
   if (!tendermint_signingIsFinished()) {
     RESP_INIT(TendermintMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_TendermintMsgRequest, resp);
     return;
   }

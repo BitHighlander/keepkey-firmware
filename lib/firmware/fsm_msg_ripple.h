@@ -72,12 +72,6 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
 
   CHECK_INITIALIZED
 
-  if (msg->has_memo && msg->memo[0] != '\0') {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Ripple memos require firmware 7.15 or later"));
-    return;
-  }
-
   CHECK_PIN
 
   bool needs_confirm = true;
@@ -157,8 +151,9 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
   }
 
   if (msg->has_memo && msg->memo[0] != '\0') {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Memo", "%s",
-                 msg->memo)) {
+    /* Memos route exchange and bridge deposits, so disclose every byte rather
+     * than truncating at the three visible body rows of a plain confirm. */
+    if (!thorchain_confirm_full_memo("Memo", msg->memo, strlen(msg->memo))) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
       layoutHome();

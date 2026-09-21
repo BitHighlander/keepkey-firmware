@@ -183,6 +183,7 @@ void fsm_msgBinanceTransferMsg(const BinanceTransferMsg* msg) {
 static void binance_response(void) {
   if (!binance_signingIsFinished()) {
     RESP_INIT(BinanceTxRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_BinanceTxRequest, resp);
     return;
   }
