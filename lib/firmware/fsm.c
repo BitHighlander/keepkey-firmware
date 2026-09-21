@@ -61,6 +61,8 @@
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
+#include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -96,6 +98,8 @@
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
+#include "messages-zcash.pb.h"
+#include "messages-hive.pb.h"
 
 #include <stdio.h>
 /* strnlen: the THORChain memo paths measure fixed arrays rather than

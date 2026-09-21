@@ -164,7 +164,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   const TokenType* assetToken;
   uint8_t* thorchainData;
   const uint8_t* contractAssetAddress;
-  const uint8_t *vaultAddress, *assetAddress;
+  const uint8_t* vaultAddress;
   uint32_t ctr;
   bignum256 Amount;
 
@@ -274,7 +274,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   } else {
     conf = confStr;
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Thorchain data",
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
                "Routing through %s", conf)) {
     return false;
   }
@@ -283,7 +283,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   for (ctr = 0; ctr < 20; ctr++) {
     snprintf(&confStr[ctr * 2], 3, "%02x", vaultAddress[ctr]);
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Thorchain data",
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
                "Using Asgard vault %s", confStr)) {
     return false;
   }
@@ -325,4 +325,13 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   }
 
   return true;
+}
+
+bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
+  return thor_confirm_deposit_tx(data_total, msg, "Thorchain data",
+                                 "Thorchain router");
+}
+
+bool thor_confirmMayaTx(uint32_t data_total, const EthereumSignTx* msg) {
+  return thor_confirm_deposit_tx(data_total, msg, "Maya data", "Maya router");
 }
