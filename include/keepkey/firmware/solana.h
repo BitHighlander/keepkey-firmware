@@ -156,10 +156,18 @@ typedef struct {
   uint8_t mint[SOL_PUBKEY_SIZE];
   bool has_mint;
   uint8_t extra_u8;
-  /* Exact instruction bytes retained for variable-length verified fields
-   * such as Memo. The parser bounds this slice inside the signed message. */
+  /* Instruction payload (memo body display). Points into the raw message
+   * buffer passed to solana_inspectTx — valid only while that buffer is. */
   const uint8_t* data;
-  size_t data_len;
+  uint16_t data_len;
+  /* Account index list, same lifetime as `data`. Needed to resolve a
+   * KKSOLSC1 schema's labelled accounts back to real pubkeys. */
+  const uint8_t* acct_indices;
+  uint8_t num_acct_indices;
+  /* True when this instruction reaches into an address-lookup table, so its
+   * accounts are NOT present in the signed message. A schema must never be
+   * applied to one: the pubkeys it would display are unknowable on-device. */
+  bool external;
 } SolanaParsedInstruction;
 
 /* Parsed transaction header */
@@ -283,14 +291,45 @@ bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 /* Format SOL amount */
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports);
 
-/* Maximum priority fee in lamports. Uses the 1.4M-CU protocol cap when no
- * explicit limit is present. Returns false for duplicates or overflow. */
-bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
-                                 bool* has_fee);
-
 /* Format token amount with decimals */
 void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
                               const char* symbol, uint8_t decimals);
+
+/* Look up a firmware-owned token identity by its signed mint account. */
+const SolanaKnownToken* solana_findKnownToken(
+    const uint8_t mint[SOL_PUBKEY_SIZE]);
+
+/* Derive the canonical SPL associated token account for
+ * (owner, token_program, mint), using Solana's find_program_address rules. */
+bool solana_deriveAssociatedTokenAddress(
+    const uint8_t owner[SOL_PUBKEY_SIZE],
+    const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]);
+
+/* Match a host-provided candidate owner only after deriving its ATA and
+ * comparing it to the destination that is present in the signed instruction.
+ * Returns the verified owner through out, or false without modifying out. */
+bool solana_findTokenRecipientOwner(
+    const SolanaSignTx* msg, const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE],
+    const uint8_t destination[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]);
+
+/* Look up token info from the host-provided list */
+const SolanaTokenInfo* solana_findTokenInfo(
+    const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE]);
+
+/* True iff `ti` carries a valid attestation: an ECDSA signature (by a clearsign
+ * signer the user loaded) over a domain-separated (mint, decimals, symbol)
+ * digest. Range-checks signer_key_id before narrowing it. Verifies only the
+ * attested tuple — the caller must additionally confirm the attested decimals
+ * match the signed instruction before trusting the amount. */
+bool solana_token_info_trusted(const SolanaTokenInfo* ti);
+
+/* ceil(price * limit / 1,000,000) priority-fee lamports, overflow-safe. Returns
+ * false (and leaves *out untouched) if the true value exceeds UINT64_MAX — the
+ * caller must then refuse to sign rather than display a wrapped figure. */
+bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
+                                  uint64_t* out);
 
 /* Sign transaction */
 bool solana_signTx(const HDNode* node, const SolanaSignTx* msg,

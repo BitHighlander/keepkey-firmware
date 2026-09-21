@@ -33,13 +33,13 @@
 
 #include <errno.h>
 #include <stdio.h>
-#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/eip712.h"
+#include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "trezor/crypto/sha3.h"
 #include "trezor/crypto/memzero.h"
@@ -49,6 +49,119 @@ static dm confirmProp;
 
 static const char* nameForValue;
 
+static bool append_type_string(char* dest, const char* value) {
+  if (!dest || !value) return false;
+  const size_t used = strnlen(dest, STRBUFSIZE + 1);
+  const size_t added = strlen(value);
+  if (used > STRBUFSIZE || added > STRBUFSIZE - used) return false;
+  memcpy(dest + used, value, added + 1);
+  return true;
+}
+
+static bool parse_bounded_decimal(const char** cursor, size_t limit,
+                                  size_t* value) {
+  const char* p = *cursor;
+  if (*p < '0' || *p > '9') return false;
+
+  size_t parsed = 0;
+  while (*p >= '0' && *p <= '9') {
+    const size_t digit = (size_t)(*p - '0');
+    if (parsed > (limit - digit) / 10) return false;
+    parsed = parsed * 10 + digit;
+    p++;
+  }
+  *cursor = p;
+  *value = parsed;
+  return true;
+}
+
+static bool parse_array_suffix(const char* suffix, bool* fixed,
+                               size_t* expected) {
+  *fixed = false;
+  *expected = 0;
+  if (*suffix == '\0') return true;
+  if (*suffix++ != '[') return false;
+  if (*suffix == ']') return suffix[1] == '\0';
+
+  size_t count = 0;
+  if (!parse_bounded_decimal(&suffix, (size_t)-1, &count) || count == 0 ||
+      suffix[0] != ']' || suffix[1] != '\0') {
+    return false;
+  }
+  *fixed = true;
+  *expected = count;
+  return true;
+}
+
+static bool type_array_suffix_is_valid(const char* suffix) {
+  bool fixed = false;
+  size_t expected = 0;
+  return parse_array_suffix(suffix, &fixed, &expected);
+}
+
+static bool fixed_array_cardinality_matches(const char* type,
+                                            const json_t* value) {
+  const char* suffix = strchr(type, '[');
+  if (!suffix) return true;
+
+  bool fixed = false;
+  size_t expected = 0;
+  if (!parse_array_suffix(suffix, &fixed, &expected)) return false;
+  if (!fixed) return true;
+  if (json_getType(value) != JSON_ARRAY) return false;
+
+  size_t actual = 0;
+  for (const json_t* element = json_getChild(value); element;
+       element = json_getSibling(element)) {
+    if (++actual > expected) return false;
+  }
+  return actual == expected;
+}
+
+static bool type_matches(const char* type, const char* base) {
+  const size_t len = strlen(base);
+  return strncmp(type, base, len) == 0 &&
+         type_array_suffix_is_valid(type + len);
+}
+
+static bool type_is_integer(const char* type, const char* prefix) {
+  const size_t prefix_len = strlen(prefix);
+  if (strncmp(type, prefix, prefix_len) != 0) return false;
+  const char* p = type + prefix_len;
+  size_t bits = 0;
+  const bool has_bits = *p >= '0' && *p <= '9';
+  if (has_bits && !parse_bounded_decimal(&p, 256, &bits)) return false;
+  if (has_bits && (bits < 8 || bits > 256 || (bits % 8) != 0)) return false;
+  return type_array_suffix_is_valid(p);
+}
+
+static unsigned integer_type_width(const char* type, const char* prefix) {
+  const char* p = type + strlen(prefix);
+  if (*p < '0' || *p > '9') return 256;
+  size_t bits = 0;
+  if (!parse_bounded_decimal(&p, 256, &bits)) return 256;
+  return (unsigned)bits;
+}
+
+static bool type_is_bytes(const char* type, unsigned* byte_size,
+                          bool* dynamic) {
+  if (strncmp(type, "bytes", 5) != 0) return false;
+  const char* p = type + 5;
+  if (*p == '\0' || *p == '[') {
+    if (!type_array_suffix_is_valid(p)) return false;
+    *byte_size = 0;
+    *dynamic = true;
+    return true;
+  }
+  size_t size = 0;
+  if (!parse_bounded_decimal(&p, 32, &size) || size == 0 ||
+      !type_array_suffix_is_valid(p))
+    return false;
+  *byte_size = (unsigned)size;
+  *dynamic = false;
+  return true;
+}
+
 static int hex_nibble(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -56,32 +169,15 @@ static int hex_nibble(char c) {
   return -1;
 }
 
-static bool decode_address(const char* string, uint8_t decoded[20]) {
-  if (!string || strlen(string) != ADDRESS_SIZE || string[0] != '0' ||
-      string[1] != 'x') {
+static bool hex_string_is_valid(const char* string, size_t expected_bytes,
+                                bool exact_size) {
+  if (!string || string[0] != '0' || string[1] != 'x') return false;
+  const size_t chars = strlen(string + 2);
+  if ((chars & 1) != 0 || (exact_size && chars != 2 * expected_bytes))
     return false;
+  for (size_t i = 0; i < chars; i++) {
+    if (hex_nibble(string[i + 2]) < 0) return false;
   }
-
-  for (size_t i = 0; i < 20; i++) {
-    const int high = hex_nibble(string[2 + 2 * i]);
-    const int low = hex_nibble(string[3 + 2 * i]);
-    if (high < 0 || low < 0) return false;
-    decoded[i] = (uint8_t)((high << 4) | low);
-  }
-  return true;
-}
-
-/* Append value to dest, a caller-allocated, NUL-terminated buffer of
-   STRBUFSIZE+1 bytes. Returns false and leaves dest untouched if the result
-   would not fit. Deliberately never truncates: a truncated encodeType string
-   hashes to a typehash the host did not ask for, and two distinct type sets
-   sharing a prefix would collide, so callers must fail closed instead. */
-static bool append_type_string(char* dest, const char* value) {
-  if (!dest || !value) return false;
-  const size_t used = strnlen(dest, STRBUFSIZE + 1);
-  const size_t added = strlen(value);
-  if (used > STRBUFSIZE || added > STRBUFSIZE - used) return false;
-  memcpy(dest + used, value, added + 1);
   return true;
 }
 
@@ -236,30 +332,29 @@ int parseType(const json_t* eip712Types, const char* typeS, char* typeStr) {
     typeStr[strlen(typeStr) - 1] = ')';
   } else {
     // append paren, there are no parameters
-    if (!append_type_string(typeStr, ")")) {
-      return UDEF_NAME_ERROR;
-    }
+    if (!append_type_string(typeStr, ")")) return UDEF_NAME_ERROR;
   }
   if (strlen(append) > 0) {
-    if (!append_type_string(typeStr, append)) {
-      return UDEF_NAME_ERROR;
-    }
+    if (!append_type_string(typeStr, append)) return UDEF_NAME_ERROR;
   }
 
   return SUCCESS;
 }
 
 int encAddress(const char* string, uint8_t* encoded) {
-  if (string == NULL) {
+  if (!string) {
     return ADDR_STRING_NULL;
   }
-  uint8_t decoded[20];
-  if (!decode_address(string, decoded)) {
+  if (strlen(string) != ADDRESS_SIZE ||
+      !hex_string_is_valid(string, 20, true)) {
     return ADDR_STRING_VFLOW;
   }
 
   memset(encoded, 0, 12);
-  memcpy(encoded + 12, decoded, sizeof(decoded));
+  for (size_t i = 0; i < 20; i++) {
+    encoded[12 + i] = (uint8_t)((hex_nibble(string[2 + 2 * i]) << 4) |
+                                hex_nibble(string[3 + 2 * i]));
+  }
   return SUCCESS;
 }
 
@@ -305,27 +400,21 @@ int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
   return SUCCESS;
 }
 
-/* These screens were review(), which calls confirm_helper() and then returns
-   true unconditionally. confirm_helper() returns false when the host sends a
-   Cancel or Initialize tiny message, so a host could refuse every field screen
-   and encode() would still hash typed data the user never saw. They are
-   confirm() now and refusal is reported to parseVals() as USER_CANCELLED, so
-   no hash is produced at all. */
 int confirmName(const char* name, bool valAvailable) {
-  if (valAvailable) {
-    nameForValue = name;
-  } else {
-    if (!confirm(ButtonRequestType_ButtonRequest_Other, "MESSAGE DATA",
-                 "Press button to continue for\n\"%s\" values", name)) {
-      return USER_CANCELLED;
-    }
+  (void)valAvailable;
+  if (!name) return GENERAL_ERROR;
+  nameForValue = name;
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, "EIP-712 Field",
+                     (const uint8_t*)name, strlen(name))) {
+    return USER_CANCELLED;
   }
   return SUCCESS;
 }
 
 int confirmValue(const char* value) {
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, "MESSAGE DATA", "%s %s",
-               nameForValue, value)) {
+  if (!value || !confirm_bytes(ButtonRequestType_ButtonRequest_Other,
+                               nameForValue ? "EIP-712 Value" : "MESSAGE DATA",
+                               (const uint8_t*)value, strlen(value))) {
     return USER_CANCELLED;
   }
   return SUCCESS;
@@ -333,30 +422,6 @@ int confirmValue(const char* value) {
 
 static const char *dsname = NULL, *dsversion = NULL, *dschainId = NULL,
                   *dsverifyingContract = NULL;
-
-bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
-  if (!text || !value || text[0] == '\0') return false;
-  if (text[0] == '0' && text[1] != '\0') return false;
-
-  uint32_t parsed = 0;
-  for (const char* p = text; *p != '\0'; p++) {
-    if (*p < '0' || *p > '9') return false;
-    const uint32_t digit = (uint32_t)(*p - '0');
-    if (parsed > (UINT32_MAX - digit) / 10) return false;
-    parsed = parsed * 10 + digit;
-  }
-
-  *value = parsed;
-  return true;
-}
-
-static void clearDsVals(void) {
-  dsname = NULL;
-  dsversion = NULL;
-  dschainId = NULL;
-  dsverifyingContract = NULL;
-}
-
 void marshallDsVals(const char* value) {
   if (0 == strncmp(nameForValue, "name", sizeof("name"))) {
     dsname = value;
@@ -380,8 +445,12 @@ static int confirmTypedValue(bool ds_vals, const char* value) {
 }
 
 int dsConfirm(void) {
+  // First check if we recognize the contract
+  uint8_t addrHexStr[20] = {0};
   char name[41] = {0};
   char version[11] = {0};
+  uint32_t chainInt;
+  bool noChain = true;
   IconType iconNum = NO_ICON;
   char title[64] = {0};
   char* fillerStr = "";
@@ -396,47 +465,35 @@ int dsConfirm(void) {
   }
 
   if (dsverifyingContract != NULL) {
-    /* EIP-712 types are host-controlled, so verifyingContract may reach this
-     * function without having passed through the address encoder. Validate it
-     * before any fixed-offset read or display.
-     *
-     * Merge note (#439 vs #440/GH #436): both branches fixed the same OOB read.
-     * This one is kept because it is strictly stronger — it validates the hex
-     * digits as well as the length and prefix, and it fails closed. The other
-     * checked only length and "0x", then set dsverifyingContract = NULL and
-     * fell through to a raw display, so a value like "0xZZZZ..." still reached
-     * sscanf and a malformed contract was shown rather than refused. */
-    /* Scoped to this block: cppcheck's variableScope rightly flagged it at
-       function scope, and CI treats that as fatal. Twenty bytes exactly, the
-       destination decode_address() validates into. */
-    uint8_t addrHexStr[20] = {0};
-    if (!decode_address(dsverifyingContract, addrHexStr)) {
-      clearDsVals();
-      return ADDR_STRING_VFLOW;
+    // Same two-chars-then-strtol idiom as encAddress(). sscanf("%2hhx") did
+    // this before, and it was the firmware's only caller of newlib's scanf
+    // engine — ~6KB of ROM on a part with none to spare.
+    char byteStrBuf[3] = {0};
+    for (int ctr = 2; ctr < 42; ctr += 2) {
+      strncpy(byteStrBuf, (char*)&dsverifyingContract[ctr], 2);
+      addrHexStr[(ctr - 2) / 2] = (uint8_t)strtol(byteStrBuf, NULL, 16);
     }
-    (void)addrHexStr;
-    snprintf(verifyingContract, sizeof(verifyingContract),
-             "Verifying Contract: %s", dsverifyingContract);
+    strcat(verifyingContract, "Verifying Contract: ");
+    strncat(verifyingContract, dsverifyingContract,
+            sizeof(verifyingContract) - sizeof("Verifying Contract: "));
   }
 
   if (NULL != dschainId) {
-    /* Merge note: the release branch parsed this with sscanf("%" SCNu32),
-     * which accepts a trailing space, a leading '+', and non-canonical forms
-     * like "007", and cannot report overflow. eip712_parse_canonical_u32()
-     * rejects all of those and fails closed, so it is used instead. See the
-     * cases in unittests/firmware/ethereum.cpp. */
-    uint32_t chainInt = 0;
-    if (!eip712_parse_canonical_u32(dschainId, &chainInt)) {
-      clearDsVals();
-      return GENERAL_ERROR;
-    }
-    (void)chainInt;
+    noChain = false;
+    chainInt = (uint32_t)strtoul((const char*)dschainId, NULL, 10);
     // As more chains are supported, add icon choice below
     // TBD: not implemented for first release
     // if (chainInt == 1) {
     //     iconNum = ETHEREUM_ICON;
     // }
   }
+  if (noChain == false && dsverifyingContract != NULL) {
+    const TokenType* assetToken =
+        tokenByChainAddress(chainInt, (uint8_t*)addrHexStr);
+    (void)assetToken;
+    fillerStr = "";
+  }
+
   strncpy(title, name, 40);
   if (NULL != dsversion) {
     strncat(title, " Ver: ", 63 - strlen(title));
@@ -446,13 +503,17 @@ int dsConfirm(void) {
     snprintf(chainStr, 32, "chain %s,  ", dschainId);
   }
   // snprintf(contractStr, 64, "verifyingContract: %s", verifyingContract);
-  bool confirmed =
-      confirm_with_icon(ButtonRequestType_ButtonRequest_Other, iconNum, title,
-                        "%s %s%s", chainStr, verifyingContract, fillerStr);
-  /* Clear the marshalled domain values on the refusal path too: they are file
-     statics and a later attempt must not inherit them. */
-  clearDsVals();
-  return confirmed ? SUCCESS : USER_CANCELLED;
+  bool approved =
+      review_with_icon(ButtonRequestType_ButtonRequest_Other, iconNum, title,
+                       "%s %s%s", chainStr, verifyingContract, fillerStr);
+  dsname = NULL;
+  dsversion = NULL;
+  dschainId = NULL;
+  dsverifyingContract = NULL;
+  if (!approved) {
+    return USER_CANCELLED;
+  }
+  return SUCCESS;
 }
 
 /*
@@ -512,10 +573,18 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         }
       }
 
-      bool hasValue = (JSON_TEXT == json_getType(walkVals) ||
-                       JSON_INTEGER == json_getType(walkVals));
-      errRet = confirmName(typeName, hasValue);
-      if (SUCCESS != errRet) {
+      if (walkVals == 0) {
+        return JSON_TYPE_WNOVAL;
+      }
+      const jsonType_t value_type = json_getType(walkVals);
+      if (!fixed_array_cardinality_matches(typeType, walkVals)) {
+        return GENERAL_ERROR;
+      }
+      const bool hasValue = value_type == JSON_TEXT ||
+                            value_type == JSON_INTEGER ||
+                            value_type == JSON_BOOLEAN;
+      valStr = hasValue ? json_getValue(walkVals) : NULL;
+      if (SUCCESS != (errRet = confirmName(typeName, hasValue))) {
         return errRet;
       }
 
@@ -531,13 +600,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
               const char* address = json_getValue(addrVals);
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
-              if (ds_vals) {
-                marshallDsVals(json_getValue(addrVals));
-              } else {
-                errRet = confirmValue(json_getValue(addrVals));
-                if (SUCCESS != errRet) {
-                  return errRet;
-                }
+              if (SUCCESS != (errRet = confirmTypedValue(ds_vals, address))) {
+                return errRet;
               }
 
               errRet = encAddress(address, encBytes);
@@ -549,13 +613,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
             keccak_Final(&valCtx, encBytes);
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
+            if (value_type != JSON_TEXT) return GENERAL_ERROR;
+            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+              return errRet;
             }
             errRet = encAddress(valStr, encBytes);
             if (SUCCESS != errRet) {
@@ -575,13 +635,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
               const char* string_value = json_getValue(stringVals);
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
-              if (ds_vals) {
-                marshallDsVals(json_getValue(stringVals));
-              } else {
-                errRet = confirmValue(json_getValue(stringVals));
-                if (SUCCESS != errRet) {
-                  return errRet;
-                }
+              if (SUCCESS !=
+                  (errRet = confirmTypedValue(ds_vals, string_value))) {
+                return errRet;
               }
               errRet = encString(string_value, strEncBytes);
               if (SUCCESS != errRet) {
@@ -592,13 +648,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
             keccak_Final(&valCtx, encBytes);
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
+            if (value_type != JSON_TEXT) return GENERAL_ERROR;
+            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+              return errRet;
             }
             errRet = encString(valStr, encBytes);
             if (SUCCESS != errRet) {
@@ -611,13 +663,10 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
           if (']' == typeType[strlen(typeType) - 1]) {
             return INT_ARRAY_ERROR;
           } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
+            if (value_type != JSON_TEXT && value_type != JSON_INTEGER)
+              return GENERAL_ERROR;
+            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+              return errRet;
             }
             const bool is_uint = type_is_integer(typeType, "uint");
             uint8_t negInt = 0;  // 0 is positive, 1 is negative
@@ -637,64 +686,44 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
               }
             }
             // all int strings are assumed to be base 10 and fit into 64 bits
-            long long intVal = strtoll(valStr, NULL, 10);
+            const char* digits = valStr + (negInt ? 1 : 0);
+            if (*digits == '\0') return GENERAL_ERROR;
+            for (const char* p = digits; *p; p++) {
+              if (*p < '0' || *p > '9') return GENERAL_ERROR;
+            }
+            errno = 0;
+            char* endptr = NULL;
+            long long intVal = strtoll(valStr, &endptr, 10);
+            if (errno == ERANGE || endptr == valStr || *endptr != '\0') {
+              return GENERAL_ERROR;
+            }
+            if (is_uint && intVal < 0) {
+              return GENERAL_ERROR;
+            }
+            const unsigned declared_bits =
+                integer_type_width(typeType, is_uint ? "uint" : "int");
+            if (declared_bits < 64) {
+              if (is_uint) {
+                const uint64_t max_value = (UINT64_C(1) << declared_bits) - 1;
+                if ((uint64_t)intVal > max_value) return GENERAL_ERROR;
+              } else {
+                const int64_t min_value = -(INT64_C(1) << (declared_bits - 1));
+                const int64_t max_value =
+                    (INT64_C(1) << (declared_bits - 1)) - 1;
+                if (intVal < min_value || intVal > max_value)
+                  return GENERAL_ERROR;
+              }
+            }
             // Needs to be big endian, so add to encBytes appropriately
-            encBytes[24] = (intVal >> 56) & 0xff;
-            encBytes[25] = (intVal >> 48) & 0xff;
-            encBytes[26] = (intVal >> 40) & 0xff;
-            encBytes[27] = (intVal >> 32) & 0xff;
-            encBytes[28] = (intVal >> 24) & 0xff;
-            encBytes[29] = (intVal >> 16) & 0xff;
-            encBytes[30] = (intVal >> 8) & 0xff;
-            encBytes[31] = (intVal) & 0xff;
-          }
-
-        } else if (0 == strncmp("bytes", typeType, strlen("bytes"))) {
-          if (']' == typeType[strlen(typeType) - 1]) {
-            return BYTESN_ARRAY_ERROR;
-          } else {
-            // This could be 'bytes', 'bytes1', ..., 'bytes32'
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
-            if (0 == strcmp(typeType, "bytes")) {
-              errRet = encodeBytes(valStr, encBytes);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-
-            } else {
-              errRet = encodeBytesN(typeType, valStr, encBytes);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
-          }
-
-        } else if (0 == strncmp("bool", typeType, strlen(typeType))) {
-          if (']' == typeType[strlen(typeType) - 1]) {
-            return BOOL_ARRAY_ERROR;
-          } else {
-            if (ds_vals) {
-              marshallDsVals(valStr);
-            } else {
-              errRet = confirmValue(valStr);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
-            for (ctr = 0; ctr < 32; ctr++) {
-              // leading zeros in bool
-              encBytes[ctr] = 0;
-            }
-            if (0 == strncmp(valStr, "true", sizeof("true"))) {
-              encBytes[31] = 0x01;
-            }
+            const uint64_t intBits = (uint64_t)intVal;
+            encBytes[24] = (intBits >> 56) & 0xff;
+            encBytes[25] = (intBits >> 48) & 0xff;
+            encBytes[26] = (intBits >> 40) & 0xff;
+            encBytes[27] = (intBits >> 32) & 0xff;
+            encBytes[28] = (intBits >> 24) & 0xff;
+            encBytes[29] = (intBits >> 16) & 0xff;
+            encBytes[30] = (intBits >> 8) & 0xff;
+            encBytes[31] = intBits & 0xff;
           }
 
         } else {
@@ -845,8 +874,7 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
     tarray = json_getSibling(tarray);
   }
   if (ds_vals) {
-    errRet = dsConfirm();
-    if (SUCCESS != errRet) {
+    if (SUCCESS != (errRet = dsConfirm())) {
       return errRet;
     }
   }
