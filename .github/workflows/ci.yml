@@ -24,7 +24,10 @@ name: CI
 
 on:
   push:
-    branches: [master, develop, 'feature/**', 'fix/**', 'release/**', 'hotfix/**']
+    # Topic branches are validated by pull_request below. Running both push and
+    # pull_request for the same in-repository branch doubles every expensive
+    # firmware/integration leg without adding an independent signal.
+    branches: [master, develop]
   pull_request:
     branches: [master, develop]
   workflow_dispatch:
