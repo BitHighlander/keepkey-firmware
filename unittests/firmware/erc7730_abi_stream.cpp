@@ -5,6 +5,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace {
@@ -63,6 +64,33 @@ TEST(Erc7730AbiStream, AcceptsAtomicArgumentsAtEveryChunkBoundary) {
   EXPECT_EQ(stream(&program, encoded, 13), ERC7730_ABI_NON_CANONICAL);
 }
 
+/* The top-level calldata stream is begun in one handler and fed by later
+ * TxAck messages, after the Erc7730AbiProgram the caller passed has gone out
+ * of scope. The stream must not depend on that object: clobber it after
+ * begin() and the feed must still walk the real type tree. */
+TEST(Erc7730AbiStream, OutlivesTheProgramPassedToBegin) {
+  const Erc7730AbiNode nodes[] = {
+      {ERC7730_ABI_TUPLE, 0, 1, 3, 0},
+      {ERC7730_ABI_ADDRESS, 0, 0, 0, 0},
+      {ERC7730_ABI_UINT, 16, 0, 0, 0},
+      {ERC7730_ABI_BOOL, 0, 0, 0, 0},
+  };
+  std::vector<uint8_t> encoded;
+  word(encoded, 0x1234);
+  word(encoded, 65535);
+  word(encoded, 1);
+
+  Erc7730AbiProgram program{nodes, 4, 0};
+  Erc7730AbiStream state{};
+  ASSERT_EQ(erc7730_abi_stream_begin(&state, &program, encoded.size()),
+            ERC7730_ABI_OK);
+  memset(&program, 0xFF, sizeof(program));  // caller's frame is gone
+  EXPECT_EQ(erc7730_abi_stream_feed(&state, 0, encoded.data(), encoded.size()),
+            ERC7730_ABI_OK);
+  EXPECT_EQ(erc7730_abi_stream_finish(&state), ERC7730_ABI_OK);
+  erc7730_abi_stream_clear(&state);
+}
+
 TEST(Erc7730AbiStream, AcceptsCanonicalRecursiveDynamicValues) {
   const Erc7730AbiNode nodes[] = {
       {ERC7730_ABI_TUPLE, 0, 1, 2, 0},
@@ -86,6 +114,41 @@ TEST(Erc7730AbiStream, AcceptsCanonicalRecursiveDynamicValues) {
   auto gap = encoded;
   gap[63] = 160;
   EXPECT_EQ(stream(&program, gap, 17), ERC7730_ABI_NON_CANONICAL);
+}
+
+TEST(Erc7730AbiStream, CapturesAuthenticatedArrayLength) {
+  const Erc7730AbiNode nodes[] = {
+      {ERC7730_ABI_TUPLE, 0, 1, 1, 0},
+      {ERC7730_ABI_ARRAY, 0, 2, 1, ERC7730_ABI_DYNAMIC_ARRAY},
+      {ERC7730_ABI_UINT, 256, 0, 0, 0},
+  };
+  const Erc7730AbiProgram program{nodes, 3, 0};
+  std::vector<uint8_t> encoded;
+  word(encoded, 32);
+  word(encoded, 3);
+  word(encoded, 7);
+  word(encoded, 8);
+  word(encoded, 9);
+
+  Erc7730AbiStream state{};
+  ASSERT_EQ(erc7730_abi_stream_begin(&state, &program, encoded.size()),
+            ERC7730_ABI_OK);
+  const int32_t path[] = {0};
+  ASSERT_EQ(erc7730_abi_stream_capture_array_path(&state, path, 1),
+            ERC7730_ABI_OK);
+  for (size_t offset = 0; offset < encoded.size();) {
+    const size_t length = std::min(size_t{5}, encoded.size() - offset);
+    ASSERT_EQ(erc7730_abi_stream_feed(&state, offset, encoded.data() + offset,
+                                      length),
+              ERC7730_ABI_OK);
+    offset += length;
+  }
+  ASSERT_EQ(erc7730_abi_stream_finish(&state), ERC7730_ABI_OK);
+  Erc7730AbiCapture capture{};
+  ASSERT_TRUE(erc7730_abi_stream_captured(&state, &capture));
+  EXPECT_EQ(capture.node, 1u);
+  ASSERT_EQ(capture.length, 32u);
+  EXPECT_EQ(capture.data[31], 3u);
 }
 
 TEST(Erc7730AbiStream, RejectsInvalidUtf8PaddingAndTruncation) {
