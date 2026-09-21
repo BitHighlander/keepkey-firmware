@@ -25,11 +25,20 @@ if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
       binance.c
       eip712.c
+      eip712_stream.c
       eos.c
       eos-contracts/eosio.system.c
       eos-contracts/eosio.token.c
       ethereum.c
       ethereum_contracts.c
+      erc7730_abi.c
+      erc7730_abi_stream.c
+      erc7730_catalog.c
+      erc7730_condition.c
+      erc7730_format.c
+      erc7730_program.c
+      erc7730_tx.c
+      erc7730_workflow.c
       ethereum_contracts/makerdao.c
       ethereum_contracts/saproxy.c
       ethereum_contracts/zxappliquid.c
