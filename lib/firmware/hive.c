@@ -35,28 +35,6 @@ bool hive_getPublicKey(const uint8_t public_key[33], char* out,
 // Path: m/48'/13'/role_hardened/account_index_hardened/0'
 // hdnode_private_ckd() returns 1 on success, 0 on failure.
 
-static bool hive_role_valid(uint32_t role) {
-  return role == HIVE_ROLE_OWNER || role == HIVE_ROLE_ACTIVE ||
-         role == HIVE_ROLE_MEMO || role == HIVE_ROLE_POSTING;
-}
-
-bool hive_slip48_path_valid(const uint32_t* address_n, size_t count) {
-  if (!address_n || count != 5) return false;
-  if (address_n[0] != HIVE_SLIP48_PURPOSE) return false;
-  if (address_n[1] != HIVE_SLIP48_NETWORK) return false;
-  if (!hive_role_valid(address_n[2])) return false;
-  if ((address_n[3] & 0x80000000u) == 0) return false;
-  if (address_n[4] != 0x80000000u) return false;
-  return true;
-}
-
-bool hive_slip48_path_valid_for_role(const uint32_t* address_n, size_t count,
-                                     uint32_t required_role) {
-  return hive_role_valid(required_role) &&
-         hive_slip48_path_valid(address_n, count) &&
-         address_n[2] == required_role;
-}
-
 bool hive_deriveRawKey(const HDNode* root, uint32_t role_hardened,
                        uint32_t account_index_hardened, uint8_t out[33]) {
   HDNode node;
@@ -199,12 +177,9 @@ static void append_tx_footer(uint8_t** buf, const uint8_t* end) {
 }
 
 /*
- * Graphene legacy canonical-signature rule (identical to EOS/Steem): high bit
- * of both r and s must be clear — same predicate as eos_is_canonic. Modern
- * hived (post-HF28) actually enforces only BIP-0062 low-S (fc is_canonical ->
- * is_bip_0062_canonical), which trezor-crypto's low-S normalization already
- * guarantees; keeping the stricter legacy rule costs an occasional extra
- * RFC6979 iteration and stays compatible with every historical verifier.
+ * Graphene canonical-signature rule (identical to EOS/Steem): high bit of
+ * both r and s must be clear. hived rejects non-canonical compact sigs, so
+ * signing must retry until canonical — same predicate as eos_is_canonic.
  */
 static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
   (void)v;
@@ -215,24 +190,7 @@ static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
 }
 
 /*
- * Core sign helper over an already-computed 32-byte digest → 65-byte
- * compact recoverable sig: header (27 + recovery_id + 4 compressed-key
- * flag), then r(32) ‖ s(32).
- */
-static bool hive_sign_raw_digest(const HDNode* node, const uint8_t digest[32],
-                                 uint8_t sig[65]) {
-  uint8_t pby;
-  if (ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig + 1, &pby,
-                        hive_is_canonic) != 0) {
-    return false;
-  }
-  // Compact signature header: 27 + recovery_id + 4 (compressed key flag)
-  sig[0] = 27 + pby + 4;
-  return true;
-}
-
-/*
- * Transaction sign helper: SHA256(chain_id || serialized_tx) → compact sig.
+ * Sign helper: SHA256(chain_id || serialized_tx) → secp256k1 recoverable sig.
  * Writes 65 bytes into sig[]. Returns true on success.
  */
 static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
@@ -245,583 +203,24 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
   uint8_t digest[32];
   sha256_Final(&sha, digest);
 
-  bool ok = hive_sign_raw_digest(node, digest, sig);
-  memzero(digest, sizeof(digest));
-  return ok;
-}
-
-/*
- * Chain-id select (host-supplied 32-byte chain_id or mainnet default) +
- * hive_sign_digest, writing the 65-byte compact signature into sig[].
- */
-static bool hive_sign_tx_sig(const HDNode* node, bool has_chain_id,
-                             const uint8_t* chain_id_bytes,
-                             size_t chain_id_size, const uint8_t* tx_buf,
-                             size_t tx_len, uint8_t sig[65]) {
-  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
-  /* Pin to Hive mainnet. A host-supplied chain_id is accepted only if it equals
-   * mainnet; any other value is refused rather than signed under an undisclosed
-   * network domain (the confirmations just say "Hive"). This also keeps the tx
-   * digest domain singular — SHA256(mainnet_chain_id || tx) — so the
-   * message-signing guard that rejects messages beginning with the mainnet
-   * chain id fully closes the tx/message signature collision. */
-  if (has_chain_id) {
-    if (chain_id_size != HIVE_CHAIN_ID_LEN ||
-        memcmp(chain_id_bytes, default_chain_id, HIVE_CHAIN_ID_LEN) != 0) {
-      return false;
-    }
-  }
-  return hive_sign_digest(node, default_chain_id, tx_buf, tx_len, sig);
-}
-
-// ── Parsed operation signing (HiveSignOperations) ─────────────────────────
-//
-// The host serializes the transaction; firmware re-derives everything it
-// displays from the bytes and refuses anything outside the phase-1 op table.
-// Digest/signature are identical to HiveSignTx: SHA256(chain_id || tx).
-
-typedef struct {
-  const uint8_t* p;
-  const uint8_t* end;
-} HiveCur;
-
-/*
- * Bounded unsigned LEB128: at most 5 bytes, must fit uint32, overlong
- * encodings rejected (an unbounded shift is a classic overflow hole).
- */
-static bool cur_varint(HiveCur* c, uint32_t* out) {
-  uint32_t v = 0;
-  for (int shift = 0; shift <= 28; shift += 7) {
-    if (c->p >= c->end) return false;
-    uint8_t b = *c->p++;
-    if (shift == 28 && (b & 0xF0)) return false;  // overflow or 6th byte
-    v |= (uint32_t)(b & 0x7F) << shift;
-    if (!(b & 0x80)) {
-      *out = v;
-      return true;
-    }
-  }
-  return false;
-}
-
-/* varint length + bytes, bounds-checked against the buffer AND field caps. */
-static bool cur_string(HiveCur* c, const uint8_t** s, uint16_t* slen,
-                       uint32_t min_len, uint32_t max_len) {
-  uint32_t n;
-  if (!cur_varint(c, &n)) return false;
-  if (n < min_len || n > max_len) return false;
-  if ((size_t)(c->end - c->p) < n) return false;
-  *s = c->p;
-  *slen = (uint16_t)n;
-  c->p += n;
-  return true;
-}
-
-/* Fixed-width little-endian readers, bounds-checked against the buffer. */
-static bool cur_u16(HiveCur* c, uint16_t* out) {
-  if ((size_t)(c->end - c->p) < 2) return false;
-  *out = (uint16_t)((uint16_t)c->p[0] | ((uint16_t)c->p[1] << 8));
-  c->p += 2;
-  return true;
-}
-
-static bool cur_u32(HiveCur* c, uint32_t* out) {
-  if ((size_t)(c->end - c->p) < 4) return false;
-  *out = (uint32_t)c->p[0] | ((uint32_t)c->p[1] << 8) |
-         ((uint32_t)c->p[2] << 16) | ((uint32_t)c->p[3] << 24);
-  c->p += 4;
-  return true;
-}
-
-/*
- * Graphene serializes bool as one byte. Anything other than 0/1 is a host
- * serializer bug, not a truthy value — reject rather than normalize, so a
- * malformed fill_or_kill or allow_votes can never be silently coerced.
- */
-static bool cur_bool(HiveCur* c, bool* out) {
-  if (c->p >= c->end) return false;
-  uint8_t b = *c->p++;
-  if (b > 1) return false;
-  *out = (b == 1);
-  return true;
-}
-
-uint64_t hive_assetAmount(const uint8_t* asset) {
-  uint64_t v = 0;
-  for (int i = 7; i >= 0; i--) v = (v << 8) | asset[i];
-  return v;
-}
-
-uint8_t hive_assetPrecision(const uint8_t* asset) { return asset[8]; }
-
-const char* hive_assetSymbol(const uint8_t* asset) {
-  return (const char*)(asset + 9);
-}
-
-/*
- * One 16-byte Graphene asset: int64 LE amount, uint8 precision, 7-byte
- * NUL-padded symbol.
- *
- * The symbol must be in `allowed` and carry its protocol-fixed precision.
- * Both checks are load-bearing for display integrity: an unexpected symbol
- * lets a host swap VESTS for HIVE (a ~2000x difference in real value behind
- * an identical-looking number), and a wrong precision moves the decimal
- * point on the confirmation screen relative to what the chain applies.
- */
-static bool cur_asset(HiveCur* c, const uint8_t** out, uint32_t allowed) {
-  if ((size_t)(c->end - c->p) < HIVE_ASSET_LEN) return false;
-  const uint8_t* a = c->p;
-  const uint8_t* sym = a + 9;
-
-  uint32_t bit;
-  uint8_t want_precision;
-  size_t sym_len;
-  if (memcmp(sym, "HIVE", 4) == 0) {
-    bit = HIVE_SYM_HIVE;
-    want_precision = 3;
-    sym_len = 4;
-  } else if (memcmp(sym, "HBD", 3) == 0) {
-    bit = HIVE_SYM_HBD;
-    want_precision = 3;
-    sym_len = 3;
-  } else if (memcmp(sym, "VESTS", 5) == 0) {
-    bit = HIVE_SYM_VESTS;
-    want_precision = 6;
-    sym_len = 5;
-  } else {
+  uint8_t pby;
+  if (ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig + 1, &pby,
+                        hive_is_canonic) != 0) {
+    memzero(digest, sizeof(digest));
     return false;
   }
-  // The prefix compares above would also accept a longer symbol sharing the
-  // prefix ("HBDX"); the padding check is what makes them exact, and it also
-  // guarantees hive_assetSymbol() returns a NUL-terminated C string.
-  for (size_t i = sym_len; i < 7; i++) {
-    if (sym[i] != 0) return false;
-  }
-  if (!(bit & allowed)) return false;
-  if (a[8] != want_precision) return false;
-  // Every asset field in this table is a quantity. A negative int64 would
-  // render as an enormous positive number through the unsigned formatter.
-  if (a[7] & 0x80) return false;
-
-  *out = a;
-  c->p += HIVE_ASSET_LEN;
-  return true;
-}
-
-/*
- * Shared rejection reasons.
- *
- * These are diagnostics, not security surface: the protection is that the
- * device REFUSES, and the host already knows which operation it sent. One
- * bespoke sentence per failure site cost ~1.8KB of rodata on a part with
- * single-digit KB of flash left, so failures are grouped by reason instead.
- * The three that carry a distinct security meaning — an authority rotation,
- * a detached comment_options, a wrong-tier request — stay separate so they
- * are never confused with an ordinary parse failure in a bug report.
- */
-static const char E_MALFORMED[] = "Hive tx: malformed operation";
-static const char E_RANGE[] = "Hive tx: value out of range";
-static const char E_AMOUNT[] = "Hive tx: amount must be greater than zero";
-static const char E_NOOP[] = "Hive tx: operation has no effect";
-static const char E_EXTENSIONS[] = "Hive tx: extensions must be empty";
-static const char E_BENEFICIARIES[] = "Hive tx: invalid beneficiaries";
-static const char E_SYMBOLS[] = "Hive tx: order symbols must differ";
-static const char E_AUTHORITY[] = "Hive tx: authority changes not supported";
-static const char E_BINDING[] =
-    "Hive tx: comment_options must follow its comment";
-static const char E_MIXED_TIER[] = "Hive tx: mixed posting/active ops";
-
-const char* hive_parseOperations(const uint8_t* tx, size_t len,
-                                 HiveParsedTx* out) {
-  memzero(out, sizeof(*out));
-  // 10-byte header + op_count varint + extensions varint is the structural
-  // minimum; op bodies are bounds-checked as they parse.
-  if (len < 12) return "Hive tx too short";
-  if (len > HIVE_MAX_OPS_TX_LEN) return "Hive tx too long";  // = proto cap
-
-  // Header (ref_block_num u16, ref_block_prefix u32, expiration u32) is
-  // covered by the signature but carries nothing to confirm on-device.
-  HiveCur c = {tx + 10, tx + len};
-
-  uint32_t op_count;
-  if (!cur_varint(&c, &op_count)) return E_MALFORMED;
-  if (op_count < 1 || op_count > HIVE_MAX_TX_OPS)
-    return "Hive tx: op count must be 1-4";
-  out->num_ops = (uint8_t)op_count;
-
-  bool any_posting = false, any_active = false;
-
-  for (uint32_t i = 0; i < op_count; i++) {
-    HiveTxOp* op = &out->ops[i];
-    uint32_t op_type;
-    if (!cur_varint(&c, &op_type)) return E_MALFORMED;
-    op->op_type = op_type;
-
-    switch (op_type) {
-      case HIVE_OP_VOTE: {  // posting authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_string(&c, &op->target, &op->target_len, 1, 16) ||
-            !cur_string(&c, &op->detail, &op->detail_len, 1, 256))
-          return E_MALFORMED;
-        if ((size_t)(c.end - c.p) < 2) return E_MALFORMED;
-        int16_t w = (int16_t)((uint16_t)c.p[0] | ((uint16_t)c.p[1] << 8));
-        c.p += 2;
-        if (w < -10000 || w > 10000) return E_RANGE;
-        op->weight = w;
-        any_posting = true;
-        break;
-      }
-      case HIVE_OP_COMMENT: {  // posting authority
-        const uint8_t *pa, *ppl, *permlink, *jm;
-        uint16_t pa_len, ppl_len, permlink_len, jm_len;
-        if (!cur_string(&c, &pa, &pa_len, 0, 16) ||
-            !cur_string(&c, &ppl, &ppl_len, 1, 256) ||
-            !cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_string(&c, &permlink, &permlink_len, 1, 256) ||
-            !cur_string(&c, &op->target, &op->target_len, 0, 256) ||
-            !cur_string(&c, &op->detail, &op->detail_len, 1,
-                        HIVE_MAX_OPS_TX_LEN) ||
-            !cur_string(&c, &jm, &jm_len, 0, HIVE_MAX_OPS_TX_LEN))
-          return E_MALFORMED;
-        op->parent_author = pa;
-        op->parent_author_len = pa_len;
-        op->parent_permlink = ppl;
-        op->parent_permlink_len = ppl_len;
-        op->permlink = permlink;
-        op->permlink_len = permlink_len;
-        op->json_metadata = jm;
-        op->json_metadata_len = jm_len;
-        op->is_top_level = (pa_len == 0);
-        any_posting = true;
-        break;
-      }
-      case HIVE_OP_CUSTOM_JSON: {  // posting OR active authority
-        uint32_t n_active, n_posting;
-        if (!cur_varint(&c, &n_active)) return E_MALFORMED;
-        for (uint32_t k = 0; k < n_active; k++) {
-          const uint8_t* s;
-          uint16_t sl;
-          if (!cur_string(&c, &s, &sl, 1, 16)) return E_MALFORMED;
-          if (!op->acct) {
-            op->acct = s;
-            op->acct_len = sl;
-          }
-        }
-        if (!cur_varint(&c, &n_posting)) return E_MALFORMED;
-        for (uint32_t k = 0; k < n_posting; k++) {
-          const uint8_t* s;
-          uint16_t sl;
-          if (!cur_string(&c, &s, &sl, 1, 16)) return E_MALFORMED;
-          if (!op->acct) {
-            op->acct = s;
-            op->acct_len = sl;
-          }
-        }
-        if (n_active + n_posting == 0) return E_MALFORMED;
-        // Both tiers on one op can never be satisfied by a single signature
-        // (post-HF28 hived requires the exact authority) — malformed input.
-        if (n_active > 0 && n_posting > 0) return E_MIXED_TIER;
-        if (!cur_string(&c, &op->target, &op->target_len, 1, 32) ||
-            !cur_string(&c, &op->detail, &op->detail_len, 1,
-                        HIVE_MAX_OPS_TX_LEN))
-          return E_MALFORMED;
-        op->n_auths = (uint8_t)(n_active + n_posting);
-        op->needs_active = (n_active > 0);
-        if (op->needs_active)
-          any_active = true;
-        else
-          any_posting = true;
-        break;
-      }
-      case HIVE_OP_TRANSFER_TO_VESTING: {  // active authority
-        // `to` may be empty — hived reads that as "power up to self".
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_string(&c, &op->target, &op->target_len, 0, 16) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HIVE))
-          return E_MALFORMED;
-        if (hive_assetAmount(op->assets[0]) == 0) return E_AMOUNT;
-        op->n_assets = 1;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_WITHDRAW_VESTING: {  // active authority
-        // 0.000000 VESTS is meaningful here: it cancels an in-progress
-        // power-down, so zero must NOT be rejected.
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_VESTS))
-          return E_MALFORMED;
-        op->n_assets = 1;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_LIMIT_ORDER_CREATE: {  // active authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_u32(&c, &op->req_id) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HIVE | HIVE_SYM_HBD) ||
-            !cur_asset(&c, &op->assets[1], HIVE_SYM_HIVE | HIVE_SYM_HBD) ||
-            !cur_bool(&c, &op->flag) || !cur_u32(&c, &op->expiration))
-          return E_MALFORMED;
-        if (hive_assetAmount(op->assets[0]) == 0 ||
-            hive_assetAmount(op->assets[1]) == 0)
-          return E_AMOUNT;
-        // The internal market only pairs HIVE against HBD. A same-symbol
-        // order is rejected on-chain anyway, and on the OLED it would read
-        // as a harmless self-trade while burning the fill.
-        if (memcmp(op->assets[0] + 9, op->assets[1] + 9, 7) == 0)
-          return E_SYMBOLS;
-        op->n_assets = 2;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_LIMIT_ORDER_CANCEL: {  // active authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_u32(&c, &op->req_id))
-          return E_MALFORMED;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_CONVERT: {  // active authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_u32(&c, &op->req_id) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HBD))
-          return E_MALFORMED;
-        if (hive_assetAmount(op->assets[0]) == 0) return E_AMOUNT;
-        op->n_assets = 1;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_COMMENT_OPTIONS: {  // posting authority
-        uint16_t percent_hbd;
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_string(&c, &op->permlink, &op->permlink_len, 1, 256) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HBD) ||
-            !cur_u16(&c, &percent_hbd) || !cur_bool(&c, &op->flag) ||
-            !cur_bool(&c, &op->flag2))
-          return E_MALFORMED;
-        if (percent_hbd > 10000) return E_RANGE;
-        op->weight = (int16_t)percent_hbd;
-        op->n_assets = 1;
-
-        // SECURITY: this op redirects a post's payout. It binds to exactly
-        // one post, so it is accepted ONLY immediately after a comment op
-        // with the same author and permlink. Standing alone it could attach
-        // beneficiaries to a post the user published earlier and is not
-        // reviewing on this screen.
-        if (i == 0 || out->ops[i - 1].op_type != HIVE_OP_COMMENT)
-          return E_BINDING;
-        const HiveTxOp* prev = &out->ops[i - 1];
-        if (prev->acct_len != op->acct_len ||
-            memcmp(prev->acct, op->acct, op->acct_len) != 0 ||
-            prev->permlink_len != op->permlink_len ||
-            memcmp(prev->permlink, op->permlink, op->permlink_len) != 0)
-          return E_BINDING;
-
-        uint32_t ext_n;
-        if (!cur_varint(&c, &ext_n)) return E_MALFORMED;
-        // hived permits only one comment_payout_beneficiaries extension;
-        // two would let a host split 16 beneficiaries past a per-extension
-        // bound check.
-        if (ext_n > 1) return E_BENEFICIARIES;
-        if (ext_n == 1) {
-          uint32_t tag, n_benef;
-          if (!cur_varint(&c, &tag) || tag != 0) return E_BENEFICIARIES;
-          if (!cur_varint(&c, &n_benef) || n_benef < 1 ||
-              n_benef > HIVE_MAX_BENEFICIARIES)
-            return E_BENEFICIARIES;
-          uint32_t weight_sum = 0;
-          const uint8_t* prev_acct = NULL;
-          uint16_t prev_acct_len = 0;
-          for (uint32_t k = 0; k < n_benef; k++) {
-            if (!cur_string(&c, &op->benef_acct[k], &op->benef_acct_len[k], 1,
-                            16) ||
-                !cur_u16(&c, &op->benef_weight[k]))
-              return E_MALFORMED;
-            if (op->benef_weight[k] > 10000) return E_RANGE;
-            // hived requires strictly ascending account names, which also
-            // enforces uniqueness. An unsorted list is rejected on-chain, so
-            // signing it would only waste a device confirmation.
-            if (prev_acct) {
-              uint16_t min_len = prev_acct_len < op->benef_acct_len[k]
-                                     ? prev_acct_len
-                                     : op->benef_acct_len[k];
-              int cmp = memcmp(prev_acct, op->benef_acct[k], min_len);
-              if (cmp > 0 ||
-                  (cmp == 0 && prev_acct_len >= op->benef_acct_len[k]))
-                return E_BENEFICIARIES;
-            }
-            prev_acct = op->benef_acct[k];
-            prev_acct_len = op->benef_acct_len[k];
-            weight_sum += op->benef_weight[k];
-          }
-          if (weight_sum > 10000) return E_BENEFICIARIES;
-          op->n_benef = (uint8_t)n_benef;
-        }
-        any_posting = true;
-        break;
-      }
-      case HIVE_OP_TRANSFER_TO_SAVINGS: {  // active authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_string(&c, &op->target, &op->target_len, 1, 16) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HIVE | HIVE_SYM_HBD) ||
-            !cur_string(&c, &op->detail, &op->detail_len, 0, HIVE_MAX_MEMO_LEN))
-          return E_MALFORMED;
-        if (hive_assetAmount(op->assets[0]) == 0) return E_AMOUNT;
-        op->n_assets = 1;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_TRANSFER_FROM_SAVINGS: {  // active authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_u32(&c, &op->req_id) ||
-            !cur_string(&c, &op->target, &op->target_len, 1, 16) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HIVE | HIVE_SYM_HBD) ||
-            !cur_string(&c, &op->detail, &op->detail_len, 0, HIVE_MAX_MEMO_LEN))
-          return E_MALFORMED;
-        if (hive_assetAmount(op->assets[0]) == 0) return E_AMOUNT;
-        op->n_assets = 1;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_CLAIM_REWARD_BALANCE: {  // posting authority
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_HIVE) ||
-            !cur_asset(&c, &op->assets[1], HIVE_SYM_HBD) ||
-            !cur_asset(&c, &op->assets[2], HIVE_SYM_VESTS))
-          return E_MALFORMED;
-        if (hive_assetAmount(op->assets[0]) == 0 &&
-            hive_assetAmount(op->assets[1]) == 0 &&
-            hive_assetAmount(op->assets[2]) == 0)
-          return E_NOOP;
-        op->n_assets = 3;
-        any_posting = true;
-        break;
-      }
-      case HIVE_OP_DELEGATE_VESTING_SHARES: {  // active authority
-        // 0.000000 VESTS is meaningful: it removes an existing delegation.
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16) ||
-            !cur_string(&c, &op->target, &op->target_len, 1, 16) ||
-            !cur_asset(&c, &op->assets[0], HIVE_SYM_VESTS))
-          return E_MALFORMED;
-        op->n_assets = 1;
-        any_active = true;
-        break;
-      }
-      case HIVE_OP_ACCOUNT_UPDATE2: {  // active or posting authority
-        uint32_t ext_n;
-        if (!cur_string(&c, &op->acct, &op->acct_len, 1, 16))
-          return E_MALFORMED;
-        // SECURITY: account_update2 can rotate owner/active/posting/memo
-        // keys. Only the profile-metadata form is in the table — this is the
-        // op-9/10 device-derived-keys invariant applied field-level. Any
-        // authority field present is a hard reject; do NOT soften this
-        // without the authority-management design review.
-        for (int k = 0; k < 4; k++) {
-          bool present;
-          if (!cur_bool(&c, &present)) return E_MALFORMED;
-          if (present) return E_AUTHORITY;
-        }
-        if (!cur_string(&c, &op->detail, &op->detail_len, 0,
-                        HIVE_MAX_OPS_TX_LEN) ||
-            !cur_string(&c, &op->json_metadata, &op->json_metadata_len, 0,
-                        HIVE_MAX_OPS_TX_LEN))
-          return E_MALFORMED;
-        if (op->detail_len == 0 && op->json_metadata_len == 0) return E_NOOP;
-        if (!cur_varint(&c, &ext_n)) return E_MALFORMED;
-        if (ext_n != 0) return E_EXTENSIONS;
-        // json_metadata is an active-key field; a posting_json_metadata-only
-        // update is a posting-tier profile change.
-        op->needs_active = (op->detail_len > 0);
-        if (op->needs_active)
-          any_active = true;
-        else
-          any_posting = true;
-        break;
-      }
-      case HIVE_OP_TRANSFER:
-      case HIVE_OP_ACCOUNT_CREATE:
-      case HIVE_OP_ACCOUNT_UPDATE:
-        // PERMANENTLY excluded from this table: transfer keeps the stronger
-        // dedicated HiveSignTx display path; the account ops keep the
-        // device-derived-keys-only invariant (a generic raw-bytes path
-        // would let a host slip third-party authorities into an
-        // account_update). Never add these here.
-        return "Hive tx: op requires its dedicated message type";
-      default:
-        return "Hive tx: unsupported operation type";
-    }
-  }
-
-  uint32_t ext_count;
-  if (!cur_varint(&c, &ext_count)) return E_MALFORMED;
-  if (ext_count != 0) return E_EXTENSIONS;
-  if (c.p != c.end) return "Hive tx: trailing bytes";
-
-  // One signature cannot satisfy posting- and active-tier ops at once.
-  if (any_posting && any_active) return E_MIXED_TIER;
-  out->needs_active = any_active;
-  return NULL;
-}
-
-void hive_signOperations(const HDNode* node, const HiveSignOperations* msg,
-                         HiveSignedOperations* resp) {
-  if (!msg->has_serialized_tx || msg->serialized_tx.size == 0 ||
-      msg->serialized_tx.size > HIVE_MAX_OPS_TX_LEN)
-    return;
-
-  // Hash straight from the decoded message — no stack copy of the 2KB tx.
-  if (!hive_sign_tx_sig(node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, msg->serialized_tx.bytes,
-                        msg->serialized_tx.size, resp->signature.bytes)) {
-    return;
-  }
-
-  resp->has_signature = true;
-  resp->signature.size = 65;
-}
-
-// ── Message signing (Keychain signBuffer contract) ────────────────────────
-// Digest is SHA256(message bytes) ONLY: no chain_id prepend (unlike
-// transactions) and no Bitcoin/Solana-style message prefix. hive-js
-// Signature.signBuffer — which every Hive dApp verifies against — hashes
-// the raw bytes exactly once; any added prefix silently breaks all dApp
-// verification.
-
-bool hive_message_is_printable(const uint8_t* message, size_t len) {
-  for (size_t i = 0; i < len; i++) {
-    if (message[i] < 0x20 || message[i] > 0x7e) return false;
-  }
-  return true;
-}
-
-void hive_signMessage(const HDNode* node, const HiveSignMessage* msg,
-                      HiveSignedMessage* resp) {
-  if (!msg->has_message || msg->message.size > HIVE_MAX_MESSAGE_LEN) return;
-
-  uint8_t digest[32];
-  sha256_Raw(msg->message.bytes, msg->message.size, digest);
-
-  uint8_t sig[65];
-  if (!hive_sign_raw_digest(node, digest, sig)) {
-    memzero(digest, sizeof(digest));
-    memzero(sig, sizeof(sig));
-    return;
-  }
-
-  resp->has_signature = true;
-  resp->signature.size = 65;
-  memcpy(resp->signature.bytes, sig, 65);
-
-  // Caller must have run hdnode_fill_public_key(node). Returned so the host
-  // can build Keychain's publicKey response field without a second call.
-  resp->has_public_key = true;
-  resp->public_key.size = 33;
-  memcpy(resp->public_key.bytes, node->public_key, 33);
-
+  // Compact signature header: 27 + recovery_id + 4 (compressed key flag)
+  sig[0] = 27 + pby + 4;
   memzero(digest, sizeof(digest));
-  memzero(sig, sizeof(sig));
+  return true;
 }
 
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
+
+// Maximum memo length that fits safely in tx_buf[512] with all other fields.
+// Non-memo overhead: header(12) + from(17) + to(17) + asset(16) + footer(1) =
+// ~63 bytes. 512 - 63 - 3 (varint) = 446; use 440 as the conservative limit.
+#define HIVE_MAX_MEMO_LEN 440
 
 static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
                                       size_t buf_len) {
@@ -851,19 +250,27 @@ void hive_signTx(const HDNode* node, const HiveSignTx* msg,
   uint8_t tx_buf[512];
   size_t tx_len = hive_serialize_transfer(msg, tx_buf, sizeof(tx_buf));
 
-  if (!hive_sign_tx_sig(node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, tx_buf, tx_len,
-                        resp->signature.bytes)) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
+          ? msg->chain_id.bytes
+          : default_chain_id;
+
+  uint8_t sig[65];
+  if (!hive_sign_digest(node, chain_id, tx_buf, tx_len, sig)) {
+    memzero(sig, sizeof(sig));
     return;
   }
 
   resp->has_signature = true;
   resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = tx_len;
   memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
 
+  memzero(sig, sizeof(sig));
   memzero(tx_buf, tx_len);
 }
 
@@ -925,20 +332,28 @@ void hive_signAccountCreate(const HDNode* signing_node,
       hive_serialize_account_create(msg, owner_raw, active_raw, posting_raw,
                                     memo_raw, tx_buf, sizeof(tx_buf));
 
-  if (!hive_sign_tx_sig(signing_node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, tx_buf, tx_len,
-                        resp->signature.bytes)) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
+          ? msg->chain_id.bytes
+          : default_chain_id;
+
+  uint8_t sig[65];
+  if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
+    memzero(sig, sizeof(sig));
     memzero(tx_buf, sizeof(tx_buf));
     return;
   }
 
   resp->has_signature = true;
   resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = tx_len;
   memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
 
+  memzero(sig, sizeof(sig));
   memzero(tx_buf, tx_len);
 }
 
@@ -998,19 +413,27 @@ void hive_signAccountUpdate(const HDNode* signing_node,
       hive_serialize_account_update(msg, owner_raw, active_raw, posting_raw,
                                     memo_raw, tx_buf, sizeof(tx_buf));
 
-  if (!hive_sign_tx_sig(signing_node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, tx_buf, tx_len,
-                        resp->signature.bytes)) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
+          ? msg->chain_id.bytes
+          : default_chain_id;
+
+  uint8_t sig[65];
+  if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
+    memzero(sig, sizeof(sig));
     memzero(tx_buf, sizeof(tx_buf));
     return;
   }
 
   resp->has_signature = true;
   resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = tx_len;
   memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
 
+  memzero(sig, sizeof(sig));
   memzero(tx_buf, tx_len);
 }

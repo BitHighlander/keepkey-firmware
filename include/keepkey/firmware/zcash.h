@@ -34,12 +34,17 @@ typedef struct {
   // cppcheck-suppress unusedStructMember
   uint8_t ask[32]; /* Spend authorizing key (scalar) */
   // cppcheck-suppress unusedStructMember
+  uint8_t ak[32]; /* Public spend validating key (compressed, even y) */
+  // cppcheck-suppress unusedStructMember
   uint8_t nk[32]; /* Nullifier deriving key */
   // cppcheck-suppress unusedStructMember
   uint8_t rivk[32]; /* Commitment randomness key */
   // cppcheck-suppress unusedStructMember
   uint8_t dk[32]; /* Diversifier key */
 } ZcashOrchardKeys;
+
+typedef void (*ZcashOrchardProgressCallback)(uint32_t completed, uint32_t total,
+                                             void* context);
 
 typedef struct {
   bool has_header_digest;
@@ -50,6 +55,9 @@ typedef struct {
   size_t sapling_digest_size;
   bool has_orchard_digest;
   size_t orchard_digest_size;
+  bool is_ironwood;
+  bool has_ironwood_digest;
+  size_t ironwood_digest_size;
   bool has_orchard_flags;
   uint32_t orchard_flags;
   bool has_orchard_value_balance;
@@ -118,6 +126,16 @@ bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
                                uint32_t account, ZcashOrchardKeys* keys);
 
 /**
+ * Progress-reporting Orchard key derivation for interactive device flows.
+ * Progress is driven by the fixed public scalar-multiplication schedule and
+ * does not depend on the derived secret key.
+ */
+bool zcash_derive_orchard_keys_with_progress(
+    const uint8_t* seed, uint32_t seed_len, uint32_t account,
+    ZcashOrchardKeys* keys, ZcashOrchardProgressCallback progress,
+    void* progress_context);
+
+/**
  * Compute the ZIP 244 shielded sighash for Orchard spend authorization.
  *
  * For shielded-only transactions, transparent_sig_digest uses the "no inputs"
@@ -137,6 +155,15 @@ bool zcash_compute_shielded_sighash(const uint8_t header_digest[32],
                                     const uint8_t orchard_digest[32],
                                     uint32_t branch_id,
                                     uint8_t sighash_out[32]);
+
+/** Compute the five-component ZIP-229 transaction-v6 sighash. */
+bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
+                                       const uint8_t transparent_digest[32],
+                                       const uint8_t sapling_digest[32],
+                                       const uint8_t orchard_digest[32],
+                                       const uint8_t ironwood_digest[32],
+                                       uint32_t branch_id,
+                                       uint8_t sighash_out[32]);
 
 /**
  * Compute ZIP-244 T.1 header_digest from plaintext transaction header fields.
@@ -202,6 +229,25 @@ bool zcash_orchard_receiver_to_unified_address(
 bool zcash_orchard_compute_cmx(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
+
+/** ZIP-2005 V3 note commitment used by the Ironwood pool. */
+bool zcash_ironwood_compute_cmx(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
+
+bool zcash_ironwood_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context);
+
+/**
+ * Progress-reporting note-commitment verification for interactive PCZT flows.
+ * The callback exposes only the public Sinsemilla word index and count.
+ */
+bool zcash_orchard_compute_cmx_with_progress(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
+    ZcashOrchardProgressCallback progress, void* progress_context);
 
 /**
  * Derive an Orchard diversifier from a diversifier key and 88-bit index.
@@ -380,5 +426,6 @@ bool storage_zcashSeedFingerprint(bool usePassphrase,
  * session is active.
  */
 void zcash_signing_abort(void);
+bool zcash_signing_is_active(void);
 
 #endif

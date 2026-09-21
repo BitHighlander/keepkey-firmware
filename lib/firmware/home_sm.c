@@ -31,6 +31,8 @@ static HomeState home_state = AT_HOME;
 
 static uint32_t idle_time = 0;
 
+void keepkey_user_activity(void) { reset_idle_time(); }
+
 static void layoutLockedState(void) {
   const Font* font = get_body_font();
   const char* state =
@@ -78,7 +80,6 @@ void layoutHome(void) {
 void layoutHomeForced(void) {
   layout_home();
   layoutLockedState();
-  reset_idle_time();
   home_state = AT_HOME;
 }
 
@@ -94,7 +95,6 @@ void leave_home(void) {
   switch (home_state) {
     case AT_HOME:
       layout_home_reversed();
-      reset_idle_time();
       home_state = AWAY_FROM_HOME;
       break;
 
@@ -122,8 +122,8 @@ void toggle_screensaver(void) {
    * host between streamed signing messages.  Confirmation handlers block the
    * main loop, so this check cannot interrupt a button hold; AWAY_FROM_HOME
    * here means firmware has returned to the main loop and is idle, and
-   * note_host_activity() has cleared the timer for every frame the host sent,
-   * so reaching the delay means the host really did stall. */
+   * only validated workflow progress renews the deadline. Unrelated host
+   * polls and incomplete frames cannot keep a stalled session unlocked. */
   if (home_state != SCREENSAVER && idle_time >= storage_getAutoLockDelayMs()) {
     /* signing_abort() and ethereum_signing_abort() draw the home screen, and
      * layoutHomeForced() resets the idle timer. Restore it, or the screensaver
@@ -178,20 +178,15 @@ void increment_idle_time(uint32_t increment_ms) { idle_time += increment_ms; }
 void reset_idle_time(void) { idle_time = 0; }
 
 /*
- * note_host_activity() - Counts a received host frame as activity
- *
- * A streamed ceremony (recovery characters, TxAck, EntropyAck) can outlast the
- * auto-lock delay while the user is working, and nothing else resets the timer
- * once the device has left the home screen. Only AWAY_FROM_HOME is reset:
- * polling a device sitting at the home screen must never hold it unlocked.
- *
- * INPUT
- *     none
- * OUTPUT
- *     none
+ * Renew the deadline only after a workflow accepts a signing stage or a real
+ * recovery edit, or accepts entropy for an armed reset. Callers must validate
+ * both the session and its payload first; receiving/decoding a host packet
+ * alone is never progress. Some signing handlers wait at AT_HOME, so accepted
+ * progress there also renews the timer. A completed lock cannot be undone by
+ * this hook.
  */
-void note_host_activity(void) {
-  if (home_state == AWAY_FROM_HOME) {
+void note_workflow_progress(void) {
+  if (home_state != SCREENSAVER) {
     reset_idle_time();
   }
 }

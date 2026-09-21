@@ -30,7 +30,6 @@
 #include "keepkey/board/messages.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/timer.h"
-#include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/app_confirm.h"
@@ -47,6 +46,7 @@
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/nano.h"
 #include "keepkey/firmware/osmosis.h"
@@ -70,7 +70,9 @@
 #include "keepkey/firmware/transaction.h"
 #include "keepkey/firmware/txin_check.h"
 #include "keepkey/firmware/u2f.h"
+#include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/base58.h"
@@ -118,6 +120,8 @@ void fsm_clearDerivedNode(void) {
 }
 
 #if DEBUG_LINK
+static FailureType fsm_test_failure_code;
+
 void fsm_test_seedDerivedNode(void) {
   memset(&fsm_derived_node, 0xA5, sizeof(fsm_derived_node));
 }
@@ -128,6 +132,10 @@ bool fsm_test_derivedNodeIsZero(void) {
   for (size_t i = 0; i < sizeof(fsm_derived_node); i++) aggregate |= bytes[i];
   return aggregate == 0;
 }
+
+void fsm_test_clearLastFailure(void) { fsm_test_failure_code = (FailureType)0; }
+
+FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
 #endif
 
 #define CHECK_INITIALIZED                               \
@@ -317,17 +325,13 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
  * application asked for an Ethereum address. */
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_signing_workflows();
-  layoutHome();
+  if (setup_isArmedAs(SETUP_RECOVERY)) {
+    /* Preserve the active recovery screen and ceremony. */
+  } else {
+    setup_abort();
+    layoutHome();
+  }
   fsm_sendFailure(code, text);
-}
-
-/* Every host frame counts as activity, so a streamed ceremony or signing
- * session the user is still working through is not auto-locked mid-flight.
- * note_host_activity() ignores frames that arrive at the home screen, so a
- * polling host cannot hold an idle device unlocked. */
-static void fsm_usb_rx(const void* msg, size_t len) {
-  note_host_activity();
-  handle_usb_rx(msg, len);
 }
 
 void fsm_init(void) {
@@ -342,13 +346,132 @@ void fsm_init(void) {
 #endif
 
   msg_init();
-  /* after msg_init(), which installs the board's own rx callback */
-  usb_set_rx_callback(&fsm_usb_rx);
 
   txin_dgst_initialize();
 }
 
+/* Reject continuation packets unless their signing workflow is active. */
+static bool reject_stale_continuation(const char* text) {
+  /* A decoded request always gets a terminal response. Silently dropping an
+   * inactive ACK leaves the host blocked forever, while dispatching it would
+   * let the handler replace an unrelated recovery screen. End signing, keep
+   * any setup ceremony armed, and reject on the wire without changing OLED
+   * state. */
+  fsm_abort_signing_workflows();
+  fsm_sendFailure(FailureType_Failure_UnexpectedMessage, text);
+  return false;
+}
+
+bool keepkey_before_message_dispatch(MessageType msg_id) {
+  switch (msg_id) {
+    case MessageType_MessageType_GetFeatures:
+    case MessageType_MessageType_GetCoinTable:
+    case MessageType_MessageType_Ping:
+      return true;
+    case MessageType_MessageType_TxAck:
+      if (!signing_is_active())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_EntropyAck:
+      if (!setup_isArmedAs(SETUP_RESET))
+        return reject_stale_continuation("Not in Reset mode");
+      return true;
+    case MessageType_MessageType_CharacterAck:
+      if (!setup_isArmedAs(SETUP_RECOVERY))
+        return reject_stale_continuation("Not in Recovery mode");
+      return true;
+#if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxAck:
+      if (!ethereum_signing_isInProgress())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_CosmosMsgAck:
+      if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
+        return reject_stale_continuation("Cosmos signing not in progress");
+      return true;
+    case MessageType_MessageType_OsmosisMsgAck:
+      if (!osmosis_signingIsInited())
+        return reject_stale_continuation("Osmosis signing not in progress");
+      return true;
+    case MessageType_MessageType_BinanceTransferMsg:
+      if (!binance_signingIsInited())
+        return reject_stale_continuation("Signing not in progress?");
+      return true;
+    case MessageType_MessageType_EosTxActionAck:
+      if (!eos_signingIsInited())
+        return reject_stale_continuation("EOS signing not in progress");
+      return true;
+    case MessageType_MessageType_ThorchainMsgAck:
+      if (!thorchain_signingIsInited())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_MayachainMsgAck:
+      if (!mayachain_signingIsInited())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+#endif
+#if ZCASH_PRIVACY
+    case MessageType_MessageType_ZcashPCZTAction:
+    case MessageType_MessageType_ZcashTransparentOutput:
+    case MessageType_MessageType_ZcashTransparentInput:
+      if (!zcash_signing_is_active())
+        return reject_stale_continuation("Zcash signing not in progress");
+      return true;
+#endif
+    default:
+      /* A new signing operation may replace an old signer, but it must never
+       * coexist with recovery/reset and borrow that ceremony's progress or
+       * blocking screens. Administrative requests still preserve ceremonies. */
+      switch (msg_id) {
+        case MessageType_MessageType_SignTx:
+        case MessageType_MessageType_SignMessage:
+        case MessageType_MessageType_SignIdentity:
+        case MessageType_MessageType_CipherKeyValue:
+#if !BITCOIN_ONLY
+        case MessageType_MessageType_EthereumSignTx:
+        case MessageType_MessageType_EthereumSignMessage:
+        case MessageType_MessageType_EthereumSignTypedHash:
+        case MessageType_MessageType_NanoSignTx:
+        case MessageType_MessageType_CosmosSignTx:
+        case MessageType_MessageType_OsmosisSignTx:
+        case MessageType_MessageType_BinanceSignTx:
+        case MessageType_MessageType_EosSignTx:
+        case MessageType_MessageType_RippleSignTx:
+        case MessageType_MessageType_ThorchainSignTx:
+        case MessageType_MessageType_MayachainSignTx:
+        case MessageType_MessageType_GetBip85Mnemonic:
+        case MessageType_MessageType_TronSignTx:
+        case MessageType_MessageType_TronSignMessage:
+        case MessageType_MessageType_TronSignTypedHash:
+        case MessageType_MessageType_TonSignTx:
+        case MessageType_MessageType_TonSignMessage:
+        case MessageType_MessageType_SolanaSignTx:
+        case MessageType_MessageType_SolanaSignMessage:
+        case MessageType_MessageType_SolanaSignOffchainMessage:
+        case MessageType_MessageType_HiveSignTx:
+        case MessageType_MessageType_HiveSignAccountCreate:
+        case MessageType_MessageType_HiveSignAccountUpdate:
+        case MessageType_MessageType_HiveSignMessage:
+        case MessageType_MessageType_HiveSignOperations:
+        case MessageType_MessageType_ClearsignAttestorSign:
+#endif
+#if ZCASH_PRIVACY
+        case MessageType_MessageType_ZcashSignPCZT:
+#endif
+          setup_abort();
+          break;
+        default:
+          break;
+      }
+      fsm_abort_signing_workflows();
+      return true;
+  }
+}
+
+void keepkey_after_message_dispatch(void) { fsm_clearDerivedNode(); }
+
 void fsm_sendSuccess(const char* text) {
+  if (msg_handler_rejected()) return;
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;
@@ -366,6 +489,7 @@ void fsm_sendSuccess(const char* text) {
 }
 
 void fsm_sendFailure(FailureType code, const char* text) {
+  if (msg_handler_rejected()) return;
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;
@@ -375,6 +499,9 @@ void fsm_sendFailure(FailureType code, const char* text) {
   RESP_INIT(Failure);
   resp->has_code = true;
   resp->code = code;
+#if DEBUG_LINK
+  fsm_test_failure_code = code;
+#endif
 
   if (text) {
     resp->has_message = true;
@@ -403,6 +530,7 @@ void fsm_abort_signing_workflows(void) {
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+  zcash_signing_abort();
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
@@ -445,6 +573,8 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+#include "fsm_msg_hive.h"
+#include "fsm_msg_zcash.h"
 #else
 // The coin engines above are compiled out, but the always-on
 // Initialize/Cancel handlers still call each engine's abort hook. With no

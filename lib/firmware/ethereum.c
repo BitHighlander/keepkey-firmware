@@ -36,6 +36,7 @@
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "keepkey/firmware/transaction.h"
@@ -1400,7 +1401,6 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
     "EIP-712 no value for type during walkVals",  // 33
-    "EIP-712 cancelled",                          // 34 (USER_CANCELLED)
 };
 
 void failMessage(int err) {

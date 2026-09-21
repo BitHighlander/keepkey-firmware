@@ -145,23 +145,20 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   if (msg->has_send) {
     const char* coin_denom =
         (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
-
-    // Validate before any display so untrusted strings never reach the UI.
     if (!thorchain_isValidDenom(coin_denom)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
       layoutHome();
       return;
     }
-
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
         // amount_str only needs to hold the numeric part (no denom suffix).
         // Denom is confirmed on a separate screen so no truncation is possible.
         char amount_str[32];
-        if (!thorchain_formatAmount(msg->send.amount, "RUNE", amount_str,
-                                    sizeof(amount_str))) {
+        if (!bn_format_uint64(msg->send.amount, NULL, NULL, 8, 0, false,
+                              amount_str, sizeof(amount_str))) {
           thorchain_signAbort();
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           "Invalid THORChain send amount");
@@ -192,7 +189,6 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
           layoutHome();
           return;
         }
-        // Confirm the asset denom on its own screen.
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
                      "%s", coin_denom)) {
           thorchain_signAbort();
