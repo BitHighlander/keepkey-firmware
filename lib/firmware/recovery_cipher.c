@@ -55,6 +55,9 @@ static char english_alphabet[ENGLISH_ALPHABET_BUF] =
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
 static int uncyphered_word_count = 0;
 static bool definitely_using_cipher = false;
+/* Accumulators for the word currently being entered. File-scope so
+ * recovery_delete_character() can keep them synchronized with backspaces.
+ * last_completed_word backs the previous-word indicator. */
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
 static CONFIDENTIAL char last_completed_word[12];
@@ -82,6 +85,7 @@ void recovery_cipher_reset(void) {
   definitely_using_cipher = false;
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
+  memzero(last_completed_word, sizeof(last_completed_word));
   memzero(current_word_scratch, sizeof(current_word_scratch));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
@@ -663,7 +667,9 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  if (!auto_completed && !enforce_wordlist) {
+  /* Cipher recovery always decodes to BIP-39. A host choosing the import flag
+   * may change storage metadata, but must not make a non-word seed valid. */
+  if (!auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");

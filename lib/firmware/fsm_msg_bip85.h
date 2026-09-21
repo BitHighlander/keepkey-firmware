@@ -49,48 +49,49 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
    * Uses the same paginated display as the backup flow in reset.c.
    */
   uint32_t word_count = 0, page_count = 0;
+  static char CONFIDENTIAL tokened_mnemonic[TOKENED_MNEMONIC_BUF];
+  static char CONFIDENTIAL
+      formatted_mnemonic[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
+  static char CONFIDENTIAL mnemonic_display[FORMATTED_MNEMONIC_BUF];
+  static char CONFIDENTIAL formatted_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
-  /* Display scratch shared with the backup flow — see reset.h. Zero the whole
-   * set at entry per the sharing contract (a prior user may have aborted). */
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
-
-  strlcpy(mnemonic_scratch_tokened, mnemonic_buf, TOKENED_MNEMONIC_BUF);
+  strlcpy(tokened_mnemonic, mnemonic_buf, TOKENED_MNEMONIC_BUF);
   memzero(mnemonic_buf, sizeof(mnemonic_buf));
 
-  const char *tok = strtok(mnemonic_scratch_tokened, " ");
+  /* Clear formatting buffers */
+  memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
+  memzero(mnemonic_display, sizeof(mnemonic_display));
+
+  const char *tok = strtok(tokened_mnemonic, " ");
 
   while (tok) {
-    snprintf(mnemonic_scratch_word, MAX_WORD_LEN + ADDITIONAL_WORD_PAD,
+    snprintf(formatted_word, MAX_WORD_LEN + ADDITIONAL_WORD_PAD,
              (word_count & 1) ? "%lu.%s\n" : "%lu.%s",
              (unsigned long)(word_count + 1), tok);
 
     /* Check that we have enough room on display to show word */
-    snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
-             mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
+    snprintf(mnemonic_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
+             formatted_mnemonic[page_count], formatted_word);
 
-    if (calc_str_line(get_body_font(), mnemonic_scratch_display, BODY_WIDTH) >
-        3) {
+    if (calc_str_line(get_body_font(), mnemonic_display, BODY_WIDTH) > 3) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {
-        memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-        memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-        memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-        memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+        memzero(tokened_mnemonic, sizeof(tokened_mnemonic));
+        memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
+        memzero(mnemonic_display, sizeof(mnemonic_display));
+        memzero(formatted_word, sizeof(formatted_word));
         fsm_sendFailure(FailureType_Failure_Other,
                         "Too many pages of mnemonic words");
         layoutHome();
         return;
       }
 
-      snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
-               mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
+      snprintf(mnemonic_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
+               formatted_mnemonic[page_count], formatted_word);
     }
 
-    strlcpy(mnemonic_scratch_formatted[page_count], mnemonic_scratch_display,
+    strlcpy(formatted_mnemonic[page_count], mnemonic_display,
             FORMATTED_MNEMONIC_BUF);
 
     tok = strtok(NULL, " ");
@@ -115,11 +116,11 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
 
     if (!confirm_constant_power(ButtonRequestType_ButtonRequest_ConfirmWord,
                                 title, "%s",
-                                mnemonic_scratch_formatted[current_page])) {
-      memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-      memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-      memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-      memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+                                formatted_mnemonic[current_page])) {
+      memzero(tokened_mnemonic, sizeof(tokened_mnemonic));
+      memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
+      memzero(mnemonic_display, sizeof(mnemonic_display));
+      memzero(formatted_word, sizeof(formatted_word));
       display_constant_power(false);
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "BIP-85 display cancelled");
@@ -131,10 +132,10 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
   display_constant_power(false);
 
   /* Wipe all sensitive buffers */
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  memzero(tokened_mnemonic, sizeof(tokened_mnemonic));
+  memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
+  memzero(mnemonic_display, sizeof(mnemonic_display));
+  memzero(formatted_word, sizeof(formatted_word));
 
   /* Send success — mnemonic is NOT sent over the wire */
   fsm_sendSuccess("BIP-85 seed displayed on device");

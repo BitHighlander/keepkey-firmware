@@ -143,6 +143,7 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   msg_write(MessageType_MessageType_Features, resp);
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
   RESP_INIT(CoinTable);
 
@@ -357,6 +358,7 @@ void fsm_msgPing(Ping* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangePin(ChangePin* msg) {
   CHECK_NOT_BITCOIN_ONLY_LOCKED
 
@@ -409,6 +411,7 @@ void fsm_msgChangePin(ChangePin* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
   CHECK_NOT_BITCOIN_ONLY_LOCKED
 
@@ -533,6 +536,7 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
                   "Not in bootloader mode");
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetEntropy(GetEntropy* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
                "Do you want to generate and return entropy using the hardware "
@@ -605,6 +609,7 @@ void fsm_msgResetDevice(ResetDevice* msg) {
              msg->has_dice_only && msg->dice_only);
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgEntropyAck(EntropyAck* msg) {
   if (msg->has_entropy) {
     reset_entropy(msg->entropy.bytes, msg->entropy.size);
