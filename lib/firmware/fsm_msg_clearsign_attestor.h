@@ -20,9 +20,9 @@
 #include "keepkey/firmware/contact_book.h"
 
 /* Clearsign attestor: let a KeepKey issue clear-sign schema attestations from
- * its seed. It ships in the regular firmware, but every operation is gated by
- * AdvancedMode. This lets builders prove the self-service workflow before a
- * future release pins a KeepKey production identity.
+ * its seed. Generic schema attestation is gated by AdvancedMode. Address-book
+ * certification is a dedicated, fully parsed, user-confirmed operation and is
+ * available by default.
  *
  * The attestor NEVER signs arbitrary bytes. It parses the submitted payload
  * with the same validator verifying devices run (solana_parseInstrSchema for
@@ -117,8 +117,6 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
 
   CHECK_INITIALIZED
   CHECK_PIN
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for clearsign attestation"));
 
   CHECK_PARAM(msg->has_payload && msg->payload.size > 0, "Missing payload");
 
@@ -133,6 +131,8 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
   size_t bytes_to_sign_len = msg->payload.size;
   bool contact_request =
       msg->payload.size >= 8 && memcmp(msg->payload.bytes, "KKABREQ1", 8) == 0;
+  CHECK_PARAM(contact_request || storage_isPolicyEnabled("AdvancedMode"),
+              _("AdvancedMode required for schema attestation"));
   if (!contact_request && (msg->payload.size < 8 ||
                            memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported descriptor");
