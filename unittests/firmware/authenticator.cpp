@@ -31,8 +31,8 @@ TEST(Authenticator, AuthorizationLossClearsAndReloadsPersistentCache) {
   ASSERT_EQ(NOERR, wipeAuthData());
   ASSERT_EQ(0, kkconfirm_drain());
 
-  char account_seed[] = "example:alice:JBSWY3DPEHPK3PXP";
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  char account_seed[] = "example:alice:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
   ASSERT_EQ(NOERR, addAuthAccount(account_seed));
   ASSERT_EQ(0, kkconfirm_drain());
   ASSERT_FALSE(authenticator_cache_is_empty());
@@ -72,8 +72,8 @@ TEST(Authenticator, RejectedOtpReviewReturnsNoOtp) {
   ASSERT_EQ(NOERR, wipeAuthData());
   ASSERT_EQ(0, kkconfirm_drain());
 
-  char account_seed[] = "example:alice:JBSWY3DPEHPK3PXP";
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  char account_seed[] = "example:alice:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
   ASSERT_EQ(NOERR, addAuthAccount(account_seed));
   ASSERT_EQ(0, kkconfirm_drain());
 
