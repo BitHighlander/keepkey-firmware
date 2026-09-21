@@ -58,9 +58,9 @@ static uint8_t last_packed[FRAME_PACKED_SIZE];
    duplicate never touches the ring. See the comment there. */
 static uint8_t capture_scratch[FRAME_PACKED_SIZE];
 static int last_packed_valid = 0;
-static uint32_t frame_write_idx =
+static _Atomic uint32_t frame_write_idx =
     0; /* monotonic, mod FRAME_RING_SIZE for slot */
-static uint32_t frame_read_idx = 0; /* monotonic */
+static _Atomic uint32_t frame_read_idx = 0; /* monotonic */
 
 /*
  * Scratch returned by kkemu_get_display(). File-scope (not function-static)
