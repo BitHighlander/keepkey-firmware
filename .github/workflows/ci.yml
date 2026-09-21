@@ -9,7 +9,7 @@
 #   └─ check-submodules   verify all deps present
 #
 # Stage 2: BUILD (parallel, gated by Stage 1)
-#   ├─ build-emulator     Docker image → artifact  [matrix: full / bitcoin-only / zcash-privacy]
+#   ├─ build-emulator     Docker image → artifact  [matrix: full / bitcoin-only]
 #   └─ build-arm-firmware cross-compile → .bin/.elf (downloadable)  [same matrix]
 #
 # Stage 3: TEST (parallel, gated by Stage 2)
@@ -202,15 +202,17 @@ jobs:
           : "${ERRORS:=0}" "${WARNINGS:=0}" "${STYLE:=0}" "${PERF:=0}" "${PORT:=0}"
           TOTAL=$((ERRORS + WARNINGS + STYLE + PERF + PORT))
 
-          echo "## cppcheck summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Severity | Count |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| error | $ERRORS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| warning | $WARNINGS |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| style | $STYLE |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| performance | $PERF |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| portability | $PORT |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **total** | **$TOTAL** |" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## cppcheck summary"
+            echo "| Severity | Count |"
+            echo "|----------|-------|"
+            echo "| error | $ERRORS |"
+            echo "| warning | $WARNINGS |"
+            echo "| style | $STYLE |"
+            echo "| performance | $PERF |"
+            echo "| portability | $PORT |"
+            echo "| **total** | **$TOTAL** |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Print findings as GitHub annotations
           cat cppcheck_report.txt
@@ -292,21 +294,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The emulator CMake default is KK_ZCASH_PRIVACY=ON (what the published
-          # dylib/Docker image include), so an empty-flag full leg builds
-          # byte-identical to the zcash-privacy leg and the SHIPPED device
-          # configuration (multi-coin, privacy OFF) is never unit-tested. Pin the
-          # full leg to the shipped config; publish-emulator ships the
-          # zcash-privacy image (the same bytes the old full leg produced).
+          # Pin the full leg to the shipped multi-coin configuration. The CMake
+          # default enables the non-release zcash-privacy experiment, so an
+          # empty flag would test and publish bytes that cannot ship as 7.15.
           - variant: full
             label: ""
             cmake_flags: "-DKK_ZCASH_PRIVACY=OFF"
           - variant: bitcoin-only
             label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
-          - variant: zcash-privacy
-            label: " (zcash-privacy)"
-            cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -375,8 +371,10 @@ jobs:
       matrix:
         include:
           - variant: full
+            label: ""
             cmake_flags: ""
           - variant: bitcoin-only
+            label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - name: Checkout
@@ -546,9 +544,6 @@ jobs:
           - variant: bitcoin-only
             label: " (bitcoin-only)"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
-          - variant: zcash-privacy
-            label: " (zcash-privacy)"
-            cmake_flags: "-DKK_ZCASH_PRIVACY=ON"
     steps:
       - name: Download emulator image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -820,7 +815,8 @@ jobs:
           # pinned (which would fail with "Descriptors cannot be created
           # directly. ... please regenerate with protoc >= 3.19.0 ...
           # OR downgrade protobuf to 3.20.x").
-          NANOPB_PROTO_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator/proto"
+          NANOPB_PROTO_DIR=$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')
+          NANOPB_PROTO_DIR="$NANOPB_PROTO_DIR/generator/proto"
           cd "$NANOPB_PROTO_DIR"
           /usr/local/bin/protoc --python_out=. nanopb.proto
           /usr/local/bin/protoc --python_out=. plugin.proto
@@ -854,7 +850,8 @@ jobs:
           # it fsm_msgDebugLinkGetState is excluded from the build.
           # CMAKE_POLICY_VERSION_MINIMUM works around vendored
           # googletest's pre-3.5 policy declaration.
-          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
+          NANOPB_DIR=$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')
+          export PATH="$PATH:$NANOPB_DIR/generator"
           which protoc-gen-nanopb
           which nanopb_generator.py
           cmake \
@@ -866,15 +863,16 @@ jobs:
 
       - name: Build kkemulator_dylib
         run: |
-          export PATH="$PATH:$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')/generator"
-          cmake --build build-emu --target kkemulator_dylib -j$(sysctl -n hw.ncpu)
+          NANOPB_DIR=$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')
+          export PATH="$PATH:$NANOPB_DIR/generator"
+          cmake --build build-emu --target kkemulator_dylib -j "$(sysctl -n hw.ncpu)"
           ls -la build-emu/lib/libkkemu* || ls -la build-emu/lib/emulator/libkkemu* || true
           # Surface the resolved binary path for the run step. macOS
           # produces .dylib; .so is preserved as a fallback for when this
           # job goes cross-platform.
-          DYLIB=$(find build-emu -name 'libkkemu.dylib' -o -name 'libkkemu.so' | head -1)
+          DYLIB=$(find build-emu \( -name 'libkkemu.dylib' -o -name 'libkkemu.so' \) | head -1)
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
-          echo "DYLIB_PATH=$(pwd)/$DYLIB" >> $GITHUB_ENV
+          echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
       - name: Upload libkkemu.dylib
         # Always upload, even on later test failure — the binary is
@@ -941,9 +939,8 @@ jobs:
       - name: Download unit test results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          # Report covers the full/default variant only — bitcoin-only and
-          # zcash-privacy are built and unit-tested in their own matrix legs
-          # but don't get a PDF (see unit-tests / build-arm-firmware).
+          # Report covers the full/default variant only; bitcoin-only is built
+          # and unit-tested in its own matrix leg but does not get a PDF.
           name: unit-test-results-full
           path: test-reports/firmware-unit/
 
@@ -1105,11 +1102,8 @@ jobs:
       - name: Download emulator image
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          # Publish the zcash-privacy variant: it matches the emulator's CMake
-          # default (privacy engine ON — what vault and auditors run), which
-          # the "full" leg no longer builds now that it pins the shipped
-          # device configuration (privacy OFF).
-          name: emu-image-zcash-privacy
+          # Publish the same regular-product image that CI qualifies.
+          name: emu-image-full
           path: /tmp
 
       - name: Load emulator image
