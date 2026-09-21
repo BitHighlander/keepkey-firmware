@@ -124,6 +124,8 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
 
 // ── HiveSignTx (transfer) ─────────────────────────────────────────────────
 
+static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count);
+
 void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   RESP_INIT(HiveSignedTx);
 
@@ -139,25 +141,39 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
     return;
   }
 
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count) ||
+      msg->address_n[2] != HIVE_ROLE_ACTIVE) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive SLIP-0048 path"));
+    layoutHome();
+    return;
+  }
+
+  if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Hive memo too long (max 440 bytes)"));
+    layoutHome();
+    return;
+  }
+
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // Display precision MUST match the precision the serializer signs
-  // (append_asset uses msg->decimals), otherwise the user approves an
-  // amount that differs from what is signed. Reject implausible precision.
-  uint8_t prec = msg->has_decimals ? (uint8_t)msg->decimals : HIVE_DECIMALS;
-  if (prec > 18) {
+  const char* wire_symbol;
+  const char* display_symbol;
+  uint8_t prec;
+  if (!hive_transferAsset(msg, &wire_symbol, &display_symbol, &prec)) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive asset precision"));
+                    _("Unsupported Hive asset symbol or precision"));
     layoutHome();
     return;
   }
-  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
+  (void)wire_symbol;
   char suffix[sizeof(msg->asset_symbol) + 2];  // leading space + symbol + NUL
-  snprintf(suffix, sizeof(suffix), " %s", symbol);
+  snprintf(suffix, sizeof(suffix), " %s", display_symbol);
   char amount_str[32];
   bn_format_uint64(msg->amount, NULL, suffix, prec, 0, false, amount_str,
                    sizeof(amount_str));
@@ -171,8 +187,8 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   }
 
   if (msg->has_memo && strlen(msg->memo) > 0) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo", "%s",
-                 msg->memo)) {
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
+                       (const uint8_t*)msg->memo, strlen(msg->memo))) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
@@ -241,7 +257,8 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count)) {
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count) ||
+      msg->address_n[2] != HIVE_ROLE_OWNER) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Invalid Hive SLIP-0048 path"));
     layoutHome();
@@ -385,7 +402,8 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count)) {
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count) ||
+      msg->address_n[2] != HIVE_ROLE_OWNER) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Invalid Hive SLIP-0048 path"));
     layoutHome();

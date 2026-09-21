@@ -220,10 +220,37 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
 // Maximum memo length that fits safely in tx_buf[512] with all other fields.
 // Non-memo overhead: header(12) + from(17) + to(17) + asset(16) + footer(1) =
 // ~63 bytes. 512 - 63 - 3 (varint) = 446; use 440 as the conservative limit.
-#define HIVE_MAX_MEMO_LEN 440
+bool hive_transferAsset(const HiveSignTx* msg, const char** wire,
+                        const char** display, uint8_t* precision) {
+  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
+
+  if (strcmp(symbol, "HIVE") == 0 ||
+      strcmp(symbol, HIVE_WIRE_SYMBOL_HIVE) == 0) {
+    *wire = HIVE_WIRE_SYMBOL_HIVE;
+    *display = "HIVE";
+  } else if (strcmp(symbol, "HBD") == 0 ||
+             strcmp(symbol, HIVE_WIRE_SYMBOL_HBD) == 0) {
+    *wire = HIVE_WIRE_SYMBOL_HBD;
+    *display = "HBD";
+  } else {
+    return false;
+  }
+
+  if (msg->has_decimals && msg->decimals != HIVE_DECIMALS) return false;
+  *precision = HIVE_DECIMALS;
+  return true;
+}
 
 static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
                                       size_t buf_len) {
+  const char* wire_symbol;
+  const char* display_symbol;
+  uint8_t precision;
+  if (!hive_transferAsset(msg, &wire_symbol, &display_symbol, &precision)) {
+    return 0;
+  }
+  (void)display_symbol;
+
   uint8_t* p = buf;
   const uint8_t* end = buf + buf_len;
 
@@ -233,9 +260,7 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
   append_string(&p, end, msg->has_from ? msg->from : "");
   append_string(&p, end, msg->has_to ? msg->to : "");
 
-  const char* sym = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
-  uint8_t prec = (uint8_t)(msg->has_decimals ? msg->decimals : HIVE_DECIMALS);
-  append_asset(&p, end, msg->amount, prec, sym);
+  append_asset(&p, end, msg->amount, precision, wire_symbol);
 
   append_string(&p, end, msg->has_memo ? msg->memo : "");
   append_tx_footer(&p, end);
@@ -249,6 +274,7 @@ void hive_signTx(const HDNode* node, const HiveSignTx* msg,
 
   uint8_t tx_buf[512];
   size_t tx_len = hive_serialize_transfer(msg, tx_buf, sizeof(tx_buf));
+  if (tx_len == 0) return;
 
   const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
   const uint8_t* chain_id =
@@ -295,7 +321,7 @@ static size_t hive_serialize_account_create(const HiveSignAccountCreate* msg,
 
   // fee (asset)
   uint64_t fee = msg->has_fee_amount ? msg->fee_amount : 3000;
-  append_asset(&p, end, fee, HIVE_DECIMALS, "HIVE");
+  append_asset(&p, end, fee, HIVE_DECIMALS, HIVE_WIRE_SYMBOL_HIVE);
 
   // creator
   append_string(&p, end, msg->has_creator ? msg->creator : "");

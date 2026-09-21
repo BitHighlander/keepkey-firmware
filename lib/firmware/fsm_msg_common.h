@@ -49,6 +49,10 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_supports_dice_modes = true;
   resp->supports_dice_modes = true;
 
+  /* 7.15 deliberately excludes provider-attested Solana lookup-table account
+   * presentation. The capability remains absent, which canonical hosts treat
+   * as false and route through the AdvancedMode blind-signing policy. */
+
   /* Variant Name */
   resp->has_firmware_variant = true;
 #if BITCOIN_ONLY
@@ -764,6 +768,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
   CHECK_NOT_BITCOIN_ONLY_LOCKED
+  bool disable_advanced_mode = false;
 
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 
@@ -812,7 +817,16 @@ void fsm_msgApplyPolicies(ApplyPolicies* msg) {
       layoutHome();
       return;
     }
+    if (!msg->policy[i].enabled &&
+        strcmp(msg->policy[i].policy_name, "AdvancedMode") == 0) {
+      disable_advanced_mode = true;
+    }
   }
+
+  /* Turning off the capability drops the provider rather than suspending it.
+   * Re-enabling AdvancedMode must not silently restore a signer on a screen
+   * that names only the policy and never names the provider identity. */
+  if (disable_advanced_mode) signed_metadata_clear_signers();
 
   storage_commit();
 

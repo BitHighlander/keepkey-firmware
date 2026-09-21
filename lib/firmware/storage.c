@@ -46,6 +46,7 @@
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
@@ -1564,6 +1565,11 @@ void session_clear(bool clear_pin) {
   signing_abort();
   setup_abort();
   authenticator_clear_cache();
+  /* Runtime metadata providers belong to the transport session, not merely to
+   * an individual signing workflow. Initialize intentionally preserves PIN and
+   * AdvancedMode, but it still starts a new session and must require the host
+   * to present the signer for on-device consent again. */
+  signed_metadata_clear_signers();
   fsm_clearDerivedNode();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
@@ -1597,6 +1603,11 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
    * themselves. */
   if (clear_pin) {
     fsm_abort_signing_workflows();
+    /* AdvancedMode is volatile authorization. An explicit lock must revoke it
+     * even though Initialize (clear_pin=false) preserves it for normal host
+     * operation. This changes only the RAM shadow; storage serialization also
+     * hard-codes the AdvancedMode bit off. */
+    storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 
   ss->seedCached = false;
@@ -2083,13 +2094,22 @@ const uint8_t* storage_getSeed(const ConfigFlash* cfg, bool usePassphrase) {
  */
 
 #if ZCASH_PRIVACY
+static void storage_zcash_orchard_progress(uint32_t completed, uint32_t total,
+                                           void* context) {
+  (void)context;
+  if (total == 0) return;
+  animating_progress_handler(_("Deriving Zcash"),
+                             (int)((completed * 1000u) / total));
+}
+
 bool storage_zcashOrchardKeys(uint32_t account, bool usePassphrase,
                               ZcashOrchardKeys* keys_out) {
   if (!keys_out) return false;
   const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
   if (!seed) return false;
-  animating_progress_handler(_("Deriving Zcash"), 250);
-  return zcash_derive_orchard_keys(seed, 64, account, keys_out);
+  animating_progress_handler(_("Deriving Zcash"), 0);
+  return zcash_derive_orchard_keys_with_progress(
+      seed, 64, account, keys_out, storage_zcash_orchard_progress, NULL);
 }
 
 bool storage_zcashSeedFingerprint(bool usePassphrase,

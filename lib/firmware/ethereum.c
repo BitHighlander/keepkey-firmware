@@ -436,19 +436,17 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
-
-  /* Insight clear-signing binding. If a verified metadata blob suppressed the
-   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
-   * metadata committed to. This is the first point that digest exists, so the
-   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
-   * never emit a signature the displayed decoded screen did not cover. */
+  /* Legacy v1 metadata commits to the complete transaction digest. The method
+   * and argument review happens before the streaming hash is final, so this is
+   * the last safe point to bind what the user saw to what would be signed.
+   * Never compute or return a signature after a mismatch. */
   if (!signed_metadata_enforce(hash)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     "Metadata does not match signed transaction");
     ethereum_signing_abort();
+    memzero(hash, sizeof(hash));
     return;
   }
-
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
