@@ -292,9 +292,6 @@ typedef union {
 } FsmResponse;
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
-/* Shared derivation scratch. Session revocation scrubs it centrally so an
- * error or lock cannot leave private key material live for a later handler. */
-static HDNode CONFIDENTIAL fsm_derived_node;
 extern bool reset_msg_stack;
 
 static const CoinType* fsm_getCoin(bool has_name, const char* name) {
