@@ -17,6 +17,8 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "keepkey/firmware/contact_book.h"
+
 /* Clearsign attestor: let a KeepKey issue clear-sign schema attestations from
  * its seed. It ships in the regular firmware, but every operation is gated by
  * AdvancedMode. This lets builders prove the self-service workflow before a
@@ -34,11 +36,15 @@
  * unlock gates its availability, seed backup is key backup, and wipe destroys
  * it.
  *
- * ponytail: KKSOLSC1 only. EVM v2 metadata blobs are attestable in principle
- * but sign a different range (payload minus the 65-byte signature trailer, see
- * signed_metadata_process) and their parser is static in signed_metadata.c;
- * add a second branch here plus an exported pure parser when EVM schemas need
- * device-issued signatures.
+ * Also accepts bounded KKABREQ1 address-book batches. The device recomputes a
+ * Merkle root, shows every label/network/destination tuple, and signs only the
+ * fixed-size KKABRT01 root manifest returned implicitly to the host.
+ *
+ * ponytail: KKSOLSC1 and KKABREQ1 only. EVM v2 metadata blobs are attestable in
+ * principle but sign a different range (payload minus the 65-byte signature
+ * trailer, see signed_metadata_process) and their parser is static in
+ * signed_metadata.c; add a second branch here plus an exported pure parser when
+ * EVM schemas need device-issued signatures.
  */
 
 /* The attestation key path: purpose 0x4B4B ("KK"), then 0x4353 ("CS") for
@@ -120,25 +126,65 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
    * can itself parse — the same code path fsm_msgSolanaSignTx runs — so a
    * compromised host cannot use the attestor as a raw signing oracle. */
   SolanaInstrSchema schema;
-  if (msg->payload.size < 8 || memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0) {
+  ContactBookManifest contact_manifest;
+  ContactBookEntry contact_entries[CONTACT_BOOK_MAX_ENTRIES];
+  uint8_t contact_signed[46];
+  const uint8_t* bytes_to_sign = msg->payload.bytes;
+  size_t bytes_to_sign_len = msg->payload.size;
+  bool contact_request =
+      msg->payload.size >= 8 && memcmp(msg->payload.bytes, "KKABREQ1", 8) == 0;
+  if (!contact_request && (msg->payload.size < 8 ||
+                           memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported descriptor");
     layoutHome();
     return;
   }
-  if (!solana_parseInstrSchema(msg->payload.bytes, msg->payload.size,
-                               &schema)) {
+  if (contact_request) {
+    if (!contact_book_parse_request(msg->payload.bytes, msg->payload.size,
+                                    &contact_manifest, contact_entries, NULL)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid address book");
+      layoutHome();
+      return;
+    }
+    bool confirmed = confirm(
+        ButtonRequestType_ButtonRequest_SignTx, "Address Book",
+        "Approve %u contacts?\nRevision %lu", (unsigned)contact_manifest.count,
+        (unsigned long)contact_manifest.revision);
+    for (uint8_t i = 0; confirmed && i < contact_manifest.count; i++) {
+      confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx,
+                          "Certify Contact", "%s\n%s", contact_entries[i].label,
+                          contact_entries[i].network);
+      if (confirmed) {
+        confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_SignTx,
+                                  "Destination", contact_entries[i].destination,
+                                  contact_entries[i].destination_len);
+      }
+    }
+    if (!confirmed) {
+      memzero(contact_entries, sizeof(contact_entries));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+      layoutHome();
+      return;
+    }
+    contact_book_manifest_bytes(&contact_manifest, contact_signed);
+    bytes_to_sign = contact_signed;
+    bytes_to_sign_len = sizeof(contact_signed);
+  } else if (!solana_parseInstrSchema(msg->payload.bytes, msg->payload.size,
+                                      &schema)) {
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid schema");
     layoutHome();
     return;
   }
 
-  char program_id[45];
-  char disc_hex[2 * SOL_SCHEMA_DISC_MAX + 1];
-  solana_pubkeyToStr(schema.program_id, program_id, sizeof(program_id));
-  for (uint8_t i = 0; i < schema.disc_len; i++) {
-    snprintf(disc_hex + 2 * i, sizeof(disc_hex) - 2 * i, "%02x",
-             schema.disc[i]);
+  char program_id[45] = {0};
+  char disc_hex[2 * SOL_SCHEMA_DISC_MAX + 1] = {0};
+  if (!contact_request) {
+    solana_pubkeyToStr(schema.program_id, program_id, sizeof(program_id));
+    for (uint8_t i = 0; i < schema.disc_len; i++) {
+      snprintf(disc_hex + 2 * i, sizeof(disc_hex) - 2 * i, "%02x",
+               schema.disc[i]);
+    }
   }
 
   /* Program IDs may consume two body rows, while an 8-byte discriminator plus
@@ -146,19 +192,21 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
    * combining them can silently clip the discriminator, which is precisely the
    * field the operator must compare against the contract ABI. */
   bool confirmed =
+      contact_request ||
       confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema", "%s\n%s",
               schema.program_name, schema.instruction_name) &&
-      confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
-              program_id) &&
-      confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
-              disc_hex);
+          confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
+                  program_id) &&
+          confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
+                  disc_hex);
 
   /* One label per screen. A structurally valid schema can still lie by
    * labelling the wrong offset ("Amount" over the order id), so the operator
    * has to read every label — and confirm()'s body is three rendered rows with
    * no pagination, so a batched list of max-length labels scrolls off. A label
    * nobody saw is a label nobody checked. */
-  for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
+  for (uint8_t i = 0; !contact_request && confirmed && i < schema.num_args;
+       i++) {
     confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                         "Arg %u: %s\n%s", (unsigned)(i + 1),
                         attestor_schemaArgTypeName(schema.args[i].type),
@@ -172,7 +220,8 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
                   (unsigned)schema.args[i].mint_account);
     }
   }
-  for (uint8_t i = 0; confirmed && i < schema.num_accounts; i++) {
+  for (uint8_t i = 0; !contact_request && confirmed && i < schema.num_accounts;
+       i++) {
     confirmed =
         confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                 "Account #%u shows\n%s", (unsigned)schema.accounts[i].index,
@@ -191,7 +240,7 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
   /* Plain ECDSA over SHA256(payload): exactly what
    * signed_metadata_verify_attestation() checks on the verifying device. */
   uint8_t digest[32];
-  sha256_Raw(msg->payload.bytes, msg->payload.size, digest);
+  sha256_Raw(bytes_to_sign, bytes_to_sign_len, digest);
 
   uint8_t sig[64];
   int ret =
@@ -214,6 +263,8 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
 
   memzero(sig, sizeof(sig));
   memzero(node, sizeof(*node));
+  memzero(contact_entries, sizeof(contact_entries));
+  memzero(contact_signed, sizeof(contact_signed));
 
   msg_write(MessageType_MessageType_ClearsignAttestorSignature, resp);
   layoutHome();

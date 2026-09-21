@@ -1,6 +1,7 @@
 
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/erc7730_condition.h"
+#include "keepkey/firmware/contact_book.h"
 
 #define ERC7730_FORMATTER_INTERPOLATION_FLAG UINT16_C(0x8000)
 #define ERC7730_FORMATTER_GROUP_CONTROL UINT8_C(0xff)
@@ -2456,6 +2457,30 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
+  RESP_INIT(EthereumMetadataAck);
+
+  /* A user-owned contact proof is verified against this seed's dedicated
+   * attestor key. It annotates an otherwise fully decoded transfer and never
+   * enables blind signing, so AdvancedMode is unnecessary at send time. */
+  if (msg->has_signed_payload && msg->signed_payload.size >= 8 &&
+      memcmp(msg->signed_payload.bytes, "KKABPRF1", 8) == 0) {
+    static const uint32_t path[3] = {0x80004B4B, 0x80004353, 0x80000000};
+    HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, path, 3, NULL);
+    if (!node) return;
+    hdnode_fill_public_key(node);
+    bool ok = contact_book_process_proof(
+        msg->signed_payload.bytes, msg->signed_payload.size, node->public_key);
+    memzero(node, sizeof(*node));
+    resp->classification = ok ? METADATA_VERIFIED : METADATA_MALFORMED;
+    resp->has_display_summary = true;
+    strlcpy(resp->display_summary, ok ? "Contact verified" : "Invalid contact",
+            sizeof(resp->display_summary));
+    msg_write(MessageType_MessageType_EthereumMetadataAck, resp);
+    return;
+  }
+
+  contact_book_clear();
+
   CHECK_PARAM(!msg->has_key_id || msg->key_id <= 0xff,
               _("clearsign metadata key_id out of range"));
 
@@ -2471,8 +2496,6 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
           msg->signed_payload.bytes, msg->signed_payload.size, msg->key_id);
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode") || certified,
               _("AdvancedMode required for uncertified clearsign metadata"));
-
-  RESP_INIT(EthereumMetadataAck);
 
   MetadataClassification result = signed_metadata_process(
       msg->signed_payload.bytes, msg->signed_payload.size,

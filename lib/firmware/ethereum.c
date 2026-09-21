@@ -35,6 +35,7 @@
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
@@ -663,7 +664,14 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
       memcmp(value + 24, "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0;
 
   const char* address = addr;
-  if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
+  char contact_network[32];
+  snprintf(contact_network, sizeof(contact_network), "eip155:%lu",
+           (unsigned long)chain_id);
+  if (!approve && to_len == 20 &&
+      contact_book_match(contact_network, CONTACT_BOOK_DEST_EVM_ADDRESS, to,
+                         to_len)) {
+    address = contact_book_label();
+  } else if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
     address = "OasisDEX";
   }
 
@@ -688,6 +696,7 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
     memset(out_str, 0, out_str_len);
     return false;
   }
+  contact_book_clear();
   return true;
 }
 
@@ -1384,6 +1393,7 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 }
 
 void ethereum_signing_abort(void) {
+  contact_book_clear();
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     signed_metadata_clear();
