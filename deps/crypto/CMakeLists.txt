@@ -63,6 +63,7 @@ set(sources
 if(${KK_ZCASH_PRIVACY})
   list(APPEND sources
       trezor-firmware/crypto/pallas.c
+      trezor-firmware/crypto/pallas_ct.c
       trezor-firmware/crypto/pallas_sinsemilla.c
       trezor-firmware/crypto/pallas_swu.c
       trezor-firmware/crypto/redpallas.c

@@ -43,12 +43,18 @@ if(NOT ${KK_BITCOIN_ONLY})
       osmosis.c
       ripple.c
       ripple_base58.c
+      signed_metadata.c
       signtx_tendermint.c
       solana.c
       tron.c
       ton.c
       tendermint.c
       thorchain.c)
+endif()
+
+# Zcash shielded/Orchard engine -- transparent Zcash needs none of this.
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.c)
 endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"

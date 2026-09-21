@@ -111,4 +111,30 @@ TEST_F(PassphraseTransition, SettingChangePreservesStagedSetup) {
   storage_setPassphraseProtected(true);
   EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
 }
+
+TEST_F(PassphraseTransition, StagingIsInertAndForeignCommitAborts) {
+  storage_setLabel("original");
+  storage_commit();
+  ASSERT_FALSE(storage_getPassphraseProtected());
+  ASSERT_FALSE(storage_hasPin());
+
+  ASSERT_TRUE(setup_stage(true, "english", "pending", 0, 37, false));
+  ASSERT_TRUE(setup_stagePin(false));
+  setup_arm(SETUP_RESET);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_STREQ("original", storage_getLabel());
+  EXPECT_FALSE(storage_getPassphraseProtected());
+  EXPECT_FALSE(storage_hasPin());
+
+  storage_commit();
+
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_STREQ("original", storage_getLabel());
+  EXPECT_FALSE(storage_getPassphraseProtected());
+  EXPECT_FALSE(storage_hasPin());
+  EXPECT_FALSE(setup_stagePin(false));
+  setup_arm(SETUP_RESET);
+  EXPECT_FALSE(setup_isArmed());
+}
+
 }  // namespace

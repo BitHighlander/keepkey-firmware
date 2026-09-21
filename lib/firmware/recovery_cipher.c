@@ -630,6 +630,7 @@ void recovery_cipher_finalize(void) {
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
   /* Attempt to autocomplete each word */
+  uint32_t words_committed = 0;
   char* tok = strtok(mnemonic, " ");
 
   while (tok) {
@@ -639,8 +640,26 @@ void recovery_cipher_finalize(void) {
 
     strlcat(final_mnemonic_scratch, temp_word_scratch, MNEMONIC_BUF);
     strlcat(final_mnemonic_scratch, " ", MNEMONIC_BUF);
+    words_committed++;
 
     tok = strtok(NULL, " ");
+  }
+
+  /* words_entered counts SEPARATORS, and strtok() collapses runs of them, so a
+   * ceremony driven with nothing but spaces satisfies the count gate above
+   * while producing no words at all. The phrase that then reaches the commit
+   * is empty, !enforce_wordlist (the wire default) skips mnemonic_check(), and
+   * the device stores a seed every attacker can derive. Require the words the
+   * loop actually emitted to be the count the ceremony claimed -- on every
+   * path, including the dry run, where a short phrase is equally meaningless.
+   */
+  if (words_committed != words_entered) {
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Not enough words entered");
+    setup_abort();
+    layoutHome();
+    return;
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
@@ -662,9 +681,10 @@ void recovery_cipher_finalize(void) {
     /* Commit point: the settings staged at the start of THIS ceremony and
      * the seed the user typed word by word land together, or neither lands.
      * setup_commit() disarms before it writes. */
-    setup_commit(final_mnemonic_scratch, /*imported=*/!enforce_wordlist);
+    const bool committed = setup_commit(SETUP_RECOVERY, final_mnemonic_scratch,
+                                        /*imported=*/!enforce_wordlist);
     memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
-    fsm_sendSuccess("Device recovered");
+    if (committed) fsm_sendSuccess("Device recovered");
   } else if (dry_run) {
     bool match = storage_isInitialized() &&
                  storage_containsMnemonic(final_mnemonic_scratch);

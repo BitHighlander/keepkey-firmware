@@ -34,6 +34,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       nano.cpp
       osmosis.cpp
       ripple.cpp
+      signed_metadata.cpp
       solana.cpp
       thorchain.cpp)
 endif()

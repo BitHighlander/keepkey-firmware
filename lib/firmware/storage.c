@@ -237,7 +237,7 @@ enum StorageVersion {
 _Static_assert(STORAGE_VERSION < STORAGE_VERSION_BTC_ONLY_BASE,
                "storage version must stay below the bitcoin-only band");
 
-static enum StorageVersion version_from_int(int version) {
+static enum StorageVersion version_from_int(uint32_t version) {
 #define STORAGE_VERSION_LAST(VAL)        \
   _Static_assert(VAL == STORAGE_VERSION, \
                  "need to update "       \
@@ -811,7 +811,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->sec.pin, ptr + 393, 10);
   storage->pub.has_language = read_bool(ptr + 403);
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
-  memcpy(storage->pub.language, ptr + 404, 17);
+  memcpy(storage->pub.language, ptr + 404, sizeof(storage->pub.language) - 1);
   storage->pub.has_label = read_bool(ptr + 421);
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
   memcpy(storage->pub.label, ptr + 422, 33);
@@ -954,10 +954,10 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
       MAX(read_u32_le(ptr + 12), STORAGE_MIN_SCREENSAVER_TIMEOUT);
 
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
-  memcpy(storage->pub.language, ptr + 16, 16);
+  memcpy(storage->pub.language, ptr + 16, sizeof(storage->pub.language) - 1);
 
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
-  memcpy(storage->pub.label, ptr + 32, 48);
+  memcpy(storage->pub.label, ptr + 32, sizeof(storage->pub.label) - 1);
 
   memcpy(storage->pub.wrapped_storage_key, ptr + 80, 64);
   memcpy(storage->pub.storage_key_fingerprint, ptr + 144, 32);
@@ -1084,10 +1084,10 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
       MAX(read_u32_le(ptr + 12), STORAGE_MIN_SCREENSAVER_TIMEOUT);
 
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
-  memcpy(storage->pub.language, ptr + 16, 16);
+  memcpy(storage->pub.language, ptr + 16, sizeof(storage->pub.language) - 1);
 
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
-  memcpy(storage->pub.label, ptr + 32, 48);
+  memcpy(storage->pub.label, ptr + 32, sizeof(storage->pub.label) - 1);
 
   memcpy(storage->pub.wrapped_storage_key, ptr + 80, 64);
   memcpy(storage->pub.storage_key_fingerprint, ptr + 144, 32);
@@ -1588,9 +1588,15 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
   pintest_t ret = PIN_WRONG;
 
   /* Direct callers bypass session_clear(), so revoke retained signing state
-   * here whenever PIN authorization is cleared. This writes no flash. */
+   * here whenever PIN authorization is cleared. This writes no flash. Setup
+   * ceremonies are deliberately left alone: pin_protect() reaches this through
+   * the routine wipe-code probe (any PIN that is not the wipe code returns
+   * PIN_WRONG), and a dry-run recovery has already staged its ceremony by
+   * then. The paths that must discard a ceremony -- session_clear(), the
+   * auto-lock, Initialize, ClearSession -- call fsm_abort_workflows()
+   * themselves. */
   if (clear_pin) {
-    fsm_abort_workflows();
+    fsm_abort_signing_workflows();
   }
 
   ss->seedCached = false;
@@ -1642,9 +1648,24 @@ void storage_commit(void) {
   // only way out is storage_wipe() (which clears the lock).
   if (btc_only_locked || firmware_too_old) return;
 
-  // Temporary storage for marshalling secrets in & out of flash. Keep the
-  // larger buffer reserved for a future migration, but 7.15 writes V17.
-  static char flash_temp[3480];
+  // Temporary storage for marshalling secrets in & out of flash.
+  //
+  // V17 = meta (44) + storage layout (2525) = 2569 bytes, so the last
+  // meaningful byte is index 2568. The size MUST be a multiple of 4: the CRC
+  // below is computed as sizeof(flash_temp) / sizeof(uint32_t) WORDS, and
+  // integer division silently drops the tail. At 2570 the CRC covered
+  // 642 words = 2568 bytes and left byte 2568 -- the final byte of the
+  // encrypted secret section -- unprotected, so a corrupted last byte could
+  // pass commit verification and only surface later as a secret fingerprint
+  // failure, which reaches storage_wipe(). 2572 = 643 words covers all 2569.
+  //
+  // Aligned because calc_crc32() casts to uint32_t*: the size assertion below
+  // says the buffer is a whole number of words, not that it starts on one.
+  static char flash_temp[2572] __attribute__((aligned(4)));
+  _Static_assert(sizeof(flash_temp) % sizeof(uint32_t) == 0,
+                 "flash_temp must be word-sized or the CRC drops its tail");
+  _Static_assert(sizeof(flash_temp) >= 2569,
+                 "flash_temp must cover the whole V17 record");
 
   memzero(flash_temp, sizeof(flash_temp));
 

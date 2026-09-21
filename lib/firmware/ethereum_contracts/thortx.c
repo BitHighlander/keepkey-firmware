@@ -259,8 +259,9 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
     }
   }
 
-  if (!thorchain_parseConfirmMemo((const char*)thorchainData, memo_len))
-    return false;
+  const ThorchainMemoResult memo_result =
+      thorchain_parseConfirmMemo((const char*)thorchainData, memo_len);
+  if (memo_result == THORCHAIN_MEMO_CANCELLED) return false;
 
   /* Page the complete raw memo as the authoritative disclosure: a long
    * structured field (dest/affiliate/aggregator) would otherwise truncate in

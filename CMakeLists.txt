@@ -23,6 +23,14 @@ option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
 
+# Regular 7.15 includes every supported chain, including Zcash Orchard.
+# Bitcoin-only is the sole reduced release product.
+if(KK_BITCOIN_ONLY)
+  set(KK_ZCASH_PRIVACY OFF)
+else()
+  set(KK_ZCASH_PRIVACY ON)
+endif()
+
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
 # itself be compiled with -fPIC. macOS happens to be lenient and will produce
@@ -165,10 +173,14 @@ else()
   add_definitions(-DBITCOIN_ONLY=0)
 endif()
 
-# The Zcash privacy engine lands in the next release slice. Keep its guarded
-# declarations disabled here so this foundational slice remains buildable on
-# its own under the ARM toolchain's -Wundef -Werror policy.
-add_definitions(-DZCASH_PRIVACY=0)
+if(${KK_ZCASH_PRIVACY})
+  add_definitions(-DZCASH_PRIVACY=1)
+  # Orchard leaves the regular image tightest on flash; shrink the Gladman
+  # AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM).
+  add_definitions(-DAES_SMALL_TABLES)
+else()
+  add_definitions(-DZCASH_PRIVACY=0)
+endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
   add_definitions(-DDEBUG_ON)

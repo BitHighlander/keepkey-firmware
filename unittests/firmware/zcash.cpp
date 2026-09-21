@@ -13,6 +13,9 @@ extern "C" {
 #include "gtest/gtest.h"
 #include <cstring>
 
+// Deterministic nonzero transcript entropy for RedPallas test vectors.
+static const uint8_t kRedPallasTestT[80] = {0x01};
+
 /* ── Pallas curve constants ──────────────────────────────────────── */
 
 /* Pallas base field prime p (LE) */
@@ -1519,7 +1522,8 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   alpha[31] = 0x00;
 
   uint8_t signature[64];
-  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, signature);
+  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
+                                  signature);
   EXPECT_EQ(ret, 0) << "RedPallas signing must succeed";
 
   /* Signature must be nonzero */
@@ -1565,8 +1569,7 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
 
 TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   /*
-   * RedPallas uses randomized nonces — signatures are intentionally
-   * non-deterministic. Verify that multiple calls all succeed and
+   * Verify that repeated calls with a valid transcript input all succeed and
    * produce valid (nonzero) 64-byte signatures.
    */
   ZcashOrchardKeys keys;
@@ -1581,7 +1584,9 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   uint8_t zero[64] = {0};
   for (int i = 0; i < 3; i++) {
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, sig), 0)
+    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, kRedPallasTestT,
+                                    sig),
+              0)
         << "Signing must succeed on call " << i;
     EXPECT_TRUE(memcmp(sig, zero, 64) != 0)
         << "Signature must be nonzero on call " << i;
@@ -1603,8 +1608,12 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
   memset(sighash_b, 0xBB, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, sig_b), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, kRedPallasTestT,
+                                  sig_a),
+            0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, kRedPallasTestT,
+                                  sig_b),
+            0);
 
   EXPECT_TRUE(memcmp(sig_a, sig_b, 64) != 0)
       << "Different sighash must produce different signatures";
