@@ -9,6 +9,13 @@ extern "C" {
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
+
+// confirm() auto-accept driver, defined in thorchain.cpp (same binary).
+// kkconfirm_preload(nYes, nNo) queues nYes accepted confirm screens then
+// nNo rejected ones; kkconfirm_drain() == 0 proves the exact screen count.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
 
 /* Every MAYAChain screen scales by the denom's own exponent, and they all ask
  * the same function, so a send screen and a deposit screen cannot disagree

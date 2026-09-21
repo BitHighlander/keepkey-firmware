@@ -21,6 +21,7 @@
 
 #include "keepkey/board/usb.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/emulator/emulator.h"
 #include "trezor/crypto/memzero.h"
 

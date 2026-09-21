@@ -149,6 +149,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Allocate %llu bytes?",
                      (unsigned long long)pi->extra_value);
+    }
 
     case SOL_INSTR_TOKEN_TRANSFER:
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
@@ -220,7 +221,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Mint %llu tokens?", (unsigned long long)pi->amount);
+                     "Mint %llu\nto %s?", (unsigned long long)pi->amount,
+                     to_str);
+    }
 
     case SOL_INSTR_TOKEN_BURN:
       if (!solana_confirm_account(title, "Burn token", pi->mint) ||
@@ -228,7 +231,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       }
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Burn %llu tokens?", (unsigned long long)pi->amount);
+                     "Burn %llu\nfrom %s?", (unsigned long long)pi->amount,
+                     from_str);
+    }
 
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
       if (!solana_confirm_account(title, "Close token account", pi->from)) {
@@ -340,6 +345,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Set vote commission to %u%%?", pi->extra_u8);
+    }
 
     case SOL_INSTR_ATA_CREATE:
       if (!solana_confirm_account(title, "Create token account", pi->to) ||
@@ -457,6 +463,24 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
     if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0) return true;
   }
   return false;
+}
+
+/* The single verified-transaction confirmation flow shared by BOTH
+ * SolanaSignTx and SolanaSignMessage (transaction-shaped messages are equally
+ * broadcastable), so their security screens — per-instruction disclosure AND
+ * the priority-fee screen — cannot drift apart. `msg` is NULL on the
+ * SignMessage path (host token symbols are unavailable there). Returns false if
+ * the user rejects any screen. */
+static bool solana_confirm_verified_tx(const SolanaParsedTx* parsed,
+                                       const SolanaSignTx* msg) {
+  for (uint8_t i = 0; i < parsed->num_instructions; i++) {
+    if (!solana_confirmInstruction(&parsed->instructions[i], msg, i,
+                                   parsed->num_instructions)) {
+      return false;
+    }
+  }
+  return solana_confirm_priority_fee(
+      parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
 }
 
 void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg) {
@@ -651,13 +675,27 @@ void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg) {
     return;
   }
 
-  /* AdvancedMode gate: Solana message signing has no domain separation.
-   * A signed message is indistinguishable from a signed transaction on
-   * the Solana network (both are raw Ed25519 over arbitrary bytes).
-   * A malicious dApp could craft a message that is also a valid tx.
+  /* Solana "message" signing has no domain separation: the signed bytes
+   * are indistinguishable from a transaction message on the network.
+   * If the payload actually parses as a fully-verifiable Solana
+   * transaction, treat it as one — clear-sign it per instruction instead
+   * of blind-signing a hex blob. Wallet integrations sign versioned (v0)
+   * swap transactions through this message, so this is the path that
+   * turns swap blind-signing into clear-signing. */
+  /* Note: solana_inspectTx tolerates a 0x00 signature-count prefix, but
+   * here the signature covers the exact message bytes — only a payload
+   * that IS a tx message from byte 0 may be displayed as one. */
+  SolanaParsedTx parsed;
+  bool is_verified_tx = msg->message.bytes[0] != 0 &&
+                        solana_inspectTx(msg->message.bytes, msg->message.size,
+                                         &parsed) == SOL_TX_REVIEW_VERIFIED;
+
+  /* AdvancedMode gate for anything we cannot verify: a malicious dApp
+   * could craft a "message" that is also a valid tx.
    * See: https://github.com/trezor/trezor-firmware/issues/4371
-   * Require AdvancedMode to proceed — same gate as ETH blind-signing. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+   * Same gate as ETH blind-signing. Fully verified transactions are
+   * clear-signed below and need no gate — the user sees the contents. */
+  if (!is_verified_tx && !storage_isPolicyEnabled("AdvancedMode")) {
     (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
                  "Solana message signing is experimental. "
                  "Enable AdvancedMode in device settings.");
