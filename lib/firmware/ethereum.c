@@ -54,6 +54,10 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
   return advanced_mode;
 }
 
+bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
+  return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
+}
+
 /* The legacy JSON parser cannot guarantee that every displayed value is the
  * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
  * but fail closed in the FSM until the complete parser hardening is backported.

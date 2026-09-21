@@ -33,8 +33,6 @@
 static const MessagesMap_t* MessagesMap = NULL;
 static size_t map_size = 0;
 static msg_failure_t msg_failure;
-/* A tiny receive failure has already answered the suspended handler. Keep
- * its unwind from producing another reply or waiting for another prompt. */
 static bool tiny_handler_rejected;
 
 bool msg_handler_rejected(void) { return tiny_handler_rejected; }
@@ -210,9 +208,6 @@ static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
   entry->process_func(decode_buffer);
 
 cleanup:
-  /* Parsed protobufs can contain PINs, passphrases, authenticator seeds, and
-   * other credentials.  Handlers must copy any state they retain; do not keep
-   * the source message resident until the next dispatch. */
   memzero(decode_buffer, sizeof(decode_buffer));
 }
 
@@ -495,7 +490,7 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   msg_tiny_flag = true;
 
-  while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
+  while (msg_tiny_id == MSG_TINY_TYPE_ERROR) {
     usbPoll();
 
     if (!block) {
@@ -505,16 +500,9 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
 
   msg_tiny_flag = false;
 
-  if (tiny_handler_rejected) {
-    memzero(msg_tiny, sizeof(msg_tiny));
-    memzero(buf, MSG_TINY_BFR_SZ);
-    return MessageType_MessageType_Cancel;
-  }
-
   if (msg_tiny_id != MSG_TINY_TYPE_ERROR) {
     memcpy(buf, msg_tiny, sizeof(msg_tiny));
   }
-  memzero(msg_tiny, sizeof(msg_tiny));
 
   return msg_tiny_id;
 }

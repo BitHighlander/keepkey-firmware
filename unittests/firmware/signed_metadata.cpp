@@ -221,6 +221,10 @@ void make_matching_msg(EthereumSignTx* msg) {
 const char* TEST_ALIAS = "CI Test";
 
 void set_advanced_mode_for_test(bool enabled) {
+  /* The full xunit binary may already have initialized emulator flash in an
+   * earlier fixture (notably Authenticator). Re-running storage_init() then
+   * attempts to migrate/decrypt an already-live shadow store. The allocation
+   * is the shared source of truth, and also keeps this suite runnable alone. */
   if (storage_getLocation() == FLASH_INVALID) {
     setup();
     storage_init();
@@ -275,6 +279,29 @@ TEST_F(SignedMetadataTest, ValidVerifiedSlot3) {
   EXPECT_EQ(memcmp(m->selector, SEL_TRANSFER, 4), 0);
   EXPECT_EQ(memcmp(m->tx_hash, TX_HASH, 32), 0);
   EXPECT_EQ(m->key_id, TEST_KEY_ID);
+}
+
+TEST_F(SignedMetadataTest, RuntimeMetadataIsInertOutsideAdvancedMode) {
+  std::vector<uint8_t> blob = base_blob();
+  set_advanced_mode_for_test(false);
+  ExpectMalformed(blob, TEST_KEY_ID);
+
+  const uint8_t data[] = "advanced-mode-gate";
+  uint8_t digest[32];
+  uint8_t sig[64];
+  sha256_Raw(data, sizeof(data) - 1, digest);
+  ASSERT_EQ(ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest, sig, NULL, NULL),
+            0);
+  EXPECT_FALSE(signed_metadata_verify_attestation(
+      TEST_KEY_ID, data, sizeof(data) - 1, sig, sizeof(sig)));
+  char alias[METADATA_ALIAS_MAX_LEN + 1] = {0};
+  EXPECT_FALSE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
+
+  set_advanced_mode_for_test(true);
+  EXPECT_TRUE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
+  EXPECT_STREQ(alias, TEST_ALIAS);
 }
 
 TEST_F(SignedMetadataTest, ValidOpaqueClassification) {
@@ -717,6 +744,21 @@ TEST_F(SignedMetadataTest, NoSignerLoadedRejects) {
   ExpectMalformed(base_blob(), TEST_KEY_ID);
 }
 
+TEST_F(SignedMetadataTest, NoCompiledSignerSlots) {
+  signed_metadata_clear_signers();
+  EXPECT_FALSE(signed_metadata_available());
+  for (uint8_t slot = 0; slot < METADATA_MAX_KEYS; slot++) {
+    char fingerprint[METADATA_FINGERPRINT_LEN];
+    EXPECT_FALSE(signed_metadata_signer_is_runtime(slot))
+        << "slot " << (int)slot;
+    EXPECT_EQ(signed_metadata_signer_alias(slot), nullptr)
+        << "slot " << (int)slot;
+    EXPECT_FALSE(signed_metadata_signer_fingerprint(slot, fingerprint))
+        << "slot " << (int)slot;
+  }
+  EXPECT_EQ(signed_metadata_signer_alias(METADATA_MAX_KEYS), nullptr);
+}
+
 TEST_F(SignedMetadataTest, FromLoadedSignerTracksMetadata) {
   EXPECT_FALSE(signed_metadata_from_loaded_signer());  // nothing processed
   std::vector<uint8_t> blob = base_blob();
@@ -988,6 +1030,16 @@ TEST(SignedMetadataSignerValid, RejectsBadAlias) {
       signed_metadata_signer_valid(0, EXPECTED_SLOT3_PUB, 33, "trust(me)"));
 }
 
+TEST(SignedMetadataSignerStore, RejectsPersistenceBeforeSessionMutation) {
+  signed_metadata_clear_signers();
+  EXPECT_FALSE(signed_metadata_store_signer(
+      TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS, nullptr, 0, 0, 0, true));
+  EXPECT_EQ(signed_metadata_signer_alias(TEST_KEY_ID), nullptr);
+  char fingerprint[METADATA_FINGERPRINT_LEN];
+  EXPECT_FALSE(signed_metadata_signer_fingerprint(TEST_KEY_ID, fingerprint));
+  signed_metadata_clear_signers();
+}
+
 /* ---- signed_metadata_pubkey_fingerprint -------------------------------- */
 
 TEST(SignedMetadataFingerprint, IsSha256Prefix) {
@@ -1208,12 +1260,130 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesTransferArgs) {
   EXPECT_EQ(memcmp(md->args[1].value + 6, AMOUNT32, 32), 0);
 }
 
-/* THE v2 drain preventer: a v2 schema commits to calldata only — never to
- * msg->value — and a v2 match suppresses ethereum.c's native-value confirm
- * screen. A payable method could then clear-sign an arbitrary ETH transfer
- * whose value is never shown. Any nonzero native value must therefore refuse
- * the v2 match and fall to the blind-sign gate. (v1 is safe: tx_hash covers
- * value.) */
+/* THE v2 drain preventer, restated.
+ *
+ * A v2 schema commits to calldata only — never to msg->value — so it cannot
+ * bind a payable call's amount. The original guard refused any nonzero value,
+ * which meant every value-bearing route (a Relay ETH->SOL bridge deposit, for
+ * one) was forced to blind-sign: precisely the transactions most worth
+ * reviewing. Refusing was not what kept funds safe; SHOWING the amount is.
+ *
+ * So the match now succeeds and the schema reports that the tx moves value.
+ * ethereum.c consumes that to keep the native amount/recipient screen instead
+ * of suppressing it, so the user sees the decoded call AND the ETH leaving.
+ * The amount is read from the transaction being signed, so nothing unattested
+ * reaches the screen and the schema stays transaction-independent. */
+TEST_F(SignedMetadataTest, V2SchemaPayableKeepsValueScreen) {
+  std::vector<uint8_t> blob = v2_base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  EthereumSignTx msg;
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true, (uint32_t)data.size());
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 0x01;  // 1 wei — any nonzero value is "payable"
+
+  /* Clear-signs, AND flags that the amount screen must still run. */
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+
+  /* Zero value: same match, but no extra screen is demanded — proving the
+   * flag tracks the value rather than being always-on. */
+  msg.value.size = 0;
+  msg.has_value = false;
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+}
+
+/* A large, realistic value must set the flag too — not just a 1-wei probe. */
+TEST_F(SignedMetadataTest, V2SchemaPayableFlagsRealisticValue) {
+  std::vector<uint8_t> blob = v2_base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  EthereumSignTx msg;
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true, (uint32_t)data.size());
+  msg.has_value = true;
+  /* 0.00798 ETH = 0x1c5145d9b6b3ff — the Relay ETH->SOL deposit from a real
+   * quote, whose blind-signing prompted this change. */
+  const uint8_t kValue[] = {0x1c, 0x51, 0x45, 0xd9, 0xb6, 0xb3, 0xff};
+  msg.value.size = sizeof(kValue);
+  memcpy(msg.value.bytes, kValue, sizeof(kValue));
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+}
+
+/* THE transaction this whole path exists for: a real Relay ETH->SOL bridge
+ * deposit, captured from api.relay.link on 2026-07-27.
+ *
+ *   to       0x4cd00e387622c35bddb9b4c962c136462338bc31
+ *   value    7980129999999999 wei (0.00798 ETH)  <-- PAYABLE
+ *   calldata 0x49290c1c + address(depositor) + bytes32(orderId)  = 68 bytes
+ *
+ * Three things had to be true for this to clear-sign, and each was a real
+ * blocker: the call is payable (was refused outright), one arg is an opaque
+ * word (BYTES was not accepted in the v2 arg parser), and 4 + 2*32 must
+ * exactly equal the calldata length (structural completeness). */
+TEST_F(SignedMetadataTest, V2SchemaDecodesRelayEthToSolanaDeposit) {
+  const uint8_t RELAY_ROUTER[20] = {0x4c, 0xd0, 0x0e, 0x38, 0x76, 0x22, 0xc3,
+                                    0x5b, 0xdd, 0xb9, 0xb4, 0x96, 0x2c, 0x13,
+                                    0x64, 0x62, 0x33, 0x8b, 0xc3, 0x31};
+  const uint8_t SEL[4] = {0x49, 0x29, 0x0c, 0x1c};
+  /* depositor 0x909Ef6B32DfDc12CA86aA710b54c991af3C5F82E */
+  const uint8_t DEPOSITOR[20] = {0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1,
+                                 0x2c, 0xa8, 0x6a, 0xa7, 0x10, 0xb5, 0x4c,
+                                 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  /* orderId 0x8a2c1211...cb1, verbatim from the quote */
+  const uint8_t ORDER_ID[32] = {0x8a, 0x2c, 0x12, 0x11, 0x97, 0xef, 0xc9, 0x5c,
+                                0x42, 0xf5, 0x31, 0x42, 0xab, 0x40, 0x97, 0x35,
+                                0xee, 0x35, 0x32, 0x87, 0xf8, 0x77, 0xed, 0x4d,
+                                0x35, 0x1f, 0x63, 0x09, 0x4d, 0x5b, 0xfc, 0xb1};
+
+  V2Spec s = v2_base_spec();
+  s.contract.assign(RELAY_ROUTER, RELAY_ROUTER + 20);
+  s.selector.assign(SEL, SEL + 4);
+  s.method = "bridgeDeposit";
+  s.args.clear();
+  s.args.push_back(v2_addr("depositor"));
+  s.args.push_back(V2Arg{"orderId", ARG_FORMAT_BYTES, 0, ""});
+
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  std::vector<uint8_t> data(SEL, SEL + 4);
+  put_addr_word(data, DEPOSITOR);
+  data.insert(data.end(), ORDER_ID, ORDER_ID + 32);
+  ASSERT_EQ(data.size(), 68u); /* 4 + 2*32, exactly — no remainder */
+
+  EthereumSignTx msg;
+  make_v2_msg(&msg, RELAY_ROUTER, data, /*has_len=*/true,
+              (uint32_t)data.size());
+  /* 0.00798 ETH — the payable part that used to force blind-signing. */
+  const uint8_t VALUE[] = {0x1c, 0x51, 0x45, 0xd9, 0xb6, 0xb3, 0xff};
+  msg.has_value = true;
+  msg.value.size = sizeof(VALUE);
+  memcpy(msg.value.bytes, VALUE, sizeof(VALUE));
+
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  /* ...and the ETH amount screen must still run, since the schema cannot
+   * bind the value. */
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+
+  const SignedMetadata* md = signed_metadata_get();
+  ASSERT_NE(md, nullptr);
+  EXPECT_EQ(md->num_args, 2);
+  EXPECT_EQ(md->args[0].format, ARG_FORMAT_ADDRESS);
+  EXPECT_EQ(md->args[0].value_len, 20);
+  EXPECT_EQ(memcmp(md->args[0].value, DEPOSITOR, 20), 0);
+  EXPECT_EQ(md->args[1].format, ARG_FORMAT_BYTES);
+  EXPECT_EQ(md->args[1].value_len, 32);
+  EXPECT_EQ(memcmp(md->args[1].value, ORDER_ID, 32), 0);
+}
+
 /* Relay solver swap: selector 0x02d5f05f(token address, amount, requestId) —
  * three fixed single words, EXACTLY the shape pulled from real relay traffic
  * (100-byte calldata: 4 + 3*32, zero remainder, verified across 22 live
@@ -1339,12 +1509,34 @@ TEST_F(SignedMetadataTest, V2RejectsSelectorMismatch) {
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));
 }
 
-/* An unsupported display format (dynamic types out of scope) -> MALFORMED. */
+/* An unsupported display format -> MALFORMED.
+ *
+ * v2 renders fixed single ABI words only: ADDRESS, AMOUNT, BYTES and
+ * TOKEN_AMOUNT. STRING is dynamic (offset + length + payload), so it cannot be
+ * read from one 32-byte word and must stay out of scope — accepting it would
+ * break the "declared widths equal the calldata length" rule that makes a
+ * schema safe without a tx_hash. An out-of-range format byte must fail too. */
 TEST_F(SignedMetadataTest, V2RejectsUnsupportedFormat) {
   V2Spec s = v2_base_spec();
   s.args[1] = V2Arg{"data", ARG_FORMAT_STRING, 0, ""};
   std::vector<uint8_t> blob = sign_body(build_v2_body(s));
   ExpectMalformed(blob, TEST_KEY_ID);
+
+  V2Spec bogus = v2_base_spec();
+  bogus.args[1] = V2Arg{"data", (ArgFormat)0x7f, 0, ""};
+  std::vector<uint8_t> blob2 = sign_body(build_v2_body(bogus));
+  ExpectMalformed(blob2, TEST_KEY_ID);
+}
+
+/* BYTES IS supported in v2: an opaque fixed word (a router's order id) still
+ * occupies exactly one ABI word, so it neither breaks structural completeness
+ * nor needs a dynamic decoder. */
+TEST_F(SignedMetadataTest, V2AcceptsBytesArg) {
+  V2Spec s = v2_base_spec();
+  s.args[1] = V2Arg{"orderId", ARG_FORMAT_BYTES, 0, ""};
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
 }
 
 /* Tampered v2 body must fail the signature check. */
@@ -1542,6 +1734,65 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   // No attestation -> not trusted (the caller falls back to unsigned display).
   ti.has_signature = false;
   EXPECT_FALSE(solana_token_info_trusted(&ti));
+
+  signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
+}
+
+/* ===================================================================== *
+ *  Clearsign attestor: the issuer/verifier digest contract
+ *
+ *  fsm_msgClearsignAttestorSign signs sha256(payload) as a 64-byte compact
+ *  ECDSA signature; verifying devices check it through
+ *  signed_metadata_verify_attestation. Those two constructions living in
+ *  different files is exactly how SignIdentity ended up unusable for this
+ *  (Bitcoin message header + double hash, 65 bytes). This pins the contract
+ *  so a change on either side fails here rather than in the field.
+ * ===================================================================== */
+
+TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
+  set_advanced_mode_for_test(true);
+  /* Smallest valid KKSOLSC1 payload: no args, no accounts. What matters here
+   * is the digest construction, not the schema body. */
+  std::vector<uint8_t> payload;
+  auto push = [&](const void* p, size_t n) {
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    payload.insert(payload.end(), b, b + n);
+  };
+  push("KKSOLSC1", 8);
+  payload.push_back(1); /* version */
+  payload.insert(payload.end(), 32, 0x42);
+  payload.push_back(1);    /* disc_len */
+  payload.push_back(0x0d); /* discriminator */
+  payload.push_back(5);
+  push("Relay", 5);
+  payload.push_back(7);
+  push("deposit", 7);
+  payload.push_back(0); /* no args */
+  payload.push_back(0); /* no accounts */
+
+  SolanaInstrSchema schema;
+  ASSERT_TRUE(solana_parseInstrSchema(payload.data(), payload.size(), &schema))
+      << "the attestor refuses to sign what it cannot parse";
+
+  /* Issuer side, byte for byte what the handler does. */
+  uint8_t digest[32];
+  sha256_Raw(payload.data(), payload.size(), digest);
+  uint8_t sig[64];
+  ASSERT_EQ(ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest, sig, NULL, NULL),
+            0);
+
+  /* Verifier side. */
+  signed_metadata_clear_signers();
+  signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
+                               NULL, 0, 0, 0, false);
+  EXPECT_TRUE(signed_metadata_verify_attestation(
+      TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
+
+  /* A schema the attestor never saw must not ride the same signature. */
+  payload[9] ^= 0x01; /* first byte of the program id */
+  EXPECT_FALSE(signed_metadata_verify_attestation(
+      TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
