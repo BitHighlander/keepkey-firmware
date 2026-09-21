@@ -154,6 +154,8 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
+        // amount_str only needs to hold the numeric part (no denom suffix).
+        // Denom is confirmed on a separate screen so no truncation is possible.
         char amount_str[32];
         if (!bn_format_uint64(msg->send.amount, NULL, NULL, 8, 0, false,
                               amount_str, sizeof(amount_str))) {
