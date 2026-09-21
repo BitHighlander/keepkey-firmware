@@ -33,6 +33,8 @@ typedef struct _EthereumMessageSignature EthereumMessageSignature;
 typedef struct _TokenType TokenType;
 typedef struct _CoinType CoinType;
 
+#define ETHEREUM_CONFIRM_BODY_SIZE 352
+
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm);
 void ethereum_signing_abort(void);
@@ -50,6 +52,8 @@ bool ethereum_streamed_eip712_enabled(void);
 /// \returns true iff successful
 bool ethereum_getStandardERC20Recipient(const EthereumSignTx* msg,
                                         char* address, size_t len);
+bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
+                                      size_t buflen);
 
 /// \pre requires that `ethereum_isStandardERC20Transfer(msg)`
 /// \returns true iff successful
