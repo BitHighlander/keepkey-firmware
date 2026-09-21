@@ -31,7 +31,6 @@
 #include "keepkey/board/layout.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/confirm_sm.h"
-#include "keepkey/board/font.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 
