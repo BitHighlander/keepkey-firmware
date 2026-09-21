@@ -37,15 +37,31 @@ static bool label_valid(const uint8_t* label, size_t len) {
   return true;
 }
 
+static bool network_valid(const uint8_t* network, size_t len) {
+  if (len == 0 || len > CONTACT_BOOK_NETWORK_MAX) return false;
+  bool colon = false;
+  for (size_t i = 0; i < len; i++) {
+    if (network[i] == ':') colon = true;
+    if (!((network[i] >= 'a' && network[i] <= 'z') ||
+          (network[i] >= 'A' && network[i] <= 'Z') ||
+          (network[i] >= '0' && network[i] <= '9') || network[i] == ':' ||
+          network[i] == '-'))
+      return false;
+  }
+  return colon;
+}
+
 static void leaf_hash(const ContactBookEntry* entry, uint8_t out[32]) {
   SHA256_CTX ctx;
-  uint8_t chain[4];
+  uint8_t network_len = (uint8_t)strlen(entry->network);
   uint8_t label_len = (uint8_t)strlen(entry->label);
-  write_be32(chain, entry->chain_id);
   sha256_Init(&ctx);
   sha256_Update(&ctx, (const uint8_t*)"KKABLEAF", 8);
-  sha256_Update(&ctx, chain, sizeof(chain));
-  sha256_Update(&ctx, entry->address, sizeof(entry->address));
+  sha256_Update(&ctx, &network_len, 1);
+  sha256_Update(&ctx, (const uint8_t*)entry->network, network_len);
+  sha256_Update(&ctx, &entry->destination_type, 1);
+  sha256_Update(&ctx, &entry->destination_len, 1);
+  sha256_Update(&ctx, entry->destination, entry->destination_len);
   sha256_Update(&ctx, &label_len, 1);
   sha256_Update(&ctx, (const uint8_t*)entry->label, label_len);
   sha256_Final(&ctx, out);
@@ -101,11 +117,19 @@ bool contact_book_parse_request(
     return false;
   memset(entries, 0, sizeof(ContactBookEntry) * CONTACT_BOOK_MAX_ENTRIES);
   for (uint8_t i = 0; i < manifest->count; i++) {
-    if (off + 25 > data_len) return false;
-    entries[i].chain_id = read_be32(data + off);
-    off += 4;
-    memcpy(entries[i].address, data + off, 20);
-    off += 20;
+    if (off + 5 > data_len) return false;
+    uint8_t network_len = data[off++];
+    if (off + network_len + 3 > data_len ||
+        !network_valid(data + off, network_len)) return false;
+    memcpy(entries[i].network, data + off, network_len);
+    off += network_len;
+    entries[i].destination_type = data[off++];
+    entries[i].destination_len = data[off++];
+    if (entries[i].destination_type == 0 || entries[i].destination_len == 0 ||
+        entries[i].destination_len > CONTACT_BOOK_DESTINATION_MAX ||
+        off + entries[i].destination_len + 1 > data_len) return false;
+    memcpy(entries[i].destination, data + off, entries[i].destination_len);
+    off += entries[i].destination_len;
     uint8_t len = data[off++];
     if (off + len > data_len || !label_valid(data + off, len)) return false;
     memcpy(entries[i].label, data + off, len);
@@ -131,7 +155,7 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
                                 const uint8_t expected_pubkey[33]) {
   contact_book_clear();
   /* magic + manifest + pubkey + sig + entry + index/depth */
-  if (!data || !expected_pubkey || data_len < 8 + 38 + 33 + 64 + 27 ||
+  if (!data || !expected_pubkey || data_len < 8 + 38 + 33 + 64 + 8 ||
       memcmp(data, PROOF_MAGIC, 8) != 0 || data[8] != CONTACT_BOOK_VERSION)
     return false;
   size_t off = 9;
@@ -150,13 +174,21 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
   off += 64;
   if (memcmp(pubkey, expected_pubkey, 33) != 0) return false;
 
-  if (off + 25 > data_len) return false;
+  if (off + 5 > data_len) return false;
   ContactBookEntry entry;
   memset(&entry, 0, sizeof(entry));
-  entry.chain_id = read_be32(data + off);
-  off += 4;
-  memcpy(entry.address, data + off, 20);
-  off += 20;
+  uint8_t network_len = data[off++];
+  if (off + network_len + 3 > data_len ||
+      !network_valid(data + off, network_len)) return false;
+  memcpy(entry.network, data + off, network_len);
+  off += network_len;
+  entry.destination_type = data[off++];
+  entry.destination_len = data[off++];
+  if (entry.destination_type == 0 || entry.destination_len == 0 ||
+      entry.destination_len > CONTACT_BOOK_DESTINATION_MAX ||
+      off + entry.destination_len + 1 > data_len) return false;
+  memcpy(entry.destination, data + off, entry.destination_len);
+  off += entry.destination_len;
   uint8_t label_len = data[off++];
   if (off + label_len + 2 > data_len || !label_valid(data + off, label_len))
     return false;
@@ -203,9 +235,13 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
   return true;
 }
 
-bool contact_book_match(uint32_t chain_id, const uint8_t address[20]) {
-  return proof_available && address && proof_entry.chain_id == chain_id &&
-         memcmp(proof_entry.address, address, 20) == 0;
+bool contact_book_match(const char* network, uint8_t destination_type,
+                        const uint8_t* destination, size_t destination_len) {
+  return proof_available && network && destination &&
+         strcmp(proof_entry.network, network) == 0 &&
+         proof_entry.destination_type == destination_type &&
+         proof_entry.destination_len == destination_len &&
+         memcmp(proof_entry.destination, destination, destination_len) == 0;
 }
 
 const char* contact_book_label(void) {

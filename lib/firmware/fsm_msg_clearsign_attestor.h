@@ -37,7 +37,7 @@
  * it.
  *
  * Also accepts bounded KKABREQ1 address-book batches. The device recomputes a
- * Merkle root, shows every label/address pair, and signs only the fixed-size
+ * Merkle root, shows every label/network/destination tuple, and signs only the fixed-size
  * KKABRT01 root manifest returned implicitly to the host.
  *
  * ponytail: KKSOLSC1 and KKABREQ1 only. EVM v2 metadata blobs are attestable in
@@ -151,12 +151,16 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
         "Approve %u contacts?\nRevision %lu", (unsigned)contact_manifest.count,
         (unsigned long)contact_manifest.revision);
     for (uint8_t i = 0; confirmed && i < contact_manifest.count; i++) {
-      char address[43] = "0x";
-      ethereum_address_checksum(contact_entries[i].address, address + 2, false,
-                                contact_entries[i].chain_id);
-      confirmed =
-          confirm(ButtonRequestType_ButtonRequest_SignTx, "Certify Contact",
-                  "%s\n%s", contact_entries[i].label, address);
+      confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx,
+                          "Certify Contact", "%s\n%s",
+                          contact_entries[i].label,
+                          contact_entries[i].network);
+      if (confirmed) {
+        confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_SignTx,
+                                  "Destination",
+                                  contact_entries[i].destination,
+                                  contact_entries[i].destination_len);
+      }
     }
     if (!confirmed) {
       memzero(contact_entries, sizeof(contact_entries));

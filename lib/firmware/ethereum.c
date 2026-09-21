@@ -664,7 +664,12 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
       memcmp(value + 24, "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0;
 
   const char* address = addr;
-  if (!approve && to_len == 20 && contact_book_match(chain_id, to)) {
+  char contact_network[32];
+  snprintf(contact_network, sizeof(contact_network), "eip155:%lu",
+           (unsigned long)chain_id);
+  if (!approve && to_len == 20 &&
+      contact_book_match(contact_network, CONTACT_BOOK_DEST_EVM_ADDRESS, to,
+                         to_len)) {
     address = contact_book_label();
   } else if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
     address = "OasisDEX";
