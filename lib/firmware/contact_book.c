@@ -1,0 +1,218 @@
+#include "keepkey/firmware/contact_book.h"
+
+#include <string.h>
+
+#include "ecdsa.h"
+#include "memzero.h"
+#include "secp256k1.h"
+#include "sha2.h"
+
+#define REQUEST_MAGIC "KKABREQ1"
+#define ROOT_MAGIC "KKABRT01"
+#define PROOF_MAGIC "KKABPRF1"
+#define CONTACT_BOOK_VERSION 1
+
+static bool proof_available;
+static ContactBookEntry proof_entry;
+
+static uint32_t read_be32(const uint8_t* p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+         ((uint32_t)p[2] << 8) | p[3];
+}
+
+static void write_be32(uint8_t* p, uint32_t v) {
+  p[0] = (uint8_t)(v >> 24);
+  p[1] = (uint8_t)(v >> 16);
+  p[2] = (uint8_t)(v >> 8);
+  p[3] = (uint8_t)v;
+}
+
+static bool label_valid(const uint8_t* label, size_t len) {
+  if (len == 0 || len > CONTACT_BOOK_LABEL_MAX) return false;
+  for (size_t i = 0; i < len; i++) {
+    /* Alpha format is deliberately ASCII-only: no controls, bidi overrides,
+     * invisible Unicode, or display-confusable normalization. */
+    if (label[i] < 0x20 || label[i] > 0x7e || label[i] == '%') return false;
+  }
+  return true;
+}
+
+static void leaf_hash(const ContactBookEntry* entry, uint8_t out[32]) {
+  SHA256_CTX ctx;
+  uint8_t chain[4];
+  uint8_t label_len = (uint8_t)strlen(entry->label);
+  write_be32(chain, entry->chain_id);
+  sha256_Init(&ctx);
+  sha256_Update(&ctx, (const uint8_t*)"KKABLEAF", 8);
+  sha256_Update(&ctx, chain, sizeof(chain));
+  sha256_Update(&ctx, entry->address, sizeof(entry->address));
+  sha256_Update(&ctx, &label_len, 1);
+  sha256_Update(&ctx, (const uint8_t*)entry->label, label_len);
+  sha256_Final(&ctx, out);
+}
+
+static void pair_hash(const uint8_t left[32], const uint8_t right[32],
+                      uint8_t out[32]) {
+  SHA256_CTX ctx;
+  sha256_Init(&ctx);
+  sha256_Update(&ctx, left, 32);
+  sha256_Update(&ctx, right, 32);
+  sha256_Final(&ctx, out);
+}
+
+static uint8_t tree_depth(uint8_t count) {
+  uint8_t depth = 0, width = 1;
+  while (width < count) {
+    width <<= 1;
+    depth++;
+  }
+  return depth;
+}
+
+static void merkle_root(const ContactBookEntry* entries, uint8_t count,
+                        uint8_t out[32]) {
+  uint8_t nodes[CONTACT_BOOK_MAX_ENTRIES][32];
+  uint8_t width = 1;
+  while (width < count) width <<= 1;
+  for (uint8_t i = 0; i < count; i++) leaf_hash(&entries[i], nodes[i]);
+  for (uint8_t i = count; i < width; i++)
+    memcpy(nodes[i], nodes[count - 1], 32);
+  while (width > 1) {
+    for (uint8_t i = 0; i < width; i += 2)
+      pair_hash(nodes[i], nodes[i + 1], nodes[i / 2]);
+    width >>= 1;
+  }
+  memcpy(out, nodes[0], 32);
+  memzero(nodes, sizeof(nodes));
+}
+
+bool contact_book_parse_request(
+    const uint8_t* data, size_t data_len, ContactBookManifest* manifest,
+    ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES], size_t* signed_len) {
+  if (!data || !manifest || !entries || data_len < 14 ||
+      memcmp(data, REQUEST_MAGIC, 8) != 0 || data[8] != CONTACT_BOOK_VERSION)
+    return false;
+  size_t off = 9;
+  manifest->revision = read_be32(data + off);
+  off += 4;
+  manifest->count = data[off++];
+  if (manifest->revision == 0 || manifest->count == 0 ||
+      manifest->count > CONTACT_BOOK_MAX_ENTRIES)
+    return false;
+  memset(entries, 0, sizeof(ContactBookEntry) * CONTACT_BOOK_MAX_ENTRIES);
+  for (uint8_t i = 0; i < manifest->count; i++) {
+    if (off + 25 > data_len) return false;
+    entries[i].chain_id = read_be32(data + off);
+    off += 4;
+    memcpy(entries[i].address, data + off, 20);
+    off += 20;
+    uint8_t len = data[off++];
+    if (off + len > data_len || !label_valid(data + off, len)) return false;
+    memcpy(entries[i].label, data + off, len);
+    entries[i].label[len] = '\0';
+    off += len;
+  }
+  if (off != data_len) return false;
+  merkle_root(entries, manifest->count, manifest->root);
+  if (signed_len) *signed_len = off;
+  return true;
+}
+
+void contact_book_manifest_bytes(const ContactBookManifest* manifest,
+                                 uint8_t out[46]) {
+  memcpy(out, ROOT_MAGIC, 8);
+  out[8] = CONTACT_BOOK_VERSION;
+  write_be32(out + 9, manifest->revision);
+  out[13] = manifest->count;
+  memcpy(out + 14, manifest->root, 32);
+}
+
+bool contact_book_process_proof(const uint8_t* data, size_t data_len,
+                                const uint8_t expected_pubkey[33]) {
+  contact_book_clear();
+  /* magic + manifest + pubkey + sig + entry + index/depth */
+  if (!data || !expected_pubkey || data_len < 8 + 38 + 33 + 64 + 27 ||
+      memcmp(data, PROOF_MAGIC, 8) != 0 || data[8] != CONTACT_BOOK_VERSION)
+    return false;
+  size_t off = 9;
+  ContactBookManifest manifest;
+  manifest.revision = read_be32(data + off);
+  off += 4;
+  manifest.count = data[off++];
+  memcpy(manifest.root, data + off, 32);
+  off += 32;
+  if (manifest.revision == 0 || manifest.count == 0 ||
+      manifest.count > CONTACT_BOOK_MAX_ENTRIES)
+    return false;
+  const uint8_t* pubkey = data + off;
+  off += 33;
+  const uint8_t* signature = data + off;
+  off += 64;
+  if (memcmp(pubkey, expected_pubkey, 33) != 0) return false;
+
+  if (off + 25 > data_len) return false;
+  ContactBookEntry entry;
+  memset(&entry, 0, sizeof(entry));
+  entry.chain_id = read_be32(data + off);
+  off += 4;
+  memcpy(entry.address, data + off, 20);
+  off += 20;
+  uint8_t label_len = data[off++];
+  if (off + label_len + 2 > data_len || !label_valid(data + off, label_len))
+    return false;
+  memcpy(entry.label, data + off, label_len);
+  off += label_len;
+  uint8_t index = data[off++];
+  uint8_t depth = data[off++];
+  if (index >= manifest.count || depth != tree_depth(manifest.count) ||
+      depth > CONTACT_BOOK_MAX_DEPTH || off + (size_t)depth * 32 != data_len)
+    return false;
+
+  uint8_t hash[32], combined[32];
+  leaf_hash(&entry, hash);
+  uint8_t cursor = index;
+  for (uint8_t i = 0; i < depth; i++) {
+    const uint8_t* sibling = data + off + (size_t)i * 32;
+    if (cursor & 1)
+      pair_hash(sibling, hash, combined);
+    else
+      pair_hash(hash, sibling, combined);
+    memcpy(hash, combined, 32);
+    cursor >>= 1;
+  }
+  if (memcmp(hash, manifest.root, 32) != 0) {
+    memzero(&entry, sizeof(entry));
+    return false;
+  }
+
+  uint8_t encoded[46], digest[32];
+  contact_book_manifest_bytes(&manifest, encoded);
+  sha256_Raw(encoded, sizeof(encoded), digest);
+  bool ok = ecdsa_verify_digest(&secp256k1, pubkey, signature, digest) == 0;
+  memzero(encoded, sizeof(encoded));
+  memzero(digest, sizeof(digest));
+  memzero(hash, sizeof(hash));
+  memzero(combined, sizeof(combined));
+  if (!ok) {
+    memzero(&entry, sizeof(entry));
+    return false;
+  }
+  proof_entry = entry;
+  proof_available = true;
+  memzero(&entry, sizeof(entry));
+  return true;
+}
+
+bool contact_book_match(uint32_t chain_id, const uint8_t address[20]) {
+  return proof_available && address && proof_entry.chain_id == chain_id &&
+         memcmp(proof_entry.address, address, 20) == 0;
+}
+
+const char* contact_book_label(void) {
+  return proof_available ? proof_entry.label : NULL;
+}
+
+void contact_book_clear(void) {
+  proof_available = false;
+  memzero(&proof_entry, sizeof(proof_entry));
+}
