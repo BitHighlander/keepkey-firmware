@@ -2222,6 +2222,8 @@ void signing_txack(TransactionType* tx) {
   signing_abort();
 }
 
+bool signing_is_active(void) { return signing; }
+
 void signing_abort(void) {
   if (signing) {
     layoutHome();
@@ -2295,8 +2297,6 @@ void signing_abort(void) {
   memzero(&tx_weight, sizeof(tx_weight));
   memzero(&signing_update_ctr, sizeof(signing_update_ctr));
 }
-
-bool signing_is_active(void) { return signing; }
 
 #if DEBUG_LINK
 static CoinType signing_test_coin;

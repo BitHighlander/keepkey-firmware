@@ -1,6 +1,6 @@
 # Exact decoding and terminal transport rejection
 
-Product: 7143. This unit replays existing audited nanopb exact byte
+Product: 715. This unit replays existing audited nanopb exact byte
 capacity enforcement (`aec631ce3`) and transport workflow abort (`d3e147ccf`).
 It preserves the product's existing features and crypto/protocol pins. Python
 host tests remain based on the product's `9c398203` suite, with only the exact
