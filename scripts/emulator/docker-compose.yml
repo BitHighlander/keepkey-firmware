@@ -34,6 +34,14 @@ services:
       dockerfile: 'scripts/emulator/python-keepkey.Dockerfile'
     volumes:
       - test-reports:/kkemu/test-reports:rw
+      # firmware-unit publishes the exact binary for this product variant.
+      # The storage gate tests must own and restart that process to cross a
+      # real boot boundary; talking only to the long-running kkemu service
+      # cannot prove upgrade preservation.
+      - emulator-bin:/kkemu-emulator-bin:ro
+    environment:
+      KK_RELEASE_MISSING_CAPABILITIES: ${KK_RELEASE_MISSING_CAPABILITIES:-}
+      KK_EMULATOR_BIN: /kkemu-emulator-bin/kkemu
     networks:
       - local-net
     depends_on:
@@ -48,6 +56,7 @@ services:
       dockerfile: 'scripts/emulator/Dockerfile'
     volumes:
       - test-reports:/kkemu/test-reports:rw
+      - emulator-bin:/kkemu-emulator-bin:rw
     entrypoint: ['scripts/emulator/firmware-unit.sh']
     networks:
       - local-net
@@ -59,4 +68,6 @@ networks:
     external: false
 volumes:
   test-reports:
+    external: false
+  emulator-bin:
     external: false

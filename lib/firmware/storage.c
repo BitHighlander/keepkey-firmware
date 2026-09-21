@@ -48,6 +48,7 @@
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
+#include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
@@ -108,6 +109,13 @@ static ConfigFlash CONFIDENTIAL shadow_config;
 static bool btc_only_locked = false;
 
 bool storage_isBitcoinOnlyLocked(void) { return btc_only_locked; }
+
+/* A downgrade found a normal-band format newer than this build. Keep flash
+ * byte-for-byte intact so reinstalling the newer firmware recovers the
+ * wallet. */
+static bool firmware_too_old = false;
+
+bool storage_isFirmwareTooOld(void) { return firmware_too_old; }
 
 // Stamp a newly-created seed into the reserved bitcoin-only version band so
 // multi-chain firmware refuses it (see storage_fromFlash). Called only from
@@ -1235,6 +1243,13 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   uint32_t raw_version = read_u32_le(flash + 44);
   enum StorageVersion version = version_from_int(raw_version);
 
+  /* Unknown normal-band versions are newer firmware, not corruption. Refuse
+   * them without committing so a downgrade can never erase the wallet. */
+  if (raw_version > (uint32_t)STORAGE_VERSION &&
+      raw_version < STORAGE_VERSION_BTC_ONLY_BASE) {
+    return SUS_TooNew;
+  }
+
   switch (version) {
     case StorageVersion_1:
       storage_readV1(ss, dst, flash, STORAGE_SECTOR_LEN);
@@ -1298,7 +1313,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         return SUS_BitcoinOnlyLocked;
       }
       // Read via the reader matching the underlying version (same mapping as
-      // the multi-chain arms above), then keep the band stamp so multi-chain
+      // the multi-chain path above), then keep the band stamp so multi-chain
       // firmware still refuses it.
       if (underlying <= 15) {
         storage_readV11(dst, flash, STORAGE_SECTOR_LEN);
@@ -1469,6 +1484,13 @@ void storage_init(void) {
       // devices in any host keyed on it. The sector is known active here.
       storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
       break;
+    case SUS_TooNew:
+      // Newer normal-band storage follows the same non-destructive contract:
+      // behave uninitialized in RAM, but never write over the flash sector.
+      firmware_too_old = true;
+      storage_reset();
+      storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
+      break;
   }
 
   if (!storage_hasPin()) {
@@ -1519,6 +1541,7 @@ void storage_wipe(void) {
 
   // The bitcoin-only wallet (if any) is gone; the device may be used freely.
   btc_only_locked = false;
+  firmware_too_old = false;
 }
 
 void storage_clearKeys(void) {
@@ -1617,11 +1640,11 @@ void storage_commit(void) {
 
   // Never overwrite a bitcoin-only wallet from multi-chain firmware; the
   // only way out is storage_wipe() (which clears the lock).
-  if (btc_only_locked) return;
+  if (btc_only_locked || firmware_too_old) return;
 
-  // Temporary storage for marshalling secrets in & out of flash.
-  // Size of v17 storage layout (2525 bytes) + size of meta (44 bytes) + 1
-  static char flash_temp[2570];
+  // Temporary storage for marshalling secrets in & out of flash. Keep the
+  // larger buffer reserved for a future migration, but 7.15 writes V17.
+  static char flash_temp[3480];
 
   memzero(flash_temp, sizeof(flash_temp));
 
@@ -2028,6 +2051,34 @@ const uint8_t* storage_getSeed(const ConfigFlash* cfg, bool usePassphrase) {
 
   return NULL;
 }
+
+/* ── Zcash storage-scoped wrappers ───────────────────────────────────
+ *
+ * ZIP-32 Orchard derives keys directly from the raw 64-byte BIP-39 seed
+ * (not the BIP-32 master node). Rather than expose a generic
+ * "give me the seed" function, storage owns the seed access and only
+ * returns derived material — Orchard keys or the 32-byte fingerprint.
+ * The seed pointer never leaves this translation unit.
+ */
+
+#if ZCASH_PRIVACY
+bool storage_zcashOrchardKeys(uint32_t account, bool usePassphrase,
+                              ZcashOrchardKeys* keys_out) {
+  if (!keys_out) return false;
+  const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
+  if (!seed) return false;
+  animating_progress_handler(_("Deriving Zcash"), 250);
+  return zcash_derive_orchard_keys(seed, 64, account, keys_out);
+}
+
+bool storage_zcashSeedFingerprint(bool usePassphrase,
+                                  uint8_t fingerprint_out[32]) {
+  if (!fingerprint_out) return false;
+  const uint8_t* seed = storage_getSeed(&shadow_config, usePassphrase);
+  if (!seed) return false;
+  return zcash_calculate_seed_fingerprint(seed, 64, fingerprint_out);
+}
+#endif
 
 bool storage_getRootNode(const char* curve, bool usePassphrase, HDNode* node) {
   // if storage has node, decrypt and use it

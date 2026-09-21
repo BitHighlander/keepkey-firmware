@@ -498,6 +498,70 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);
 }
 
+#if !BITCOIN_ONLY
+// A seed created under bitcoin-only firmware is stamped in a reserved version
+// band. Multi-chain firmware must REFUSE it (SUS_BitcoinOnlyLocked), not load
+// it and not silently reset it here -- the seed stays intact in flash until an
+// explicit wipe. This is the core anti-downgrade guarantee.
+TEST(Storage, BitcoinOnlyBandRefused) {
+  // storage_fromFlash always reads STORAGE_SECTOR_LEN from `flash` (in the
+  // firmware it points to a full flash sector), so the buffer must be a full
+  // sector or the version-17 read below runs off the end.
+  static char flash[STORAGE_SECTOR_LEN];
+  memset(flash, 0, sizeof(flash));
+  memcpy(flash, "stor", 4);  // STORAGE_MAGIC_STR
+  uint32_t v = STORAGE_VERSION_BTC_ONLY;
+  flash[44] = (char)(v & 0xff);
+  flash[45] = (char)((v >> 8) & 0xff);
+  flash[46] = (char)((v >> 16) & 0xff);
+  flash[47] = (char)((v >> 24) & 0xff);
+
+  SessionState session;
+  memset(&session, 0, sizeof(session));
+  ConfigFlash shadow;
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+
+  // A normal (below-band) version is still handled as before.
+  flash[44] = 17;
+  flash[45] = flash[46] = flash[47] = 0;
+  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+}
+#endif
+
+#if BITCOIN_ONLY
+// On bitcoin-only firmware, an in-band wallet stamped at an OLDER underlying
+// version (which is exactly what an existing wallet looks like after a
+// STORAGE_VERSION bump) must still load and migrate — never be refused, which
+// would lock the user out of their own wallet. A NEWER in-band version is
+// refused (downgrade guard), never wiped.
+TEST(Storage, BitcoinOnlyBandMigrates) {
+  static char flash[STORAGE_SECTOR_LEN];
+  SessionState session;
+  ConfigFlash shadow;
+
+  // Older in-band version (underlying < STORAGE_VERSION): migrate, not refuse.
+  memset(flash, 0, sizeof(flash));
+  memcpy(flash, "stor", 4);
+  uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION - 1);
+  memcpy(flash + 44, &older,
+         4);  // test host is little-endian, matches read_u32_le
+  memset(&session, 0, sizeof(session));
+  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+
+  // Our own current in-band version: loads (not refused).
+  uint32_t current = STORAGE_VERSION_BTC_ONLY;
+  memcpy(flash + 44, &current, 4);
+  memset(&session, 0, sizeof(session));
+  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+
+  // A newer in-band version than this firmware understands: refuse.
+  uint32_t newer = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION + 1);
+  memcpy(flash + 44, &newer, 4);
+  memset(&session, 0, sizeof(session));
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+}
+#endif
+
 TEST(Storage, StorageRoundTrip) {
   ConfigFlash start;
   memset(&start, 0xAB, sizeof(start));
@@ -538,7 +602,9 @@ TEST(Storage, StorageRoundTrip) {
 
   storage_secMigrate(&session, &start.storage, /*encrypt=*/true);
 
-  std::vector<uint8_t> flash(2570);
+  // storage_fromFlash validates against the full sector size. Keep the exact
+  // V16 prefix assertion below, but back it with a complete sector.
+  std::vector<uint8_t> flash(STORAGE_SECTOR_LEN);
 
   storage_writeV16((char *)&flash[0], flash.size(), &start);
 
@@ -557,6 +623,7 @@ TEST(Storage, StorageRoundTrip) {
     printf("\n");
 #endif
 
+  // clang-format off
   const uint8_t expected_flash[] = {
         0x73, 0x74, 0x6f, 0x72, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
         0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
@@ -654,7 +721,7 @@ TEST(Storage, StorageRoundTrip) {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00, 0xe4, 0x8d, 0xfe, 0xcf, 0xd0, 0x54, 0x71,
+        0x00, 0x00, 0x00, 0x00, 0x00, STORAGE_VERSION, 0x00, 0x00, 0x00, 0xe4, 0x8d, 0xfe, 0xcf, 0xd0, 0x54, 0x71,
         0x50, 0xcb, 0x12, 0x84, 0xfa, 0x5f, 0xbf, 0xcb, 0x09, 0xca, 0x00, 0xf1, 0x37, 0xe4, 0x8f, 0x5e,
         0xf9, 0x81, 0x57, 0x26, 0xb6, 0x7b, 0x8e, 0x03, 0x44, 0x9a, 0x2a, 0x7c, 0xf4, 0x3c, 0x79, 0x87,
         0x5d, 0x26, 0xae, 0x9b, 0x4b, 0xb4, 0xd2, 0xc4, 0x67, 0x97, 0xe7, 0x6b, 0x6c, 0x4c, 0xbe, 0x68,
@@ -720,14 +787,15 @@ TEST(Storage, StorageRoundTrip) {
         0x7c, 0x20, 0x50, 0x7c, 0x85, 0xc1, 0x44, 0xaa, 0xfb, 0xf8, 0xeb, 0x20, 0x16, 0x8d, 0x72, 0x8c,
         0xd2, 0xbe, 0xc2, 0xea, 0x44, 0xed, 0x7b, 0x94, 0x21, 0x00, 
   };
+  // clang-format on
 
   // If storage isn't correct, let's get an idea of where the failure is
-  for (int i=0; i<flash.size(); i++) {
+  for (size_t i = 0; i < sizeof(expected_flash); i++) {
     if (flash[i] != expected_flash[i]) {
       printf("%d\n %x %x\n", i, flash[i], expected_flash[i]);
     }
   }
-  EXPECT_TRUE(memcmp(&flash[0], expected_flash, flash.size()) == 0);
+  EXPECT_EQ(0, memcmp(&flash[0], expected_flash, sizeof(expected_flash)));
 
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));
@@ -1021,4 +1089,39 @@ TEST(Storage, EncryptionClearsAuthdataCipherSecrets) {
 TEST(Storage, DecryptionClearsAuthdataCipherSecrets) {
   EXPECT_EQ(static_cast<unsigned>(STORAGE_CIPHER_CLEANUP_COMPLETE),
             storage_test_cipher_cleanup(false, false));
+}
+
+TEST(Storage, NewerStorageVersionRefusedNotWiped) {
+  static char flash[STORAGE_SECTOR_LEN];
+  memset(flash, 0, sizeof(flash));
+  memcpy(flash, "stor", 4);
+
+  SessionState session = {};
+  ConfigFlash shadow = {};
+  const auto put_version = [](char *bytes, uint32_t version) {
+    bytes[44] = static_cast<char>(version & 0xff);
+    bytes[45] = static_cast<char>((version >> 8) & 0xff);
+    bytes[46] = static_cast<char>((version >> 16) & 0xff);
+    bytes[47] = static_cast<char>((version >> 24) & 0xff);
+  };
+
+  put_version(flash, STORAGE_VERSION);
+  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
+
+  for (uint32_t version = STORAGE_VERSION + 1;
+       version <= STORAGE_VERSION + 8; ++version) {
+    put_version(flash, version);
+    EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_TooNew)
+        << "storage version " << version << " must be refused, not wiped";
+  }
+
+  put_version(flash, STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION);
+  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
+
+  put_version(flash, 16);
+  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
+}
+
+TEST(Storage, BridgeReleaseDoesNotMigrateFormat) {
+  EXPECT_EQ(STORAGE_VERSION, 17);
 }

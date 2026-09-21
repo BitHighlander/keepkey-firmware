@@ -645,7 +645,14 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
               }
             }
             // all int strings are assumed to be base 10 and fit into 64 bits
-            long long intVal = strtoll(valStr, NULL, 10);
+            char* endptr = NULL;
+            long long intVal = strtoll(valStr, &endptr, 10);
+            if (endptr == valStr || *endptr != '\0') {
+              return GENERAL_ERROR;
+            }
+            if (0 == strncmp("uint", typeType, 4) && intVal < 0) {
+              return GENERAL_ERROR;
+            }
             // Needs to be big endian, so add to encBytes appropriately
             encBytes[24] = (intVal >> 56) & 0xff;
             encBytes[25] = (intVal >> 48) & 0xff;

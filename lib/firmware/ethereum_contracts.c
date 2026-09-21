@@ -78,6 +78,7 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
   if (zx_isZxLiquidTx(msg)) return true;
   if (zx_isZxApproveLiquid(msg)) return true;
 
+  if (thor_isMayachainTx(msg)) return true;
   if (thor_isThorchainTx(msg)) return true;
 
   return false;
@@ -85,6 +86,8 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
 
 bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
                                 const HDNode* node) {
+  (void)node;
+
   /* Same selector bound as ethereum_contractHandled(). This function is only
    * ever reached after that one returned true, so this is belt and braces --
    * but the two dispatch on the same predicates and must not be able to
@@ -101,6 +104,7 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
   if (zx_isZxApproveLiquid(msg))
     return zx_confirmApproveLiquidity(data_total, msg);
 
+  if (thor_isMayachainTx(msg)) return thor_confirmMayaTx(data_total, msg);
   if (thor_isThorchainTx(msg)) return thor_confirmThorTx(data_total, msg);
 
   return false;

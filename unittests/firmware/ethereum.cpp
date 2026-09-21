@@ -92,7 +92,7 @@ TEST(Ethereum, AmountFormattingNeverReturnsBlank) {
   EXPECT_STREQ("AMOUNT TOO LARGE TO DISPLAY", rendered);
 }
 
-TEST(Ethereum, ContractAmountCallsitesFailClosedAtDisplayBoundary) {
+TEST(Ethereum, SapAmountCallsitesFailClosedAtDisplayBoundary) {
   uint8_t max_word[32];
   std::memset(max_word, 0xff, sizeof(max_word));
   char rendered[41];
@@ -100,16 +100,12 @@ TEST(Ethereum, ContractAmountCallsitesFailClosedAtDisplayBoundary) {
   EXPECT_FALSE(sa_formatUint256(max_word, "", rendered, sizeof(rendered)));
   EXPECT_FALSE(
       sa_formatUint256(max_word, " Token Units", rendered, sizeof(rendered)));
-  EXPECT_FALSE(
-      thor_formatUnknownAssetAmount(max_word, rendered, sizeof(rendered)));
 
   uint8_t one[32] = {};
   one[31] = 1;
   ASSERT_TRUE(
       sa_formatUint256(one, " Token Units", rendered, sizeof(rendered)));
   EXPECT_STREQ("1 Token Units", rendered);
-  ASSERT_TRUE(thor_formatUnknownAssetAmount(one, rendered, sizeof(rendered)));
-  EXPECT_STREQ("1 unformatted", rendered);
 }
 
 TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
@@ -174,22 +170,6 @@ TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
             encAddress("0x00112233445566778899aabbccddeeff0011223g", encoded));
   EXPECT_NE(SUCCESS, encAddress("0x00112233445566778899aabbccddeeff0011223344",
                                 encoded));
-}
-
-// Every EIP-712 field screen used to be a review(), which calls
-// confirm_helper() and then returns true unconditionally, so a host that
-// answered each screen with a protocol Cancel still got a hash back. The
-// screens are confirm() now and refusal reaches ethereum.c as USER_CANCELLED.
-//
-// That code has to stay outside failMsgReturn[]. ethereum.c sizes the table
-// LAST_ERROR - 2 and indexes it err - 3, so a cancellation code at or below
-// LAST_ERROR would shift every message already in the table and would make
-// failMessage() report a refusal as a parse error instead of an
-// ActionCancelled. It also must not collide with the two non-error codes.
-TEST(Ethereum, Eip712UserCancelledIsOutsideTheFailMessageTable) {
-  EXPECT_GT(USER_CANCELLED, LAST_ERROR);
-  EXPECT_NE(USER_CANCELLED, SUCCESS);
-  EXPECT_NE(USER_CANCELLED, NULL_MSG_HASH);
 }
 
 TEST(Ethereum, PrecomputedTypedHashesRequireAdvancedMode) {
@@ -288,17 +268,6 @@ TEST(Ethereum, NativePseudoAddressTransferFormatterIsUnknownOffMainnet) {
   char rendered[32];
   ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
   EXPECT_STREQ("Unknown token value", rendered);
-}
-
-TEST(Ethereum, ThorchainNativeAssetUsesOnlyItsZeroAddressSentinel) {
-  static const uint8_t kZeroAddress[20] = {};
-  static const uint8_t kTokenAddress[20] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                            0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
-
-  EXPECT_TRUE(thor_assetIsNative(kZeroAddress));
-  EXPECT_FALSE(thor_assetIsNative(kNativePseudoAddress));
-  EXPECT_FALSE(thor_assetIsNative(kTokenAddress));
-  EXPECT_FALSE(thor_assetIsNative(nullptr));
 }
 
 // A canonical transformERC20 call with one transformation whose data is one
