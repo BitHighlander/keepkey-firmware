@@ -96,7 +96,7 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
 
   if (zx_isZxSwap(msg)) return zx_confirmZxSwap(data_total, msg);
 
-  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg, node);
+  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg);
 
   if (zx_isZxApproveLiquid(msg))
     return zx_confirmApproveLiquidity(data_total, msg);

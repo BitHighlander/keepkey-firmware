@@ -23,7 +23,6 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
-#include "trezor/crypto/memzero.h"
 
 #include <nanopb.h>
 
@@ -33,17 +32,6 @@
 static const MessagesMap_t* MessagesMap = NULL;
 static size_t map_size = 0;
 static msg_failure_t msg_failure;
-/* A tiny receive failure has already answered the suspended handler. Keep
- * its unwind from producing another reply or waiting for another prompt. */
-static bool tiny_handler_rejected;
-
-bool msg_handler_rejected(void) { return tiny_handler_rejected; }
-
-static void reject_tiny_message(FailureType code, const char* text) {
-  if (tiny_handler_rejected) return;
-  (*msg_failure)(code, text);
-  tiny_handler_rejected = true;
-}
 
 #if DEBUG_LINK
 static msg_debug_link_get_state_t msg_debug_link_get_state;
@@ -194,26 +182,20 @@ static bool pb_parse(const MessagesMap_t* entry, const uint8_t* msg,
 static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
                      uint32_t msg_size) {
   static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(4)));
-  memzero(decode_buffer, sizeof(decode_buffer));
+  memset(decode_buffer, 0, sizeof(decode_buffer));
 
   if (!pb_parse(entry, msg, msg_size, decode_buffer)) {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage,
                    "Could not parse protocol buffer message");
-    goto cleanup;
+    return;
   }
 
   if (!entry->process_func) {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage, "Unexpected message");
-    goto cleanup;
+    return;
   }
 
   entry->process_func(decode_buffer);
-
-cleanup:
-  /* Parsed protobufs can contain PINs, passphrases, authenticator seeds, and
-   * other credentials.  Handlers must copy any state they retain; do not keep
-   * the source message resident until the next dispatch. */
-  memzero(decode_buffer, sizeof(decode_buffer));
 }
 
 /*
@@ -388,17 +370,15 @@ _Static_assert(sizeof(msg_tiny) >= sizeof(DebugLinkGetState),
 #endif
 
 static void msg_read_tiny(const uint8_t* msg, size_t len) {
-  msg_tiny_id = MSG_TINY_TYPE_ERROR;
-  memzero(msg_tiny, sizeof(msg_tiny));
   if (len != 64) return;
 
   uint8_t buf[64];
   memcpy(buf, msg, sizeof(buf));
 
   if (buf[0] != '?' || buf[1] != '#' || buf[2] != '#') {
-    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                        "Malformed tiny packet");
-    goto cleanup;
+    (*msg_failure)(FailureType_Failure_UnexpectedMessage,
+                   "Malformed tiny packet");
+    return;
   }
 
   uint16_t msgId = buf[4] | ((uint16_t)buf[3]) << 8;
@@ -406,9 +386,9 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
                      ((uint32_t)buf[6]) << 16 | ((uint32_t)buf[5]) << 24;
 
   if (msgSize > 64 - 9) {
-    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                        "Malformed tiny packet");
-    goto cleanup;
+    (*msg_failure)(FailureType_Failure_UnexpectedMessage,
+                   "Malformed tiny packet");
+    return;
   }
 
   const pb_field_t* fields = NULL;
@@ -445,28 +425,20 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
     if (status) {
       msg_tiny_id = msgId;
     } else {
-      reject_tiny_message(FailureType_Failure_SyntaxError,
-                          "Malformed tiny packet");
-      memzero(msg_tiny, sizeof(msg_tiny));
-      msg_tiny_id = MSG_TINY_TYPE_ERROR;
+      (*msg_failure)(FailureType_Failure_SyntaxError, "Malformed tiny packet");
+      msg_tiny_id = 0xffff;
     }
   } else {
-    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                        "Unknown message");
+    (*msg_failure)(FailureType_Failure_UnexpectedMessage, "Unknown message");
     msg_tiny_id = 0xffff;
   }
-
-cleanup:
-  memzero(buf, sizeof(buf));
 }
 
 void handle_usb_rx(const void* msg, size_t len) {
   if (msg_tiny_flag) {
     msg_read_tiny(msg, len);
   } else {
-    tiny_handler_rejected = false;
     usb_rx_helper(msg, len, NORMAL_MSG);
-    tiny_handler_rejected = false;
   }
 }
 
@@ -495,7 +467,7 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   msg_tiny_flag = true;
 
-  while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
+  while (msg_tiny_id == MSG_TINY_TYPE_ERROR) {
     usbPoll();
 
     if (!block) {
@@ -505,16 +477,9 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
 
   msg_tiny_flag = false;
 
-  if (tiny_handler_rejected) {
-    memzero(msg_tiny, sizeof(msg_tiny));
-    memzero(buf, MSG_TINY_BFR_SZ);
-    return MessageType_MessageType_Cancel;
-  }
-
   if (msg_tiny_id != MSG_TINY_TYPE_ERROR) {
     memcpy(buf, msg_tiny, sizeof(msg_tiny));
   }
-  memzero(msg_tiny, sizeof(msg_tiny));
 
   return msg_tiny_id;
 }

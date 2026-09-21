@@ -31,17 +31,7 @@
 #pragma GCC optimize("-O3")
 
 /*
- * draw_char_impl() - Place one glyph, optionally without writing pixels.
- *
- * Whether a glyph fits is decided entirely by geometry -- canvas->width and
- * ->height against p->x, p->y and the glyph's own extent -- and never by what
- * is already on the canvas. So the identical control flow answers both "does
- * this fit" and "draw this", and `measure` selects which. The pixel store is
- * the only statement it guards; every bounds test, pointer advance and shift
- * runs the same way in both modes.
- *
- * This is what lets confirm_body_fits() ask the real renderer instead of
- * modelling it. See draw_string_walk().
+ * draw_char_with_shift() - Draw image on display with left/top margins
  *
  * INPUT
  *     - canvas: canvas
@@ -49,13 +39,11 @@
  *     - x_shift: left margin
  *     - y_shift: top margin
  *     - img: pointer to image drawn on the screen
- *     - measure: run the placement but write no pixels
  * OUTPUT
- *      true/false whether the image was placed
+ *      true/false whether image was drawn
  */
-static bool draw_char_impl(Canvas* canvas, DrawableParams* p, uint16_t* x_shift,
-                           uint16_t* y_shift, const CharacterImage* img,
-                           bool measure) {
+bool draw_char_with_shift(Canvas* canvas, DrawableParams* p, uint16_t* x_shift,
+                          uint16_t* y_shift, const CharacterImage* img) {
   bool ret_stat = false;
 
   uint16_t start_index = (p->y * canvas->width) + p->x;
@@ -82,9 +70,7 @@ static bool draw_char_impl(Canvas* canvas, DrawableParams* p, uint16_t* x_shift,
           if (canvas_pixel >= canvas_end) {
             return false;  // defensive bounds check
           }
-          if (!measure) {
-            *canvas_pixel = (*img_pixel == 0x00) ? p->color : *canvas_pixel;
-          }
+          *canvas_pixel = (*img_pixel == 0x00) ? p->color : *canvas_pixel;
           canvas_pixel++;
           img_pixel++;
         }
@@ -104,28 +90,9 @@ static bool draw_char_impl(Canvas* canvas, DrawableParams* p, uint16_t* x_shift,
     }
   }
 
-  if (!measure) {
-    canvas->dirty = true;
-  }
+  canvas->dirty = true;
 
   return (ret_stat);
-}
-
-/*
- * draw_char_with_shift() - Draw image on display with left/top margins
- *
- * INPUT
- *     - canvas: canvas
- *     - p: pointer to Margins and text color
- *     - x_shift: left margin
- *     - y_shift: top margin
- *     - img: pointer to image drawn on the screen
- * OUTPUT
- *      true/false whether image was drawn
- */
-bool draw_char_with_shift(Canvas* canvas, DrawableParams* p, uint16_t* x_shift,
-                          uint16_t* y_shift, const CharacterImage* img) {
-  return draw_char_impl(canvas, p, x_shift, y_shift, img, false);
 }
 
 /*
@@ -141,16 +108,14 @@ bool draw_char_with_shift(Canvas* canvas, DrawableParams* p, uint16_t* x_shift,
  * OUTPUT
  *     none
  */
-static bool draw_string_walk(Canvas* canvas, const Font* font,
-                             const char* str_write, const DrawableParams* p,
-                             uint16_t width, uint16_t line_height,
-                             bool measure) {
+void draw_string(Canvas* canvas, const Font* font, const char* str_write,
+                 const DrawableParams* p, uint16_t width,
+                 uint16_t line_height) {
   uint16_t sepPixels =
       0;  // font char separation pixels for large font (pin font)
 
   if (!canvas) {
-    /* Nothing was placed. If there was anything to place, it was dropped. */
-    return *str_write == '\0';
+    return;
   }
 
   if (font == get_pin_font()) {
@@ -171,15 +136,6 @@ static bool draw_string_walk(Canvas* canvas, const Font* font,
       char_params.y += line_height;
       x_offset = 0;
       str_write++;
-      /* A newline that puts the cursor below the canvas has not been honoured
-       * -- nothing can be placed on the row it asked for. Stop here rather
-       * than walking a cursor that is off screen, so the completeness test
-       * below sees whatever is left. Without this, a body of nothing but
-       * newlines consumes every character while drawing nothing and would
-       * report as fully shown. */
-      if (char_params.y + font_height(font) > canvas->height) {
-        have_space = false;
-      }
       continue;
     }
 
@@ -211,35 +167,11 @@ static bool draw_string_walk(Canvas* canvas, const Font* font,
     x_offset += sepPixels;
     char_params.x = x_offset + p->x;
     have_space =
-        draw_char_impl(canvas, &char_params, &x_offset, NULL, img, measure);
-    /* A rejected glyph was not drawn. Leave str_write on it so the caller's
-     * completeness result cannot report that a clipped final glyph fitted. */
-    if (have_space) {
-      str_write++;
-    }
+        draw_char_with_shift(canvas, &char_params, &x_offset, NULL, img);
+    str_write++;
   }
 
-  if (!measure) {
-    canvas->dirty = true;
-  }
-
-  /* The loop exits either because the string ran out or because a glyph no
-   * longer fit. Those are the same exit, so the only honest completeness
-   * signal is whether anything is left: a non-NUL here means characters were
-   * dropped without an ellipsis and without any other trace. */
-  return *str_write == '\0';
-}
-
-void draw_string(Canvas* canvas, const Font* font, const char* str_write,
-                 const DrawableParams* p, uint16_t width,
-                 uint16_t line_height) {
-  (void)draw_string_walk(canvas, font, str_write, p, width, line_height, false);
-}
-
-bool draw_string_fits(Canvas* canvas, const Font* font, const char* str_write,
-                      const DrawableParams* p, uint16_t width,
-                      uint16_t line_height) {
-  return draw_string_walk(canvas, font, str_write, p, width, line_height, true);
+  canvas->dirty = true;
 }
 
 /*
