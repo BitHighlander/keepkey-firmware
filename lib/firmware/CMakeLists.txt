@@ -48,7 +48,6 @@ if(NOT ${KK_BITCOIN_ONLY})
       signtx_tendermint.c
       solana.c
       hive.c
-      zcash.c
       tron.c
       ton.c
       tendermint.c
