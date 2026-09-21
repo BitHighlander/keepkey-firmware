@@ -34,6 +34,7 @@
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/signed_metadata.h"
@@ -288,6 +289,20 @@ static void hash_rlp_number(uint32_t number) {
   hash_rlp_field(data + offset, 4 - offset);
 }
 
+/* Strip leading zero bytes before RLP-encoding an integer field.
+ * Per the Ethereum yellow paper, integer fields (nonce, gas, value, etc.)
+ * must not have leading zeros. Addresses are NOT integers and must not use
+ * this function. */
+static void hash_rlp_bytes_stripped(const uint8_t* buf, size_t size) {
+  size_t offset = 0;
+  while (offset < size && buf[offset] == 0) offset++;
+  if (offset == size) {
+    hash_rlp_field(buf, 0);
+  } else {
+    hash_rlp_field(buf + offset, size - offset);
+  }
+}
+
 /*
  * Calculate the number of bytes needed for an RLP length header.
  * NOTE: supports up to 16MB of data (how unlikely...)
@@ -305,6 +320,21 @@ static int rlp_calculate_length(int length, uint8_t firstbyte) {
   } else {
     return 4 + length;
   }
+}
+
+/* Length of an RLP-encoded integer field AFTER stripping leading zero bytes.
+ * MUST mirror hash_rlp_bytes_stripped(): the Stage-1 list-length header
+ * (hash_rlp_list_length) and the Stage-2 bytes actually hashed have to agree,
+ * or the keccak pre-image is malformed and the signature recovers to a garbage
+ * address (looks like a "random signer" / dropped tx). Any integer field whose
+ * big-endian form has a leading zero byte hits this. */
+static int rlp_calculate_length_stripped(const uint8_t* buf, size_t size) {
+  size_t offset = 0;
+  while (offset < size && buf[offset] == 0) offset++;
+  if (offset == size) {
+    return rlp_calculate_length(0, 0);
+  }
+  return rlp_calculate_length(size - offset, buf[offset]);
 }
 
 static int rlp_calculate_number_length(uint32_t number) {
@@ -367,6 +397,19 @@ static void send_signature(void) {
   }
 
   keccak_Final(&keccak_ctx, hash);
+
+  /* Insight clear-signing binding. If a verified metadata blob suppressed the
+   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
+   * metadata committed to. This is the first point that digest exists, so the
+   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
+   * never emit a signature the displayed decoded screen did not cover. */
+  if (!signed_metadata_enforce(hash)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "Metadata does not match signed transaction");
+    ethereum_signing_abort();
+    return;
+  }
+
   if (ecdsa_sign_digest(&secp256k1, privkey, hash, sig, &v,
                         ethereum_is_canonic) != 0) {
     fsm_sendFailure(FailureType_Failure_Other, "Signing failed");
@@ -754,8 +797,13 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
     return false;
   }
 
-  if (msg->gas_price.size + msg->gas_limit.size > 30) {
-    // sanity check that fee doesn't overflow
+  // Sanity-bound the fee field that this tx type actually uses, so the
+  // on-screen fee (fee_per_gas * gas_limit) cannot overflow into the modular
+  // bn_multiply and display a wrong value. EIP-1559 uses max_fee_per_gas;
+  // legacy uses gas_price (which is 0 for EIP-1559 and vice versa).
+  size_t fee_per_gas_size = msg->has_max_fee_per_gas ? msg->max_fee_per_gas.size
+                                                     : msg->gas_price.size;
+  if (fee_per_gas_size + msg->gas_limit.size > 30) {
     return false;
   }
 
@@ -876,17 +924,30 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_tx_type = ETHEREUM_TX_TYPE_LEGACY;
   }
 
-  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559 && chain_id == 0) {
+  /* The typed prefix (0x02) and access list are emitted based on
+   * ethereum_tx_type, while the fee fields are selected by has_max_fee_per_gas.
+   * If those two disagree, Stage 1 (rlp_length) and Stage 2 (hashed bytes)
+   * describe different field lists and the signature recovers to a wrong
+   * address. Enforce a consistent shape up front. */
+  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
+    if (chain_id == 0) {
+      /* chain_id is the mandatory first RLP field of an EIP-1559 tx; absent
+       * chain_id is counted (1 byte) in Stage 1 but hash_rlp_number(0) hashes
+       * nothing in Stage 2. */
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("EIP-1559 transactions require chain_id"));
+      ethereum_signing_abort();
+      return;
+    }
+    if (!msg->has_max_fee_per_gas) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("EIP-1559 transactions require max_fee_per_gas"));
+      ethereum_signing_abort();
+      return;
+    }
+  } else if (msg->has_max_fee_per_gas) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("EIP-1559 transactions require chain_id"));
-    ethereum_signing_abort();
-    return;
-  }
-
-  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559 &&
-      !msg->has_max_fee_per_gas) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("EIP-1559 transactions require max_fee_per_gas"));
+                    _("max_fee_per_gas requires an EIP-1559 (type 2) tx"));
     ethereum_signing_abort();
     return;
   }
@@ -1104,24 +1165,24 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     rlp_length += rlp_calculate_number_length(chain_id);
   }
 
-  rlp_length += rlp_calculate_length(msg->nonce.size, msg->nonce.bytes[0]);
-  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
+  rlp_length +=
+      rlp_calculate_length_stripped(msg->nonce.bytes, msg->nonce.size);
+  if (msg->has_max_fee_per_gas) {
     rlp_length +=
-        rlp_calculate_length(msg->max_priority_fee_per_gas.size,
-                             msg->max_priority_fee_per_gas.size
-                                 ? msg->max_priority_fee_per_gas.bytes[0]
-                                 : 0);
-    rlp_length += rlp_calculate_length(msg->max_fee_per_gas.size,
-                                       msg->max_fee_per_gas.bytes[0]);
+        rlp_calculate_length_stripped(msg->max_priority_fee_per_gas.bytes,
+                                      msg->max_priority_fee_per_gas.size);
+    rlp_length += rlp_calculate_length_stripped(msg->max_fee_per_gas.bytes,
+                                                msg->max_fee_per_gas.size);
   } else {
-    rlp_length +=
-        rlp_calculate_length(msg->gas_price.size, msg->gas_price.bytes[0]);
+    rlp_length += rlp_calculate_length_stripped(msg->gas_price.bytes,
+                                                msg->gas_price.size);
   }
 
   rlp_length +=
-      rlp_calculate_length(msg->gas_limit.size, msg->gas_limit.bytes[0]);
+      rlp_calculate_length_stripped(msg->gas_limit.bytes, msg->gas_limit.size);
   rlp_length += rlp_calculate_length(msg->to.size, msg->to.bytes[0]);
-  rlp_length += rlp_calculate_length(msg->value.size, msg->value.bytes[0]);
+  rlp_length +=
+      rlp_calculate_length_stripped(msg->value.bytes, msg->value.size);
   rlp_length +=
       rlp_calculate_length(data_total, msg->data_initial_chunk.bytes[0]);
 
@@ -1168,19 +1229,26 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     hash_rlp_number(chain_id);
   }
 
-  hash_rlp_field(msg->nonce.bytes, msg->nonce.size);
+  hash_rlp_bytes_stripped(msg->nonce.bytes, msg->nonce.size);
 
-  if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
-    hash_rlp_field(msg->max_priority_fee_per_gas.bytes,
-                   msg->max_priority_fee_per_gas.size);
-    hash_rlp_field(msg->max_fee_per_gas.bytes, msg->max_fee_per_gas.size);
+  if (msg->has_max_fee_per_gas) {
+    /* max_priority_fee_per_gas is a mandatory EIP-1559 field; when absent it
+     * encodes as the empty integer (0x80). Stage 1 always counts it
+     * (unconditionally, above), so Stage 2 must always hash it too -- guarding
+     * on has_max_priority_fee_per_gas here would under-hash and leave the list
+     * header over-declared (the same wrong-signer class this commit fixes).
+     * .size is 0 when unset, which hash_rlp_bytes_stripped emits as 0x80. */
+    hash_rlp_bytes_stripped(msg->max_priority_fee_per_gas.bytes,
+                            msg->max_priority_fee_per_gas.size);
+    hash_rlp_bytes_stripped(msg->max_fee_per_gas.bytes,
+                            msg->max_fee_per_gas.size);
   } else {
-    hash_rlp_field(msg->gas_price.bytes, msg->gas_price.size);
+    hash_rlp_bytes_stripped(msg->gas_price.bytes, msg->gas_price.size);
   }
 
-  hash_rlp_field(msg->gas_limit.bytes, msg->gas_limit.size);
-  hash_rlp_field(msg->to.bytes, msg->to.size);
-  hash_rlp_field(msg->value.bytes, msg->value.size);
+  hash_rlp_bytes_stripped(msg->gas_limit.bytes, msg->gas_limit.size);
+  hash_rlp_field(msg->to.bytes, msg->to.size); /* address: no strip */
+  hash_rlp_bytes_stripped(msg->value.bytes, msg->value.size);
   hash_rlp_length(data_total, msg->data_initial_chunk.bytes[0]);
   hash_data(msg->data_initial_chunk.bytes, msg->data_initial_chunk.size);
   data_left = data_total - msg->data_initial_chunk.size;
