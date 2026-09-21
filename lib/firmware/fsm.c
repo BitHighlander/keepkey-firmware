@@ -42,6 +42,8 @@
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts.h"
+#include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/erc7730_catalog.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
@@ -109,34 +111,6 @@
 
 #define _(X) (X)
 
-/* Size the response arena to the largest registered response. RESP_INIT
- * statically checks every writer, so a future response that outgrows this
- * union fails the build rather than overrunning at runtime. */
-#pragma push_macro("MSG_IN")
-#pragma push_macro("MSG_OUT")
-#pragma push_macro("RAW_IN")
-#pragma push_macro("DEBUG_IN")
-#pragma push_macro("DEBUG_OUT")
-#undef MSG_IN
-#undef MSG_OUT
-#undef RAW_IN
-#undef DEBUG_IN
-#undef DEBUG_OUT
-#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
-#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME out_##STRUCT_NAME;
-#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC)
-#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
-#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME dbg_##STRUCT_NAME;
-typedef union {
-#include "messagemap.def"
-} FsmResponse;
-#pragma pop_macro("MSG_IN")
-#pragma pop_macro("MSG_OUT")
-#pragma pop_macro("RAW_IN")
-#pragma pop_macro("DEBUG_IN")
-#pragma pop_macro("DEBUG_OUT")
-
-static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
 /* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
  * derived private key after any chain handler, so session revocation scrubs it
  * centrally. */
@@ -275,6 +249,55 @@ static const MessagesMap_t MessagesMap[] = {
 
 #include "messagemap.def"
 
+/* MessagesMap is dense (see messages.h), so a duplicated message ID no longer
+ * collides by construction. Duplicate case labels fail the build instead. */
+#undef MSG_IN
+#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef MSG_OUT
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef RAW_IN
+#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef DEBUG_IN
+#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+#undef DEBUG_OUT
+#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
+
+static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
+  switch (id) {
+#include "messagemap.def"
+    default:
+      break;
+  }
+}
+
+/* msg_resp is sized to the largest registered response instead of
+ * MAX_FRAME_SIZE, which over-allocated ~4 KiB the 16 KiB stack reserve needs.
+ * RESP_INIT static-asserts that every writer fits, so a response outgrowing
+ * this fails the build rather than overrunning at runtime. */
+#undef MSG_IN
+#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
+
+#undef MSG_OUT
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME out_##STRUCT_NAME;
+
+#undef RAW_IN
+#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC)
+
+#undef DEBUG_IN
+#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
+
+#undef DEBUG_OUT
+#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME dbg_##STRUCT_NAME;
+
+typedef union {
+#include "messagemap.def"
+} FsmResponse;
+
+static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
 extern bool reset_msg_stack;
 
 static const CoinType* fsm_getCoin(bool has_name, const char* name) {

@@ -126,13 +126,10 @@ uint16_t* frame_arena_scratch2049(void) {
 static const MessagesMap_t* message_map_entry(MessageMapType type,
                                               MessageType msg_id,
                                               MessageMapDirection dir) {
-  const MessagesMap_t* m = MessagesMap;
-
-  if (map_size > msg_id && m[msg_id].msg_id == msg_id &&
-      m[msg_id].type == type && m[msg_id].dir == dir) {
-    return &m[msg_id];
+  for (size_t i = 0; i < map_size; i++) {
+    const MessagesMap_t* m = &MessagesMap[i];
+    if (m->msg_id == msg_id && m->type == type && m->dir == dir) return m;
   }
-
   return NULL;
 }
 
@@ -150,14 +147,8 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
                                  MessageMapDirection dir) {
   assert(MessagesMap != NULL);
 
-  const MessagesMap_t* m = MessagesMap;
-
-  if (map_size > msg_id && m[msg_id].msg_id == msg_id &&
-      m[msg_id].type == type && m[msg_id].dir == dir) {
-    return m[msg_id].fields;
-  }
-
-  return NULL;
+  const MessagesMap_t* m = message_map_entry(type, msg_id, dir);
+  return m ? m->fields : NULL;
 }
 
 /*

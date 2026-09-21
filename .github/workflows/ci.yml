@@ -582,7 +582,7 @@ jobs:
     needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     env:
-      KK_RELEASE_MISSING_CAPABILITIES: erc7730-runtime-review,evm-max-amount-review,evm-unknown-token-review,entropy-audit-budget,osmosis-wire-guards,ripple-memo-policy,hive-release-review,prompt-workflow-unwind,session-trust-lifetime,storage-v19-kdf,solana-lut-attestation
+      KK_RELEASE_MISSING_CAPABILITIES: evm-max-amount-review,evm-unknown-token-review,entropy-audit-budget,osmosis-wire-guards,ripple-memo-policy,hive-release-review,prompt-workflow-unwind,session-trust-lifetime,storage-v19-kdf,solana-lut-attestation
     timeout-minutes: 60
     strategy:
       fail-fast: false
