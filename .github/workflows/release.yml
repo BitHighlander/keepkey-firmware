@@ -194,14 +194,6 @@ jobs:
             suffix: "-bitcoin-only"
             cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: full
-            cmake_flags: ""
-          - variant: bitcoin-only
-            cmake_flags: "-DKK_BITCOIN_ONLY=ON"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
 
