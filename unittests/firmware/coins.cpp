@@ -114,6 +114,14 @@ TEST(Coins, RetiredEthereumContractEntriesStayRemoved) {
   }
 }
 
+TEST(Coins, DigiByteTaprootIsEnabledForFirmware717) {
+  const CoinType *coin = coinByName("DigiByte");
+  ASSERT_NE(coin, nullptr);
+  EXPECT_TRUE(coin->has_taproot);
+  EXPECT_TRUE(coin->taproot);
+  EXPECT_STREQ(coin->bech32_prefix, "dgb");
+}
+
 TEST(Coins, BIP32AccountName) {
   struct {
     const char *coin_name;
