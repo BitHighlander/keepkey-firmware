@@ -80,6 +80,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
                               const HDNode* node,
                               EthereumTypedDataSignature* resp);
 bool ethereum_typed_hash_policy_allows(bool advanced_mode);
+bool ethereum_eip712_is_domain_primary_type(const char* primary_type);
 bool ethereum_structured_eip712_enabled(void);
 bool ethereum_path_check(uint32_t address_n_count, const uint32_t* address_n,
                          bool pubkey_export, uint64_t chain);

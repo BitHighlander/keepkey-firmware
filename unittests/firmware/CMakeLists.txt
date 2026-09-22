@@ -26,6 +26,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       binance.cpp
       coins.cpp
       cosmos.cpp
+      eip712.cpp
       eos.cpp
       eos_authorization.cpp
       eos_authorization_probe.c
