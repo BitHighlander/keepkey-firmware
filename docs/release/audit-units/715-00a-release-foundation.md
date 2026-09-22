@@ -1,26 +1,26 @@
 # 7.15 block 00a release-foundation receipt
 
-Status: `FROZEN` (publication and hosted qualification pending)
+Status: `REVIEW` (Copilot follow-up and current-head hosted qualification pending)
 
 ## Immutable review boundary
 
 - Pull request: `BitHighlander/keepkey-firmware#844`
 - Adjacent base: `fc1e93746132553ad98ed60f4847c8d770732bf9`
-- Incoming PR head: `a9173b32eb8515db8130f0bd393bc9b249d83320`
-- Local implementation head: `1ecfd133b34b45fb61289cb6a56011f620bdcc0b`
-- Local implementation tree: `32746075138fca4c60d74482e0c688ede50b207a`
-- Firmware commits: 34, excluding merge commits from the count used by the audit
-- Implementation diff: 188 files, 16,797 additions, 2,836 deletions, 19,633 changed lines
+- Prior PR head: `f099dfcd8de99567cece5e11646921eb61569ec2`
+- Local implementation head: `7c4dceb530e45c5cabb7a377c102ee052dd6cfd0`
+- Local implementation tree: `600d2ddea00c01c3eea3e79204cf5ffa08d10ebd`
+- Firmware commits: 35, excluding merge commits from the count used by the audit
+- Implementation diff: 193 files, 17,107 additions, 2,844 deletions, 19,951 changed lines
 - python-keepkey: `c1b136a751038064c29bdf4c25d5a9bf5f8ca8aa`
 - device-protocol: `8545cd5b615f5832374afbf06387a3f28869285e`
-- trezor-firmware/crypto: `cdc05bebe9e6989cf711e1b5bea6324fd09f848e`
+- trezor-firmware/crypto: `e8ce42f873dbdae16017122bb4fe8a949f825fc0` ([dependency PR #12](https://github.com/keepkey/trezor-firmware/pull/12))
 
 The companion commit has canonical `reconcile/upstream-sync` ancestry and pins
 device-protocol `dd9c85dc747cf965fb0e7bf49615dc9e7568ee65`. A fresh detached
 worktree reproduced the exact implementation head, all direct firmware pins and
-both nested companion pins without a dirty file. Because the companion candidate
-is intentionally unpushed, that reproduction used its exact local repository;
-remote reachability remains a publication gate. Any later implementation, test,
+both nested companion pins without a dirty file. The canonical companion pin
+is now remotely reachable; its clean recursive checkout remains a final gate.
+Any later implementation, test,
 dependency or workflow change applies the SOP invalidation matrix.
 
 ## Block contract
@@ -63,23 +63,23 @@ Those may not be pulled into this block merely to resolve a later-stack failure.
 
 ## Hosted evidence
 
-The exact candidate head has one successful pull-request run:
+The prior `f099dfcd8` head has one successful pull-request run:
 `https://github.com/BitHighlander/keepkey-firmware/actions/runs/35629160260`.
 It is supporting evidence until the local audit and Docker contract pass. Do not
-rerun it if the candidate remains unchanged. A changed candidate gets exactly one
-new hosted run only after local qualification.
+rerun it if the candidate remains unchanged. The changed implementation head
+requires one new hosted run after local qualification.
 
 ## Acceptance scorecard
 
 | Measure | Limit | Current |
 | --- | ---: | ---: |
-| Unresolved critical/high/release-blocking findings | 0 | 0 |
-| Unresolved block-owned findings | 0 | 0 |
+| Unresolved critical/high/release-blocking findings | 0 | 3 pending reviewer disposition |
+| Unresolved block-owned findings | 0 | 3 pending reviewer disposition |
 | Unexplained test failures | 0 | 0 |
 | Unreviewed required-test skips | 0 | 0 (ledger below) |
 | Flaky retries counted as evidence | 0 | 0 |
 | Stale, moving or unreachable pins | 0 | 0; companion candidate remotely fetchable by SHA |
-| Adjacent changed lines | < 20,000 | 19,854 including this receipt |
+| Adjacent changed lines | < 20,000 | 19,972 including this receipt |
 | Declared capability profiles lacking Docker evidence | 0 | 0 |
 | Active hosted runs for this PR/head | <= 1 | 0 |
 
@@ -93,8 +93,8 @@ companion tests. No hosted run was requested during mutable work.
 
 | Profile | Native | Integration | OLED audit | Evidence |
 | --- | ---: | ---: | ---: | --- |
-| regular | 192 firmware + 16 board + 18 crypto pass | 559 pass, 272 skip | 64 pass, 23 skip; 359 PNGs / 64 sequences | exit 0 |
-| bitcoin-only | 92 firmware + 16 board + 18 crypto pass | 334 pass, 497 skip | 25 pass, 62 skip; 169 PNGs / 25 sequences | exit 0 |
+| regular | 193 firmware + 16 board + 19 crypto pass | 559 pass, 272 skip | 64 pass, 23 skip; 359 PNGs / 64 sequences | exit 0 |
+| bitcoin-only | 93 firmware + 16 board + 19 crypto pass | 334 pass, 497 skip | 25 pass, 62 skip; 169 PNGs / 25 sequences | exit 0 |
 
 Both pinned ARM builds pass. SRAM evidence records 21,312 bytes of regular and
 28,268 bytes of bitcoin-only reserve against the 16,384-byte requirement; the
@@ -102,6 +102,8 @@ largest measured frame is 12,416 bytes and the required remaining margin is
 4,096 bytes. Cppcheck covered 109 files with zero findings. Actionlint,
 `git diff --check`, compose rendering, secret scan and the required-command shell
 failure probes pass. The canonical companion deterministic gate passes 41 tests.
+An initial local run omitted the declared release capability mask and failed two
+later-slice reset cases; it was discarded and rerun correctly with the mask.
 
 The skip ledger is intentional: later 7.15 capabilities are named by
 `KK_RELEASE_MISSING_CAPABILITIES`; product-inapplicable cases are variant-gated;
@@ -219,3 +221,22 @@ upgrade/boot preservation tests execute and pass in both profiles.
   affected bytes, latch before hardware reset and restore the focused tests.
 - Validation: both Docker native profiles, integrations, ARM builds and SRAM
   gates must be rerun because this changes shared RNG runtime code.
+
+### `715-00A-010` — Copilot: unit runner masked report-copy failure
+
+- Severity: high; review `5283084230` on prior head `f099dfcd8`.
+- Fix: preserve the xunit result and separately propagate status/copy failures.
+- Validation: both Docker native profiles pass on implementation `7c4dceb53`.
+
+### `715-00A-011` — Copilot: SRAM gate accepted unbounded dynamic frames
+
+- Severity: high; the previous ARM archives contained nine unbounded frames.
+- Fix: reject those records; bound Base58/Base32 arrays in firmware and crypto
+  dependency PR #12; add parser and Base58 boundary regressions.
+- Validation: both rebuilt ARM profiles pass the SRAM gate with no dynamic
+  unbounded records and 21,312/28,268-byte reserves.
+
+### `715-00A-012` — Copilot: storage fixture could double-initialize timers
+
+- Severity: high; review `5283084230` on prior head `f099dfcd8`.
+- Fix: use the shared `kk_test_board_init()` fixture; both native suites pass.
