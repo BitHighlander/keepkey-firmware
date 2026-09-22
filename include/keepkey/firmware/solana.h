@@ -156,10 +156,18 @@ typedef struct {
   uint8_t mint[SOL_PUBKEY_SIZE];
   bool has_mint;
   uint8_t extra_u8;
-  /* Exact instruction bytes retained for variable-length verified fields
-   * such as Memo. The parser bounds this slice inside the signed message. */
+  /* Instruction payload (memo body display). Points into the raw message
+   * buffer passed to solana_inspectTx — valid only while that buffer is. */
   const uint8_t* data;
-  size_t data_len;
+  uint16_t data_len;
+  /* Account index list, same lifetime as `data`. Needed to resolve a
+   * KKSOLSC1 schema's labelled accounts back to real pubkeys. */
+  const uint8_t* acct_indices;
+  uint8_t num_acct_indices;
+  /* True when this instruction reaches into an address-lookup table, so its
+   * accounts are NOT present in the signed message. A schema must never be
+   * applied to one: the pubkeys it would display are unknowable on-device. */
+  bool external;
 } SolanaParsedInstruction;
 
 /* Parsed transaction header */
@@ -181,9 +189,113 @@ typedef enum {
   SOL_TX_REVIEW_VERIFIED,
 } SolanaTxReview;
 
+/* Firmware-owned token definitions. These are intentionally tiny and only
+ * cover identities whose mint and decimals are stable enough to be part of
+ * the device's trusted display policy. */
+typedef struct {
+  uint8_t mint[SOL_PUBKEY_SIZE];
+  const char* symbol;
+  uint8_t decimals;
+} SolanaKnownToken;
+
+/* ── KKSOLSC1: reusable instruction schemas ───────────────────────────
+ *
+ * A schema says how to READ one program instruction — it carries no amounts
+ * and no transaction hash. A trusted clearsign signer attests it ONCE per
+ * (program, discriminator); every later transaction reuses the same blob and
+ * the device decodes the values straight out of the bytes it is signing.
+ *
+ * Safety rests on structural completeness, not on binding to a transaction:
+ *   - discriminator + the declared arg widths must equal the instruction
+ *     data length EXACTLY, so no unaccounted byte can carry a second effect;
+ *   - every account index the schema displays must exist in the instruction;
+ *   - the instruction must not reach into a lookup table (see `external`);
+ *   - and every OTHER instruction in the transaction must be one firmware
+ *     already recognises, so a schema can never green-light a message whose
+ *     real effect sits in an instruction nobody described.
+ *
+ * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
+ *   magic          8   "KKSOLSC1"
+ *   version        1   1 or 2
+ *   program_id    32
+ *   disc_len       1   1..8
+ *   discriminator  disc_len
+ *   program name   1 + 1..SOL_SCHEMA_NAME_MAX
+ *   instr name     1 + 1..SOL_SCHEMA_NAME_MAX
+ *   n_args         1   0..4 (v1), 0..SOL_SCHEMA_MAX_ARGS (v2)
+ *     per arg:     type(1) label_len(1) label
+ *     TOKEN_AMOUNT (v2) appends mint_account(1)
+ *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
+ *     per account: index(1) label_len(1) label
+ * No bytes may follow. Args are laid out sequentially from the end of the
+ * discriminator, in declaration order.
+ */
+#define SOL_SCHEMA_NAME_MAX 20
+#define SOL_SCHEMA_LABEL_MAX 16
+#define SOL_SCHEMA_V1_MAX_ARGS 4
+#define SOL_SCHEMA_MAX_ARGS 8
+#define SOL_SCHEMA_MAX_ACCOUNTS 4
+#define SOL_SCHEMA_DISC_MAX 8
+
+typedef enum {
+  SOL_SCHEMA_ARG_U64 = 1,          /* 8 bytes, shown as a decimal integer */
+  SOL_SCHEMA_ARG_U8 = 2,           /* 1 byte */
+  SOL_SCHEMA_ARG_PUBKEY = 3,       /* 32 bytes, shown base58 */
+  SOL_SCHEMA_ARG_OPAQUE32 = 4,     /* 32 bytes, shown truncated hex */
+  SOL_SCHEMA_ARG_LAMPORTS = 5,     /* 8 bytes, shown as SOL */
+  SOL_SCHEMA_ARG_TOKEN_AMOUNT = 6, /* 8 bytes; mint is an ix account */
+  SOL_SCHEMA_ARG_DURATION = 7,     /* 8-byte seconds */
+} SolanaSchemaArgType;
+
+typedef struct {
+  SolanaSchemaArgType type;
+  char label[SOL_SCHEMA_LABEL_MAX + 1];
+  uint8_t mint_account;
+} SolanaSchemaArg;
+
+typedef struct {
+  uint8_t index;
+  char label[SOL_SCHEMA_LABEL_MAX + 1];
+} SolanaSchemaAccount;
+
+typedef struct {
+  uint8_t program_id[SOL_PUBKEY_SIZE];
+  uint8_t disc[SOL_SCHEMA_DISC_MAX];
+  uint8_t disc_len;
+  char program_name[SOL_SCHEMA_NAME_MAX + 1];
+  char instruction_name[SOL_SCHEMA_NAME_MAX + 1];
+  SolanaSchemaArg args[SOL_SCHEMA_MAX_ARGS];
+  uint8_t num_args;
+  SolanaSchemaAccount accounts[SOL_SCHEMA_MAX_ACCOUNTS];
+  uint8_t num_accounts;
+} SolanaInstrSchema;
+
+/* Parse a KKSOLSC1 payload. Validates every length and text field and
+ * requires the payload to be consumed exactly. */
+/* Byte width one schema arg consumes in the instruction data. 0 = unknown
+ * type, which the parser rejects. */
+uint16_t solana_schemaArgWidth(SolanaSchemaArgType t);
+
+bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
+                             SolanaInstrSchema* out);
+
+/* Find the instruction this schema describes and prove it may be trusted:
+ * program id + discriminator match, the schema accounts for the instruction
+ * data exactly, its account indices are in range, the instruction is not
+ * lookup-table backed, and every other instruction in `tx` is a program
+ * firmware already decodes. Returns the matching index via `out_index`. */
+bool solana_schemaApplies(const SolanaInstrSchema* schema,
+                          const SolanaParsedTx* tx, uint8_t* out_index);
+
 /* Inspect a raw Solana transaction and classify it for signing UX */
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
                                 SolanaParsedTx* tx);
+
+/* True when a raw SolanaSignMessage payload is plain text that cannot
+ * authorize a transaction for `pubkey`: every byte is printable ASCII or '\n',
+ * and the 32-byte key appears nowhere in it. */
+bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
+                                  const uint8_t pubkey[SOL_PUBKEY_SIZE]);
 
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
@@ -191,14 +303,45 @@ bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 /* Format SOL amount */
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports);
 
-/* Maximum priority fee in lamports. Uses the 1.4M-CU protocol cap when no
- * explicit limit is present. Returns false for duplicates or overflow. */
-bool solana_calculatePriorityFee(const SolanaParsedTx* tx, uint64_t* fee_out,
-                                 bool* has_fee);
-
 /* Format token amount with decimals */
 void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
                               const char* symbol, uint8_t decimals);
+
+/* Look up a firmware-owned token identity by its signed mint account. */
+const SolanaKnownToken* solana_findKnownToken(
+    const uint8_t mint[SOL_PUBKEY_SIZE]);
+
+/* Derive the canonical SPL associated token account for
+ * (owner, token_program, mint), using Solana's find_program_address rules. */
+bool solana_deriveAssociatedTokenAddress(
+    const uint8_t owner[SOL_PUBKEY_SIZE],
+    const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]);
+
+/* Match a host-provided candidate owner only after deriving its ATA and
+ * comparing it to the destination that is present in the signed instruction.
+ * Returns the verified owner through out, or false without modifying out. */
+bool solana_findTokenRecipientOwner(
+    const SolanaSignTx* msg, const uint8_t token_program[SOL_PUBKEY_SIZE],
+    const uint8_t mint[SOL_PUBKEY_SIZE],
+    const uint8_t destination[SOL_PUBKEY_SIZE], uint8_t out[SOL_PUBKEY_SIZE]);
+
+/* Look up token info from the host-provided list */
+const SolanaTokenInfo* solana_findTokenInfo(
+    const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE]);
+
+/* True iff `ti` carries a valid attestation: an ECDSA signature (by a clearsign
+ * signer the user loaded) over a domain-separated (mint, decimals, symbol)
+ * digest. Range-checks signer_key_id before narrowing it. Verifies only the
+ * attested tuple — the caller must additionally confirm the attested decimals
+ * match the signed instruction before trusting the amount. */
+bool solana_token_info_trusted(const SolanaTokenInfo* ti);
+
+/* ceil(price * limit / 1,000,000) priority-fee lamports, overflow-safe. Returns
+ * false (and leaves *out untouched) if the true value exceeds UINT64_MAX — the
+ * caller must then refuse to sign rather than display a wrapped figure. */
+bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
+                                  uint64_t* out);
 
 /* Sign transaction */
 bool solana_signTx(const HDNode* node, const SolanaSignTx* msg,

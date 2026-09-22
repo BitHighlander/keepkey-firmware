@@ -122,6 +122,13 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
   // Confirm transaction basics
   // supports only 1 message ack
   CHECK_PARAM(mayachain_signingIsInited(), "Signing not in progress");
+  if (msg->has_send == msg->has_deposit) {
+    mayachain_signAbort();
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Expected exactly one MAYAChain message"));
+    layoutHome();
+    return;
+  }
   if (msg->has_send && msg->send.has_to_address && msg->send.has_amount &&
       msg->send.has_denom) {
     // pass
@@ -144,7 +151,22 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   const MayachainSignTx* sign_tx = mayachain_getMayachainSignTx();
 
+  // Default to "cacao" for backward compatibility; validate all non-default
+  // denoms before any display so untrusted strings never reach the UI or
+  // the signing JSON.
+  const char* coin_denom =
+      (msg->has_send && msg->send.has_denom && msg->send.denom[0])
+          ? msg->send.denom
+          : "cacao";
+
   if (msg->has_send) {
+    if (!mayachain_isValidDenom(coin_denom)) {
+      mayachain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
+      layoutHome();
+      return;
+    }
+
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
@@ -196,12 +218,19 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
+                     "%s", coin_denom)) {
+          mayachain_signAbort();
+          fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+          layoutHome();
+          return;
+        }
 
         break;
       }
     }
     if (!mayachain_signTxUpdateMsgSend(msg->send.amount, msg->send.to_address,
-                                       msg->send.denom)) {
+                                       coin_denom)) {
       mayachain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Failed to include send message in transaction");

@@ -25,6 +25,9 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/authenticator.h"
 
+/* 7.15 is the bridge release: it teaches deployed firmware to refuse rather
+ * than erase storage written by a newer version. It must not migrate the
+ * format itself, because every already-shipped release only understands V17. */
 #define STORAGE_VERSION \
   17 /* Must add case fallthrough in storage_fromFlash after increment*/
 
@@ -81,6 +84,10 @@ void storage_wipe(void);
 ///
 /// Cleared only by storage_wipe().
 bool storage_isBitcoinOnlyLocked(void);
+
+/// \brief True iff flash contains a newer storage format than this firmware.
+///        The bytes remain untouched until an explicit wipe.
+bool storage_isFirmwareTooOld(void);
 
 /// \brief Clear storage key and storage key fingerprint.
 void storage_clearKeys(void);

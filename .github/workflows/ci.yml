@@ -558,6 +558,8 @@ jobs:
   python-integration-tests:
     needs: [lint-format, static-analysis, check-submodules, secret-scan]
     runs-on: ubuntu-latest
+    env:
+      KK_RELEASE_MISSING_CAPABILITIES: safe-reset-ceremony,thor-deposit-review,evm-max-amount-review,evm-unknown-token-review,entropy-audit-budget,osmosis-wire-guards,legacy-evm-router-signing,protected-ping-presence,ripple-memo-policy,hive-release-review,prompt-workflow-unwind,session-trust-lifetime,storage-v19-kdf,solana-lut-attestation
     timeout-minutes: 60
     strategy:
       fail-fast: false
