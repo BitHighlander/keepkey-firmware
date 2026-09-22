@@ -1,6 +1,6 @@
 # Versioned storage buffer capacities
 
-Product: 7143. Carry the previously audited `be82c15c4` capacity checks
+Product: 715. Carry the previously audited `be82c15c4` capacity checks
 into the product without changing its flash format. V11 uses its actual encrypted
 payload footprint; V16/V17 readers and writers validate their complete buffers;
 outer record wrappers account for metadata and forward the remaining capacity.

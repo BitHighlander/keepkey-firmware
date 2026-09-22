@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/board/messages.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
 
@@ -56,7 +57,12 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
 bool kkconfirm_preload(int nYes, int nNo) {
   static bool initialized = false;
   if (!initialized) {
-    kk_board_init();  // canvas + runnable queues for confirm's draw path
+    // Some earlier test fixtures initialize the emulator canvas directly.
+    // Re-running the whole board initializer in that state resets timer/layout
+    // machinery underneath the confirmation loop and can strand its UDP poll.
+    if (layout_get_canvas() == nullptr) {
+      kk_board_init();  // canvas + runnable queues for confirm's draw path
+    }
     fsm_init();       // registers the usb rx callback + message maps
     usbInit("");      // binds the emulator UDP ports
     initialized = true;
