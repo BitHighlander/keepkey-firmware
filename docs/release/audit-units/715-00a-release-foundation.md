@@ -1,6 +1,6 @@
 # 7.15 block 00a — release-foundation receipt
 
-Status: `LOCAL-QUALIFIED`; clean-checkout reproduction and publication pending. Old `ACCEPTED` applies to `f099dfcd8`, not PR #844 head `8e49807a3`.
+Status: `FROZEN` from local implementation `cd7444b5e`; hosted qualification pending. The old `ACCEPTED` applies only to `f099dfcd8`. Final head/tree belong in the post-push PR attachment.
 
 - Adjacent base: `fc1e93746132553ad98ed60f4847c8d770732bf9`.
 - Companion: `c1b136a751038064c29bdf4c25d5a9bf5f8ca8aa` (canonical ancestry); nested device-protocol: `dd9c85dc747cf965fb0e7bf49615dc9e7568ee65`; consumed pins reproduced cleanly.
@@ -16,7 +16,7 @@ This foundation carries 7.14.x signing/storage/display/recovery/entropy/authoriz
 | Companion integration | 559 pass/272 skip regular; 334 pass/497 skip bitcoin-only | 559/272 regular and 334/497 bitcoin-only pass/skip |
 | Strict OLED | 64 pass/23 skip regular; 25 pass/62 skip bitcoin-only | 64/23 regular and 25/62 bitcoin-only pass/skip |
 | ARM/SRAM | Both pass; 21,312/28,268 B reserves; largest frame 12,416 B | Both pass; same reserves and 12,416 B largest frame |
-| Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0; actionlint, format, secret, diff and compose pass; clean pin pending |
+| Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0; actionlint, format, secret, diff and compose pass; detached clean checkout/pins and both Docker native builds pass |
 | Hosted | [Old head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35629160260); [current PR head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35782012448) green | No current-candidate run; at most one after local freeze |
 
 Reviewed skips use `KK_RELEASE_MISSING_CAPABILITIES` or product/version gates; dylib/registry have separate gates, PIN-timeout/empty burned-version have alternate coverage, and seven Osmosis plus five boot/upgrade tests run in both profiles. Flaky retries do not count.
