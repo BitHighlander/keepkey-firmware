@@ -627,7 +627,9 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
 static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
-                                    size_t out_str_len, bool approve) {
+                                    size_t out_str_len, bool approve,
+                                    bool* verified_contact) {
+  if (verified_contact) *verified_contact = false;
   bignum256 val;
   uint8_t pad_val[32];
   memset(pad_val, 0, sizeof(pad_val));
@@ -671,6 +673,7 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
       contact_book_match(contact_network, CONTACT_BOOK_DEST_EVM_ADDRESS, to,
                          to_len)) {
     address = contact_book_label();
+    if (verified_contact) *verified_contact = true;
   } else if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
     address = "OasisDEX";
   }
@@ -696,7 +699,6 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
     memset(out_str, 0, out_str_len);
     return false;
   }
-  contact_book_clear();
   return true;
 }
 
@@ -1086,6 +1088,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   if (needs_confirm) {
+    bool verified_contact = false;
+    const uint8_t* transfer_to = NULL;
+    uint32_t transfer_to_len = 0;
     if (token == UnknownToken) {
       if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
                                             sizeof(confirm_body_message))) {
@@ -1095,21 +1100,24 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         return;
       }
     } else if (token != NULL) {
-      if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
-                                   msg->data_initial_chunk.bytes + 36, 32,
-                                   token, confirm_body_message,
-                                   sizeof(confirm_body_message),
-                                   /*approve=*/is_approve)) {
+      transfer_to = msg->data_initial_chunk.bytes + 16;
+      transfer_to_len = 20;
+      if (!layoutEthereumConfirmTx(
+              transfer_to, transfer_to_len, msg->data_initial_chunk.bytes + 36,
+              32, token, confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/is_approve, &verified_contact)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
         return;
       }
     } else {
+      transfer_to = msg->to.bytes;
+      transfer_to_len = msg->to.size;
       if (!layoutEthereumConfirmTx(
-              msg->to.bytes, msg->to.size, msg->value.bytes, msg->value.size,
+              transfer_to, transfer_to_len, msg->value.bytes, msg->value.size,
               NULL, confirm_body_message, sizeof(confirm_body_message),
-              /*approve=*/false)) {
+              /*approve=*/false, &verified_contact)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
@@ -1130,11 +1138,25 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       BRT = ButtonRequestType_ButtonRequest_ConfirmOutput;
     }
     if (!confirm(BRT, title, "%s", confirm_body_message)) {
+      contact_book_clear();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "Signing cancelled by user");
       ethereum_signing_abort();
       return;
     }
+    if (verified_contact) {
+      char raw_address[43] = "0x";
+      ethereum_address_checksum(transfer_to, raw_address + 2, false, chain_id);
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Contact Address", "%s", raw_address)) {
+        contact_book_clear();
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        "Signing cancelled by user");
+        ethereum_signing_abort();
+        return;
+      }
+    }
+    contact_book_clear();
   }
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
