@@ -176,13 +176,17 @@ int main(void) {
   { // limit sigRet lifetime to this block
     int sigRet = SIG_FAIL;
     sigRet = signatures_ok();
-    flash_collectHWEntropy(SIG_OK == sigRet);
+    bool entropy_ok = flash_collectHWEntropy(SIG_OK == sigRet);
 
     /* Drop privileges */
     drop_privs();
 
     /* Init board */
     kk_board_init();
+    if (!entropy_ok) {
+      layout_warning_static("RNG self-test failed. Reboot device!");
+      shutdown();
+    }
 
     /* Program the model into OTP, if we're not in screen-test mode, and it's
      * not already there

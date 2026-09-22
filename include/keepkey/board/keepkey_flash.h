@@ -23,6 +23,8 @@
 #define MODEL_STR_SIZE 32
 
 #include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #include "memory.h"
 
@@ -51,6 +53,18 @@ const char* flash_getModel(void);
 bool flash_setModel(const char (*model)[32]);
 const char* flash_programModel(void);
 
-void flash_collectHWEntropy(bool privileged);
+bool flash_collectHWEntropy(bool privileged);
 void flash_readHWEntropy(uint8_t* buff, size_t size);
+
+/* The boot OTP path is shared with fault-injection tests. All callbacks must
+ * operate on FLASH_OTP_BLOCK_RANDOMNESS. On failure, output is zeroed. */
+typedef struct {
+  bool (*is_locked)(uint8_t block);
+  bool (*draw)(uint8_t* data, size_t size);
+  bool (*write)(uint8_t block, uint8_t offset, const uint8_t* data,
+                uint8_t size);
+  bool (*read)(uint8_t block, uint8_t offset, uint8_t* data, uint8_t size);
+  bool (*lock)(uint8_t block);
+} FlashEntropyOps;
+bool flash_collectOtpEntropy(uint8_t* output, const FlashEntropyOps* ops);
 #endif

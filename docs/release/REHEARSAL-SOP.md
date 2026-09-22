@@ -64,7 +64,9 @@ A block is `ACCEPTED` only when every item below is true:
 3. **Identity:** exact base SHA, head SHA, tree SHA, submodule SHAs and capability
    profile are recorded; the head is a direct descendant of its declared base.
 4. **Review:** zero unresolved critical, high, release-blocking or block-owned
-   findings. Every non-blocking finding has a stable ID and explicit disposition.
+   findings. Every finding has a stable ID, affected head, owner, severity,
+   disposition and verification evidence. A reviewer reply or green check does
+   not close a substantive finding without a technical reproduction or rationale.
 5. **Local checks:** formatting, static analysis and focused regression tests pass;
    every distinct capability profile introduced or inherited by the block passes
    in the pinned Docker environment. Actual passes, failures and skips are recorded.
@@ -80,6 +82,11 @@ A block is `ACCEPTED` only when every item below is true:
 8. **Publication:** the PR base/head, adjacent diff and description match the frozen
    receipt. Required hosted checks pass once on that exact head with no unexplained
    skipped, cancelled or neutralized gate.
+9. **Failure paths:** for each owned security invariant, record the success path,
+   failure/abort branches and their distinguishing negative tests. Fault-inject
+   irreversible writes, entropy failures and signing/display failures where a
+   normal green suite cannot reach them. An untested branch is an evidence gap,
+   not an assumed pass; record why a test is infeasible and the alternate review.
 
 Use this scorecard in every block receipt. A block with any exceeded limit is not
 done, regardless of its review history or the state of later blocks.
@@ -101,6 +108,13 @@ Record counts, not only a `pass` label. Required skips may exist only when each
 has a stable identifier, technical rationale and owning future release or human
 gate; an expected skip is reviewed evidence, while an unexplained skip exceeds
 the limit above.
+
+Keep a subsystem coverage ledger for foundation or cross-cutting blocks. Name
+each changed runtime, test-harness, build, workflow and dependency surface;
+assign an owner/reviewer and link its focused tests and failure-path review.
+The line-count limit is a publication constraint, not a measure of review
+completeness. If the ledger is too broad to review coherently, split the block
+before freezing it.
 
 The iteration limit is evidence-based rather than calendar-based. Each review
 cycle must close a named finding or add named missing evidence. After three
@@ -315,9 +329,13 @@ Use this minimum invalidation matrix instead of an ad hoc judgment:
 | Restack, reorder or new base | Ancestry, adjacent diffs, line counts, receipts and every dependent head |
 | Security policy/invariant | Owning security review, mutation regressions and affected product qualification |
 
-A handoff document never validates itself and must not claim its own future commit
-SHA. The authoritative release identity belongs in a machine-readable manifest;
-human-readable PR descriptions and handoffs are generated or verified from it.
+A handoff document never validates itself or claims its own future SHA. Attach
+the frozen head/tree and hosted run in a post-push PR comment or external
+machine-readable manifest; verify checked-in receipts against that attachment.
+An acceptance comment is head-specific: it must name the exact head and hosted
+run. A changed head or new substantive finding immediately reopens the block
+and dependent blocks, even if old comments still say `ACCEPTED`. Post a new
+status on the PR rather than silently relying on an earlier acceptance record.
 
 ## Docker-first and hosted-CI budget
 

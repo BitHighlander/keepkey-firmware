@@ -1,5 +1,6 @@
 set(sources
     memcmp_s.cpp
+    otp_entropy.cpp
     board.cpp)
 
 include_directories(
