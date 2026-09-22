@@ -28,6 +28,8 @@ void fsm_clearDerivedNode(void);
 #if DEBUG_LINK
 void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
+void fsm_test_clearLastFailure(void);
+FailureType fsm_test_lastFailureCode(void);
 #endif
 
 #define RESP_INIT(TYPE)                                                    \
@@ -97,7 +99,13 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg);
 void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg);
 void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg);
 void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg);
+void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg);
+void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg);
+void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg);
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg);
+void fsm_msgEthereumClearSignDefinition(const EthereumClearSignDefinition* msg);
+void fsm_msgEthereumClearSignDefinitionChunk(
+    const EthereumClearSignDefinitionChunk* msg);
 void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg);
 
 void fsm_msgNanoGetAddress(NanoGetAddress* msg);
@@ -158,8 +166,6 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg);
 void fsm_msgHiveSignTx(const HiveSignTx* msg);
 void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg);
 void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg);
-void fsm_msgHiveSignMessage(const HiveSignMessage* msg);
-void fsm_msgHiveSignOperations(const HiveSignOperations* msg);
 
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);

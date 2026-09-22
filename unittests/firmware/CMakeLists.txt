@@ -39,6 +39,10 @@ if(NOT ${KK_BITCOIN_ONLY})
       thorchain.cpp)
 endif()
 
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.cpp)
+endif()
+
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/lib/firmware
