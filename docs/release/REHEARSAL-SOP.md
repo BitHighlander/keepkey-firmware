@@ -72,8 +72,11 @@ A block is `ACCEPTED` only when every item below is true:
    emulator state or storage restore them with fixtures. A changed test harness
    passes its isolation regression in both normal and altered suite order.
 7. **Repeatability:** the focused failing-before/passing-after regression is
-   demonstrated, and the required local qualification succeeds from a clean
-   recursive checkout. A flaky or unreproduced pass is not a pass.
+   demonstrated, and local qualification succeeds from a clean checkout with
+   direct pins and every nested submodule consumed by active build/test paths
+   initialized. Identify excluded nested vendor/test trees in the receipt;
+   their parent gitlink remains pinned, but an unbounded deep clone is not a gate.
+   A flaky or unreproduced pass is not a pass.
 8. **Publication:** the PR base/head, adjacent diff and description match the frozen
    receipt. Required hosted checks pass once on that exact head with no unexplained
    skipped, cancelled or neutralized gate.
@@ -308,7 +311,7 @@ Use this minimum invalidation matrix instead of an ad hoc judgment:
 | Test or harness | Affected tests, isolation/order regression and capability profiles |
 | Firmware runtime | Affected focused tests, all affected Docker profiles and downstream block identities |
 | Companion runtime/test | Companion tests and every consuming firmware capability profile |
-| Submodule/gitlink | Pin/provenance checks and affected clean recursive builds/integration |
+| Submodule/gitlink | Pin/provenance checks and affected clean dependency-graph builds/integration |
 | Restack, reorder or new base | Ancestry, adjacent diffs, line counts, receipts and every dependent head |
 | Security policy/invariant | Owning security review, mutation regressions and affected product qualification |
 

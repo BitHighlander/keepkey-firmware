@@ -19,9 +19,15 @@ The companion commit has canonical `reconcile/upstream-sync` ancestry and pins
 device-protocol `dd9c85dc747cf965fb0e7bf49615dc9e7568ee65`. A fresh detached
 worktree reproduced the exact implementation head, all direct firmware pins and
 both nested companion pins without a dirty file. The canonical companion pin
-is now remotely reachable; its clean recursive checkout remains a final gate.
-Any later implementation, test,
-dependency or workflow change applies the SOP invalidation matrix.
+is remotely reachable. Any later implementation, test, dependency or workflow
+change applies the SOP invalidation matrix.
+
+The current `a763f5f91` fresh checkout is clean with every direct pin and both
+python-keepkey nested pins initialized. Trezor's nested vendor/test trees are
+excluded: active firmware CMake and Docker paths consume its `crypto/` sources,
+not `vendor/`, `common/defs/` or `crypto/tests/`. Both product builds pass from
+the pinned source. Full deep recursion reaches unrelated Micropython/TinyUSB
+hardware repositories and is not the block's reproducibility boundary.
 
 ## Block contract
 
@@ -59,7 +65,7 @@ Those may not be pulled into this block merely to resolve a later-stack failure.
 - Pinned Docker python integration and strict OLED evidence for both products.
 - ARM builds, SRAM budget and artifact-manifest validation for both products.
 - Actual pass/fail/skip totals and every expected skip disposition.
-- Clean recursive-checkout reproduction with no uncommitted dependency change.
+- Clean build/test dependency-graph checkout with no uncommitted pin change.
 
 ## Hosted evidence
 
@@ -79,7 +85,7 @@ requires one new hosted run after local qualification.
 | Unreviewed required-test skips | 0 | 0 (ledger below) |
 | Flaky retries counted as evidence | 0 | 0 |
 | Stale, moving or unreachable pins | 0 | 0; companion candidate remotely fetchable by SHA |
-| Adjacent changed lines | < 20,000 | 19,972 including this receipt |
+| Adjacent changed lines | < 20,000 | 19,981 including this receipt |
 | Declared capability profiles lacking Docker evidence | 0 | 0 |
 | Active hosted runs for this PR/head | <= 1 | 0 |
 
