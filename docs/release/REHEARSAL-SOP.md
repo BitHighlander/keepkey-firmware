@@ -252,8 +252,7 @@ instruction to keep inventing improvements. Define the finish line before work.
    finding dispositions, exclusions and remaining release-only requirements.
    A passing candidate ends the internal loop. Advance to the next unit.
 
-A review pass is not evidence of correctness by itself. Do not weaken tests,
-remove required coverage or redefine behavior merely to obtain a clean result.
+A review pass is not evidence of correctness. Do not weaken tests, remove required coverage or redefine behavior merely to obtain a clean result.
 Confirmed release-critical defects still block release. Optional style preferences
 and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
@@ -340,9 +339,7 @@ status on the PR rather than silently relying on an earlier acceptance record.
 ## Docker-first and hosted-CI budget
 
 GitHub is the immutable-head confirmation environment, not the debugging loop.
-Before pushing a block, run its focused checks and capability profiles locally in
-the same pinned Docker environment used by CI. Before publishing the assembled
-product, complete the product qualification tier locally.
+Before pushing a block, run focused checks and capability profiles in pinned Docker, using CI's exact entrypoint and pre-suite phases; direct test commands are diagnostic only. Before publishing the assembled product, complete product qualification locally.
 
 - Run lightweight format, static, secret, topology and pin checks on every slice.
 - Run expensive full-product integration on the final product and only on earlier
@@ -350,7 +347,11 @@ product, complete the product qualification tier locally.
 - Allow at most one active hosted run per PR and exact head. Cancel superseded runs.
 - Configure workflow concurrency by workflow and PR, with older runs cancelled.
 - Do not manually rerun an unchanged failure. First identify a concrete flaky or
-  infrastructure cause, or make and locally validate a relevant change.
+  infrastructure cause, or make and locally validate a relevant change. For a
+  red hosted test, retain its exact assertion/response and head, rerun focused
+  and full-suite locally, inspect request/response boundaries and suite order,
+  and keep a finding open until a cause and distinguishing regression are named.
+  A passing local replay or subsequent hosted retry never erases the red run.
 - Two infrastructure-only failures end hosted retries until the failure is locally
   reproduced, the workflow is repaired, or the provider recovers.
 - Skipped, cancelled, timed-out and missing jobs are not successful evidence.
