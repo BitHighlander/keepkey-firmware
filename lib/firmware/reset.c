@@ -580,6 +580,8 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
     return;
   }
 
+  note_workflow_progress();
+
   SHA256_CTX ctx;
   memzero(&ctx, sizeof(ctx));
   /* In either dice mode int_entropy is ALREADY the whole derivation, set in

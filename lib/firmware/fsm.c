@@ -30,6 +30,7 @@
 #include "keepkey/board/messages.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/app_confirm.h"
@@ -376,7 +377,7 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_signing_workflows();
   if (setup_isArmedAs(SETUP_RECOVERY)) {
-    /* Preserve the active recovery screen and ceremony. */
+    recovery_cipher_redraw();
   } else {
     setup_abort();
     layoutHome();
@@ -400,7 +401,19 @@ void fsm_init(void) {
   txin_dgst_initialize();
 }
 
-/* Reject continuation packets unless their signing workflow is active. */
+/* Only messages that advance an already established stream, plus bounded
+ * read-only polls, may inherit a signing workflow. Every other top-level
+ * request ends signing before its handler can block for host or user input.
+ * New protocol messages therefore fail closed until classified here. An ACK
+ * inherits state only when its own workflow is active; message type alone is
+ * not authority to preserve some other signer.
+ *
+ * Deliberately NOT session_clear(true): that is a LOCK. It would drop the PIN,
+ * passphrase and seed cache, disarm AdvancedMode and revoke ClearSign signers
+ * on every request, so ApplyPolicies/LoadClearsignSigner could never reach the
+ * EthereumSignTx that needs them. Idle locking stays with toggle_screensaver.
+ * Metadata loaded before a sign survives: ethereum_signing_abort() only clears
+ * it while a stream is active. */
 static bool reject_stale_continuation(const char* text) {
   /* A decoded request always gets a terminal response. Silently dropping an
    * inactive ACK leaves the host blocked forever, while dispatching it would
@@ -518,10 +531,18 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
   }
 }
 
-void keepkey_after_message_dispatch(void) { fsm_clearDerivedNode(); }
+void keepkey_after_message_dispatch(void) {
+  /* fsm_getDerivedNode() returns shared confidential scratch. No handler may
+   * leave a private key resident after its response or cancellation. */
+  fsm_clearDerivedNode();
+}
 
 void fsm_sendSuccess(const char* text) {
+  /* A nested confirmation can reject an unexpected tiny message itself.
+   * That Failure is already the terminal wire response; suppress the outer
+   * handler's response while it unwinds. */
   if (msg_handler_rejected()) return;
+
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;
@@ -539,7 +560,10 @@ void fsm_sendSuccess(const char* text) {
 }
 
 void fsm_sendFailure(FailureType code, const char* text) {
+  /* See fsm_sendSuccess(): never emit a second response after the nested
+   * tiny-message receiver has already rejected the request. */
   if (msg_handler_rejected()) return;
+
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;

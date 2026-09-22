@@ -44,6 +44,20 @@ static void osmosis_format_amount(char* out, size_t out_len,
   snprintf(out, out_len, "%s OSMO", decimal_buf);
 }
 
+/* MsgSend is represented by a uint64 in the host API. Reject wire-level
+ * decimal strings that would overflow that contract, while leaving wider
+ * protocol-native swap and pool amount fields intact. */
+static bool osmosis_validate_send_amount(bool has_value, const char* value) {
+  if (!osmosis_validate_amount(has_value, value)) return false;
+  uint64_t parsed = 0;
+  for (const char* p = value; *p; ++p) {
+    const uint8_t digit = (uint8_t)(*p - '0');
+    if (parsed > (UINT64_MAX - digit) / 10) return false;
+    parsed = parsed * 10 + digit;
+  }
+  return true;
+}
+
 void fsm_msgOsmosisGetAddress(const OsmosisGetAddress* msg) {
   RESP_INIT(OsmosisAddress);
 
@@ -190,11 +204,18 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
   if (msg->has_send) {
     if (!osmosis_validate_account_address(msg->send.has_to_address,
                                           msg->send.to_address) ||
-        !osmosis_validate_amount(msg->send.has_amount, msg->send.amount) ||
         !osmosis_validate_required_text(msg->send.has_denom, msg->send.denom)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Message is missing required parameters"));
+      layoutHome();
+      return;
+    }
+
+    if (!osmosis_validate_send_amount(msg->send.has_amount, msg->send.amount)) {
+      osmosis_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid Osmosis amount or denomination"));
       layoutHome();
       return;
     }
@@ -794,6 +815,7 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
   if (!osmosis_signingIsFinished()) {
     RESP_INIT(OsmosisMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_OsmosisMsgRequest, resp);
     return;
   }

@@ -391,6 +391,8 @@ static int rlp_calculate_number_length(uint32_t number) {
 }
 
 static void send_request_chunk(void) {
+  /* The previous chunk was validated and hashed before requesting more. */
+  note_workflow_progress();
   layoutProgress(_("Signing"), (data_total - data_left) * 1000 / data_total);
   msg_tx_request.has_data_length = true;
   msg_tx_request.data_length = data_left <= 1024 ? data_left : 1024;
@@ -877,6 +879,19 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (!msg->has_data_initial_chunk) msg->data_initial_chunk.size = 0;
   if (!msg->has_to) msg->to.size = 0;
   if (!msg->has_nonce) msg->nonce.size = 0;
+
+  /* Ethereum integer zero has one canonical protobuf spelling in this
+   * protocol: an empty byte string. RLP drops leading zeroes, so retaining an
+   * explicit all-zero buffer would sign the same transaction while letting
+   * classification predicates disagree about whether it is an ERC-20 call.
+   * Normalize before any contract or generic classifier sees the message. */
+  if (msg->value.size > 0) {
+    bool all_zero = true;
+    for (size_t i = 0; i < msg->value.size; i++) {
+      all_zero &= msg->value.bytes[i] == 0;
+    }
+    if (all_zero) msg->value.size = 0;
+  }
 
   /* eip-155 chain id
    *

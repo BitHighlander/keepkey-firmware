@@ -73,7 +73,6 @@ void fsm_msgTronGetAddress(const TronGetAddress* msg) {
   layoutHome();
 }
 
-// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgTronSignTx(TronSignTx* msg) {
   RESP_INIT(TronSignedTx);
 

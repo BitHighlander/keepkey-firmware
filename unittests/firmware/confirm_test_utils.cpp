@@ -31,8 +31,7 @@ void kk_test_board_init(void);
 
 static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
                                uint8_t len) {
-  static int fd = -1;
-  if (fd < 0) fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (fd < 0) return false;
 
   uint8_t frame[64] = {0};
@@ -49,8 +48,11 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
   addr.sin_family = AF_INET;
   addr.sin_port = htons(11044);  // emulator main "usb" port
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  return sendto(fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
-                sizeof(addr)) == (ssize_t)sizeof(frame);
+  const bool sent = sendto(fd, frame, sizeof(frame), 0,
+                           (struct sockaddr*)&addr, sizeof(addr)) ==
+                    (ssize_t)sizeof(frame);
+  close(fd);
+  return sent;
 }
 
 /* One ButtonAck + one DebugLinkDecision, i.e. what a single screen eats. */

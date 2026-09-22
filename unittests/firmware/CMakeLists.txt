@@ -1,6 +1,5 @@
 set(sources
     nanopb_bounds.cpp
-    authenticator.cpp
     confirm_test_utils.cpp
     fsm.cpp
     dice.cpp
@@ -53,6 +52,11 @@ endif()
 if(${KK_ZCASH_PRIVACY})
   list(APPEND sources zcash.cpp)
 endif()
+
+# This legacy fixture initializes and mutates persistent emulator flash. Keep
+# it last so its process-global storage/session state cannot contaminate UI and
+# transport tests that rely on a pristine confirmation harness.
+list(APPEND sources authenticator.cpp)
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/include

@@ -277,6 +277,15 @@ static bool confirm_screen(const char* request_title_param,
 #endif
 
         default:
+          /* An unmapped or malformed tiny message has already received its
+           * terminal Failure in messages.c.  Do not leave the confirmation
+           * loop alive behind that response: the host has no outstanding
+           * ButtonRequest to answer and every later request would otherwise
+           * be consumed here indefinitely. */
+          if (msg_handler_rejected()) {
+            ret_stat = false;
+            goto confirm_screen_exit;
+          }
           break; /* break from switch statement and stay in the while loop*/
       }
     }
