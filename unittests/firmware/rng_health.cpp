@@ -33,6 +33,19 @@ TEST(RngHealth, RejectsEmptyAndNull) {
   EXPECT_FALSE(rng_health_analyze(&b, 0));
 }
 
+TEST(RngHealth, PersistentHardwareErrorLatchesBeforeReset) {
+  rng_test_power_on_reset();
+  uint32_t samples = 0;
+  for (uint32_t i = 0; i < 99; ++i) {
+    EXPECT_FALSE(rng_persistent_error_step(&samples));
+  }
+  EXPECT_FALSE(rng_seed_error_latched());
+  EXPECT_TRUE(rng_persistent_error_step(&samples));
+  EXPECT_EQ(samples, 0U);
+  EXPECT_TRUE(rng_seed_error_latched());
+  rng_test_power_on_reset();
+}
+
 TEST(RngHealth, AcceptsNonDegenerateSample) {
   auto v = pseudo(RNG_HEALTH_SAMPLE_BYTES);
   EXPECT_TRUE(rng_health_analyze(v.data(), v.size()));
@@ -190,6 +203,8 @@ TEST(RngHealth, TransientHardwareFaultRemainsLatched) {
   const uint8_t zeros[32] = {0};
   EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
   EXPECT_TRUE(rng_seed_error_latched());
+  rng_test_power_on_reset();
+  rng_health_force_verdict(true);
 }
 
 TEST(RngHealth, PersistentHardwareFaultLatchesBeforeReset) {
@@ -270,3 +285,40 @@ TEST(RngHealth, TrippingBytesAreWipedNotReturned) {
 }
 
 }  // namespace
+
+static size_t observed_draw_bytes;
+static bool fault_on_draw;
+extern "C" void rng_health_test_draw_completed(size_t len) {
+  observed_draw_bytes += len;
+  if (fault_on_draw) rng_test_observe_transient_error();
+}
+
+class RngBootGate : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    rng_test_power_on_reset();
+    rng_health_test_reset();
+    observed_draw_bytes = 0;
+    fault_on_draw = false;
+  }
+  void TearDown() override {
+    fault_on_draw = false;
+    rng_test_power_on_reset();
+    rng_health_force_verdict(true);
+  }
+};
+
+TEST_F(RngBootGate, SamplesFreshVerdictOnce) {
+  ASSERT_TRUE(rng_health_check());
+  EXPECT_EQ(RNG_HEALTH_SAMPLE_BYTES, observed_draw_bytes);
+  EXPECT_TRUE(rng_health_check());
+  EXPECT_EQ(RNG_HEALTH_SAMPLE_BYTES, observed_draw_bytes);
+}
+
+TEST_F(RngBootGate, MidSampleHardwareFaultFailsClosed) {
+  fault_on_draw = true;
+  EXPECT_FALSE(rng_health_check());
+  EXPECT_EQ(32u, observed_draw_bytes);
+  EXPECT_FALSE(rng_health_check());
+  EXPECT_EQ(32u, observed_draw_bytes);
+}

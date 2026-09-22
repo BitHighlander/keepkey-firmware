@@ -1,5 +1,10 @@
 # Fork release product program
 
+> Historical snapshot (2026-09-08), retained only as provenance. Its branches,
+> SHAs, active unit and execution order are not current instructions. The active
+> 7.15 program advances sequentially under `REHEARSAL-SOP.md`; Block 00A is
+> recorded in `audit-units/715-00a-release-foundation.md`.
+
 Owner direction: 2026-09-08. Harden and assemble 7.14.2, 7.14.3 and 7.15 through
 small local audit units. The canonical procedure is [REHEARSAL-SOP.md](REHEARSAL-SOP.md).
 Copilot belongs to final upstream preparation, after internal product acceptance.

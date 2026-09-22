@@ -7,6 +7,8 @@
 # point it at the GHCR mirror explicitly. The default keeps plain
 # `docker build` and local use working unchanged.
 ARG BASE_IMAGE=kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
+ARG EMULATOR_IMAGE=kktech/kkemu:latest
+FROM ${EMULATOR_IMAGE} AS emulator
 FROM ${BASE_IMAGE} AS deps
 
 # Extra Python deps needed by tests that aren't in the shared base image.
@@ -23,5 +25,10 @@ FROM deps
 
 WORKDIR /kkemu
 COPY ./ /kkemu
+
+# Some storage-policy regressions must restart the emulator and inspect the
+# boot-time version gate. Reuse the exact product image already built by CI;
+# do not compile a second, potentially different emulator in this image.
+COPY --from=emulator /kkemu/bin/kkemu /kkemu/bin/kkemu
 
 ENTRYPOINT ["/bin/sh", "./scripts/emulator/python-keepkey-tests.sh"]

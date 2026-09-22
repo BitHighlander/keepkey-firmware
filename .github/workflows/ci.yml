@@ -38,6 +38,14 @@ on:
         type: boolean
         default: false
 
+# A lower release-stack update can synchronize several dependent PRs in quick
+# succession. Keep only the newest run for each PR; an older head cannot become
+# acceptance evidence after GitHub has observed its replacement. Long-lived
+# branch pushes retain their full runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
@@ -155,6 +163,10 @@ jobs:
 
       - name: Run cppcheck
         run: |
+          # GitHub runs this block with `bash -e`. Keep cppcheck in an OR-list
+          # so a finding does not abort before the report, annotations and
+          # severity totals are emitted below.
+          CPPCHECK_RC=0
           cppcheck \
             --enable=warning,style,performance,portability \
             --std=c11 \
@@ -175,7 +187,7 @@ jobs:
             --template='::warning file={file},line={line},col={column}::{severity}: {message} [{id}]' \
             --output-file=cppcheck_report.txt \
             --error-exitcode=1 \
-            lib/ include/keepkey/ tools/ 2>&1; CPPCHECK_RC=$?
+            lib/ include/keepkey/ tools/ 2>&1 || CPPCHECK_RC=$?
 
           # Count issues by severity
           ERRORS=$(grep -c '\berror:' cppcheck_report.txt 2>/dev/null || true)
@@ -404,20 +416,23 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/root/keepkey-firmware:z \
-            ${{ env.BASE_IMAGE }} /bin/sh -c "\
-              mkdir /root/build && cd /root/build && \
+            ${{ env.BASE_IMAGE }} /bin/sh -ec "\
+              mkdir /root/build; cd /root/build; \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
                 ${{ matrix.cmake_flags }} \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
-                -DCMAKE_COLOR_MAKEFILE=ON \
-                ${{ matrix.cmake_flags }} && \
-              make && \
-              mkdir -p /root/keepkey-firmware/bin && \
-              cp bin/*.bin /root/keepkey-firmware/bin/ && \
-              cp bin/*.elf /root/keepkey-firmware/bin/ && \
-              cp bin/*.map /root/keepkey-firmware/bin/ 2>/dev/null || true && \
-              arm-none-eabi-size -A bin/firmware.keepkey.elf > /root/keepkey-firmware/bin/firmware.keepkey.size.txt 2>/dev/null || true && \
-              find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T - && \
+                -DCMAKE_COLOR_MAKEFILE=ON; \
+              make; \
+              mkdir -p /root/keepkey-firmware/bin; \
+              cp bin/*.bin /root/keepkey-firmware/bin/; \
+              cp bin/*.elf /root/keepkey-firmware/bin/; \
+              if ls bin/*.map >/dev/null 2>&1; then \
+                cp bin/*.map /root/keepkey-firmware/bin/; \
+              fi; \
+              if command -v arm-none-eabi-size >/dev/null 2>&1; then \
+                arm-none-eabi-size -A bin/firmware.keepkey.elf > /root/keepkey-firmware/bin/firmware.keepkey.size.txt; \
+              fi; \
+              find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T -; \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
       # SRAM budget gate — RC7's zcash-privacy variant hard-faulted on boot
@@ -556,8 +571,15 @@ jobs:
           retention-days: 30
 
   python-integration-tests:
-    needs: [lint-format, static-analysis, check-submodules, secret-scan]
+    # Consume the exact emulator image built in Stage 2. Rebuilding it here
+    # duplicated both the most expensive build and the firmware-unit suite.
+    needs: build-emulator
     runs-on: ubuntu-latest
+    env:
+      # Canonical python-keepkey serves every release. Name only capabilities
+      # intentionally owned by later 7.15 stack blocks; their tests remain in
+      # the suite and become mandatory when the owning block removes each name.
+      KK_RELEASE_MISSING_CAPABILITIES: safe-reset-ceremony,thor-deposit-review,evm-max-amount-review,evm-unknown-token-review,entropy-audit-budget,osmosis-wire-guards,legacy-evm-router-signing,protected-ping-presence,ripple-memo-policy,hive-release-review,prompt-workflow-unwind,session-trust-lifetime,storage-v19-kdf,solana-lut-attestation
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -586,6 +608,23 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
+      - name: Download emulator image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: emu-image-${{ matrix.variant }}
+          path: /tmp
+
+      - name: Load emulator image
+        run: |
+          docker load -i /tmp/emu-image.tar
+          if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
+            docker tag "${{ env.EMU_IMAGE }}-${{ matrix.variant }}" \
+              kktech/kkemu-bitcoin-only:latest
+          else
+            docker tag "${{ env.EMU_IMAGE }}-${{ matrix.variant }}" \
+              kktech/kkemu:latest
+          fi
+
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
         run: |
@@ -594,12 +633,16 @@ jobs:
             COMPOSE_ARGS+=(-f docker-compose.bitcoin-only.yml)
           fi
 
-          # Run each test container — capture exit codes, always extract reports
+          # Build only the companion test image. firmware-unit already ran
+          # against the downloaded emulator image in its dedicated matrix job.
+          # Point its boot-test stage at the exact artifact tag loaded above,
+          # never at a same-named registry image.
+          export KK_EMULATOR_IMAGE="${EMU_IMAGE}-${{ matrix.variant }}"
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
+            build python-keepkey
           set +e
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from firmware-unit firmware-unit; FW_RC=$?
-          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
+            up --no-build --exit-code-from python-keepkey python-keepkey; PY_RC=$?
           set -e
 
           REPORT_ROOT=${{ github.workspace }}/test-reports/${{ matrix.variant }}
@@ -607,9 +650,7 @@ jobs:
 
           echo "=== Extracting test reports from Docker ==="
           PY_CONTAINER=$(docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} ps -a -q python-keepkey)
-          FW_CONTAINER=$(docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} ps -a -q firmware-unit)
 
-          docker cp "$FW_CONTAINER":/kkemu/test-reports/. "$REPORT_ROOT/" || echo "WARN: firmware-unit docker cp failed"
           docker cp "$PY_CONTAINER":/kkemu/test-reports/. "$REPORT_ROOT/" || echo "WARN: python-keepkey docker cp failed"
 
           echo "=== Extracted files ==="
@@ -618,16 +659,12 @@ jobs:
           find "$REPORT_ROOT/screenshots" -name '*.png' 2>/dev/null | wc -l
           echo "PNGs on host"
 
-          echo "firmware-unit exit code: $FW_RC"
           echo "python-keepkey exit code: $PY_RC"
 
-          if [ "$FW_RC" -ne 0 ]; then
-            echo "::error::firmware-unit tests failed (exit code $FW_RC)"
-          fi
           if [ "$PY_RC" -ne 0 ]; then
             echo "::error::python-keepkey tests failed (exit code $PY_RC)"
           fi
-          [ "$FW_RC" -eq 0 ] && [ "$PY_RC" -eq 0 ] || exit 1
+          [ "$PY_RC" -eq 0 ] || exit 1
 
       - name: Upload Python test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -635,14 +672,6 @@ jobs:
         with:
           name: ${{ matrix.python_artifact }}
           path: test-reports/${{ matrix.variant }}/python-keepkey/
-          retention-days: 30
-
-      - name: Upload native test results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: firmware-unit-results-${{ matrix.variant }}
-          path: test-reports/${{ matrix.variant }}/firmware-unit/
           retention-days: 30
 
       - name: Upload OLED screenshots

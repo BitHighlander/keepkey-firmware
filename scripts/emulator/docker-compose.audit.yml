@@ -1,0 +1,9 @@
+# Local release-audit isolation: integration containers communicate over the
+# compose network and do not need to publish emulator ports on the host. This
+# permits an immutable candidate to be qualified without stopping unrelated
+# developer emulators already bound to the default ports.
+services:
+  kkemu:
+    ports: !reset []
+  python-keepkey:
+    image: '${KK_AUDIT_TEST_IMAGE:-kktech/kkemu-tests:latest}'
