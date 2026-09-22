@@ -150,10 +150,15 @@ static bool validate_abi_node(Erc7730CatalogVerifier* v, const uint8_t* node) {
   }
 
   if (kind == 8 || kind == 9) {
-    if (first_child <= v->abi_node_index || child_count == 0 ||
-        first_child > v->abi_node_count ||
-        child_count > v->abi_node_count - first_child)
+    if (child_count == 0) {
+      if (kind != 8 || v->abi_node_index != 0 || first_child != 0 ||
+          v->abi_node_count != 1)
+        return false;
+    } else if (first_child <= v->abi_node_index ||
+               first_child > v->abi_node_count ||
+               child_count > v->abi_node_count - first_child) {
       return false;
+    }
     if (kind == 9 && (child_count != 1 || array_length == 0 ||
                       (array_length > ERC7730_ABI_MAX_ARRAY_ELEMENTS &&
                        array_length != UINT16_MAX)))
@@ -323,7 +328,6 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (byte == 1) {
       v->path_step_remaining = 4;
     } else if (byte == 2) {
-      if (v->path_full_seen) return false;
       v->path_full_seen = true;
       finish_path_step(v);
     } else if (byte == 3) {
@@ -521,8 +525,7 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
   if ((roles & FORMAT_ROLE_BIT(1)) == 0 ||
       (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0)
     return false;
-  if ((v->formatter_kind == 3 && (roles & FORMAT_ROLE_BIT(2)) == 0) ||
-      (v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
+  if ((v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
       (v->formatter_kind == 8 && (roles & FORMAT_ROLE_BIT(10)) == 0) ||
       (v->formatter_kind == 13 && (roles & FORMAT_ROLE_BIT(15)) == 0) ||
       (v->formatter_kind == 14 &&

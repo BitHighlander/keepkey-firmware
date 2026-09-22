@@ -290,6 +290,13 @@ TEST(Erc7730Catalog, RejectsMalformedOrAliasedAbiGraphsWhileStreaming) {
   EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
+TEST(Erc7730Catalog, AcceptsCanonicalEmptyRootTupleForArgumentlessCall) {
+  auto p = replaceTable(minimalProgram(), 2,
+                        {8, 0, 0, 0, 0, 0, 0, 0, 0}, 1);
+  p[p.size() - 6] = 1;  // exact ABI depth for the empty root tuple
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+}
+
 TEST(Erc7730Catalog, RecomputesSignedResourceDeclaration) {
   auto p = minimalProgram();
   p[p.size() - 22] = 1;  // claims 256 strings instead of zero
@@ -337,8 +344,8 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
 
   entries = {1, 2, 0xff, 0xff, 2, 2};
-  p = programWithPaths(entries, 1);  // two full-array selectors
-  EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithPaths(entries, 1);  // nested full-array selectors
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
   entries = {2, 1, 0, 2, 1, 0, 0, 0, 0};
   p = programWithPaths(entries, 1);  // container paths have no steps
@@ -385,6 +392,14 @@ TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
   p = replaceTable(p, 7, display, 3);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
+  // tokenAmount without a token operand is canonical and displays the
+  // device-decoded integer as an unknown-token fallback.
+  const std::vector<uint8_t> unknown_token = {3, 0, 1, 1, 1, 0, 0};
+  p = programWithPaths(path, 1);
+  p = replaceTable(p, 6, unknown_token, 1);
+  p = replaceTable(p, 7, display, 3);
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+
   auto bad_formatter = formatter;
   bad_formatter[4] = 3;
   bad_formatter[6] = 1;  // value operand claims a missing string index
@@ -398,6 +413,27 @@ TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
   bad_display[18] = 1;  // end instruction has a non-absent operand
   p = replaceTable(p, 7, bad_display, 3);
   EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, ValidatesNestedGroupControlFlowAndRejectsBadReturns) {
+  auto p = minimalProgram();
+  const std::vector<uint8_t> display = {
+      1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // intent
+      5,  0, 0xff, 0xff, 0xff, 0xff, 0,    4,     // outer begin -> pc 4
+      5,  0, 0xff, 0xff, 0xff, 0xff, 0,    3,     // inner begin -> pc 3
+      6,  0, 0,    2,    0xff, 0xff, 0xff, 0xff,  // inner end -> pc 2
+      6,  0, 0,    1,    0xff, 0xff, 0xff, 0xff,  // outer end -> pc 1
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,  // end
+  };
+  p = replaceTable(p, 7, display, 6);
+  p[sectionOffset(p, 9) + 5 + 18] = 2;
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_UNTRUSTED);
+
+  auto malformed = display;
+  malformed[3 * 8 + 3] = 1;  // inner end returns to the outer begin
+  p = replaceTable(minimalProgram(), 7, malformed, 6);
+  p[sectionOffset(p, 9) + 5 + 18] = 2;
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, BindsSignedDeploymentsExactly) {
