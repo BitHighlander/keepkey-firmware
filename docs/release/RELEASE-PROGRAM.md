@@ -60,11 +60,13 @@ passed 695 host tests, with 56 skips. These are predecessor evidence, not final
 combined candidate receipts. Three skipped Zcash checks apply to the canonical
 7.15 sources and are being enabled in the companion host audit.
 
-The older 7.15.0 unsupported-storage lockout conflicts with the current explicit
-storage downgrade policy. It is superseded rather than blindly replayed. The
-experimental uncommitted change was withdrawn. Native test concurrency also
-exposed shared emulator port use; run those full suites serially to avoid binding
-collisions. Neither issue is grounds for weakening the release checks.
+The 7.15 candidate intentionally includes the unsupported-storage lockout as a
+non-destructive V17 bridge: newer records are never parsed and remain recoverable
+after reinstalling the newer firmware. Canonical tests detect the `SUS_TooNew`
+capability rather than pinning that behavior to a release string. Native test
+concurrency also exposed shared emulator port use; run those full suites serially
+to avoid binding collisions. Neither issue is grounds for weakening the release
+checks.
 
 ## Existing rehearsal evidence
 
