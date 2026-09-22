@@ -46,6 +46,155 @@ TEST(Ethereum, AddressChecksum) {
   test_checksum("D1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb");
 }
 
+TEST(Ethereum, ChainIdValidationCoversPresenceAndBounds) {
+  EthereumSignTx msg = EthereumSignTx{};
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
+  msg.has_chain_id = true;
+  msg.chain_id = 0;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
+  msg.chain_id = 1;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+
+  /* The boundary is where v + 2 * chain_id + 35 stops fitting in a uint32_t
+     at the worst-case v == 1. Pin both sides of it, in 64-bit arithmetic so
+     the check itself cannot wrap. */
+  msg.chain_id = 2147483629u;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+  EXPECT_EQ(2ull * 2147483629ull + 35ull + 1ull, 4294967294ull);
+
+  /* One higher wraps to 0: a recovery id the device never produced. */
+  EXPECT_EQ(2ull * 2147483630ull + 35ull + 1ull, 4294967296ull);
+  EXPECT_EQ(static_cast<uint32_t>(2ull * 2147483630ull + 35ull + 1ull), 0u);
+
+  msg.chain_id = 2147483630u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+
+  msg.chain_id = 2147483631u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+  EXPECT_FALSE(ethereum_chainIdIsValid(nullptr));
+}
+
+TEST(Ethereum, AmountFormattingNeverReturnsBlank) {
+  uint8_t max_bytes[32];
+  std::memset(max_bytes, 0xff, sizeof(max_bytes));
+  bignum256 amount;
+  bn_read_be(max_bytes, &amount);
+
+  const TokenType token = {nullptr, " TEST", 1, 18};
+  char rendered[32];
+  EXPECT_FALSE(
+      ethereumFormatAmount(&amount, &token, 1, rendered, sizeof(rendered)));
+  EXPECT_STREQ("AMOUNT TOO LARGE TO DISPLAY", rendered);
+}
+
+TEST(Ethereum, UnknownErc20CannotBePresentedAsAReviewedTransfer) {
+  char rendered[32] = {};
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  memset(msg.to.bytes, 0x42, msg.to.size);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  const uint8_t selector[4] = {0xa9, 0x05, 0x9c, 0xbb};
+  memcpy(msg.data_initial_chunk.bytes, selector, sizeof(selector));
+  memset(msg.data_initial_chunk.bytes + 16, 0x24, 20);
+  msg.data_initial_chunk.bytes[67] = 1;
+  EXPECT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+
+  char first_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, first_review,
+                                               sizeof(first_review)));
+  EXPECT_NE(std::string::npos,
+            std::string(first_review).find("Unknown token contract 0x"));
+  EXPECT_NE(std::string::npos,
+            std::string(first_review).find("Send 1 base units to 0x"));
+
+  /* Contract substitution must change what the user sees even when calldata,
+   * fee and every later data-hash screen are identical. */
+  memset(msg.to.bytes, 0x43, msg.to.size);
+  char substituted_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, substituted_review,
+                                               sizeof(substituted_review)));
+  EXPECT_STRNE(first_review, substituted_review);
+
+  const uint8_t approve_selector[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  memcpy(msg.data_initial_chunk.bytes, approve_selector,
+         sizeof(approve_selector));
+  char approval_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, approval_review,
+                                               sizeof(approval_review)));
+  EXPECT_NE(std::string::npos, std::string(approval_review).find("Allow 0x"));
+  EXPECT_NE(std::string::npos,
+            std::string(approval_review).find("withdraw up to 1 base units"));
+
+  /* The largest finite approval (unlimited is refused separately) is a
+   * 78-digit amount; its review must still fit the signing body. */
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+  msg.data_initial_chunk.bytes[67] = 0xfe;
+  char largest_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  EXPECT_TRUE(ethereumFormatUnknownTokenReview(&msg, largest_review,
+                                               sizeof(largest_review)));
+}
+
+TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
+  bignum256 amount;
+  bn_read_uint64(1500000000000000000ULL, &amount);
+  char rendered[32];
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 43114, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 AVAX", rendered);
+
+  ASSERT_TRUE(
+      ethereumFormatAmount(&amount, nullptr, 10, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
+  ASSERT_TRUE(
+      ethereumFormatAmount(&amount, nullptr, 8453, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 42161, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
+  /* An unmapped chain must never render a bare, unit-less number. Wei is the
+     base unit of every EVM chain, so the amount stays exact while the device
+     stops claiming to know an asset name it does not have. */
+  ASSERT_TRUE(ethereumFormatAmount(&amount, nullptr, 59144, rendered,
+                                   sizeof(rendered)));
+  EXPECT_STREQ("1500000000000000000 Wei", rendered);
+
+  ASSERT_TRUE(
+      ethereumFormatAmount(&amount, nullptr, 257, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1500000000000000000 Wei", rendered);
+}
+
+TEST(Ethereum, TransferAmountUsesTheRequestsSigningChain) {
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.has_value = true;
+  msg.value.size = 8;
+  const uint64_t amount = 1500000000000000000ULL;
+  for (size_t i = 0; i < msg.value.size; ++i) {
+    msg.value.bytes[msg.value.size - 1 - i] =
+        static_cast<uint8_t>(amount >> (8 * i));
+  }
+
+  char rendered[32];
+  msg.chain_id = 56;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 BNB", rendered);
+
+  msg.chain_id = 137;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 MATIC", rendered);
+}
+
 TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
   EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));

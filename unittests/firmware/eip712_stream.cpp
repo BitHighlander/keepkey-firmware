@@ -9,6 +9,7 @@ extern "C" {
 #include <cstring>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -676,4 +677,66 @@ TEST(Eip712Stream, TypeHashTerminatesOnACycle) {
   // Terminates. The value is not the interesting part; not hanging is.
   std::string h = typeHashHex(f, "A");
   EXPECT_EQ(h, keccakHex("A(B b)B(A a)"));
+}
+
+namespace {
+
+Eip712ReqKind walkMatrix(const std::vector<uint32_t>& written_levels,
+                         uint16_t rows, uint16_t cols) {
+  EthereumTypedDataStructAck domain{};
+  EthereumTypedDataStructAck matrix{};
+  Field values = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 2);
+  values.array_levels_count = written_levels.size();
+  for (size_t i = 0; i < written_levels.size(); i++)
+    values.array_levels[i] = written_levels[i];
+  addMember(matrix, "values", values);
+
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "Matrix");
+  eip712_stream_begin(&begin, true);
+  for (int step = 0; step < 100; step++) {
+    const Eip712Next* next = eip712_stream_next();
+    switch (next->kind) {
+      case EIP712_REQ_STRUCT:
+        eip712_stream_on_struct(
+            strcmp(next->struct_name, "Matrix") == 0 ? &matrix : &domain);
+        break;
+      case EIP712_REQ_DEFINITION:
+        eip712_stream_definition_accepted();
+        break;
+      case EIP712_REQ_VALUE: {
+        EthereumTypedDataValueAck ack{};
+        uint16_t v = next->member_path_len == 2   ? rows
+                     : next->member_path_len == 3 ? cols
+                                                  : 1;
+        ack.value.size = 2;
+        ack.value.bytes[0] = v >> 8;
+        ack.value.bytes[1] = v & 0xff;
+        eip712_stream_on_value(&ack);
+        break;
+      }
+      default: {
+        Eip712ReqKind kind = next->kind;
+        eip712_stream_abort();
+        return kind;
+      }
+    }
+  }
+  eip712_stream_abort();
+  return EIP712_REQ_NONE;
+}
+
+}  // namespace
+
+TEST(Eip712Stream, FixedDimensionsAreCheckedOutermostFirst) {
+  EXPECT_EQ(walkMatrix({2, 4}, 4, 2), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({2, 4}, 2, 2), EIP712_REQ_FAIL);
+  EXPECT_EQ(walkMatrix({2, 4}, 4, 4), EIP712_REQ_FAIL);
+}
+
+TEST(Eip712Stream, InnerDimensionsAreCheckedToo) {
+  EXPECT_EQ(walkMatrix({2, 0}, 3, 2), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({2, 0}, 3, 1), EIP712_REQ_FAIL);
+  EXPECT_EQ(walkMatrix({0, 4}, 4, 3), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({0, 4}, 3, 3), EIP712_REQ_FAIL);
 }

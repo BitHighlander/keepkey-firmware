@@ -491,9 +491,12 @@ typedef struct {
   uint32_t elem_size;
   char elem_struct[EIP712_MAX_STRUCT_NAME];
   uint8_t levels_total;
-  uint8_t level_index;
+  uint8_t level_index; /* 0 is the OUTERMOST dimension */
   bool have_type_hash;
-  uint8_t type_hash[32]; /* lives exactly as long as the frame that needs it */
+  union {
+    uint8_t type_hash[32];
+    uint32_t declared_levels[4];
+  };
   uint16_t array_len;
 } Eip712Frame;
 
@@ -749,6 +752,10 @@ static void complete_frame(void) {
   e712.waiting = EIP712_IDLE;
 }
 
+static uint32_t declared_dim(const Eip712Frame* arr) {
+  return arr->declared_levels[arr->levels_total - 1 - arr->level_index];
+}
+
 /* Point the machine at element member_index of the array frame on top.
  *
  * An element is one of three things, and which one is fixed by the TYPE rather
@@ -772,7 +779,9 @@ static void drive_array_element(void) {
     strlcpy(inner->elem_struct, arr->elem_struct, EIP712_MAX_STRUCT_NAME);
     inner->levels_total = arr->levels_total;
     inner->level_index = arr->level_index + 1;
-    e712.pending_declared_dim = 0;
+    memcpy(inner->declared_levels, arr->declared_levels,
+           sizeof(inner->declared_levels));
+    e712.pending_declared_dim = declared_dim(inner);
     e712.want_array_len = true;
     request_value();
     return;
@@ -1013,7 +1022,9 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         }
         arr->levels_total = (uint8_t)m->type.array_levels_count;
         arr->level_index = 0;
-        e712.pending_declared_dim = m->type.array_levels[0];
+        memcpy(arr->declared_levels, m->type.array_levels,
+               m->type.array_levels_count * sizeof(uint32_t));
+        e712.pending_declared_dim = declared_dim(arr);
         e712.want_array_len = true;
         request_value();
         return true;
