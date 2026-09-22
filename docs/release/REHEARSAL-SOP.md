@@ -1,17 +1,11 @@
 # Firmware rehearsal and acceptance SOP
 
-Owner decision: 2026-09-07; tiered acceptance revision: 2026-09-21. This is
-the canonical procedure for firmware release rehearsal, including the 7.14.x
-hardening foundation and subsequent extraction of alpha features.
-It supersedes the alpha audit requirement for two whole-tree zero-finding
-passes as a prerequisite to staging. Historical rehearsal handoffs are
-evidence, not executable instructions or current branch identities.
+Owner decision: 2026-09-07; tiered acceptance revision: 2026-09-21. This is the canonical firmware rehearsal procedure, covering 7.14.x hardening and later alpha extraction.
+It replaces the two whole-tree zero-finding prerequisite for staging. Historical handoffs are evidence, not executable instructions or current branch identities.
 
 ## Two fork PR types: products and audit units
 
-Owner clarification: 2026-09-08. The main products are the fork release branches
-for 7.14.2, 7.14.3 and 7.15. Small rehearsal branches are the workspace for
-hardening and feature extraction before accepted changes update those products.
+Owner clarification: 2026-09-08. The main products are fork release branches for 7.14.2, 7.14.3 and 7.15. Small rehearsal branches harden and extract features before accepted changes update those products.
 All internal PRs live in the fork. Neither PR type is merged into fork develop.
 
 | PR type | Head and target | Purpose and acceptance |
@@ -19,18 +13,13 @@ All internal PRs live in the fork. Neither PR type is merged into fork develop.
 | Release product | Main fork release branch → fork `develop` | Cumulative, buildable product candidate with a release manifest, exact pins, accepted-unit receipts and complete product checks. Its large diff is an integration view, not a request to rediscover every issue on every iteration. |
 | Audit unit | Isolated rehearsal branch → fork `develop` when independent; otherwise → its immediate predecessor | One bounded behavior or defect, reviewed and tested locally against its recorded base. Dependent units stay stacked and unmerged into develop. |
 
-Both types belong to the fork-develop staging program; a dependent audit PR
-must target its predecessor so its review diff stays small. Do not retarget all
-stack members directly to develop and recreate the cumulative review surface.
+Both types belong to fork-develop staging. A dependent audit PR targets its predecessor to keep the review diff small; do not retarget every stack member to develop.
 The existing F00–F05 stack is rehearsal evidence, not the complete 7.15 product.
 
 ## Tiered, sequential acceptance
 
-Release work advances one review block at a time. A block is an adjacent PR diff
-with one written contract, one predecessor and one receipt. Block N+1 may be
-inventoried, but it must not be implemented, restacked, published or sent to
-hosted CI until block N is accepted. Do not use a passing final cumulative tree
-to waive a failing or unverified lower block.
+Release work advances one adjacent-PR review block at a time, with one written contract, predecessor and receipt. Block N+1 may be inventoried but not implemented, restacked, published or sent to hosted CI until N is accepted.
+A passing cumulative tree cannot waive a failing or unverified lower block.
 
 Every block moves through exactly these states:
 
@@ -349,8 +338,9 @@ Before pushing a block, run focused checks and capability profiles in pinned Doc
 - Do not manually rerun an unchanged failure. First identify a concrete flaky or
   infrastructure cause, or make and locally validate a relevant change. For a
   red hosted test, retain its exact assertion/response and head, rerun focused
-  and full-suite locally, inspect request/response boundaries and suite order,
-  and keep a finding open until a cause and distinguishing regression are named.
+  and full-suite locally, assert each request/response boundary (including
+  intermediate acks), inspect suite order, and keep the finding open until a
+  cause and distinguishing regression are named.
   A passing local replay or subsequent hosted retry never erases the red run.
 - Two infrastructure-only failures end hosted retries until the failure is locally
   reproduced, the workflow is repaired, or the provider recovers.
