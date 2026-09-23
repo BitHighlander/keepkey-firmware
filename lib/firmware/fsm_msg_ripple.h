@@ -31,6 +31,14 @@ void fsm_msgRippleGetAddress(const RippleGetAddress* msg) {
 
   const CoinType* coin = fsm_getCoin(true, "Ripple");
 
+  /* ripple_getAddress() hands ripple_encode_check() a MAX_ADDR_SIZE (130 byte)
+     destination, but RippleAddress.address is capped at 36 by the proto
+     options. Encode into a correctly sized local and copy the result, so the
+     encoder's bound matches the buffer it is actually writing. Today a Ripple
+     address encodes to ~35 characters and happens to fit, but that is a
+     property of the input, not of the contract -- and it is a one byte margin.
+     gcc 14 rejects the direct call outright (-Werror=stringop-overflow);
+     gcc 10, which CI uses, does not. */
   char ripple_addr[MAX_ADDR_SIZE];
   if (!ripple_getAddress(node->public_key, ripple_addr)) {
     memzero(node, sizeof(*node));
@@ -71,12 +79,6 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
   RESP_INIT(RippleSignedTx);
 
   CHECK_INITIALIZED
-
-  if (msg->has_memo && msg->memo[0] != '\0') {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Ripple memos require firmware 7.15 or later"));
-    return;
-  }
 
   CHECK_PIN
 
@@ -157,8 +159,13 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
   }
 
   if (msg->has_memo && msg->memo[0] != '\0') {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Memo", "%s",
-                 msg->memo)) {
+    /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
+     * other memo surface. A single unpaged confirm renders only 3 OLED lines,
+     * silently drops the overflow, and honors embedded newlines — so a memo
+     * whose visible first line looks benign could carry ~180 signed-but-unseen
+     * bytes into the Memos field that exchanges and bridges use for deposit
+     * routing. */
+    if (!thorchain_confirm_full_memo("Memo", msg->memo, strlen(msg->memo))) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
       layoutHome();
