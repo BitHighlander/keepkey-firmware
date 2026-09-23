@@ -257,10 +257,10 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
 
   strength = _strength;
   /* Mark dice ceremonies before the entropy draw. DebugLink must never
-   * expose either the draw or its later dice-derived replacement as raw bytes. */
-  dice_mode = dice_entropy
-                  ? (dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED)
-                  : DICE_MODE_NONE;
+   * expose either the draw or its later dice-derived replacement as raw bytes.
+   */
+  dice_mode = dice_entropy ? (dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED)
+                           : DICE_MODE_NONE;
 
   if (_no_backup) {
     // Double confirm, since this is a feature for advanced users only, and
