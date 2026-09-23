@@ -109,7 +109,34 @@
 
 #define _(X) (X)
 
-static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+/* Size the response arena to the largest registered response. RESP_INIT
+ * statically checks every writer, so a future response that outgrows this
+ * union fails the build rather than overrunning at runtime. */
+#pragma push_macro("MSG_IN")
+#pragma push_macro("MSG_OUT")
+#pragma push_macro("RAW_IN")
+#pragma push_macro("DEBUG_IN")
+#pragma push_macro("DEBUG_OUT")
+#undef MSG_IN
+#undef MSG_OUT
+#undef RAW_IN
+#undef DEBUG_IN
+#undef DEBUG_OUT
+#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME out_##STRUCT_NAME;
+#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC)
+#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
+#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME dbg_##STRUCT_NAME;
+typedef union {
+#include "messagemap.def"
+} FsmResponse;
+#pragma pop_macro("MSG_IN")
+#pragma pop_macro("MSG_OUT")
+#pragma pop_macro("RAW_IN")
+#pragma pop_macro("DEBUG_IN")
+#pragma pop_macro("DEBUG_OUT")
+
+static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
 /* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
  * derived private key after any chain handler, so session revocation scrubs it
  * centrally. */
@@ -444,6 +471,9 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         case MessageType_MessageType_SignMessage:
         case MessageType_MessageType_SignIdentity:
         case MessageType_MessageType_CipherKeyValue:
+        /* BIP-85 is available in both variants and starts a private-key
+         * derivation. It must end an armed setup ceremony in either build. */
+        case MessageType_MessageType_GetBip85Mnemonic:
 #if !BITCOIN_ONLY
         case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignMessage:
@@ -456,7 +486,6 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         case MessageType_MessageType_RippleSignTx:
         case MessageType_MessageType_ThorchainSignTx:
         case MessageType_MessageType_MayachainSignTx:
-        case MessageType_MessageType_GetBip85Mnemonic:
         case MessageType_MessageType_TronSignTx:
         case MessageType_MessageType_TronSignMessage:
         case MessageType_MessageType_TronSignTypedHash:
@@ -605,3 +634,4 @@ void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
 #endif  // !BITCOIN_ONLY
+#include "fsm_msg_bip85.h"

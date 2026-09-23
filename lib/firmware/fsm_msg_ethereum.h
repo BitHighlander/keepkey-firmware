@@ -338,6 +338,7 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   RESP_INIT(EthereumMessageSignature);
 
@@ -360,7 +361,7 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   /* Merge note (#432 vs this branch): release/7.14.2 gated Ethereum message
    * signing behind AdvancedMode, which blocks every Sign-In-With-Ethereum flow
    * on a default device until the user explicitly enables blind signing.
-   * AdvancedMode persists across power cycles until explicitly disabled.
+   * AdvancedMode is session-scoped and is cleared on lock.
    * confirm_bytes() paginates and displays EVERY signed byte, which is what
    * that gate was standing in for. Full disclosure is both the stronger
    * security property and the one that does not break default-configuration

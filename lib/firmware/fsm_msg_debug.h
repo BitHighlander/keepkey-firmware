@@ -5,12 +5,12 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   (void)msg;
   RESP_INIT(DebugLinkState);
 
-  /* The canvas encodes the same secrets as reset_word and dice_digest.
-   * Return an empty state throughout dice setup, including before arm(),
-   * so no alternate field or screen capture bypasses the privacy boundary.
-   * Button decisions remain available; committed-wallet diagnostics resume
-   * after setup_commit() has wiped the transient ceremony state. */
-  if (reset_debug_is_private()) {
+  /* The canvas can encode dice entropy or a BIP-85 child mnemonic. Return an
+   * empty state throughout either private ceremony so no alternate field or
+   * screen capture bypasses the on-device disclosure boundary. Button
+   * decisions remain available; diagnostics resume after private pages clear.
+   */
+  if (reset_debug_is_private() || bip85_debug_is_private()) {
     msg_debug_write(MessageType_MessageType_DebugLinkState, resp);
     return;
   }
@@ -100,9 +100,9 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
 void fsm_msgDebugLinkStop(DebugLinkStop* msg) { (void)msg; }
 
 void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump* msg) {
-  if (reset_debug_is_private()) {
+  if (reset_debug_is_private() || bip85_debug_is_private()) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    "Memory reads disabled during dice setup");
+                    "Memory reads disabled during private seed display");
     return;
   }
 #ifndef EMULATOR

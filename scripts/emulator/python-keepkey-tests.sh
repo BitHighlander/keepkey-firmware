@@ -57,6 +57,7 @@ echo "=== Full Python integration suite ==="
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v . /kkemu/unittests/host/test_p02_transport.py \
+  /kkemu/unittests/host/test_p03_recovery.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 
 echo "0" > /kkemu/test-reports/python-keepkey/status
