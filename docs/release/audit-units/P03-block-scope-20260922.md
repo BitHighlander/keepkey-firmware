@@ -114,3 +114,37 @@ This is a concrete Block 3 evidence gap, not a pass. The source-only version
 gate checks ran, but they do not replace next-boot behavior. The audit must
 run an owned-emulator power-cycle suite or carry this as pending before final
 Block 3 acceptance.
+
+## Owned-emulator closure and source disposition (2026-09-22)
+
+The five skipped host CI cases above were subsequently run in an emulator image
+built from this review worktree with the exact pinned candidate code and
+submodules. The full image is `sha256:18f7375986270c6bdcea6155e9fe8382d5a4faca8f0466ff3bf727b759a2e9f3`;
+the Bitcoin-only image is `sha256:12d356b3912a0e7f76923db50368ee66e979fed3935174b6084726090a8f99db`.
+Both ran `python3 -m pytest -q deps/python-keepkey/tests/test_storage_version_gate.py -k TestStorageUpgradePreservation`
+with `KK_EMULATOR_BIN=/kkemu/bin/kkemu`: **5 passed, 11 deselected** per variant.
+The five passed cases cover Bitcoin-only band refusal without wiping, reboot
+wallet preservation, framed and unframed V16 upgrade without wiping, and
+unknown-version wiping. Full and Bitcoin-only JUnit SHA256 values are
+`af033f9ec59d0f5cab3404fd41ee3a1c505bc6bc71564a56271dee1c1b8be4d5`
+and `ea0d0bf20441dbde6cef95037400de4586aa616b3e9273ed1c7f003c34968eac`.
+Thus the earlier **skip is closed by a separate executed result**, while its
+historical CI artifact remains accurately described as skipped.
+
+`make xunit` passed inside each image. The full variant passed 573 firmware,
+17 board, 18 crypto, and 6 Pallas constant-time tests; Bitcoin-only passed
+131 firmware, 17 board, and 18 crypto tests. Complete log SHA256 values are
+`5a452156d0b2264f480ac5d640e388e1ea9ab10bf57783751bcde2fbe947459d`
+and `4509a2ef1d05d5cdfa21401a6350fd562a48b1b6e69be3dcb14f211ee25ff49e`.
+The artifacts are retained locally in `/private/tmp/kk-fw-715-p03-owned-evidence`.
+
+Current-source review traced setup state and commit authorization in
+`lib/firmware/reset.c`, temporary secret cleanup in `pin_sm.c`, previous-word
+and backspace rendering in `recovery_cipher.c`, unsigned version classification
+and bounded stored-string decoding in `storage.c`, and sector-limited emulator
+erase in `lib/board/keepkey_flash.c`. The corresponding native tests are
+registered and executed in both variants. No new **in-scope** product defect
+was identified. The inherited erase-before-replacement power-interruption
+risk remains **open and deferred**, not fixed or waived. Physical OLED behavior,
+signed hardware upgrade, and exact later CI workflow acceptance remain
+release gates beyond this Block 3 receipt.
