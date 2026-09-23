@@ -179,6 +179,15 @@ static bool pb_parse(const MessagesMap_t* entry, const uint8_t* msg,
   return pb_decode(&stream, entry->fields, buf);
 }
 
+/* Firmware supplies the authorization boundary; board-only targets use these
+ * defaults so they can share the transport dispatcher. */
+__attribute__((weak)) bool keepkey_before_message_dispatch(MessageType msg_id) {
+  (void)msg_id;
+  return true;
+}
+
+__attribute__((weak)) void keepkey_after_message_dispatch(void) {}
+
 /*
  * dispatch() - Process received message and jump to corresponding process
  * function
@@ -207,9 +216,14 @@ static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
     goto cleanup;
   }
 
+  if (entry->type == NORMAL_MSG &&
+      !keepkey_before_message_dispatch(entry->msg_id)) {
+    goto cleanup;
+  }
   entry->process_func(decode_buffer);
 
 cleanup:
+  if (entry->type == NORMAL_MSG) keepkey_after_message_dispatch();
   memzero(decode_buffer, sizeof(decode_buffer));
 }
 
@@ -232,7 +246,12 @@ static void raw_dispatch(const MessagesMap_t* entry, const uint8_t* msg,
   raw_msg.length = msg_size;
 
   if (entry->process_func) {
+    if (entry->type == NORMAL_MSG &&
+        !keepkey_before_message_dispatch(entry->msg_id)) {
+      return;
+    }
     ((raw_msg_handler_t)(void*)entry->process_func)(&raw_msg, frame_length);
+    if (entry->type == NORMAL_MSG) keepkey_after_message_dispatch();
   }
 }
 

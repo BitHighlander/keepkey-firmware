@@ -286,7 +286,6 @@ class AutoLockProgress : public ::testing::Test {
 };
 }  // namespace
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
   for (int i = 0; i < 4; ++i) {
@@ -300,9 +299,7 @@ TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
   fsm_init();
   fsm_test_seedDerivedNode();
@@ -314,7 +311,6 @@ TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
 
   EXPECT_TRUE(fsm_test_derivedNodeIsZero());
 }
-#endif
 
 TEST(Fsm, InactiveBitcoinAckGetsATerminalResponse) {
   fsm_init();
@@ -406,7 +402,6 @@ TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
   EXPECT_FALSE(signing_is_active());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   ChangePin request = {};
@@ -417,7 +412,6 @@ TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
 }
-#endif
 
 TEST_F(AutoLockProgress, TopLevelBoundaryEndsSigningButIsNotALock) {
   // AdvancedMode is the observable here: without a PIN, session_clear()
@@ -491,7 +485,6 @@ TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));
@@ -526,10 +519,8 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   signing_abort();
   storage_reset();
@@ -578,9 +569,7 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   signing_abort();
   storage_reset();
@@ -627,7 +616,6 @@ TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   EXPECT_FALSE(eos_signingIsInited());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 #endif
 
 // This integration-style case remaps emulator flash and drives the address
@@ -725,7 +713,6 @@ TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
 }
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   fsm_init();
   HDNode node = {};
@@ -761,7 +748,6 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
                  BinanceTransferMsg_fields, &binance_ack);
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
-#endif
 
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
@@ -785,7 +771,6 @@ TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   layoutHomeForced();
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   kk_test_board_init();
   fsm_init();
@@ -821,7 +806,6 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   EXPECT_EQ(2, kkconfirm_drain())
       << "a generic-signing confirmation ran before the global refusal";
 }
-#endif
 #endif
 
 #if !BITCOIN_ONLY
