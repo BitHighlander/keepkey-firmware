@@ -142,7 +142,8 @@ TEST_F(PassphraseTransition, StagingIsInertAndForeignCommitAborts) {
 
 }  // namespace
 
-TEST_F(PassphraseTransition, InitializeRetainsPinButAbortsSigningAndPassphrase) {
+TEST_F(PassphraseTransition,
+       InitializeRetainsPinButAbortsSigningAndPassphrase) {
   fsm_init();
   storage_setPin("1234");
   storage_setPassphraseProtected(true);
