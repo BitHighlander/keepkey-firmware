@@ -1,3 +1,5 @@
+#include "gtest/gtest.h"
+
 extern "C" {
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
@@ -8,7 +10,6 @@ extern "C" {
 #include "keepkey/board/confirm_sm.h"
 }
 
-#include "gtest/gtest.h"
 
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
