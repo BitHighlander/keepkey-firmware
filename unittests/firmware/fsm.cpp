@@ -753,6 +753,16 @@ TEST_F(AutoLockProgress, CosmosStartRenewsButPollingDoesNot) {
 // Generic Tendermint is compiled but has no message-map entries. Do not
 // enable a dormant protocol merely to exercise its internal renewal hook.
 TEST_F(AutoLockProgress, UnregisteredTendermintCannotRenewTheDeadline) {
+  EXPECT_EQ(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_TendermintSignTx,
+                           IN_MSG));
+  EXPECT_EQ(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_TendermintMsgAck,
+                           IN_MSG));
+  EXPECT_EQ(
+      nullptr,
+      message_fields(NORMAL_MSG, MessageType_MessageType_TendermintMsgRequest,
+                     OUT_MSG));
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   TendermintSignTx start = {};
   receiveMessage(MessageType_MessageType_TendermintSignTx,
