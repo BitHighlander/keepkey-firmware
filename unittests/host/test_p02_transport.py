@@ -36,3 +36,13 @@ class TestP02Transport(common.KeepKeyTest):
         self.assert_terminal_rejection(
             proto.Ping(button_protection=True), proto.ButtonRequest,
             proto.GetFeatures())
+
+    def test_short_packet_terminates_button_wait(self):
+        response = self.client.call_raw(proto.Ping(button_protection=True))
+        self.assertIsInstance(response, proto.ButtonRequest)
+        self.client.transport.socket.send(b'?##' + b'\x00' * 9)
+        response = self.client.transport.read_blocking()
+        self.assertIsInstance(response, proto.Failure)
+        self.assertEqual(response.code, types.Failure_UnexpectedMessage)
+        response = self.client.call_raw(proto.Initialize())
+        self.assertIsInstance(response, proto.Features)
