@@ -916,9 +916,10 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        // Decoded who/what/why approved; raw-data confirm is suppressed. The
-        // signature is bound to this metadata's tx hash in send_signature().
-        needs_confirm = false;
+        // Decoded who/what/why approved; raw-data confirm is suppressed.
+        // A v2 schema does not bind native value, so show that transaction
+        // amount and recipient separately when it is nonzero.
+        needs_confirm = signed_metadata_schema_moves_value();
         data_needs_confirm = false;
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -947,7 +948,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   if (needs_confirm) {
-    if (token != NULL) {
+    if (token != NULL && !signed_metadata_schema_moves_value()) {
       if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
                                    msg->data_initial_chunk.bytes + 36, 32,
                                    token, confirm_body_message,

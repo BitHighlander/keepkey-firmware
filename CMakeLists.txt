@@ -23,12 +23,12 @@ option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
 
-# Regular 7.15 includes every supported chain, including Zcash Orchard.
-# Bitcoin-only is the sole reduced release product.
+# Regular 7.15 defaults to every supported chain, including Zcash Orchard.
+# Preserve an explicit OFF for builds that omit Zcash privacy support.
 if(KK_BITCOIN_ONLY)
   set(KK_ZCASH_PRIVACY OFF)
 else()
-  set(KK_ZCASH_PRIVACY ON)
+  option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
@@ -248,6 +248,9 @@ if(${KK_EMULATOR})
   add_test(test-firmware ${CMAKE_BINARY_DIR}/bin/firmware-unit)
   add_test(test-board ${CMAKE_BINARY_DIR}/bin/board-unit)
   add_test(test-crypto ${CMAKE_BINARY_DIR}/bin/crypto-unit)
+  if(KK_ZCASH_PRIVACY)
+    add_test(test-zcash-crypto ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit)
+  endif()
 
   add_custom_target(
     xunit
@@ -257,5 +260,12 @@ if(${KK_EMULATOR})
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/board.xml
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
+  add_dependencies(xunit firmware-unit board-unit crypto-unit)
+  if(KK_ZCASH_PRIVACY)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-crypto.xml)
+    add_dependencies(xunit zcash-crypto-unit)
+  endif()
 
 endif()

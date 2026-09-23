@@ -22,7 +22,8 @@ skips unknown fields silently rather than refusing them.
    for 24 (`dice_rolls_for_strength`). Rolls are stored as ASCII `'1'`-`'6'`,
    one byte each.
 4. Rolls on which any face lands more than 30% of the time are refused with a
-   `SyntaxError` before anything else is shown (`dice_rolls_look_biased`).
+   `SyntaxError` before the digest or backup flow is shown
+   (`dice_rolls_look_biased`).
 5. `dice_digest = SHA256(rolls)`. All 32 bytes are shown on the OLED as 64 hex
    characters, with the roll count, on a paged confirm screen.
 6. The seed is derived per mode (`dice_derive_only` / `dice_derive_mixed`, in
