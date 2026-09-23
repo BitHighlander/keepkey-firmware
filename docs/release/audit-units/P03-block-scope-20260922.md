@@ -1,7 +1,7 @@
-# P03 Block 3 — frozen scope and audit inventory (7.15)
+# P03 Block 3 — frozen scope and completed local evidence (7.15)
 
-Status: audit started; this is the finite-batch contract, not a completion or
-release-acceptance receipt. Worktree `audit/715-p03-final-review` begins at
+Status: local audit evidence completed; this is the finite-batch contract and
+local receipt, not final release acceptance. Worktree `audit/715-p03-final-review` begins at
 `92f3d00f2b75c1fe02ba3a00a7ea46b4e163c31e`, the reviewed Block 2 head.
 Its firmware source is `audit/715-scope-repair` at
 `614425a2a14d0113de251e7944118e47f31f5265`. The canonical product
@@ -88,7 +88,9 @@ to these historical unit heads.
    with zero findings and zero unresolved threads before marking that
    checkpoint successful.
 
-No new firmware change, Copilot request, or release promotion is claimed here.
+This unit makes no firmware change or release promotion. Its Copilot request
+and delivered findings are tracked on PR #851; the final checkpoint requires
+a fresh clean review of the corrected head.
 
 ## Initial evidence check (2026-09-22)
 
