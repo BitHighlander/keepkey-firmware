@@ -16,7 +16,7 @@ This foundation carries 7.14.x signing/storage/display/recovery/entropy/authoriz
 | Companion integration | 559 pass/272 skip regular; 334 pass/497 skip bitcoin-only | Exact Docker entrypoints: 559/272 regular and 334/497 bitcoin-only pass/skip, zero failures |
 | Strict OLED | 64 pass/23 skip regular; 25 pass/62 skip bitcoin-only | Exact Docker entrypoints: 64/23 regular and 25/62 bitcoin-only pass/skip, zero failures |
 | ARM/SRAM | Both pass; 21,312/28,268 B reserves; largest frame 12,416 B | Both pass; same reserves and 12,416 B largest frame |
-| Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0 on prior head and changed `layout.c`/`timer.c`/`libkkemu.c` 0 findings; clang-format, actionlint and diff check pass; clean pin and secret checks to be repeated on final head |
+| Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0 on prior head and changed `layout.c`/`timer.c`/`libkkemu.c` 0 findings; clang-format, actionlint, diff, clean pins and Gitleaks pass on final code head |
 | Hosted | [Old head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35629160260); [prior PR head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35782012448) green | [Run 35799306854](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35799306854) passed on `506ea3e12`; new fix head pending |
 
 Reviewed skips use `KK_RELEASE_MISSING_CAPABILITIES` or product/version gates; dylib/registry have separate gates, PIN-timeout/empty burned-version have alternate coverage, and seven Osmosis plus five boot/upgrade tests run in both profiles. Flaky retries do not count.
