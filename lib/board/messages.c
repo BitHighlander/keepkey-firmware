@@ -45,6 +45,11 @@ static void reject_tiny_message(FailureType code, const char* text) {
   tiny_handler_rejected = true;
 }
 
+void msg_reject_unexpected_tiny(void) {
+  reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                      "Unexpected tiny acknowledgement");
+}
+
 #if DEBUG_LINK
 static msg_debug_link_get_state_t msg_debug_link_get_state;
 #endif

@@ -78,7 +78,10 @@ static void check_for_pin_ack(PINInfo* pin_info) {
 #endif
 
     case MSG_TINY_TYPE_ERROR:
+      break;
     default:
+      msg_reject_unexpected_tiny();
+      pin_info->pin_ack_msg = PIN_ACK_CANCEL;
       break;
   }
   memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
