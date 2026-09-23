@@ -46,3 +46,29 @@ class TestP02Transport(common.KeepKeyTest):
         self.assertEqual(response.code, types.Failure_UnexpectedMessage)
         response = self.client.call_raw(proto.Initialize())
         self.assertIsInstance(response, proto.Features)
+
+    def assert_dice_entropy_hidden(self, dice_only):
+        self.client.wipe_device()
+        response = self.client.call_raw(proto.ResetDevice(
+            strength=128, dice_entropy=True, dice_only=dice_only))
+        self.assertIsInstance(response, proto.ButtonRequest)
+        self.assertEqual(response.code, types.ButtonRequest_DiceRoll)
+        state = self.client.debug._call(proto.DebugLinkGetState())
+        self.assertFalse(state.HasField('reset_entropy'))
+        self.assertEqual(state.reset_entropy, b'')
+        self.assertIsInstance(self.client.call_raw(proto.Cancel()), proto.Failure)
+        self.assertIsInstance(self.client.call_raw(proto.Initialize()), proto.Features)
+
+        # Control: DebugLink remains functional for ordinary reset diagnostics.
+        response = self.client.call_raw(proto.ResetDevice(strength=128))
+        self.assertIsInstance(response, proto.EntropyRequest)
+        state = self.client.debug._call(proto.DebugLinkGetState())
+        self.assertTrue(state.HasField('reset_entropy'))
+        self.assertEqual(len(state.reset_entropy), 32)
+        self.assertIsInstance(self.client.call_raw(proto.Cancel()), proto.Failure)
+
+    def test_dice_mixed_consent_does_not_expose_raw_entropy(self):
+        self.assert_dice_entropy_hidden(False)
+
+    def test_dice_only_consent_does_not_expose_raw_entropy(self):
+        self.assert_dice_entropy_hidden(True)

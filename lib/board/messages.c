@@ -527,6 +527,7 @@ void handle_debug_usb_rx(const void* msg, size_t len) {
  */
 static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
+  tiny_handler_rejected = false;
   msg_tiny_flag = true;
 
   while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
