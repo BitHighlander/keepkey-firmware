@@ -39,21 +39,19 @@ the five Block 2 contracts above and add explicit regression coverage in
 registered in `unittests/firmware/usb_rx.cpp`.
 
 The earlier full-diff register also lists F161, F204 and F205 against the USB
-regressions. F161 is a coverage boundary: the packet-storage test is compiled
-only for the full variant, while Bitcoin-only still runs the tiny-message test
-and its complete native suite. F204 describes a possible shared-port test hang;
-the test consumes one datagram and restores the FSM callback before asserting,
-and the exact candidate CI completed, but this is not a proof that port sharing
-can never cause a flaky run. F205's suggested `volatile` guard is unnecessary
-for the local `id` variable: each poll call returns a new value assigned before
-the loop condition is reevaluated; no asynchronous writer changes that local.
-These are recorded for the final reviewer rather than silently counted as new
-product defects.
+regressions. Their Block 2 dispositions are:
+
+| ID | Disposition | Reason and effect on acceptance |
+| --- | --- | --- |
+| F161 | Accepted limitation | The packet-storage UDP regression is compiled only for the full variant. Bitcoin-only runs the tiny-message regression and its complete native suite. Device USB paths were source reviewed and ARM built. This narrows test coverage but does not block Block 2 review; hardware verification remains a release gate. |
+| F204 | Accepted test limitation | A shared UDP port could cause test interference. The test consumes one datagram and restores the FSM callback before assertions; the firmware-equivalent CI run completed. One pass does not prove the test can never be flaky. This does not identify a product defect and does not block Block 2 review; a reproducible port collision would reopen test acceptance. |
+| F205 | Refuted | The local `id` is assigned the return value of each synchronous poll before the loop condition is reevaluated. No asynchronous writer changes that local, so a `volatile` qualifier would not strengthen this check. |
 
 ## Candidate checks and limits
 
 - [CI run 34951131013](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34951131013)
-  passed on `7e091af157131897adc5514de392570c32088946`: full and
+  passed on the earlier firmware-equivalent head
+  `7e091af157131897adc5514de392570c32088946`: full and
   Bitcoin-only ARM builds, emulator builds, native unit suites, host integration,
   Python dylib tests, crypto tests, static analysis, formatting, submodule and
   secret checks, report generation and the CI gate. Emulator publication was
@@ -69,7 +67,8 @@ product defects.
   execution is asserted here. The original packet unit source reviewed the
   device callback paths; its native regression exercises UDP storage.
 
-Local review disposition: no known unresolved Block 2 finding at this candidate.
+Local review disposition: no known unresolved Block 2 product defect at this
+candidate. F161 and F204 are accepted test limitations, and F205 is refuted.
 The reviewer should inspect the listed paths and interaction commits against
 the stated contracts. New evidence on those paths reopens this receipt under
 the rehearsal SOP; unrelated release work stays with its own audit unit.

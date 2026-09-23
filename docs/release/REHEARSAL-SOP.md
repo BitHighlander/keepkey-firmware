@@ -153,6 +153,9 @@ requesting its final review. Give the reviewer both a readable source document
 and a PDF generated from that source. The report must identify the exact base,
 head, target branch, dependency pins, and included commit IDs. Confirm the live
 target still matches the recorded base before presenting the report.
+When the report itself is committed in the review PR, record its generation
+predecessor in the report and record the resulting final PR head in the PR
+description; a file cannot embed the hash of the commit that contains itself.
 
 Include a line-change inventory produced from Git for the PR diff and, when a
 small review PR summarizes earlier code units, for each underlying unit commit.
