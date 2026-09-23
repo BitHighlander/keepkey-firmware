@@ -36,14 +36,13 @@ std::vector<uint8_t> pseudo(size_t len, uint32_t seed = 1) {
 // -- was never executed by this suite at all, while the release report listed
 // this file as the evidence for the boot RNG gate.
 //
-// The latch is one-way and per boot by design and there is no seam that puts
-// it back to RNG_UNTESTED, so the gate can be entered at most once per test
-// binary: this must stay the FIRST test in the file that touches a verdict.
+// A test-only reset restores the initial verdict regardless of test order.
 //
 // WHAT IT DOES NOT PIN: the `!rng_source_live() -> RNG_FAILED` arm, and the
 // size of the sample drawn. Both need an emulator seam in lib/rand/rng_health.c
 // that can make the source report dead or stuck, which does not exist yet.
 TEST(RngHealth, BootGateRunsOnAFreshVerdict) {
+  rng_health_reset_for_test();
   EXPECT_TRUE(rng_health_check())
       << "the boot self-test refused a healthy generator";
 

@@ -1,9 +1,12 @@
 extern "C" {
 #include "keepkey/transport/interface.h"
 #include "keepkey/board/usb.h"
+#include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
+#include "trezor/crypto/bip39.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/coins.h"
@@ -17,6 +20,7 @@ extern "C" {
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/storage.h"
 #include "storage.h"
 #include "keepkey/firmware/thorchain.h"
@@ -43,6 +47,33 @@ TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
 
   for (size_t i = 0; i < sizeof(credential); ++i) {
     EXPECT_EQ('\0', credential[i]);
+  }
+}
+
+TEST(Fsm, ZcashPrivacyWireSurfaceMatchesBuildVariant) {
+  fsm_init();
+  const MessageType inbound[] = {MessageType_MessageType_ZcashSignPCZT,
+                                 MessageType_MessageType_ZcashPCZTAction,
+                                 MessageType_MessageType_ZcashGetOrchardFVK,
+                                 MessageType_MessageType_ZcashTransparentOutput,
+                                 MessageType_MessageType_ZcashTransparentInput,
+                                 MessageType_MessageType_ZcashDisplayAddress};
+  const MessageType outbound[] = {
+      MessageType_MessageType_ZcashPCZTActionAck,
+      MessageType_MessageType_ZcashSignedPCZT,
+      MessageType_MessageType_ZcashOrchardFVK,
+      MessageType_MessageType_ZcashTransparentSigned,
+      MessageType_MessageType_ZcashAddress,
+      MessageType_MessageType_ZcashTransparentAck};
+  for (MessageType type : inbound) {
+    EXPECT_EQ(ZCASH_PRIVACY != 0,
+              message_fields(NORMAL_MSG, type, IN_MSG) != nullptr)
+        << type;
+  }
+  for (MessageType type : outbound) {
+    EXPECT_EQ(ZCASH_PRIVACY != 0,
+              message_fields(NORMAL_MSG, type, OUT_MSG) != nullptr)
+        << type;
   }
 }
 
@@ -286,7 +317,6 @@ class AutoLockProgress : public ::testing::Test {
 };
 }  // namespace
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
   for (int i = 0; i < 4; ++i) {
@@ -300,9 +330,7 @@ TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
   fsm_init();
   fsm_test_seedDerivedNode();
@@ -314,7 +342,6 @@ TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
 
   EXPECT_TRUE(fsm_test_derivedNodeIsZero());
 }
-#endif
 
 TEST(Fsm, InactiveBitcoinAckGetsATerminalResponse) {
   fsm_init();
@@ -345,7 +372,6 @@ TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
   usb_test_receive(tail, sizeof(tail));
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   TxAck ack = {};
   ack.has_tx = true;
@@ -374,7 +400,6 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 TEST_F(AutoLockProgress, FeaturePollingAtHomeDoesNotRenewTheIdleDeadline) {
   signing_abort();
@@ -398,7 +423,6 @@ TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
   Ping ping = {};
   ping.has_pin_protection = true;
@@ -408,9 +432,7 @@ TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
 
   EXPECT_FALSE(signing_is_active());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   ChangePin request = {};
@@ -421,7 +443,6 @@ TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
 }
-#endif
 
 TEST_F(AutoLockProgress, TopLevelBoundaryEndsSigningButIsNotALock) {
   // AdvancedMode is the observable here: without a PIN, session_clear()
@@ -445,8 +466,7 @@ TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
   setup_arm(SETUP_RECOVERY);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 
-  EXPECT_TRUE(
-      keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
+  EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
 
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(signing_is_active());
@@ -495,7 +515,6 @@ TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));
@@ -530,10 +549,8 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   signing_abort();
   storage_reset();
@@ -582,9 +599,7 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   signing_abort();
   storage_reset();
@@ -632,6 +647,517 @@ TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 #endif
+
+// Drive the real protobuf dispatch at the old deadline. Each initial request
+// must buy a fresh interval; polling during the next interval must not.
+TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  storage_reset();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  ResetDevice start = {};
+  start.has_strength = true;
+  start.strength = 128;
+  receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                 &start);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+#if !BITCOIN_ONLY
+TEST_F(AutoLockProgress, BinanceStartRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  BinanceSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 2;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  std::strcpy(start.chain_id, "chain-1");
+  start.has_source = true;
+  std::strcpy(start.chain_id, "Binance-Chain-Nile");
+  receiveMessage(MessageType_MessageType_BinanceSignTx, BinanceSignTx_fields,
+                 &start);
+  ASSERT_TRUE(binance_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(binance_signingIsInited());
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(binance_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(binance_signingIsInited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, CosmosStartRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  CosmosSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 2;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  std::strcpy(start.chain_id, "chain-1");
+  start.has_fee_amount = start.has_gas = true;
+  receiveMessage(MessageType_MessageType_CosmosSignTx, CosmosSignTx_fields,
+                 &start);
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+// Generic Tendermint is compiled but has no message-map entries. Do not
+// enable a dormant protocol merely to exercise its internal renewal hook.
+TEST_F(AutoLockProgress, UnregisteredTendermintCannotRenewTheDeadline) {
+  EXPECT_EQ(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_TendermintSignTx,
+                           IN_MSG));
+  EXPECT_EQ(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_TendermintMsgAck,
+                           IN_MSG));
+  EXPECT_EQ(
+      nullptr,
+      message_fields(NORMAL_MSG, MessageType_MessageType_TendermintMsgRequest,
+                     OUT_MSG));
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  TendermintSignTx start = {};
+  receiveMessage(MessageType_MessageType_TendermintSignTx,
+                 TendermintSignTx_fields, &start);
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, OsmosisStartRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  OsmosisSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 2;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  std::strcpy(start.chain_id, "chain-1");
+  start.has_fee_amount = start.has_gas = true;
+  receiveMessage(MessageType_MessageType_OsmosisSignTx, OsmosisSignTx_fields,
+                 &start);
+  ASSERT_TRUE(osmosis_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(osmosis_signingIsInited());
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(osmosis_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(osmosis_signingIsInited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, ThorchainStartRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  ThorchainSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 2;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  std::strcpy(start.chain_id, "chain-1");
+  start.has_fee_amount = start.has_gas = true;
+  receiveMessage(MessageType_MessageType_ThorchainSignTx,
+                 ThorchainSignTx_fields, &start);
+  ASSERT_TRUE(thorchain_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(thorchain_signingIsInited());
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(thorchain_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(thorchain_signingIsInited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, MayachainStartRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  MayachainSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 2;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  std::strcpy(start.chain_id, "chain-1");
+  start.has_fee_amount = start.has_gas = true;
+  receiveMessage(MessageType_MessageType_MayachainSignTx,
+                 MayachainSignTx_fields, &start);
+  ASSERT_TRUE(mayachain_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(mayachain_signingIsInited());
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(mayachain_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(mayachain_signingIsInited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, BinanceContinuationRenewsAndMalformedAckTerminates) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  BinanceSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 3;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  start.has_source = true;
+  std::strcpy(start.chain_id, "Binance-Chain-Nile");
+  receiveMessage(MessageType_MessageType_BinanceSignTx, BinanceSignTx_fields,
+                 &start);
+  ASSERT_TRUE(binance_signingIsInited());
+  HDNode signer = {};
+  ASSERT_TRUE(storage_getRootNode("secp256k1", false, &signer));
+  hdnode_fill_public_key(&signer);
+  BinanceTransferMsg ack = {};
+  ack.inputs_count = ack.outputs_count = 1;
+  ack.inputs[0].has_address = ack.outputs[0].has_address = true;
+  ASSERT_TRUE(tendermint_getAddress(&signer, "tbnb", ack.inputs[0].address));
+  std::strcpy(ack.outputs[0].address,
+              "tbnb1ss57e8sa7xnwq030k2ctr775uac9gjzglqhvpy");
+  ack.inputs[0].coins_count = ack.outputs[0].coins_count = 1;
+  ack.inputs[0].coins[0].has_amount = ack.outputs[0].coins[0].has_amount = true;
+  ack.inputs[0].coins[0].amount = ack.outputs[0].coins[0].amount = 1;
+  ack.inputs[0].coins[0].has_denom = ack.outputs[0].coins[0].has_denom = true;
+  std::strcpy(ack.inputs[0].coins[0].denom, "BNB");
+  std::strcpy(ack.outputs[0].coins[0].denom, "BNB");
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_BinanceTransferMsg,
+                   BinanceTransferMsg_fields, &ack);
+    ASSERT_EQ(0, kkconfirm_drain());
+    ASSERT_TRUE(binance_signingIsInited());
+    increment_idle_time(1);
+    toggle_screensaver();
+    ASSERT_TRUE(binance_signingIsInited());
+  }
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  ack = {};
+  receiveMessage(MessageType_MessageType_BinanceTransferMsg,
+                 BinanceTransferMsg_fields, &ack);
+  EXPECT_FALSE(binance_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  CosmosSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 3;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  start.has_fee_amount = start.has_gas = true;
+  std::strcpy(start.chain_id, "chain-1");
+  receiveMessage(MessageType_MessageType_CosmosSignTx, CosmosSignTx_fields,
+                 &start);
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  HDNode recipient = {};
+  const uint8_t seed[32] = {7};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &recipient));
+  hdnode_fill_public_key(&recipient);
+  CosmosMsgAck ack = {};
+  ack.has_send = ack.send.has_to_address = ack.send.has_amount = true;
+  ack.send.amount = 1;
+  ASSERT_TRUE(tendermint_getAddress(&recipient, "cosmos", ack.send.to_address));
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
+                   &ack);
+    ASSERT_EQ(0, kkconfirm_drain());
+    ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+    increment_idle_time(1);
+    toggle_screensaver();
+    ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  }
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  ack = {};
+  receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
+                 &ack);
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  OsmosisSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 3;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  start.has_fee_amount = start.has_gas = true;
+  std::strcpy(start.chain_id, "chain-1");
+  receiveMessage(MessageType_MessageType_OsmosisSignTx, OsmosisSignTx_fields,
+                 &start);
+  ASSERT_TRUE(osmosis_signingIsInited());
+  HDNode recipient = {};
+  const uint8_t seed[32] = {7};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &recipient));
+  hdnode_fill_public_key(&recipient);
+  OsmosisMsgAck ack = {};
+  ack.has_send = ack.send.has_to_address = ack.send.has_amount = true;
+  std::strcpy(ack.send.amount, "1");
+  ASSERT_TRUE(tendermint_getAddress(&recipient, "osmo", ack.send.to_address));
+  ack.send.has_denom = true;
+  std::strcpy(ack.send.denom, "uosmo");
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_OsmosisMsgAck, OsmosisMsgAck_fields,
+                   &ack);
+    ASSERT_EQ(0, kkconfirm_drain());
+    ASSERT_TRUE(osmosis_signingIsInited());
+    increment_idle_time(1);
+    toggle_screensaver();
+    ASSERT_TRUE(osmosis_signingIsInited());
+  }
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  ack = {};
+  receiveMessage(MessageType_MessageType_OsmosisMsgAck, OsmosisMsgAck_fields,
+                 &ack);
+  EXPECT_FALSE(osmosis_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, ThorchainContinuationRenewsAndMalformedAckTerminates) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  ThorchainSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 3;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  start.has_fee_amount = start.has_gas = true;
+  std::strcpy(start.chain_id, "chain-1");
+  receiveMessage(MessageType_MessageType_ThorchainSignTx,
+                 ThorchainSignTx_fields, &start);
+  ASSERT_TRUE(thorchain_signingIsInited());
+  HDNode recipient = {};
+  const uint8_t seed[32] = {7};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &recipient));
+  hdnode_fill_public_key(&recipient);
+  ThorchainMsgAck ack = {};
+  ack.has_send = ack.send.has_to_address = ack.send.has_amount = true;
+  ack.send.amount = 1;
+  ASSERT_TRUE(tendermint_getAddress(&recipient, "thor", ack.send.to_address));
+  ack.send.has_denom = true;
+  std::strcpy(ack.send.denom, "rune");
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_ThorchainMsgAck,
+                   ThorchainMsgAck_fields, &ack);
+    ASSERT_EQ(0, kkconfirm_drain());
+    ASSERT_TRUE(thorchain_signingIsInited());
+    increment_idle_time(1);
+    toggle_screensaver();
+    ASSERT_TRUE(thorchain_signingIsInited());
+  }
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  ack = {};
+  receiveMessage(MessageType_MessageType_ThorchainMsgAck,
+                 ThorchainMsgAck_fields, &ack);
+  EXPECT_FALSE(thorchain_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, MayachainContinuationRenewsAndMalformedAckTerminates) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  MayachainSignTx start = {};
+  start.has_msg_count = true;
+  start.msg_count = 3;
+  start.has_account_number = start.has_chain_id = start.has_sequence = true;
+  start.has_fee_amount = start.has_gas = true;
+  std::strcpy(start.chain_id, "chain-1");
+  receiveMessage(MessageType_MessageType_MayachainSignTx,
+                 MayachainSignTx_fields, &start);
+  ASSERT_TRUE(mayachain_signingIsInited());
+  HDNode recipient = {};
+  const uint8_t seed[32] = {7};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &recipient));
+  hdnode_fill_public_key(&recipient);
+  MayachainMsgAck ack = {};
+  ack.has_send = ack.send.has_to_address = ack.send.has_amount = true;
+  ack.send.amount = 1;
+  ASSERT_TRUE(tendermint_getAddress(&recipient, "maya", ack.send.to_address));
+  ack.send.has_denom = true;
+  std::strcpy(ack.send.denom, "cacao");
+  for (int i = 0; i < 2; ++i) {
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_MayachainMsgAck,
+                   MayachainMsgAck_fields, &ack);
+    ASSERT_EQ(0, kkconfirm_drain());
+    ASSERT_TRUE(mayachain_signingIsInited());
+    increment_idle_time(1);
+    toggle_screensaver();
+    ASSERT_TRUE(mayachain_signingIsInited());
+  }
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  ack = {};
+  receiveMessage(MessageType_MessageType_MayachainMsgAck,
+                 MayachainMsgAck_fields, &ack);
+  EXPECT_FALSE(mayachain_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, EosStartRenewsButPollingDoesNot) {
+  ScopedFlash flash;
+  signing_abort();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  EosSignTx start = {};
+  start.has_chain_id = start.has_header = start.has_num_actions = true;
+  start.chain_id.size = 32;
+  start.num_actions = 2;
+  receiveMessage(MessageType_MessageType_EosSignTx, EosSignTx_fields, &start);
+  ASSERT_TRUE(eos_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(eos_signingIsInited());
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(eos_signingIsInited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(eos_signingIsInited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
 #endif
 
 // This integration-style case remaps emulator flash and drives the address
@@ -729,7 +1255,6 @@ TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
 }
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   fsm_init();
   HDNode node = {};
@@ -765,7 +1290,6 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
                  BinanceTransferMsg_fields, &binance_ack);
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
-#endif
 
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
@@ -789,7 +1313,6 @@ TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   layoutHomeForced();
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   kk_test_board_init();
   fsm_init();
@@ -825,7 +1348,6 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   EXPECT_EQ(2, kkconfirm_drain())
       << "a generic-signing confirmation ran before the global refusal";
 }
-#endif
 #endif
 
 #if !BITCOIN_ONLY
@@ -941,4 +1463,284 @@ TEST(Fsm, TransportFailureDisarmsResetBeforeAStaleEntropyAck) {
   EXPECT_FALSE(setup_isArmed())
       << "a rejected frame left reset armed for a stale EntropyAck";
   layoutHomeForced();
+}
+
+TEST(Fsm, UnrelatedGetFeaturesDoesNotDeferAnActiveSigningAutoLock) {
+  kk_test_board_init();
+  fsm_init();
+  layoutHomeForced();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  uint8_t get_features[64] = {'?', '#', '#'};
+  get_features[3] =
+      static_cast<uint8_t>(MessageType_MessageType_GetFeatures >> 8);
+  get_features[4] = static_cast<uint8_t>(MessageType_MessageType_GetFeatures);
+  handle_usb_rx(get_features, sizeof(get_features));
+  ASSERT_TRUE(signing_is_active());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+
+  layoutHomeForced();
+}
+
+TEST(Fsm, WorkflowResponseAtHomeDoesNotDeferTheAutoLock) {
+  kk_test_board_init();
+  fsm_init();
+  layoutHomeForced();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  TxRequest next = {};
+  ASSERT_TRUE(msg_write(MessageType_MessageType_TxRequest, &next));
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+
+  layoutHomeForced();
+}
+
+extern "C" {
+void reset_probe_begin(int abort_phase);
+void reset_probe_end(void);
+unsigned reset_probe_seen(void);
+unsigned reset_probe_errors(void);
+const char* reset_probe_entropy_words(void);
+const char* reset_probe_backup_words(void);
+}
+namespace {
+struct ResetProbeScope {
+  explicit ResetProbeScope(int abort_phase) { reset_probe_begin(abort_phase); }
+  ~ResetProbeScope() { reset_probe_end(); }
+};
+}  // namespace
+
+TEST(DiceCeremonyPrivacy,
+     Mixed128DerivationAndDevicePagesUseIndependentFixture) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  // Python hashlib oracle: draw=00..1f, rolls=(123456)*N truncated to 50.
+  const uint8_t expected_seed[32] = {
+      0xd7, 0x17, 0xae, 0xc4, 0x8f, 0x55, 0x58, 0x59, 0x5a, 0x60, 0x62,
+      0xd1, 0xec, 0x03, 0xf9, 0x72, 0x24, 0x63, 0x62, 0x24, 0x56, 0xc6,
+      0x31, 0x12, 0x37, 0xdd, 0x95, 0x82, 0x53, 0xf6, 0x24, 0x87};
+  const std::string expected_mnemonic = mnemonic_from_data(expected_seed, 16);
+  uint8_t draw[32];
+  for (unsigned i = 0; i < 32; ++i) draw[i] = i;
+  const std::string expected_entropy_words = mnemonic_from_data(draw, 32);
+  reset_init(128, false, false, "english", "privacy", false, 0, 0, true, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_TRUE(reset_debug_is_private());
+  EXPECT_EQ(expected_entropy_words, reset_probe_entropy_words());
+  const uint8_t host_entropy[32] = {0xa5};
+  reset_entropy(host_entropy, sizeof(host_entropy));
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_EQ(expected_mnemonic, storage_getMnemonic());
+  EXPECT_EQ(expected_mnemonic, reset_probe_backup_words());
+  EXPECT_EQ(126u, reset_probe_seen());
+  EXPECT_EQ(0u, reset_probe_errors());
+  EXPECT_FALSE(reset_debug_is_private());
+  EXPECT_FALSE(setup_isArmed());
+}
+
+TEST(DiceCeremonyPrivacy,
+     Mixed256DerivationAndDevicePagesUseIndependentFixture) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  // Python hashlib oracle: draw=00..1f, rolls=(123456)*N truncated to 99.
+  const uint8_t expected_seed[32] = {
+      0x2d, 0xf1, 0x8b, 0xfa, 0x9b, 0x97, 0xb3, 0x84, 0xb8, 0xd3, 0x05,
+      0xcf, 0x7b, 0xe0, 0xa9, 0x98, 0x23, 0x04, 0x51, 0xce, 0x42, 0x5b,
+      0xf4, 0x8d, 0xd9, 0x25, 0xf8, 0xb8, 0x70, 0x81, 0x1f, 0x58};
+  const std::string expected_mnemonic = mnemonic_from_data(expected_seed, 32);
+  uint8_t draw[32];
+  for (unsigned i = 0; i < 32; ++i) draw[i] = i;
+  const std::string expected_entropy_words = mnemonic_from_data(draw, 32);
+  reset_init(256, false, false, "english", "privacy", false, 0, 0, true, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_TRUE(reset_debug_is_private());
+  EXPECT_EQ(expected_entropy_words, reset_probe_entropy_words());
+  const uint8_t host_entropy[32] = {0xa5};
+  reset_entropy(host_entropy, sizeof(host_entropy));
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_EQ(expected_mnemonic, storage_getMnemonic());
+  EXPECT_EQ(expected_mnemonic, reset_probe_backup_words());
+  EXPECT_EQ(126u, reset_probe_seen());
+  EXPECT_EQ(0u, reset_probe_errors());
+  EXPECT_FALSE(reset_debug_is_private());
+  EXPECT_FALSE(setup_isArmed());
+}
+
+TEST(DiceCeremonyPrivacy,
+     Only128DerivationAndDevicePagesUseIndependentFixture) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  // Python hashlib oracle: draw=00..1f, rolls=(123456)*N truncated to 50.
+  const uint8_t expected_seed[32] = {
+      0xee, 0x72, 0xae, 0x91, 0x5a, 0x4e, 0x6e, 0xa7, 0xcc, 0xbe, 0xb8,
+      0xe5, 0xe5, 0xee, 0xce, 0xf2, 0x9a, 0x1d, 0x0d, 0x90, 0xf0, 0x53,
+      0x18, 0x37, 0x26, 0xa4, 0x24, 0xb6, 0xd3, 0xb0, 0x73, 0x25};
+  const std::string expected_mnemonic = mnemonic_from_data(expected_seed, 16);
+  uint8_t draw[32];
+  for (unsigned i = 0; i < 32; ++i) draw[i] = i;
+  const std::string expected_entropy_words = mnemonic_from_data(draw, 32);
+  reset_init(128, false, false, "english", "privacy", false, 0, 0, true, true);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_TRUE(reset_debug_is_private());
+  EXPECT_EQ(std::string(), reset_probe_entropy_words());
+  const uint8_t host_entropy[32] = {0xa5};
+  reset_entropy(host_entropy, sizeof(host_entropy));
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_EQ(expected_mnemonic, storage_getMnemonic());
+  EXPECT_EQ(expected_mnemonic, reset_probe_backup_words());
+  EXPECT_EQ(122u, reset_probe_seen());
+  EXPECT_EQ(0u, reset_probe_errors());
+  EXPECT_FALSE(reset_debug_is_private());
+  EXPECT_FALSE(setup_isArmed());
+}
+
+TEST(DiceCeremonyPrivacy,
+     Only256DerivationAndDevicePagesUseIndependentFixture) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  // Python hashlib oracle: draw=00..1f, rolls=(123456)*N truncated to 99.
+  const uint8_t expected_seed[32] = {
+      0x55, 0x88, 0xd3, 0x63, 0x0b, 0xd1, 0x9f, 0x63, 0x75, 0xb7, 0xbd,
+      0x92, 0x24, 0x57, 0xaf, 0x34, 0xea, 0x9c, 0x74, 0xf0, 0x08, 0x07,
+      0x56, 0x6a, 0x1c, 0xf8, 0x08, 0xe4, 0x45, 0xdc, 0x8c, 0x20};
+  const std::string expected_mnemonic = mnemonic_from_data(expected_seed, 32);
+  uint8_t draw[32];
+  for (unsigned i = 0; i < 32; ++i) draw[i] = i;
+  const std::string expected_entropy_words = mnemonic_from_data(draw, 32);
+  reset_init(256, false, false, "english", "privacy", false, 0, 0, true, true);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_TRUE(reset_debug_is_private());
+  EXPECT_EQ(std::string(), reset_probe_entropy_words());
+  const uint8_t host_entropy[32] = {0xa5};
+  reset_entropy(host_entropy, sizeof(host_entropy));
+  ASSERT_TRUE(storage_hasMnemonic());
+  EXPECT_EQ(expected_mnemonic, storage_getMnemonic());
+  EXPECT_EQ(expected_mnemonic, reset_probe_backup_words());
+  EXPECT_EQ(122u, reset_probe_seen());
+  EXPECT_EQ(0u, reset_probe_errors());
+  EXPECT_FALSE(reset_debug_is_private());
+  EXPECT_FALSE(setup_isArmed());
+}
+
+TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
+  kk_test_board_init();
+  fsm_init();
+  for (int phase = 1; phase <= 6; ++phase) {
+    SCOPED_TRACE(phase);
+    ScopedFlash flash;
+    ResetProbeScope probe(phase);
+    reset_init(128, false, false, "english", "abort", false, 0, 0, true, false);
+    if (setup_isArmed()) {
+      const uint8_t external[32] = {1};
+      reset_entropy(external, sizeof(external));
+    }
+    EXPECT_NE(0u, reset_probe_seen() & (1u << phase));
+    EXPECT_EQ(0u, reset_probe_errors());
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_FALSE(reset_debug_is_private());
+    EXPECT_FALSE(storage_hasMnemonic());
+    EXPECT_STREQ("", reset_get_word());
+    uint8_t bytes[32] = {};
+    EXPECT_EQ(32u, reset_get_int_entropy(bytes));
+    for (uint8_t byte : bytes) EXPECT_EQ(0, byte);
+    EXPECT_EQ(0u, reset_get_dice_digest(bytes));
+    reset_init(128, false, false, "english", "ordinary", false, 0, 0, false,
+               false);
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+    EXPECT_FALSE(reset_debug_is_private());
+    ASSERT_EQ(32u, reset_get_int_entropy(bytes));
+    for (unsigned i = 0; i < 32; ++i) EXPECT_EQ(i, bytes[i]);
+  }
+}
+
+TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  reset_init(128, false, false, "english", "canvas", false, 0, 0, true, false);
+  ASSERT_TRUE(reset_debug_is_private());
+  Canvas* canvas = display_canvas();
+  ASSERT_NE(nullptr, canvas->buffer);
+  const size_t size = canvas->width * canvas->height;
+  std::memset(canvas->buffer, 0xa5, size);
+  DebugLinkFlashDump dump = {};
+  dump.has_address = dump.has_length = true;
+  dump.address = 0x20000000;
+  dump.length = 32;
+  fsm_test_clearLastFailure();
+  fsm_msgDebugLinkFlashDump(&dump);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+  setup_abort();
+  EXPECT_FALSE(reset_debug_is_private());
+  for (size_t i = 0; i < size; ++i) ASSERT_EQ(0, canvas->buffer[i]);
+}
+
+TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {
+  kk_test_board_init();
+  fsm_init();
+  const uint32_t versions[] = {
+#if BITCOIN_ONLY
+      STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION + 1,
+#else
+      STORAGE_VERSION + 1,
+      STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION,
+#endif
+  };
+  for (uint32_t version : versions) {
+    SCOPED_TRACE(version);
+    ScopedFlash flash;
+    struct WipeOnExit {
+      ~WipeOnExit() { storage_wipe(); }
+    } cleanup;
+    auto* active =
+        reinterpret_cast<uint8_t*>(flash_write_helper(storage_getLocation()));
+    std::memcpy(active + 44, &version, sizeof(version));
+    storage_init();
+    ASSERT_TRUE(storage_isFirmwareTooOld() || storage_isBitcoinOnlyLocked());
+    const auto before = flash.bytes;
+    ResetDevice reset = {};
+    reset.has_strength = true;
+    reset.strength = 128;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                   &reset);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_FALSE(setup_isArmed());
+    ASSERT_TRUE(setup_stage(false, "english", "blocked", 0, 0, false));
+    setup_arm(SETUP_RESET);
+    fsm_test_clearLastFailure();
+    EXPECT_FALSE(setup_commit(
+        SETUP_RESET, "all all all all all all all all all all all all", false));
+    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+              fsm_test_lastFailureCode());
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_FALSE(storage_hasMnemonic());
+    EXPECT_EQ(before, flash.bytes);
+  }
 }

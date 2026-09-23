@@ -41,3 +41,11 @@ description = "Git commit SHAs quoted in markdown docs"
 condition = "AND"
 paths = ['''(^|/)docs/.*\.md$''']
 regexes = ['''\b[0-9a-f]{40}\b''']
+
+# These exact SHA-256 digests identify the two locally audited ELF artifacts.
+# They are evidence checksums, not credentials. Keep both path and value exact.
+[[allowlists]]
+description = "Recorded P02 ELF artifact checksums"
+condition = "AND"
+paths = ['''^docs/release/audit-units/P02-requalification-20260923-artifacts\.json$''']
+regexes = ['''^(626c8727e2915af71e3420a8fd082affff69221efd58994a8326a61b80dbe9ce|8aa316e79e2e8ab598a5552e9f721f2887110628059f27cb7158136bc9954c64)$''']

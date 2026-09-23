@@ -69,10 +69,8 @@ static uint32_t strength;
 static uint8_t CONFIDENTIAL int_entropy[32];
 static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 
-/* SHA-256 of the ASCII roll string, shown to the user and exposed over
- * DebugLink. A digest of secret input is not the input, but it is a
- * verification oracle for a 99-symbol space, so it is treated as
- * confidential and cleared as soon as the reset that produced it ends. */
+/* SHA-256 of the ASCII rolls, shown only on-device. In ONLY mode this is
+ * the seed material itself. Clear it when the ceremony ends. */
 static uint8_t CONFIDENTIAL dice_digest[32];
 static bool has_dice_digest = false;
 
@@ -98,6 +96,9 @@ bool setup_isArmedAs(SetupKind kind) {
 }
 
 void setup_abort(void) {
+  /* Do not reopen screenshots with the last secret page still in the canvas
+   * or queued animations after cancellation/commit. */
+  if (dice_mode != DICE_MODE_NONE) layout_clear();
   /* The recovery half owns its own word buffers. Clearing them is a memzero
    * too; like everything here it touches no storage. */
   recovery_cipher_reset();
@@ -183,6 +184,15 @@ void setup_arm(SetupKind kind) {
 
 bool setup_commit(SetupKind kind, const char* mnemonic, bool imported) {
   if (!setup_require(kind, "Setup ceremony was aborted")) return false;
+  /* storage_commit() declines both downgrade states without writing. Reject
+   * before staging the seed so a host can never receive a false Success. */
+  if (storage_isBitcoinOnlyLocked() || storage_isFirmwareTooOld()) {
+    setup_abort();
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Storage is locked for this firmware. Use Wipe first."));
+    layoutHome();
+    return false;
+  }
   /* The ordering below is load-bearing. storage_setPin() derives the storage
    * key that storage_commit() encrypts the secrets with, so it has to run
    * before storage_setMnemonic(). Do not reorder. */
@@ -256,6 +266,11 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   }
 
   strength = _strength;
+  /* Mark dice ceremonies before the entropy draw. DebugLink must never
+   * expose either the draw or its later dice-derived replacement as raw bytes.
+   */
+  dice_mode = dice_entropy ? (dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED)
+                           : DICE_MODE_NONE;
 
   if (_no_backup) {
     // Double confirm, since this is a feature for advanced users only, and
@@ -342,7 +357,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
     uint32_t rolls_needed = dice_rolls_for_strength(strength);
 
-    dice_mode = dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED;
     bool consented =
         dice_only
             ? confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Only"),
@@ -411,9 +425,8 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     /* The digest page is formatted into current_words: 265 bytes, already
      * CONFIDENTIAL, and idle between roll entry and the backup pager. A new
      * static buffer here cost the full 7.15 image its 16 KiB SRAM reserve,
-     * which sits within a few dozen bytes of the linker floor. Under
-     * DEBUG_LINK reset_get_word() returns this text while the page is up; the
-     * digest is already exposed there. */
+     * which sits within a few dozen bytes of the linker floor. DebugLink
+     * getters and canvas output are gated for the whole dice ceremony. */
     {
       char hex[4][17];
       data2hex(dice_digest, 8, hex[0]);
@@ -460,17 +473,18 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   /* Arm last, and only here: from this statement on an EntropyAck is in
    * sequence, and nothing else is. */
   setup_arm(SETUP_RESET);
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EntropyRequest, &resp);
 }
 
-/* Page \a mnemonic under one ButtonRequest per screen, exposing each screen's
- * words through reset_get_word() for DebugLink. Used for the backup words
- * and, in the dice MIXED mode, for the device-entropy words the user copies
- * down to verify the seed offline. Sends its own Failure and returns false
- * when the user cancels or the sentence does not fit; the caller owns the
- * ceremony rollback. Its scratch is zeroed at entry, because the format loop
- * depends on empty page strings and a prior caller may have aborted, and on
- * every exit. */
+/* Page \a mnemonic under one ButtonRequest per screen, retaining each screen's
+ * words for ordinary reset diagnostics. Dice pages remain device-only. Used for
+ * the backup words and, in the dice MIXED mode, for the device-entropy words
+ * the user copies down to verify the seed offline. Sends its own Failure and
+ * returns false when the user cancels or the sentence does not fit; the caller
+ * owns the ceremony rollback. Its scratch is zeroed at entry, because the
+ * format loop depends on empty page strings and a prior caller may have
+ * aborted, and on every exit. */
 static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
                                 ButtonRequestType type) {
   uint32_t word_count = 0, page_count = 0;
@@ -545,7 +559,7 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
     char title[MEDIUM_STR_BUF];
     strlcpy(title, title_base, MEDIUM_STR_BUF);
 
-    /* make current screen mnemonic available via debuglink */
+    /* Retain the current logical page; dice diagnostics are gated below. */
     strlcpy(current_words, mnemonic_by_screen[current_page],
             MNEMONIC_BY_SCREEN_BUF);
 
@@ -644,15 +658,20 @@ exit:
 }
 
 #if DEBUG_LINK
+bool reset_debug_is_private(void) { return dice_mode != DICE_MODE_NONE; }
+
 uint32_t reset_get_int_entropy(uint8_t* entropy) {
+  if (dice_mode != DICE_MODE_NONE) return 0;
   memcpy(entropy, int_entropy, 32);
   return 32;
 }
 
-const char* reset_get_word(void) { return current_words; }
+const char* reset_get_word(void) {
+  return reset_debug_is_private() ? "" : current_words;
+}
 
 uint32_t reset_get_dice_digest(uint8_t* digest) {
-  if (!has_dice_digest) {
+  if (reset_debug_is_private() || !has_dice_digest) {
     return 0;
   }
   memcpy(digest, dice_digest, 32);

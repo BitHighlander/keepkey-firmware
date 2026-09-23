@@ -582,7 +582,8 @@ jobs:
     needs: [lint-format, check-submodules, secret-scan]
     runs-on: ubuntu-latest
     env:
-      KK_RELEASE_MISSING_CAPABILITIES: evm-max-amount-review,evm-unknown-token-review,entropy-audit-budget,osmosis-wire-guards,ripple-memo-policy,hive-release-review,prompt-workflow-unwind,session-trust-lifetime,storage-v19-kdf,solana-lut-attestation
+      KK_DICE_DEBUG_PRIVATE: "1"
+      KK_RELEASE_MISSING_CAPABILITIES: evm-max-amount-review,evm-unknown-token-review,entropy-audit-budget,osmosis-wire-guards,ripple-memo-policy,hive-release-review,session-trust-lifetime,storage-v19-kdf,solana-lut-attestation
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -642,12 +643,13 @@ jobs:
           # Run each test container — capture exit codes, always extract reports
           FW_RC=0
           PY_RC=0
+          BUILD_RC=0
           set +e
           # Build once, up twice. The base image was loaded from the cache above,
           # so this never reaches Docker Hub. `|| RC=$?`, never `; RC=$?`: this
           # step runs under bash -e, and the semicolon form aborts before the
           # assignment -- and before the evidence below is extracted.
-          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} build
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} build || BUILD_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
             up --exit-code-from firmware-unit firmware-unit || FW_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
@@ -672,6 +674,11 @@ jobs:
 
           echo "firmware-unit exit code: $FW_RC"
           echo "python-keepkey exit code: $PY_RC"
+          echo "compose build exit code: $BUILD_RC"
+
+          if [ "$BUILD_RC" -ne 0 ]; then
+            echo "::error::compose build failed (exit code $BUILD_RC)"
+          fi
 
           if [ "$FW_RC" -ne 0 ]; then
             echo "::error::firmware-unit tests failed (exit code $FW_RC)"
@@ -679,7 +686,7 @@ jobs:
           if [ "$PY_RC" -ne 0 ]; then
             echo "::error::python-keepkey tests failed (exit code $PY_RC)"
           fi
-          [ "$FW_RC" -eq 0 ] && [ "$PY_RC" -eq 0 ] || exit 1
+          [ "$BUILD_RC" -eq 0 ] && [ "$FW_RC" -eq 0 ] && [ "$PY_RC" -eq 0 ] || exit 1
 
       - name: Upload Python test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -990,13 +997,14 @@ jobs:
 
       - name: Generate test report PDF
         env:
+          KK_DICE_DEBUG_PRIVATE: "1"
           FW_VERSION: ${{ steps.version.outputs.fw_version }}
           KK_FIRMWARE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           KK_PYTHON_SHA: ${{ steps.python.outputs.sha }}
           KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
           KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
-          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/197
+          KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/compare/49d537c...ea385cf6fdd5c22e2c3ea3845787777fb9c9d127
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report

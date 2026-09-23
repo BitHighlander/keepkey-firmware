@@ -276,8 +276,12 @@ static bool confirm_screen(const char* request_title_param,
           break;
 #endif
 
+        case MSG_TINY_TYPE_ERROR:
+          break;
         default:
-          break; /* break from switch statement and stay in the while loop*/
+          msg_reject_unexpected_tiny();
+          ret_stat = false;
+          goto confirm_screen_exit;
       }
     }
 

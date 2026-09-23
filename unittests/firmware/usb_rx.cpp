@@ -1,10 +1,14 @@
+#include "gtest/gtest.h"
+
 extern "C" {
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/pin_sm.h"
+#include "keepkey/firmware/passphrase_sm.h"
+#include "keepkey/firmware/storage.h"
+#include "keepkey/board/confirm_sm.h"
 }
-
-#include "gtest/gtest.h"
 
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
@@ -153,6 +157,54 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   for (uint8_t byte : received) EXPECT_EQ(0, byte);
 }
 
+static void expectMalformedTinyPacketRejected(size_t packet_length) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  fsm_init();
+  setup();
+
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  uint8_t frame[64] = {'?', '#', '#'};
+  frame[3] = MessageType_MessageType_PassphraseAck >> 8;
+  frame[4] = MessageType_MessageType_PassphraseAck & 0xff;
+  frame[8] = packet_length == sizeof(frame)
+                 ? 56
+                 : 0;  // More than the 55 payload bytes a tiny frame can hold.
+  ASSERT_EQ(packet_length, sendto(fd, frame, packet_length, 0,
+                                  reinterpret_cast<struct sockaddr *>(&address),
+                                  sizeof(address)));
+
+  uint8_t received[MSG_TINY_BFR_SZ];
+  memset(received, 0xa5, sizeof(received));
+  uint16_t id = MSG_TINY_TYPE_ERROR;
+  for (int attempt = 0; attempt < 1000 && id == MSG_TINY_TYPE_ERROR;
+       ++attempt) {
+    id = check_for_tiny_msg(received);
+    if (id == MSG_TINY_TYPE_ERROR) usleep(1000);
+  }
+  close(fd);
+  EXPECT_EQ(MessageType_MessageType_Cancel, id);
+  EXPECT_EQ(1, failure_count);
+  for (uint8_t byte : received) EXPECT_EQ(0, byte);
+
+  // A subsequent normal dispatch resets the tiny rejection state.
+  uint8_t reset_frame[64] = {};
+  handle_usb_rx(reset_frame, sizeof(reset_frame));
+}
+
+TEST(USBRX, MalformedTinyPacketCancelsAndClearsPendingBuffer) {
+  expectMalformedTinyPacketRejected(64);
+}
+
+TEST(USBRX, ShortTinyPacketCancelsAndClearsPendingBuffer) {
+  expectMalformedTinyPacketRejected(12);
+}
+
 static const uint8_t *observed_packet;
 static size_t observed_length;
 static void observe_packet(const void *packet, size_t length) {
@@ -188,4 +240,128 @@ TEST(USBRX, PacketStorageIsWipedAfterCallback) {
   ASSERT_EQ(sizeof(frame), observed_length);
   // The transport owns static storage; observe its lifetime after callback.
   for (size_t i = 0; i < sizeof(frame); ++i) EXPECT_EQ(0, observed_packet[i]);
+}
+
+// Queue a valid acknowledgement for the wrong waiting handler, followed by
+// Cancel so the old implementation terminates instead of hanging the suite.
+// Only the rejection of the first message satisfies this contract.
+static void expectWrongAcknowledgementRejected(MessageType wrong, int handler) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  fsm_init();
+  setup();
+  storage_reset();
+  if (handler == 0) storage_setPin("1234");
+  if (handler == 1) storage_setPassphraseProtected(true);
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  for (MessageType type : {wrong, MessageType_MessageType_Cancel}) {
+    uint8_t frame[64] = {'?', '#', '#'};
+    frame[3] = type >> 8;
+    frame[4] = type & 0xff;
+    if (type == MessageType_MessageType_PassphraseAck) {
+      frame[8] = 2;
+      frame[9] = 0x0a;  // Required passphrase string, empty but valid.
+    }
+    EXPECT_EQ(
+        sizeof(frame),
+        sendto(fd, frame, sizeof(frame), 0,
+               reinterpret_cast<struct sockaddr *>(&address), sizeof(address)));
+  }
+  close(fd);
+  if (handler == 0) EXPECT_FALSE(pin_protect_uncached());
+  if (handler == 1) EXPECT_FALSE(passphrase_protect());
+  if (handler == 2)
+    EXPECT_FALSE(confirm(ButtonRequestType_ButtonRequest_Other,
+                         "P02 acknowledgement", "Reject a foreign reply"));
+  EXPECT_EQ(1, failure_count);
+  EXPECT_TRUE(msg_handler_rejected());
+  EXPECT_FALSE(session_isPassphraseCached());
+
+  // Reset the terminal marker before draining the trailing Cancel; otherwise
+  // check_for_tiny_msg() deliberately returns Cancel without polling again.
+  uint8_t reset_frame[64] = {};
+  handle_usb_rx(reset_frame, sizeof(reset_frame));
+  (void)kkconfirm_drain();
+  fsm_init();
+  storage_reset();
+}
+
+TEST(USBRX, PinWaitRejectsForeignAcknowledgement) {
+  expectWrongAcknowledgementRejected(MessageType_MessageType_ButtonAck, 0);
+}
+TEST(USBRX, PassphraseWaitRejectsForeignAcknowledgement) {
+  expectWrongAcknowledgementRejected(MessageType_MessageType_ButtonAck, 1);
+}
+TEST(USBRX, ButtonWaitRejectsForeignAcknowledgement) {
+  expectWrongAcknowledgementRejected(MessageType_MessageType_PassphraseAck, 2);
+}
+
+TEST(USBRX, MalformedTinyFrameUnwindsAndNextPollRecovers) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  setup();
+
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+  uint8_t frame[64] = {'?', '#', '#'};
+  frame[3] = MessageType_MessageType_ButtonAck >> 8;
+  frame[4] = MessageType_MessageType_ButtonAck & 0xff;
+  uint8_t received[MSG_TINY_BFR_SZ] = {};
+  EXPECT_EQ(
+      sizeof(frame) - 1,
+      sendto(fd, frame, sizeof(frame) - 1, 0,
+             reinterpret_cast<struct sockaddr *>(&address), sizeof(address)));
+
+  uint16_t id = MSG_TINY_TYPE_ERROR;
+  for (int attempt = 0; attempt < 1000 && id == MSG_TINY_TYPE_ERROR;
+       ++attempt) {
+    id = check_for_tiny_msg(received);
+    if (id == MSG_TINY_TYPE_ERROR) usleep(1000);
+  }
+  EXPECT_EQ(MessageType_MessageType_Cancel, id);
+  EXPECT_EQ(1, failure_count);
+  EXPECT_TRUE(msg_handler_rejected());
+
+  EXPECT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
+                                  reinterpret_cast<struct sockaddr *>(&address),
+                                  sizeof(address)));
+  id = MSG_TINY_TYPE_ERROR;
+  for (int attempt = 0; attempt < 1000 && id == MSG_TINY_TYPE_ERROR;
+       ++attempt) {
+    id = check_for_tiny_msg(received);
+    if (id == MSG_TINY_TYPE_ERROR) usleep(1000);
+  }
+  close(fd);
+  EXPECT_EQ(MessageType_MessageType_ButtonAck, id);
+  EXPECT_EQ(1, failure_count);
+  EXPECT_FALSE(msg_handler_rejected());
+}
+
+TEST(USBRX, DebugDispatchClearsAnEarlierTinyRejection) {
+  fsm_init();
+  setup();
+  uint8_t frame[64] = {'?', '#', '#'};
+  // Normal dispatch begins a fresh rejection scope.
+  handle_usb_rx(frame, sizeof(frame));
+  msg_reject_unexpected_tiny();
+  ASSERT_TRUE(msg_handler_rejected());
+  frame[3] = MessageType_MessageType_DebugLinkStop >> 8;
+  frame[4] = MessageType_MessageType_DebugLinkStop & 0xff;
+  handle_debug_usb_rx(frame, sizeof(frame));
+  EXPECT_FALSE(msg_handler_rejected());
+  const int before = failure_count;
+  msg_reject_unexpected_tiny();
+  EXPECT_EQ(before + 1, failure_count);
+  handle_usb_rx(frame, sizeof(frame));
+  fsm_init();
 }

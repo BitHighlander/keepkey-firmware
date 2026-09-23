@@ -23,6 +23,15 @@ REPORT_PDF = REPORT_DIR / "test-report.pdf"
 MERGED_JUNIT = REPORT_DIR / "junit-merged.xml"
 
 BASE_REQUIRED_CASES = {
+    "DiceCeremonyPrivacy.Mixed128DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.Mixed256DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.Only128DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.Only256DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart",
+    "DiceCeremonyPrivacy.AbortClearsCanvasBeforeDiagnosticsResume",
+    "test_msg_resetdevice.TestDeviceReset.test_reset_device_dice_mixed_is_verifiable",
+    "test_msg_resetdevice.TestDeviceReset.test_reset_device_dice_only_is_verifiable",
+    "test_p02_transport.TestP02Transport.test_mixed_entropy_pages_remain_private_and_cancel_clears_state",
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
 }
@@ -249,7 +258,7 @@ def validate_arm_manifests(arm_dir, firmware_sha, python_sha):
 def require_native_junit(root):
     """Require each native suite before discovering any additional XML inputs."""
     native_dir = Path(root) / "test-reports" / "firmware-unit"
-    required = ("firmware.xml", "board.xml", "crypto.xml")
+    required = ("firmware.xml", "board.xml", "crypto.xml", "zcash-crypto.xml")
     missing = [name for name in required
                if not (native_dir / name).is_file()
                or (native_dir / name).stat().st_size == 0]

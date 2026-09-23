@@ -96,10 +96,12 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
                 bool _no_backup, uint32_t _auto_lock_delay_ms,
                 uint32_t _u2f_counter, bool dice_entropy, bool dice_only);
 void reset_entropy(const uint8_t* ext_entropy, uint32_t len);
+/* True from dice setup through commit/abort, including pre-arm UI waits. */
+bool reset_debug_is_private(void);
 uint32_t reset_get_int_entropy(uint8_t* entropy);
 const char* reset_get_word(void);
 /// \returns 32 and fills \a digest with SHA-256 of the roll string, or 0 if
-/// the current ceremony collected no dice. Cleared by setup_abort().
+/// disclosure is private or no digest is available. Cleared by setup_abort().
 uint32_t reset_get_dice_digest(uint8_t* digest);
 
 #endif
