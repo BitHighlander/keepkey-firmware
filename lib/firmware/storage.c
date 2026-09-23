@@ -1654,9 +1654,11 @@ void storage_commit(void) {
     // commit what was in storage->encrypted_sec
   }
 
+  /* The serialized record must carry the activation marker. Setting it only
+   * in shadow_config after serialization leaves every fresh commit invisible
+   * to find_active_storage() on the next boot. */
+  memcpy(shadow_config.meta.magic, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
   storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
-
-  memcpy(&shadow_config, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
 
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
