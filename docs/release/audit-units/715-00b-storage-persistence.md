@@ -75,13 +75,13 @@ scope before any completion claim.
   screens ignored that result and could approve an empty amount. The candidate
   uses a larger buffer and refuses the flow if formatting or final screen
   assembly cannot represent the complete value. Final tests remain pending.
-- **Bootloader scope conflict:** Block 00b changes `lib/board/signatures.c`,
-  whose `signatures_ok()` is called by the bootloader and whose `kkboard`
-  library is linked into `bootloader.elf`. Block 00a also directly changed
-  `tools/bootloader/usb_flash.c`. The draft SRS C-2 statement, “No bootloader
-  changes in this release,” therefore cannot be treated as satisfied. The
-  release owner must reconcile that requirement with the accepted foundation;
-  this note does not waive it.
+- **Bootloader scope conflict:** Block 00b originally changed the shared
+  `signatures_ok()` implementation and Block 00a had directly edited
+  `tools/bootloader/usb_flash.c`. The owner retained SRS C-2, “No bootloader
+  changes in this release.” The reconciled candidate now restores the
+  pre-foundation bootloader source, removes the shared F3 signature change,
+  and makes bootloader/updater/bootstrap artifacts opt-in. The default release
+  build must exclude those artifacts; clean-build verification is pending.
 - **Dependency:** the reconciled crypto pin is
   `74908938c562ec89dcae9fb4e3b05ec3ff17f58b`, the head of upstream
   keepkey/trezor-firmware PR #12. It descends from both foundation pins, but

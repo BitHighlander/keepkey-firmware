@@ -6,11 +6,13 @@ services:
         coinsupport: "-DKK_BITCOIN_ONLY=ON"
 
   python-keepkey:
+    image: kktech/kkemu-tests-bitcoin-only:latest
     build:
       args:
         EMULATOR_IMAGE: '${KK_EMULATOR_IMAGE:-kktech/kkemu-bitcoin-only:latest}'
 
   firmware-unit:
+    image: kktech/kkemu-bitcoin-only:latest
     build:
       args:
         coinsupport: "-DKK_BITCOIN_ONLY=ON"

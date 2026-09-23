@@ -435,6 +435,22 @@ jobs:
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T -; \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
+      - name: Enforce firmware-only 7.15 artifacts (${{ matrix.variant }})
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          outputs = Path("bin")
+          forbidden = sorted(
+              p.name for p in outputs.iterdir()
+              if p.is_file() and p.name.startswith(
+                  ("bootloader.", "blupdater.", "bootstrap.")))
+          if forbidden:
+              raise SystemExit(
+                  "C-2 forbids bootloader/updater/bootstrap artifacts: "
+                  + ", ".join(forbidden))
+          PY
+
       # SRAM budget gate — RC7's zcash-privacy variant hard-faulted on boot
       # because static SRAM left an 11.2 KB gap while msg_write() carried a
       # 12.4 KB stack frame. keepkey.ld now ASSERTs a 16 KiB reserve at link

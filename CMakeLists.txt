@@ -19,6 +19,8 @@ set(BOOTLOADER_PATCH_VERSION 5)
 option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
+option(KK_BUILD_BOOTLOADER_TOOLS
+       "Build bootloader, bootloader updater, and bootstrap artifacts" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
@@ -179,7 +181,7 @@ elseif(
   OR "${CMAKE_BUILD_TYPE}" STREQUAL "")
   add_definitions(-DNDEBUG)
   add_definitions(-DMEMORY_PROTECT=1)
-  if(NOT ${KK_EMULATOR})
+  if(NOT ${KK_EMULATOR} AND KK_BUILD_BOOTLOADER_TOOLS)
     message(
       WARNING
         "*********************************************************************\n"

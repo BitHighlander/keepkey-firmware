@@ -132,6 +132,9 @@ void layout_warning(const char* str);
 void layout_warning_static(const char* str);
 void layout_simple_message(const char* str);
 void layout_version(int32_t major, int32_t minor, int32_t patch);
+#if DEBUG_LINK
+void layout_debuglink_watermark(void);
+#endif
 void layout_home(void);
 void layout_home_reversed(void);
 void animate(void);
