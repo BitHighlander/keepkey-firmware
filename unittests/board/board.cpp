@@ -20,6 +20,24 @@ TEST(Board, Shutdown) {
   EXPECT_EXIT(shutdown(), ::testing::ExitedWithCode(1), "");
 }
 
+static void timer_test_callback(void*) {}
+static void timer_test_callback_after_reinit(void*) {}
+
+TEST(Board, TimerQueueSurvivesReinitialization) {
+  kk_timer_init();
+  post_periodic(timer_test_callback, nullptr, 10, 10);
+  kk_timer_init();
+  // A distinct callback forces the old cyclic active queue to be traversed.
+  post_periodic(timer_test_callback_after_reinit, nullptr, 10, 10);
+  remove_runnable(timer_test_callback_after_reinit);
+  // The legacy timer_init entry point must also discard the old links.
+  timer_init();
+  post_periodic(timer_test_callback, nullptr, 10, 10);
+  remove_runnable(timer_test_callback);
+  ualarm(0, 0);
+  signal(SIGALRM, SIG_IGN);
+}
+
 TEST(Board, MonochromeEvidencePreservesGrayscaleForeground) {
   for (uint16_t y = 0; y < 4; y++) {
     for (uint16_t x = 0; x < 4; x++) {

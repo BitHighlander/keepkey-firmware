@@ -319,25 +319,9 @@ confirm_screen_exit:
 }
 
 bool confirm_body_fits(const char* body, uint16_t body_width) {
-  /* This used to count rows with calc_str_line() and compare against
-   * BODY_ROWS. That was a second model of the screen, and the attacker picks
-   * the input on which the two models disagree: the guard has now been broken
-   * three separate ways -- by plain overflow, by a uint8_t line counter
-   * wrapping at 255 newlines, and by space padding that one walk collapses and
-   * the other does not. Each fix taught the model one more rule that
-   * draw_string() already knew.
-   *
-   * So there is no model any more. draw_string_fits() runs draw_string()'s own
-   * loop and its own per-glyph fit test with the pixel writes switched off,
-   * and reports whether the last character was placed. Measuring and drawing
-   * cannot disagree because they are the same code.
-   *
-   * calc_str_line() survives here for one thing only, and it is not a security
-   * decision: layout_standard_notification() uses it to pick the vertical
-   * alignment, so the probe must start at the same sp.y the real draw will
-   * start at. Both call it with the same arguments, so both get the same
-   * answer -- and if that answer were ever wrong, the probe would be wrong in
-   * exactly the way the real draw is, which is the property we want. */
+  /* Measure with the renderer's own per-glyph fit logic. The old row-count
+   * guard diverged on overflow, 255 newlines, and space padding. Keep
+   * calc_str_line() only to match the real layout's vertical alignment. */
   Canvas* canvas = layout_get_canvas();
   const Font* body_font = get_body_font();
   const char* str2 = body ? body : "";
@@ -435,20 +419,8 @@ static bool page_body_confirm(const char* request_title, const char* body,
   static CONFIDENTIAL char page_buf[BODY_CHAR_MAX];
   static char page_title[TITLE_CHAR_MAX];
 
-  /* Pass 1: count.
-   *
-   * The cap REFUSES; it must never truncate. Breaking out with input still
-   * unread left `pages` at 100 while the body ran on, and the render loop then
-   * treats page 100 as the last one -- so the hold that means "I approve this"
-   * lands on a prefix, with the tail neither shown nor accounted for. A body of
-   * 351 newlines reaches that: confirm_body_fits() accepts three newlines and
-   * rejects four, so page_take() returns 3 and the body needs 117 pages.
-   *
-   * Returning false instead is not a lost capability. BODY_CHAR_MAX is 352, and
-   * a body needing more than 99 pages is one averaging under four characters a
-   * screen -- unreachable for real text, and not something a user could review
-   * in any meaningful sense if it were. The caller reports it exactly as it
-   * reports a refused screen. */
+  /* Count first and refuse over 99 pages. Truncation could turn an unseen
+   * suffix into approval of a prefix (351 newlines need 117 pages). */
   size_t pages = 0;
   {
     const char* p = body;

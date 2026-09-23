@@ -1,6 +1,6 @@
 # 7.15 block 00a — release-foundation receipt
 
-Status: `FROZEN` from implementation `2d4daf177`; 016 is fixed and Docker-qualified, with hosted qualification pending. Run 35793746096 failed on `0ad2cdfb6`; old `ACCEPTED` applies only to `f099dfcd8`. Final head/tree belong in the PR attachment.
+Status: `MUTABLE` after Copilot review 5285511297 on `506ea3e12`; findings 017–018 are locally fixed, but the replacement head is not yet hosted-qualified. Prior run 35799306854 passed on `506ea3e12`; final head/tree belong in the PR attachment.
 
 - Adjacent base: `fc1e93746132553ad98ed60f4847c8d770732bf9`.
 - Companion: `98c717ff2204124bf67cc78cab8ca1d501fd4e92` (fast-forward canonical `reconcile/upstream-sync` from `c1b136a`); nested device-protocol: `dd9c85dc747cf965fb0e7bf49615dc9e7568ee65`; consumed pins reproduced cleanly.
@@ -12,18 +12,18 @@ This foundation carries 7.14.x signing/storage/display/recovery/entropy/authoriz
 
 | Gate | Historical evidence | Current candidate |
 | --- | --- | --- |
-| Native Docker | 193 regular / 93 bitcoin firmware, 16 board, 19 crypto pass | 194 regular / 92 bitcoin firmware, 18 board, 19 crypto pass; OTP and Nano regressions included |
-| Companion integration | 559 pass/272 skip regular; 334 pass/497 skip bitcoin-only | Exact Docker entrypoint: 559/272 regular and 334/497 bitcoin-only pass/skip, zero failures |
-| Strict OLED | 64 pass/23 skip regular; 25 pass/62 skip bitcoin-only | Exact Docker entrypoint: 64/23 regular and 25/62 bitcoin-only pass/skip, zero failures |
+| Native Docker | 193 regular / 93 bitcoin firmware, 16 board, 19 crypto pass | Current fix images: 194 regular / 92 bitcoin firmware, 19 board, 19 crypto pass; timer reinit hangs before fix and passes after |
+| Companion integration | 559 pass/272 skip regular; 334 pass/497 skip bitcoin-only | Exact Docker entrypoints: 559/272 regular and 334/497 bitcoin-only pass/skip, zero failures |
+| Strict OLED | 64 pass/23 skip regular; 25 pass/62 skip bitcoin-only | Exact Docker entrypoints: 64/23 regular and 25/62 bitcoin-only pass/skip, zero failures |
 | ARM/SRAM | Both pass; 21,312/28,268 B reserves; largest frame 12,416 B | Both pass; same reserves and 12,416 B largest frame |
-| Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0 on prior head and changed `confirm_sm.c` 0 findings; format, secret, diff, compose pass; detached clean checkout/pins and both Docker native builds pass |
-| Hosted | [Old head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35629160260); [prior PR head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35782012448) green | [Run 35793746096](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35793746096) failed: recovery test 558 pass/272 skip/1 fail; 016 open |
+| Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0 on prior head and changed `timer.c`/`libkkemu.c` 0 findings; clang-format and diff check pass; clean pin and secret checks to be repeated on final head |
+| Hosted | [Old head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35629160260); [prior PR head](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35782012448) green | [Run 35799306854](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35799306854) passed on `506ea3e12`; new fix head pending |
 
 Reviewed skips use `KK_RELEASE_MISSING_CAPABILITIES` or product/version gates; dylib/registry have separate gates, PIN-timeout/empty burned-version have alternate coverage, and seven Osmosis plus five boot/upgrade tests run in both profiles. Flaky retries do not count.
 
 ## Findings and closure evidence
 
-Owner: BitHighlander release; local reviewer: Codex. Findings 001–012 affect `f099dfcd8`, 013–015 affect `8e49807a3`, 016 affects `0ad2cdfb6`; 001/003/005 are operational, 006 decoder-integrity, 013 policy, and 016 remains release-blocking until hosted qualification. Review threads and the gate ledger supply verification.
+Owner: BitHighlander release; local reviewer: Codex. Findings 001–012 affect `f099dfcd8`, 013–015 affect `8e49807a3`, 016 affects `0ad2cdfb6`, and 017–018 affect `506ea3e12`. Review threads and the gate ledger supply verification.
 
 | ID | Failure and required disposition |
 | --- | --- |
@@ -42,4 +42,6 @@ Owner: BitHighlander release; local reviewer: Codex. Findings 001–012 affect `
 | 013 | 7.14.3 is non-release foundation; final #843 sets 7.15.0; thread resolved. |
 | 014 | OTP draw/write/read/lock failures wipe salt and halt before storage; injected failures, both native profiles and both ARM gates pass. |
 | 015 | Nano unrenderable amount refuses signing: old code returns signed `true`, fixed code `false` with no signature; isolated/shuffled and regular native pass. |
-| 016 | Hosted recovery read stale `Success("Device wiped")` at `RecoveryDevice`. Pre-fix Docker reproduced at cycles 50/190; companion handshake assertions saw premature backup-page reply at cycle 45. Root: `confirm_constant_power_paged()` emitted a debug subpage `ButtonRequest` without clearing the previous page's `button_request_acked`, so debug approval could advance before the new ack and poison the next ceremony. Firmware clears it per new request; companion commit `98c717f` asserts reset/wipe responses and no reply before each backup ack. Pre-fix regression failed; fixed image passed original test 400/400 and regression 20/20. Exact full and bitcoin-only Docker entrypoints and both ARM/SRAM gates pass; hosted rerun pending. |
+| 016 | Hosted recovery read stale `Success("Device wiped")` at `RecoveryDevice`. Pre-fix Docker reproduced at cycles 50/190; companion handshake assertions saw premature backup-page reply at cycle 45. Root: `confirm_constant_power_paged()` emitted a debug subpage `ButtonRequest` without clearing the previous page's `button_request_acked`, so debug approval could advance before the new ack and poison the next ceremony. Firmware clears it per new request; companion commit `98c717f` asserts reset/wipe responses and no reply before each backup ack. Pre-fix regression failed; fixed image passed original test 400/400 and regression 20/20. Exact full and bitcoin-only Docker entrypoints and both ARM/SRAM gates passed; hosted run 35799306854 passed on `506ea3e12`. |
+| 017 | Copilot P1 `4077885685`: repeated `kkemu_init()` relinked static timer nodes into a cycle. Reset both queues and scrub node callbacks/contexts before repopulating. New board regression hangs in the pre-fix Docker image and passes in the fixed image; both ARM/SRAM gates pass. |
+| 018 | Copilot P1 `4077885724`: dice evidence requested mutually exclusive `display_random` and `dice_entropy` and expected a forbidden post-mix screen. Use the dice-compatible request and assert direct `EntropyRequest`; the fixed script completed a real Docker reset and saved five screens. |

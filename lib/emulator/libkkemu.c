@@ -54,8 +54,7 @@ static int libkkemu_initialized = 0;
 
 static uint8_t frame_ring[FRAME_RING_SIZE][FRAME_PACKED_SIZE];
 static uint8_t last_packed[FRAME_PACKED_SIZE];
-/* Pack target for libkkemu_capture_frame(), so a frame that turns out to be a
-   duplicate never touches the ring. See the comment there. */
+/* Deduplicate before touching the ring's oldest unread slot. */
 static uint8_t capture_scratch[FRAME_PACKED_SIZE];
 static int last_packed_valid = 0;
 static _Atomic uint32_t frame_write_idx =
@@ -111,15 +110,7 @@ size_t libkkemu_socketWrite(int iface, const void* buffer, size_t size) {
 static void libkkemu_capture_frame(const uint8_t* canvas_buf) {
   if (!canvas_buf) return;
 
-  /* Pack into scratch, NOT straight into the ring slot.
-   *
-   * Packing in place and only then testing for a duplicate destroyed data:
-   * once the ring is full, frame_ring[frame_write_idx % FRAME_RING_SIZE] is
-   * the OLDEST UNREAD frame, and the early return on a duplicate left it
-   * overwritten while frame_read_idx still pointed at it. The host's next
-   * kkemu_pop_frame() then returned a frame it had never been shown, and the
-   * one it was owed was gone. Deduplicate first; touch the ring only for a
-   * frame that is actually going to be published. */
+  /* A duplicate must not overwrite the oldest unread ring slot. */
   memset(capture_scratch, 0, FRAME_PACKED_SIZE);
   for (int x = 0; x < 256; x++) {
     for (int y = 0; y < 64; y++) {
@@ -208,20 +199,7 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
 void kkemu_shutdown(void) {
   if (!libkkemu_initialized) return;
 
-  /*
-   * End any workflow still in flight BEFORE anything else.
-   *
-   * The buffer scrubbing below covers the transport rings and the frame ring,
-   * but signing state and fsm_derived_node -- the shared derived private-key
-   * scratch -- live behind fsm_abort_workflows(), which nothing here was
-   * calling. In the dylib case this file is written for, the library sits in a
-   * long-running host process, so a shutdown/init cycle would carry an old
-   * workflow and its key material across into the next session. That is the
-   * same exposure the comment below describes, and it needs the same answer.
-   *
-   * Before storage_commit() so the committed image reflects the aborted state
-   * rather than a half-finished ceremony.
-   */
+  /* Clear in-flight signing state and derived keys before committing storage. */
   fsm_abort_workflows();
 
   /* Flush any pending storage to the flash buffer */

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Capture the on-device dice-entry screens from kkemu.
+"""Capture the on-device dice-entry screens from the UDP emulator.
 
 Evidence tool for the dice_entropy ResetDevice flow: drives a full reset with
 device-side dice collection via DebugLinkDecision.input injection and saves
 the OLED at each interesting state.
 """
 
-import hashlib
 import os
 import sys
 import time
@@ -55,7 +54,7 @@ client.wipe_device()
 client.auto_button = False
 
 ret = client.call_raw(proto.ResetDevice(
-    display_random=True, strength=256, passphrase_protection=False,
+    display_random=False, strength=256, passphrase_protection=False,
     pin_protection=False, language='english', label='dice evidence',
     dice_entropy=True))
 assert isinstance(ret, proto.ButtonRequest), ret
@@ -82,16 +81,11 @@ snap("04-digest-confirm.png")
 
 client.debug.press_yes()
 ret = client.call_raw(proto.ButtonAck())
-assert isinstance(ret, proto.ButtonRequest), ret  # post-mix entropy display
-snap("05-postmix-internal-entropy.png")
-
-client.debug.press_yes()
-ret = client.call_raw(proto.ButtonAck())
 assert isinstance(ret, proto.EntropyRequest), ret
 ret = client.call_raw(proto.EntropyAck(entropy=b'E' * 32))
 
 assert isinstance(ret, proto.ButtonRequest), ret
-snap("06-backup-explainer.png")
+snap("05-backup-explainer.png")
 client.debug.press_yes()
 ret = client.call_raw(proto.ButtonAck())
 while isinstance(ret, proto.ButtonRequest):

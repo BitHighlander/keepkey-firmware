@@ -34,6 +34,7 @@
 #include "trezor/crypto/rand.h"
 
 #include <stddef.h>
+#include <string.h>
 
 static volatile uint32_t remaining_delay = UINT32_MAX;
 static volatile uint32_t timeSinceWakeup = 0;
@@ -193,11 +194,31 @@ static void run_runnables(void) {
   }
 }
 
-void kk_timer_init(void) {
+/* A second board/emulator session must not relink nodes that are still in a
+ * queue from the first one. Reset both queues and the node contents before
+ * rebuilding the free list, including callbacks and their contexts. */
+static void reset_runnable_queues(void) {
+#ifndef EMULATOR
+  svc_disable_interrupts();
+#endif
+  free_queue.head = NULL;
+  free_queue.size = 0;
+  active_queue.head = NULL;
+  active_queue.size = 0;
+  memset(runnables, 0, sizeof(runnables));
+  remaining_delay = UINT32_MAX;
+  timeSinceWakeup = 0;
   for (int i = 0; i < MAX_RUNNABLES; i++) {
-    runnable_queue_push(&free_queue, &runnables[i]);
+    runnables[i].next = free_queue.head;
+    free_queue.head = &runnables[i];
+    free_queue.size++;
   }
+#ifndef EMULATOR
+  svc_enable_interrupts();
+#endif
 }
+
+void kk_timer_init(void) { reset_runnable_queues(); }
 
 /*
  * timer_init() - Timer 4 initialization.  Main timer for round robin tasking.
@@ -208,11 +229,7 @@ void kk_timer_init(void) {
  *     none
  */
 void timer_init(void) {
-  int i;
-
-  for (i = 0; i < MAX_RUNNABLES; i++) {
-    runnable_queue_push(&free_queue, &runnables[i]);
-  }
+  reset_runnable_queues();
 
 #ifndef EMULATOR
   // Set up the timer.
