@@ -540,6 +540,7 @@ void recovery_character(const char* character) {
   strlcat(mnemonic, decoded_character, MNEMONIC_BUF);
 
   next_character();
+  if (setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -583,6 +584,7 @@ void recovery_delete_character(void) {
   coded_word[wlen < sizeof(coded_word) ? wlen : sizeof(coded_word) - 1] = '\0';
 
   next_character();
+  if (len > 0 && setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*

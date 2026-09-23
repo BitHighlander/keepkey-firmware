@@ -286,7 +286,6 @@ class AutoLockProgress : public ::testing::Test {
 };
 }  // namespace
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
   for (int i = 0; i < 4; ++i) {
@@ -300,7 +299,6 @@ TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
   fsm_init();
@@ -487,7 +485,6 @@ TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));
@@ -522,10 +519,8 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   signing_abort();
   storage_reset();
@@ -574,9 +569,7 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   signing_abort();
   storage_reset();
@@ -623,7 +616,6 @@ TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   EXPECT_FALSE(eos_signingIsInited());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 #endif
 
 // This integration-style case remaps emulator flash and drives the address
