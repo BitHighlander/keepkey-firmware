@@ -78,7 +78,7 @@ Base: `release/715-stack-02-chains` at `51411c4a7c96137bc80f8b99fa1690c4e385f7fd
 Frozen code/test/pin/workflow head: `947f5c29ab0b9a94baa44b33507bddcb0e13e449`. The final formatting-only commit
 changes no firmware behavior. Native evidence covers its implementation and
 assertions; final exact-head hosted CI is a separate receipt.
-Inventory predecessor: `c906add7bfd43641c78635f54fdad8cdf0047a15`. The containing report head is in the PR body.
+Inventory predecessor: `6f06021160b4cc97e29621042f2f508d324b44bc`. The containing report head is in the PR body.
 The shared release branch is unchanged; accepted predecessor/release gates remain open.
 
 Canonical SOP SHA256: `fc343f5728e7f2c2057f416b9a16f962d1e31509c5c4faacb1cc12338fbcb155`.
@@ -126,11 +126,11 @@ files once present in the inventory predecessor. Do not sum overlapping commits.
 | 39 | 0 | `docs/release/REHEARSAL-SOP.md` |
 | 445 | 0 | `docs/release/audit-units/715-01-review-20260923.md` |
 | - | - | `docs/release/audit-units/715-01-review-20260923.pdf` |
-| 270 | 0 | `docs/release/audit-units/P02-INTERNAL-ROUND2-20260923.md` |
+| 275 | 0 | `docs/release/audit-units/P02-INTERNAL-ROUND2-20260923.md` |
 | - | - | `docs/release/audit-units/P02-INTERNAL-ROUND2-20260923.pdf` |
 | 42 | 0 | `docs/release/audit-units/P02-PR-PREFLIGHT-20260923.md` |
 | 83 | 0 | `docs/release/audit-units/P02-RETROSPECTIVE-20260923.md` |
-| 1170 | 0 | `docs/release/audit-units/P02-ROUND2-ARTIFACTS-20260923.json` |
+| 1195 | 0 | `docs/release/audit-units/P02-ROUND2-ARTIFACTS-20260923.json` |
 | 377 | 0 | `docs/release/audit-units/P02-ROUND2-COMMIT-INVENTORY-20260923.md` |
 | 4120 | 0 | `docs/release/audit-units/P02-ROUND2-SKIPS-20260923.json` |
 | 780 | 0 | `docs/release/audit-units/P02-readiness-20260923-artifacts.json` |
