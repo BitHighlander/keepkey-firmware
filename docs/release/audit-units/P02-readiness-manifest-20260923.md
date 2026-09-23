@@ -30,3 +30,9 @@ This explicit scope extension addresses the blockers found by the P02 audit; it 
 The global unlimited ERC-20 refusal is an existing release-line contract, visible in `a56fb3e88:lib/firmware/ethereum.c` and independently required by the pinned host `49d537ce953b7524599bfc87f56b7a50a51a13a1` test `test_msg_ethereum_clear_signing.py` (`erc20-approve-unlimited`). Restore that refusal before generic confirmation. Canonicalize all-zero native value representations so a 32-byte zero cannot bypass the ERC-20 classifier. This is a separate inherited policy repair, not evidence that the entire chains feature set is accepted.
 
 Progress and recovery focused verification: 19 native tests passed twice consecutively with the existing emulator image. Full-suite repeated-image verification remains required.
+
+## Predecessor reconciliation
+
+Merge the exact Stack 01 head `cec3cac2487356e0ffa556d201e5eab14f31e054` into the isolated readiness branch. Preserve its UDP animation fix, board regression and response callback API. Firmware uses explicit validated progress calls instead of subscribing to all continuation responses: empty recovery deletes and empty EOS chunks can emit requests without making progress. Preserve continuation renewal in Bitcoin, Ethereum, recovery, EOS, Cosmos, Osmosis, Binance, Thorchain, Mayachain, Tendermint and reset. The latter handlers emit continuation requests only after successful initialization or validated message updates; add explicit renewal at those sites.
+
+Preserve predecessor parser-level feature-polling and home-screen response regressions. Its synthetic TxRequest-only renewal test is superseded by the actual validated Bitcoin stream test: emitting a response alone is no longer the firmware progress contract. This reconciliation does not confer acceptance on either predecessor owner.

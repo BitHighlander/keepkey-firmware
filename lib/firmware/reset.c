@@ -460,6 +460,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   /* Arm last, and only here: from this statement on an EntropyAck is in
    * sequence, and nothing else is. */
   setup_arm(SETUP_RESET);
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EntropyRequest, &resp);
 }
 

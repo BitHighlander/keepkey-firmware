@@ -452,6 +452,12 @@ char usbTiny(char set) {
 
 #endif  // EMULATOR
 
+static msg_sent_callback_t msg_sent_callback;
+
+void msg_set_sent_callback(msg_sent_callback_t callback) {
+  msg_sent_callback = callback;
+}
+
 bool msg_write(MessageType msg_id, const void* msg) {
   if (msg_handler_rejected()) return false;
   const pb_field_t* fields = message_fields(NORMAL_MSG, msg_id, OUT_MSG);
@@ -493,6 +499,7 @@ bool msg_write(MessageType msg_id, const void* msg) {
 #endif
   }
 
+  if (msg_sent_callback) msg_sent_callback(msg_id);
   return true;
 }
 
