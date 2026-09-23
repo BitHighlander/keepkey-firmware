@@ -24,3 +24,9 @@ This prepares readiness; it does not request the final external review.
 ## Scope and status
 
 This explicit scope extension addresses the blockers found by the P02 audit; it is not a full chains-feature or whole-alpha audit. Separate coherent commits and finding dispositions are required for progress, approval policy and recovery fixture changes. Current status: in progress. No Copilot request, shared-branch reset, upstream merge or release publication is authorized by this manifest.
+
+## Approval policy disposition
+
+The global unlimited ERC-20 refusal is an existing release-line contract, visible in `a56fb3e88:lib/firmware/ethereum.c` and independently required by the pinned host `49d537ce953b7524599bfc87f56b7a50a51a13a1` test `test_msg_ethereum_clear_signing.py` (`erc20-approve-unlimited`). Restore that refusal before generic confirmation. Canonicalize all-zero native value representations so a 32-byte zero cannot bypass the ERC-20 classifier. This is a separate inherited policy repair, not evidence that the entire chains feature set is accepted.
+
+Progress and recovery focused verification: 19 native tests passed twice consecutively with the existing emulator image. Full-suite repeated-image verification remains required.

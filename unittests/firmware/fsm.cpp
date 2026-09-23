@@ -771,7 +771,6 @@ TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   layoutHomeForced();
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   kk_test_board_init();
   fsm_init();
@@ -807,7 +806,6 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   EXPECT_EQ(2, kkconfirm_drain())
       << "a generic-signing confirmation ran before the global refusal";
 }
-#endif
 #endif
 
 #if !BITCOIN_ONLY
