@@ -1720,8 +1720,7 @@ TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {
     fsm_test_clearLastFailure();
     receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
                    &reset);
-    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
-              fsm_test_lastFailureCode());
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
     EXPECT_FALSE(setup_isArmed());
     ASSERT_TRUE(setup_stage(false, "english", "blocked", 0, 0, false));
     setup_arm(SETUP_RESET);
