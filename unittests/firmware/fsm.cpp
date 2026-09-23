@@ -398,7 +398,6 @@ TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
   Ping ping = {};
   ping.has_pin_protection = true;
@@ -408,7 +407,6 @@ TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
 
   EXPECT_FALSE(signing_is_active());
 }
-#endif
 
 #if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
