@@ -9,6 +9,39 @@ this template; the main worktree copy is the coordination reference. Record the
 main template commit or, while the main worktree has uncommitted changes, its
 SHA256 in the unit receipt so agents can detect drift.
 
+## 7.15 audit progress (not release approval)
+
+- **Block 00a — complete for the audit-unit checkpoint (2026-09-22).**
+  [PR #844](https://github.com/BitHighlander/keepkey-firmware/pull/844)
+  targets fork `develop` at `fc1e93746132553ad98ed60f4847c8d770732bf9`;
+  final head `9cb72384fd14b2a688a70d17711a7923941d2290`, tree
+  `8f3be92b55df9a5582f4fb4669bad65416ae16ae`. Its adjacent diff is
+  19,986 changed lines. Exact-head hosted run
+  [35810605413](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35810605413)
+  passed required jobs; emulator publication was intentionally skipped. Local
+  full/Bitcoin-only Docker, ARM, OLED and companion checks are recorded in the
+  [unit report](https://github.com/BitHighlander/keepkey-firmware/blob/9cb72384fd14b2a688a70d17711a7923941d2290/docs/release/audit-units/715-00a-release-foundation.md).
+  Current-head Copilot reviews `5286304890` and `5286389477` both say
+  `Findings: None`, with zero inline findings and zero unresolved threads, which
+  satisfies the explicit checkpoint rule in the SOP. Their generic “Needs a
+  closer look” overviews remain a human-review note, not a concrete finding.
+  This completes Block 00a only; it does **not** approve the assembled 7.15
+  release, physical-device testing, merging, or publication.
+
+| Block | Audit-unit checkpoint | Final review evidence | Remaining release limits |
+| --- | --- | --- | --- |
+| P01 | **Pending phase integration.** The five P01 unit notes report local fixes or checks, but do not contain a completed phase receipt. | `audit-units/P01-001-manifest-application.md`, `P01-004-report-inputs.md`, `P01-006-disassembly-input.md`, `P01-007-build-arguments.md`, and `P01-008-compose-variant.md` | Do not infer P01 completion from P02 ancestry or the Block 00a product checkpoint. |
+| P02 / Block 2 | **Complete for the audit-unit checkpoint.** [PR #850](https://github.com/BitHighlander/keepkey-firmware/pull/850), final head `92f3d00f2b75c1fe02ba3a00a7ea46b4e163c31e`; [receipt](audit-units/P02-final-review-20260922.md) and [report](audit-units/P02-audit-report-20260922.pdf). | Copilot review `5285534015` on that head: `Findings: None`, zero unresolved threads. Its generic evidence-traceability overview names no new actionable item; six prior inline findings are recorded as resolved. | F161 and F204 remain accepted test limitations; hardware and exact later workflow certification remain separate gates. |
+| P03 / Block 3 | **Complete for the audit-unit checkpoint.** [PR #851](https://github.com/BitHighlander/keepkey-firmware/pull/851), final head `5b5a9c1b196f82a6a98e07f6ba2729560aeafe89`; [scope and owned-emulator receipt](audit-units/P03-block-scope-20260922.md) and [report](audit-units/P03-audit-report-20260922.pdf). | Copilot review `5285845557` on that head: `Findings: None`, zero unresolved threads. Its generic artifact-traceability overview names no new actionable item; the prior inline inventory finding is resolved. | The inherited erase-before-replacement power-interruption risk remains open and outside this block; physical recovery and exact later workflow acceptance remain release gates. |
+| P04 / Block 4 | **Complete for the audit-unit checkpoint.** [PR #852](https://github.com/BitHighlander/keepkey-firmware/pull/852), final head `92931c91dc77bf2cdf80aaa8938b978add0cfde8`; [scope and evidence](audit-units/P04-block-scope-20260922.md) and [report](audit-units/P04-audit-report-20260922.pdf). | Copilot review `5285987088` on that head: Approved, `Findings: None`, zero inline findings and zero unresolved threads. Two earlier documentation findings are resolved. | Physical signing/OLED review, signed-device upgrade, and exact later workflow acceptance remain release gates. |
+| P05 / Block 5 | **Pending.** No frozen P05 scope or final-review branch was present when this ledger was checked. | No P05 report or review receipt yet. | Select a named candidate gap and freeze its source, base, tests, and exclusions before claiming completion. |
+| P06 / Block 6 | **In progress** on [PR #853](https://github.com/BitHighlander/keepkey-firmware/pull/853), currently based on P04 because P05 is outside that unit. | Scope and owned-emulator Ripple evidence are in the PR; its report, PDF, and final review remain pending. | Do not count it complete or treat its current head as a P05 receipt. |
+
+These entries record audit-unit completion, not release approval. Their source
+candidate is `audit/715-scope-repair @ 614425a2a14d0113de251e7944118e47f31f5265`;
+the canonical `release/7.15` product and fork `develop` were not advanced by
+P02–P04. Recheck the live heads before relying on this ledger.
+
 ## 1. Identity and frozen scope
 
 - Unit/block and owner: `<ID>` / `<owner>`
