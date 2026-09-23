@@ -22,6 +22,8 @@
 #include <limits.h>
 
 #include "keepkey/firmware/zcash.h"
+#include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/blake2b.h"
 #include "trezor/crypto/pallas.h"
 #include "trezor/crypto/redpallas.h"
@@ -1048,10 +1050,23 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   const uint8_t* sighash = zcash_signing.sighash;
 
-  /* Sign this action with RedPallas:
-   * sig = RedPallas.sign(ask, alpha, sighash) */
-  if (redpallas_sign_digest(zcash_signing.keys.ask, msg->alpha.bytes, sighash,
-                            zcash_signing.signatures[msg->index]) != 0) {
+  /* RedDSA needs a fresh, health-checked 80-byte nonce transcript. Never let
+   * a degraded draw reach the signer or leave the transcript in stack memory. */
+  uint8_t nonce_transcript[80] = {0};
+  if (!rng_health_check() ||
+      !random_buffer_checked(nonce_transcript, sizeof(nonce_transcript))) {
+    memzero(nonce_transcript, sizeof(nonce_transcript));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Random number generator self-test failed"));
+    zcash_signing_abort();
+    layoutHome();
+    return;
+  }
+  int sign_result = redpallas_sign_digest(
+      zcash_signing.keys.ask, msg->alpha.bytes, sighash, nonce_transcript,
+      zcash_signing.signatures[msg->index]);
+  memzero(nonce_transcript, sizeof(nonce_transcript));
+  if (sign_result != 0) {
     fsm_sendFailure(FailureType_Failure_Other, _("RedPallas signing failed"));
     zcash_signing_abort();
     layoutHome();
