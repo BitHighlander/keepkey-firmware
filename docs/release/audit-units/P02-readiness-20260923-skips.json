@@ -1,7 +1,7 @@
 {
   "full": {
-    "total": 835,
-    "passed": 578,
+    "total": 837,
+    "passed": 580,
     "skipped": [
       {
         "test": "deps.python-keepkey.tests.test_dylib_confirm_flow.TestDylibConfirmFlow.test_features_round_trip",
@@ -1055,8 +1055,8 @@
     }
   },
   "btc": {
-    "total": 835,
-    "passed": 349,
+    "total": 837,
+    "passed": 351,
     "skipped": [
       {
         "test": "deps.python-keepkey.tests.test_dylib_confirm_flow.TestDylibConfirmFlow.test_features_round_trip",
