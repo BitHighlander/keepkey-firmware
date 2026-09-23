@@ -106,11 +106,17 @@ Earlier firmware-equivalent CI
 at `7e091af157131897adc5514de392570c32088946` has full and Bitcoin-only
 unit artifacts `10388679573` and `10389512420`, full and Bitcoin-only host
 artifacts `10390030970` and `10389023825`, and full/Bitcoin-only firmware
-artifacts `10389287571` and `10388589162`. Both host JUnit files record
+artifacts `10389287571` and `10388589162`. The full ARM build job
+`104322245689` and Bitcoin-only ARM build job `104322245632` both concluded
+success; each job's cross-compile, SRAM budget gate, source-binding, and
+artifact-upload steps also concluded success. Both host JUnit files record
 `test_msg_signtx.test_one_one_fee` passing; the Bitcoin-only host JUnit also
 records `test_bitcoin_signing_survives_the_strip` passing (it is expectedly
 skipped in the full variant). `7e091af15..614425a2a` changes only two CI
 workflow files, so this is code/test/pin-equivalent supporting evidence, not
-exact-workflow certification. `350ccf3a7..` this review head changes only
-audit documentation/SOP, so the pinned owned-image native results carry for
-P04. Physical signing review and signed-device upgrade remain release gates.
+exact-workflow certification. The explicit provenance range
+`350ccf3a7d27e2c73d845f39c97101c9bbdf94f4..66a5a8a3c97dae8841f7a4847ab4e8ebe90fe9ba`
+changes only audit documentation/SOP; the containing final head after this
+receipt correction is recorded in PR #852 and checked for the same property.
+Thus the pinned owned-image native results carry for P04. Physical signing
+review and signed-device upgrade remain release gates.
