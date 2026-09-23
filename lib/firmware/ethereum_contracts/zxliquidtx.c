@@ -128,13 +128,20 @@ static HDNode* zx_getDerivedNode(const char* curve, const uint32_t* address_n,
                                  size_t address_n_count,
                                  uint32_t* fingerprint) {
   static HDNode CONFIDENTIAL node;
+  /* A prior call may have left a derived key in this long-lived buffer. */
+  memzero(&node, sizeof(node));
   if (fingerprint) *fingerprint = 0;
   if (!get_curve_by_name(curve)) return NULL;
-  if (!storage_getRootNode(curve, true, &node)) return NULL;
+  if (!storage_getRootNode(curve, true, &node)) {
+    memzero(&node, sizeof(node));
+    return NULL;
+  }
   if (!address_n || address_n_count == 0) return &node;
   if (hdnode_private_ckd_cached(&node, address_n, address_n_count,
-                                fingerprint) == 0)
+                                fingerprint) == 0) {
+    memzero(&node, sizeof(node));
     return NULL;
+  }
   return &node;
 }
 
