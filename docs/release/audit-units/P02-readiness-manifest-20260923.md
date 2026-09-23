@@ -1,0 +1,26 @@
+# P02 final-review readiness batch
+
+User authorization: 2026-09-23, work until P02 is ready for final Copilot.
+This prepares readiness; it does not request the final external review.
+
+## Frozen inputs
+
+- Prior P02 receipt: `a6a8b6d73a297ac28181dfcc6e77a1c63ac9b0a6`.
+- Tested P02 code: `3ade6134877314293749af4e73de9ebf9d9de0c4`.
+- Original code-bearing Stack 02: `51411c4a7c96137bc80f8b99fa1690c4e385f7fd`.
+- Stack 01 current head: `cec3cac2487356e0ffa556d201e5eab14f31e054`, not yet accepted.
+- Stack 00b current head: `4c56e19e3070772a28b2890a4ec862ecf77d5429`, separately claimed and not accepted.
+- Local remediation sources: Bitcoin progress `2831f91b5`; selected progress and approval policy changes in `ae4061a6f`. Do not replay the combined remediation branch or its unpublished host dependency pointer.
+- All dependency pins stay at the prior receipt's exact values unless separately justified.
+
+## Finite work and dependency order
+
+1. Resolve P02-I02's four progress failures as a named workflow-progress interaction unit. Preserve the rule that accepted continuation work renews the timer, while feature polling, malformed packets, empty recovery deletion and empty EOS chunks do not. Ordinary full and Bitcoin-only tests must execute applicable regressions.
+2. Reconcile the padded-zero unlimited-approval failure against the declared product policy and pinned host expectations. Record its disposition independently of the progress unit; no security contract is changed merely to make a test pass.
+3. Resolve P02-I03's repeat-run recovery fixture failure. Trace storage erase versus RAM reset and test against an already initialized emulated image. Preserve assertions proving an all-space recovery cannot commit a mnemonic.
+4. Reconcile the Stack 01/02 progress-policy conflict on an isolated candidate. Preserve tested predecessor fixes and all five P02 contracts. Claim no predecessor acceptance on another owner's behalf; do not restack a shared branch without recording the reconciled head and scope.
+5. Validate final applicable native, host, storage, ARM/resource, report and CI gates. Freeze a code-bearing review identity, complete report/PDF and final adjacent inventory. Keep physical/release gates and actual Copilot delivery separate.
+
+## Scope and status
+
+This explicit scope extension addresses the blockers found by the P02 audit; it is not a full chains-feature or whole-alpha audit. Separate coherent commits and finding dispositions are required for progress, approval policy and recovery fixture changes. Current status: in progress. No Copilot request, shared-branch reset, upstream merge or release publication is authorized by this manifest.
