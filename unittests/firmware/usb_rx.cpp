@@ -158,7 +158,7 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   for (uint8_t byte : received) EXPECT_EQ(0, byte);
 }
 
-TEST(USBRX, MalformedTinyPacketCancelsAndClearsPendingBuffer) {
+static void expectMalformedTinyPacketRejected(size_t packet_length) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_EQ(0, kkconfirm_drain());
   fsm_init();
@@ -173,8 +173,8 @@ TEST(USBRX, MalformedTinyPacketCancelsAndClearsPendingBuffer) {
   uint8_t frame[64] = {'?', '#', '#'};
   frame[3] = MessageType_MessageType_PassphraseAck >> 8;
   frame[4] = MessageType_MessageType_PassphraseAck & 0xff;
-  frame[8] = 56;  // More than the 55 payload bytes a tiny frame can hold.
-  ASSERT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
+  frame[8] = packet_length == sizeof(frame) ? 56 : 0;  // More than the 55 payload bytes a tiny frame can hold.
+  ASSERT_EQ(packet_length, sendto(fd, frame, packet_length, 0,
                                   reinterpret_cast<struct sockaddr*>(&address),
                                   sizeof(address)));
 
@@ -194,6 +194,14 @@ TEST(USBRX, MalformedTinyPacketCancelsAndClearsPendingBuffer) {
   // A subsequent normal dispatch resets the tiny rejection state.
   uint8_t reset_frame[64] = {};
   handle_usb_rx(reset_frame, sizeof(reset_frame));
+}
+
+TEST(USBRX, MalformedTinyPacketCancelsAndClearsPendingBuffer) {
+  expectMalformedTinyPacketRejected(64);
+}
+
+TEST(USBRX, ShortTinyPacketCancelsAndClearsPendingBuffer) {
+  expectMalformedTinyPacketRejected(12);
 }
 
 static const uint8_t *observed_packet;

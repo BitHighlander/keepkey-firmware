@@ -34,6 +34,8 @@
 bool msg_handler_rejected(void);
 /* Reject a decoded tiny reply that does not belong to the waiting handler. */
 void msg_reject_unexpected_tiny(void);
+/* Short main/debug USB packets terminate a tiny wait; normal mode is inert. */
+void msg_reject_short_tiny_packet(void);
 
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)                        \
   [ID].msg_id = (ID), [ID].type = (NORMAL_MSG), [ID].dir = (IN_MSG), \

@@ -319,7 +319,10 @@ static volatile char tiny = 0;
 static void main_rx_callback(usbd_device* dev, uint8_t ep) {
   (void)ep;
   static CONFIDENTIAL uint8_t buf[64] __attribute__((aligned(4)));
-  if (usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_MAIN_OUT, buf, 64) != 64) {
+  const int received =
+      usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_MAIN_OUT, buf, 64);
+  if (received != 64) {
+    if (received > 0) msg_reject_short_tiny_packet();
     memzero(buf, sizeof(buf));
     return;
   }
@@ -351,7 +354,10 @@ static void u2f_rx_callback(usbd_device* dev, uint8_t ep) {
 static void debug_rx_callback(usbd_device* dev, uint8_t ep) {
   (void)ep;
   static uint8_t buf[64] __attribute__((aligned(4)));
-  if (usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_DEBUG_OUT, buf, 64) != 64) {
+  const int received =
+      usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_DEBUG_OUT, buf, 64);
+  if (received != 64) {
+    if (received > 0) msg_reject_short_tiny_packet();
     memzero(buf, sizeof(buf));
     return;
   }

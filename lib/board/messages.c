@@ -399,6 +399,13 @@ static bool msg_tiny_flag = false;
 static CONFIDENTIAL uint8_t msg_tiny[MSG_TINY_BFR_SZ];
 static uint16_t msg_tiny_id = MSG_TINY_TYPE_ERROR; /* Default to error type */
 
+void msg_reject_short_tiny_packet(void) {
+  if (msg_tiny_flag) {
+    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                        "Malformed tiny packet");
+  }
+}
+
 _Static_assert(sizeof(msg_tiny) >= sizeof(Cancel), "msg_tiny too tiny");
 _Static_assert(sizeof(msg_tiny) >= sizeof(Initialize), "msg_tiny too tiny");
 _Static_assert(sizeof(msg_tiny) >= sizeof(PassphraseAck), "msg_tiny too tiny");
@@ -414,7 +421,10 @@ _Static_assert(sizeof(msg_tiny) >= sizeof(DebugLinkGetState),
 static void msg_read_tiny(const uint8_t* msg, size_t len) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   memzero(msg_tiny, sizeof(msg_tiny));
-  if (len != 64) return;
+  if (len != 64) {
+    msg_reject_short_tiny_packet();
+    return;
+  }
 
   uint8_t buf[64];
   memcpy(buf, msg, sizeof(buf));
