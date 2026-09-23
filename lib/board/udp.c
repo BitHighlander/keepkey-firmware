@@ -65,6 +65,8 @@ void usbPoll(void) {
     }
   }
   memzero(buf, sizeof(buf));
+  /* Keep progress animations moving while the emulator waits for host work. */
+  layout_animate_poll();
 }
 
 bool usb_tx(const uint8_t* msg, uint32_t len) {
