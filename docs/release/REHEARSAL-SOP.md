@@ -146,6 +146,39 @@ unit, not additional unchanged review prompts.
 
 ## Copilot only at the late external checkpoint
 
+### Reviewable audit report before the external checkpoint
+
+Prepare an audit report for each frozen unit or upstream-shaped batch before
+requesting its final review. Give the reviewer both a readable source document
+and a PDF generated from that source. The report must identify the exact base,
+head, target branch, dependency pins, and included commit IDs. Confirm the live
+target still matches the recorded base before presenting the report.
+When the report itself is committed in the review PR, record its generation
+predecessor in the report and record the resulting final PR head in the PR
+description; a file cannot embed the hash of the commit that contains itself.
+
+Include a line-change inventory produced from Git for the PR diff and, when a
+small review PR summarizes earlier code units, for each underlying unit commit.
+Show additions, deletions, files, and the command/range used. State explicitly
+when counts include documentation, tests, submodule pointer lines, or commits
+that overlap in their changed lines; do not present a sum of overlapping commit
+counts as the net candidate diff. Give every change a short plain-language
+description covering the prior behavior, the new behavior, why it matters, and
+its regression or validation evidence. Separate direct unit changes from later
+interaction changes and from report-only changes.
+
+Map every known in-scope finding to fixed, refuted, accepted limitation, or
+pending, with a technical reason and exact evidence. Name skips and unavailable
+device checks. Link exact CI run and artifact identities, and explain whether
+later commits changed code, tests, pins, workflows, or documentation. A green
+earlier run is supporting evidence when the head changes, not an exact-head
+pass. Recheck the affected surface and regenerate the report after material
+changes. Run a PDF render check and inspect the output before handing it over.
+
+The report supplies review evidence; it cannot guarantee that Copilot or a
+human reviewer will return zero findings. Keep delivered-review status and
+local readiness as separate statements.
+
 Do not request Copilot during authoring, local hardening, predecessor propagation,
 or routine fork PR staging. Do not create a PR or push solely to trigger Copilot.
 Quota exhaustion, missing delivery or a historical round ceiling does not block
