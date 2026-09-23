@@ -89,3 +89,28 @@ to these historical unit heads.
    checkpoint successful.
 
 No new firmware change, Copilot request, or release promotion is claimed here.
+
+## Initial evidence check (2026-09-22)
+
+The current source still registers `setup_ceremony.cpp`, `storage.cpp`, and
+`storage_passphrase.cpp` in the firmware native target and `board.cpp` in the
+board target. The earlier firmware-equivalent CI run 34951131013 produced
+`unit-test-results-full` (artifact `10388679573`) and
+`unit-test-results-bitcoin-only` (artifact `10389512420`). Their JUnit XML
+records, in **both** variants, nine executed `SetupCeremony` cases, the
+`VersionedReadersTerminateStoredStrings`,
+`FutureBitcoinBandValuesNeverFallThroughToWipe`, and
+`StagingIsInertAndForeignCommitAborts` cases, plus the board
+`EmulatorEraseClearsOnlyTheSelectedStorageSector` case. This verifies test
+execution on that earlier code-equivalent head; it is not an exact-head result
+for the current workflow files.
+
+The host `python-test-results` artifact (`10390030970`) records passing cipher
+recovery, backspace, reset and dice cases. It also records **five skipped
+`TestStorageUpgradePreservation` power-cycle cases**, including wallet
+preservation, Bitcoin-only band refusal, V16 upgrades and unknown-version
+wiping, because that host image has no emulator binary it owns and can restart.
+This is a concrete Block 3 evidence gap, not a pass. The source-only version
+gate checks ran, but they do not replace next-boot behavior. The audit must
+run an owned-emulator power-cycle suite or carry this as pending before final
+Block 3 acceptance.
