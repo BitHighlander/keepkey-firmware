@@ -1,6 +1,6 @@
 # 7.15 block 00a — release-foundation receipt
 
-Publication snapshot: `PUBLISHED` candidate after local Docker qualification, with findings 019–020 from Copilot review 5285935289 addressed. Historical hosted evidence: [run 35805082008](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35805082008) passed on `6c7dac7ee`; it does not qualify this code head. The exact head/tree, current hosted run and live acceptance verdict belong in a post-push PR attachment, per the SOP.
+Publication snapshot: `PUBLISHED` candidate after local Docker qualification, with findings 021–025 from Copilot review 5286105814 addressed or dispositioned. Historical hosted evidence: [run 35807704204](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35807704204) passed on `b643fca9c`; it does not qualify this code head. The exact head/tree, current hosted run and live acceptance verdict belong in a post-push PR attachment, per the SOP.
 
 - Adjacent base: `fc1e93746132553ad98ed60f4847c8d770732bf9`.
 - Companion: `98c717ff2204124bf67cc78cab8ca1d501fd4e92` (fast-forward canonical `reconcile/upstream-sync` from `c1b136a`); nested device-protocol: `dd9c85dc747cf965fb0e7bf49615dc9e7568ee65`; consumed pins reproduced cleanly.
@@ -17,7 +17,7 @@ This foundation carries 7.14.x signing/storage/display/recovery/entropy/authoriz
 | Strict OLED | 64 pass/23 skip regular; 25 pass/62 skip bitcoin-only | Exact Docker entrypoints: 64/23 regular and 25/62 bitcoin-only pass/skip, zero failures |
 | ARM/SRAM | Both pass; 21,312/28,268 B reserves; largest frame 12,416 B | Both pass; same reserves and 12,416 B largest frame |
 | Static/provenance | Cppcheck 109 files/0 findings; actionlint, format, secret, clean pin and failure probes pass | Cppcheck 109/0 on prior head and changed `layout.c`/`timer.c`/`libkkemu.c` 0 findings; clang-format, actionlint, diff, clean pins and Gitleaks pass on final code head |
-| Hosted | [Run 35799306854](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35799306854) passed on `506ea3e12` | [Run 35805082008](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35805082008) passed on `6c7dac7ee`; new code head requires its own exact-head gate |
+| Hosted | [Run 35805082008](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35805082008) passed on `6c7dac7ee` | [Run 35807704204](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35807704204) passed on `b643fca9c`; new code head requires its own exact-head gate |
 
 Reviewed skips use `KK_RELEASE_MISSING_CAPABILITIES` or product/version gates; dylib/registry have separate gates, PIN-timeout/empty burned-version have alternate coverage, and seven Osmosis plus five boot/upgrade tests run in both profiles. Flaky retries do not count.
 
@@ -47,3 +47,8 @@ Owner: BitHighlander release; local reviewer: Codex. Findings 001–012 affect `
 | 018 | Copilot P1 `4077885724`: dice evidence requested mutually exclusive `display_random` and `dice_entropy` and expected a forbidden post-mix screen. Use the dice-compatible request and assert direct `EntropyRequest`; the fixed script completed a real Docker reset and saved five screens. |
 | 019 | Copilot P2 `4078257542`: SignIdentity fingerprint remained on the stack after PIN refusal. Scrub on invalid identity, PIN refusal and immediately after deriving the address path; retain existing PIN failure layout. Requalify exact head. |
 | 020 | Copilot P2 `4078257578`: checked-in receipt cited an obsolete hosted verdict. Separate historical green runs from current candidate qualification, which is attached to the PR after push. |
+| 021 | Copilot P1 `4078394190`: reject any decoded Ripple memo before PIN/approval; serializer cannot commit it. Live Docker negative probe gets `Ripple memos are not supported`; normal signing passes. |
+| 022 | Copilot P1 `4078394229`: reject explicit non-`rune` THORChain sends before approval; serializer hard-codes native RUNE. Live Docker negative probe gets `Only native RUNE sends are supported`; native send passes. |
+| 023 | Copilot P2 `4078394255`: remove orphaned DEBUG_LINK bootloader watermark call; the helper was intentionally removed from layout. Docker ARM DEBUG_LINK bootloader compiles and links. |
+| 024 | Copilot P1 `4078394274`: decline restoration of transformERC20/MakerDAO specialized dispatch. Existing `TransformErc20AlwaysRequiresAdvancedMode` and `MakerDaoSelectorsAreNotSpecializedForPointRelease` regressions require raw AdvancedMode review because those decoders hide or incompletely validate calldata. |
+| 025 | Copilot P1 `4078394302`: suppress `DebugLinkState.reset_entropy` while dice digest marks an active dice ceremony. Live capture asserts it absent at `EntropyRequest`: assertion fails against `b643fca9c` image and passes against fixed image, completing five-screen reset. |

@@ -82,6 +82,9 @@ snap("04-digest-confirm.png")
 client.debug.press_yes()
 ret = client.call_raw(proto.ButtonAck())
 assert isinstance(ret, proto.EntropyRequest), ret
+state = client.debug._call(proto.DebugLinkGetState())
+assert state.HasField('dice_digest') and len(state.dice_digest) == 32
+assert not state.HasField('reset_entropy')
 ret = client.call_raw(proto.EntropyAck(entropy=b'E' * 32))
 
 assert isinstance(ret, proto.ButtonRequest), ret

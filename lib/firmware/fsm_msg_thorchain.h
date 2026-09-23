@@ -135,6 +135,15 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     return;
   }
 
+  if (msg->has_send && msg->send.has_denom &&
+      strcmp(msg->send.denom, "rune") != 0) {
+    thorchain_signAbort();
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Only native RUNE sends are supported");
+    layoutHome();
+    return;
+  }
+
   const CoinType* coin = fsm_getCoin(true, "THORChain");
   if (!coin) {
     return;
@@ -155,13 +164,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
           layoutHome();
           return;
         }
-        /* Validate the recipient BEFORE the screen, not in the serializer.
-           thorchain_signTxUpdateMsgSend() already refuses a
-           malformed or wrong-network address, but it runs after this
-           confirmation, so the owner approved a transfer that was then
-           rejected. This release line's rule is that an invalid signed value
-           fails before approval, so the same check moves ahead of the
-           screen. */
+        /* Reject malformed or wrong-network recipients before approval. */
         if (!tendermint_validateBech32Address(
                 msg->send.to_address,
                 sign_tx->has_testnet && sign_tx->testnet ? "tthor" : "thor")) {

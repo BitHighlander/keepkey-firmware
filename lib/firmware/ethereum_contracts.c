@@ -56,21 +56,11 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
                               const HDNode* node) {
   (void)node;
 
-  /* Every handler parses and displays fixed offsets inside the initial chunk
-   * only. If the calldata does not fit in that chunk, the remainder streams
-   * in via EthereumTxAck and is hashed into the signature without ever being
-   * shown, so refuse to claim the tx and fall through to the generic raw-data
-   * disclosure path. This gate runs BEFORE any decoder, including 0x
-   * transformERC20, so a transformERC20 whose transformations[] tail exceeds
-   * one 1024-byte chunk is NOT clear-signed blind: it falls through to raw
-   * disclosure (AdvancedMode-gated). */
+  /* Only fully received calldata is eligible for specialized review;
+   * streamed tails use the AdvancedMode-gated raw-data path. */
   if (data_total != msg->data_initial_chunk.size) return false;
 
-  /* Every predicate below opens with a 4-byte selector memcmp.
-   * data_initial_chunk is a fixed-capacity buffer that is NOT cleared between
-   * messages, so on a calldata shorter than its own selector those reads
-   * compare bytes left over from an earlier transaction. Nothing downstream
-   * guarantees the minimum, so establish it once here. */
+  /* Predicates read selectors from a reused buffer; require four live bytes. */
   if (msg->data_initial_chunk.size < 4) return false;
 
   if (sa_isWithdrawFromSalary(msg)) return true;
@@ -85,10 +75,7 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
 
 bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
                                 const HDNode* node) {
-  /* Same selector bound as ethereum_contractHandled(). This function is only
-   * ever reached after that one returned true, so this is belt and braces --
-   * but the two dispatch on the same predicates and must not be able to
-   * disagree about which of them are safe to evaluate. */
+  /* Keep the same selector bound as ethereum_contractHandled(). */
   if (msg->data_initial_chunk.size < 4) return false;
 
   if (sa_isWithdrawFromSalary(msg))

@@ -213,12 +213,7 @@ void reset_init(bool display_random, uint32_t _strength,
     return;
   }
 
-  /* Refused, not silently ignored: the entropy screen renders the POST-mix
-   * internal entropy, so honoring both would hand a host that reads that
-   * screen the seed pre-image and make the dice fold-in worthless. 7.15
-   * removes the entropy screen outright; this release keeps it because
-   * already-shipped hosts of the 7.14 line legitimately request it, but it
-   * must never coexist with dice. */
+  /* The post-mix entropy screen cannot coexist with dice. */
   if (display_random && dice_entropy) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Can't show internal entropy when dice entropy is used"));
@@ -297,18 +292,8 @@ void reset_init(bool display_random, uint32_t _strength,
     return;
   }
 
-  /* Dice fold in before EntropyRequest, so the host contribution arrives
-   * strictly after the device has committed to its own.
-   *
-   * The mixed value is deliberately NOT displayable: display_random is
-   * refused above whenever dice are in use, because the entropy screen shows
-   * the POST-mix value, and a host that supplies ext_entropy and reads that
-   * screen once computes SHA256(shown || ext_entropy) -- the seed pre-image
-   * -- making the dice fold-in worthless. The roll digest below is safe by
-   * contrast: it is a hash of the user's own input, not of seed material.
-   *
-   * The digest needs no clear here -- setup_stage() above ran setup_abort(),
-   * which zeroes it. */
+  /* Dice mix before EntropyRequest. The digest covers user rolls, not seed
+   * material; setup_stage() cleared its prior value. */
   if (dice_entropy) {
     static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
     static char CONFIDENTIAL digest_hex[17];
