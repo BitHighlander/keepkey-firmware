@@ -112,6 +112,10 @@ TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
 bool msg_write(MessageType msg_id, const void* msg);
+/* Called only after a normal response has been encoded and sent. Firmware may
+ * use the response type to recognize progress in an active workflow. */
+typedef void (*msg_sent_callback_t)(MessageType msg_id);
+void msg_set_sent_callback(msg_sent_callback_t callback);
 
 #if DEBUG_LINK
 bool msg_debug_write(MessageType msg_id, const void* msg);

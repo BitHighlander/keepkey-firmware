@@ -321,13 +321,31 @@ static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_sendFailure(code, text);
 }
 
-/* Every host frame counts as activity, so a streamed ceremony or signing
- * session the user is still working through is not auto-locked mid-flight.
- * note_host_activity() ignores frames that arrive at the home screen, so a
- * polling host cannot hold an idle device unlocked. */
-static void fsm_usb_rx(const void* msg, size_t len) {
-  note_host_activity();
-  handle_usb_rx(msg, len);
+/* A continuation request is sent only after the handler has parsed and
+ * accepted the preceding workflow step. Unrelated queries and malformed input
+ * produce no such request and cannot keep a stalled session unlocked. Button,
+ * PIN and passphrase prompts run in blocking handlers, where the main-loop
+ * idle timer does not advance, so they do not belong here. */
+static void fsm_workflow_response_sent(MessageType msg_id) {
+  switch (msg_id) {
+    case MessageType_MessageType_TxRequest:
+    case MessageType_MessageType_EntropyRequest:
+    case MessageType_MessageType_CharacterRequest:
+#if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxRequest:
+    case MessageType_MessageType_CosmosMsgRequest:
+    case MessageType_MessageType_OsmosisMsgRequest:
+    case MessageType_MessageType_BinanceTxRequest:
+    case MessageType_MessageType_EosTxActionRequest:
+    case MessageType_MessageType_ThorchainMsgRequest:
+    case MessageType_MessageType_MayachainMsgRequest:
+    case MessageType_MessageType_TendermintMsgRequest:
+#endif
+      note_host_activity();
+      break;
+    default:
+      break;
+  }
 }
 
 void fsm_init(void) {
@@ -342,8 +360,7 @@ void fsm_init(void) {
 #endif
 
   msg_init();
-  /* after msg_init(), which installs the board's own rx callback */
-  usb_set_rx_callback(&fsm_usb_rx);
+  msg_set_sent_callback(&fsm_workflow_response_sent);
 
   txin_dgst_initialize();
 }
