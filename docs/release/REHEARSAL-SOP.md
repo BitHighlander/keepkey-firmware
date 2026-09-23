@@ -148,6 +148,17 @@ unit, not additional unchanged review prompts.
 
 ### Reviewable audit report before the external checkpoint
 
+All agents use one canonical audit flow: read this SOP and the master form at
+`docs/release/MASTER-AUDIT-TEMPLATE.md` in the **main firmware worktree**
+(the first entry in `git worktree list --porcelain`) before beginning a block.
+Fill the form's
+identity, historical Git inventory, current-source reconciliation, findings,
+verification, render/preflight, and review-checkpoint sections in the unit's
+isolated worktree. Record the master form's commit or SHA256 in the unit receipt.
+Do not create an agent-specific substitute flow or treat a copied worktree form
+as a different authority. Reconcile any snapshot against the main copy before
+the first external review request.
+
 Prepare an audit report for each frozen unit or upstream-shaped batch before
 requesting its final review. Give the reviewer both a readable source document
 and a PDF generated from that source. The report must identify the exact base,
@@ -226,6 +237,14 @@ a documented disposition, or while an earlier request is still pending. A
 timeline request event proves registration; only a delivered current-head
 review with body, inline comments, and zero unresolved threads proves a clean
 checkpoint. State the number of requests and their outcomes in the receipt.
+
+When a delivered Copilot review on the current final head says `Findings: None`,
+has zero inline findings, and leaves zero unresolved threads, mark the Copilot
+checkpoint complete and move to the next block. A generic “Needs a closer look”
+overview is not a finding unless it identifies a concrete actionable body-only
+issue; quote and disposition any such issue. Do not spend another request to
+confirm an already clean result. Keep physical-device and release promotion
+gates separate from this audit-unit completion decision.
 
 A failed, missing or quota-limited review is not a clean review. Report Copilot's
 actual status separately from internal readiness. Existing substantive findings
