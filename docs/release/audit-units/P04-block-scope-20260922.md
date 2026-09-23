@@ -71,3 +71,46 @@ candidate before declaring the historical units accepted.
 4. Produce the Git-reproducible audit report and PDF, render-check the PDF,
    perform the canonical local preflight, and only then enter the final review
    checkpoint within the SOP request budget.
+
+## Current-source and executed-test check (2026-09-22)
+
+Current `txin_check.c` finalizes a copy of the input SHA256 context, so each
+output compares the same inputs. `signing_init` and `signing_abort` reset only
+the in-progress digest; `transaction.c` leaves OP_RETURN without a payment
+comparison key and saves an accepted payment key only after duplicate-output
+refusal is ruled out. The mixed-mode path helper checks `count >= 5`, equal
+path lengths, and the leading `(count - 5)` components before allowing the
+script-purpose variation. The phase-one signer hashes
+`sizeof(tx->inputs[0].prev_hash.bytes)`, the actual transaction-ID byte array.
+Later multisig quorum and sighash-suffix changes are separate guards in the
+same signer and do not remove these P04 checks. No new in-scope defect was
+identified by this path review.
+
+Both full and Bitcoin-only native targets register `signing.cpp`,
+`transaction.cpp`, and `usb_rx.cpp`. In the exact pinned candidate emulator
+images used for P03, `make xunit` logs show executed passes for
+`Signing.MixedModeChangeMustPreserveLeadingPathComponents`,
+`Transaction.ChangedInputsTriggerDuplicateOutputRefusal`,
+`Transaction.IdenticalOutputsWithinOneTransactionKeepInputHistory`, and
+`USBRX.TinyAcknowledgementDoesNotReusePreviousSecret` in **both variants**.
+The full run passed 573 firmware, 17 board, 18 crypto, and 6 Pallas tests;
+Bitcoin-only passed 131 firmware, 17 board, and 18 crypto. Full and Bitcoin-only
+image IDs are `sha256:18f7375986270c6bdcea6155e9fe8382d5a4faca8f0466ff3bf727b759a2e9f3`
+and `sha256:12d356b3912a0e7f76923db50368ee66e979fed3935174b6084726090a8f99db`.
+Log SHA256 values are `5a452156d0b2264f480ac5d640e388e1ea9ab10bf57783751bcde2fbe947459d`
+and `4509a2ef1d05d5cdfa21401a6350fd562a48b1b6e69be3dcb14f211ee25ff49e`.
+The logs are retained at `/private/tmp/kk-fw-715-p03-owned-evidence`.
+
+Earlier firmware-equivalent CI
+[run 34951131013](https://github.com/BitHighlander/keepkey-firmware/actions/runs/34951131013)
+at `7e091af157131897adc5514de392570c32088946` has full and Bitcoin-only
+unit artifacts `10388679573` and `10389512420`, full and Bitcoin-only host
+artifacts `10390030970` and `10389023825`, and full/Bitcoin-only firmware
+artifacts `10389287571` and `10388589162`. Both host JUnit files record
+`test_msg_signtx.test_one_one_fee` passing; the Bitcoin-only host JUnit also
+records `test_bitcoin_signing_survives_the_strip` passing (it is expectedly
+skipped in the full variant). `7e091af15..614425a2a` changes only two CI
+workflow files, so this is code/test/pin-equivalent supporting evidence, not
+exact-workflow certification. `350ccf3a7..` this review head changes only
+audit documentation/SOP, so the pinned owned-image native results carry for
+P04. Physical signing review and signed-device upgrade remain release gates.
