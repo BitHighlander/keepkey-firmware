@@ -681,13 +681,8 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
                                 ButtonRequestType type,
                                 const char* request_title,
                                 const char* request_body, ...) {
-  /* Custom renderers do not expose their placement geometry, so the confirm
-   * state machine cannot prove that they drew the complete body. Route every
-   * TRANSACTION-CONSENT screen through the measured standard renderer instead:
-   * bespoke amount styling is not worth silently clipping signed fields.
-   *
-   * Address and xpub display screens do NOT come through here -- see
-   * confirm_address_with_custom_layout() below for why they must not. */
+  /* Consent must use the measured standard renderer; custom geometry cannot
+   * prove that all signed fields fit. Address/xpub display is separate. */
   (void)layout_notification_func;
   button_request_acked = false;
 
@@ -717,26 +712,9 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
 bool confirm_address_with_custom_layout(
     layout_notification_t layout_notification_func, ButtonRequestType type,
     const char* request_title, const char* request_body, ...) {
-  /* Address and xpub verification screens keep their own renderer.
-   *
-   * The measured fallback in confirm_with_custom_layout() exists to stop a
-   * bespoke layout from silently clipping a field the owner is CONSENTING to
-   * sign. An address screen is not that: it displays a public value the device
-   * itself derived, for the owner to check against what the host claims, and
-   * nothing is signed by looking at it. Routing these through the standard
-   * renderer had a cost that the safety argument does not pay for -- the five
-   * address layouts draw the address as a QR code through layout_address(),
-   * and the standard renderer draws no QR at all. Scanning that code is how
-   * the address is actually used, so the fallback removed the feature rather
-   * than hardening it.
-   *
-   * Clipping is still handled, just by the layout rather than the pager: these
-   * renderers wrap the address with draw_string() and drop to the body font
-   * when it will not fit bold.
-   *
-   * confirm_helper() already applies its measured/paged path only to
-   * layout_standard_notification, so handing it a custom layout renders
-   * exactly as it did before this release line. */
+  /* Keep the QR-capable address/xpub renderer: viewing a derived public value
+   * is not transaction consent. Its layout wraps or shrinks long addresses;
+   * routing it through the measured standard renderer would remove the QR. */
   button_request_acked = false;
 
   va_list vl;

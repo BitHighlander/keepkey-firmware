@@ -22,6 +22,7 @@ TEST(Board, Shutdown) {
 
 static void timer_test_callback(void*) {}
 static void timer_test_callback_after_reinit(void*) {}
+static void animation_test_callback(void*, uint32_t, uint32_t) {}
 
 TEST(Board, TimerQueueSurvivesReinitialization) {
   kk_timer_init();
@@ -36,6 +37,14 @@ TEST(Board, TimerQueueSurvivesReinitialization) {
   remove_runnable(timer_test_callback);
   ualarm(0, 0);
   signal(SIGALRM, SIG_IGN);
+}
+
+TEST(Board, AnimationQueueSurvivesReinitialization) {
+  kk_timer_init();
+  layout_init(display_canvas_init());
+  layout_add_animation(animation_test_callback, nullptr, 10);
+  layout_init(display_canvas_init());
+  layout_clear_animations();
 }
 
 TEST(Board, MonochromeEvidencePreservesGrayscaleForeground) {
