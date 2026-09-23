@@ -67,6 +67,10 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
     storage_ready = true;
   }
   storage_wipe();
+  // Match WipeDevice: erase flash and reset the loaded RAM storage state.
+  storage_reset();
+  storage_resetUuid();
+  storage_commit();
   ASSERT_FALSE(storage_isInitialized());
 
   // enforce_wordlist is omitted by default on the wire, which is what makes
@@ -86,5 +90,9 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
   EXPECT_FALSE(setup_isArmed());
   (void)kkconfirm_drain();
   storage_wipe();
+  // Match WipeDevice: erase flash and reset the loaded RAM storage state.
+  storage_reset();
+  storage_resetUuid();
+  storage_commit();
   layoutHomeForced();
 }
