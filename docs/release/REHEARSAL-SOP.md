@@ -137,6 +137,45 @@ and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
 unit, not additional unchanged review prompts.
 
+## Security closure evidence
+
+Owner revision: 2026-09-23, following P02 review #855. Before closing a security
+finding, record a contract table with the sensitive value or state, its origin,
+observer, build variant, workflow phase, allowed outputs, forbidden outputs and
+equivalent representations. Follow the value through bytes, encoded words,
+derived values, logs and display pixels. A field disappearing does not establish
+that its value is hidden. Resolve contradictions between the documented policy,
+implementation and test harness before claiming readiness; do not narrow the
+policy merely to make an existing test pass.
+
+Map every changed security-sensitive entry path to an executed assertion. For
+workflow deadlines, include each initial and continuation handler, valid progress
+near expiry, invalid or empty input, polling, and eventual stalled-session expiry.
+For transport changes, exercise the actual main and debug receive callbacks,
+including short, complete, no-data and error transfers. Shared-helper tests alone
+do not prove callback or handler integration. Record variant-specific exclusions.
+
+After implementation, perform a separate falsification pass: assume the fix is
+present and attempt to violate the original contract through another encoding,
+a later phase, another callback or a build variant. Use independent expected
+values; a harness must not obtain its oracle through an output that the contract
+forbids. Cover consent, sensitive display pages, input, result, backup, abort and
+restart when auditing a setup ceremony. Use targeted negative controls or
+mutations where needed to demonstrate that assertions detect the original defect
+and alternate disclosure paths. Record the attempted counterexamples and results.
+
+Inventory both inline comments and review-body observations. Each receives a
+stable disposition and evidence, even if the review service created no thread.
+An inherited fix requires the same property analysis as a locally authored fix.
+
+Report these states separately: implemented; targeted behavior verified;
+integration verified; adversarial contract checks verified; external review
+delivered; findings dispositioned; release accepted. Test totals, clean CI,
+artifact hashes and predecessor provenance cannot substitute for a property-level
+coverage matrix. Name any untested phase or output explicitly. Complete semantic
+checks before repeatedly regenerating receipts; retain exact source identities
+and refresh evidence when relevant code or dependencies change.
+
 ## Copilot only at the late external checkpoint
 
 Do not request Copilot during authoring, local hardening, predecessor propagation,
