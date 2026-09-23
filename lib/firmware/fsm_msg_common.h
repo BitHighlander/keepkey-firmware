@@ -262,6 +262,16 @@ void fsm_msgPing(Ping* msg) {
     }
   }
 
+  /* A protected Ping can wait inside confirmation or credential entry. End
+   * an older signing stream first, so cancelling the Ping cannot resume it.
+   * This leaves the session's PIN and passphrase policy intact. */
+  if (authMsg < NUM_AUTHMESSAGES ||
+      (msg->has_button_protection && msg->button_protection) ||
+      (msg->has_pin_protection && msg->pin_protection) ||
+      (msg->has_passphrase_protection && msg->passphrase_protection)) {
+    fsm_abort_signing_workflows();
+  }
+
   if (authMsg < NUM_AUTHMESSAGES) {
     // this is an authenticator message
     unsigned errcode;
