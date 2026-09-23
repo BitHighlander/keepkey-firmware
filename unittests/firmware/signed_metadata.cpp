@@ -22,9 +22,12 @@ extern "C" {
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h" /* SolanaTokenInfo, solana_token_info_trusted */
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+
+void setup(void);
 }
 
 #include "gtest/gtest.h"
@@ -217,14 +220,26 @@ void make_matching_msg(EthereumSignTx* msg) {
 
 const char* TEST_ALIAS = "CI Test";
 
+void set_advanced_mode_for_test(bool enabled) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", enabled));
+}
+
 class SignedMetadataTest : public ::testing::Test {
  protected:
   void SetUp() override {
+    set_advanced_mode_for_test(true);
     signed_metadata_clear_signers();
     signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                  NULL, 0, 0, 0, false);
   }
-  void TearDown() override { signed_metadata_clear_signers(); }
+  void TearDown() override {
+    signed_metadata_clear_signers();
+    set_advanced_mode_for_test(false);
+  }
 
   void ExpectMalformed(const std::vector<uint8_t>& blob, uint8_t key_id) {
     EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), key_id),
@@ -1193,32 +1208,26 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesTransferArgs) {
   EXPECT_EQ(memcmp(md->args[1].value + 6, AMOUNT32, 32), 0);
 }
 
-/* THE v2 drain preventer: a v2 schema commits to calldata only — never to
- * msg->value — and a v2 match suppresses ethereum.c's native-value confirm
- * screen. A payable method could then clear-sign an arbitrary ETH transfer
- * whose value is never shown. Any nonzero native value must therefore refuse
- * the v2 match and fall to the blind-sign gate. (v1 is safe: tx_hash covers
- * value.) */
-TEST_F(SignedMetadataTest, V2SchemaRejectsNonzeroNativeValue) {
+/* A v2 schema commits to calldata only. A payable call may use its decoded
+ * display, but ethereum.c must also show the transaction's native value. */
+TEST_F(SignedMetadataTest, V2PayableCallRequiresNativeValueConfirmation) {
   std::vector<uint8_t> blob = v2_base_blob();
   ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
             METADATA_VERIFIED);
-
   EthereumSignTx msg;
   std::vector<uint8_t> data = v2_transfer_calldata();
-  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true, (uint32_t)data.size());
-  msg.has_value = true;
+  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true,
+              static_cast<uint32_t>(data.size()));
   msg.value.size = 1;
-  msg.value.bytes[0] = 0x01;  // 1 wei is enough — any nonzero value refuses
-  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
-
-  /* Same tx with zero value clear-signs — proving the refusal above is the
-   * value guard, not some other binding. */
-  msg.value.size = 0;
-  msg.has_value = false;
-  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+  msg.value.bytes[0] = 0;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+  signed_metadata_clear();
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
 }
-
 /* Relay solver swap: selector 0x02d5f05f(token address, amount, requestId) —
  * three fixed single words, EXACTLY the shape pulled from real relay traffic
  * (100-byte calldata: 4 + 3*32, zero remainder, verified across 22 live
@@ -1347,7 +1356,7 @@ TEST_F(SignedMetadataTest, V2RejectsSelectorMismatch) {
 /* An unsupported display format (dynamic types out of scope) -> MALFORMED. */
 TEST_F(SignedMetadataTest, V2RejectsUnsupportedFormat) {
   V2Spec s = v2_base_spec();
-  s.args[1] = V2Arg{"data", ARG_FORMAT_BYTES, 0, ""};
+  s.args[1] = V2Arg{"data", ARG_FORMAT_STRING, 0, ""};
   std::vector<uint8_t> blob = sign_body(build_v2_body(s));
   ExpectMalformed(blob, TEST_KEY_ID);
 }
@@ -1453,6 +1462,7 @@ TEST(SignedMetadataEnforceSchema, ReliedButUnavailableOrUnverifiedFails) {
 // path): a valid signature from a loaded signer verifies; tampering, an
 // unloaded key_id, or a wrong signature length are all rejected.
 TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
+  set_advanced_mode_for_test(true);
   signed_metadata_clear_signers();
   signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                nullptr, 0, 0, 0, false);
@@ -1479,12 +1489,14 @@ TEST(SignedMetadataAttestation, VerifiesValidRejectsTampered) {
       signed_metadata_verify_attestation(TEST_KEY_ID, data, len, sig, 63));
 
   signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
 }
 
 // End-to-end test of the production Solana token-definition path: builds the
 // exact domain-separated preimage solana_token_info_trusted() reconstructs,
 // signs it, and checks acceptance + every rejection branch.
 TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
+  set_advanced_mode_for_test(true);
   signed_metadata_clear_signers();
   signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS,
                                nullptr, 0, 0, 0, false);
@@ -1546,6 +1558,7 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   EXPECT_FALSE(solana_token_info_trusted(&ti));
 
   signed_metadata_clear_signers();
+  set_advanced_mode_for_test(false);
 }
 
 }  // namespace

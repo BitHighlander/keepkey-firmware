@@ -522,6 +522,11 @@ static bool isCrossAccountSegwitChangeAllowed(const uint32_t* lhs_address_n,
 
   if (count != lhs_address_n_count) return false;
 
+  // Mixed script purposes may share an account only below the same leading
+  // path. Extended paths must not silently cross into another wallet branch.
+  if (memcmp(lhs_address_n, rhs_address_n, (count - 5) * sizeof(uint32_t)) != 0)
+    return false;
+
   // Only do this for coins that support segwit
   if (!coin->has_segwit || !coin->segwit) return false;
 
@@ -728,10 +733,8 @@ void signing_init(const SignTx* msg, const CoinType* _coin,
   multisig_fp_mismatch = false;
   next_nonsegwit_input = 0xffffffff;
 
-  /* An OP_RETURN-only transaction never reaches the payment-output path that
-   * normally resets this context. Start each signing request with a fresh
-   * current digest while preserving the previous completed transaction used
-   * by the duplicate-output warning. */
+  /* All outputs share this request's input hash. Preserve the prior payment
+   * comparison key, but start a fresh current hash at the signing boundary. */
   txin_dgst_reset_current();
 
   curve = get_curve_by_name(coin->curve_name);
@@ -1562,7 +1565,13 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
         nwitnesses++;
         /* Never append the sighash inside the decoded protobuf field. Even a
          * nominal 73-byte value has no spare byte there. */
-        uint8_t sig_with_hashtype[73];
+        /* One byte larger than the field it copies, so the sighash
+         * append below is in bounds for every size nanopb can decode
+         * (bytes[73]) -- the cap above is then a policy check, not the
+         * only thing standing between a host and a stack write. */
+        uint8_t
+            sig_with_hashtype[sizeof(txinput->multisig.signatures[0].bytes) +
+                              1];
         const size_t sig_len = txinput->multisig.signatures[i].size;
         memcpy(sig_with_hashtype, txinput->multisig.signatures[i].bytes,
                sig_len);
@@ -1744,7 +1753,7 @@ void signing_txack(TransactionType* tx) {
         authorized_bip143_in += tx->inputs[0].amount;
 
         txin_dgst_addto(tx->inputs[0].prev_hash.bytes,
-                        sizeof(TxInputType_prev_hash_t));
+                        sizeof(tx->inputs[0].prev_hash.bytes));
 
         phase1_request_next_input();
       } else {

@@ -152,6 +152,16 @@ bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
   size_t value_size;
   const TokenType* token;
 
+  /* ethereumFormatAmount() keys the " WAN" ticker off the module's
+   * wanchain_tx_type, which ethereum_signing_init() sets -- and on the
+   * transfer path that has not run yet. Set it from THIS message, or a
+   * previous Wanchain transaction's type names the asset on this one's amount
+   * screen. signing_init() assigns the same value again later. */
+  wanchain_tx_type =
+      (msg->has_tx_type && (msg->tx_type == 1 || msg->tx_type == 6))
+          ? msg->tx_type
+          : 0;
+
   if (ethereum_isStandardERC20Transfer(msg)) {
     value_bytes = msg->data_initial_chunk.bytes + 4 + 32;
     value_size = 32;
@@ -906,9 +916,10 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        // Decoded who/what/why approved; raw-data confirm is suppressed. The
-        // signature is bound to this metadata's tx hash in send_signature().
-        needs_confirm = false;
+        // Decoded who/what/why approved; raw-data confirm is suppressed.
+        // A v2 schema does not bind native value, so show that transaction
+        // amount and recipient separately when it is nonzero.
+        needs_confirm = signed_metadata_schema_moves_value();
         data_needs_confirm = false;
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -937,7 +948,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   if (needs_confirm) {
-    if (token != NULL) {
+    if (token != NULL && !signed_metadata_schema_moves_value()) {
       if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
                                    msg->data_initial_chunk.bytes + 36, 32,
                                    token, confirm_body_message,
@@ -1193,6 +1204,7 @@ void ethereum_signing_abort(void) {
     memzero(privkey, sizeof(privkey));
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
+    signed_metadata_clear();
     layoutHome();
     ethereum_signing = false;
   }

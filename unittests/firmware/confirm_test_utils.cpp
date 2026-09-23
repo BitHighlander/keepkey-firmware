@@ -106,3 +106,36 @@ int kkconfirm_drain(void) {
   }
   return n - KKCONFIRM_MSGS_PER_SCREEN;
 }
+
+#include "gtest/gtest.h"
+extern "C" {
+#include "keepkey/board/confirm_sm.h"
+}
+
+TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  const char body[] = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+  size_t pages = 0;
+  for (const char* cursor = body; *cursor;) {
+    const size_t take = confirm_constant_power_subpage_take(cursor);
+    ASSERT_GT(take, 0u);
+    cursor += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1u);
+  const uint8_t yes[] = {0x08, 0x01};
+  const uint8_t no[] = {0x08, 0x00};
+  // Decisions can arrive before acknowledgements on the separate debug link.
+  for (size_t page = 0; page < pages; page++) {
+    ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision,
+                                   yes, sizeof(yes)));
+    ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0));
+  }
+  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0));
+  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, no,
+                                 sizeof(no)));
+  EXPECT_TRUE(confirm_constant_power_paged(
+      ButtonRequestType_ButtonRequest_ConfirmWord, "Backup", body));
+  EXPECT_EQ(0, kkconfirm_drain());
+}

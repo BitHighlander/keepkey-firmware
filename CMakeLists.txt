@@ -23,6 +23,14 @@ option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
 
+# Regular 7.15 defaults to every supported chain, including Zcash Orchard.
+# Preserve an explicit OFF for builds that omit Zcash privacy support.
+if(KK_BITCOIN_ONLY)
+  set(KK_ZCASH_PRIVACY OFF)
+else()
+  option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
+endif()
+
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
 # itself be compiled with -fPIC. macOS happens to be lenient and will produce
@@ -165,10 +173,14 @@ else()
   add_definitions(-DBITCOIN_ONLY=0)
 endif()
 
-# The Zcash privacy engine lands in the next release slice. Keep its guarded
-# declarations disabled here so this foundational slice remains buildable on
-# its own under the ARM toolchain's -Wundef -Werror policy.
-add_definitions(-DZCASH_PRIVACY=0)
+if(${KK_ZCASH_PRIVACY})
+  add_definitions(-DZCASH_PRIVACY=1)
+  # Orchard leaves the regular image tightest on flash; shrink the Gladman
+  # AES lookup tables from 4KB to 1KB each (-15,360 bytes ROM).
+  add_definitions(-DAES_SMALL_TABLES)
+else()
+  add_definitions(-DZCASH_PRIVACY=0)
+endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
   add_definitions(-DDEBUG_ON)
@@ -236,6 +248,9 @@ if(${KK_EMULATOR})
   add_test(test-firmware ${CMAKE_BINARY_DIR}/bin/firmware-unit)
   add_test(test-board ${CMAKE_BINARY_DIR}/bin/board-unit)
   add_test(test-crypto ${CMAKE_BINARY_DIR}/bin/crypto-unit)
+  if(KK_ZCASH_PRIVACY)
+    add_test(test-zcash-crypto ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit)
+  endif()
 
   add_custom_target(
     xunit
@@ -245,5 +260,12 @@ if(${KK_EMULATOR})
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/board.xml
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
+  add_dependencies(xunit firmware-unit board-unit crypto-unit)
+  if(KK_ZCASH_PRIVACY)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-crypto.xml)
+    add_dependencies(xunit zcash-crypto-unit)
+  endif()
 
 endif()

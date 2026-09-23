@@ -656,15 +656,16 @@ void layout_animate_images(void* data, uint32_t duration, uint32_t elapsed) {
 }
 
 #if DEBUG_LINK
-/* Kept for bootloader/debug screens; normal layout clearing no longer draws
- * it because it overlaps the measured bottom body row. */
+/* Not drawn by layout_clear() any more -- the watermark overlapped the bottom
+ * body row, which the measured pager now accounts for. tools/bootloader still
+ * stamps its own screens with it under DEBUG_LINK, so the definition stays. */
 void layout_debuglink_watermark(void) {
   const Font* font = get_body_font();
   const char* watermark = "DEBUG_LINK";
   DrawableParams sp;
   sp.x = KEEPKEY_DISPLAY_WIDTH - calc_str_width(font, watermark) -
          BODY_FONT_LINE_PADDING;
-  sp.y = KEEPKEY_DISPLAY_HEIGHT - font_height(font);
+  sp.y = KEEPKEY_DISPLAY_HEIGHT - 1 * font_height(font);
   sp.color = 0x22;
   draw_string(canvas, font, watermark, &sp, KEEPKEY_DISPLAY_WIDTH,
               font_height(font));

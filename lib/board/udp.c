@@ -23,6 +23,7 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/emulator/emulator.h"
+#include "trezor/crypto/memzero.h"
 
 #include <stdint.h>
 #include <assert.h>
@@ -63,10 +64,8 @@ void usbPoll(void) {
       // msg_read_tiny(msg.message, sizeof(msg.message));
     }
   }
-
-  // Keep a queued progress animation moving while we block on host I/O (e.g.
-  // Zcash proof generation on the host), matching device usbPoll(). No-op
-  // unless a trickle animation is active.
+  memzero(buf, sizeof(buf));
+  /* Keep progress animations moving while the emulator waits for host work. */
   layout_animate_poll();
 }
 

@@ -30,6 +30,7 @@
 #include "keepkey/board/messages.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/app_confirm.h"
@@ -136,6 +137,31 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                             \
   }
 
+/* A locked bitcoin-only wallet leaves the RAM shadow reset, so handlers that
+ * merely PERSIST settings look perfectly ordinary: storage_setPin(),
+ * storage_setLabel() and friends update the shadow, storage_commit() then
+ * returns without writing (the btc_only_locked backstop in storage.c), and the
+ * handler answers Success. The change appears to take effect for the rest of
+ * the session and is gone at the next boot.
+ *
+ * CHECK_NOT_INITIALIZED already refuses this for the ceremonies that CREATE a
+ * seed. The same reasoning applies to every handler that expects its write to
+ * survive a reboot, and those were missed. Refuse before doing the work rather
+ * than reporting a success that did not happen. */
+#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                    \
+  if (storage_isBitcoinOnlyLocked()) {                                   \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Bitcoin-only wallet present. Use Wipe first.");     \
+    layoutHome();                                                        \
+    return;                                                              \
+  }                                                                      \
+  if (storage_isFirmwareTooOld()) {                                      \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Storage requires newer firmware. Use Wipe first."); \
+    layoutHome();                                                        \
+    return;                                                              \
+  }
+
 #define CHECK_NOT_INITIALIZED                                              \
   if (storage_isInitialized()) {                                           \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
@@ -151,6 +177,11 @@ bool fsm_test_derivedNodeIsZero(void) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
     return;                                                                \
+  }                                                                        \
+  if (storage_isFirmwareTooOld()) {                                        \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
+                    "Storage requires newer firmware. Use Wipe first.");   \
+    return;                                                                \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
@@ -166,26 +197,19 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                                   \
   }
 
-/* Only the two ceremony STARTS use this. Every other message that persists
- * anything is handled structurally instead: storage_commit() aborts an armed
- * ceremony, so a handler that writes can never have its write consumed by
- * one -- the worst it can do is end it. */
-#define CHECK_NO_CEREMONY                                     \
-  if (setup_isArmed()) {                                      \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
-                    "Device is in the middle of setup. Send " \
-                    "Initialize or Cancel first.");           \
-    layoutHome();                                             \
-    return;                                                   \
-  }
-
-#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
-  if (storage_isBitcoinOnlyLocked()) {                              \
-    fsm_sendFailure(FailureType_Failure_Other,                      \
-                    "Device holds a bitcoin-only wallet. Wipe the " \
-                    "device to use multi-chain firmware.");         \
-    layoutHome();                                                   \
-    return;                                                         \
+#define CHECK_NOT_BTC_ONLY_LOCKED                                        \
+  if (storage_isBitcoinOnlyLocked()) {                                   \
+    fsm_sendFailure(FailureType_Failure_Other,                           \
+                    "Device holds a bitcoin-only wallet. Wipe the "      \
+                    "device to use multi-chain firmware.");              \
+    layoutHome();                                                        \
+    return;                                                              \
+  }                                                                      \
+  if (storage_isFirmwareTooOld()) {                                      \
+    fsm_sendFailure(FailureType_Failure_Other,                           \
+                    "Storage requires newer firmware. Use Wipe first."); \
+    layoutHome();                                                        \
+    return;                                                              \
   }
 
 #define CHECK_PIN              \
@@ -296,12 +320,49 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
 }
 
 /* A transport rejection never reaches the chain handler's abort path. Clear
- * in-flight workflows before reporting it so a later packet cannot resume one.
- */
+ * the in-flight SIGNING session before reporting it so a later packet cannot
+ * resume one: a malformed EthereumTxAck or TxAck is rejected here, and without
+ * this the half-advanced session is still live for the next ack.
+ *
+ * NOT fsm_abort_workflows(): a setup ceremony cannot be resumed by a rejected
+ * frame -- it advances only on on-device input, setup_stage() refuses to
+ * restage over an armed ceremony (#429) and storage_commit() disarms one --
+ * so tearing it down here buys nothing and costs the user real work. Every
+ * unmapped message id lands in this handler, and on bitcoin-only firmware that
+ * is every multi-chain message a host probes with: setup_abort() would
+ * memzero a recovery 20 words into its seed, mid-entry, because a wallet
+ * application asked for an Ethereum address. */
 static void sendFailureWrapper(FailureType code, const char* text) {
-  fsm_abort_workflows();
+  fsm_abort_signing_workflows();
   layoutHome();
   fsm_sendFailure(code, text);
+}
+
+/* A continuation request is sent only after the handler has parsed and
+ * accepted the preceding workflow step. Unrelated queries and malformed input
+ * produce no such request and cannot keep a stalled session unlocked. Button,
+ * PIN and passphrase prompts run in blocking handlers, where the main-loop
+ * idle timer does not advance, so they do not belong here. */
+static void fsm_workflow_response_sent(MessageType msg_id) {
+  switch (msg_id) {
+    case MessageType_MessageType_TxRequest:
+    case MessageType_MessageType_EntropyRequest:
+    case MessageType_MessageType_CharacterRequest:
+#if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxRequest:
+    case MessageType_MessageType_CosmosMsgRequest:
+    case MessageType_MessageType_OsmosisMsgRequest:
+    case MessageType_MessageType_BinanceTxRequest:
+    case MessageType_MessageType_EosTxActionRequest:
+    case MessageType_MessageType_ThorchainMsgRequest:
+    case MessageType_MessageType_MayachainMsgRequest:
+    case MessageType_MessageType_TendermintMsgRequest:
+#endif
+      note_host_activity();
+      break;
+    default:
+      break;
+  }
 }
 
 void fsm_init(void) {
@@ -316,6 +377,7 @@ void fsm_init(void) {
 #endif
 
   msg_init();
+  msg_set_sent_callback(&fsm_workflow_response_sent);
 
   txin_dgst_initialize();
 }
@@ -357,6 +419,14 @@ void fsm_sendFailure(FailureType code, const char* text) {
 
 void fsm_abort_workflows(void) {
   setup_abort();
+  fsm_abort_signing_workflows();
+}
+
+/* The signing half of the above. Clearing PIN authorization revokes retained
+ * signing state, but must not discard a setup ceremony: recovery stages its
+ * ceremony before prompting for the PIN, and every routine PIN entry clears
+ * the session while checking the entered digits against the wipe code. */
+void fsm_abort_signing_workflows(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
@@ -367,6 +437,9 @@ void fsm_abort_workflows(void) {
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+#if ZCASH_PRIVACY
+  zcash_signing_abort();
+#endif
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
@@ -409,6 +482,9 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+#if ZCASH_PRIVACY
+#include "fsm_msg_zcash.h"
+#endif
 #else
 // The coin engines above are compiled out, but the always-on
 // Initialize/Cancel handlers still call each engine's abort hook. With no
