@@ -14,9 +14,12 @@ only.
 
 The canonical main-worktree form is
 `docs/release/MASTER-AUDIT-TEMPLATE.md`, SHA256
-`8c6ef0cdb27bc028befec2c4614f3bb9b672010e84fd797c829dea83b1c88315`.
+`dc484ea3bb7810b410c43830c307f032ad19276f81c7c6c123c407405d4b27e8`
+at the pre-review check. The main copy adds a Block 00a progress note to the
+committed snapshot; the template's numbered form sections are unchanged.
 The main worktree has unrelated unresolved changes; the committed template at
-`7d2c76bce1b49449cc80051cd431b7b1a487a1f3` is byte-identical.
+`7d2c76bce1b49449cc80051cd431b7b1a487a1f3` supplies those same form
+sections. The main copy remains the coordination authority.
 
 ## Selected behavior and invariant
 
