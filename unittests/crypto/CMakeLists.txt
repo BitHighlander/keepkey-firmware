@@ -24,8 +24,9 @@ target_link_libraries(crypto-unit
     trezorcrypto
     kktransport)
 
-# Orchard/Pallas engine + its unit test only exist when privacy is built in.
-if(${KK_ZCASH_PRIVACY})
+# Exercise the dormant engine in ordinary full emulator CI, even though this
+# foundation does not yet expose Zcash firmware handlers.
+if(KK_ZCASH_PRIVACY OR (KK_EMULATOR AND NOT KK_BITCOIN_ONLY))
   add_executable(zcash-crypto-unit
       ../firmware/zcash.cpp
       ${CMAKE_SOURCE_DIR}/lib/firmware/zcash.c)

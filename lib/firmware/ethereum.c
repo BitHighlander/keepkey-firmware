@@ -908,7 +908,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       if (signed_metadata_confirm()) {
         // Decoded who/what/why approved; raw-data confirm is suppressed. The
         // signature is bound to this metadata's tx hash in send_signature().
-        needs_confirm = false;
+        needs_confirm = signed_metadata_schema_moves_value();
         data_needs_confirm = false;
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,

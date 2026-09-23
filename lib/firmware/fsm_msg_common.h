@@ -349,7 +349,7 @@ void fsm_msgPing(Ping* msg) {
 }
 
 void fsm_msgChangePin(ChangePin* msg) {
-  CHECK_NOT_BTC_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -400,7 +400,7 @@ void fsm_msgChangePin(ChangePin* msg) {
 }
 
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
-  CHECK_NOT_BTC_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -545,7 +545,7 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 }
 
 void fsm_msgLoadDevice(LoadDevice* msg) {
-  CHECK_NOT_BTC_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
 
   if (!confirm_load_device(msg->has_node)) {
@@ -574,7 +574,7 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 }
 
 void fsm_msgResetDevice(ResetDevice* msg) {
-  CHECK_NOT_BTC_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
 
@@ -610,7 +610,7 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
-  CHECK_NOT_BTC_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
                  "Do you want to change the label to \"%s\"?", msg->label)) {
@@ -701,6 +701,7 @@ apply_settings_cancelled:
 }
 
 void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NO_CEREMONY
 
   if (msg->has_dry_run && msg->dry_run) {
@@ -743,7 +744,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
-  CHECK_NOT_BTC_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 
   for (size_t i = 0; i < msg->policy_count; ++i) {

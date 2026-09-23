@@ -1505,6 +1505,10 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
 
 /* ── RedPallas Signing Smoke Test ────────────────────────────────── */
 
+// Explicit 80-byte randomness fixture for the pinned RedPallas API. This is
+// test input only; firmware signing must use the health-checked CSPRNG.
+static const uint8_t redpallas_test_randomness[80] = {0x42};
+
 TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
@@ -1519,7 +1523,8 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
   alpha[31] = 0x00;
 
   uint8_t signature[64];
-  int ret = redpallas_sign_digest(keys.ask, alpha, sighash, signature);
+  int ret = redpallas_sign_digest(keys.ask, alpha, sighash,
+                                  redpallas_test_randomness, signature);
   EXPECT_EQ(ret, 0) << "RedPallas signing must succeed";
 
   /* Signature must be nonzero */
@@ -1581,7 +1586,9 @@ TEST(Zcash, RedPallasSign_MultipleCallsSucceed) {
   uint8_t zero[64] = {0};
   for (int i = 0; i < 3; i++) {
     uint8_t sig[64];
-    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash, sig), 0)
+    ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash,
+                                    redpallas_test_randomness, sig),
+              0)
         << "Signing must succeed on call " << i;
     EXPECT_TRUE(memcmp(sig, zero, 64) != 0)
         << "Signature must be nonzero on call " << i;
@@ -1603,8 +1610,12 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
   memset(sighash_b, 0xBB, 32);
 
   uint8_t sig_a[64], sig_b[64];
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a, sig_a), 0);
-  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b, sig_b), 0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_a,
+                                  redpallas_test_randomness, sig_a),
+            0);
+  ASSERT_EQ(redpallas_sign_digest(keys.ask, alpha, sighash_b,
+                                  redpallas_test_randomness, sig_b),
+            0);
 
   EXPECT_TRUE(memcmp(sig_a, sig_b, 64) != 0)
       << "Different sighash must produce different signatures";

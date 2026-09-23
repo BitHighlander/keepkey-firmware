@@ -327,24 +327,23 @@ bool confirm_nano_address(const char* desc, const char* address) {
  * confirm_zcash_address() - Show zcash address confirmation
  *
  * INPUT
- *      - desc: description (title) shown on both screens
- *      - address: zcash unified address — full text on the first screen,
- *        QR on the second
+ *      - desc: description (title) shown on text and QR screens
+ *      - address: zcash unified address — complete text on measured pages,
+ *        QR after the text pages
  * OUTPUT
  *     true/false of confirmation
  *
  */
 #if ZCASH_PRIVACY
 bool confirm_zcash_address(const char* desc, const char* address) {
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_Address, desc,
-                                  "%s", address)) {
+  if (!address || !confirm_bytes(ButtonRequestType_ButtonRequest_Address, desc,
+                                 (const uint8_t*)address, strlen(address))) {
     return false;
   }
 
-  return confirm_with_custom_layout(&layout_zcash_address_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    desc, "%s", address);
+  return confirm_address_with_custom_layout(
+      &layout_zcash_address_notification,
+      ButtonRequestType_ButtonRequest_Address, desc, "%s", address);
 }
 #endif
 

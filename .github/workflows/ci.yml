@@ -872,6 +872,12 @@ jobs:
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
           echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
+      - name: Run emulator lifecycle and concurrency regressions
+        run: |
+          cmake --build build-emu --target emulator-unit -j "$(sysctl -n hw.ncpu)"
+          mkdir -p test-reports/emulator
+          build-emu/bin/emulator-unit --gtest_output=xml:test-reports/emulator/lifecycle.xml
+
       - name: Upload libkkemu.dylib
         # Always upload, even on later test failure — the binary is
         # what vault and external auditors actually consume from this

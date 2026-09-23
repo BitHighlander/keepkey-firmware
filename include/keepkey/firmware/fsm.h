@@ -26,6 +26,8 @@
 /* Scrub the function-static HDNode used by synchronous FSM derivations. */
 void fsm_clearDerivedNode(void);
 #if DEBUG_LINK
+void fsm_test_clearLastFailure(void);
+FailureType fsm_test_lastFailureCode(void);
 void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
 #endif

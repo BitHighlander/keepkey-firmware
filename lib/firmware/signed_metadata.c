@@ -255,7 +255,8 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
       /* BYTES covers an opaque fixed word — an order/request id, say — which
        * a router genuinely cannot render as an address or an amount. It still
        * consumes exactly one 32-byte ABI word, so structural completeness is
-       * unaffected; only the rendering differs (hex, first 16 bytes). */
+       * unaffected; only the rendering differs (hex, every byte on numbered
+       * pages). */
       case ARG_FORMAT_BYTES:
         arg->value_len = 0; /* filled from the tx calldata at decode time */
         break;
@@ -412,6 +413,7 @@ void signed_metadata_clear(void) {
   relied_on_metadata = false;
   metadata_signer_loaded = false;
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 }
 
 void signed_metadata_clear_signers(void) {
@@ -742,6 +744,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
    * signed_metadata_enforce() pass for a v2 blob that did not decode this tx.
    */
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 
   if (!metadata_available || !msg ||
       stored_metadata.classification != METADATA_VERIFIED ||

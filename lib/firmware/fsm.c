@@ -147,6 +147,13 @@ bool fsm_test_derivedNodeIsZero(void) {
    * false. Refuse here, loudly, before the user does the work -- a        \
    * ceremony allowed to run would end in storage_commit() declining to    \
    * write and the handler reporting success anyway. */                    \
+  if (storage_isFirmwareTooOld()) {                                        \
+    fsm_sendFailure(FailureType_Failure_Other,                             \
+                    "Wallet format requires newer firmware. "              \
+                    "Update firmware or wipe the device.");                \
+    layoutHome();                                                          \
+    return;                                                                \
+  }                                                                        \
   if (storage_isBitcoinOnlyLocked()) {                                     \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
@@ -179,7 +186,14 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                                   \
   }
 
-#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
+#define CHECK_STORAGE_WRITABLE                                      \
+  if (storage_isFirmwareTooOld()) {                                 \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Wallet format requires newer firmware. "       \
+                    "Update firmware or wipe the device.");         \
+    layoutHome();                                                   \
+    return;                                                         \
+  }                                                                 \
   if (storage_isBitcoinOnlyLocked()) {                              \
     fsm_sendFailure(FailureType_Failure_Other,                      \
                     "Device holds a bitcoin-only wallet. Wipe the " \
@@ -337,7 +351,16 @@ void fsm_sendSuccess(const char* text) {
   msg_write(MessageType_MessageType_Success, resp);
 }
 
+#if defined(EMULATOR) && DEBUG_LINK
+static FailureType test_failure_code;
+void fsm_test_clearLastFailure(void) { test_failure_code = (FailureType)0; }
+FailureType fsm_test_lastFailureCode(void) { return test_failure_code; }
+#endif
+
 void fsm_sendFailure(FailureType code, const char* text) {
+#if defined(EMULATOR) && DEBUG_LINK
+  test_failure_code = code;
+#endif
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;

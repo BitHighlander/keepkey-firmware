@@ -59,10 +59,12 @@ set(sources
     trezor-firmware/crypto/aes/aestab.c)
 
 # Pallas/Orchard curve arithmetic (~2.4k LOC) -- only the Zcash shielded engine
-# uses it. Excluded from the default and bitcoin-only images.
-if(${KK_ZCASH_PRIVACY})
+# uses it. Also built for full emulator crypto tests; production default and
+# Bitcoin-only firmware still omit it.
+if(KK_ZCASH_PRIVACY OR (KK_EMULATOR AND NOT KK_BITCOIN_ONLY))
   list(APPEND sources
       trezor-firmware/crypto/pallas.c
+      trezor-firmware/crypto/pallas_ct.c
       trezor-firmware/crypto/pallas_sinsemilla.c
       trezor-firmware/crypto/pallas_swu.c
       trezor-firmware/crypto/redpallas.c

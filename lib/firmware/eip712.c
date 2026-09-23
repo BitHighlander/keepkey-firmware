@@ -31,6 +31,7 @@
    strings and address should be prefixed by 0x
 */
 
+#include <errno.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -620,6 +621,16 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
           if (']' == typeType[strlen(typeType) - 1]) {
             return INT_ARRAY_ERROR;
           } else {
+            // all int strings are assumed to be base 10 and fit into 64 bits
+            char* endptr = NULL;
+            errno = 0;
+            long long intVal = strtoll(valStr, &endptr, 10);
+            if (errno == ERANGE || endptr == valStr || *endptr != '\0') {
+              return GENERAL_ERROR;
+            }
+            if (0 == strncmp("uint", typeType, 4) && intVal < 0) {
+              return GENERAL_ERROR;
+            }
             if (ds_vals) {
               marshallDsVals(valStr);
             } else {
@@ -643,15 +654,6 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 // zero padding for positive
                 encBytes[ctr] = 0;
               }
-            }
-            // all int strings are assumed to be base 10 and fit into 64 bits
-            char* endptr = NULL;
-            long long intVal = strtoll(valStr, &endptr, 10);
-            if (endptr == valStr || *endptr != '\0') {
-              return GENERAL_ERROR;
-            }
-            if (0 == strncmp("uint", typeType, 4) && intVal < 0) {
-              return GENERAL_ERROR;
             }
             // Needs to be big endian, so add to encBytes appropriately
             encBytes[24] = (intVal >> 56) & 0xff;

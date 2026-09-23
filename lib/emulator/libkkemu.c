@@ -181,16 +181,15 @@ static void libkkemu_capture_frame(const uint8_t* canvas_buf) {
       memcmp(capture_scratch, last_packed, FRAME_PACKED_SIZE) == 0) {
     return;
   }
+  uint32_t w = atomic_load_explicit(&frame_write_idx, memory_order_relaxed);
+  uint32_t r = atomic_load_explicit(&frame_read_idx, memory_order_acquire);
+  if (w - r >= FRAME_RING_SIZE) return;
+
+  memcpy(frame_ring[w % FRAME_RING_SIZE], capture_scratch, FRAME_PACKED_SIZE);
+  atomic_store_explicit(&frame_write_idx, w + 1, memory_order_release);
+  /* A dropped frame must remain eligible for capture after the host drains. */
   memcpy(last_packed, capture_scratch, FRAME_PACKED_SIZE);
   last_packed_valid = 1;
-
-  memcpy(frame_ring[frame_write_idx % FRAME_RING_SIZE], capture_scratch,
-         FRAME_PACKED_SIZE);
-  frame_write_idx++;
-  /* Drop oldest if host fell behind */
-  if (frame_write_idx - frame_read_idx > FRAME_RING_SIZE) {
-    frame_read_idx = frame_write_idx - FRAME_RING_SIZE;
-  }
 }
 
 /* ── Public API ─────────────────────────────────────────────────────── */
@@ -263,6 +262,9 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
 
 void kkemu_shutdown(void) {
   if (!libkkemu_initialized) return;
+
+  /* Join the producer before touching firmware, rings, or host flash. */
+  kkemu_stop();
 
   /* Clear in-flight signing state and derived keys before committing storage. */
   fsm_abort_workflows();
