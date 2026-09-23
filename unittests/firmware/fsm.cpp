@@ -48,6 +48,25 @@ TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   }
 }
 
+TEST(Fsm, ZcashPrivacyWireSurfaceMatchesBuildVariant) {
+  fsm_init();
+#if ZCASH_PRIVACY
+  EXPECT_NE(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_ZcashSignPCZT,
+                           IN_MSG));
+  EXPECT_NE(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_ZcashPCZTAction,
+                           IN_MSG));
+  EXPECT_NE(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_ZcashSignedPCZT,
+                           OUT_MSG));
+#else
+  EXPECT_EQ(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_ZcashSignPCZT,
+                           IN_MSG));
+#endif
+}
+
 #if !BITCOIN_ONLY
 TEST(Fsm, AbortWorkflowsClearsEveryObservableSigningSession) {
   HDNode node = {};

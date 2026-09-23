@@ -148,12 +148,18 @@ bool fsm_test_derivedNodeIsZero(void) {
  * seed. The same reasoning applies to every handler that expects its write to
  * survive a reboot, and those were missed. Refuse before doing the work rather
  * than reporting a success that did not happen. */
-#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                \
-  if (storage_isBitcoinOnlyLocked()) {                               \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
-                    "Bitcoin-only wallet present. Use Wipe first."); \
-    layoutHome();                                                    \
-    return;                                                          \
+#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                    \
+  if (storage_isBitcoinOnlyLocked()) {                                   \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Bitcoin-only wallet present. Use Wipe first.");     \
+    layoutHome();                                                        \
+    return;                                                              \
+  }                                                                      \
+  if (storage_isFirmwareTooOld()) {                                      \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Storage requires newer firmware. Use Wipe first."); \
+    layoutHome();                                                        \
+    return;                                                              \
   }
 
 #define CHECK_NOT_INITIALIZED                                              \
@@ -171,6 +177,11 @@ bool fsm_test_derivedNodeIsZero(void) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
     return;                                                                \
+  }                                                                        \
+  if (storage_isFirmwareTooOld()) {                                        \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
+                    "Storage requires newer firmware. Use Wipe first.");   \
+    return;                                                                \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
@@ -186,13 +197,19 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                                   \
   }
 
-#define CHECK_NOT_BTC_ONLY_LOCKED                                   \
-  if (storage_isBitcoinOnlyLocked()) {                              \
-    fsm_sendFailure(FailureType_Failure_Other,                      \
-                    "Device holds a bitcoin-only wallet. Wipe the " \
-                    "device to use multi-chain firmware.");         \
-    layoutHome();                                                   \
-    return;                                                         \
+#define CHECK_NOT_BTC_ONLY_LOCKED                                        \
+  if (storage_isBitcoinOnlyLocked()) {                                   \
+    fsm_sendFailure(FailureType_Failure_Other,                           \
+                    "Device holds a bitcoin-only wallet. Wipe the "      \
+                    "device to use multi-chain firmware.");              \
+    layoutHome();                                                        \
+    return;                                                              \
+  }                                                                      \
+  if (storage_isFirmwareTooOld()) {                                      \
+    fsm_sendFailure(FailureType_Failure_Other,                           \
+                    "Storage requires newer firmware. Use Wipe first."); \
+    layoutHome();                                                        \
+    return;                                                              \
   }
 
 #define CHECK_PIN              \
@@ -420,6 +437,9 @@ void fsm_abort_signing_workflows(void) {
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+#if ZCASH_PRIVACY
+  zcash_signing_abort();
+#endif
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
@@ -462,6 +482,9 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+#if ZCASH_PRIVACY
+#include "fsm_msg_zcash.h"
+#endif
 #else
 // The coin engines above are compiled out, but the always-on
 // Initialize/Cancel handlers still call each engine's abort hook. With no
