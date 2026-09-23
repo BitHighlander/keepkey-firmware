@@ -921,10 +921,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        // Decoded who/what/why approved; raw-data confirm is suppressed. The
-        // signature is bound to this metadata's tx hash in send_signature().
-        needs_confirm = false;
-        data_needs_confirm = false;
+        /* A runtime-loaded provider is annotation, never authority to remove
+         * an ordinary review screen. Keep the amount, raw calldata and fee
+         * path unchanged after the decoded screens. Only a future pinned
+         * firmware signer could use the suppression path; this build has no
+         * such signer. Metadata remains bound to the signature below. */
+        if (!signed_metadata_from_loaded_signer()) {
+          needs_confirm = signed_metadata_schema_moves_value();
+          data_needs_confirm = false;
+        }
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         "Signing cancelled by user");
@@ -933,9 +938,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
-  // (then it must survive to bind the signature). Prevents stale reuse when the
-  // contractHandled / ERC-20 paths bypass the metadata check above.
+  // Keep metadata only when its decoded screens were approved, so their
+  // attestation remains bound to the signature. Otherwise prevent stale reuse
+  // when contractHandled / ERC-20 paths bypassed metadata review.
   if (!signed_metadata_relied()) {
     signed_metadata_clear();
   }
