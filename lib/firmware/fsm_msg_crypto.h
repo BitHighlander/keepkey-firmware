@@ -75,6 +75,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
   uint8_t hash[32];
   if (!msg->has_identity ||
       cryptoIdentityFingerprint(&(msg->identity), hash) == 0) {
+    memzero(hash, sizeof(hash));
     fsm_sendFailure(FailureType_Failure_Other, "Invalid identity");
     layoutHome();
     return;
@@ -97,7 +98,11 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     return;
   }
 
-  CHECK_PIN
+  if (!pin_protect_cached()) {
+    memzero(hash, sizeof(hash));
+    layoutHome();
+    return;
+  }
 
   uint32_t address_n[5];
   address_n[0] = 0x80000000 | 13;
@@ -109,6 +114,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
                  ((uint32_t)hash[11] << 24);
   address_n[4] = 0x80000000 | hash[12] | (hash[13] << 8) | (hash[14] << 16) |
                  ((uint32_t)hash[15] << 24);
+  memzero(hash, sizeof(hash));
 
   HDNode* node = fsm_getDerivedNode(curve, address_n, 5, NULL);
   if (!node) {
