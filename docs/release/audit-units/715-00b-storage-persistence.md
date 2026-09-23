@@ -52,13 +52,15 @@ the current unframed V17 format; adding a CRC envelope is separate format work.
   patched full variant passed 64 screenshot tests (23 skipped) and 559
   integration tests (271 skipped). These are supporting evidence for the old
   base and pin, not a final result for the reconciled candidate.
-- The reconciled candidate's native suite passed 217 firmware, 20 board, and
-  19 crypto tests. Its focused storage power-cycle suite passed all five tests
-  after both storage fixes. The full candidate integration rerun remains
-  pending because Docker stopped responding to API requests.
-- The Bitcoin-only patched integration variant, exact-head CI, code-review
-  checkpoint, physical-device checks, and the rest of the 104-path audit remain
-  pending. No Copilot request was made.
+- The reconciled C-2 candidate passed 217 firmware, 20 board and 19 crypto
+  native tests; full OLED 64/23 pass/skip and integration 559/272 pass/skip.
+  Bitcoin-only passed 95 firmware, 20 board and 19 crypto native tests; OLED
+  25/62 pass/skip and integration 334/497 pass/skip. The focused storage
+  power-cycle suite passed all five tests after both storage fixes.
+- Exact-head hosted [run 35921519743](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35921519743)
+  passed all required jobs on `f7cd316a499fbccdcfbcd0c532bffb6365e19474`.
+  The report-only follow-up head still needs its own hosted result. Copilot,
+  physical-device and release checkpoints remain pending.
 
 The final master audit report and PDF required by the SOP must account for all
 Block 00b behavior, tests, pins, skipped checks, and reviewed code-bearing
@@ -69,19 +71,21 @@ scope before any completion claim.
 - **Opaque signed metadata display:** `ARG_FORMAT_BYTES` and `ARG_FORMAT_RAW`
   showed only the first 16 bytes followed by an ellipsis, then suppressed raw
   transaction review. The candidate now shows every byte in numbered 16-byte
-  pages; this change still needs a build and display-flow verification.
+  pages; both product builds and software matrices pass.
 - **Amount formatting failure:** `bn_format()` returns zero and clears its
   output when the amount plus suffix exceeds the supplied buffer. The old
   screens ignored that result and could approve an empty amount. The candidate
   uses a larger buffer and refuses the flow if formatting or final screen
-  assembly cannot represent the complete value. Final tests remain pending.
+  assembly cannot represent the complete value. Both product builds and
+  software matrices pass.
 - **Bootloader scope conflict:** Block 00b originally changed the shared
   `signatures_ok()` implementation and Block 00a had directly edited
   `tools/bootloader/usb_flash.c`. The owner retained SRS C-2, “No bootloader
   changes in this release.” The reconciled candidate now restores the
   pre-foundation bootloader source, removes the shared F3 signature change,
   and makes bootloader/updater/bootstrap artifacts opt-in. The default release
-  build must exclude those artifacts; clean-build verification is pending.
+  build excludes those artifacts. Both clean ARM builds and CI's artifact gate
+  passed.
 - **Dependency:** the reconciled crypto pin is
   `74908938c562ec89dcae9fb4e3b05ec3ff17f58b`, the head of upstream
   keepkey/trezor-firmware PR #12. It descends from both foundation pins, but
