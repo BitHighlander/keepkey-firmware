@@ -182,21 +182,11 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     }
 
     if (confirmed && parsed.memo_len > 0) {
-      bool printable = true;
-      for (uint16_t i = 0; i < parsed.memo_len; i++) {
-        if (parsed.memo[i] < 0x20 || parsed.memo[i] > 0x7e) {
-          printable = false;
-          break;
-        }
-      }
-      if (printable && parsed.memo_len <= 114) {
-        confirmed = confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
-                            "%.*s", (int)parsed.memo_len, parsed.memo);
-      } else {
-        confirmed =
-            confirm(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
-                    "Data attached (%u bytes)", (unsigned)parsed.memo_len);
-      }
+      /* raw_data.data is signed verbatim. A byte count or one unpaged screen
+       * hides a long memo's tail; confirm_bytes pages and escapes every byte.
+       */
+      confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                                "Memo", parsed.memo, parsed.memo_len);
     }
 
     if (!confirmed) {

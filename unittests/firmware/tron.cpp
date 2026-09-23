@@ -1,10 +1,43 @@
 extern "C" {
+#include "keepkey/board/layout.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/tron.h"
 }
 
 #include "gtest/gtest.h"
 #include <cstring>
 #include <vector>
+
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+
+TEST(Tron, LongBinaryMemoRequiresApprovalOfEveryPage) {
+  std::vector<uint8_t> memo(114, 'W');
+  memo[40] = 0;
+  memo.back() = 'Z';
+
+  size_t offset = 0;
+  int pages = 0;
+  while (offset < memo.size()) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(
+        memo.data() + offset, memo.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    offset += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1);
+
+  ASSERT_TRUE(kkconfirm_preload(pages - 1, 1));
+  EXPECT_FALSE(confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                             "Memo", memo.data(), memo.size()));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  ASSERT_TRUE(kkconfirm_preload(pages, 0));
+  EXPECT_TRUE(confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
+                            memo.data(), memo.size()));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
 
 /* ------------------------------------------------------------------ */
 /*  Minimal protobuf wire-format writer for building raw_data vectors  */
