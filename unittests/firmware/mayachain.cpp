@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/ecdsa.h"
@@ -55,6 +56,40 @@ TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
       mayachain_formatAmount(1, "ETH.ETH\n", rendered, sizeof(rendered)));
   EXPECT_FALSE(
       mayachain_formatAmount(1, "ETH.\\ETH", rendered, sizeof(rendered)));
+}
+
+TEST(Mayachain, RejectingAssetScreenAbortsSendHandler) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  hdnode_fill_public_key(&node);
+
+  MayachainSignTx sign_tx = {};
+  sign_tx.has_msg_count = true;
+  sign_tx.msg_count = 1;
+  sign_tx.has_chain_id = true;
+  std::strcpy(sign_tx.chain_id, "mayachain-mainnet-v1");
+  ASSERT_TRUE(mayachain_signTxInit(&node, &sign_tx));
+
+  MayachainMsgAck ack = {};
+  ack.has_send = true;
+  ack.send.has_to_address = true;
+  std::strcpy(ack.send.to_address,
+              "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  ack.send.has_amount = true;
+  ack.send.amount = 1;
+  ack.send.has_denom = true;
+  std::memset(ack.send.denom, 'a', 68);
+  ack.send.denom[68] = '\0';
+
+  // The amount/recipient screen is accepted; the independent Asset screen is
+  // refused. The handler must abort before serializing this send.
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  fsm_test_clearLastFailure();
+  fsm_msgMayachainMsgAck(&ack);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(mayachain_signingIsInited());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Mayachain, MemoWithMisdeclaredLengthIsRefused) {

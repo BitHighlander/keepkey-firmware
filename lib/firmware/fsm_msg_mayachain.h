@@ -219,14 +219,16 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
-                     "%s", coin_denom)) {
+        /* The amount/recipient layout can clip a long denomination. Show the
+         * complete asset separately before signing its serialized value. */
+        if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           "Asset", (const uint8_t*)coin_denom,
+                           strlen(coin_denom))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
           layoutHome();
           return;
         }
-
         break;
       }
     }
