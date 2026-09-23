@@ -14,6 +14,7 @@ extern "C" {
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 using ::testing::ElementsAreArray;
 
@@ -369,6 +370,78 @@ TEST(Storage, SetPolicy) {
   EXPECT_EQ(storage.pub.policies[3].enabled, true);
 }
 
+extern "C" {
+void setup(void);
+void storage_writeV17(char *, size_t, const ConfigFlash *);
+void storage_readV17(ConfigFlash *, const char *, size_t);
+}
+
+TEST(Storage, AdvancedModeNeverRoundTripsThroughFlash) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  struct RestorePolicy {
+    ~RestorePolicy() { storage_setPolicy("AdvancedMode", false); }
+  } restore;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+
+  ConfigFlash source = {};
+  source.storage.version = STORAGE_VERSION;
+  source.storage.encrypted_sec_version = STORAGE_VERSION;
+  storage_resetPolicies(&source.storage);
+  std::vector<char> flash(STORAGE_SECTOR_LEN, 0);
+  storage_writeV17(flash.data(), flash.size(), &source);
+  uint32_t flags = 0;
+  memcpy(&flags, flash.data() + 48, sizeof(flags));
+  EXPECT_EQ(flags & (1u << 12), 0u);
+
+  flags |= (1u << 12);  // Simulate an older record or modified flash.
+  memcpy(flash.data() + 48, &flags, sizeof(flags));
+  for (auto reader : {storage_readV11, storage_readV16, storage_readV17}) {
+    ConfigFlash restored = {};
+    reader(&restored, flash.data(), flash.size());
+    EXPECT_FALSE(restored.storage.pub.policies[3].enabled);
+  }
+
+  memcpy(flash.data(), "stor", 4);
+  const uint32_t version = STORAGE_VERSION;
+  memcpy(flash.data() + 44, &version, sizeof(version));
+  SessionState session = {};
+  ConfigFlash restored = {};
+  EXPECT_EQ(storage_fromFlash(&session, &restored, flash.data()), SUS_Updated);
+}
+
+TEST(Storage, LegacyPolicyNameCannotEnableAdvancedMode) {
+  std::vector<char> legacy(468 + sizeof(Storage{}.encrypted_sec), 0);
+  legacy[0] = 2;
+  legacy[464] = 1;
+  memcpy(legacy.data() + 465, "AdvancedMode", 12);
+  legacy[480] = 1;
+  legacy[481] = 1;
+  SessionState session = {};
+  Storage restored = {};
+  storage_readStorageV1(&session, &restored, legacy.data(), legacy.size());
+  storage_upgradePolicies(&restored);
+  EXPECT_FALSE(storage_isPolicyEnabled_impl(restored.pub.policies,
+                                           "AdvancedMode"));
+}
+
+TEST(Storage, LockDisarmsAdvancedModeButInitializeRetainsIt) {
+  Storage storage = {};
+  storage_resetPolicies(&storage);
+  ASSERT_TRUE(storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  SessionState session = {};
+
+  session_clear_impl(&session, &storage, false);
+  EXPECT_TRUE(storage_isPolicyEnabled_impl(storage.pub.policies,
+                                          "AdvancedMode"));
+
+  session_clear_impl(&session, &storage, true);
+  EXPECT_FALSE(storage_isPolicyEnabled_impl(storage.pub.policies,
+                                           "AdvancedMode"));
+}
+
 TEST(Storage, ResetCache) {
   Cache src;
   memset(&src, 0xCC, sizeof(src));
@@ -492,7 +565,8 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
-  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
+  // Legacy flash policy state is discarded on upgrade.
+  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, false);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);
