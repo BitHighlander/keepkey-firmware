@@ -7,6 +7,9 @@ extern "C" {
 #include "keepkey/board/layout.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/transport/interface.h"
 #include "keepkey/emulator/setup.h"
@@ -138,3 +141,21 @@ TEST_F(PassphraseTransition, StagingIsInertAndForeignCommitAborts) {
 }
 
 }  // namespace
+
+TEST_F(PassphraseTransition, InitializeRetainsPinButAbortsSigningAndPassphrase) {
+  fsm_init();
+  storage_setPin("1234");
+  storage_setPassphraseProtected(true);
+  session_cachePassphrase(kHidden);
+  ASSERT_TRUE(session_isPinCached());
+  ASSERT_TRUE(session_isPassphraseCached());
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  ASSERT_TRUE(signing_is_active());
+  fsm_msgInitialize(nullptr);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_TRUE(session_isPinCached());
+  EXPECT_FALSE(session_isPassphraseCached());
+}
