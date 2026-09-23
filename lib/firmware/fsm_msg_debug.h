@@ -5,6 +5,16 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   (void)msg;
   RESP_INIT(DebugLinkState);
 
+  /* The canvas encodes the same secrets as reset_word and dice_digest.
+   * Return an empty state throughout dice setup, including before arm(),
+   * so no alternate field or screen capture bypasses the privacy boundary.
+   * Button decisions remain available; committed-wallet diagnostics resume
+   * after setup_commit() has wiped the transient ceremony state. */
+  if (reset_debug_is_private()) {
+    msg_debug_write(MessageType_MessageType_DebugLinkState, resp);
+    return;
+  }
+
   if (storage_hasPin()) {
     resp->has_pin = true;
     strlcpy(resp->pin, storage_getPin(), sizeof(resp->pin));
@@ -90,6 +100,11 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
 void fsm_msgDebugLinkStop(DebugLinkStop* msg) { (void)msg; }
 
 void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump* msg) {
+  if (reset_debug_is_private()) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    "Memory reads disabled during dice setup");
+    return;
+  }
 #ifndef EMULATOR
   if (!msg->has_length ||
       msg->length > sizeof(((DebugLinkFlashDumpResponse*)0)->data.bytes)) {

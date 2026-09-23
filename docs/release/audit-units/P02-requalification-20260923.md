@@ -1,5 +1,10 @@
 # P02 transport/workflow requalification — 2026-09-23
 
+> Historical receipt. Review #855 demonstrated that consent-only raw-field
+> checks did not establish dice confidentiality. Those closure claims are
+> superseded by [internal round 2](P02-INTERNAL-ROUND2-20260923.md); the recorded
+> hashes/test outputs remain historical evidence, not current acceptance.
+
 **Status: scoped local fixes verified; Block 2 remains in progress.** This is a local candidate receipt, not acceptance of release Stack 02, its predecessor, the assembled product, or a completed Copilot checkpoint.
 
 ## 1. Identity and frozen scope

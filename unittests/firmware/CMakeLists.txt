@@ -7,6 +7,7 @@ set(sources
     recovery.cpp
     rng_health.cpp
     setup_ceremony.cpp
+    reset_policy_probe.c
     signing.cpp
     storage.cpp
     storage_cipher_probe.c
@@ -14,6 +15,7 @@ set(sources
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
+    usb_callbacks.cpp
     u2f.cpp)
 
 # Suites for the coin engines the bitcoin-only image compiles out. Building

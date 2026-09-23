@@ -10,7 +10,6 @@ extern "C" {
 #include "keepkey/board/confirm_sm.h"
 }
 
-
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
 void set_msg_failure_handler(msg_failure_t failure_func);
@@ -173,9 +172,11 @@ static void expectMalformedTinyPacketRejected(size_t packet_length) {
   uint8_t frame[64] = {'?', '#', '#'};
   frame[3] = MessageType_MessageType_PassphraseAck >> 8;
   frame[4] = MessageType_MessageType_PassphraseAck & 0xff;
-  frame[8] = packet_length == sizeof(frame) ? 56 : 0;  // More than the 55 payload bytes a tiny frame can hold.
+  frame[8] = packet_length == sizeof(frame)
+                 ? 56
+                 : 0;  // More than the 55 payload bytes a tiny frame can hold.
   ASSERT_EQ(packet_length, sendto(fd, frame, packet_length, 0,
-                                  reinterpret_cast<struct sockaddr*>(&address),
+                                  reinterpret_cast<struct sockaddr *>(&address),
                                   sizeof(address)));
 
   uint8_t received[MSG_TINY_BFR_SZ];
@@ -266,9 +267,10 @@ static void expectWrongAcknowledgementRejected(MessageType wrong, int handler) {
       frame[8] = 2;
       frame[9] = 0x0a;  // Required passphrase string, empty but valid.
     }
-    EXPECT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
-                                   reinterpret_cast<struct sockaddr*>(&address),
-                                   sizeof(address)));
+    EXPECT_EQ(
+        sizeof(frame),
+        sendto(fd, frame, sizeof(frame), 0,
+               reinterpret_cast<struct sockaddr *>(&address), sizeof(address)));
   }
   close(fd);
   if (handler == 0) EXPECT_FALSE(pin_protect_uncached());
@@ -299,7 +301,6 @@ TEST(USBRX, ButtonWaitRejectsForeignAcknowledgement) {
   expectWrongAcknowledgementRejected(MessageType_MessageType_PassphraseAck, 2);
 }
 
-
 TEST(USBRX, MalformedTinyFrameUnwindsAndNextPollRecovers) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_EQ(0, kkconfirm_drain());
@@ -316,10 +317,10 @@ TEST(USBRX, MalformedTinyFrameUnwindsAndNextPollRecovers) {
   frame[3] = MessageType_MessageType_ButtonAck >> 8;
   frame[4] = MessageType_MessageType_ButtonAck & 0xff;
   uint8_t received[MSG_TINY_BFR_SZ] = {};
-  EXPECT_EQ(sizeof(frame) - 1,
-            sendto(fd, frame, sizeof(frame) - 1, 0,
-                   reinterpret_cast<struct sockaddr *>(&address),
-                   sizeof(address)));
+  EXPECT_EQ(
+      sizeof(frame) - 1,
+      sendto(fd, frame, sizeof(frame) - 1, 0,
+             reinterpret_cast<struct sockaddr *>(&address), sizeof(address)));
 
   uint16_t id = MSG_TINY_TYPE_ERROR;
   for (int attempt = 0; attempt < 1000 && id == MSG_TINY_TYPE_ERROR;
@@ -331,10 +332,9 @@ TEST(USBRX, MalformedTinyFrameUnwindsAndNextPollRecovers) {
   EXPECT_EQ(1, failure_count);
   EXPECT_TRUE(msg_handler_rejected());
 
-  EXPECT_EQ(sizeof(frame),
-            sendto(fd, frame, sizeof(frame), 0,
-                   reinterpret_cast<struct sockaddr *>(&address),
-                   sizeof(address)));
+  EXPECT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
+                                  reinterpret_cast<struct sockaddr *>(&address),
+                                  sizeof(address)));
   id = MSG_TINY_TYPE_ERROR;
   for (int attempt = 0; attempt < 1000 && id == MSG_TINY_TYPE_ERROR;
        ++attempt) {
@@ -345,4 +345,23 @@ TEST(USBRX, MalformedTinyFrameUnwindsAndNextPollRecovers) {
   EXPECT_EQ(MessageType_MessageType_ButtonAck, id);
   EXPECT_EQ(1, failure_count);
   EXPECT_FALSE(msg_handler_rejected());
+}
+
+TEST(USBRX, DebugDispatchClearsAnEarlierTinyRejection) {
+  fsm_init();
+  setup();
+  uint8_t frame[64] = {'?', '#', '#'};
+  // Normal dispatch begins a fresh rejection scope.
+  handle_usb_rx(frame, sizeof(frame));
+  msg_reject_unexpected_tiny();
+  ASSERT_TRUE(msg_handler_rejected());
+  frame[3] = MessageType_MessageType_DebugLinkStop >> 8;
+  frame[4] = MessageType_MessageType_DebugLinkStop & 0xff;
+  handle_debug_usb_rx(frame, sizeof(frame));
+  EXPECT_FALSE(msg_handler_rejected());
+  const int before = failure_count;
+  msg_reject_unexpected_tiny();
+  EXPECT_EQ(before + 1, failure_count);
+  handle_usb_rx(frame, sizeof(frame));
+  fsm_init();
 }

@@ -54,8 +54,7 @@ class TestP02Transport(common.KeepKeyTest):
         self.assertIsInstance(response, proto.ButtonRequest)
         self.assertEqual(response.code, types.ButtonRequest_DiceRoll)
         state = self.client.debug._call(proto.DebugLinkGetState())
-        self.assertFalse(state.HasField('reset_entropy'))
-        self.assertEqual(state.reset_entropy, b'')
+        self.assertEqual([], state.ListFields())
         self.assertIsInstance(self.client.call_raw(proto.Cancel()), proto.Failure)
         self.assertIsInstance(self.client.call_raw(proto.Initialize()), proto.Features)
 
@@ -72,3 +71,25 @@ class TestP02Transport(common.KeepKeyTest):
 
     def test_dice_only_consent_does_not_expose_raw_entropy(self):
         self.assert_dice_entropy_hidden(True)
+
+    def test_mixed_entropy_pages_remain_private_and_cancel_clears_state(self):
+        self.client.wipe_device()
+        response = self.client.call_raw(proto.ResetDevice(
+            strength=256, dice_entropy=True))
+        # Consent followed by two actual entropy display subpages, the phase
+        # the old consent-only regression never reached.
+        for page in range(3):
+            self.assertIsInstance(response, proto.ButtonRequest)
+            self.assertEqual(response.code, types.ButtonRequest_DiceRoll)
+            state = self.client.debug._call(proto.DebugLinkGetState())
+            self.assertEqual([], state.ListFields())
+            if page < 2:
+                self.client.debug.press_yes()
+                response = self.client.call_raw(proto.ButtonAck())
+        self.assertIsInstance(self.client.call_raw(proto.Cancel()), proto.Failure)
+        self.assertIsInstance(self.client.call_raw(proto.Initialize()), proto.Features)
+        state = self.client.debug._call(proto.DebugLinkGetState())
+        self.assertFalse(state.HasField('mnemonic'))
+        self.assertEqual('', state.reset_word)
+        self.assertEqual(b'', state.dice_digest)
+        self.assertEqual(bytes(32), state.reset_entropy)

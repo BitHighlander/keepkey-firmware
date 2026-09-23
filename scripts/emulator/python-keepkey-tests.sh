@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# Dice setup keeps every DebugLinkState field private through commit/abort.
+export KK_DICE_DEBUG_PRIVATE=1
+
 mkdir -p /kkemu/test-reports/python-keepkey
 # This volume can survive retries. Stale frames would make the new report look
 # more complete than the exact run really was, so every capture starts empty.

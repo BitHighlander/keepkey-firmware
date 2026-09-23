@@ -47,7 +47,7 @@ static void reject_tiny_message(FailureType code, const char* text) {
 
 void msg_reject_unexpected_tiny(void) {
   reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                      "Unexpected tiny acknowledgement");
+                      "Unexpected message during protected wait");
 }
 
 #if DEBUG_LINK
@@ -509,7 +509,9 @@ void handle_debug_usb_rx(const void* msg, size_t len) {
   if (msg_tiny_flag) {
     msg_read_tiny(msg, len);
   } else {
+    tiny_handler_rejected = false;
     usb_rx_helper(msg, len, DEBUG_MSG);
+    tiny_handler_rejected = false;
   }
 }
 #endif
