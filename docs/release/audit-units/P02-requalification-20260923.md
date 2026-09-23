@@ -139,12 +139,12 @@ Net implementation/test range: `git diff --numstat 51411c4a7c96137bc80f8b99fa169
 
 ### Complete local candidate inventory
 
-Generation predecessor: `173752ec4af42f17b8f54af85f1419c1f602d3be`. Reproduce with `git diff --numstat 51411c4a7c96137bc80f8b99fa1690c4e385f7fd..173752ec4af42f17b8f54af85f1419c1f602d3be`. This includes the report source, binary PDF and artifact manifest. The final containing head is recorded in the canonical ledger; no remote review is claimed. Final committed path/count equality is checked after report regeneration.
+Generation predecessor: `07e9389692eb4a708e31ebf662e59a0c4afac35b`. Reproduce with `git diff --numstat 51411c4a7c96137bc80f8b99fa1690c4e385f7fd..07e9389692eb4a708e31ebf662e59a0c4afac35b`. This includes the report source, binary PDF and artifact manifest. The final containing head is recorded in the canonical ledger; no remote review is claimed. Final committed path/count equality is checked after report regeneration.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
 | 36 | 0 | `docs/release/audit-units/P02-requalification-20260923-artifacts.json` |
-| 227 | 0 | `docs/release/audit-units/P02-requalification-20260923.md` |
+| 246 | 0 | `docs/release/audit-units/P02-requalification-20260923.md` |
 | - | - | `docs/release/audit-units/P02-requalification-20260923.pdf` |
 | 4 | 0 | `include/keepkey/board/messages.h` |
 | 5 | 1 | `lib/board/confirm_sm.c` |
