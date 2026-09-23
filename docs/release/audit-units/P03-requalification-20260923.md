@@ -11,7 +11,7 @@ Status: **local code and integration checks passed; release and external review 
 | Historical receipt | P03 PR #851 head `5b5a9c1b196f82a6a98e07f6ba2729560aeafe89`; its final reviewed diff contained three evidence files and no firmware code |
 | Replayed local AdvancedMode fix | Historical `c2ddc065606df576f5c546259b6811e64f4de2a2`, reconciled for both variants and ARM at `e4dbc6caa312db1f0f24569b7494ac1f283b5ddc` |
 | BIP-85 hardening | `2b1be1e6203ebf148aa9425844a74624991657c0` |
-| Frozen code tree | `6d4be1138abb0a5739a0714d1f4135544540153d` |
+| Frozen code tree | `e6d906266ce5583f3fcf559a77a0308dace7838e` (format-only delta from locally tested tree) |
 | Build source | Isolated branch `audit/p03-requalification-20260923`; no shared `develop` mutation |
 | Code-bearing review surface | [PR #857](https://github.com/BitHighlander/keepkey-firmware/pull/857), targeting the P02 reviewed branch |
 
@@ -66,7 +66,7 @@ Evidence SHA256: full native log `14da47f6206117f747e143bd6ad826d0ec877c8661554c
 | 43 | 34 | `lib/firmware/fsm_msg_bip85.h` |
 | 2 | 0 | `lib/firmware/fsm_msg_coin.h` |
 | 5 | 0 | `lib/firmware/fsm_msg_common.h` |
-| 7 | 8 | `lib/firmware/fsm_msg_debug.h` |
+| 8 | 8 | `lib/firmware/fsm_msg_debug.h` |
 | 2 | 1 | `lib/firmware/fsm_msg_ethereum.h` |
 | 1 | 0 | `lib/firmware/fsm_msg_ton.h` |
 | 1 | 0 | `lib/firmware/fsm_msg_tron.h` |
@@ -83,4 +83,4 @@ The large `messagemap.def` line delta is mostly formatting; the semantic change 
 
 ## Checkpoint state and next action
 
-Implemented, targeted behavior, native/host integration, variant builds, and local adversarial contract checks: **passed on the frozen code tree**. Code-bearing PR #857 is open against the P02 reviewed head. External code review: **not delivered**. Exact-head CI and physical-device OLED/release testing: **pending**. Release acceptance: **pending**. The inherited erase-before-replacement power-interruption risk remains open and deferred, not fixed or waived. No Copilot request was made under the current late-review SOP. The next internal step is to record CI on the exact PR head before any product-branch update.
+Implemented, targeted behavior, native/host integration, variant builds, and local adversarial contract checks: **passed on the locally tested code**. The only later code edit was clang-format's wrap of a DebugLink comment, which does not change runtime behavior. Code-bearing PR #857 is open against the P02 reviewed head. CI run [35928940193](https://github.com/BitHighlander/keepkey-firmware/actions/runs/35928940193) failed the format gate on that comment and skipped downstream jobs; the comment is corrected in `a514f32b0c5a8cd1b828dae29fea1482aa34d662`. External code review: **not delivered**. Corrected exact-head CI and physical-device OLED/release testing: **pending**. Release acceptance: **pending**. The inherited erase-before-replacement power-interruption risk remains open and deferred, not fixed or waived. No Copilot request was made under the current late-review SOP.
