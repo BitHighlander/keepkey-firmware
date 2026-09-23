@@ -184,6 +184,15 @@ void setup_arm(SetupKind kind) {
 
 bool setup_commit(SetupKind kind, const char* mnemonic, bool imported) {
   if (!setup_require(kind, "Setup ceremony was aborted")) return false;
+  /* storage_commit() declines both downgrade states without writing. Reject
+   * before staging the seed so a host can never receive a false Success. */
+  if (storage_isBitcoinOnlyLocked() || storage_isFirmwareTooOld()) {
+    setup_abort();
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Storage is locked for this firmware. Use Wipe first."));
+    layoutHome();
+    return false;
+  }
   /* The ordering below is load-bearing. storage_setPin() derives the storage
    * key that storage_commit() encrypts the secrets with, so it has to run
    * before storage_setMnemonic(). Do not reorder. */

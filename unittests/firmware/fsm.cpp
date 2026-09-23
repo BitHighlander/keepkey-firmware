@@ -3,6 +3,7 @@ extern "C" {
 #include "keepkey/board/usb.h"
 #include "keepkey/board/keepkey_display.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
 #include "trezor/crypto/bip39.h"
@@ -46,6 +47,33 @@ TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
 
   for (size_t i = 0; i < sizeof(credential); ++i) {
     EXPECT_EQ('\0', credential[i]);
+  }
+}
+
+TEST(Fsm, ZcashPrivacyWireSurfaceMatchesBuildVariant) {
+  fsm_init();
+  const MessageType inbound[] = {MessageType_MessageType_ZcashSignPCZT,
+                                 MessageType_MessageType_ZcashPCZTAction,
+                                 MessageType_MessageType_ZcashGetOrchardFVK,
+                                 MessageType_MessageType_ZcashTransparentOutput,
+                                 MessageType_MessageType_ZcashTransparentInput,
+                                 MessageType_MessageType_ZcashDisplayAddress};
+  const MessageType outbound[] = {
+      MessageType_MessageType_ZcashPCZTActionAck,
+      MessageType_MessageType_ZcashSignedPCZT,
+      MessageType_MessageType_ZcashOrchardFVK,
+      MessageType_MessageType_ZcashTransparentSigned,
+      MessageType_MessageType_ZcashAddress,
+      MessageType_MessageType_ZcashTransparentAck};
+  for (MessageType type : inbound) {
+    EXPECT_EQ(ZCASH_PRIVACY != 0,
+              message_fields(NORMAL_MSG, type, IN_MSG) != nullptr)
+        << type;
+  }
+  for (MessageType type : outbound) {
+    EXPECT_EQ(ZCASH_PRIVACY != 0,
+              message_fields(NORMAL_MSG, type, OUT_MSG) != nullptr)
+        << type;
   }
 }
 
@@ -1661,4 +1689,49 @@ TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
   setup_abort();
   EXPECT_FALSE(reset_debug_is_private());
   for (size_t i = 0; i < size; ++i) ASSERT_EQ(0, canvas->buffer[i]);
+}
+
+TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {
+  kk_test_board_init();
+  fsm_init();
+  const uint32_t versions[] = {
+#if BITCOIN_ONLY
+      STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION + 1,
+#else
+      STORAGE_VERSION + 1,
+      STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION,
+#endif
+  };
+  for (uint32_t version : versions) {
+    SCOPED_TRACE(version);
+    ScopedFlash flash;
+    struct WipeOnExit {
+      ~WipeOnExit() { storage_wipe(); }
+    } cleanup;
+    auto* active =
+        reinterpret_cast<uint8_t*>(flash_write_helper(storage_getLocation()));
+    std::memcpy(active + 44, &version, sizeof(version));
+    storage_init();
+    ASSERT_TRUE(storage_isFirmwareTooOld() || storage_isBitcoinOnlyLocked());
+    const auto before = flash.bytes;
+    ResetDevice reset = {};
+    reset.has_strength = true;
+    reset.strength = 128;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                   &reset);
+    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+              fsm_test_lastFailureCode());
+    EXPECT_FALSE(setup_isArmed());
+    ASSERT_TRUE(setup_stage(false, "english", "blocked", 0, 0, false));
+    setup_arm(SETUP_RESET);
+    fsm_test_clearLastFailure();
+    EXPECT_FALSE(setup_commit(
+        SETUP_RESET, "all all all all all all all all all all all all", false));
+    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+              fsm_test_lastFailureCode());
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_FALSE(storage_hasMnemonic());
+    EXPECT_EQ(before, flash.bytes);
+  }
 }

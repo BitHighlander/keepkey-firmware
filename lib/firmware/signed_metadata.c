@@ -412,6 +412,7 @@ void signed_metadata_clear(void) {
   relied_on_metadata = false;
   metadata_signer_loaded = false;
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 }
 
 void signed_metadata_clear_signers(void) {
@@ -742,6 +743,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
    * signed_metadata_enforce() pass for a v2 blob that did not decode this tx.
    */
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 
   if (!metadata_available || !msg ||
       stored_metadata.classification != METADATA_VERIFIED ||

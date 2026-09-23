@@ -47,3 +47,24 @@ the MIXED device draw. The native fixture is required for that claim.
 
 Do not mark findings resolved or readiness complete until final tests, mutation
 controls, source review and evidence reconciliation are complete.
+
+## Predecessor refresh during this round
+
+Live Stack 01 advanced from `23b3c16b1` to
+`6b923be9993edfa7b072c56e87626374ba030f75` (commits `8952feb39` and
+`6b923be99`). Reconcile storage downgrade refusal at setup commit and dispatch,
+v2 metadata native-value approval/reset, order-independent RNG fixtures, compose
+build failure propagation, Zcash native execution and explicit privacy-OFF build
+support. Existing P02 Hive/Zcash registration and stronger timeout regressions
+are retained where predecessor formatting patches conflict. Remove the P02
+unconditional duplicate zcash.c source so privacy-OFF actually excludes it.
+
+Do not import the predecessor's Ripple memo refusal removal: this P02 candidate
+still declares `ripple-memo-policy` unavailable and retains the existing refusal
+contract. Do not replace the report with the predecessor's receipt. Apply its
+Zcash full-product native-report requirement and additionally require the dice
+native and wire assertions introduced here. This is an assessed reconciliation,
+not acceptance or a rewrite of the shared predecessor/release branches.
+
+Host harness pin: `ea385cf6fdd5c22e2c3ea3845787777fb9c9d127`, published at
+`keepkey/python-keepkey`, branch `audit/p02-dice-debug-privacy-20260923`.
