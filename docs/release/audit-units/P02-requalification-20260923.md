@@ -137,7 +137,26 @@ Net implementation/test range: `git diff --numstat 51411c4a7c96137bc80f8b99fa169
 | 110 | 1 | `unittests/firmware/usb_rx.cpp` |
 | 48 | 0 | `unittests/host/test_p02_transport.py` |
 
-The report source and PDF are added after this code/test range. A final external-review inventory must include their committed counts and explicit containing head before any review request; this local receipt does not claim that external preflight is complete.
+### Complete local candidate inventory
+
+Generation predecessor: `173752ec4af42f17b8f54af85f1419c1f602d3be`. Reproduce with `git diff --numstat 51411c4a7c96137bc80f8b99fa1690c4e385f7fd..173752ec4af42f17b8f54af85f1419c1f602d3be`. This includes the report source, binary PDF and artifact manifest. The final containing head is recorded in the canonical ledger; no remote review is claimed. Final committed path/count equality is checked after report regeneration.
+
+| Added | Deleted | Path |
+| ---: | ---: | --- |
+| 36 | 0 | `docs/release/audit-units/P02-requalification-20260923-artifacts.json` |
+| 227 | 0 | `docs/release/audit-units/P02-requalification-20260923.md` |
+| - | - | `docs/release/audit-units/P02-requalification-20260923.pdf` |
+| 4 | 0 | `include/keepkey/board/messages.h` |
+| 5 | 1 | `lib/board/confirm_sm.c` |
+| 35 | 1 | `lib/board/messages.c` |
+| 8 | 2 | `lib/board/usb.c` |
+| 10 | 0 | `lib/firmware/fsm_msg_common.h` |
+| 8 | 0 | `lib/firmware/passphrase_sm.c` |
+| 3 | 0 | `lib/firmware/pin_sm.c` |
+| 0 | 8 | `unittests/firmware/fsm.cpp` |
+| 21 | 0 | `unittests/firmware/storage_passphrase.cpp` |
+| 110 | 1 | `unittests/firmware/usb_rx.cpp` |
+| 48 | 0 | `unittests/host/test_p02_transport.py` |
 
 ## 3. Findings and dispositions
 
