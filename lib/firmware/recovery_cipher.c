@@ -669,9 +669,9 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  /* Cipher recovery always decodes to BIP-39. A host choosing the import flag
-   * may change storage metadata, but must not make a non-word seed valid. */
-  if (!auto_completed) {
+  /* An enforced recovery must decode to BIP-39 words. Import mode deliberately
+   * accepts non-word phrases; the count/nonempty guard above still applies. */
+  if (enforce_wordlist && !auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");

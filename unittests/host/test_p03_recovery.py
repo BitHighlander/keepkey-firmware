@@ -5,6 +5,48 @@ from keepkeylib import messages_pb2 as proto
 
 
 class TestP03Recovery(common.KeepKeyTest):
+    def test_import_without_wordlist_accepts_non_bip39_phrase(self):
+        response = self.client.call_raw(proto.RecoveryDevice(
+            word_count=12, pin_protection=False,
+            passphrase_protection=False, use_character_cipher=True))
+        self.assertIsInstance(response, proto.ButtonRequest)
+        self.client.debug.press_yes()
+        response = self.client.call_raw(proto.ButtonAck())
+
+        for index in range(12):
+            for letter in 'zzzz':
+                self.assertIsInstance(response, proto.CharacterRequest)
+                cipher = self.client.debug.read_recovery_cipher()
+                response = self.client.call_raw(proto.CharacterAck(
+                    character=cipher[ord(letter) - ord('a')]))
+            if index < 11:
+                response = self.client.call_raw(proto.CharacterAck(character=' '))
+
+        self.assertIsInstance(response, proto.CharacterRequest)
+        response = self.client.call_raw(proto.CharacterAck(done=True))
+        self.assertIsInstance(response, proto.Success)
+        self.client.init_device()
+        self.assertTrue(self.client.features.imported)
+        self.assertEqual(' '.join(['zzzz'] * 12),
+                         self.client.debug.read_mnemonic())
+
+    def test_enforced_wordlist_rejects_non_bip39_word(self):
+        response = self.client.call_raw(proto.RecoveryDevice(
+            word_count=12, pin_protection=False,
+            passphrase_protection=False, enforce_wordlist=True,
+            use_character_cipher=True))
+        self.assertIsInstance(response, proto.ButtonRequest)
+        self.client.debug.press_yes()
+        response = self.client.call_raw(proto.ButtonAck())
+        for letter in 'zzzz':
+            self.assertIsInstance(response, proto.CharacterRequest)
+            cipher = self.client.debug.read_recovery_cipher()
+            response = self.client.call_raw(proto.CharacterAck(
+                character=cipher[ord(letter) - ord('a')]))
+        response = self.client.call_raw(proto.CharacterAck(character=' '))
+        self.assertIsInstance(response, proto.Failure)
+        self.assertIn('Word not found', response.message)
+
     def test_bip85_18_word_flow_completes(self):
         self.setup_mnemonic_allallall()
         response = self.client.call(proto.GetBip85Mnemonic(word_count=18, index=0))
@@ -35,14 +77,20 @@ class TestP03Recovery(common.KeepKeyTest):
         self.client.debug.press_yes()
         response = self.client.call_raw(proto.ButtonAck())
 
-        pages = 0
+        # This is the first child-word page, before its ButtonAck.
+        self.assertIsInstance(response, proto.ButtonRequest)
+        self.assertEqual(
+            [], self.client.debug._call(proto.DebugLinkGetState()).ListFields())
+        pages = 1
         while isinstance(response, proto.ButtonRequest):
-            pages += 1
             self.assertLess(pages, 10)
-            state = self.client.debug._call(proto.DebugLinkGetState())
-            self.assertEqual([], state.ListFields())
             self.client.debug.press_yes()
             response = self.client.call_raw(proto.ButtonAck())
+            if isinstance(response, proto.ButtonRequest):
+                pages += 1
+                self.assertEqual(
+                    [], self.client.debug._call(
+                        proto.DebugLinkGetState()).ListFields())
 
         self.assertGreater(pages, 0)
         self.assertIsInstance(response, proto.Success)
