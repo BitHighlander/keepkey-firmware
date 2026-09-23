@@ -15,6 +15,7 @@
 #include "keepkey/board/usb.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
@@ -53,10 +54,12 @@ static int libkkemu_initialized = 0;
 
 static uint8_t frame_ring[FRAME_RING_SIZE][FRAME_PACKED_SIZE];
 static uint8_t last_packed[FRAME_PACKED_SIZE];
+/* Deduplicate before touching the ring's oldest unread slot. */
+static uint8_t capture_scratch[FRAME_PACKED_SIZE];
 static int last_packed_valid = 0;
-static uint32_t frame_write_idx =
+static _Atomic uint32_t frame_write_idx =
     0; /* monotonic, mod FRAME_RING_SIZE for slot */
-static uint32_t frame_read_idx = 0; /* monotonic */
+static _Atomic uint32_t frame_read_idx = 0; /* monotonic */
 
 /*
  * Scratch returned by kkemu_get_display(). File-scope (not function-static)
@@ -107,23 +110,26 @@ size_t libkkemu_socketWrite(int iface, const void* buffer, size_t size) {
 static void libkkemu_capture_frame(const uint8_t* canvas_buf) {
   if (!canvas_buf) return;
 
-  uint8_t* slot = frame_ring[frame_write_idx % FRAME_RING_SIZE];
-  memset(slot, 0, FRAME_PACKED_SIZE);
+  /* A duplicate must not overwrite the oldest unread ring slot. */
+  memset(capture_scratch, 0, FRAME_PACKED_SIZE);
   for (int x = 0; x < 256; x++) {
     for (int y = 0; y < 64; y++) {
-      if (canvas_buf[y * 256 + x] > 0) {
-        slot[x + (y / 8) * 256] |= (uint8_t)(1u << (y % 8));
+      if (display_mono_pixel_is_lit(canvas_buf[y * 256 + x], x, y)) {
+        capture_scratch[x + (y / 8) * 256] |= (uint8_t)(1u << (y % 8));
       }
     }
   }
 
   /* Dedup: skip if identical to last captured */
-  if (last_packed_valid && memcmp(slot, last_packed, FRAME_PACKED_SIZE) == 0) {
+  if (last_packed_valid &&
+      memcmp(capture_scratch, last_packed, FRAME_PACKED_SIZE) == 0) {
     return;
   }
-  memcpy(last_packed, slot, FRAME_PACKED_SIZE);
+  memcpy(last_packed, capture_scratch, FRAME_PACKED_SIZE);
   last_packed_valid = 1;
 
+  memcpy(frame_ring[frame_write_idx % FRAME_RING_SIZE], capture_scratch,
+         FRAME_PACKED_SIZE);
   frame_write_idx++;
   /* Drop oldest if host fell behind */
   if (frame_write_idx - frame_read_idx > FRAME_RING_SIZE) {
@@ -193,6 +199,9 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
 void kkemu_shutdown(void) {
   if (!libkkemu_initialized) return;
 
+  /* Clear in-flight signing state and derived keys before committing storage. */
+  fsm_abort_workflows();
+
   /* Flush any pending storage to the flash buffer */
   storage_commit();
 
@@ -220,6 +229,7 @@ void kkemu_shutdown(void) {
   memzero(&rb_debug_out, sizeof(rb_debug_out));
   memzero(frame_ring, sizeof(frame_ring));
   memzero(last_packed, sizeof(last_packed));
+  memzero(capture_scratch, sizeof(capture_scratch));
   memzero(display_packed_scratch, sizeof(display_packed_scratch));
   last_packed_valid = 0;
   frame_write_idx = 0;
@@ -299,7 +309,7 @@ const uint8_t* kkemu_get_display(int* width, int* height) {
   memset(display_packed_scratch, 0, sizeof(display_packed_scratch));
   for (int x = 0; x < 256; x++) {
     for (int y = 0; y < 64; y++) {
-      if (c->buffer[y * 256 + x] > 0) {
+      if (display_mono_pixel_is_lit(c->buffer[y * 256 + x], x, y)) {
         display_packed_scratch[x + (y / 8) * 256] |= (uint8_t)(1u << (y % 8));
       }
     }

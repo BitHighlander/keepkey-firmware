@@ -63,21 +63,43 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
 
   CHECK_INITIALIZED
 
-  if (!confirm_sign_identity(&(msg->identity), msg->has_challenge_visual
-                                                   ? msg->challenge_visual
-                                                   : 0)) {
+  const char* curve =
+      msg->has_ecdsa_curve_name ? msg->ecdsa_curve_name : SECP256K1_NAME;
+
+  /* Establish that there is something signable BEFORE asking anyone to approve
+     it. The identity check used to sit after the confirmation and the curve was
+     not checked until fsm_getDerivedNode() below, so a request with no identity
+     or an unsupported curve collected a full approval -- and, for the curve, a
+     PIN entry -- before failing. The curve also selects the key, so it belongs
+     on the screen's side of the line, not after it. */
+  uint8_t hash[32];
+  if (!msg->has_identity ||
+      cryptoIdentityFingerprint(&(msg->identity), hash) == 0) {
+    memzero(hash, sizeof(hash));
+    fsm_sendFailure(FailureType_Failure_Other, "Invalid identity");
+    layoutHome();
+    return;
+  }
+
+  if (!get_curve_by_name(curve)) {
+    memzero(hash, sizeof(hash));
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Unknown ecdsa curve");
+    layoutHome();
+    return;
+  }
+
+  if (!confirm_sign_identity(
+          &(msg->identity),
+          msg->has_challenge_visual ? msg->challenge_visual : 0, curve)) {
+    memzero(hash, sizeof(hash));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign identity cancelled");
     layoutHome();
     return;
   }
 
-  CHECK_PIN
-
-  uint8_t hash[32];
-  if (!msg->has_identity ||
-      cryptoIdentityFingerprint(&(msg->identity), hash) == 0) {
-    fsm_sendFailure(FailureType_Failure_Other, "Invalid identity");
+  if (!pin_protect_cached()) {
+    memzero(hash, sizeof(hash));
     layoutHome();
     return;
   }
@@ -92,11 +114,8 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
                  ((uint32_t)hash[11] << 24);
   address_n[4] = 0x80000000 | hash[12] | (hash[13] << 8) | (hash[14] << 16) |
                  ((uint32_t)hash[15] << 24);
+  memzero(hash, sizeof(hash));
 
-  const char* curve = SECP256K1_NAME;
-  if (msg->has_ecdsa_curve_name) {
-    curve = msg->ecdsa_curve_name;
-  }
   HDNode* node = fsm_getDerivedNode(curve, address_n, 5, NULL);
   if (!node) {
     return;

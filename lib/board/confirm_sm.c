@@ -42,9 +42,29 @@
 /* Button request ack */
 static bool button_request_acked = false;
 
+#if DEBUG_LINK
+/* DebugLink supplies one decision per ButtonRequest. A multi-screen physical
+ * confirmation under one request must carry that decision across subpages. */
+static bool last_exit_was_debug_decision = false;
+#endif
+
 extern bool reset_msg_stack;
 
 static CONFIDENTIAL char strbuf[BODY_CHAR_MAX];
+
+/* vsnprintf() returns the length it WOULD have written. Treat anything that
+ * did not fit as a refusal: once characters are lost, no renderer or pager can
+ * recover them and there is no complete body the user can approve. */
+static bool format_body_into(char* out, size_t out_len,
+                             const char* request_body, va_list vl) {
+  if (!out || out_len == 0 || !request_body) return false;
+  const int needed = vsnprintf(out, out_len, request_body, vl);
+  return needed >= 0 && (size_t)needed < out_len;
+}
+
+static bool format_body(const char* request_body, va_list vl) {
+  return format_body_into(strbuf, sizeof(strbuf), request_body, vl);
+}
 
 /// Handler for push button being pressed.
 /// \param context current state context.
@@ -151,17 +171,22 @@ static void swap_layout(ActiveLayout active_layout, volatile StateInfo* si,
   };
 }
 
-/// Common confirmation function.
+/// Run one confirmation screen: draw it, then wait for either the user's hold
+/// or the host's Cancel. Callers go through confirm_helper() below, which is
+/// what the public confirm()/review() wrappers use.
 /// \param request_title  The confirmation's title.
 /// \param requesta_body  The body of the confirmation message.
 /// \param layout_notification_func  layout callback for displaying confirm
 /// message. \returns true iff the device confirmed.
-static bool confirm_helper(const char* request_title_param,
+static bool confirm_screen(const char* request_title_param,
                            const char* request_body,
                            layout_notification_t layout_notification_func,
                            bool constant_power, IconType iconNum,
                            bool immediate) {
   bool ret_stat = false;
+#if DEBUG_LINK
+  last_exit_was_debug_decision = false;
+#endif
   volatile StateInfo state_info;
   ActiveLayout new_layout, cur_layout;
   DisplayState new_ds;
@@ -236,7 +261,7 @@ static bool confirm_helper(const char* request_title_param,
           }
 
           ret_stat = false;
-          goto confirm_helper_exit;
+          goto confirm_screen_exit;
 #if DEBUG_LINK
 
         case MessageType_MessageType_DebugLinkDecision:
@@ -269,6 +294,7 @@ static bool confirm_helper(const char* request_title_param,
 #if DEBUG_LINK
 
     if (debug_decided && button_request_acked) {
+      last_exit_was_debug_decision = true;
       break; /* confirmation done via debug link.  Exiting function */
     }
 
@@ -284,12 +310,216 @@ static bool confirm_helper(const char* request_title_param,
     animate();
   }
 
-confirm_helper_exit:
+confirm_screen_exit:
 
   keepkey_button_set_on_press_handler(NULL, NULL);
   keepkey_button_set_on_release_handler(NULL, NULL);
 
   return (ret_stat);
+}
+
+bool confirm_body_fits(const char* body, uint16_t body_width) {
+  /* Measure with the renderer's own per-glyph fit logic. The old row-count
+   * guard diverged on overflow, 255 newlines, and space padding. Keep
+   * calc_str_line() only to match the real layout's vertical alignment. */
+  Canvas* canvas = layout_get_canvas();
+  const Font* body_font = get_body_font();
+  const char* str2 = body ? body : "";
+
+  DrawableParams sp;
+  const uint32_t body_line_count = calc_str_line(body_font, str2, body_width);
+  sp.y = TOP_MARGIN;
+  if (body_line_count == ONE_LINE) {
+    sp.y = TOP_MARGIN_FOR_ONE_LINE;
+  } else if (body_line_count == TWO_LINES) {
+    sp.y = TOP_MARGIN_FOR_TWO_LINES;
+  }
+
+  /* Mirrors layout_standard_notification(): the title is drawn from sp.y, then
+   * the body starts one title-height plus BODY_TOP_MARGIN below it. */
+  sp.y += font_height(body_font) + BODY_TOP_MARGIN;
+  sp.x = (body_width == BODY_WIDTH_WITH_ICON) ? LEFT_MARGIN_WITH_ICON
+                                              : LEFT_MARGIN;
+  sp.color = BODY_COLOR;
+
+  return draw_string_fits(canvas, body_font, str2, &sp, body_width,
+                          font_height(body_font) + BODY_FONT_LINE_PADDING);
+}
+
+bool confirm_body_fits_constant_power(const char* body, uint16_t body_width) {
+  Canvas* canvas = layout_get_canvas();
+  const Font* body_font = get_body_font();
+  const char* str2 = body ? body : "";
+
+  DrawableParams sp;
+  const uint32_t body_line_count = calc_str_line(body_font, str2, body_width);
+  sp.y = TOP_MARGIN;
+  if (body_line_count == ONE_LINE) {
+    sp.y = TOP_MARGIN_FOR_ONE_LINE;
+  } else if (body_line_count == TWO_LINES) {
+    sp.y = TOP_MARGIN_FOR_TWO_LINES;
+  }
+  sp.y += font_height(body_font) + BODY_TOP_MARGIN;
+  sp.x = 128 + LEFT_MARGIN;
+  sp.color = BODY_COLOR;
+
+  return draw_string_fits(canvas, body_font, str2, &sp, body_width,
+                          font_height(body_font) + BODY_FONT_LINE_PADDING);
+}
+
+/// How many characters of `body` fit one screen, starting from `body[0]`?
+///
+/// Binary search over confirm_body_fits(), which replays the real placement.
+/// Returns at least 1 so a body of unrenderable glyphs still advances rather
+/// than looping forever.
+static size_t page_take(const char* body, uint16_t body_width, char* buf,
+                        size_t buf_size) {
+  const size_t len = strlen(body);
+  if (len == 0) return 0;
+
+  size_t lo = 1;
+  size_t hi = len < (buf_size - 1) ? len : (buf_size - 1);
+  size_t best = 1;
+
+  while (lo <= hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    memcpy(buf, body, mid);
+    buf[mid] = '\0';
+    if (confirm_body_fits(buf, body_width)) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      if (mid == 1) break;
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/// Show `body` across as many screens as it needs.
+///
+/// Intermediate pages are `immediate`: a short click advances them. Only the
+/// LAST page takes the caller's real hold, because only the last page is the
+/// approval. Paging through what you are being shown should not cost the same
+/// effort as consenting to it.
+///
+/// INVARIANT (see #482): one required press, one ButtonRequest. Every page
+/// after the first writes its own request and clears button_request_acked, so
+/// a host that answers every request it is told about never waits on a press
+/// it never heard of.
+///
+/// `notify_host` is false for the *_without_button_request() entry points,
+/// which deliberately never message the host; emitting per-page requests for
+/// those would tell a host about presses it never asked to arbitrate.
+static bool page_body_confirm(const char* request_title, const char* body,
+                              layout_notification_t layout_notification_func,
+                              bool constant_power, IconType iconNum,
+                              bool immediate, uint16_t body_width,
+                              bool notify_host) {
+  static CONFIDENTIAL char page_buf[BODY_CHAR_MAX];
+  static char page_title[TITLE_CHAR_MAX];
+
+  /* Count first and refuse over 99 pages. Truncation could turn an unseen
+   * suffix into approval of a prefix (351 newlines need 117 pages). */
+  size_t pages = 0;
+  {
+    const char* p = body;
+    while (*p) {
+      const size_t take = page_take(p, body_width, page_buf, sizeof(page_buf));
+      if (take == 0) break;
+      p += take;
+      while (*p == ' ') p++; /* a leading space is dropped at a line start */
+      pages++;
+      if (pages > 99) {
+        /* title formats n/m, and a prefix must never become the approval */
+        memzero(page_buf, sizeof(page_buf));
+        return false;
+      }
+    }
+  }
+  if (pages <= 1) {
+    /* Nothing gained by paging -- draw it as it was. */
+    return confirm_screen(request_title, body, layout_notification_func,
+                          constant_power, iconNum, immediate);
+  }
+
+  bool ok = false;
+  const char* p = body;
+  for (size_t page = 0; page < pages && *p; page++) {
+    const size_t take = page_take(p, body_width, page_buf, sizeof(page_buf));
+    if (take == 0) break;
+    memcpy(page_buf, p, take);
+    page_buf[take] = '\0';
+
+    const int title_len =
+        snprintf(page_title, sizeof(page_title), "%s %u/%u", request_title,
+                 (unsigned)(page + 1), (unsigned)pages);
+    if (title_len < 0 || (size_t)title_len >= sizeof(page_title)) break;
+
+    const bool last = (page + 1 == pages);
+    if (page > 0 && notify_host) {
+      ButtonRequest page_ack;
+      memset(&page_ack, 0, sizeof(page_ack));
+      page_ack.has_code = true;
+      page_ack.code = ButtonRequestType_ButtonRequest_Other;
+      button_request_acked = false;
+      msg_write(MessageType_MessageType_ButtonRequest, &page_ack);
+    }
+
+    if (!confirm_screen(page_title, page_buf, layout_notification_func,
+                        constant_power, iconNum, last ? immediate : true)) {
+      goto done;
+    }
+
+    p += take;
+    while (*p == ' ') p++;
+    if (last) ok = true;
+  }
+
+done:
+  memzero(page_buf, sizeof(page_buf));
+  memzero(page_title, sizeof(page_title));
+  return ok;
+}
+
+/// Show a confirmation, paging when its complete body will not fit the screen.
+///
+/// draw_string() draws until a glyph no longer fits the canvas and then simply
+/// stops: a body taller than BODY_ROWS is drawn in part, with no ellipsis and
+/// nothing to tell the user that the tail of an address, an amount or a
+/// warning was dropped. Complete formatted bodies are therefore paged here.
+/// Source formatting overflow is refused by every public entry point before a
+/// ButtonRequest is emitted, because lost source cannot be paged.
+///
+/// Bodies that fit take exactly the path they took before: one screen, one
+/// ButtonRequest, one hold.
+static bool confirm_helper(const char* request_title, const char* request_body,
+                           layout_notification_t layout_notification_func,
+                           bool constant_power, IconType iconNum,
+                           bool immediate, bool notify_host) {
+  const uint16_t body_width =
+      (uint16_t)((iconNum == NO_ICON) ? BODY_WIDTH : BODY_WIDTH_WITH_ICON);
+
+  /* Only layout_standard_notification is known to wrap the body at BODY_WIDTH
+   * over BODY_ROWS rows. Custom layouts place and size their own body, and
+   * layout_constant_power_notification draws from x = 128 + LEFT_MARGIN where
+   * the canvas edge, not BODY_WIDTH, is the limit. Measuring either of those
+   * against BODY_WIDTH would be wrong, so leave them exactly as they were. */
+  const bool render_incomplete =
+      (layout_notification_func == &layout_standard_notification) &&
+      !confirm_body_fits(request_body, body_width);
+
+  if (render_incomplete) {
+    /* RENDER overflow: the body reached the renderer intact, so every
+     * character is still in hand and can be shown -- on more than one screen.
+     * Page it. */
+    return page_body_confirm(request_title, request_body,
+                             layout_notification_func, constant_power, iconNum,
+                             immediate, body_width, notify_host);
+  }
+
+  return confirm_screen(request_title, request_body, layout_notification_func,
+                        constant_power, iconNum, immediate);
 }
 
 bool confirm(ButtonRequestType type, const char* request_title,
@@ -298,8 +528,12 @@ bool confirm(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -310,9 +544,86 @@ bool confirm(ButtonRequestType type, const char* request_title,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
+}
+
+size_t confirm_constant_power_subpage_take(const char* body) {
+  const size_t len = strlen(body);
+  if (len == 0) return 0;
+
+  size_t best = 0;
+  for (size_t i = 0; i < len; i++) {
+    if (body[i] != '\n' && i + 1 != len) continue;
+    const size_t take = i + 1;
+    char probe[BODY_CHAR_MAX];
+    if (take >= sizeof(probe)) break;
+    memcpy(probe, body, take);
+    probe[take] = '\0';
+    if (confirm_body_fits_constant_power(probe, CONSTANT_POWER_BODY_WIDTH)) {
+      best = take;
+    } else {
+      break;
+    }
+  }
+  return best;
+}
+
+bool confirm_constant_power_paged(ButtonRequestType type,
+                                  const char* request_title,
+                                  const char* request_body) {
+  button_request_acked = false;
+
+  ButtonRequest resp;
+  memset(&resp, 0, sizeof(resp));
+  resp.has_code = true;
+  resp.code = type;
+  msg_write(MessageType_MessageType_ButtonRequest, &resp);
+
+  static CONFIDENTIAL char sub[BODY_CHAR_MAX];
+  const char* p = request_body ? request_body : "";
+  bool ok = true;
+#if DEBUG_LINK
+  bool decided_via_debug = false;
+#endif
+
+  while (*p && ok) {
+    const size_t take = confirm_constant_power_subpage_take(p);
+    if (take == 0 || take >= sizeof(sub)) {
+      ok = false;
+      break;
+    }
+    memcpy(sub, p, take);
+    sub[take] = '\0';
+    p += take;
+    const bool last = (*p == '\0');
+
+#if DEBUG_LINK
+    if (decided_via_debug) {
+      /* Production keeps the legacy one-ButtonRequest-per-word-group
+       * protocol. The debug build emits a request for each renderer subpage
+       * so the evidence harness can capture every physical OLED page instead
+       * of silently retaining only the first one. */
+      memset(&resp, 0, sizeof(resp));
+      resp.has_code = true;
+      resp.code = type;
+      button_request_acked = false;
+      msg_write(MessageType_MessageType_ButtonRequest, &resp);
+      decided_via_debug = false;
+    }
+#endif
+
+    ok = confirm_screen(request_title, sub, &layout_constant_power_notification,
+                        true, NO_ICON,
+                        /*immediate=*/!last);
+#if DEBUG_LINK
+    if (ok && last_exit_was_debug_decision) decided_via_debug = true;
+#endif
+  }
+
+  memzero(sub, sizeof(sub));
+  return ok;
 }
 
 bool confirm_constant_power(ButtonRequestType type, const char* request_title,
@@ -321,8 +632,12 @@ bool confirm_constant_power(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -333,7 +648,7 @@ bool confirm_constant_power(ButtonRequestType type, const char* request_title,
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_constant_power_notification,
-                     true, NO_ICON, false);
+                     true, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -345,15 +660,19 @@ bool confirm_with_custom_button_request(const ButtonRequest* button_request,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   msg_write(MessageType_MessageType_ButtonRequest, button_request);
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -362,12 +681,50 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
                                 ButtonRequestType type,
                                 const char* request_title,
                                 const char* request_body, ...) {
+  /* Consent must use the measured standard renderer; custom geometry cannot
+   * prove that all signed fields fit. Address/xpub display is separate. */
+  (void)layout_notification_func;
   button_request_acked = false;
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
+
+  /* Send button request */
+  ButtonRequest resp;
+  memset(&resp, 0, sizeof(ButtonRequest));
+  resp.has_code = true;
+  resp.code = type;
+  msg_write(MessageType_MessageType_ButtonRequest, &resp);
+
+  bool ret =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, NO_ICON, false, true);
+  memzero(strbuf, sizeof(strbuf));
+  return ret;
+}
+
+bool confirm_address_with_custom_layout(
+    layout_notification_t layout_notification_func, ButtonRequestType type,
+    const char* request_title, const char* request_body, ...) {
+  /* Keep the QR-capable address/xpub renderer: viewing a derived public value
+   * is not transaction consent. Its layout wraps or shrinks long addresses;
+   * routing it through the measured standard renderer would remove the QR. */
+  button_request_acked = false;
+
+  va_list vl;
+  va_start(vl, request_body);
+  const bool formatted = format_body(request_body, vl);
+  va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -377,7 +734,7 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
   bool ret = confirm_helper(request_title, strbuf, layout_notification_func,
-                            false, NO_ICON, false);
+                            false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -388,12 +745,44 @@ bool confirm_without_button_request(const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   bool ret =
       confirm_helper(request_title, strbuf, &layout_standard_notification,
-                     false, NO_ICON, false);
+                     false, NO_ICON, false, false);
+  memzero(strbuf, sizeof(strbuf));
+  return ret;
+}
+
+bool confirm_with_icon(ButtonRequestType type, IconType iconNum,
+                       const char* request_title, const char* request_body,
+                       ...) {
+  button_request_acked = false;
+
+  va_list vl;
+  va_start(vl, request_body);
+  const bool formatted = format_body(request_body, vl);
+  va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
+
+  /* Send button request */
+  ButtonRequest resp;
+  memset(&resp, 0, sizeof(ButtonRequest));
+  resp.has_code = true;
+  resp.code = type;
+  msg_write(MessageType_MessageType_ButtonRequest, &resp);
+
+  bool ret =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, iconNum, false, true);
   memzero(strbuf, sizeof(strbuf));
   return ret;
 }
@@ -404,8 +793,12 @@ bool review(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -414,10 +807,11 @@ bool review(ButtonRequestType type, const char* request_title,
   resp.code = type;
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
-  (void)confirm_helper(request_title, strbuf, &layout_standard_notification,
-                       false, NO_ICON, false);
+  const bool shown =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, NO_ICON, false, true);
   memzero(strbuf, sizeof(strbuf));
-  return true;
+  return shown;
 }
 
 bool review_without_button_request(const char* request_title,
@@ -426,13 +820,18 @@ bool review_without_button_request(const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
-  (void)confirm_helper(request_title, strbuf, &layout_standard_notification,
-                       false, NO_ICON, false);
+  const bool shown =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, NO_ICON, false, false);
   memzero(strbuf, sizeof(strbuf));
-  return true;
+  return shown;
 }
 
 bool review_with_icon(ButtonRequestType type, IconType iconNum,
@@ -442,8 +841,12 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -452,10 +855,11 @@ bool review_with_icon(ButtonRequestType type, IconType iconNum,
   resp.code = type;
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
-  (void)confirm_helper(request_title, strbuf, &layout_standard_notification,
-                       false, iconNum, false);
+  const bool shown =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, iconNum, false, true);
   memzero(strbuf, sizeof(strbuf));
-  return true;
+  return shown;
 }
 
 bool review_immediate(ButtonRequestType type, const char* request_title,
@@ -464,8 +868,12 @@ bool review_immediate(ButtonRequestType type, const char* request_title,
 
   va_list vl;
   va_start(vl, request_body);
-  vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
+  const bool formatted = format_body(request_body, vl);
   va_end(vl);
+  if (!formatted) {
+    memzero(strbuf, sizeof(strbuf));
+    return false;
+  }
 
   /* Send button request */
   ButtonRequest resp;
@@ -474,8 +882,9 @@ bool review_immediate(ButtonRequestType type, const char* request_title,
   resp.code = type;
   msg_write(MessageType_MessageType_ButtonRequest, &resp);
 
-  (void)confirm_helper(request_title, strbuf, &layout_standard_notification,
-                       false, NO_ICON, true);
+  const bool shown =
+      confirm_helper(request_title, strbuf, &layout_standard_notification,
+                     false, NO_ICON, true, true);
   memzero(strbuf, sizeof(strbuf));
-  return true;
+  return shown;
 }

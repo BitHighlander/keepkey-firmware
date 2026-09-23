@@ -32,8 +32,12 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/python-keepkey.Dockerfile'
+      args:
+        EMULATOR_IMAGE: '${KK_EMULATOR_IMAGE:-kktech/kkemu:latest}'
     volumes:
       - test-reports:/kkemu/test-reports:rw
+    environment:
+      KK_RELEASE_MISSING_CAPABILITIES: '${KK_RELEASE_MISSING_CAPABILITIES:-}'
     networks:
       - local-net
     depends_on:
