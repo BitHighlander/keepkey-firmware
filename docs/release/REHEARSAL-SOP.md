@@ -157,6 +157,19 @@ When the report itself is committed in the review PR, record its generation
 predecessor in the report and record the resulting final PR head in the PR
 description; a file cannot embed the hash of the commit that contains itself.
 
+Before requesting review, freeze the report files in a commit, then generate the
+final inventory from an **immutable, explicit base-to-predecessor range** such
+as `git diff --numstat BASE_SHA..REPORT_PREDECESSOR_SHA`. Include every PR file,
+including the report source and binary PDF (Git shows `-` for binary counts).
+Regenerate and commit the report if the first report commit changes the file
+list or line counts. Verify the committed final diff with
+`git diff --numstat BASE_SHA..FINAL_HEAD_SHA` and compare every path and count
+to the report; a report-only correction may use the predecessor range when the
+final diff is identical, with the containing head recorded in the PR body.
+Do not cite a mutable branch name, `HEAD`, or a one-argument `git diff` as the
+reproduction command for a frozen inventory. Confirm that the PDF shows the
+same inventory and that its rendered pages are legible.
+
 Include a line-change inventory produced from Git for the PR diff and, when a
 small review PR summarizes earlier code units, for each underlying unit commit.
 Show additions, deletions, files, and the command/range used. State explicitly
@@ -174,6 +187,13 @@ later commits changed code, tests, pins, workflows, or documentation. A green
 earlier run is supporting evidence when the head changes, not an exact-head
 pass. Recheck the affected surface and regenerate the report after material
 changes. Run a PDF render check and inspect the output before handing it over.
+
+Perform one local preflight before spending a Copilot request: compare the
+report table with the final Git diff; check the report and PR body for the exact
+base, predecessor, final head, pins, skips, open risks, and review status; open
+the PDF; run `git diff --check`; and confirm the PR contains only the intended
+files. Fix all discrepancies locally and freeze the head before requesting.
+Record this preflight in the PR description or audit receipt.
 
 The report supplies review evidence; it cannot guarantee that Copilot or a
 human reviewer will return zero findings. Keep delivered-review status and
@@ -193,6 +213,19 @@ and their affected interactions; do not substitute a broad product diff for them
 Never automatically start a repeat-until-silent Copilot loop. If findings arrive,
 triage and fix them locally in a batch; a re-request needs a concrete reason tied
 to that external checkpoint. Preserve prior dispositions and review counts.
+
+Use one Copilot request for a locally complete unit. If that review finds issues,
+read its body and every inline comment, fix all related issues together, and
+repeat the full local preflight before a corrective request. A request reviews
+one commit: changing the head makes an earlier clean result stale. Budget at
+most one corrective request per unit without a renewed owner decision; if it
+still finds issues, stop requesting, report the exact remaining findings and
+current head, and get the owner's direction before spending another request.
+Never re-request to test an uninspected report edit, to clear a thread without
+a documented disposition, or while an earlier request is still pending. A
+timeline request event proves registration; only a delivered current-head
+review with body, inline comments, and zero unresolved threads proves a clean
+checkpoint. State the number of requests and their outcomes in the receipt.
 
 A failed, missing or quota-limited review is not a clean review. Report Copilot's
 actual status separately from internal readiness. Existing substantive findings
