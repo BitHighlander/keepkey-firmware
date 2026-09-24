@@ -1557,6 +1557,7 @@ void session_clear(bool clear_pin) {
   /* Every session loss is an authorization boundary even when Initialize asks
    * to preserve the cached PIN. Abort signing and discard all plaintext
    * setup/authenticator state before the caller can report success. */
+  signed_metadata_clear_signers();
   signing_abort();
   setup_abort();
   authenticator_clear_cache();
@@ -2309,6 +2310,9 @@ bool storage_hasNode(void) { return shadow_config.storage.pub.has_node; }
 Allocation storage_getLocation(void) { return storage_location; }
 
 bool storage_setPolicy(const char* policy_name, bool enabled) {
+  if (!enabled && strcmp(policy_name, "AdvancedMode") == 0) {
+    signed_metadata_clear_signers();
+  }
   return storage_setPolicy_impl(shadow_config.storage.pub.policies, policy_name,
                                 enabled);
 }

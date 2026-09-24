@@ -1,4 +1,5 @@
 set(sources
+    app_confirm.cpp
     nanopb_bounds.cpp
     authenticator.cpp
     confirm_test_utils.cpp
@@ -31,6 +32,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       eos_authorization.cpp
       eos_authorization_probe.c
       ethereum.cpp
+      liquidity_key_probe.c
       mayachain.cpp
       nano.cpp
       osmosis.cpp

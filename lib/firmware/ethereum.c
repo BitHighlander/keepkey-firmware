@@ -916,6 +916,20 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  if (data_total == 68 && ethereum_isStandardERC20Approve(msg)) {
+    // Unlimited approval grants open-ended authority and is refused before
+    // any generic transaction confirmation can mask this policy decision.
+    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
+    bool unlimited = true;
+    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
+    if (unlimited) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Unlimited ERC20 approval is disabled"));
+      ethereum_signing_abort();
+      return;
+    }
+  }
+
   bool data_needs_confirm = true;
   if (ethereum_contractHandled(data_total, msg, node)) {
     if (!ethereum_contractConfirmed(data_total, msg, node)) {
@@ -966,17 +980,6 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_total == 68 && ethereum_isStandardERC20Approve(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
     is_approve = true;
-    // Unlimited approval grants open-ended authority and is refused before
-    // any generic transaction confirmation can mask this policy decision.
-    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
-    bool unlimited = true;
-    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
-    if (unlimited) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Unlimited ERC20 approval is disabled"));
-      ethereum_signing_abort();
-      return;
-    }
   }
 
   if (needs_confirm) {

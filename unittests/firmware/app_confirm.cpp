@@ -1,42 +1,48 @@
 extern "C" {
 #include "keepkey/firmware/app_confirm.h"
 }
-
 #include "gtest/gtest.h"
+#include <string>
 
-TEST(AppConfirm, MultilineAsciiMessageUsesTextMode) {
-  static const char message[] =
-      "Welcome to DegenQuest!\n"
-      "\n"
-      "Sign this message to authenticate your wallet.\n"
-      "\n"
-      "This request will not trigger a blockchain transaction or cost any gas "
-      "fees.\n"
-      "\n"
-      "Nonce: d2d8d32b-a7fc-4129-a60b-e0664f0b2169";
+void kk_test_board_init(void);
 
-  ASSERT_EQ(193U, sizeof(message) - 1);
-  EXPECT_TRUE(confirm_bytes_is_text(reinterpret_cast<const uint8_t*>(message),
-                                    sizeof(message) - 1));
+TEST(AppConfirm, AllByteValuesHaveAnUnambiguousVisibleRepresentation) {
+  for (unsigned value = 0; value < 256; ++value) {
+    const uint8_t byte = value;
+    char actual[5];
+    char expected[5];
+    if (value >= 0x21 && value <= 0x7e && value != 0x5c) {
+      expected[0] = value;
+      expected[1] = 0;
+    } else {
+      snprintf(expected, sizeof(expected), "\\x%02X", value);
+    }
+    ASSERT_TRUE(confirm_bytes_escape(&byte, 1, actual, sizeof(actual)));
+    EXPECT_STREQ(expected, actual) << value;
+  }
 }
 
-TEST(AppConfirm, UnsafeControlsAndBinaryBytesUseHexMode) {
-  static const uint8_t spaces[] = {' ', ' ', ' '};
-  static const uint8_t blank_lines[] = {'\n', '\n'};
-  static const uint8_t nul[] = {'a', 0x00, 'b'};
-  static const uint8_t tab[] = {'a', '\t', 'b'};
-  static const uint8_t carriage_return[] = {'a', '\r', 'b'};
-  static const uint8_t escape[] = {'a', 0x1b, 'b'};
-  static const uint8_t del[] = {'a', 0x7f, 'b'};
-  static const uint8_t utf8[] = {0xc3, 0xa9};
-
-  EXPECT_FALSE(confirm_bytes_is_text(spaces, sizeof(spaces)));
-  EXPECT_FALSE(confirm_bytes_is_text(blank_lines, sizeof(blank_lines)));
-  EXPECT_FALSE(confirm_bytes_is_text(nul, sizeof(nul)));
-  EXPECT_FALSE(confirm_bytes_is_text(tab, sizeof(tab)));
-  EXPECT_FALSE(confirm_bytes_is_text(carriage_return, sizeof(carriage_return)));
-  EXPECT_FALSE(confirm_bytes_is_text(escape, sizeof(escape)));
-  EXPECT_FALSE(confirm_bytes_is_text(del, sizeof(del)));
-  EXPECT_FALSE(confirm_bytes_is_text(utf8, sizeof(utf8)));
-  EXPECT_FALSE(confirm_bytes_is_text(nullptr, 1));
+TEST(AppConfirm, PagesPreserveEveryEscapedByteIncludingHiddenSuffix) {
+  kk_test_board_init();
+  const std::string input = std::string(200, 'A') + "\n\t\\x00TAIL0199";
+  char escaped[1024];
+  ASSERT_TRUE(
+      confirm_bytes_escape(reinterpret_cast<const uint8_t*>(input.data()),
+                           input.size(), escaped, sizeof(escaped)));
+  std::string joined;
+  size_t offset = 0;
+  unsigned pages = 0;
+  while (offset < input.size()) {
+    char page[128];
+    size_t take = confirm_bytes_format_page(
+        reinterpret_cast<const uint8_t*>(input.data() + offset),
+        input.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    offset += take;
+    joined += page;
+    pages++;
+  }
+  EXPECT_GT(pages, 1u);
+  EXPECT_EQ(escaped, joined);
+  EXPECT_NE(std::string::npos, joined.find("TAIL0199"));
 }
