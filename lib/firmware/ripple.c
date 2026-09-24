@@ -171,7 +171,7 @@ void ripple_serializeVarint(bool* ok, uint8_t** buf, const uint8_t* end,
     return;
   }
 
-  if (val < 192) {
+  if (val <= 192) {
     append_u8(ok, buf, end, val);
     return;
   }

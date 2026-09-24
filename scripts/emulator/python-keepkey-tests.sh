@@ -55,4 +55,15 @@ KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 
+# Stack 06 owns legacy runtime metadata and session trust. The later ERC-7730
+# capability must not hide these already implemented contracts.
+KK_RELEASE_MISSING_CAPABILITIES= \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v --tb=short \
+  test_msg_ethereum_clearsign_additive.py \
+  test_msg_session_trust_lifetime.py \
+  test_msg_ripple_sign_tx.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack06-contracts.xml
+
 echo "0" > /kkemu/test-reports/python-keepkey/status

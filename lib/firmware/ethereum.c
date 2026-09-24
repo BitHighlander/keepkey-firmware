@@ -351,6 +351,8 @@ static int rlp_calculate_number_length(uint32_t number) {
 }
 
 static void send_request_chunk(void) {
+  // The previous chunk was validated and accepted before requesting more.
+  note_workflow_progress();
   layoutProgress(_("Signing"), (data_total - data_left) * 1000 / data_total);
   msg_tx_request.has_data_length = true;
   msg_tx_request.data_length = data_left <= 1024 ? data_left : 1024;
@@ -839,6 +841,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (!msg->has_to) msg->to.size = 0;
   if (!msg->has_nonce) msg->nonce.size = 0;
 
+  // RLP treats an all-zero integer as zero regardless of its wire length.
+  // Canonicalize before contract and generic classifiers inspect this value.
+  if (msg->value.size > 0) {
+    bool all_zero = true;
+    for (size_t i = 0; i < msg->value.size; ++i) {
+      all_zero &= msg->value.bytes[i] == 0;
+    }
+    if (all_zero) msg->value.size = 0;
+  }
+
   /* eip-155 chain id
    *
    * An absent chain_id is not "some other chain", it is no chain. The bounds
@@ -968,6 +980,20 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     fsm_sendFailure(FailureType_Failure_SyntaxError, _("Safety check failed"));
     ethereum_signing_abort();
     return;
+  }
+
+  if (data_total == 68 && ethereum_isStandardERC20Approve(msg)) {
+    // Unlimited approval grants open-ended authority and is refused before
+    // any generic transaction confirmation can mask this policy decision.
+    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
+    bool unlimited = true;
+    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
+    if (unlimited) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Unlimited ERC20 approval is disabled"));
+      ethereum_signing_abort();
+      return;
+    }
   }
 
   bool data_needs_confirm = true;

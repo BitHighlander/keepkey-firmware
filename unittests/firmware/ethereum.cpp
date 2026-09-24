@@ -264,3 +264,11 @@ TEST(Ethereum, LpApprovalRequiresMainnetDerivedPairAndCanonicalSpender) {
   msg.data_initial_chunk.bytes[4] = 1;
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
 }
+
+extern "C" bool test_liquidity_failed_derivation_wipes(int stage);
+
+TEST(Ethereum, LiquidityDerivationWipesRootAndPartialKeysOnEveryFailure) {
+  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(1));
+  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(2));
+  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(3));
+}

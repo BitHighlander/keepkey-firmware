@@ -2,7 +2,7 @@
 //
 // Shared by every test that drives code through a confirmation screen
 // (authenticator, ethereum, thorchain, mayachain, osmosis, ...). It lives in
-// its own translation unit rather than inside one chain's test file so that
+// confirm_test_utils.cpp rather than inside one chain's test file so that
 // adding a caller never depends on which chain-specific test happens to be
 // listed in CMakeLists.txt.
 #ifndef UNITTESTS_FIRMWARE_KKCONFIRM_DRIVER_H
