@@ -15,6 +15,7 @@ set(sources
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
+    messages_probe.c
     u2f.cpp)
 
 # Suites for the coin engines the bitcoin-only image compiles out. Building

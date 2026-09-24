@@ -47,6 +47,7 @@
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
