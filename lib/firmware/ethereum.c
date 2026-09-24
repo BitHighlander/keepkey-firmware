@@ -922,9 +922,14 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   // Keep the selector and both ABI words available to the allowance policy.
   // Otherwise a host could split an approval prefix across streamed chunks.
-  if (data_total >= 68 && msg->data_initial_chunk.size < 68) {
+  const size_t selector_bytes =
+      msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      msg->data_initial_chunk.size < 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3",
+             selector_bytes) == 0) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Calldata requires at least 68 initial bytes"));
+                    _("Approval requires at least 68 initial bytes"));
     ethereum_signing_abort();
     return;
   }
