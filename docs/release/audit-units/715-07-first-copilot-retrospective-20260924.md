@@ -74,6 +74,14 @@ Failures retained in the evidence history: the initial Docker read-only/disk out
 
 No physical device was flashed, no production signing was performed, and no release was promoted. Full ERC-7730 v2 conformance and later release-stack capabilities remain outside this bounded extraction. Hosted exact-head CI and predecessor acceptance are separate statuses from these local checks. A historical green result or a resolved thread is never a current-head clean review.
 
+## Hosted qualification correction
+
+First corrective hosted run 35962710863 on e46aae5fd passed all native, static, ARM and BTC integration jobs, but full integration stopped at the screenshot audit: test_clearsign_erc20_approve_unlimited passed its refusal assertion and captured zero screens, while the report incorrectly declared two. The frozen local preflight had inspected the new Stack 07 frames and JUnit validation, but did not replay the full existing screenshot declaration set after enabling erc7730-runtime-review. That omission belongs to this audit, not to an infrastructure explanation.
+
+The firmware already refuses unlimited approval before any ButtonRequest. Published host correction 1d42a1fa401129da292a8b0fe4f6dc9bee727117 describes that exact screenless contract, removes the invalid full-sequence claim, and strengthens the actual wire test to require immediate Failure with no intervening ButtonRequest. Nearby generated report prose now correctly states AdvancedMode ON with annotations additional to ordinary raw review. No firmware policy, assertion or screenshot gate was weakened. Seven focused refusal/report tests pass; replaying the corrected screenshot audit against the actual hosted artifact passes. Firmware source remains identical to the locally validated implementation. New-pin final hosted CI is recorded in the PR receipt.
+
+Prevention: before the combined matrix, run the report-required screenshot audit across all newly enabled legacy cases, not only newly authored protocol tests. A successful wire test with no frames is valid only when the report declares a refusal contract and the wire assertion prohibits intervening approvals.
+
 ## Prevention and next-round discipline
 
 - Pin the claim, PR, actual predecessor and immutable head before any external request. Verify the diff is code-bearing and belongs to the named block.

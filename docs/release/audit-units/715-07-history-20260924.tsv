@@ -101,3 +101,5 @@ ec4c425090f1a124e9ff7fab51d8bfa29eae2b69	7	0	lib/firmware/fsm_msg_ethereum.h
 ec4c425090f1a124e9ff7fab51d8bfa29eae2b69	7	0	scripts/emulator/python-keepkey-tests.sh
 ec4c425090f1a124e9ff7fab51d8bfa29eae2b69	2	0	scripts/emulator/test_stack07_regressions.py
 ec4c425090f1a124e9ff7fab51d8bfa29eae2b69	62	2	unittests/firmware/fsm.cpp
+host:1d42a1fa401129da292a8b0fe4f6dc9bee727117	18	8	scripts/generate-test-report.py
+host:1d42a1fa401129da292a8b0fe4f6dc9bee727117	10	6	tests/test_msg_ethereum_clear_signing.py
