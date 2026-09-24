@@ -72,3 +72,9 @@ d7d149c4670821dbc07628669e578c7d80806afe	11	0	scripts/emulator/python-keepkey-te
 1ebb3b8ec72765eec1dea7d668cd744fcfc45881	86	0	unittests/firmware/eip712.cpp
 1ebb3b8ec72765eec1dea7d668cd744fcfc45881	372	2	unittests/firmware/ethereum.cpp
 1ebb3b8ec72765eec1dea7d668cd744fcfc45881	33	37	unittests/firmware/storage.cpp
+0b9031caef5a7371e77dd785d1f45252ca458a06	17	4	lib/firmware/ethereum.c
+0b9031caef5a7371e77dd785d1f45252ca458a06	71	0	unittests/firmware/fsm.cpp
+6869694bb6c4a3d6cfb21d714bb7c9233e74edcb	8	7	lib/firmware/ethereum.c
+6869694bb6c4a3d6cfb21d714bb7c9233e74edcb	35	0	unittests/firmware/fsm.cpp
+fad2d0c4af0e186a9e16837cd844413feb552306	7	2	lib/firmware/ethereum.c
+fad2d0c4af0e186a9e16837cd844413feb552306	36	34	unittests/firmware/fsm.cpp
