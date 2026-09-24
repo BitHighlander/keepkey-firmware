@@ -2,8 +2,13 @@
 
 Date: 2026-09-16
 
-Status: implementation starting on `feature/alpha-erc7730`. Target base is
-fork `alpha` at `7151ba3bfd1541e5e27f10517793f106225c8e92`.
+Status at authorship: implementation starting on `feature/alpha-erc7730`,
+targeting fork `alpha` at `7151ba3bfd1541e5e27f10517793f106225c8e92`.
+This is a historical alpha design and full-conformance target. Release Stack 07
+stages a bounded ERC-7730 core in 7.15 behind AdvancedMode; its actual scope,
+runtime trust boundary and acceptance evidence must be read from that stack's
+audit report and adjacent source diff. The alpha goal below is not a claim that
+the 7.15 subset implements the complete ERC-7730 v2 specification.
 
 ## Goal
 
@@ -17,7 +22,9 @@ Do not describe the result as full ERC-7730 support until every required item
 in the conformance section is implemented, negatively tested, and exercised by
 registry fixtures on the emulator.
 
-This work is alpha-only. It does not change 7.15, 7.14.x, a bootloader, storage
+At authorship this plan targeted alpha only. The later Stack 07 extraction
+changes 7.15 firmware; the remaining full-conformance work stays outside this
+unit. Neither this plan nor its later extraction changes a bootloader, storage
 format, or an upstream release branch.
 
 ## Starting point
