@@ -187,7 +187,7 @@ TEST_F(ReviewHandlers, Bip85DerivationMatchesIndependentBip32Oracle) {
   fsm_test_clearLastFailure();
   fsm_msgGetBip85Mnemonic(&request);
   EXPECT_EQ(0, fsm_test_lastFailureCode());
-  EXPECT_LT(kkconfirm_drain(), 19);  // initial approval and display pages
+  EXPECT_EQ(32, kkconfirm_drain());  // 20 pairs queued, 4 screens approved
   for (char byte : mnemonic_scratch_tokened) EXPECT_EQ(0, byte);
   for (const auto& page : mnemonic_scratch_formatted)
     for (char byte : page) EXPECT_EQ(0, byte);
