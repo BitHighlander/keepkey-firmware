@@ -10,6 +10,12 @@ Stack 05 audit PR #858 at `41de705c9c16da65bb3c390ab8dc1136b462803c` is the prov
 
 Canonical untracked release evidence was copied to `/private/tmp/kk715-stack06-intake-evidence/canonical-release` with SHA256SUMS before relying on it. Main worktree conflict files were left intact. Master snapshot SHA256: `6b8fe1a948d62ae34a51371610dac03e02cb921ccb3a7547d50eb5a35eb71fea`.
 
+## Predecessor refresh
+
+During intake, Stack 05 moved to `5c3f2d927f56a8646178d00c0abc9ed01c427393` (report-gate repair `86ecb29ec` and report refresh). PR #858 has no delivered review and CI is in progress. Acceptance remains pending. The provisional branch was rebased cleanly to that head; code head is `b55063ff5e8d3f2e96ffb2275be3cc24161531d0`. Original replay is now `2ec1e4d6d`; historical fix replays are `c2ba4e60c`, `f8091221f`, `b55063ff5`.
+
+`git diff be99d50ca..b55063ff5 -- lib include unittests deps CMakeLists.txt cmake` is empty. The tests below therefore carry forward as firmware-equivalent local evidence. They are not exact-head hosted CI for the updated workflow/report generator.
+
 ## Finite batch and historical reconciliation
 
 Scope: original Stack 06 delta, requalification of its prior fixes, and falsification of inherited transport, Ripple, policy and workflow contracts. No new chain support, release publication, predecessor claim takeover, or structured EIP-712 enablement. Missing predecessor fixes receive named dispositions; historical fixes are not automatically accepted.
@@ -61,3 +67,62 @@ Required before review: accepted predecessor reconciliation; source-to-test and 
 20	0	unittests/firmware/kkconfirm_driver.h
 258	7	unittests/firmware/signed_metadata.cpp
 ```
+
+## Executed intake evidence
+
+Tests ran against code `be99d50ca` before the report-only predecessor refresh. Full image: `sha256:a6b779e7e265579cf47ce8f2fe0cebb82ceed87d9ad0f9626334214d0160614b`; Bitcoin-only: `sha256:b06ba1a0893a1660289259449e4d10da507e954d882a7a22174e82dc1b1d9253`. Both use the pinned builder digest in `scripts/emulator/Dockerfile`. Exact top-level submodule trees were exported from the pinned commits, plus Python Ethereum list `89a64f717e1690bb31adb3e4c38e23640357333c`; unused nested upstream crypto submodules were not initialized. No dependency pointer changed.
+
+| Check | Outcome | Scope / limits |
+| --- | --- | --- |
+| Full native `make xunit` | PASS: 445 firmware, 19 board, 18 crypto | Ordinary compile guards; does not establish hidden workflow contracts or separate Zcash crypto suite |
+| Bitcoin-only native `make xunit` | PASS: 122 firmware, 19 board, 18 crypto | Altcoin suites excluded by product configuration |
+| Guarded full diagnostic | FAIL: 10 / 35 Fsm/AutoLockProgress tests | Explicit `-DKK_FINAL_POLICY_TESTS`; separate diagnostic container, no candidate macro change |
+| Guarded Bitcoin-only diagnostic | FAIL: 6 / 26 tests | Same explicit diagnostic flag |
+| Additive metadata host module | PASS: 5 / 5, none skipped | v1, v2, all runtime slots, absent signer and bad signature |
+| Session-trust + Ripple host modules | FAIL: 5, PASS: 2, SKIP: 3 | Four session failures, one Ripple memo failure; two power-cycle checks lacked owned emulator binary; pre-7.15 memo-refusal test excluded by version |
+| Tiny rejection negative control | Expected FAIL: 1 / 1 in each variant | Remove rejection exit/Cancel-buffer clearing in disposable container; positive test passed ordinary native runs |
+| Adjacent whitespace check | PASS | `git diff --check 5c3f2d927..b55063ff5` |
+
+Host tests used the exact pinned Python source mounted read-only in `kk715-stack05-python:latest` (reused dependency environment), isolated Docker network and candidate full emulator. No staged-capability skip list was supplied for the focused tests. Initial tool invocations with explicit platform metadata and an incorrect Ripple test filename did not run tests; corrected invocations above are the evidence. All failure counts are assertions, not independently proven root-cause counts.
+
+### Executed diagnostic failures
+
+**full**
+
+- `Fsm.DispatchScrubsDerivedKeyScratchAfterHandler`
+- `Fsm.CrossWorkflowAcknowledgementsTerminateTheActiveSigner`
+- `Fsm.PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal`
+- `AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked`
+- `AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline`
+- `AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession`
+- `AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession`
+- `AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot`
+- `AutoLockProgress.EthereumChunksRenewButFeaturePollingDoesNot`
+- `AutoLockProgress.EosDataProgressRenewsButEmptyChunksDoNot`
+
+**btc**
+
+- `Fsm.DispatchScrubsDerivedKeyScratchAfterHandler`
+- `AutoLockProgress.FeaturePollingCannotKeepStalledSigningUnlocked`
+- `AutoLockProgress.ValidBitcoinStreamProgressRenewsTheIdleDeadline`
+- `AutoLockProgress.ProtectedPingCannotSuspendAnOlderSigningSession`
+- `AutoLockProgress.TopLevelConfirmationEndsAnOlderSigningSession`
+- `AutoLockProgress.RecoveryEditsRenewButPollingAndEmptyDeleteDoNot`
+
+### Disposition update and remaining contract gaps
+
+- B06-001: fix replayed; ordinary suite passes. Explicit injected root-load/CKD failure with RAM observation is still missing; do not close on source inspection alone.
+- B06-002: fix replayed; actual UDP malformed-ack assertion passes in both builds and its negative control fails. Blocking wait, debug callback, short/no-data/error paths and direct post-copy tiny-storage inspection still need coverage before full security closure.
+- B06-003: fix replayed; five pinned host assertions pass. Software targeted verification only; independent mutation and full integration remain pending.
+- B06-004: inherited defect reproduced. ClearSession leaves AdvancedMode armed; disabling AdvancedMode does not revoke signer; ClearSession and Initialize preserve signer trust. Power-cycle cases remain unexecuted here. Historical storage fix alone must be checked against the distinct soft-Initialize policy and signer contracts.
+- B06-005: inherited memo refusal reproduced on declared 7.15; 192-byte serializer boundary still uses `< 192`. Host boundary fix requires its own pin/publication reconciliation. No Ripple support change was silently added to Stack 06.
+- B06-006: guarded diagnostics reproduce missing predecessor workflow contracts in both variants. Historical dispatch/progress fixes remain proposed evidence, not accepted upstream content. Ordinary green results cannot waive these failures.
+- B06-007: padded-zero/unlimited-approval refusal fails in the full diagnostic. Hive and other approval host failures remain pending reproduction.
+- B06-008: parser tests execute in ordinary full build; structured signing remains disabled. This is not authorization to enable it.
+- **B06-009, new verification gap:** original Stack 06 adds `unittests/firmware/app_confirm.cpp` and `kkconfirm_driver.cpp`, but neither is registered in firmware CMake. The AppConfirm file calls `confirm_bytes_is_text`, which has no declaration or implementation in this candidate. The existing compiled `confirm_test_utils.cpp` already supplies driver functions. Do not count these orphan files as test coverage or register the duplicate driver blindly. Resolve their source provenance and intended text/hex policy before closing the display review.
+
+The shared staged-capability list explicitly excludes Ripple memo, session trust and workflow unwind checks. That explains how broad hosted checks can pass while these product contracts fail; it does not close them. The next required dependency is acceptance/reconciliation of Stack 05 and propagation of the accepted predecessor security contracts, followed by the remaining Stack 06 property checks, full/BTC host suites, ARM/resource and exact-head CI. No code-review readiness, PDF preflight, external review or release acceptance is claimed.
+
+## Evidence bundle
+
+`715-06-intake-evidence-20260924.tgz` preserves native/diagnostic/host logs, XML, mutation scripts and original replay inventory. Each included file is hashed in the accompanying manifest. Canonical untracked evidence snapshot remains separately preserved at the absolute path above; it is not represented as a committed predecessor handoff.
