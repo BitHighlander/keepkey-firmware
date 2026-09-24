@@ -152,8 +152,6 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
-# The Zcash Orchard engine (added in this PR) pulls the Pallas curve
-# arithmetic into the image, and the per-chain clear-sign code stacked on top
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
