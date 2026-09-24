@@ -285,7 +285,7 @@ static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
 #undef MSG_OUT
 #define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)          \
   uint8_t out_##STRUCT_NAME[_Generic(((STRUCT_NAME*)0), \
-                                CoinTable*: 1,          \
+                                CoinTable *: 1,         \
                                 default: sizeof(STRUCT_NAME))];
 
 #undef RAW_IN
@@ -300,6 +300,13 @@ static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
 typedef union {
 #include "messagemap.def"
 } FsmResponse;
+
+/* Each generated member contributes to the union's compile-time bound. */
+#undef MSG_OUT
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)                 \
+  _Static_assert(sizeof(((FsmResponse*)0)->out_##STRUCT_NAME), \
+                 "Response size must be nonzero");
+#include "messagemap.def"
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
 extern bool reset_msg_stack;

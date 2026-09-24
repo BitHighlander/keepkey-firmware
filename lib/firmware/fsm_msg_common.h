@@ -168,7 +168,7 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   const size_t chunk_size =
       sizeof(((CoinTable*)0)->table) / sizeof(((CoinTable*)0)->table[0]);
 
-  if (has_start && has_end) {
+  if (has_start) {
     if (coin_table_count <= start || coin_table_count < end || end < start ||
         chunk_size < end - start) {
       fsm_sendFailure(FailureType_Failure_Other,
@@ -185,14 +185,14 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   resp->has_num_coins = true;
   resp->num_coins = coin_table_count;
 
-  if (has_start && has_end) {
+  if (has_start) {
     resp->table_count = end - start;
 
     for (size_t i = 0; i < end - start; i++) {
       if (start + i < COINS_COUNT) {
         resp->table[i] = coins[start + i];
 #if !BITCOIN_ONLY
-      } else if (start + i - COINS_COUNT < TOKENS_COUNT) {
+      } else if (start + i < COINS_COUNT + TOKENS_COUNT) {
         coinFromToken(&resp->table[i], &tokens[start + i - COINS_COUNT]);
 #endif
       }
