@@ -74,6 +74,7 @@ typedef struct {
   SHA256_CTX calldata_hash;
   uint8_t reviewed_digest[32];
   bool reviewed_digest_set;
+  bool signing_pass;
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM

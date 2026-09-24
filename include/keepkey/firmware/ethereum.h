@@ -43,7 +43,8 @@ void format_ethereum_address(const uint8_t* to, char* destination_str,
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg);
 bool ethereum_chainIdIsValid(const EthereumSignTx* msg);
 bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
-                                  int buflen);
+                                  int buflen)
+    __attribute__((warn_unused_result));
 bool ethereum_streamed_eip712_enabled(void);
 
 /// \pre requires that `ethereum_isStandardERC20Transfer(msg)`
@@ -68,7 +69,8 @@ void ethereum_message_sign(const EthereumSignMessage* msg, const HDNode* node,
 int ethereum_message_verify(const EthereumVerifyMessage* msg);
 
 bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
-                          uint32_t cid, char* buf, int buflen);
+                          uint32_t cid, char* buf, int buflen)
+    __attribute__((warn_unused_result));
 
 void bn_from_bytes(const uint8_t* value, size_t value_len, bignum256* val);
 

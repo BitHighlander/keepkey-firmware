@@ -168,6 +168,39 @@ class TestStack07Regressions(common.KeepKeyTest):
             self.assertIsInstance(result, proto.Failure, field)
             self.assertEqual(passes, 0)
 
+    def test_failed_certified_domain_clears_preload(self):
+        doc, program = self._typed_fixture()
+        envelope = self._preload(program)
+        changed = copy.deepcopy(doc)
+        changed["domain"]["chainId"] = 2
+        result, _, _, _ = self._walk(self._typed_start(), envelope, changed)
+        self.assertIsInstance(result, proto.Failure)
+        result, buttons, _, _ = self._walk(self._typed_start(), doc=doc)
+        self.assertIsInstance(result, eth.EthereumTypedDataSignature)
+        self.assertEqual(buttons, 7)
+
+    def test_early_typed_failure_clears_preload(self):
+        doc, program = self._typed_fixture()
+        self._preload(program)
+        result = self.client.call_raw(eth.EthereumSignTypedData(
+            address_n=PATH, primary_type="", metamask_v4_compat=True))
+        self.assertIsInstance(result, proto.Failure)
+        result, buttons, _, _ = self._walk(self._typed_start(), doc=doc)
+        self.assertIsInstance(result, eth.EthereumTypedDataSignature)
+        self.assertEqual(buttons, 7)
+
+    def test_empty_message_requires_explicit_consent(self):
+        doc, _ = self._typed_fixture()
+        doc["types"]["Mail"] = []
+        doc["message"] = {}
+        result, buttons, _, _ = self._walk(self._typed_start(), doc=doc,
+                                           cancel_button=6)
+        self.assertIsInstance(result, proto.Failure)
+        self.assertEqual(buttons, 6)
+        result, buttons, _, _ = self._walk(self._typed_start(), doc=doc)
+        self.assertIsInstance(result, eth.EthereumTypedDataSignature)
+        self.assertEqual(buttons, 6)
+
     def test_intent_only_typed_definition_still_requires_source_and_intent(self):
         doc, program = self._typed_fixture(fields=False)
         envelope = self._preload(program)
@@ -188,6 +221,27 @@ class TestStack07Regressions(common.KeepKeyTest):
             data_length=68, data_initial_chunk=program[38:42])
         result, _, passes, _ = self._walk(start, envelope, change_pass=4)
         self.assertIsInstance(result, proto.Failure)
+        self.assertEqual(passes, 4)
+
+    def test_calldata_signing_replay_succeeds_with_arguments(self):
+        signature = "audit(uint256 first,uint256 second)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Audit action", "fields": [
+                {"path": "first", "label": "First value", "format": "raw"},
+                {"path": "second", "label": "Second value", "format": "raw"}]}}}}
+        program = erc7730_compiler.compile_calldata(descriptor, signature, 1, ADDRESS)
+        start = eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
+            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
+            data_length=68, data_initial_chunk=program[38:42])
+        baseline, _, baseline_passes, _ = self._walk(start)
+        self.assertIsInstance(baseline, eth.EthereumTxRequest)
+        self.assertTrue(baseline.HasField("signature_r"))
+        self.assertEqual(baseline_passes, 1)
+        envelope = self._preload(program)
+        result, _, passes, _ = self._walk(start, envelope)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertEqual(result.signature_r, baseline.signature_r)
+        self.assertEqual(result.signature_s, baseline.signature_s)
         self.assertEqual(passes, 4)
 
     def test_selector_only_call_signs_after_certified_intent(self):

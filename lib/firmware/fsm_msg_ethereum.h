@@ -363,7 +363,7 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
 
 void fsm_msgEthereumTxAck(EthereumTxAck* msg) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
-  if (workflow->phase != ERC7730_WORKFLOW_CALLDATA) {
+  if (workflow->phase != ERC7730_WORKFLOW_CALLDATA || workflow->signing_pass) {
     ethereum_signing_txack(msg);
     return;
   }
@@ -1217,6 +1217,7 @@ static void eip712_pump(void) {
         memzero(&identity, sizeof(identity));
         eip712_stream_abort();
         erc7730_workflow_abort(erc7730_workflow_state());
+        erc7730_catalog_clear_preload();
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("ERC-7730 definition does not match typed data"));
         layout_home();
@@ -1352,12 +1353,14 @@ static void eip712_pump(void) {
     }
     case EIP712_REQ_CANCELLED:
       erc7730_workflow_abort(erc7730_workflow_state());
+      erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("EIP-712 cancelled"));
       layout_home();
       return;
     case EIP712_REQ_FAIL:
       erc7730_workflow_abort(erc7730_workflow_state());
+      erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       next->error ? next->error : "EIP-712 error");
       layout_home();

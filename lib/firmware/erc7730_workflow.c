@@ -596,7 +596,9 @@ bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
     return false;
   }
   workflow->phase = ERC7730_WORKFLOW_READY;
-  return erc7730_workflow_restore_and_start_calldata(workflow, tx);
+  if (!erc7730_workflow_restore_and_start_calldata(workflow, tx)) return false;
+  workflow->signing_pass = true;
+  return true;
 }
 
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,

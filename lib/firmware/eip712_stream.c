@@ -537,6 +537,7 @@ static struct {
   uint8_t root;
   uint8_t domain_separator[32];
   bool have_domain_separator;
+  bool message_value_confirmed;
 
   Eip712Frame stack[EIP712_MAX_DEPTH];
   uint8_t depth;
@@ -784,6 +785,14 @@ static void complete_frame(void) {
   /* Both halves are in hand. The FSM derives the key and signs: the response
    * buffer and the node live there, and keeping key material out of this
    * translation unit keeps it unit-testable. */
+  if (!e712.message_value_confirmed &&
+      !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Message",
+               "Sign empty EIP-712 message?")) {
+    eip712_stream_abort();
+    memzero(&next_step, sizeof(next_step));
+    next_step.kind = EIP712_REQ_CANCELLED;
+    return;
+  }
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_DONE;
   memcpy(next_step.domain_separator, e712.domain_separator, 32);
@@ -1208,6 +1217,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     next_step.kind = EIP712_REQ_CANCELLED;
     return false;
   }
+  if (e712.root == 1) e712.message_value_confirmed = true;
 
   Eip712Frame* f = &e712.stack[e712.depth - 1];
   if (!eip712_encode_leaf(field, bytes, len,
