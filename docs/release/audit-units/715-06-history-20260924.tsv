@@ -65,3 +65,10 @@ de8e97cb376ee9aafaf2947d64121a65cb3cf67d	54	0	unittests/firmware/liquidity_key_p
 1258aee567c411d3d2f607be7f8e6667ff9de032	6	0	unittests/firmware/signed_metadata.cpp
 1258aee567c411d3d2f607be7f8e6667ff9de032	37	1	unittests/firmware/usb_rx.cpp
 d7d149c4670821dbc07628669e578c7d80806afe	11	0	scripts/emulator/python-keepkey-tests.sh
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	3	3	docs/security/evidence/rom-printf-integer-percent/README.md
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	1	0	include/keepkey/firmware/eip712.h
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	67	39	lib/firmware/eip712.c
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	11	0	lib/firmware/storage.c
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	86	0	unittests/firmware/eip712.cpp
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	372	2	unittests/firmware/ethereum.cpp
+1ebb3b8ec72765eec1dea7d668cd744fcfc45881	33	37	unittests/firmware/storage.cpp
