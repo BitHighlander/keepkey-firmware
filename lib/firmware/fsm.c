@@ -44,6 +44,7 @@
 #include "keepkey/firmware/eos-contracts.h"
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/erc7730_catalog.h"
+#include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
@@ -432,8 +433,22 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
       return true;
 #if !BITCOIN_ONLY
     case MessageType_MessageType_EthereumTxAck:
-      if (!ethereum_signing_isInProgress())
+      if (!ethereum_signing_isInProgress() &&
+          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_CALLDATA)
         return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataStructAck:
+      if (eip712_stream_waiting() != EIP712_WANT_STRUCT)
+        return reject_stale_continuation("No EIP-712 schema requested");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataValueAck:
+      if (eip712_stream_waiting() != EIP712_WANT_VALUE)
+        return reject_stale_continuation("No EIP-712 value requested");
+      return true;
+    case MessageType_MessageType_EthereumClearSignDefinitionChunk:
+      if (erc7730_workflow_state()->phase != ERC7730_WORKFLOW_REPLAY &&
+          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_SELECT)
+        return reject_stale_continuation("No ERC-7730 definition requested");
       return true;
     case MessageType_MessageType_CosmosMsgAck:
       if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
@@ -481,6 +496,7 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignMessage:
         case MessageType_MessageType_EthereumSignTypedHash:
+        case MessageType_MessageType_EthereumSignTypedData:
         case MessageType_MessageType_NanoSignTx:
         case MessageType_MessageType_CosmosSignTx:
         case MessageType_MessageType_OsmosisSignTx:
@@ -573,6 +589,7 @@ void fsm_abort_signing_workflows(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
+  eip712_stream_abort();
   nano_signingAbort();
   binance_signAbort();
   tendermint_signAbort();

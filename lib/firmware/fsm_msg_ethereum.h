@@ -128,6 +128,7 @@ static void send_erc7730_definition_request(void) {
                      ? remaining
                      : ERC7730_TRANSPORT_CHUNK_MAX;
   memzero(definition_id, sizeof(definition_id));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EthereumClearSignDefinitionRequest, resp);
 }
 
@@ -146,6 +147,7 @@ static void send_erc7730_calldata_request(void) {
   resp->data_length = remaining < ERC7730_TRANSPORT_CHUNK_MAX
                           ? remaining
                           : ERC7730_TRANSPORT_CHUNK_MAX;
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EthereumTxRequest, resp);
 }
 
@@ -1217,6 +1219,7 @@ static void eip712_pump(void) {
     case EIP712_REQ_STRUCT: {
       RESP_INIT(EthereumTypedDataStructRequest);
       strlcpy(resp->name, next->struct_name, sizeof(resp->name));
+      note_workflow_progress();
       msg_write(MessageType_MessageType_EthereumTypedDataStructRequest, resp);
       return;
     }
@@ -1225,6 +1228,7 @@ static void eip712_pump(void) {
       resp->member_path_count = next->member_path_len;
       memcpy(resp->member_path, next->member_path,
              next->member_path_len * sizeof(uint32_t));
+      note_workflow_progress();
       msg_write(MessageType_MessageType_EthereumTypedDataValueRequest, resp);
       return;
     }
@@ -1239,6 +1243,7 @@ static void eip712_pump(void) {
                                                   sizeof(formatted))) {
           memzero(formatted, sizeof(formatted));
           erc7730_workflow_abort(workflow);
+          eip712_stream_abort();
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           _("Certified EIP-712 value was not found"));
           layout_home();
@@ -1335,11 +1340,13 @@ static void eip712_pump(void) {
       return;
     }
     case EIP712_REQ_CANCELLED:
+      erc7730_workflow_abort(erc7730_workflow_state());
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("EIP-712 cancelled"));
       layout_home();
       return;
     case EIP712_REQ_FAIL:
+      erc7730_workflow_abort(erc7730_workflow_state());
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       next->error ? next->error : "EIP-712 error");
       layout_home();

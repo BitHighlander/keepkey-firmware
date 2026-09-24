@@ -9,6 +9,8 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
@@ -435,8 +437,7 @@ TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
   setup_arm(SETUP_RECOVERY);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 
-  EXPECT_TRUE(
-      keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
+  EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
 
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(signing_is_active());
@@ -568,6 +569,65 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   }
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, TypedDataProgressRenewsButPollingEventuallyLocks) {
+  signing_abort();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  ASSERT_TRUE(storage_isInitialized());
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                 EthereumSignTypedData_fields, &start);
+  ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 2; i++) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                   EthereumTypedDataStructAck_fields, &empty);
+    toggle_screensaver();
+    ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  }
+  GetFeatures poll{};
+  for (int i = 0; i < 4; i++) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+    receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                   &poll);
+    toggle_screensaver();
+  }
+  EXPECT_EQ(home_get_state(), SCREENSAVER);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  EXPECT_FALSE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumTypedDataStructAck));
+}
+
+TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
+  kk_test_board_init();
+  fsm_init();
+  for (auto boundary :
+       {MessageType_MessageType_Initialize, MessageType_MessageType_Cancel,
+        MessageType_MessageType_ClearSession,
+        MessageType_MessageType_EthereumGetAddress}) {
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&start, false));
+    EXPECT_TRUE(keepkey_before_message_dispatch(
+        MessageType_MessageType_EthereumTypedDataStructAck));
+    EXPECT_TRUE(keepkey_before_message_dispatch(boundary));
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+  auto* workflow = erc7730_workflow_state();
+  workflow->phase = ERC7730_WORKFLOW_REPLAY;
+  EXPECT_TRUE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumClearSignDefinitionChunk));
+  workflow->phase = ERC7730_WORKFLOW_CALLDATA;
+  EXPECT_TRUE(
+      keepkey_before_message_dispatch(MessageType_MessageType_EthereumTxAck));
+  fsm_abort_workflows();
+  EXPECT_FALSE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumClearSignDefinitionChunk));
 }
 
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {

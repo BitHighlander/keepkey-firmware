@@ -66,4 +66,11 @@ pytest -v --tb=short \
   test_msg_ripple_sign_tx.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-stack06-contracts.xml
 
+echo "=== Stack 07 signing contract regressions ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack07_regressions.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack07.xml
+
 echo "0" > /kkemu/test-reports/python-keepkey/status

@@ -21,6 +21,7 @@ ADDRESS = bytes.fromhex("11" * 20)
 class TestStack07Regressions(common.KeepKeyTest):
     def setUp(self):
         super().setUp()
+        self.requires_fullFeature()
         self.setup_mnemonic_nopin_nopassphrase()
         self.client.apply_policy("AdvancedMode", 1)
 
@@ -37,6 +38,7 @@ class TestStack07Regressions(common.KeepKeyTest):
             envelope, program[7], 1, ADDRESS,
             program[38:42] if program[7] == 1 else program[38:70])
         erc7730.preload(self.client, definition)
+        self._drop_setup_screenshots()
         return envelope
 
     def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None):
