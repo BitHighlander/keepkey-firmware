@@ -145,7 +145,17 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
 
 // cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
-  RESP_INIT(CoinTable);
+  _Static_assert(sizeof(CoinTable) <= MAX_DECODE_SIZE,
+                 "CoinTable exceeds decoded-request scratch");
+  _Static_assert(_Alignof(CoinTable) <= 8,
+                 "CoinTable requires stronger scratch alignment");
+
+  /* The incoming GetCoinTable is held in decode_buffer. Copy its fields and
+   * validate them before reclaiming that storage for the large response. */
+  const bool has_start = msg->has_start;
+  const bool has_end = msg->has_end;
+  const uint32_t start = msg->start;
+  const uint32_t end = msg->end;
 
 #if BITCOIN_ONLY
   const size_t coin_table_count = COINS_COUNT;
@@ -153,15 +163,14 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
 #endif
 
-  CHECK_PARAM(msg->has_start == msg->has_end,
-              "Incorrect GetCoinTable parameters");
+  CHECK_PARAM(has_start == has_end, "Incorrect GetCoinTable parameters");
 
-  resp->has_chunk_size = true;
-  resp->chunk_size = sizeof(resp->table) / sizeof(resp->table[0]);
+  const size_t chunk_size =
+      sizeof(((CoinTable*)0)->table) / sizeof(((CoinTable*)0)->table[0]);
 
-  if (msg->has_start && msg->has_end) {
-    if (coin_table_count <= msg->start || coin_table_count < msg->end ||
-        msg->end < msg->start || resp->chunk_size < msg->end - msg->start) {
+  if (has_start && has_end) {
+    if (coin_table_count <= start || coin_table_count < end || end < start ||
+        chunk_size < end - start) {
       fsm_sendFailure(FailureType_Failure_Other,
                       "Incorrect GetCoinTable parameters");
       layoutHome();
@@ -169,18 +178,22 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
     }
   }
 
+  CoinTable* resp = (CoinTable*)msg_decoded_request_response_scratch();
+  memzero(resp, sizeof(*resp));
+  resp->has_chunk_size = true;
+  resp->chunk_size = chunk_size;
   resp->has_num_coins = true;
   resp->num_coins = coin_table_count;
 
-  if (msg->has_start && msg->has_end) {
-    resp->table_count = msg->end - msg->start;
+  if (has_start && has_end) {
+    resp->table_count = end - start;
 
-    for (size_t i = 0; i < msg->end - msg->start; i++) {
-      if (msg->start + i < COINS_COUNT) {
-        resp->table[i] = coins[msg->start + i];
+    for (size_t i = 0; i < end - start; i++) {
+      if (start + i < COINS_COUNT) {
+        resp->table[i] = coins[start + i];
 #if !BITCOIN_ONLY
-      } else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
-        coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
+      } else if (start + i - COINS_COUNT < TOKENS_COUNT) {
+        coinFromToken(&resp->table[i], &tokens[start + i - COINS_COUNT]);
 #endif
       }
     }

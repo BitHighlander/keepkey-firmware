@@ -18,6 +18,27 @@ PATH = [0x8000002C, 0x8000003C, 0x80000000, 0, 0]
 ADDRESS = bytes.fromhex("11" * 20)
 
 
+class TestStack07CoinTableReuse(common.KeepKeyTest):
+    def setUp(self):
+        super().setUp()
+        self.setup_mnemonic_nopin_nopassphrase()
+
+    def test_cointable_response_reuses_decoded_request_without_truncation(self):
+        inventory = self.client.call(proto.GetCoinTable())
+        self.assertEqual(inventory.chunk_size, 24)
+        count = 2 if inventory.num_coins == 2 else 24
+        for end in ([2] if count == 2 else [10, 24]):
+            page = self.client.call(proto.GetCoinTable(start=0, end=end))
+            self.assertIsInstance(page, proto.CoinTable)
+            self.assertEqual(page.chunk_size, 24)
+            self.assertEqual(len(page.table), end)
+            self.assertEqual(page.num_coins, inventory.num_coins)
+        invalid = self.client.call_raw(proto.GetCoinTable(start=0, end=25))
+        self.assertIsInstance(invalid, proto.Failure)
+        recovered = self.client.call(proto.GetCoinTable(start=0, end=count))
+        self.assertEqual(len(recovered.table), count)
+
+
 class TestStack07Regressions(common.KeepKeyTest):
     def setUp(self):
         super().setUp()

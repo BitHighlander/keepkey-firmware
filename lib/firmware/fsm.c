@@ -275,15 +275,18 @@ static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
   }
 }
 
-/* msg_resp is sized to the largest registered response instead of
- * MAX_FRAME_SIZE, which over-allocated ~4 KiB the 16 KiB stack reserve needs.
- * RESP_INIT static-asserts that every writer fits, so a response outgrowing
- * this fails the build rather than overrunning at runtime. */
+/* CoinTable reuses the decoded request after copying its small input fields;
+ * keeping its 24-entry response here would duplicate nearly 6 KiB of SRAM.
+ * All other registered responses still determine this buffer's exact size.
+ * RESP_INIT checks each ordinary writer against it at compile time. */
 #undef MSG_IN
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
 
 #undef MSG_OUT
-#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME out_##STRUCT_NAME;
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)          \
+  uint8_t out_##STRUCT_NAME[_Generic(((STRUCT_NAME*)0), \
+                                CoinTable*: 1,          \
+                                default: sizeof(STRUCT_NAME))];
 
 #undef RAW_IN
 #define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC)
