@@ -5,6 +5,8 @@ extern "C" {
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <string>
+#include "kkconfirm_driver.h"
 
 TEST(EIP712, AddressRequiresCanonicalTwentyByteHex) {
   uint8_t encoded[32] = {0};
@@ -105,4 +107,88 @@ TEST(EIP712, MissingTypedValueFailsWithoutDereferencingNull) {
 
   uint8_t hash[32] = {};
   EXPECT_EQ(JSON_TYPE_WNOVAL, encode(types, values, "Mail", hash));
+}
+
+TEST(EIP712, ShortByteStringsFailClosed) {
+  uint8_t output[32] = {};
+  const char empty[] = {'\0'};
+  const char zero[] = {'0', '\0'};
+  for (const char* value : {empty, zero, "x", "0X"}) {
+    EXPECT_NE(SUCCESS, encodeBytes(value, output));
+    EXPECT_NE(SUCCESS, encodeBytesN("bytes1", value, output));
+  }
+}
+
+static int encodeDomainField(const char* field, const char* value) {
+  std::string types = "{\"types\":{\"EIP712Domain\":[{\"name\":\"";
+  types += field;
+  types += "\",\"type\":\"string\"}]}}";
+  std::string values = "{\"domain\":{\"";
+  values += field;
+  values += "\":\"";
+  values += value;
+  values += "\"}}";
+  json_t type_nodes[16] = {}, value_nodes[8] = {};
+  const json_t* t = json_create(&types[0], type_nodes, 16);
+  const json_t* v = json_create(&values[0], value_nodes, 8);
+  if (!t || !v) return GENERAL_ERROR;
+  uint8_t hash[32] = {};
+  return encode(t, v, "EIP712Domain", hash);
+}
+
+TEST(EIP712, DomainContractValidatesEvenWhenDeclaredString) {
+  for (const char* value :
+       {"", "0", "0x01", "0x00112233445566778899aabbccddeeff0011223g"}) {
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    EXPECT_EQ(ADDR_STRING_VFLOW, encodeDomainField("verifyingContract", value));
+    kkconfirm_drain();
+  }
+}
+
+TEST(EIP712, DomainChainIdRejectsNoncanonicalAndOverflowValues) {
+  for (const char* value : {"", "01", "+1", "-1", "1x", "4294967296"}) {
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    EXPECT_EQ(GENERAL_ERROR, encodeDomainField("chainId", value));
+    kkconfirm_drain();
+  }
+  ASSERT_TRUE(kkconfirm_preload(3, 0));
+  EXPECT_EQ(SUCCESS, encodeDomainField("chainId", "4294967295"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(EIP712, DomainSummaryCancellationIsNotApproval) {
+  ASSERT_TRUE(kkconfirm_preload(2, 1));
+  EXPECT_EQ(USER_CANCELLED, encodeDomainField("chainId", "1"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(EIP712, FailedDomainCannotRetainPointersIntoPriorJson) {
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  EXPECT_EQ(USER_CANCELLED, encodeDomainField("verifyingContract", "0x01"));
+  EXPECT_EQ(0, kkconfirm_drain());
+  // Previous field has been marshalled, then cancelled, and its JSON freed.
+  // The next domain omits it and must not reuse the invalid/dangling pointer.
+  ASSERT_TRUE(kkconfirm_preload(3, 0));
+  EXPECT_EQ(SUCCESS, encodeDomainField("chainId", "1"));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(EIP712, IntegerValuesRejectNoncanonicalDecimal) {
+  char types_json[] =
+      "{\"types\":{\"Test\":[{\"name\":\"value\",\"type\":\"int64\"}]}}";
+  json_t type_nodes[12] = {};
+  const json_t* types = json_create(types_json, type_nodes, 12);
+  ASSERT_NE(nullptr, types);
+  for (const char* value : {"01", "-0", "-01", "+1", "1x"}) {
+    std::string text = "{\"message\":{\"value\":\"";
+    text += value;
+    text += "\"}}";
+    json_t value_nodes[8] = {};
+    const json_t* values = json_create(&text[0], value_nodes, 8);
+    ASSERT_NE(nullptr, values);
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    uint8_t hash[32] = {};
+    EXPECT_EQ(GENERAL_ERROR, encode(types, values, "Test", hash));
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
 }

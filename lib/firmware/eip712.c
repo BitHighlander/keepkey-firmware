@@ -39,7 +39,6 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/eip712.h"
-#include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "trezor/crypto/sha3.h"
 #include "trezor/crypto/memzero.h"
@@ -171,7 +170,8 @@ static int hex_nibble(char c) {
 
 static bool hex_string_is_valid(const char* string, size_t expected_bytes,
                                 bool exact_size) {
-  if (!string || string[0] != '0' || string[1] != 'x') return false;
+  if (!string || strlen(string) < 2 || string[0] != '0' || string[1] != 'x')
+    return false;
   const size_t chars = strlen(string + 2);
   if ((chars & 1) != 0 || (exact_size && chars != 2 * expected_bytes))
     return false;
@@ -422,7 +422,31 @@ int confirmValue(const char* value) {
 
 static const char *dsname = NULL, *dsversion = NULL, *dschainId = NULL,
                   *dsverifyingContract = NULL;
+bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
+  if (!text || !value || text[0] == '\0') return false;
+  if (text[0] == '0' && text[1] != '\0') return false;
+
+  uint32_t parsed = 0;
+  for (const char* p = text; *p != '\0'; p++) {
+    if (*p < '0' || *p > '9') return false;
+    const uint32_t digit = (uint32_t)(*p - '0');
+    if (parsed > (UINT32_MAX - digit) / 10) return false;
+    parsed = parsed * 10 + digit;
+  }
+
+  *value = parsed;
+  return true;
+}
+
+static void clearDsVals(void) {
+  dsname = NULL;
+  dsversion = NULL;
+  dschainId = NULL;
+  dsverifyingContract = NULL;
+}
+
 void marshallDsVals(const char* value) {
+  if (!nameForValue) return;
   if (0 == strncmp(nameForValue, "name", sizeof("name"))) {
     dsname = value;
   }
@@ -445,12 +469,8 @@ static int confirmTypedValue(bool ds_vals, const char* value) {
 }
 
 int dsConfirm(void) {
-  // First check if we recognize the contract
-  uint8_t addrHexStr[20] = {0};
   char name[41] = {0};
   char version[11] = {0};
-  uint32_t chainInt;
-  bool noChain = true;
   IconType iconNum = NO_ICON;
   char title[64] = {0};
   char* fillerStr = "";
@@ -465,35 +485,34 @@ int dsConfirm(void) {
   }
 
   if (dsverifyingContract != NULL) {
-    // Same two-chars-then-strtol idiom as encAddress(). sscanf("%2hhx") did
-    // this before, and it was the firmware's only caller of newlib's scanf
-    // engine — ~6KB of ROM on a part with none to spare.
-    char byteStrBuf[3] = {0};
-    for (int ctr = 2; ctr < 42; ctr += 2) {
-      strncpy(byteStrBuf, (char*)&dsverifyingContract[ctr], 2);
-      addrHexStr[(ctr - 2) / 2] = (uint8_t)strtol(byteStrBuf, NULL, 16);
+    // Domain field names are host-controlled regardless of the declared type.
+    // Validate the exact address before any summary uses it.
+    if (!hex_string_is_valid(dsverifyingContract, 20, true)) {
+      clearDsVals();
+      return ADDR_STRING_VFLOW;
     }
-    strcat(verifyingContract, "Verifying Contract: ");
-    strncat(verifyingContract, dsverifyingContract,
-            sizeof(verifyingContract) - sizeof("Verifying Contract: "));
+    snprintf(verifyingContract, sizeof(verifyingContract),
+             "Verifying Contract: %s", dsverifyingContract);
   }
 
   if (NULL != dschainId) {
-    noChain = false;
-    chainInt = (uint32_t)strtoul((const char*)dschainId, NULL, 10);
+    /* Merge note: the release branch parsed this with sscanf("%" SCNu32),
+     * which accepts a trailing space, a leading '+', and non-canonical forms
+     * like "007", and cannot report overflow. eip712_parse_canonical_u32()
+     * rejects all of those and fails closed, so it is used instead. See the
+     * cases in unittests/firmware/ethereum.cpp. */
+    uint32_t chainInt = 0;
+    if (!eip712_parse_canonical_u32(dschainId, &chainInt)) {
+      clearDsVals();
+      return GENERAL_ERROR;
+    }
+    (void)chainInt;
     // As more chains are supported, add icon choice below
     // TBD: not implemented for first release
     // if (chainInt == 1) {
     //     iconNum = ETHEREUM_ICON;
     // }
   }
-  if (noChain == false && dsverifyingContract != NULL) {
-    const TokenType* assetToken =
-        tokenByChainAddress(chainInt, (uint8_t*)addrHexStr);
-    (void)assetToken;
-    fillerStr = "";
-  }
-
   strncpy(title, name, 40);
   if (NULL != dsversion) {
     strncat(title, " Ver: ", 63 - strlen(title));
@@ -503,17 +522,13 @@ int dsConfirm(void) {
     snprintf(chainStr, 32, "chain %s,  ", dschainId);
   }
   // snprintf(contractStr, 64, "verifyingContract: %s", verifyingContract);
-  bool approved =
-      review_with_icon(ButtonRequestType_ButtonRequest_Other, iconNum, title,
-                       "%s %s%s", chainStr, verifyingContract, fillerStr);
-  dsname = NULL;
-  dsversion = NULL;
-  dschainId = NULL;
-  dsverifyingContract = NULL;
-  if (!approved) {
-    return USER_CANCELLED;
-  }
-  return SUCCESS;
+  bool confirmed =
+      confirm_with_icon(ButtonRequestType_ButtonRequest_Other, iconNum, title,
+                        "%s %s%s", chainStr, verifyingContract, fillerStr);
+  /* Clear the marshalled domain values on the refusal path too: they are file
+     statics and a later attempt must not inherit them. */
+  clearDsVals();
+  return confirmed ? SUCCESS : USER_CANCELLED;
 }
 
 /*
@@ -687,7 +702,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
             // all int strings are assumed to be base 10 and fit into 64 bits
             const char* digits = valStr + (negInt ? 1 : 0);
-            if (*digits == '\0') return GENERAL_ERROR;
+            if (*digits == '\0' ||
+                (digits[0] == '0' && (digits[1] != '\0' || negInt)))
+              return GENERAL_ERROR;
             for (const char* p = digits; *p; p++) {
               if (*p < '0' || *p > '9') return GENERAL_ERROR;
             }
@@ -882,8 +899,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
   return SUCCESS;
 }
 
-int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
-           uint8_t* hashRet) {
+static int encode_impl(const json_t* jsonTypes, const json_t* jsonVals,
+                       const char* typeS, uint8_t* hashRet) {
   int ctr;
   char encTypeStr[STRBUFSIZE + 1] = {0};
   uint8_t typeHash[32];
@@ -960,4 +977,15 @@ int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
   memzero(encTypeStr, sizeof(encTypeStr));
 
   return SUCCESS;
+}
+
+/* Domain pointers refer into the caller's JSON. No attempt may retain them. */
+int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
+           uint8_t* hashRet) {
+  clearDsVals();
+  nameForValue = NULL;
+  const int result = encode_impl(jsonTypes, jsonVals, typeS, hashRet);
+  clearDsVals();
+  nameForValue = NULL;
+  return result;
 }

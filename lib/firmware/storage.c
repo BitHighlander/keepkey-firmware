@@ -821,6 +821,17 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   // A legacy flash record can supply a policy name. Never let it shadow the
   // compiled AdvancedMode entry when the policy table is upgraded.
   storage_resetPolicies(storage);
+  if (storage->version != 1) {
+    PolicyType legacy_policy = {0};
+    storage_readPolicyV1(&legacy_policy, ptr + 464, 17);
+    // Only ShapeShift existed in this format. Preserve its preference while
+    // refusing injected names that could enable later security policies.
+    if (legacy_policy.has_policy_name && legacy_policy.has_enabled &&
+        strcmp(legacy_policy.policy_name, "ShapeShift") == 0) {
+      storage_setPolicy_impl(storage->pub.policies, "ShapeShift",
+                             legacy_policy.enabled);
+    }
+  }
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
