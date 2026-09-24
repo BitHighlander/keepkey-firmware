@@ -105,3 +105,8 @@ host:1d42a1fa401129da292a8b0fe4f6dc9bee727117	18	8	scripts/generate-test-report.
 host:1d42a1fa401129da292a8b0fe4f6dc9bee727117	10	6	tests/test_msg_ethereum_clear_signing.py
 3e2de50b5ca2ed18b1c94645da65c91489c6b818	11	0	lib/firmware/fsm_msg_ethereum.h
 3e2de50b5ca2ed18b1c94645da65c91489c6b818	27	0	scripts/emulator/test_stack07_regressions.py
+984d3a9a846012838facaa6a949364e145c4181e	5	0	include/keepkey/board/messages.h
+984d3a9a846012838facaa6a949364e145c4181e	3	1	lib/board/messages.c
+984d3a9a846012838facaa6a949364e145c4181e	8	5	lib/firmware/fsm.c
+984d3a9a846012838facaa6a949364e145c4181e	28	15	lib/firmware/fsm_msg_common.h
+984d3a9a846012838facaa6a949364e145c4181e	21	0	scripts/emulator/test_stack07_regressions.py
