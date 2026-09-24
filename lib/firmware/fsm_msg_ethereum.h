@@ -335,6 +335,17 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       layoutHome();
       return;
     }
+    /* Certified calldata starts with a selector only. The ordinary allowance
+     * guard requires the complete 68-byte approval prefix before review, so
+     * this bounded certified path cannot safely annotate approve calls. */
+    if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+      memzero(&definition, sizeof(definition));
+      erc7730_catalog_clear_preload();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("ERC-7730 approval not supported"));
+      layoutHome();
+      return;
+    }
     if (!erc7730_workflow_begin(erc7730_workflow_state(), &definition, msg)) {
       memzero(&definition, sizeof(definition));
       fsm_sendFailure(FailureType_Failure_SyntaxError,

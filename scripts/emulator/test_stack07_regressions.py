@@ -187,3 +187,30 @@ class TestStack07Regressions(common.KeepKeyTest):
         self.assertEqual(result.signature_s, baseline.signature_s)
         self.assertEqual(buttons, baseline_buttons + 3)
         self.assertEqual(passes, 0)
+
+    def test_certified_approval_refused_before_annotation_screens(self):
+        signature = "approve(address spender,uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Approve tokens", "fields": [
+                {"path": "amount", "label": "Allowance", "format": "raw"}]}}}}
+        program = erc7730_compiler.compile_calldata(descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        selector = program[38:42]
+        start = eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
+            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
+            data_length=68, data_initial_chunk=selector)
+        result, buttons, _, _ = self._walk(start, envelope)
+        self.assertIsInstance(result, proto.Failure)
+        self.assertEqual(result.message, "ERC-7730 approval not supported")
+        self.assertEqual(buttons, 0)
+
+        # A finite approval with all 68 bytes supplied up front still reaches
+        # the established ordinary review and signing path.
+        data = selector + b"\x00" * 12 + ADDRESS + (42).to_bytes(32, "big")
+        ordinary = eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
+            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
+            data_length=68, data_initial_chunk=data)
+        result, buttons, _, _ = self._walk(ordinary)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        self.assertGreater(buttons, 0)
