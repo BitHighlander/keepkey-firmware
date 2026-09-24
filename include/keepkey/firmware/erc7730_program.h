@@ -44,8 +44,20 @@ typedef struct {
 #define ERC7730_PROGRAM_SECTION_ABI 2u
 
 typedef struct {
+  uint16_t literals[5];
+  uint8_t operations[5];
+  uint8_t scratch[7];
+  uint32_t received;
+  uint16_t count;
+  uint16_t index;
+  uint16_t remaining;
+  uint8_t staged;
+} Erc7730DomainBindings;
+
+typedef struct {
   Erc7730ProgramIndex index;
   Erc7730ProgramAbi abi;
+  Erc7730DomainBindings domain;
   bool abi_started;
   bool failed;
 } Erc7730ProgramLoader;

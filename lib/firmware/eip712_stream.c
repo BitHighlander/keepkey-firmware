@@ -72,6 +72,9 @@ bool eip712_identifier_ok(const char* name) {
  */
 bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
   if (!field || !out || out_len == 0) return false;
+  if (field->array_levels_count >
+      sizeof(field->array_levels) / sizeof(field->array_levels[0]))
+    return false;
 
   const char* base;
   char scratch[EIP712_MAX_TYPE_NAME];
@@ -295,6 +298,25 @@ bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
   if (!facts || !member_name || !field || (!value && value_len != 0) ||
       !eip712_validate_leaf(field, value, value_len))
     return false;
+  const int hash_index = strcmp(member_name, "name") == 0      ? 0
+                         : strcmp(member_name, "version") == 0 ? 1
+                         : strcmp(member_name, "salt") == 0    ? 2
+                                                               : -1;
+  if (hash_index >= 0) {
+    const uint8_t bit = 1u << hash_index;
+    if ((facts->domain_present & bit) != 0 ||
+        (hash_index < 2 &&
+         field->data_type !=
+             EthereumTypedDataStructAck_EthereumDataType_STRING) ||
+        (hash_index == 2 &&
+         (field->data_type !=
+              EthereumTypedDataStructAck_EthereumDataType_BYTES ||
+          !field->has_size || field->size != 32 || value_len != 32)))
+      return false;
+    keccak_256(value, value_len, facts->domain_hashes[hash_index]);
+    facts->domain_present |= bit;
+    return true;
+  }
   if (strcmp(member_name, "chainId") == 0) {
     if (facts->has_chain_id ||
         field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
@@ -492,6 +514,7 @@ typedef struct {
   char elem_struct[EIP712_MAX_STRUCT_NAME];
   uint8_t levels_total;
   uint8_t level_index;
+  uint32_t array_levels[4];
   bool have_type_hash;
   uint8_t type_hash[32]; /* lives exactly as long as the frame that needs it */
   uint16_t array_len;
@@ -546,7 +569,45 @@ static struct {
   uint8_t phase;
   Eip712Closure closure;
   uint8_t closure_index;
+  struct {
+    char name[EIP712_MAX_STRUCT_NAME];
+    uint8_t digest[32];
+  } schemas[EIP712_MAX_STRUCTS + 1];
+  uint8_t schema_count;
 } e712;
+
+bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
+                                  const uint8_t* value, size_t length,
+                                  bool require_absent) {
+  if (!e712.have_domain_separator || field < 1 || field > 5 ||
+      (!value && length != 0))
+    return false;
+  const Eip712DomainFacts* facts = &e712.domain_facts;
+  if (field == 3) {
+    if (require_absent) return !facts->has_chain_id;
+    if (!facts->has_chain_id || literal_kind != 7 || length == 0 || length > 8)
+      return false;
+    uint64_t chain = 0;
+    for (size_t i = 0; i < length; i++) chain = (chain << 8) | value[i];
+    return chain == facts->chain_id;
+  }
+  if (field == 4) {
+    if (require_absent) return !facts->has_verifying_contract;
+    return facts->has_verifying_contract && literal_kind == 5 && length == 20 &&
+           memcmp(value, facts->verifying_contract, 20) == 0;
+  }
+  const uint8_t index = field == 5 ? 2 : field - 1;
+  const bool present = (facts->domain_present & (1u << index)) != 0;
+  if (require_absent) return !present;
+  if (!present || literal_kind != (field == 5 ? 3 : 4) ||
+      (field == 5 && length != 32))
+    return false;
+  uint8_t digest[32];
+  keccak_256(value, length, digest);
+  const bool matches = memcmp(digest, facts->domain_hashes[index], 32) == 0;
+  memzero(digest, sizeof(digest));
+  return matches;
+}
 
 /* What the next StructAck is for. */
 enum {
@@ -730,7 +791,14 @@ static void complete_frame(void) {
   memcpy(next_step.address_n, e712.address_n,
          e712.address_n_count * sizeof(uint32_t));
   next_step.address_n_count = e712.address_n_count;
-  eip712_stream_abort();
+  if (e712.require_definition) {
+    e712.active = false;
+    e712.waiting = EIP712_IDLE;
+    memzero(e712.stack, sizeof(e712.stack));
+    memzero(e712.pool, sizeof(e712.pool));
+  } else {
+    eip712_stream_abort();
+  }
 }
 
 /* Point the machine at element member_index of the array frame on top.
@@ -756,7 +824,9 @@ static void drive_array_element(void) {
     strlcpy(inner->elem_struct, arr->elem_struct, EIP712_MAX_STRUCT_NAME);
     inner->levels_total = arr->levels_total;
     inner->level_index = arr->level_index + 1;
-    e712.pending_declared_dim = 0;
+    memcpy(inner->array_levels, arr->array_levels, sizeof(inner->array_levels));
+    e712.pending_declared_dim =
+        inner->array_levels[inner->levels_total - 1u - inner->level_index];
     e712.want_array_len = true;
     request_value();
     return;
@@ -846,6 +916,24 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
   return true;
 }
 
+bool eip712_stream_resume_for_field(void) {
+  if (next_step.kind == EIP712_REQ_DEFINITION)
+    return eip712_stream_definition_accepted();
+  if (e712.active || next_step.kind != EIP712_REQ_DONE ||
+      !e712.require_definition || !e712.definition_accepted ||
+      !e712.have_domain_separator)
+    return false;
+  e712.active = true;
+  e712.root = 1;
+  e712.depth = 1;
+  e712.slots_used = 0;
+  memzero(e712.stack, sizeof(e712.stack));
+  memzero(e712.pool, sizeof(e712.pool));
+  strlcpy(e712.stack[0].name, e712.primary_type, EIP712_MAX_STRUCT_NAME);
+  begin_type_hash();
+  return true;
+}
+
 bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
   if (!e712.active || e712.waiting != EIP712_WANT_STRUCT) {
     fail("Unexpected EIP-712 struct");
@@ -877,6 +965,35 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         return false;
       }
     }
+  }
+
+  /* A repeated schema supplies display names and value types as well as
+   * encodeType bytes. Bind all three uses to the first canonical segment. */
+  SHA3_CTX schema_hash;
+  uint8_t schema_digest[32];
+  keccak_256_Init(&schema_hash);
+  if (!hash_segment_from_ack(next_step.struct_name, ack, &schema_hash)) {
+    fail("Invalid EIP-712 schema");
+    return false;
+  }
+  keccak_Final(&schema_hash, schema_digest);
+  uint8_t schema_index = 0;
+  while (schema_index < e712.schema_count &&
+         strcmp(e712.schemas[schema_index].name, next_step.struct_name) != 0)
+    schema_index++;
+  if (schema_index == e712.schema_count) {
+    if (schema_index >= EIP712_MAX_STRUCTS + 1) {
+      fail("Too many EIP-712 schemas");
+      return false;
+    }
+    strlcpy(e712.schemas[schema_index].name, next_step.struct_name,
+            sizeof(e712.schemas[schema_index].name));
+    memcpy(e712.schemas[schema_index].digest, schema_digest, 32);
+    e712.schema_count++;
+  } else if (memcmp(e712.schemas[schema_index].digest, schema_digest, 32) !=
+             0) {
+    fail("EIP-712 schema changed during signing");
+    return false;
   }
 
   switch (e712.phase) {
@@ -979,7 +1096,11 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         }
         arr->levels_total = (uint8_t)m->type.array_levels_count;
         arr->level_index = 0;
-        e712.pending_declared_dim = m->type.array_levels[0];
+        memcpy(arr->array_levels, m->type.array_levels,
+               sizeof(arr->array_levels));
+        /* Solidity writes the outermost dimension last: T[2][3] is three
+         * arrays of two T values. */
+        e712.pending_declared_dim = arr->array_levels[arr->levels_total - 1u];
         e712.want_array_len = true;
         request_value();
         return true;

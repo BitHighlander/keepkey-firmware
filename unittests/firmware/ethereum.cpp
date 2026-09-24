@@ -51,6 +51,19 @@ TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
 }
 
+TEST(Ethereum, DirectSigningEntryRejectsChainIdAboveMaximum) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EthereumSignTx msg{};
+  msg.has_chain_id = true;
+  msg.chain_id = 2147483630u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+  HDNode node{};
+  ethereum_signing_init(&msg, &node, false);
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  msg.chain_id--;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+}
+
 TEST(Ethereum, DomainOnlyPrimaryTypeRequiresExactMatch) {
   EXPECT_TRUE(ethereum_eip712_is_domain_primary_type("EIP712Domain"));
   EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP"));

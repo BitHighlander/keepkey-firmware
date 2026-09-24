@@ -179,6 +179,48 @@ void erc7730_program_loader_begin(Erc7730ProgramLoader* loader,
   loader->failed = loader->index.failed;
 }
 
+static bool domain_bindings_feed(Erc7730DomainBindings* bindings,
+                                 uint32_t offset, const uint8_t* data,
+                                 size_t length) {
+  if (offset != bindings->received) return false;
+  for (size_t i = 0; i < length; i++, bindings->received++) {
+    if (bindings->received < 2) {
+      bindings->scratch[bindings->received] = data[i];
+      if (bindings->received == 1) {
+        bindings->count = read_be16(bindings->scratch);
+        if (bindings->count > 64) return false;
+      }
+      continue;
+    }
+    if (bindings->index >= bindings->count) return false;
+    if (bindings->remaining == 0) {
+      bindings->scratch[bindings->staged++] = data[i];
+      if (bindings->staged == 3) {
+        bindings->remaining = read_be16(bindings->scratch + 1);
+        if (bindings->remaining == 0 || bindings->remaining > 139 ||
+            (bindings->scratch[0] == 2 && bindings->remaining != 4))
+          return false;
+      }
+      continue;
+    }
+    if (bindings->scratch[0] == 2)
+      bindings->scratch[bindings->staged++] = data[i];
+    if (--bindings->remaining != 0) continue;
+    if (bindings->scratch[0] == 2) {
+      const uint8_t field = bindings->scratch[3];
+      const uint8_t operation = bindings->scratch[4];
+      if (field < 1 || field > 5 || operation < 1 || operation > 2 ||
+          bindings->operations[field - 1] != 0)
+        return false;
+      bindings->operations[field - 1] = operation;
+      bindings->literals[field - 1] = read_be16(bindings->scratch + 5);
+    }
+    bindings->index++;
+    bindings->staged = 0;
+  }
+  return true;
+}
+
 bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
                                  uint32_t program_offset, const uint8_t* data,
                                  size_t data_len) {
@@ -215,6 +257,19 @@ bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
                                 overlap_end - overlap_start)) {
     loader->failed = true;
     return false;
+  }
+  if (erc7730_program_index_known_section(&loader->index, 8, &section)) {
+    const uint32_t start =
+        program_offset > section.offset ? program_offset : section.offset;
+    const uint32_t end = chunk_end < section.offset + section.length
+                             ? chunk_end
+                             : section.offset + section.length;
+    if (start < end &&
+        !domain_bindings_feed(&loader->domain, start - section.offset,
+                              data + start - program_offset, end - start)) {
+      loader->failed = true;
+      return false;
+    }
   }
   return true;
 }

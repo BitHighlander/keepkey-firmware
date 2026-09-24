@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/eip712_stream.h"  // Public declarations stay guarded.
 #include "messages-ethereum.pb.h"
 #include "trezor/crypto/sha3.h"
 }
@@ -9,6 +10,7 @@ extern "C" {
 #include <cstring>
 #include <map>
 #include <string>
+#include "kkconfirm_driver.h"
 
 namespace {
 
@@ -106,6 +108,12 @@ TEST(Eip712Stream, TypeNameArraysInWrittenOrder) {
   EXPECT_EQ(nameOf(s), "Person[]");
 }
 
+TEST(Eip712Stream, TypeNameRejectsArrayCountPastWireCapacity) {
+  Field f = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 2);
+  f.array_levels_count = sizeof(f.array_levels) / sizeof(f.array_levels[0]) + 1;
+  EXPECT_EQ(nameOf(f), "<refused>");
+}
+
 TEST(Eip712Stream, TypeNameStructNeedsAName) {
   EXPECT_EQ(nameOf(mk(EthereumTypedDataStructAck_EthereumDataType_STRUCT)),
             "<refused>");
@@ -182,7 +190,7 @@ TEST(Eip712Stream, EncodeStringIsHashed) {
 }
 
 TEST(Eip712Stream, AccumulatesOnlyValidatedDomainBindingFacts) {
-  EXPECT_LE(sizeof(Eip712DomainFacts), 64u);
+  EXPECT_LE(sizeof(Eip712DomainFacts), 168u);
   Eip712DomainFacts facts{};
   Field chain = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
   uint8_t chain_id[32] = {0};
@@ -245,6 +253,124 @@ TEST(Eip712Stream, CertifiedWalkPausesBeforeMessageValuesUntilAccepted) {
   EXPECT_STREQ(eip712_stream_next()->struct_name, "Mail");
   EXPECT_FALSE(eip712_stream_definition_accepted());
   eip712_stream_abort();
+}
+
+TEST(Eip712Stream, NestedFixedArrayChecksOuterAndInnerDimensions) {
+  for (bool wrong_outer : {false, true}) {
+    EthereumSignTypedData begin{};
+    strcpy(begin.primary_type, "Matrix");
+    ASSERT_TRUE(eip712_stream_begin(&begin, false));
+    EthereumTypedDataStructAck empty{};
+    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+    EthereumTypedDataStructAck matrix{};
+    matrix.members_count = 1;
+    strcpy(matrix.members[0].name, "values");
+    auto& type = matrix.members[0].type;
+    type = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+    type.array_levels_count = 2;
+    type.array_levels[0] = 2;
+    type.array_levels[1] = 3;
+    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&matrix));
+    EthereumTypedDataValueAck length{};
+    length.value.size = 2;
+    length.value.bytes[1] = wrong_outer ? 2 : 3;
+    EXPECT_EQ(eip712_stream_on_value(&length), !wrong_outer);
+    if (!wrong_outer) {
+      length.value.bytes[1] = 1;
+      EXPECT_FALSE(eip712_stream_on_value(&length));
+    }
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  }
+}
+
+TEST(Eip712Stream, RefusesSchemaChangesAfterDiscoveryAndHashing) {
+  for (int repeat_phase : {1, 2}) {
+    EthereumSignTypedData begin{};
+    strcpy(begin.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&begin, false));
+    EthereumTypedDataStructAck schema{};
+    for (int i = 0; i < repeat_phase; i++)
+      ASSERT_TRUE(eip712_stream_on_struct(&schema));
+    schema.members_count = 1;
+    strcpy(schema.members[0].name, "injected");
+    schema.members[0].type =
+        mk(EthereumTypedDataStructAck_EthereumDataType_BOOL);
+    EXPECT_FALSE(eip712_stream_on_struct(&schema));
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  }
+}
+
+TEST(Eip712Stream, EnforcesSignedDomainNameAndAbsenceConstraints) {
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&begin, true));
+  EthereumTypedDataStructAck domain{};
+  domain.members_count = 1;
+  strcpy(domain.members[0].name, "name");
+  domain.members[0].type =
+      mk(EthereumTypedDataStructAck_EthereumDataType_STRING);
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&domain));
+  EthereumTypedDataValueAck value{};
+  value.value.size = 3;
+  memcpy(value.value.bytes, "App", 3);
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(eip712_stream_on_value(&value));
+  EXPECT_EQ(kkconfirm_drain(), 0);
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 2; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DEFINITION);
+  EXPECT_TRUE(
+      eip712_stream_domain_matches(1, 4, (const uint8_t*)"App", 3, false));
+  EXPECT_FALSE(
+      eip712_stream_domain_matches(1, 4, (const uint8_t*)"Other", 5, false));
+  EXPECT_FALSE(eip712_stream_domain_matches(1, 0, nullptr, 0, true));
+  EXPECT_TRUE(eip712_stream_domain_matches(2, 0, nullptr, 0, true));
+  EXPECT_FALSE(
+      eip712_stream_domain_matches(2, 4, (const uint8_t*)"1", 1, false));
+  eip712_stream_abort();
+  EXPECT_FALSE(
+      eip712_stream_domain_matches(1, 4, (const uint8_t*)"App", 3, false));
+}
+
+TEST(Eip712Stream, CertifiedFieldReplayPreservesDomainAndSigningPath) {
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "Mail");
+  begin.address_n_count = 1;
+  begin.address_n[0] = 0x8000002c;
+  ASSERT_TRUE(eip712_stream_begin(&begin, true));
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+  EthereumTypedDataStructAck schema{};
+  schema.members_count = 1;
+  strcpy(schema.members[0].name, "amount");
+  schema.members[0].type =
+      mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  for (int i = 0; i < 2; i++) ASSERT_TRUE(eip712_stream_on_struct(&schema));
+  ASSERT_TRUE(eip712_stream_resume_for_field());
+  ASSERT_TRUE(eip712_stream_on_struct(&schema));
+  EthereumTypedDataValueAck value{};
+  value.value.size = 32;
+  value.value.bytes[31] = 42;
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(eip712_stream_on_value(&value));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  const auto first = *eip712_stream_next();
+  EXPECT_EQ(kkconfirm_drain(), 0);
+  ASSERT_TRUE(eip712_stream_resume_for_field());
+  EXPECT_STREQ(eip712_stream_next()->struct_name, "Mail");
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&schema));
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(eip712_stream_on_value(&value));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(memcmp(first.domain_separator,
+                   eip712_stream_next()->domain_separator, 32),
+            0);
+  EXPECT_EQ(memcmp(first.message_hash, eip712_stream_next()->message_hash, 32),
+            0);
+  EXPECT_EQ(eip712_stream_next()->address_n[0], begin.address_n[0]);
+  EXPECT_EQ(kkconfirm_drain(), 0);
+  eip712_stream_abort();
+  EXPECT_FALSE(eip712_stream_resume_for_field());
 }
 
 TEST(Eip712Stream, EncodeAddressIsLeftPadded) {

@@ -119,7 +119,7 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
       s->received >= sizeof(s->word) ? s->received - sizeof(s->word) : 0;
   while (s->depth != 0) {
     Erc7730AbiStreamFrame* f = &s->frames[s->depth - 1u];
-    const Erc7730AbiNode* n = &s->program->nodes[f->node];
+    const Erc7730AbiNode* n = &s->program.nodes[f->node];
     if (f->mode == STREAM_VALUE) {
       if (n->kind <= ERC7730_ABI_FIXED_BYTES) return ERC7730_ABI_OK;
       if (n->kind == ERC7730_ABI_BYTES || n->kind == ERC7730_ABI_STRING) {
@@ -161,7 +161,7 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
       bool target_prefix = false;
       child_target(s, f, n, item_index, &path_depth, &target_prefix);
       bool dynamic = false;
-      if (!node_dynamic(s->program, child, 0, &dynamic))
+      if (!node_dynamic(&s->program, child, 0, &dynamic))
         return ERC7730_ABI_BAD_PROGRAM;
       if (dynamic) return ERC7730_ABI_OK;
       Erc7730AbiResult r = push_value(s, child, path_depth, target_prefix);
@@ -257,7 +257,7 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
   if (r != ERC7730_ABI_OK || s->depth == 0)
     return r == ERC7730_ABI_OK ? ERC7730_ABI_NON_CANONICAL : r;
   Erc7730AbiStreamFrame* f = &s->frames[s->depth - 1u];
-  const Erc7730AbiNode* n = &s->program->nodes[f->node];
+  const Erc7730AbiNode* n = &s->program.nodes[f->node];
   if (f->mode == STREAM_VALUE) {
     r = consume_atomic(n, s->word);
     if (r == ERC7730_ABI_OK) {
@@ -283,7 +283,7 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
     bool target_prefix = false;
     child_target(s, f, n, item_index, &path_depth, &target_prefix);
     s->pending[s->pending_used++] =
-        (Erc7730AbiPending){child, declared, path_depth, target_prefix};
+        (Erc7730AbiPending){declared, child, path_depth, target_prefix};
     f->pending_count++;
   } else if (f->mode == STREAM_BYTES_LENGTH) {
     size_t length = 0;
@@ -350,7 +350,7 @@ Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
     s->failed = true;
     return r != ERC7730_ABI_OK ? r : ERC7730_ABI_NON_CANONICAL;
   }
-  s->program = program;
+  s->program = *program;
   s->total_length = total_length;
   r = push_value(s, program->root, 0, true);
   if (r != ERC7730_ABI_OK) s->failed = true;

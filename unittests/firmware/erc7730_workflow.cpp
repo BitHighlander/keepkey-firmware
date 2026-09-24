@@ -36,6 +36,38 @@ TEST(Erc7730Workflow, RejectsUnbackedAndMalformedStarts) {
   EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
 }
 
+TEST(Erc7730Workflow,
+     SigningReplayMustMatchReviewedBytesAcrossChunkBoundaries) {
+  for (bool change_value : {false, true}) {
+    Erc7730Workflow workflow{};
+    prepareTypedUintWorkflow(&workflow);
+    workflow.typed_data = false;
+    EthereumSignTx tx{};
+    tx.has_data_length = true;
+    tx.data_length = 36;
+    tx.has_data_initial_chunk = true;
+    tx.data_initial_chunk.size = 4;
+    tx.data_initial_chunk.bytes[0] = 0xaa;
+    ASSERT_TRUE(erc7730_tx_continuation_capture(&workflow.continuation, &tx));
+    ASSERT_TRUE(erc7730_workflow_restore_and_start_calldata(&workflow, &tx));
+    uint8_t value[32] = {0};
+    value[31] = 42;
+    ASSERT_EQ(erc7730_workflow_calldata_feed(&workflow, value, 32),
+              ERC7730_ABI_OK);
+    ASSERT_EQ(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+    ASSERT_TRUE(erc7730_workflow_start_signing(&workflow, &tx));
+    EXPECT_FALSE(erc7730_workflow_complete(&workflow));
+    if (change_value) value[31] = 43;
+    ASSERT_EQ(erc7730_workflow_calldata_feed(&workflow, value, 7),
+              ERC7730_ABI_OK);
+    ASSERT_EQ(erc7730_workflow_calldata_feed(&workflow, value + 7, 25),
+              ERC7730_ABI_OK);
+    EXPECT_EQ(erc7730_workflow_calldata_finish(&workflow),
+              change_value ? ERC7730_ABI_NON_CANONICAL : ERC7730_ABI_OK);
+    EXPECT_EQ(erc7730_workflow_complete(&workflow), !change_value);
+  }
+}
+
 TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
   Erc7730Workflow workflow{};
   const uint8_t byte = 0;
@@ -110,6 +142,24 @@ TEST(Erc7730Workflow, TypedDataCaptureFailsClosedOnMissingOrWrongWidthValue) {
   const uint32_t target_path[2] = {1, 0};
   EXPECT_FALSE(erc7730_workflow_eip712_observe(&workflow, target_path, 2, value,
                                                sizeof(value) - 1));
+}
+
+TEST(Erc7730Workflow, TypedDataReplayBindsBothDomainAndMessageHashes) {
+  for (bool change_domain : {false, true}) {
+    Erc7730Workflow workflow{};
+    workflow.typed_data = true;
+    workflow.phase = ERC7730_WORKFLOW_COMPLETE;
+    uint8_t domain[32] = {1};
+    uint8_t message[32] = {2};
+    ASSERT_TRUE(erc7730_workflow_eip712_commit(&workflow, domain, message));
+    EXPECT_TRUE(erc7730_workflow_eip712_commit(&workflow, domain, message));
+    if (change_domain)
+      domain[31] ^= 1;
+    else
+      message[31] ^= 1;
+    EXPECT_FALSE(erc7730_workflow_eip712_commit(&workflow, domain, message));
+    EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+  }
 }
 
 TEST(Erc7730Workflow, ResolvesNegativeTypedArrayIndexFromStreamedLength) {

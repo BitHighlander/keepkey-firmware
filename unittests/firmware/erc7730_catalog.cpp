@@ -1,6 +1,11 @@
 extern "C" {
 #include "keepkey/firmware/erc7730_catalog.h"
+#include "keepkey/firmware/erc7730_program.h"
+#include "keepkey/firmware/storage.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+void setup(void);
 }
 
 #include "gtest/gtest.h"
@@ -231,6 +236,80 @@ TEST(Erc7730Catalog, CanonicalEnvelopeReachesAuthenticationInAnyChunking) {
   EXPECT_EQ(feedAll(e, e.size()), ERC7730_CATALOG_UNTRUSTED);
   EXPECT_EQ(feedAll(e, 1), ERC7730_CATALOG_UNTRUSTED);
   EXPECT_EQ(feedAll(e, 37), ERC7730_CATALOG_UNTRUSTED);
+}
+
+TEST(Erc7730Catalog, EmptyRootTupleReachesAuthentication) {
+  auto p = replaceTable(minimalProgram(), 2, {8, 0, 0, 0, 0, 0, 0, 0, 0}, 1);
+  p[sectionOffset(p, 9) + 5 + 16] = 1;
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+  p[sectionOffset(p, 2) + 5 + 2 + 4] = 1;
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, LoaderRetainsEveryDomainConstraintAcrossChunkBoundaries) {
+  auto p = replaceTable(minimalProgram(), 8,
+                        {2, 0, 4, 1, 1, 0, 7, 2, 0, 4, 2, 2, 0xff, 0xff}, 2);
+  for (size_t chunk : {1u, 7u, 1024u}) {
+    Erc7730ProgramLoader loader{};
+    erc7730_program_loader_begin(&loader, p.size());
+    for (size_t offset = 0; offset < p.size(); offset += chunk) {
+      ASSERT_TRUE(
+          erc7730_program_loader_feed(&loader, offset, p.data() + offset,
+                                      std::min(chunk, p.size() - offset)));
+    }
+    Erc7730AbiProgram abi{};
+    ASSERT_TRUE(erc7730_program_loader_complete(&loader, &abi));
+    EXPECT_EQ(loader.domain.operations[0], 1);
+    EXPECT_EQ(loader.domain.literals[0], 7);
+    EXPECT_EQ(loader.domain.operations[1], 2);
+    EXPECT_EQ(loader.domain.literals[1], UINT16_MAX);
+  }
+}
+
+TEST(Erc7730Catalog, SignatureAuthenticatesHeaderAndRuntimeKeyContext) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  signed_metadata_clear_signers();
+  uint8_t key[32] = {0};
+  key[31] = 1;
+  uint8_t pubkey[33];
+  ecdsa_get_public_key33(&secp256k1, key, pubkey);
+  ASSERT_TRUE(signed_metadata_store_signer(3, pubkey, "Approved signer",
+                                           nullptr, 0, 0, 0, false));
+  auto program = minimalProgram();
+  auto e = envelope(program);
+  const size_t cert = 10 + program.size() + 3;
+  e[cert] = 1;
+  e[cert + ERC7730_DELEGATE_OFF_SCOPE + 3] = 1;
+  memcpy(e.data() + cert + ERC7730_DELEGATE_OFF_ALIAS, "Host alias", 10);
+  memcpy(e.data() + cert + ERC7730_DELEGATE_OFF_PUBKEY, pubkey, 33);
+  std::vector<uint8_t> leaf{0};
+  leaf.insert(leaf.end(), program.begin(), program.end());
+  auto root = digest(leaf);
+  static const uint8_t purpose[] = "KEEPKEY:ERC7730:CATALOG\0";
+  std::vector<uint8_t> attestation(purpose, purpose + sizeof(purpose) - 1);
+  attestation.insert(attestation.end(), root.begin(), root.end());
+  auto hash = digest(attestation);
+  ASSERT_EQ(ecdsa_sign_digest(&secp256k1, key, hash.data(),
+                              e.data() + cert + ERC7730_DELEGATE_RECORD_LEN,
+                              nullptr, nullptr),
+            0);
+  ASSERT_EQ(feedAll(e, 31), ERC7730_CATALOG_COMPLETE);
+  auto changed = e;
+  changed[10 + 173]++;  // Signed issuance epoch, still structurally valid.
+  EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
+  changed = e;
+  changed[cert + ERC7730_DELEGATE_OFF_SCOPE + 3] = 2;
+  EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
+  changed = e;
+  changed[cert + ERC7730_DELEGATE_OFF_PUBKEY] ^= 1;
+  EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  EXPECT_EQ(feedAll(e, 31), ERC7730_CATALOG_UNTRUSTED);
+  signed_metadata_clear_signers();
 }
 
 TEST(Erc7730Catalog, RejectsOutOfOrderAndDuplicateChunks) {

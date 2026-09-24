@@ -52,6 +52,7 @@ typedef struct {
   uint32_t program_length;
   uint32_t envelope_length;
   char delegate_alias[ERC7730_DELEGATE_ALIAS_LEN + 1];
+  char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
   uint8_t kind;
 } Erc7730CatalogIdentity;
 

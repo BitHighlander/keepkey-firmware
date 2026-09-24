@@ -133,8 +133,12 @@ Erc7730AbiResult erc7730_abi_validate_program(const Erc7730AbiProgram* p) {
       case ERC7730_ABI_STRING:
         break;
       case ERC7730_ABI_TUPLE:
-        if (n->child_count == 0 || n->first_child <= i ||
-            n->first_child >= p->node_count ||
+        if (n->child_count == 0) {
+          if (i != 0 || p->node_count != 1 || n->first_child != 0)
+            return ERC7730_ABI_BAD_PROGRAM;
+          break;
+        }
+        if (n->first_child <= i || n->first_child >= p->node_count ||
             n->child_count > p->node_count - n->first_child)
           return ERC7730_ABI_BAD_PROGRAM;
         break;

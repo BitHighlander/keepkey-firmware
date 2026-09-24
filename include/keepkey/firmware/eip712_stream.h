@@ -73,6 +73,8 @@ typedef struct {
   bool has_chain_id;
   bool has_verifying_contract;
   bool has_primary_type_hash;
+  uint8_t domain_hashes[3][32]; /* name, version, salt */
+  uint8_t domain_present;
 } Eip712DomainFacts;
 
 /* Canonical ASCII Solidity identifier. Besides being part of encodeType, a
@@ -129,8 +131,9 @@ bool eip712_domain_facts_observe(
     const uint8_t* value, uint16_t value_len);
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts);
-
-#endif
+bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
+                                  const uint8_t* value, size_t length,
+                                  bool require_absent);
 
 /* ── The walk ────────────────────────────────────────────────────────
  *
@@ -187,6 +190,9 @@ const Eip712Next* eip712_stream_next(void);
 bool eip712_stream_begin(const EthereumSignTypedData* msg,
                          bool require_definition);
 bool eip712_stream_definition_accepted(void);
+/* Resume the first certified field or replay message values for the next.
+ * The reviewed domain and signing path remain fixed across these passes. */
+bool eip712_stream_resume_for_field(void);
 
 /* Feed the machine. Each returns false and tears the session down on any
  * protocol or validation error, having already sent a Failure. */
@@ -200,3 +206,5 @@ Eip712Wait eip712_stream_waiting(void);
  * ClearSession -- a half-walked document must never survive into the next one.
  */
 void eip712_stream_abort(void);
+
+#endif /* KEEPKEY_FIRMWARE_EIP712_STREAM_H */

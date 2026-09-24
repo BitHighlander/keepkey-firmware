@@ -11,8 +11,8 @@
 #define ERC7730_ABI_CAPTURE_MAX 128u
 
 typedef struct {
-  uint16_t node;
   size_t declared_offset;
+  uint16_t node;
   uint8_t path_depth;
   bool target_prefix;
 } Erc7730AbiPending;
@@ -44,7 +44,8 @@ typedef struct {
 } Erc7730AbiCapture;
 
 typedef struct {
-  const Erc7730AbiProgram* program;
+  /* Own the view; nodes belong to the caller for the stream's lifetime. */
+  Erc7730AbiProgram program;
   Erc7730AbiStreamFrame frames[ERC7730_ABI_MAX_DEPTH];
   Erc7730AbiPending pending[ERC7730_ABI_STREAM_MAX_PENDING];
   uint8_t word[32];

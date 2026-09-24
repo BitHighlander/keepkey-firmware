@@ -15,6 +15,9 @@ static void fail(Erc7730Workflow* workflow) {
   erc7730_program_loader_clear(&workflow->loader);
   erc7730_abi_stream_clear(&workflow->calldata);
   memzero(&workflow->identity, sizeof(workflow->identity));
+  memzero(&workflow->calldata_hash, sizeof(workflow->calldata_hash));
+  memzero(workflow->reviewed_digest, sizeof(workflow->reviewed_digest));
+  workflow->reviewed_digest_set = false;
   workflow->phase = ERC7730_WORKFLOW_FAILED;
 }
 
@@ -147,6 +150,19 @@ bool erc7730_workflow_select_path(Erc7730Workflow* workflow,
   return begin_selection_replay(workflow, ERC7730_SELECTION_PATH);
 }
 
+bool erc7730_workflow_select_literal(Erc7730Workflow* workflow,
+                                     uint16_t literal_index) {
+  Erc7730ProgramSection section;
+  if (!workflow || workflow->phase != ERC7730_WORKFLOW_READY ||
+      !erc7730_program_index_section(&workflow->loader.index, 4, &section))
+    return false;
+  memzero(&workflow->selection, sizeof(workflow->selection));
+  erc7730_program_literal_begin(&workflow->selection.literal, section.length,
+                                literal_index);
+  if (workflow->selection.literal.failed) return false;
+  return begin_selection_replay(workflow, ERC7730_SELECTION_LITERAL);
+}
+
 static bool feed_selection_program(Erc7730Workflow* workflow,
                                    uint32_t program_offset,
                                    const uint8_t* program_data,
@@ -165,6 +181,9 @@ static bool feed_selection_program(Erc7730Workflow* workflow,
       break;
     case ERC7730_SELECTION_PATH:
       section_type = 3;
+      break;
+    case ERC7730_SELECTION_LITERAL:
+      section_type = 4;
       break;
     default:
       return false;
@@ -199,6 +218,10 @@ static bool feed_selection_program(Erc7730Workflow* workflow,
   if (workflow->selection_kind == ERC7730_SELECTION_PATH)
     return erc7730_program_path_feed(&workflow->selection.path, section_offset,
                                      overlap_data, overlap_length);
+  if (workflow->selection_kind == ERC7730_SELECTION_LITERAL)
+    return erc7730_program_literal_feed(&workflow->selection.literal,
+                                        section_offset, overlap_data,
+                                        overlap_length);
   return false;
 }
 
@@ -248,6 +271,10 @@ Erc7730CatalogResult erc7730_workflow_selection_feed(
       case ERC7730_SELECTION_PATH:
         selection_complete = workflow->selection.path.complete &&
                              !workflow->selection.path.failed;
+        break;
+      case ERC7730_SELECTION_LITERAL:
+        selection_complete = workflow->selection.literal.complete &&
+                             !workflow->selection.literal.failed;
         break;
       default:
         break;
@@ -363,6 +390,9 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
     return false;
   }
   workflow->phase = ERC7730_WORKFLOW_CALLDATA;
+  sha256_Init(&workflow->calldata_hash);
+  sha256_Update(&workflow->calldata_hash, tx->data_initial_chunk.bytes,
+                tx->data_initial_chunk.size);
   return true;
 }
 
@@ -528,10 +558,45 @@ bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow) {
   return true;
 }
 
+bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
+                                    const uint8_t domain[32],
+                                    const uint8_t message[32]) {
+  if (!workflow || !domain || !message || !workflow->typed_data ||
+      workflow->phase != ERC7730_WORKFLOW_COMPLETE)
+    return false;
+  uint8_t digest[32];
+  sha256_Init(&workflow->calldata_hash);
+  sha256_Update(&workflow->calldata_hash, domain, 32);
+  sha256_Update(&workflow->calldata_hash, message, 32);
+  sha256_Final(&workflow->calldata_hash, digest);
+  const bool matches = !workflow->reviewed_digest_set ||
+                       memcmp(workflow->reviewed_digest, digest, 32) == 0;
+  if (matches) {
+    memcpy(workflow->reviewed_digest, digest, 32);
+    workflow->reviewed_digest_set = true;
+  } else {
+    fail(workflow);
+  }
+  memzero(digest, sizeof(digest));
+  return matches;
+}
+
 bool erc7730_workflow_restore_complete(const Erc7730Workflow* workflow,
                                        EthereumSignTx* tx) {
   return workflow && tx && workflow->phase == ERC7730_WORKFLOW_COMPLETE &&
          erc7730_tx_continuation_restore(&workflow->continuation, tx);
+}
+
+bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
+                                    EthereumSignTx* tx) {
+  if (!workflow || workflow->typed_data ||
+      workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
+      !workflow->reviewed_digest_set) {
+    fail(workflow);
+    return false;
+  }
+  workflow->phase = ERC7730_WORKFLOW_READY;
+  return erc7730_workflow_restore_and_start_calldata(workflow, tx);
 }
 
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
@@ -544,7 +609,11 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   }
   const Erc7730AbiResult result = erc7730_abi_stream_feed(
       &workflow->calldata, workflow->calldata.received, data, data_len);
-  if (result != ERC7730_ABI_OK) fail(workflow);
+  if (result != ERC7730_ABI_OK) {
+    fail(workflow);
+  } else {
+    sha256_Update(&workflow->calldata_hash, data, data_len);
+  }
   return result;
 }
 
@@ -558,6 +627,19 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
     return result;
+  }
+  uint8_t digest[32];
+  sha256_Final(&workflow->calldata_hash, digest);
+  const bool matches = !workflow->reviewed_digest_set ||
+                       memcmp(workflow->reviewed_digest, digest, 32) == 0;
+  if (matches && !workflow->reviewed_digest_set) {
+    memcpy(workflow->reviewed_digest, digest, 32);
+    workflow->reviewed_digest_set = true;
+  }
+  memzero(digest, sizeof(digest));
+  if (!matches) {
+    fail(workflow);
+    return ERC7730_ABI_NON_CANONICAL;
   }
   workflow->phase = ERC7730_WORKFLOW_COMPLETE;
   return ERC7730_ABI_OK;
@@ -621,8 +703,7 @@ bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,
 }
 
 bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
-  if (!workflow || workflow->typed_data ||
-      workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
+  if (!workflow || workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
       workflow->display_index == UINT16_MAX)
     return false;
   memzero(workflow->label, sizeof(workflow->label));

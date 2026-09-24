@@ -53,7 +53,8 @@ static bool all_zero(const uint8_t* p, size_t n) {
 
 static bool verify_runtime_delegate(
     const Erc7730CatalogVerifier* v, uint32_t expected_scope,
-    char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1]) {
+    char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1],
+    char out_fingerprint[METADATA_FINGERPRINT_LEN]) {
   const uint8_t* record = v->cert;
   if (record[ERC7730_DELEGATE_OFF_VERSION] != 1 || expected_scope == 0 ||
       read_be32(record + ERC7730_DELEGATE_OFF_SCOPE) != expected_scope) {
@@ -87,6 +88,7 @@ static bool verify_runtime_delegate(
   if (!ok) return false;
   memzero(out_alias, ERC7730_DELEGATE_ALIAS_LEN + 1);
   strlcpy(out_alias, runtime_alias, ERC7730_DELEGATE_ALIAS_LEN + 1);
+  signed_metadata_pubkey_fingerprint(pubkey, out_fingerprint);
   memzero(runtime_alias, sizeof(runtime_alias));
   return true;
 }
@@ -150,6 +152,10 @@ static bool validate_abi_node(Erc7730CatalogVerifier* v, const uint8_t* node) {
   }
 
   if (kind == 8 || kind == 9) {
+    if (kind == 8 && child_count == 0) {
+      return v->abi_node_index == 0 && v->abi_node_count == 1 &&
+             first_child == 0 && array_length == 0;
+    }
     if (first_child <= v->abi_node_index || child_count == 0 ||
         first_child > v->abi_node_count ||
         child_count > v->abi_node_count - first_child)
@@ -951,7 +957,8 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) != 0 ||
       v->cert_length != ERC7730_DELEGATE_RECORD_LEN || v->recovery > 1 ||
       !verify_runtime_delegate(v, (uint32_t)read_be64(v->header + 10),
-                               identity->delegate_alias)) {
+                               identity->delegate_alias,
+                               identity->delegate_fingerprint)) {
     memzero(actual_id, sizeof(actual_id));
     v->failed = true;
     return ERC7730_CATALOG_UNTRUSTED;

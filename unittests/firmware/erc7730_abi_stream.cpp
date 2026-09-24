@@ -220,4 +220,21 @@ TEST(Erc7730AbiStream, CapturesAtomicWordAndRejectsMissingOrLargeTargets) {
             ERC7730_ABI_RESOURCE_LIMIT);
 }
 
+TEST(Erc7730AbiStream, ExtremeNegativeIndexFailsWithoutArithmeticWrap) {
+  const Erc7730AbiNode nodes[] = {{ERC7730_ABI_TUPLE, 0, 1, 1, 0},
+                                  {ERC7730_ABI_ARRAY, 0, 2, 1, 1},
+                                  {ERC7730_ABI_UINT, 256, 0, 0, 0}};
+  Erc7730AbiProgram program{nodes, 3, 0};
+  Erc7730AbiStream state{};
+  ASSERT_EQ(erc7730_abi_stream_begin(&state, &program, 32), ERC7730_ABI_OK);
+  // The stream owns its program view even if the caller reuses the temporary.
+  program = {};
+  const int32_t path[] = {0, INT32_MIN};
+  ASSERT_EQ(erc7730_abi_stream_capture_path(&state, path, 2), ERC7730_ABI_OK);
+  uint8_t word[32] = {0};
+  ASSERT_EQ(erc7730_abi_stream_feed(&state, 0, word, sizeof(word)),
+            ERC7730_ABI_OK);
+  EXPECT_EQ(erc7730_abi_stream_finish(&state), ERC7730_ABI_BAD_PATH);
+}
+
 }  // namespace

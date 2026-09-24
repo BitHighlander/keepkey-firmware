@@ -9,6 +9,7 @@
 #include "keepkey/firmware/erc7730_format.h"
 #include "keepkey/firmware/erc7730_program.h"
 #include "keepkey/firmware/erc7730_tx.h"
+#include "trezor/crypto/sha2.h"
 
 typedef enum {
   ERC7730_WORKFLOW_IDLE = 0,
@@ -27,6 +28,7 @@ typedef enum {
   ERC7730_SELECTION_STRING,
   ERC7730_SELECTION_FORMATTER,
   ERC7730_SELECTION_PATH,
+  ERC7730_SELECTION_LITERAL,
 } Erc7730SelectionKind;
 
 typedef enum {
@@ -36,6 +38,7 @@ typedef enum {
   ERC7730_DISPLAY_LABEL,
   ERC7730_DISPLAY_FORMATTER,
   ERC7730_DISPLAY_PATH,
+  ERC7730_DISPLAY_DOMAIN_STRING,
 } Erc7730DisplayStage;
 
 /* The workflow owns every pointer-bearing interpreter object. No pointer into
@@ -49,6 +52,7 @@ typedef struct {
     Erc7730ProgramString string;
     Erc7730ProgramFormatter formatter;
     Erc7730ProgramPath path;
+    Erc7730ProgramLiteral literal;
   } selection;
   /* Display materialization precedes calldata streaming, so the two pieces of
    * state never coexist. Overlay the two-byte formatter cursor with the much
@@ -60,11 +64,16 @@ typedef struct {
   char intent[ERC7730_PROGRAM_MAX_STRING_LENGTH + 1u];
   char label[ERC7730_PROGRAM_MAX_STRING_LENGTH + 1u];
   uint16_t display_index;
+  uint8_t domain_field;
   uint8_t phase;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
   bool intent_confirmed;
+  bool identity_confirmed;
+  SHA256_CTX calldata_hash;
+  uint8_t reviewed_digest[32];
+  bool reviewed_digest_set;
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM
@@ -91,6 +100,8 @@ bool erc7730_workflow_select_formatter(Erc7730Workflow* workflow,
                                        uint16_t formatter_index);
 bool erc7730_workflow_select_path(Erc7730Workflow* workflow,
                                   uint16_t path_index);
+bool erc7730_workflow_select_literal(Erc7730Workflow* workflow,
+                                     uint16_t literal_index);
 Erc7730CatalogResult erc7730_workflow_selection_feed(
     Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,
     bool* complete);
@@ -115,8 +126,13 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
                                      size_t member_path_count,
                                      const uint8_t* value, size_t value_len);
 bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow);
+bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
+                                    const uint8_t domain[32],
+                                    const uint8_t message[32]);
 bool erc7730_workflow_restore_complete(const Erc7730Workflow* workflow,
                                        EthereumSignTx* tx);
+bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
+                                    EthereumSignTx* tx);
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len);

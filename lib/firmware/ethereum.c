@@ -864,7 +864,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
    * id >= 1; a host omitting the field is malformed, not legacy.
    */
   chain_id = msg->has_chain_id ? msg->chain_id : 0;
-  if (chain_id < 1) {
+  if (!ethereum_chainIdIsValid(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Chain Id out of bounds"));
     ethereum_signing_abort();
