@@ -2,6 +2,9 @@ void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
   fsm_abort_workflows();
   session_clear(false);  // do not clear PIN
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
   layoutHome();
   fsm_msgGetFeatures(0);
 }
@@ -564,6 +567,9 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
   }
 
   storage_loadDevice(msg);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   storage_commit();
 
@@ -577,6 +583,9 @@ void fsm_msgResetDevice(ResetDevice* msg) {
   CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   reset_init(msg->has_display_random && msg->display_random,
              msg->has_strength ? msg->strength : 128,
@@ -719,6 +728,11 @@ void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
    * after both init-state checks have passed: a recovery that is about to be
    * rejected must not tear down work it never replaces. */
   fsm_abort_workflows();
+#if !BITCOIN_ONLY
+  if (!(msg->has_dry_run && msg->dry_run)) {
+    signed_metadata_clear_signers();
+  }
+#endif
 
   recovery_cipher_init(
       msg->has_word_count ? msg->word_count : 0,

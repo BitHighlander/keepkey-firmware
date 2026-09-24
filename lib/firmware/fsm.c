@@ -399,6 +399,9 @@ void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
   fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
   /* Several abort routines -- Binance, Tendermint, Osmosis, THORChain,
      MAYAChain, EOS, Nano -- only clear state and touch no layout, so without
      this the approval screen of the transaction just cancelled stays on the
@@ -419,6 +422,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_crypto.h"
 #include "fsm_msg_debug.h"
 #if !BITCOIN_ONLY
+#include "fsm_msg_bip85.h"
 #include "fsm_msg_ethereum.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"

@@ -66,11 +66,13 @@ if(${KK_EMULATOR})
       # (bcrypt, BCryptGenRandom) used by setup.c / rng.c on _WIN32.
       target_link_libraries(kkemulator_dylib
           -Wl,--start-group ${FIRMWARE_LIBS} -Wl,--end-group bcrypt)
-      target_link_options(kkemulator_dylib PRIVATE "-Wl,--export-all-symbols")
+      set_property(TARGET kkemulator_dylib APPEND_STRING PROPERTY LINK_FLAGS
+          " -Wl,--export-all-symbols")
     else()
       target_link_libraries(kkemulator_dylib ${FIRMWARE_LIBS})
       if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
-        target_link_options(kkemulator_dylib PRIVATE "-Wl,-no_fixup_chains")
+        set_property(TARGET kkemulator_dylib APPEND_STRING PROPERTY LINK_FLAGS
+            " -Wl,-no_fixup_chains")
       endif()
     endif()
   endif()

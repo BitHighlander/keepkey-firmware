@@ -39,6 +39,9 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
+  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
+              _("key_id out of range"));
+
   RESP_INIT(EthereumMetadataAck);
 
   MetadataClassification result = signed_metadata_process(

@@ -46,6 +46,7 @@
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
@@ -1432,6 +1433,15 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 }
 
 void storage_init(void) {
+#if !BITCOIN_ONLY
+  /* A reopened flash buffer starts a new wallet session, even when an
+   * emulator library remains loaded in the same process. */
+  signed_metadata_clear_signers();
+#endif
+  /* These locks describe the flash buffer being opened, not the prior
+   * emulator lifecycle. Recompute both from this buffer on every init. */
+  btc_only_locked = false;
+  firmware_too_old = false;
   // Find storage sector with valid data and set storage_location variable.
   if (!find_active_storage(&storage_location)) {
     // Otherwise initialize it to the default sector.
