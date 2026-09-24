@@ -543,8 +543,7 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
   memset(flash, 0, sizeof(flash));
   memcpy(flash, "stor", 4);
   uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION - 1);
-  memcpy(flash + 44, &older,
-         4);  // test host is little-endian, matches read_u32_le
+  memcpy(flash + 44, &older, 4);  // test host is little-endian, matches read_u32_le
   memset(&session, 0, sizeof(session));
   EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
 

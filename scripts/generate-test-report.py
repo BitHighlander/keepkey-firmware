@@ -137,10 +137,9 @@ def release_missing_capabilities(cases):
         os.environ.get("KK_RELEASE_MISSING_CAPABILITIES", "").split(",")
         if value.strip()
     }
-    # The report job consumes immutable JUnit from the integration job but
-    # intentionally does not inherit that job's partial-stack environment.
-    # Bind the report to the artifact itself by recovering the explicit
-    # capability declarations from canonical skip reasons.
+    # The report job shares CI's staged-capability inventory with the Python
+    # integration job. Recover declarations from the immutable JUnit as well
+    # so the report records capabilities actually skipped by that suite.
     missing_capabilities.update(
         case["skip_reason"][len(CAPABILITY_SKIP_PREFIX):]
         for case in cases
@@ -287,10 +286,8 @@ def main():
 
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
-    # Normalize the artifact-bound staged capability ledger into the existing
-    # canonical environment contract before invoking python-keepkey's report
-    # validator.  The report job does not inherit the integration job's env;
-    # its immutable JUnit is therefore the authority.
+    # Normalize the shared staged-capability inventory plus the declarations
+    # in immutable JUnit before invoking python-keepkey's report validator.
     missing_capabilities = release_missing_capabilities(cases)
     if missing_capabilities:
         os.environ["KK_RELEASE_MISSING_CAPABILITIES"] = ",".join(
