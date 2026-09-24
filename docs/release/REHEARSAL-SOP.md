@@ -6,6 +6,23 @@ It supersedes the alpha audit requirement for two whole-tree zero-finding
 passes as a prerequisite to staging. Historical rehearsal handoffs are
 evidence, not executable instructions or current branch identities.
 
+## Current review policy and authority
+
+Owner correction: 2026-09-24, after Stack 06. Complete a consolidated local
+source, compatibility and evidence audit before proposing another paid review.
+A green build or repaired last comment does not establish that this preflight
+is complete. Copilot is an optional, explicitly authorized external checkpoint
+in internal rehearsal; it is required only where the selected upstream/release
+contract explicitly says so. Its absence or stale reviewed head does not prevent
+local acceptance once the local contract passes. Record the external status
+honestly, independently of local acceptance.
+
+The external-checkpoint rules below apply only when that checkpoint is entered.
+They do not override local acceptance or authorize an automatic request loop.
+One owner authorization permits the stated request, not successive requests
+until a clean verdict. Prepare the complete local audit and stable evidence
+before proposing a paid request; do not end every repair by asking for another.
+
 ## First step: claim the audit block
 
 Before opening an audit worktree, editing code, or requesting review, read the
@@ -166,6 +183,51 @@ and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
 unit, not additional unchanged review prompts.
 
+## Consolidated local audit before paid review
+
+Use one frozen base/head and a single findings list. Read the complete adjacent
+source/test/build/dependency diff, including removed lines. Audit the current
+implementation and its callers; a list of changed filenames is insufficient.
+Perform these passes locally before declaring review readiness:
+
+| Pass | Required evidence | Failure to resolve before requesting |
+| --- | --- | --- |
+| Identity and preservation | Accepted immediate predecessor, live PR base/head, dependency pins; disposition for removed guards, declarations, tests, assertions and build registrations | An unexplained deletion or old predecessor, even with green CI |
+| Consumer compatibility | Each changed wire bound, field, default, storage policy and API mapped to actual caller behavior; boundary requests through the handler/transport; full/BTC resource effects | A firmware-only check that misses a client's default, such as CoinTable capacity 8 versus a 10-entry request |
+| Security and equivalent inputs | Trace input through classifier, specialized handler, fallback, consent, signature/output and cleanup; test missing/zero/padded/nonzero values, length boundaries, split/trailing input and abort/retry as applicable | A guard demonstrated only through its helper or original failing representation |
+| Test preservation and execution | Compare predecessor test identities and assertion changes; map newly added and previously guarded tests to actual result files by variant; compare every relevant skip with the unit's claimed scope | A new test never built, an assertion weakened, or an owned behavior hidden behind a later-feature skip |
+| Findings, artifacts and status | All inline/body findings dispositioned; check runtime behavior against report wording; stable source/PDF inventory, exact identities and evidence; release-only limitations named | Stale status prose, unsupported claims or a report edit used as a reason for another paid review |
+
+A test-name comparison is a deletion alarm, not proof that assertions are
+unchanged; inspect assertion diffs and compile/skip conditions as well. For
+skipped owned behavior, run the narrow module with an explicit capability
+override or correct its classification. Do not globally enable unrelated
+later capabilities. Use independent vectors where practical; preserve a negative
+control that fails on the old defect when closure depends on a new assertion.
+
+After batching fixes, audit the remediation delta and adjacent interactions in
+a separate pass. Record attempted counterexamples and their outcomes, including
+valid neighboring inputs that must continue to work. Stop when no known
+in-scope defect or required verification gap remains. A further iteration must
+name a concrete defect or gap; do not invent a fixed number of whole-tree passes.
+
+Review readiness needs a short signed-off receipt: reviewer/UTC time, explicit
+base/head and pin identities, paths and properties reviewed, finding dispositions,
+executed/skipped evidence, counterexamples, open release gates, and the reason
+an external review would add value. "Signed-off" identifies the accountable
+reviewer; it does not require another person, another agent, or paid service.
+Freeze semantic content before formatting the final source/PDF once. Keep live
+CI/review outcomes in the PR receipt/ledger with their SHAs so historical prose
+does not masquerade as current status or force repeated report commits.
+
+Re-use passing evidence for unchanged code, pins and configuration with an
+explicit impact assessment. Documentation-only updates need consistency, render
+and diff checks; they do not automatically require another full CI matrix.
+New protocol bounds need consumer and resource checks; signing/state changes
+need affected positive, negative and continuation checks. Run the full required
+matrix once on the final material candidate. Never label carried evidence as a
+new exact-head execution.
+
 ## Security closure evidence
 
 Owner revision: 2026-09-23, following P02 review #855. Before closing a security
@@ -323,14 +385,16 @@ Never automatically start a repeat-until-silent Copilot loop. If findings arrive
 triage and fix them locally in a batch; a re-request needs a concrete reason tied
 to that external checkpoint. Preserve prior dispositions and review counts.
 
-Use one Copilot request for a locally complete unit only when the reviewed PR
-passes the code-bearing coverage gate. If that review finds issues,
-read its body and every inline comment, fix all related issues together, and
-repeat the full local preflight before a corrective request. A request reviews
-one commit: changing the head makes an earlier clean result stale. Budget at
-most one corrective request per unit without a renewed owner decision; if it
-still finds issues, stop requesting, report the exact remaining findings and
-current head, and get the owner's direction before spending another request.
+At an authorized external checkpoint, request Copilot once only after the
+consolidated local audit and code-bearing coverage gate pass. Record the
+owner authorization, purpose, immutable base/head, prior request count and
+expected value before sending it. If findings arrive, inspect the body and
+all inline comments, investigate their shared root causes, and fix related
+issues together locally. Repeat the affected audit passes before considering
+another request. A changed head makes an earlier review historical; that fact
+alone is not a reason to spend another request. Every additional paid request
+requires renewed owner direction for that request and a concrete remaining
+external-checkpoint purpose. There is no automatic corrective allowance.
 Never re-request to test an uninspected report edit, to clear a thread without
 a documented disposition, or while an earlier request is still pending. A
 timeline request event proves registration; only a delivered current-head
@@ -340,15 +404,18 @@ checkpoint. State the number of requests and their outcomes in the receipt.
 When a delivered Copilot review on the current final head **and the matching
 code-bearing adjacent diff** says `Findings: None`, has zero inline findings,
 and leaves zero unresolved threads, mark that code-review checkpoint complete.
-Move to the next block only after the named block's local acceptance contract
-and predecessor integration also pass. A generic “Needs a closer look”
+For advancement, evaluate the named block's local acceptance contract and
+predecessor integration independently; an external clean result alone cannot
+satisfy them, and an optional stale external result does not invalidate them.
+A generic “Needs a closer look”
 overview is not a finding unless it identifies a concrete actionable body-only
 issue; quote and disposition any such issue. Do not spend another request to
 confirm an already clean result. Keep physical-device and release promotion
 gates separate from this audit-unit completion decision.
 
-A named unit may instead close by an explicit owner acceptance of a technically
-declined finding after the current-head review, exact-head validation, complete
+A required external checkpoint may instead close by explicit owner acceptance
+of a technically declined finding after the current-head review, exact-head
+validation, complete
 inline/body dispositions and zero unresolved threads are recorded. State the
 owner exception in the unit receipt and master ledger; never relabel Copilot’s
 actual verdict as clean. This does not waive physical-device, predecessor

@@ -1,0 +1,413 @@
+============================= test session starts ==============================
+platform linux -- Python 3.6.9, pytest-6.2.4, py-1.10.0, pluggy-0.13.1 -- /usr/bin/python3.6
+rootdir: /audit-host
+collecting ... collected 3 items
+
+test_msg_ethereum_erc20_uniswap_liquidity.py::TestMsgEthereumUniswaptxERC20::test_sign_uni_add_liquidity_ETH PASSED [ 33%]
+test_msg_ethereum_erc20_uniswap_liquidity.py::TestMsgEthereumUniswaptxERC20::test_sign_uni_approve_liquidity_ETH PASSED [ 66%]
+test_msg_ethereum_erc20_uniswap_liquidity.py::TestMsgEthereumUniswaptxERC20::test_sign_uni_remove_liquidity_ETH PASSED [100%]
+
+=============================== warnings summary ===============================
+../keepkeylib/types_pb2.py:26
+  ../keepkeylib/types_pb2.py:26: DeprecationWarning: Call to deprecated create function FileDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    dependencies=[google_dot_protobuf_dot_descriptor__pb2.DESCRIPTOR,])
+
+../keepkeylib/types_pb2.py:37
+  ../keepkeylib/types_pb2.py:37: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:41
+  ../keepkeylib/types_pb2.py:41: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:45
+  ../keepkeylib/types_pb2.py:45: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:49
+  ../keepkeylib/types_pb2.py:49: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:53
+  ../keepkeylib/types_pb2.py:53: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:57
+  ../keepkeylib/types_pb2.py:57: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:61
+  ../keepkeylib/types_pb2.py:61: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:65
+  ../keepkeylib/types_pb2.py:65: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:69
+  ../keepkeylib/types_pb2.py:69: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:73
+  ../keepkeylib/types_pb2.py:73: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:77
+  ../keepkeylib/types_pb2.py:77: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:81
+  ../keepkeylib/types_pb2.py:81: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:85
+  ../keepkeylib/types_pb2.py:85: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:90
+  ../keepkeylib/types_pb2.py:90: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=2570,
+
+../keepkeylib/types_pb2.py:104
+  ../keepkeylib/types_pb2.py:104: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:108
+  ../keepkeylib/types_pb2.py:108: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:112
+  ../keepkeylib/types_pb2.py:112: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:116
+  ../keepkeylib/types_pb2.py:116: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:120
+  ../keepkeylib/types_pb2.py:120: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:124
+  ../keepkeylib/types_pb2.py:124: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:128
+  ../keepkeylib/types_pb2.py:128: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:133
+  ../keepkeylib/types_pb2.py:133: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=2726,
+
+../keepkeylib/types_pb2.py:147
+  ../keepkeylib/types_pb2.py:147: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:151
+  ../keepkeylib/types_pb2.py:151: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:155
+  ../keepkeylib/types_pb2.py:155: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:159
+  ../keepkeylib/types_pb2.py:159: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:163
+  ../keepkeylib/types_pb2.py:163: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:167
+  ../keepkeylib/types_pb2.py:167: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:172
+  ../keepkeylib/types_pb2.py:172: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=2854,
+
+../keepkeylib/types_pb2.py:186
+  ../keepkeylib/types_pb2.py:186: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:190
+  ../keepkeylib/types_pb2.py:190: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:194
+  ../keepkeylib/types_pb2.py:194: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:198
+  ../keepkeylib/types_pb2.py:198: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:202
+  ../keepkeylib/types_pb2.py:202: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:207
+  ../keepkeylib/types_pb2.py:207: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=2941,
+
+../keepkeylib/types_pb2.py:221
+  ../keepkeylib/types_pb2.py:221: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:225
+  ../keepkeylib/types_pb2.py:225: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:229
+  ../keepkeylib/types_pb2.py:229: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:234
+  ../keepkeylib/types_pb2.py:234: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=3005,
+
+../keepkeylib/types_pb2.py:248
+  ../keepkeylib/types_pb2.py:248: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:252
+  ../keepkeylib/types_pb2.py:252: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:256
+  ../keepkeylib/types_pb2.py:256: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:260
+  ../keepkeylib/types_pb2.py:260: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:264
+  ../keepkeylib/types_pb2.py:264: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:268
+  ../keepkeylib/types_pb2.py:268: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:272
+  ../keepkeylib/types_pb2.py:272: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:276
+  ../keepkeylib/types_pb2.py:276: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:280
+  ../keepkeylib/types_pb2.py:280: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:284
+  ../keepkeylib/types_pb2.py:284: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:288
+  ../keepkeylib/types_pb2.py:288: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:292
+  ../keepkeylib/types_pb2.py:292: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:296
+  ../keepkeylib/types_pb2.py:296: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:300
+  ../keepkeylib/types_pb2.py:300: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:304
+  ../keepkeylib/types_pb2.py:304: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:308
+  ../keepkeylib/types_pb2.py:308: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:312
+  ../keepkeylib/types_pb2.py:312: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:316
+  ../keepkeylib/types_pb2.py:316: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:320
+  ../keepkeylib/types_pb2.py:320: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:324
+  ../keepkeylib/types_pb2.py:324: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:328
+  ../keepkeylib/types_pb2.py:328: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:332
+  ../keepkeylib/types_pb2.py:332: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:336
+  ../keepkeylib/types_pb2.py:336: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:340
+  ../keepkeylib/types_pb2.py:340: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:344
+  ../keepkeylib/types_pb2.py:344: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:348
+  ../keepkeylib/types_pb2.py:348: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:352
+  ../keepkeylib/types_pb2.py:352: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:356
+  ../keepkeylib/types_pb2.py:356: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:360
+  ../keepkeylib/types_pb2.py:360: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:364
+  ../keepkeylib/types_pb2.py:364: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:368
+  ../keepkeylib/types_pb2.py:368: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:372
+  ../keepkeylib/types_pb2.py:372: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:376
+  ../keepkeylib/types_pb2.py:376: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:380
+  ../keepkeylib/types_pb2.py:380: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:384
+  ../keepkeylib/types_pb2.py:384: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:388
+  ../keepkeylib/types_pb2.py:388: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:392
+  ../keepkeylib/types_pb2.py:392: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:396
+  ../keepkeylib/types_pb2.py:396: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:401
+  ../keepkeylib/types_pb2.py:401: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=4284,
+
+../keepkeylib/types_pb2.py:415
+  ../keepkeylib/types_pb2.py:415: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:419
+  ../keepkeylib/types_pb2.py:419: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:423
+  ../keepkeylib/types_pb2.py:423: DeprecationWarning: Call to deprecated create function EnumValueDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    type=None),
+
+../keepkeylib/types_pb2.py:428
+  ../keepkeylib/types_pb2.py:428: DeprecationWarning: Call to deprecated create function EnumDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=4413,
+
+../keepkeylib/types_pb2.py:516
+  ../keepkeylib/types_pb2.py:516: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR)
+
+../keepkeylib/types_pb2.py:524
+  ../keepkeylib/types_pb2.py:524: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR)
+
+../keepkeylib/types_pb2.py:532
+  ../keepkeylib/types_pb2.py:532: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR)
+
+../keepkeylib/types_pb2.py:540
+  ../keepkeylib/types_pb2.py:540: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR)
+
+../keepkeylib/types_pb2.py:556
+  ../keepkeylib/types_pb2.py:556: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:563
+  ../keepkeylib/types_pb2.py:563: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:570
+  ../keepkeylib/types_pb2.py:570: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:577
+  ../keepkeylib/types_pb2.py:577: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:584
+  ../keepkeylib/types_pb2.py:584: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:591
+  ../keepkeylib/types_pb2.py:591: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:605
+  ../keepkeylib/types_pb2.py:605: DeprecationWarning: Call to deprecated create function Descriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=178,
+
+../keepkeylib/types_pb2.py:622
+  ../keepkeylib/types_pb2.py:622: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:629
+  ../keepkeylib/types_pb2.py:629: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:643
+  ../keepkeylib/types_pb2.py:643: DeprecationWarning: Call to deprecated create function Descriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    serialized_end=242,
+
+../keepkeylib/types_pb2.py:660
+  ../keepkeylib/types_pb2.py:660: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:667
+  ../keepkeylib/types_pb2.py:667: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+../keepkeylib/types_pb2.py:674
+  ../keepkeylib/types_pb2.py:674: DeprecationWarning: Call to deprecated create function FieldDescriptor(). Note: Create unlinked descriptors is going to go away. Please use get/find descriptors from generated code or query the descriptor_pool.
+    options=None, file=DESCRIPTOR),
+
+-- Docs: https://docs.pytest.org/en/stable/warnings.html
+---------------- generated xml file: /audit/liquidity-host.xml -----------------
+======================= 3 passed, 100 warnings in 0.32s ========================
