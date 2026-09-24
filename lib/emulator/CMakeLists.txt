@@ -11,7 +11,11 @@ if(${KK_EMULATOR})
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_BINARY_DIR}/include)
 
-  add_library(kkemulator ${sources})
+  # The standalone UDP transport uses BSD sockets and is not built on Win32.
+  # Windows consumers load only the ring-buffer DLL below.
+  if(NOT WIN32)
+    add_library(kkemulator ${sources})
+  endif()
 
   # ── Shared library target (libkkemu.dylib / libkkemu.so) ──────────
   if(KK_BUILD_DYLIB)

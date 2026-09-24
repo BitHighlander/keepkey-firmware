@@ -166,6 +166,10 @@ def validate_cases(cases):
     if "evm-max-amount-review" not in missing_capabilities:
         required_cases.update(EVM_REQUIRED_CASES)
     if "osmosis-wire-guards" not in missing_capabilities:
+        # Match the actual firmware version in the artifacts, rather than the
+        # 7.15 audit program name. Block 00b still builds 7.14.3 and declares
+        # this later-slice capability missing; once the product version is
+        # raised to 7.15 and the capability is present, require the new case.
         if firmware_version_tuple() >= (7, 15, 0):
             required_cases.update(OSMOSIS_REQUIRED_CASES)
         else:

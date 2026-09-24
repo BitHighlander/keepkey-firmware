@@ -70,13 +70,6 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
 
   CHECK_INITIALIZED
 
-  if (msg->has_memo) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Ripple memos are not supported");
-    layoutHome();
-    return;
-  }
-
   CHECK_PIN
 
   bool needs_confirm = true;

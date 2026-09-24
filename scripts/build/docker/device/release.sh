@@ -7,8 +7,9 @@ IMAGETAG=kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235
 
 docker image inspect $IMAGETAG > /dev/null || docker pull $IMAGETAG
 
-# Extra cmake flags pass straight through (reproducible-build verification of
-# the other variants): ./release.sh -DKK_BITCOIN_ONLY=ON  /  -DKK_ZCASH_PRIVACY=ON
+# Extra cmake flags pass straight through (for example,
+# ./release.sh -DKK_BITCOIN_ONLY=ON). Zcash privacy is not available in this
+# foundation slice; CMake rejects that option rather than mislabeling a build.
 EXTRA_CMAKE_FLAGS="$*"
 
 docker run -t \

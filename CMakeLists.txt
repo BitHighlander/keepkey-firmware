@@ -17,6 +17,14 @@ option(KK_BUILD_BOOTLOADER_TOOLS
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
+option(KK_ZCASH_PRIVACY "Build Zcash shielded privacy firmware" OFF)
+
+# The shielded firmware engine belongs to a later release slice. Reject the
+# requested variant here instead of silently producing a non-privacy image.
+if(KK_ZCASH_PRIVACY)
+  message(FATAL_ERROR
+      "KK_ZCASH_PRIVACY is not available in this foundation slice")
+endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
@@ -139,10 +147,9 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
-# NOTE: AES table size is selected per-variant below. This PR splits Zcash
-# (and its Pallas curve arithmetic) into the zcash-privacy variant, so the
-# default and bitcoin-only images regain flash headroom and keep the fast
-# FOUR_TABLES AES; only zcash-privacy opts into AES_SMALL_TABLES.
+# The later Zcash privacy slice will select its own AES table size. This
+# foundation build rejects that variant above and retains its current AES
+# selection.
 
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
@@ -160,9 +167,8 @@ else()
   add_definitions(-DBITCOIN_ONLY=0)
 endif()
 
-# The Zcash privacy engine lands in the next release slice. Keep its guarded
-# declarations disabled here so this foundational slice remains buildable on
-# its own under the ARM toolchain's -Wundef -Werror policy.
+# The unavailable privacy variant was rejected above. Define the guard for
+# this foundation build under the ARM toolchain's -Wundef -Werror policy.
 add_definitions(-DZCASH_PRIVACY=0)
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
@@ -220,7 +226,7 @@ add_subdirectory(deps/crypto)
 add_subdirectory(deps/qrenc)
 add_subdirectory(deps/sca-hardening)
 
-if(${KK_EMULATOR})
+if(${KK_EMULATOR} AND NOT WIN32)
   add_subdirectory(deps/googletest)
   add_subdirectory(unittests)
   if(${KK_BUILD_FUZZERS})

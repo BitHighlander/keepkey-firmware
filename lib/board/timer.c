@@ -296,7 +296,13 @@ void delay_us(uint32_t us) {
     __asm__("nop");
   }
 #else
+#ifdef _WIN32
+  /* Windows has no POSIX usleep. Round up to the next millisecond so even a
+   * sub-millisecond USB poll delay still yields to the host. */
+  if (us != 0) Sleep(us / 1000 + (us % 1000 != 0));
+#else
   usleep(us);
+#endif
 #endif
 }
 

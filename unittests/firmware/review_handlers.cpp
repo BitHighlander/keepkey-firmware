@@ -5,6 +5,7 @@ extern "C" {
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/reset.h"
+#include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/bip85.h"
@@ -121,6 +122,24 @@ TEST_F(ReviewHandlers, StorageReinitializationRecomputesFirmwareLock) {
 }
 
 #if !BITCOIN_ONLY
+TEST_F(ReviewHandlers, RippleMemoReachesReviewBeforeSigning) {
+  RippleSignTx msg = {};
+  msg.has_payment = true;
+  msg.payment.has_amount = true;
+  msg.payment.amount = 1000000;
+  msg.payment.has_destination = true;
+  strcpy(msg.payment.destination, "rNaqKtKrMSwpwZSzRckPf7S96DkimjkF4H");
+  msg.has_fee = true;
+  msg.fee = RIPPLE_MIN_FEE;
+  msg.has_memo = true;
+  strcpy(msg.memo, "Memo review must be reached");
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  fsm_test_clearLastFailure();
+  fsm_msgRippleSignTx(&msg);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 static const uint8_t review_pubkey[33] = {
     0x02, 0xe3, 0xb3, 0x01, 0x5c, 0x47, 0xdd, 0xca, 0xab, 0xe4, 0xf8,
     0xe8, 0x72, 0xf1, 0xed, 0x8f, 0x09, 0xca, 0x14, 0x5a, 0x8d, 0x81,
