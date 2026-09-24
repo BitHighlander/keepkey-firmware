@@ -6,6 +6,22 @@ It supersedes the alpha audit requirement for two whole-tree zero-finding
 passes as a prerequisite to staging. Historical rehearsal handoffs are
 evidence, not executable instructions or current branch identities.
 
+## First step: claim the audit block
+
+Before opening an audit worktree, editing code, or requesting review, read the
+main firmware worktree's `MASTER-AUDIT-TEMPLATE.md` progress ledger and this
+SOP. Select the lowest unclaimed, unaudited **release block** in the recorded
+predecessor order. Historical `P` audit units and release stack IDs are distinct.
+Check the live PR and predecessor identity, then claim the block in the main
+worktree by creating `docs/release/audit-claims/<block-id>/` with plain `mkdir`
+(without `-p`). Directory creation must succeed; if it already exists, read
+its `OWNER.md` and choose another unclaimed block. Never overwrite a claim.
+Immediately write `OWNER.md` with the agent/worktree, UTC time, block ID,
+code-bearing PR, and in-progress status, and add the same claim to the master
+progress ledger. Other agents must treat a claimed block as unavailable until
+its owner records completion or explicitly releases the claim. Claims coordinate
+work only; they are not audit or release acceptance.
+
 ## Two fork PR types: products and audit units
 
 Owner clarification: 2026-09-08. The main products are the fork release branches
@@ -83,6 +99,12 @@ superseded, or excluded with a technical reason. A historical commit calling
 something a vulnerability is evidence to investigate, not permission to reverse
 the current contract. Check test build registration and version-based skips against
 the actual candidate capabilities; a test in the tree is not evidence it ran.
+Inventory compile guards on security and release-policy tests at the exact
+candidate head. Record which named tests executed in the ordinary full and
+Bitcoin-only builds. Any guarded test that is part of the claimed behavior
+must also run in an explicit diagnostic build, or the behavior remains
+unverified. A failing guarded test blocks a clean local checkpoint until its
+root cause and fix are verified; a green ordinary suite cannot override it.
 
 ## Findings and review units
 
@@ -130,6 +152,13 @@ instruction to keep inventing improvements. Define the finish line before work.
    finding dispositions, exclusions and remaining release-only requirements.
    A passing candidate ends the internal loop. Advance to the next unit.
 
+Before dispatching the expensive combined CI matrix, finish the capability/skip
+inventory and pass the local native, host, and report-validator suites. A focused
+unit pass is not that preflight. Use small local checks while reconciliation is
+still changing the candidate; do not repeatedly launch a full matrix and cancel
+it for the next known unit. Receipt-only documentation changes may carry forward
+validated code/pin evidence when their non-documentation diff is proven empty.
+
 A review pass is not evidence of correctness by itself. Do not weaken tests,
 remove required coverage or redefine behavior merely to obtain a clean result.
 Confirmed release-critical defects still block release. Optional style preferences
@@ -137,7 +166,147 @@ and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
 unit, not additional unchanged review prompts.
 
+## Security closure evidence
+
+Owner revision: 2026-09-23, following P02 review #855. Before closing a security
+finding, record a contract table with the sensitive value or state, its origin,
+observer, build variant, workflow phase, allowed outputs, forbidden outputs and
+equivalent representations. Follow the value through bytes, encoded words,
+derived values, logs and display pixels. A field disappearing does not establish
+that its value is hidden. Resolve contradictions between the documented policy,
+implementation and test harness before claiming readiness; do not narrow the
+policy merely to make an existing test pass.
+
+Map every changed security-sensitive entry path to an executed assertion. For
+workflow deadlines, include each initial and continuation handler, valid progress
+near expiry, invalid or empty input, polling, and eventual stalled-session expiry.
+For transport changes, exercise the actual main and debug receive callbacks,
+including short, complete, no-data and error transfers. Shared-helper tests alone
+do not prove callback or handler integration. Record variant-specific exclusions.
+
+After implementation, perform a separate falsification pass: assume the fix is
+present and attempt to violate the original contract through another encoding,
+a later phase, another callback or a build variant. Use independent expected
+values; a harness must not obtain its oracle through an output that the contract
+forbids. Cover consent, sensitive display pages, input, result, backup, abort and
+restart when auditing a setup ceremony. Use targeted negative controls or
+mutations where needed to demonstrate that assertions detect the original defect
+and alternate disclosure paths. Record the attempted counterexamples and results.
+
+Inventory both inline comments and review-body observations. Each receives a
+stable disposition and evidence, even if the review service created no thread.
+An inherited fix requires the same property analysis as a locally authored fix.
+
+Report these states separately: implemented; targeted behavior verified;
+integration verified; adversarial contract checks verified; external review
+delivered; findings dispositioned; release accepted. Test totals, clean CI,
+artifact hashes and predecessor provenance cannot substitute for a property-level
+coverage matrix. Name any untested phase or output explicitly. Complete semantic
+checks before repeatedly regenerating receipts; retain exact source identities
+and refresh evidence when relevant code or dependencies change.
+
 ## Copilot only at the late external checkpoint
+
+### Block identity and review coverage gate
+
+Use the release program's block ID, exact predecessor SHA, product head SHA,
+and code-bearing PR number as one identity. A historical fix ID such as `P06`
+does not mean `release/715-stack-06` and must not be called "Block 6" without
+the release stack identity. Before starting a block, compare the live PR's
+adjacent diff with the named predecessor and list every changed source, test,
+dependency pointer, workflow, and documentation path. If the PR title, report,
+or branch name describes a different diff, stop and reconcile the identity.
+
+Classify each PR as **code-bearing** or **receipt-only** from its live adjacent
+diff. A receipt-only PR changes documentation/evidence but no implementation,
+test, dependency pointer, build, or workflow path. A Copilot review of that PR
+can assess the receipt only. It cannot review code already present in the base,
+historical commits, or another PR, even if the report quotes those changes.
+Never request Copilot on a receipt-only PR to satisfy a firmware block or
+code-unit checkpoint. Do not create or retarget a PR merely to manufacture a
+reviewable diff. If code review is required, identify the actual code-bearing
+PR and exact reviewed base/head; if one does not exist, record the checkpoint
+as pending and prepare an appropriately scoped code-bearing review at the
+authorized late checkpoint. Preserve prior tests as evidence, not as a
+substitute for review coverage.
+
+The preflight must include `git diff --name-status BASE_SHA..FINAL_HEAD_SHA`
+and `git diff --numstat BASE_SHA..FINAL_HEAD_SHA`, the live PR base/head, and a
+coverage table mapping each declared behavior to the code-bearing diff or an
+explicitly labeled inherited-code review. A documentation-only diff is a
+hard failure for a firmware-code Copilot checkpoint. Keep separate statuses
+for local behavior verification, receipt review, code-review checkpoint,
+assembled product, and release acceptance. No single "clean" or "complete"
+label may collapse them.
+Run `scripts/release/check-code-review-diff.sh BASE_SHA FINAL_HEAD_SHA` as a
+minimum machine gate; exit status 2 means no code-bearing path and forbids a
+firmware-code review request. A zero exit only proves that some eligible path
+changed. The human path-to-behavior coverage table remains mandatory.
+
+### Reviewable audit report before the external checkpoint
+
+All agents use one canonical audit flow: read this SOP and the master form at
+`docs/release/MASTER-AUDIT-TEMPLATE.md` in the **main firmware worktree**
+(the first entry in `git worktree list --porcelain`) before beginning a block.
+Fill the form's
+identity, historical Git inventory, current-source reconciliation, findings,
+verification, render/preflight, and review-checkpoint sections in the unit's
+isolated worktree. Record the master form's commit or SHA256 in the unit receipt.
+Do not create an agent-specific substitute flow or treat a copied worktree form
+as a different authority. Reconcile any snapshot against the main copy before
+the first external review request.
+
+Prepare an audit report for each frozen unit or upstream-shaped batch before
+requesting its final review. Give the reviewer both a readable source document
+and a PDF generated from that source. The report must identify the exact base,
+head, target branch, dependency pins, and included commit IDs. Confirm the live
+target still matches the recorded base before presenting the report.
+When the report itself is committed in the review PR, record its generation
+predecessor in the report and record the resulting final PR head in the PR
+description; a file cannot embed the hash of the commit that contains itself.
+
+Before requesting review, freeze the report files in a commit, then generate the
+final inventory from an **immutable, explicit base-to-predecessor range** such
+as `git diff --numstat BASE_SHA..REPORT_PREDECESSOR_SHA`. Include every PR file,
+including the report source and binary PDF (Git shows `-` for binary counts).
+Regenerate and commit the report if the first report commit changes the file
+list or line counts. Verify the committed final diff with
+`git diff --numstat BASE_SHA..FINAL_HEAD_SHA` and compare every path and count
+to the report; a report-only correction may use the predecessor range when the
+final diff is identical, with the containing head recorded in the PR body.
+Do not cite a mutable branch name, `HEAD`, or a one-argument `git diff` as the
+reproduction command for a frozen inventory. Confirm that the PDF shows the
+same inventory and that its rendered pages are legible.
+
+Include a line-change inventory produced from Git for the PR diff and, when a
+small review PR summarizes earlier code units, for each underlying unit commit.
+Show additions, deletions, files, and the command/range used. State explicitly
+when counts include documentation, tests, submodule pointer lines, or commits
+that overlap in their changed lines; do not present a sum of overlapping commit
+counts as the net candidate diff. Give every change a short plain-language
+description covering the prior behavior, the new behavior, why it matters, and
+its regression or validation evidence. Separate direct unit changes from later
+interaction changes and from report-only changes.
+
+Map every known in-scope finding to fixed, refuted, accepted limitation, or
+pending, with a technical reason and exact evidence. Name skips and unavailable
+device checks. Link exact CI run and artifact identities, and explain whether
+later commits changed code, tests, pins, workflows, or documentation. A green
+earlier run is supporting evidence when the head changes, not an exact-head
+pass. Recheck the affected surface and regenerate the report after material
+changes. Run a PDF render check and inspect the output before handing it over.
+
+Perform one local preflight before spending a Copilot request: compare the
+report table with the final Git diff; check the report and PR body for the exact
+base, predecessor, final head, pins, skips, open risks, and review status; open
+the PDF; run `git diff --check`; and confirm the PR contains only the intended
+files. Apply the block identity and review coverage gate above. Fix all
+discrepancies locally and freeze the head before requesting.
+Record this preflight in the PR description or audit receipt.
+
+The report supplies review evidence; it cannot guarantee that Copilot or a
+human reviewer will return zero findings. Keep delivered-review status and
+local readiness as separate statements.
 
 Do not request Copilot during authoring, local hardening, predecessor propagation,
 or routine fork PR staging. Do not create a PR or push solely to trigger Copilot.
@@ -154,10 +323,47 @@ Never automatically start a repeat-until-silent Copilot loop. If findings arrive
 triage and fix them locally in a batch; a re-request needs a concrete reason tied
 to that external checkpoint. Preserve prior dispositions and review counts.
 
+Use one Copilot request for a locally complete unit only when the reviewed PR
+passes the code-bearing coverage gate. If that review finds issues,
+read its body and every inline comment, fix all related issues together, and
+repeat the full local preflight before a corrective request. A request reviews
+one commit: changing the head makes an earlier clean result stale. Budget at
+most one corrective request per unit without a renewed owner decision; if it
+still finds issues, stop requesting, report the exact remaining findings and
+current head, and get the owner's direction before spending another request.
+Never re-request to test an uninspected report edit, to clear a thread without
+a documented disposition, or while an earlier request is still pending. A
+timeline request event proves registration; only a delivered current-head
+review with body, inline comments, and zero unresolved threads proves a clean
+checkpoint. State the number of requests and their outcomes in the receipt.
+
+When a delivered Copilot review on the current final head **and the matching
+code-bearing adjacent diff** says `Findings: None`, has zero inline findings,
+and leaves zero unresolved threads, mark that code-review checkpoint complete.
+Move to the next block only after the named block's local acceptance contract
+and predecessor integration also pass. A generic “Needs a closer look”
+overview is not a finding unless it identifies a concrete actionable body-only
+issue; quote and disposition any such issue. Do not spend another request to
+confirm an already clean result. Keep physical-device and release promotion
+gates separate from this audit-unit completion decision.
+
+A named unit may instead close by an explicit owner acceptance of a technically
+declined finding after the current-head review, exact-head validation, complete
+inline/body dispositions and zero unresolved threads are recorded. State the
+owner exception in the unit receipt and master ledger; never relabel Copilot’s
+actual verdict as clean. This does not waive physical-device, predecessor
+integration or release-promotion gates.
+
 A failed, missing or quota-limited review is not a clean review. Report Copilot's
 actual status separately from internal readiness. Existing substantive findings
 must still be resolved or explicitly declined on technical grounds; deferring
 Copilot does not waive known defects or any upstream-required review gate.
+
+If an earlier completion claim used a receipt-only Copilot review, correct its
+ledger entry. Retain the factual receipt review and test results, mark the
+firmware-code review checkpoint **unverified**, and reopen any block completion
+that depended on it. Do not spend another Copilot request until the actual
+code-bearing scope and authorized checkpoint are ready.
 
 ## Final upstream SOP
 
