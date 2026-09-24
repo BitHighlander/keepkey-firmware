@@ -143,6 +143,62 @@
     "/private/tmp/kk00b-remediation-arm-btc/build.log": {
       "sha256": "d5586605f478b2adbf5b7df2287ccbe3f13aac50d7aaaaeafe8e7895af4d4b01",
       "bytes": 1817
+    },
+    "/private/tmp/kk00b-ci-215a712/python-test-results/junit-screenshots.xml": {
+      "sha256": "9f21007e5106e3f5af9bbb0fd8431338f3c2b885c8797120c1ee0a75f8ef77ff",
+      "bytes": 17380
+    },
+    "/private/tmp/kk00b-ci-215a712/python-test-results/junit.xml": {
+      "sha256": "b0a349c3291b1405dbf26603acc3ddb96937dc74c32ae4585e5bc1346c0d6b72",
+      "bytes": 189101
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-full/crypto.xml": {
+      "sha256": "8093244ffc5a5dda10882901d03b5b0cac7c813ed5501a84fd3a6271467c7bf0",
+      "bytes": 2207
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-full/zcash-display.xml": {
+      "sha256": "4c6671eeca19f5a8a84ad54dce319d6f2a31042a5083bd5b4cb608c5b41c08d7",
+      "bytes": 396
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-full/board.xml": {
+      "sha256": "5bf15e87b9ed37347b7f36e54700f782f7ed7177262a8f339f8be3e70367eedf",
+      "bytes": 2540
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-full/firmware.xml": {
+      "sha256": "b3a809a3ae6f1a18fcb3edf0d7f028bceaf48d01efa3a45e86c31ffb7648d2a1",
+      "bytes": 39203
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-full/zcash-crypto.xml": {
+      "sha256": "101670c34e21c346e7154ddafd1ec7b4693a9d81554c9ac3deb898201d7632b0",
+      "bytes": 6504
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-bitcoin-only/crypto.xml": {
+      "sha256": "85a5080453c873790810ad4bec29ff15bd883984fab64d7c357ca9c5af824ab9",
+      "bytes": 2203
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-bitcoin-only/board.xml": {
+      "sha256": "82614a5ad97ed2a37f8a10ffdbde56adffb0e8abf48dab4e7176250af85a22e2",
+      "bytes": 2531
+    },
+    "/private/tmp/kk00b-ci-215a712/unit-test-results-bitcoin-only/firmware.xml": {
+      "sha256": "cce68ec7103d07068ed73503a18cde0765d4d7a64ee8a163be34d8a51947cf9f",
+      "bytes": 11252
+    },
+    "/private/tmp/kk00b-ci-215a712/python-test-results-bitcoin-only/junit-screenshots.xml": {
+      "sha256": "97f66e4944a866bfef46d4c22dc66da76d1d20962070139ab66f8e3181174f6d",
+      "bytes": 25863
+    },
+    "/private/tmp/kk00b-ci-215a712/python-test-results-bitcoin-only/junit.xml": {
+      "sha256": "a4b23568e88ca87e42b5ee9121c778f06a2768a0ab57367e6ab8a45d9a5ae89b",
+      "bytes": 237384
+    },
+    "/private/tmp/kk00b-ci-215a712/python-dylib-test-results/dylib-junit.xml": {
+      "sha256": "60b2de88b43369e21003a9a763a42d3e856bfceed25e816efac79631c9150ef6",
+      "bytes": 832
+    },
+    "/private/tmp/kk00b-remediation-thread/lifecycle.xml": {
+      "sha256": "d5b9d14a5e2fd71593521e03a052381e804c23b06aed1b55a3d00a23b51b92ec",
+      "bytes": 797
     }
   },
   "native": {
@@ -4254,5 +4310,11 @@
     "Local evidence is not hosted final-head qualification or audit acceptance.",
     "Host skips are not passing assertions.",
     "No physical-device, Windows-runtime, shielded signing, or full unchanged-foundation requalification claimed."
-  ]
+  ],
+  "ci_wiring_followup_commit": "d4d1c967ca1c878e81622099ff1487ebd7e2b4d9",
+  "initial_ci": {
+    "run_id": 35936336586,
+    "head": "215a712d22781158efc6138b10412ec8969b2120",
+    "status": "required jobs passed; artifact inspection exposed missing lifecycle XML and five storage boot skips per variant; follow-up required"
+  }
 }
