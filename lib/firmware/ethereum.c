@@ -112,15 +112,18 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
-bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
-      msg->data_initial_chunk.size == 68 &&
+static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
+  if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size == 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\x09\x5e\xa7\xb3\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
              16) == 0) {
     return true;
   }
   return false;
+}
+
+bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
+  return msg->value.size == 0 && ethereum_isERC20ApproveCall(msg);
 }
 
 bool ethereum_getStandardERC20Recipient(const EthereumSignTx* msg,
@@ -916,7 +919,17 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
-  if (data_total == 68 && ethereum_isStandardERC20Approve(msg)) {
+  // Keep the complete fixed-width call available to the allowance policy.
+  // Otherwise a host could split a 68-byte approval across streamed chunks.
+  if (data_total == 68 && msg->data_initial_chunk.size != 68) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("68-byte calldata requires a complete initial chunk"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  if (data_total == 68 && ethereum_isERC20ApproveCall(msg)) {
+    // Native value cannot exempt a payable token from this allowance policy.
     // Unlimited approval grants open-ended authority and is refused before
     // any generic transaction confirmation can mask this policy decision.
     const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;

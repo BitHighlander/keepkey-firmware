@@ -806,6 +806,77 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   EXPECT_EQ(2, kkconfirm_drain())
       << "a generic-signing confirmation ran before the global refusal";
 }
+TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())
+      << "a generic-signing confirmation ran before the global refusal";
+}
+TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = 68;
+  msg.data_initial_chunk.size = 4;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())
+      << "a generic-signing confirmation ran before the global refusal";
+}
 #endif
 
 #if !BITCOIN_ONLY
