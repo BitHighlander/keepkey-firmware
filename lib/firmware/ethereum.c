@@ -54,6 +54,10 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
   return advanced_mode;
 }
 
+bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
+  return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
+}
+
 /* The legacy JSON parser cannot guarantee that every displayed value is the
  * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
  * but fail closed in the FSM until the complete parser hardening is backported.
@@ -108,15 +112,19 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
-bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
-      msg->data_initial_chunk.size == 68 &&
+static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
+  if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size >= 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\x09\x5e\xa7\xb3\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
              16) == 0) {
     return true;
   }
   return false;
+}
+
+bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
+  return msg->value.size == 0 && msg->data_initial_chunk.size == 68 &&
+         ethereum_isERC20ApproveCall(msg);
 }
 
 bool ethereum_getStandardERC20Recipient(const EthereumSignTx* msg,
@@ -335,6 +343,8 @@ static int rlp_calculate_number_length(uint32_t number) {
 }
 
 static void send_request_chunk(void) {
+  // The previous chunk was validated and accepted before requesting more.
+  note_workflow_progress();
   layoutProgress(_("Signing"), (data_total - data_left) * 1000 / data_total);
   msg_tx_request.has_data_length = true;
   msg_tx_request.data_length = data_left <= 1024 ? data_left : 1024;
@@ -769,6 +779,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (!msg->has_to) msg->to.size = 0;
   if (!msg->has_nonce) msg->nonce.size = 0;
 
+  // RLP treats an all-zero integer as zero regardless of its wire length.
+  // Canonicalize before contract and generic classifiers inspect this value.
+  if (msg->value.size > 0) {
+    bool all_zero = true;
+    for (size_t i = 0; i < msg->value.size; ++i) {
+      all_zero &= msg->value.bytes[i] == 0;
+    }
+    if (all_zero) msg->value.size = 0;
+  }
+
   /* eip-155 chain id
    *
    * An absent chain_id is not "some other chain", it is no chain. The bounds
@@ -900,6 +920,35 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  // Keep the selector and both ABI words available to the allowance policy.
+  // Otherwise a host could split an approval prefix across streamed chunks.
+  const size_t selector_bytes =
+      msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      msg->data_initial_chunk.size < 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3",
+             selector_bytes) == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Approval requires at least 68 initial bytes"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  if (data_total >= 68 && ethereum_isERC20ApproveCall(msg)) {
+    // Native value cannot exempt a payable token from this allowance policy.
+    // Unlimited approval grants open-ended authority and is refused before
+    // any generic transaction confirmation can mask this policy decision.
+    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
+    bool unlimited = true;
+    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
+    if (unlimited) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Unlimited ERC20 approval is disabled"));
+      ethereum_signing_abort();
+      return;
+    }
+  }
+
   bool data_needs_confirm = true;
   if (ethereum_contractHandled(data_total, msg, node)) {
     if (!ethereum_contractConfirmed(data_total, msg, node)) {
@@ -917,10 +966,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        // Decoded who/what/why approved; raw-data confirm is suppressed. The
-        // signature is bound to this metadata's tx hash in send_signature().
-        needs_confirm = false;
-        data_needs_confirm = false;
+        /* A runtime-loaded provider is annotation, never authority to remove
+         * an ordinary review screen. Keep the amount, raw calldata and fee
+         * path unchanged after the decoded screens. Only a future pinned
+         * firmware signer could use the suppression path; this build has no
+         * such signer. Metadata remains bound to the signature below. */
+        if (!signed_metadata_from_loaded_signer()) {
+          needs_confirm = signed_metadata_schema_moves_value();
+          data_needs_confirm = false;
+        }
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         "Signing cancelled by user");
@@ -929,9 +983,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
-  // (then it must survive to bind the signature). Prevents stale reuse when the
-  // contractHandled / ERC-20 paths bypass the metadata check above.
+  // Keep metadata only when its decoded screens were approved, so their
+  // attestation remains bound to the signature. Otherwise prevent stale reuse
+  // when contractHandled / ERC-20 paths bypassed metadata review.
   if (!signed_metadata_relied()) {
     signed_metadata_clear();
   }

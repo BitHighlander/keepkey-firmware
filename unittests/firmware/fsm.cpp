@@ -37,6 +37,24 @@ void kk_test_board_init(void);
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 
+TEST(Fsm, CoinTableRetainsPredecessorPageCapacity) {
+  const CoinTable response = {};
+  EXPECT_EQ(24u, sizeof(response.table) / sizeof(response.table[0]));
+#if !BITCOIN_ONLY
+  kk_test_board_init();
+  fsm_init();
+  for (uint32_t count : {10u, 24u}) {
+    fsm_test_clearLastFailure();
+    GetCoinTable request = {};
+    request.has_start = request.has_end = true;
+    request.start = 0;
+    request.end = count;
+    fsm_msgGetCoinTable(&request);
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  }
+#endif
+}
+
 TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   char credential[] = "site:user:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   ASSERT_EQ(LARGESEED, addAuthAccount(credential));
@@ -286,7 +304,6 @@ class AutoLockProgress : public ::testing::Test {
 };
 }  // namespace
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
   for (int i = 0; i < 4; ++i) {
@@ -300,9 +317,7 @@ TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
   fsm_init();
   fsm_test_seedDerivedNode();
@@ -314,7 +329,6 @@ TEST(Fsm, DispatchScrubsDerivedKeyScratchAfterHandler) {
 
   EXPECT_TRUE(fsm_test_derivedNodeIsZero());
 }
-#endif
 
 TEST(Fsm, InactiveBitcoinAckGetsATerminalResponse) {
   fsm_init();
@@ -345,7 +359,6 @@ TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
   usb_test_receive(tail, sizeof(tail));
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   TxAck ack = {};
   ack.has_tx = true;
@@ -374,7 +387,6 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 TEST_F(AutoLockProgress, FeaturePollingAtHomeDoesNotRenewTheIdleDeadline) {
   signing_abort();
@@ -398,7 +410,6 @@ TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
   Ping ping = {};
   ping.has_pin_protection = true;
@@ -408,9 +419,7 @@ TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
 
   EXPECT_FALSE(signing_is_active());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   ChangePin request = {};
@@ -421,7 +430,6 @@ TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
 }
-#endif
 
 TEST_F(AutoLockProgress, TopLevelBoundaryEndsSigningButIsNotALock) {
   // AdvancedMode is the observable here: without a PIN, session_clear()
@@ -495,7 +503,6 @@ TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));
@@ -530,10 +537,8 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   signing_abort();
   storage_reset();
@@ -582,9 +587,7 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   signing_abort();
   storage_reset();
@@ -631,7 +634,6 @@ TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   EXPECT_FALSE(eos_signingIsInited());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
-#endif
 #endif
 
 // This integration-style case remaps emulator flash and drives the address
@@ -729,7 +731,6 @@ TEST(Fsm, InvalidSecondBitcoinStartTerminatesOldSigning) {
 }
 
 #if !BITCOIN_ONLY
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   fsm_init();
   HDNode node = {};
@@ -765,7 +766,6 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
                  BinanceTransferMsg_fields, &binance_ack);
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
-#endif
 
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
@@ -789,7 +789,6 @@ TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   layoutHomeForced();
 }
 
-#if defined(KK_FINAL_POLICY_TESTS)
 TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   kk_test_board_init();
   fsm_init();
@@ -825,7 +824,114 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   EXPECT_EQ(2, kkconfirm_drain())
       << "a generic-signing confirmation ran before the global refusal";
 }
-#endif
+TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())
+      << "a generic-signing confirmation ran before the global refusal";
+}
+TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 69;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())
+      << "a generic-signing confirmation ran before the global refusal";
+}
+TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
+  for (size_t initial : {1u, 2u, 3u, 4u, 16u, 67u}) {
+    kk_test_board_init();
+    fsm_init();
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+    EthereumSignTx msg = {};
+    msg.has_chain_id = true;
+    msg.chain_id = 1;
+    msg.has_gas_price = msg.has_gas_limit = true;
+    msg.gas_price.size = msg.gas_limit.size = 1;
+    msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+    msg.has_to = true;
+    msg.to.size = 20;
+    msg.to.bytes[0] = 1;
+    msg.has_value = true;
+    msg.value.size = 1;
+    msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+    msg.has_data_length = msg.has_data_initial_chunk = true;
+    msg.data_length = 68;
+    msg.data_initial_chunk.size = initial;
+    memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+    memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+    HDNode node = {};
+    const uint8_t seed[32] = {1};
+    ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+    ethereum_signing_init(&msg, &node, false);
+
+    EXPECT_FALSE(ethereum_signing_isInProgress());
+    EXPECT_EQ(1u, msg.value.size);
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_EQ(2, kkconfirm_drain())
+        << "a generic-signing confirmation ran before the global refusal";
+  }
+}
 #endif
 
 #if !BITCOIN_ONLY

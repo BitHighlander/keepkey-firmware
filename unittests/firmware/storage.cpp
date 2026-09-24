@@ -14,6 +14,7 @@ extern "C" {
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 using ::testing::ElementsAreArray;
 
@@ -197,8 +198,8 @@ TEST(Storage, ReadStorageV1) {
   // Decrypt upgraded storage.
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey("123456789", wrapping_key, dst.pub.sca_hardened,
-                            dst.pub.v15_16_trans,
-                            dst.pub.random_salt, "");  // strongest pin evar
+                            dst.pub.v15_16_trans, dst.pub.random_salt,
+                            "");  // strongest pin evar
   storage_unwrapStorageKey(wrapping_key, dst.pub.wrapped_storage_key,
                            session.storageKey);
   storage_secMigrate(&session, &dst, /*encrypt=*/false);
@@ -369,6 +370,79 @@ TEST(Storage, SetPolicy) {
   EXPECT_EQ(storage.pub.policies[3].enabled, true);
 }
 
+extern "C" {
+void setup(void);
+void storage_writeV17(char *, size_t, const ConfigFlash *);
+void storage_readV17(ConfigFlash *, const char *, size_t);
+}
+
+TEST(Storage, AdvancedModeNeverRoundTripsThroughFlash) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  struct RestorePolicy {
+    ~RestorePolicy() { storage_setPolicy("AdvancedMode", false); }
+  } restore;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+
+  ConfigFlash source = {};
+  source.storage.version = STORAGE_VERSION;
+  source.storage.encrypted_sec_version = STORAGE_VERSION;
+  storage_resetPolicies(&source.storage);
+  std::vector<char> flash(STORAGE_SECTOR_LEN, 0);
+  storage_writeV17(flash.data(), flash.size(), &source);
+  uint32_t flags = 0;
+  memcpy(&flags, flash.data() + 48, sizeof(flags));
+  EXPECT_EQ(flags & (1u << 12), 0u);
+
+  flags |= (1u << 12);  // Simulate an older record or modified flash.
+  memcpy(flash.data() + 48, &flags, sizeof(flags));
+  for (auto reader : {storage_readV11, storage_readV16, storage_readV17}) {
+    ConfigFlash restored = {};
+    reader(&restored, flash.data(), flash.size());
+    EXPECT_FALSE(restored.storage.pub.policies[3].enabled);
+  }
+
+  memcpy(flash.data(), "stor", 4);
+  const uint32_t version = STORAGE_VERSION;
+  memcpy(flash.data() + 44, &version, sizeof(version));
+  SessionState session = {};
+  ConfigFlash restored = {};
+  EXPECT_EQ(storage_fromFlash(&session, &restored, flash.data()), SUS_Updated);
+}
+
+TEST(Storage, LegacyPolicyNameCannotEnableAdvancedMode) {
+  std::vector<char> legacy(468 + sizeof(Storage{}.encrypted_sec), 0);
+  legacy[0] = 2;
+  legacy[464] = 1;
+  memcpy(legacy.data() + 465, "AdvancedMode", 12);
+  legacy[480] = 1;
+  legacy[481] = 1;
+  SessionState session = {};
+  Storage restored = {};
+  storage_readStorageV1(&session, &restored, legacy.data(), legacy.size());
+  storage_upgradePolicies(&restored);
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(restored.pub.policies, "AdvancedMode"));
+}
+
+TEST(Storage, LockDisarmsAdvancedModeButInitializeRetainsIt) {
+  Storage storage = {};
+  storage_resetPolicies(&storage);
+  ASSERT_TRUE(
+      storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  SessionState session = {};
+
+  session_clear_impl(&session, &storage, false);
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
+
+  session_clear_impl(&session, &storage, true);
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
+}
+
 TEST(Storage, ResetCache) {
   Cache src;
   memset(&src, 0xCC, sizeof(src));
@@ -467,8 +541,8 @@ TEST(Storage, StorageUpgrade_Normal) {
   uint8_t wrapping_key[64];
   storage_deriveWrappingKey(
       "123456789", wrapping_key, shadow.storage.pub.sca_hardened,
-      shadow.storage.pub.v15_16_trans, 
-      shadow.storage.pub.random_salt, "");  // strongest pin evar
+      shadow.storage.pub.v15_16_trans, shadow.storage.pub.random_salt,
+      "");  // strongest pin evar
   storage_unwrapStorageKey(wrapping_key, shadow.storage.pub.wrapped_storage_key,
                            session.storageKey);
 
@@ -492,6 +566,7 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
+  // The known legacy preference survives; arbitrary names cannot enable trust.
   EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
@@ -543,7 +618,8 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
   memset(flash, 0, sizeof(flash));
   memcpy(flash, "stor", 4);
   uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION - 1);
-  memcpy(flash + 44, &older, 4);  // test host is little-endian, matches read_u32_le
+  memcpy(flash + 44, &older,
+         4);  // test host is little-endian, matches read_u32_le
   memset(&session, 0, sizeof(session));
   EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
 
@@ -850,8 +926,8 @@ TEST(Storage, IsPinCorrect) {
   uint8_t wrapping_key[64];
   uint8_t random_salt[32];
   memset(random_salt, 0, sizeof(random_salt));
-  storage_deriveWrappingKey("1234", wrapping_key, sca_hardened, 
-                            v15_16_trans, random_salt, "");
+  storage_deriveWrappingKey("1234", wrapping_key, sca_hardened, v15_16_trans,
+                            random_salt, "");
 
   const uint8_t storage_key[64] = "Quick blue fox";
   uint8_t wrapped_key[64];
@@ -862,8 +938,8 @@ TEST(Storage, IsPinCorrect) {
 
   uint8_t key_out[64];
   EXPECT_TRUE(storage_isPinCorrect_impl("1234", wrapped_key, fingerprint,
-                                        &sca_hardened, &v15_16_trans, 
-                                        key_out, random_salt));
+                                        &sca_hardened, &v15_16_trans, key_out,
+                                        random_salt));
 
   EXPECT_TRUE(memcmp(key_out, storage_key, 64) == 0);
 }
@@ -913,9 +989,8 @@ TEST(Storage, Vuln1996) {
     ASSERT_TRUE(PIN_GOOD == storage_isPinCorrect_impl(
                                 v.pin, config.storage.pub.wrapped_storage_key,
                                 config.storage.pub.storage_key_fingerprint,
-                                &config.storage.pub.sca_hardened, 
-                                &config.storage.pub.v15_16_trans,
-                                storage_key,
+                                &config.storage.pub.sca_hardened,
+                                &config.storage.pub.v15_16_trans, storage_key,
                                 random_salt));
     ASSERT_TRUE(config.storage.pub.sca_hardened == true);
     memcpy(wrapped_key1, config.storage.pub.wrapped_storage_key,
@@ -928,15 +1003,15 @@ TEST(Storage, Vuln1996) {
 
     // first obtain the storage key generated above
     storage_deriveWrappingKey(v.pin, wrapping_key,
-                              config.storage.pub.sca_hardened, 
-                              config.storage.pub.v15_16_trans,
-                              random_salt, "");
+                              config.storage.pub.sca_hardened,
+                              config.storage.pub.v15_16_trans, random_salt, "");
     storage_unwrapStorageKey(
         wrapping_key, config.storage.pub.wrapped_storage_key, storage_key);
 
     // now derive a wrapping key from unstretched pin and wrap the storage key
     // with it
-    storage_deriveWrappingKey(v.pin, wrapping_key_upin, false, false, random_salt, "");
+    storage_deriveWrappingKey(v.pin, wrapping_key_upin, false, false,
+                              random_salt, "");
     uint8_t iv[64];
     memcpy(iv, wrapping_key_upin, sizeof(iv));
     aes_encrypt_ctx ctx;
@@ -958,8 +1033,7 @@ TEST(Storage, Vuln1996) {
     ASSERT_TRUE(storage_isPinCorrect_impl(
         v.pin, config.storage.pub.wrapped_storage_key,
         config.storage.pub.storage_key_fingerprint,
-        &config.storage.pub.sca_hardened, 
-        &config.storage.pub.v15_16_trans,
+        &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
         storage_key, random_salt));
     ASSERT_TRUE(memcmp(wrapped_key1, config.storage.pub.wrapped_storage_key,
                        sizeof(wrapped_key1)) == 0);
@@ -978,10 +1052,8 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(storage_isPinCorrect_impl(
       "", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
-      &config.storage.pub.sca_hardened, 
-      &config.storage.pub.v15_16_trans,
-      session.storageKey,
-      config.storage.pub.random_salt));
+      &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+      session.storageKey, config.storage.pub.random_salt));
 
   uint8_t old_storage_key[64];
   memcpy(old_storage_key, session.storageKey, sizeof(old_storage_key));
@@ -995,10 +1067,8 @@ TEST(Storage, Reset) {
   ASSERT_TRUE(storage_isPinCorrect_impl(
       "1234", config.storage.pub.wrapped_storage_key,
       config.storage.pub.storage_key_fingerprint,
-      &config.storage.pub.sca_hardened, 
-      &config.storage.pub.v15_16_trans,
-      new_storage_key,
-      config.storage.pub.random_salt));
+      &config.storage.pub.sca_hardened, &config.storage.pub.v15_16_trans,
+      new_storage_key, config.storage.pub.random_salt));
 
   ASSERT_TRUE(storage_isWipeCodeCorrect_impl(
       "2222", config.storage.pub.wrapped_wipe_code_key,
@@ -1139,8 +1209,8 @@ TEST(Storage, NewerStorageVersionRefusedNotWiped) {
   put_version(flash, STORAGE_VERSION);
   EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
 
-  for (uint32_t version = STORAGE_VERSION + 1;
-       version <= STORAGE_VERSION + 8; ++version) {
+  for (uint32_t version = STORAGE_VERSION + 1; version <= STORAGE_VERSION + 8;
+       ++version) {
     put_version(flash, version);
     EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_TooNew)
         << "storage version " << version << " must be refused, not wiped";

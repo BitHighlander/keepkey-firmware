@@ -47,6 +47,7 @@
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
@@ -817,11 +818,19 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  if (storage->version == 1) {
-    storage->pub.policies_count = 0;
-  } else {
-    storage->pub.policies_count = 1;
-    storage_readPolicyV1(&storage->pub.policies[0], ptr + 464, 17);
+  // A legacy flash record can supply a policy name. Never let it shadow the
+  // compiled AdvancedMode entry when the policy table is upgraded.
+  storage_resetPolicies(storage);
+  if (storage->version != 1) {
+    PolicyType legacy_policy = {0};
+    storage_readPolicyV1(&legacy_policy, ptr + 464, 17);
+    // Only ShapeShift existed in this format. Preserve its preference while
+    // refusing injected names that could enable later security policies.
+    if (legacy_policy.has_policy_name && legacy_policy.has_enabled &&
+        strcmp(legacy_policy.policy_name, "ShapeShift") == 0) {
+      storage_setPolicy_impl(storage->pub.policies, "ShapeShift",
+                             legacy_policy.enabled);
+    }
   }
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
@@ -832,7 +841,6 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage->pub.u2f_counter = 0;
 
   if (storage->version == 1) {
-    storage_resetPolicies(storage);
     storage_resetCache(&storage->sec.cache);
   } else {
     storage_readCacheV1(&storage->sec.cache, ptr + 484, 75);
@@ -881,7 +889,6 @@ void storage_writeStorageV11(char* ptr, size_t len, const Storage* storage) {
                    (storage->pub.has_mnemonic ? (1u << 9) : 0) |
                    (storage->pub.has_u2froot ? (1u << 10) : 0) |
                    (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
                    (storage->pub.no_backup ? (1u << 13) : 0) |
                    (storage->has_sec_fingerprint ? (1u << 14) : 0) |
                    // cppcheck-suppress badBitmaskCheck
@@ -940,8 +947,7 @@ void storage_readStorageV11(Storage* storage, const char* ptr, size_t len) {
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -998,7 +1004,6 @@ void storage_writeStorageV16Plaintext(char* ptr, size_t len,
                    (storage->pub.has_mnemonic ? (1u << 9) : 0) |
                    (storage->pub.has_u2froot ? (1u << 10) : 0) |
                    (storage_isPolicyEnabled("Experimental") ? (1u << 11) : 0) |
-                   (storage_isPolicyEnabled("AdvancedMode") ? (1u << 12) : 0) |
                    (storage->pub.no_backup ? (1u << 13) : 0) |
                    (storage->has_sec_fingerprint ? (1u << 14) : 0) |
                    (storage->pub.sca_hardened ? (1u << 15) : 0) |
@@ -1069,8 +1074,7 @@ void storage_readStorageV16Plaintext(Storage* storage, const char* ptr,
   storage->pub.has_u2froot = flags & (1u << 10);
   storage_readPolicyV2(&storage->pub.policies[2], "Experimental",
                        flags & (1u << 11));
-  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode",
-                       flags & (1u << 12));
+  storage_readPolicyV2(&storage->pub.policies[3], "AdvancedMode", false);
   storage->pub.no_backup = flags & (1u << 13);
   storage->has_sec_fingerprint = flags & (1u << 14);
   storage->pub.sca_hardened = flags & (1u << 15);
@@ -1296,6 +1300,9 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
     case StorageVersion_17:
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
+      // Older firmware persisted AdvancedMode in unauthenticated bit 12.
+      // Commit once to erase it, including for devices that never set a PIN.
+      if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
 
     case StorageVersion_BTC_ONLY:
@@ -1323,6 +1330,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
+      if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
                                                        : SUS_Updated;
     }
@@ -1561,6 +1569,7 @@ void session_clear(bool clear_pin) {
   /* Every session loss is an authorization boundary even when Initialize asks
    * to preserve the cached PIN. Abort signing and discard all plaintext
    * setup/authenticator state before the caller can report success. */
+  signed_metadata_clear_signers();
   signing_abort();
   setup_abort();
   authenticator_clear_cache();
@@ -1597,6 +1606,8 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
    * themselves. */
   if (clear_pin) {
     fsm_abort_signing_workflows();
+    signed_metadata_clear_signers();
+    storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 
   ss->seedCached = false;
@@ -2311,6 +2322,9 @@ bool storage_hasNode(void) { return shadow_config.storage.pub.has_node; }
 Allocation storage_getLocation(void) { return storage_location; }
 
 bool storage_setPolicy(const char* policy_name, bool enabled) {
+  if (!enabled && strcmp(policy_name, "AdvancedMode") == 0) {
+    signed_metadata_clear_signers();
+  }
   return storage_setPolicy_impl(shadow_config.storage.pub.policies, policy_name,
                                 enabled);
 }

@@ -9,6 +9,7 @@ extern "C" {
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
 void set_msg_failure_handler(msg_failure_t failure_func);
+bool test_tiny_buffer_is_clear(void);
 }
 
 static int failure_count;
@@ -133,6 +134,7 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   }
   EXPECT_EQ(MessageType_MessageType_PassphraseAck, id);
   EXPECT_STREQ(secret, reinterpret_cast<PassphraseAck *>(received)->passphrase);
+  EXPECT_TRUE(test_tiny_buffer_is_clear());
 
   memset(frame, 0, sizeof(frame));
   frame[0] = '?';
@@ -151,6 +153,45 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   close(fd);
   ASSERT_EQ(MessageType_MessageType_ButtonAck, id);
   for (uint8_t byte : received) EXPECT_EQ(0, byte);
+}
+
+TEST(USBRX, MalformedTinyPacketCancelsAndClearsPendingBuffer) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  fsm_init();
+  setup();
+
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  uint8_t frame[64] = {'?', '#', '#'};
+  frame[3] = MessageType_MessageType_PassphraseAck >> 8;
+  frame[4] = MessageType_MessageType_PassphraseAck & 0xff;
+  frame[8] = 56;  // More than the 55 payload bytes a tiny frame can hold.
+  ASSERT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
+                                  reinterpret_cast<struct sockaddr *>(&address),
+                                  sizeof(address)));
+
+  uint8_t received[MSG_TINY_BFR_SZ];
+  memset(received, 0xa5, sizeof(received));
+  uint16_t id = MSG_TINY_TYPE_ERROR;
+  for (int attempt = 0; attempt < 1000 && id == MSG_TINY_TYPE_ERROR;
+       ++attempt) {
+    id = check_for_tiny_msg(received);
+    if (id == MSG_TINY_TYPE_ERROR) usleep(1000);
+  }
+  close(fd);
+  EXPECT_EQ(MessageType_MessageType_Cancel, id);
+  EXPECT_EQ(1, failure_count);
+  EXPECT_TRUE(test_tiny_buffer_is_clear());
+  for (uint8_t byte : received) EXPECT_EQ(0, byte);
+
+  // A subsequent normal dispatch resets the tiny rejection state.
+  uint8_t reset_frame[64] = {};
+  handle_usb_rx(reset_frame, sizeof(reset_frame));
 }
 
 static const uint8_t *observed_packet;
@@ -188,4 +229,37 @@ TEST(USBRX, PacketStorageIsWipedAfterCallback) {
   ASSERT_EQ(sizeof(frame), observed_length);
   // The transport owns static storage; observe its lifetime after callback.
   for (size_t i = 0; i < sizeof(frame); ++i) EXPECT_EQ(0, observed_packet[i]);
+}
+
+TEST(USBRX, BlockingMalformedTinyPacketReturnsWithoutAnotherHostMessage) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  fsm_init();
+  setup();
+  const int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  ASSERT_GE(fd, 0);
+  struct sockaddr_in address = {};
+  address.sin_family = AF_INET;
+  address.sin_port = htons(11044);
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  uint8_t frame[64] = {'?', '#', '#'};
+  frame[3] = MessageType_MessageType_PassphraseAck >> 8;
+  frame[4] = MessageType_MessageType_PassphraseAck & 0xff;
+  frame[8] = 56;
+  ASSERT_EQ(sizeof(frame), sendto(fd, frame, sizeof(frame), 0,
+                                  reinterpret_cast<struct sockaddr *>(&address),
+                                  sizeof(address)));
+  close(fd);
+  uint8_t received[MSG_TINY_BFR_SZ];
+  memset(received, 0xa5, sizeof(received));
+  // A regression terminates this test process instead of hanging CI forever.
+  alarm(3);
+  const MessageType id = wait_for_tiny_msg(received);
+  alarm(0);
+  EXPECT_EQ(MessageType_MessageType_Cancel, id);
+  EXPECT_EQ(1, failure_count);
+  EXPECT_TRUE(test_tiny_buffer_is_clear());
+  for (uint8_t byte : received) EXPECT_EQ(0, byte);
+  uint8_t reset_frame[64] = {};
+  handle_usb_rx(reset_frame, sizeof(reset_frame));
 }
