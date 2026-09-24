@@ -1,10 +1,12 @@
 extern "C" {
 #include "keepkey/firmware/eip712.h"
+#include "trezor/crypto/sha3.h"
 }
 
 #include "gtest/gtest.h"
 
 #include <cstring>
+#include <array>
 #include <string>
 #include "kkconfirm_driver.h"
 
@@ -190,5 +192,102 @@ TEST(EIP712, IntegerValuesRejectNoncanonicalDecimal) {
     uint8_t hash[32] = {};
     EXPECT_EQ(GENERAL_ERROR, encode(types, values, "Test", hash));
     EXPECT_EQ(0, kkconfirm_drain());
+  }
+}
+
+TEST(EIP712, PublicTinyJsonErrorStatusRemainsLinkable) {
+  const volatile int* parser_status = &json_errno;
+  EXPECT_NE(nullptr, parser_status);
+}
+
+TEST(EIP712, CanonicalIntegerWidthsMatchIndependentAbiWords) {
+  struct Case {
+    const char* type;
+    const char* text;
+    bool valid;
+    uint8_t first;
+    uint8_t last;
+    uint8_t fill;
+    size_t fill_start;
+  };
+  const Case cases[] = {
+      {"uint64", "9223372036854775808", true, 0, 0, 0, 32},
+      {"uint64", "18446744073709551615", true, 0, 0xff, 0xff, 24},
+      {"uint64", "18446744073709551616", false, 0, 0, 0, 32},
+      {"uint128", "340282366920938463463374607431768211455", true, 0, 0xff,
+       0xff, 16},
+      {"uint128", "340282366920938463463374607431768211456", false, 0, 0, 0,
+       32},
+      {"uint256",
+       "11579208923731619542357098500868790785326998466564056403945758400791312"
+       "9639935",
+       true, 0xff, 0xff, 0xff, 0},
+      {"uint256",
+       "11579208923731619542357098500868790785326998466564056403945758400791312"
+       "9639936",
+       false, 0, 0, 0, 32},
+      {"int256",
+       "57896044618658097711785492504343953926634992332820282019728792003956564"
+       "819967",
+       true, 0x7f, 0xff, 0xff, 1},
+      {"int256",
+       "57896044618658097711785492504343953926634992332820282019728792003956564"
+       "819968",
+       false, 0, 0, 0, 32},
+      {"int256",
+       "-5789604461865809771178549250434395392663499233282028201972879200395656"
+       "4819968",
+       true, 0x80, 0, 0, 1},
+      {"int256",
+       "-5789604461865809771178549250434395392663499233282028201972879200395656"
+       "4819969",
+       false, 0, 0, 0, 32},
+      {"int8", "127", true, 0, 0x7f, 0, 32},
+      {"int8", "128", false, 0, 0, 0, 32},
+      {"int8", "-128", true, 0xff, 0x80, 0xff, 0},
+      {"int8", "-129", false, 0, 0, 0, 32},
+      {"uint8", "255", true, 0, 0xff, 0, 32},
+      {"uint8", "256", false, 0, 0, 0, 32},
+      {"uint256", "01", false, 0, 0, 0, 32},
+      {"int256", "-0", false, 0, 0, 0, 32},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(std::string(c.type) + " = " + c.text);
+    std::string type_json =
+        std::string("{\"types\":{\"Test\":[{\"name\":\"value\",\"type\":\"") +
+        c.type + "\"}]}}";
+    std::string value_json =
+        std::string("{\"message\":{\"value\":\"") + c.text + "\"}}";
+    json_t type_nodes[12] = {}, value_nodes[8] = {};
+    const json_t* types = json_create(&type_json[0], type_nodes, 12);
+    const json_t* values = json_create(&value_json[0], value_nodes, 8);
+    ASSERT_NE(nullptr, types);
+    ASSERT_NE(nullptr, values);
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    uint8_t actual[32] = {};
+    const int status = encode(types, values, "Test", actual);
+    EXPECT_EQ(c.valid ? SUCCESS : GENERAL_ERROR, status);
+    EXPECT_EQ(0, kkconfirm_drain());
+    if (!c.valid || status != SUCCESS) continue;
+
+    std::array<uint8_t, 32> word = {};
+    word.fill(0);
+    for (size_t i = c.fill_start; i < word.size(); ++i) word[i] = c.fill;
+    word[0] = c.first;
+    word[31] = c.last;
+    if (strcmp(c.type, "uint64") == 0 && c.text[0] == '9') word[24] = 0x80;
+    if (strcmp(c.type, "int8") == 0 && c.text[0] == '-') {
+      for (size_t i = 0; i < 31; ++i) word[i] = 0xff;
+    }
+    const std::string type_string = std::string("Test(") + c.type + " value)";
+    uint8_t type_hash[32], expected[32];
+    keccak_256(reinterpret_cast<const uint8_t*>(type_string.data()),
+               type_string.size(), type_hash);
+    SHA3_CTX ctx = {};
+    sha3_256_Init(&ctx);
+    sha3_Update(&ctx, type_hash, sizeof(type_hash));
+    sha3_Update(&ctx, word.data(), word.size());
+    keccak_Final(&ctx, expected);
+    EXPECT_EQ(0, memcmp(actual, expected, sizeof(actual)));
   }
 }
