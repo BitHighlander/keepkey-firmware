@@ -43,7 +43,7 @@ services:
       - emulator-bin:/kkemu-emulator-bin:ro
     environment:
       KK_RELEASE_MISSING_CAPABILITIES: '${KK_RELEASE_MISSING_CAPABILITIES:-}'
-      KK_EMULATOR_BIN: /kkemu-emulator-bin/kkemu
+      KK_EMULATOR_BIN: '${KK_EMULATOR_BIN:-/kkemu-emulator-bin/kkemu}'
     networks:
       - local-net
     depends_on:

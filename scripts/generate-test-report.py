@@ -23,6 +23,10 @@ REPORT_PDF = REPORT_DIR / "test-report.pdf"
 MERGED_JUNIT = REPORT_DIR / "junit-merged.xml"
 
 BASE_REQUIRED_CASES = {
+    "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
+    "EmulatorLifecycle.ConcurrentCaptureNeverTearsOrReordersUnreadSlots",
+    "EmulatorLifecycle.ShutdownStopsPollThreadAndAllowsRestart",
+    "EmulatorLifecycle.ShutdownWakesConfirmationWaitingForHostDecision",
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
 }
@@ -262,6 +266,7 @@ def main():
     junit_paths += [Path(path) for path in sorted(glob.glob(
         str(ROOT / "test-reports" / "firmware-unit" / "*.xml")))]
     junit_paths.append(ROOT / "test-reports" / "dylib-junit.xml")
+    junit_paths.append(ROOT / "test-reports" / "emulator" / "lifecycle.xml")
     missing_junit = [str(path) for path in junit_paths if not path.is_file()]
     if missing_junit:
         fail("required JUnit inputs missing: %s" % ", ".join(missing_junit))

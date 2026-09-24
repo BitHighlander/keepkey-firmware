@@ -654,6 +654,9 @@ jobs:
           # Point its boot-test stage at the exact artifact tag loaded above,
           # never at a same-named registry image.
           export KK_EMULATOR_IMAGE="${EMU_IMAGE}-${{ matrix.variant }}"
+          # CI does not start firmware-unit to populate the shared volume.
+          # The companion image already copies this exact variant binary.
+          export KK_EMULATOR_BIN=/kkemu/bin/kkemu
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
             build python-keepkey
           set +e
@@ -921,7 +924,9 @@ jobs:
         if: always()
         with:
           name: python-dylib-test-results
-          path: test-reports/dylib-junit.xml
+          path: |
+            test-reports/dylib-junit.xml
+            test-reports/emulator/lifecycle.xml
           retention-days: 30
           if-no-files-found: warn
 
