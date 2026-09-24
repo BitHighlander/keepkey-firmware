@@ -103,3 +103,5 @@ ec4c425090f1a124e9ff7fab51d8bfa29eae2b69	2	0	scripts/emulator/test_stack07_regre
 ec4c425090f1a124e9ff7fab51d8bfa29eae2b69	62	2	unittests/firmware/fsm.cpp
 host:1d42a1fa401129da292a8b0fe4f6dc9bee727117	18	8	scripts/generate-test-report.py
 host:1d42a1fa401129da292a8b0fe4f6dc9bee727117	10	6	tests/test_msg_ethereum_clear_signing.py
+3e2de50b5ca2ed18b1c94645da65c91489c6b818	11	0	lib/firmware/fsm_msg_ethereum.h
+3e2de50b5ca2ed18b1c94645da65c91489c6b818	27	0	scripts/emulator/test_stack07_regressions.py

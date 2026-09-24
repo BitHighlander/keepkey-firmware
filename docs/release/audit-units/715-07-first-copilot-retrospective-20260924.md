@@ -95,3 +95,11 @@ Prevention: before the combined matrix, run the report-required screenshot audit
 ## Completion states
 
 Implemented: confirmed code defects and additional integration findings repaired. Targeted behavior: native and seven protocol cases pass. Adversarial checks: four negative controls detected the removed protections. Integration: final full/BTC native and ARM complete; broad host results tracked in the candidate receipt. External review: one historical review delivered with findings; no current-head review requested. Findings dispositioned: technical dispositions above, publication/thread closure tracked separately. Release accepted: **no**.
+
+## Later predecessor reconciliation — Stack 06 `ff956077f`
+
+This section was added after the complete first-round retrospective. Stack 06 moved from `8ed653517` to `ff956077f` with a global ERC-20 allowance guard and three native regressions; its audit remains separately owned and its final review checkpoint is still open. Stack 07 merged the new head without conflict. Source inspection found an interaction the earlier Stack 07 tests could not cover: certified calldata begins with only four selector bytes, while the new predecessor policy needs the complete 68-byte approval prefix before any confirmation. A certified `approve(address,uint256)` could otherwise show runtime annotation screens and then fail at the ordinary signing entry.
+
+The bounded certified path now refuses every approval selector immediately after matching the preloaded definition and before definition replay or annotation screens. The preload is cleared. A new real signed-envelope host regression requires zero ButtonRequests and the explicit failure, then proves a finite 68-byte ordinary approval still reaches signing. This is deliberately narrower than supporting certified approval: the current selector-only continuation cannot satisfy the predecessor's pre-review allowance policy. A future implementation would need to validate the full prefix before UI and bind those exact bytes to the signing stream.
+
+The updated report/receipt records full, BTC, ARM, host, protocol, OLED and SRAM results against this merged tree. Earlier review 5298993214 and its dispositions remain historical; this merge is not covered by that review. No second Copilot request follows from adding this section.
