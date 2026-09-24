@@ -39,6 +39,24 @@ void kk_test_board_init(void);
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 
+TEST(Fsm, CoinTableRetainsPredecessorPageCapacity) {
+  const CoinTable response = {};
+  EXPECT_EQ(24u, sizeof(response.table) / sizeof(response.table[0]));
+#if !BITCOIN_ONLY
+  kk_test_board_init();
+  fsm_init();
+  for (uint32_t count : {10u, 24u}) {
+    fsm_test_clearLastFailure();
+    GetCoinTable request = {};
+    request.has_start = request.has_end = true;
+    request.start = 0;
+    request.end = count;
+    fsm_msgGetCoinTable(&request);
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  }
+#endif
+}
+
 TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   char credential[] = "site:user:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   ASSERT_EQ(LARGESEED, addAuthAccount(credential));

@@ -78,3 +78,5 @@ d7d149c4670821dbc07628669e578c7d80806afe	11	0	scripts/emulator/python-keepkey-te
 6869694bb6c4a3d6cfb21d714bb7c9233e74edcb	35	0	unittests/firmware/fsm.cpp
 fad2d0c4af0e186a9e16837cd844413feb552306	7	2	lib/firmware/ethereum.c
 fad2d0c4af0e186a9e16837cd844413feb552306	36	34	unittests/firmware/fsm.cpp
+7d76cd47c2c3f50905224b32402e9e5e815e526c	1	1	include/keepkey/transport/messages.options
+7d76cd47c2c3f50905224b32402e9e5e815e526c	18	0	unittests/firmware/fsm.cpp
