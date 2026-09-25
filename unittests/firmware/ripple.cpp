@@ -168,3 +168,28 @@ TEST(Ripple, MemoDataUsesCanonicalBlob13AndLengthBoundary) {
     EXPECT_EQ(0xf1, end[-1]);
   }
 }
+
+TEST(Ripple, TruncatedBufferFailsWithoutWritingPastEnd) {
+  // Memo-only transaction: every truncation point is reached through the
+  // non-asserting append/varint/memo paths.
+  RippleSignTx tx = {};
+  tx.has_memo = true;
+  memset(tx.memo, 'm', 150);
+  tx.memo[150] = 0;
+  uint8_t full[512];
+  uint8_t* full_end = full;
+  ASSERT_TRUE(ripple_serialize(&full_end, full + sizeof(full), &tx, nullptr,
+                               nullptr, nullptr, 0));
+  const size_t needed = full_end - full;
+  for (size_t room = 0; room < needed; ++room) {
+    uint8_t output[512];
+    memset(output, 0xa5, sizeof(output));
+    uint8_t* cursor = output;
+    EXPECT_FALSE(ripple_serialize(&cursor, output + room, &tx, nullptr,
+                                  nullptr, nullptr, 0))
+        << room;
+    EXPECT_LE(cursor, output + room) << room;
+    for (size_t i = room; i < sizeof(output); ++i)
+      ASSERT_EQ(0xa5, output[i]) << "wrote past end at " << i << ", room " << room;
+  }
+}

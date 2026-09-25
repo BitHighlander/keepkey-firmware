@@ -1357,7 +1357,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
 void failMessage(int err);
 
-const char* failMsgReturn[LAST_ERROR - 2] = {
+const char* failMsgReturn[] = {
     "EIP-712 general error",  //  3
     "EIP-712 user defined type name too long",
     "EIP-712 too many user defined types",
@@ -1389,8 +1389,12 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
     "EIP-712 no value for type during walkVals",  // 33
-    "EIP-712 cancelled",                          // 34 (USER_CANCELLED)
 };
+/* One message per code GENERAL_ERROR..LAST_ERROR; a missing or extra entry
+ * would shift every message after it. */
+_Static_assert(sizeof(failMsgReturn) / sizeof(failMsgReturn[0]) ==
+                   LAST_ERROR - GENERAL_ERROR + 1,
+               "failMsgReturn must cover GENERAL_ERROR..LAST_ERROR exactly");
 
 void failMessage(int err) {
   if (USER_CANCELLED == err) {
