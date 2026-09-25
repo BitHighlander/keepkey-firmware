@@ -992,6 +992,9 @@ jobs:
           git submodule update --init deps/python-keepkey
           echo "sha=$(git rev-parse HEAD:deps/python-keepkey)" >> "$GITHUB_OUTPUT"
 
+      - name: Check report gate regressions
+        run: python3 -m unittest scripts/test_generate_test_report.py -v
+
       - name: Generate test report PDF
         env:
           FW_VERSION: ${{ steps.version.outputs.fw_version }}
