@@ -140,6 +140,11 @@ The target is to add back at most ~10% of what was deleted.
 - The full CI graph green on the exact head. Local runs in the `kk837-dev` image (CI's base image) are the fast loop.
 - The §2 measurements that are still missing.
 
+## 9a. Owner decision (2026-09-25): no clear-sign means blind sign in 7.15, and rejection in 7.16
+
+- **7.15:** the whole ERC-7730 runtime already sits behind AdvancedMode and shows "NOT verified by KeepKey". It is not clear-signing in the 7.16 sense. An inner call the device cannot clear-sign may therefore be shown under a **blind-sign warning**, with AdvancedMode on, which the runtime already requires.
+- **7.16:** AdvancedMode becomes a **hard gate**. Anything that cannot be clear-signed must be **rejected**, with no blind-sign fallback. This applies to inner calls, and to every refusal class in the formatter plan: slices, packed words, missing definitions.
+
 ## 9. Decisions needed from the owner before design
 
 1. **P5:** without an inner definition, show the minimum (callee, selector, value, operation, bytes hash or data) with a "not clear-signed" label, or refuse?
