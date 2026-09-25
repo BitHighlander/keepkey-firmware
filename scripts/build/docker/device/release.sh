@@ -7,8 +7,8 @@ IMAGETAG=kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235
 
 docker image inspect "$IMAGETAG" > /dev/null || docker pull "$IMAGETAG"
 
-# Extra cmake flags pass straight through. The only alternate release product
-# is bitcoin-only: ./release.sh -DKK_BITCOIN_ONLY=ON
+# Extra CMake flags pass through for reproducible Bitcoin-only verification:
+# ./release.sh -DKK_BITCOIN_ONLY=ON
 EXTRA_CMAKE_FLAGS="$*"
 
 docker run -t \
