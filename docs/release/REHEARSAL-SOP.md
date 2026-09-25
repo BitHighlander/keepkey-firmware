@@ -247,6 +247,58 @@ and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
 unit, not additional unchanged review prompts.
 
+## Pre-push gate, self-review classes and agent handoff
+
+Owner request: 2026-09-25, after the 00b retrospective
+(`audit-units/715-00b-retro-20260925.md`). The rules above were already
+correct in principle; 00b broke them in sequencing and enforcement. These
+rules are mechanical so they do not depend on memory.
+
+**Pre-push gate.** Run `scripts/preflight.sh` after the last edit and
+immediately before every push. It mirrors CI Stage-1 (a red Stage-1 job skips
+the whole build graph) and fails closed. Do not push on a failure, with one
+recorded exception: if only the Docker-backed step failed because Docker is
+unavailable, push and state in the PR that hosted CI is the only
+static-analysis evidence for that head. Do not
+treat a local tool that differs from CI's version as a substitute. Local
+qualification runs pinned, clean submodules only; a dirty submodule is a
+different product.
+
+**Stacked PRs.** CI triggers automatically only for PRs into `master`,
+`develop` or `release/715-stack-*`. A PR stacked on an `audit/*` branch
+gets no run; dispatch `ci.yml` on its exact head, and record that run as
+its hosted evidence.
+
+**Negative controls.** A new check, script, poll or gate counts as evidence
+only after it has been shown to fail on a known-bad input. A silent tool is
+not a passing tool until its control has fired. This applies to agent
+scripts: API polls must paginate, and batch writes must be verified by
+reading the result back.
+
+**Self-review classes.** Before any external review, walk the block's own
+diff for these recurring classes and fix or disposition each hit:
+
+| Class | Question to answer in the diff |
+| --- | --- |
+| Invariant in a comment | Which comment states a fact? What code, `_Static_assert` or test proves it? |
+| Consent order | Is every value validated before it is displayed, and displayed before it is hashed or signed? |
+| Buffer bounds | Is every bound computed by subtraction from the end, never by forming a pointer past it? |
+| Configuration duplication | Does any option, pin or ledger entry now appear twice? |
+| Gate trust | Does any gate read free text from an artifact instead of a checked-in ledger or an exact identity? |
+| Dead guards | Did a new early return make a later check unreachable? |
+
+**Local runtime health.** Before starting a long local job, check
+`docker info` with a timeout, and run images for the host architecture.
+Give every background job a time limit. If a job makes no progress for
+10 minutes, stop it and report. If Docker is unavailable, qualify on hosted
+CI and say so explicitly (owner direction, 2026-09-24).
+
+**Agent handoff record.** Work handed from one agent to another must be
+committed, as a WIP commit if needed, never left as an uncommitted tree. It
+must carry a short note listing: head SHA, dirty or unpinned dependencies,
+the checks that ran and the exact tree each ran against, open findings, and
+the next step. A pasted transcript is not a handoff record.
+
 ## Copilot only with explicit owner authorization
 
 Do not request Copilot during authoring, local hardening, predecessor propagation,
@@ -260,14 +312,45 @@ instruction to complete, audit, publish or prepare the release is not Copilot
 authorization. If authorized, enter the checkpoint only after the release and
 its proposed upstream units pass internal acceptance. Audit the small final units
 and their affected interactions; do not substitute a broad product diff for them.
-Never automatically start a repeat-until-silent Copilot loop. If findings arrive,
-triage and fix them locally in a batch; a re-request needs a concrete reason tied
-to that external checkpoint. Preserve prior dispositions and review counts.
+Never start an unbounded repeat-until-silent Copilot loop. The bounded loop in
+"Review budget and block splitting" below is the standing authorization for
+re-requests. Preserve prior dispositions and review counts.
 
 A failed, missing or quota-limited review is not a clean review. Report Copilot's
 actual status separately from internal readiness. Existing substantive findings
 must still be resolved or explicitly declined on technical grounds; deferring
 Copilot does not waive known defects or any upstream-required review gate.
+
+## Review budget and block splitting
+
+Owner decision: 2026-09-25, after the 00b retrospective. This is the
+standing authorization for Copilot on frozen blocks; no per-round approval
+is needed.
+
+1. **Budget.** Each frozen block gets up to **3 Copilot rounds**, requested
+   by the agent without asking. Use Balanced effort where it is available.
+2. **Each round.** Fix every actionable finding and audit its class across
+   the block. Reply to and resolve every thread. Then run
+   `scripts/preflight.sh` and get hosted CI green on the new head. Only then
+   request the next round.
+3. **Pass.** A round passes when a delivered review on the current head has
+   no finding that needs a code change. A decline needs technical evidence
+   on the thread. A finding the agent would decline on a security-relevant
+   path goes to the owner instead of being declined.
+4. **Failure.** A round with any finding that needs a code change is a
+   failure. A quota failure, or a review that never arrives, is neither a
+   pass nor a failure; it does not use up the budget.
+5. **Split after 3 failures.** Re-cut the block into smaller consecutive
+   blocks, using the next unused IDs in sequence (for example, 00b becomes
+   00b, 00c and 00d). Each piece holds one bounded behavior or subsystem, is
+   stacked in dependency order, and gets a fresh 3-round budget. Repeat for
+   any piece that fails 3 rounds, until the entire block is approved. The
+   agent plans and performs the split without asking. It records the split
+   in a receipt that maps every file, finding and disposition from the
+   parent to exactly one piece, so no fix or evidence is lost. Splitting
+   never waives an open finding.
+6. **00b transition.** 00b's seven earlier rounds do not count. The owner
+   authorized 3 more rounds on 00b before any split (2026-09-25).
 
 ## Final upstream SOP
 
