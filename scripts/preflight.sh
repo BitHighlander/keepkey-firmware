@@ -35,6 +35,18 @@ for f in $(git ls-files '*.options'); do
     END { exit bad }' "$f" || fail "duplicate option in $f"
 done
 
+step "every unit test file is built"
+# A test file no CMakeLists names never runs: hive.cpp sat in 00b with ~20
+# tests that had never executed. Dormant suites for a capability a later
+# block owns are listed here with that owner; nothing else may be unbuilt.
+DORMANT_TESTS="unittests/firmware/hive.cpp"  # hive-release-review block
+cmake_text=$(git ls-files '*CMakeLists.txt' '*.cmake' | xargs cat)
+for f in $(git ls-files 'unittests/*.cpp' 'unittests/**/*.cpp'); do
+  case " $DORMANT_TESTS " in *" $f "*) continue ;; esac
+  printf '%s\n' "$cmake_text" | grep -q "$(basename "$f")" ||
+    fail "$f is not named by any CMakeLists.txt, so it never runs"
+done
+
 step "clang-format 20 (CI pins 20)"
 CF=""
 for c in clang-format-20 /opt/homebrew/opt/llvm@20/bin/clang-format clang-format; do

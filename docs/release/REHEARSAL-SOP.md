@@ -264,6 +264,11 @@ treat a local tool that differs from CI's version as a substitute. Local
 qualification runs pinned, clean submodules only; a dirty submodule is a
 different product.
 
+**Stacked PRs.** CI triggers automatically only for PRs into `master`,
+`develop` or `release/715-stack-*`. A PR stacked on an `audit/*` branch
+gets no run; dispatch `ci.yml` on its exact head, and record that run as
+its hosted evidence.
+
 **Negative controls.** A new check, script, poll or gate counts as evidence
 only after it has been shown to fail on a known-bad input. A silent tool is
 not a passing tool until its control has fired. This applies to agent
