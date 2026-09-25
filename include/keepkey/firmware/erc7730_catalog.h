@@ -106,6 +106,14 @@ typedef struct {
   uint64_t literal_set_mask;
   uint8_t literal_classes[32]; /* ERC7730_CLASS_* per literal, 4 bits each */
   uint8_t date_strings[12];    /* strings "timestamp"/"blockheight", 1 bit */
+  uint8_t path_arrays[64];     /* ABI node of each path's [] step, or 0xff */
+  uint64_t path_iterable_mask; /* paths that end on their [] step */
+  uint8_t formatter_value_array;
+  uint8_t display_iteration_array;
+  bool formatter_any_array;
+  bool display_in_iteration;
+  bool path_array_indexed;
+  bool path_last_full;
   uint16_t cert_length;
   uint16_t field_received;
   uint16_t section_mask;

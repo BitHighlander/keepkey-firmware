@@ -143,6 +143,24 @@ The plan's counts assumed values came only from calldata. Measured with containe
   - Wire: `test_phase_c_formatters_show_exact_text`, `test_enum_labels_are_the_signers_claim_beside_the_value`, `test_nft_shows_the_collection_address`.
   - Controls: a label replacing the enum value, dropping the date-encoding check, and treating an out-of-range timestamp as a date each fail.
 
+### Phase D status (2026-09-25): block 7b
+
+- **Conditions.** The registry uses only "optional" (condition opcode 3), and only on fields. Condition opcode 3 is the only one executed, and it always shows. A field, group or iteration that references it is shown exactly as one that does not. Every opcode that could hide or veto a value (never, ifIn/ifNotIn, mustMatch, ifEmpty) is refused at preload. The owner's §8.4 hiding policy is therefore never exercised: nothing is hidden.
+- **Groups (5/6).** Executed as grouping only; each field shows its own label.
+- **Iteration (7/8).** Runs over one array at a time, calldata only.
+  - The array must be reached through tuples only (no array index before the `[]` step), so its ABI node identifies it.
+  - Every field inside must read that array; a field that iterates must be inside an iteration; nesting is refused.
+  - The runtime captures the array's length in one pass, then shows each element's fields titled "Signer field i/N", binding `[]` to element i. An empty array shows no element.
+  - The stream's 64-element limit is enforced by the up-front validation pass, before the first screen.
+  - A path ending in `[]` is iterable. It is also a value when its element is a leaf (`address[] recipients`).
+- **Slices (path step 3).** Still refused. Their registry uses cut an address out of `bytes`, which would reinterpret bytes.
+- Registry: 1,294 signable (from 1,138). SRAM reserve 18,048 B (−96 B). ROM about +1.2 KB.
+- Tests:
+  - Native: `PreloadChecksIterationAgainstTheArrayItWalks` (another array, outside, nested, typed data) and `IterationPathsReachTheirArrayThroughTuplesOnly`.
+  - Wire: `test_iteration_shows_every_element_numbered` (including an empty array) and `test_grouped_tuple_iteration_and_optional_fields`.
+  - Controls: dropping the same-array rule, stopping after one element, or binding every element to 0 each fail.
+- Trap caught while writing the tests: the verifier and the mirror both treated every `[]`-terminated path as "not a value". They agreed, so the lockstep test could not see it, while every `address[]` field was being refused. Symmetric bugs need an independent expectation.
+
 ## 4. Formatter designs and trust sources
 
 | Kind | Name | Trust source | Display (body under a device-owned title; the signer's label leads) |

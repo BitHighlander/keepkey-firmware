@@ -46,6 +46,7 @@ typedef enum {
   ERC7730_DISPLAY_ARG_MESSAGE,  /* the field's string: message, date
                                    encoding, unit base or enum label */
   ERC7730_DISPLAY_ARG_ENUM_KEY, /* one enum entry's key */
+  ERC7730_DISPLAY_ITERATION,    /* the array an iteration walks */
 } Erc7730DisplayStage;
 
 /* The most arguments an executable formatter carries (tokenAmount: value,
@@ -109,6 +110,13 @@ typedef struct {
    * interpolated intent; such a part has no label. */
   uint8_t intent_part;
   uint8_t intent_parts;
+  /* An iteration (display opcodes 7..8) in progress: its instructions, and
+   * the element its "every element" path steps are bound to. */
+  uint16_t iteration_begin;
+  uint16_t iteration_end;
+  uint8_t iteration_index;
+  uint8_t iteration_count;
+  bool iterating;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
@@ -164,6 +172,11 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
 bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
                                                 EthereumSignTx* tx,
                                                 const Erc7730Path* path);
+/* Capture the element count of the array an iteration path walks (the path
+ * without its final "every element" step). */
+bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
+                                               EthereumSignTx* tx,
+                                               const Erc7730Path* path);
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
                                            const Erc7730Path* path);
 bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,

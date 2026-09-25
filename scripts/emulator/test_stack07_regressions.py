@@ -555,12 +555,12 @@ class TestStack07Regressions(common.KeepKeyTest):
 
     def test_program_outside_capability_table_is_refused_at_preload(self):
         signature = "audit(uint256 first,uint256 second)"
-        # Shapes the runtime does not execute yet (Phase D).
+        # Conditions that could hide or veto a field are never executed.
         fields = {
-            "group": {"label": "Group", "fields": [
-                {"path": "first", "label": "First value", "format": "raw"}]},
-            "condition": {"path": "first", "label": "First value",
-                          "format": "raw", "visible": {"ifNotIn": [0]}},
+            "ifNotIn": {"path": "first", "label": "First value",
+                        "format": "raw", "visible": {"ifNotIn": [0]}},
+            "mustMatch": {"path": "first", "label": "First value",
+                          "format": "raw", "visible": {"mustMatch": [42]}},
         }
         self._load_signer()
         for name, field in sorted(fields.items()):
@@ -844,3 +844,59 @@ class TestStack07Regressions(common.KeepKeyTest):
         assert_failure(self, result, types.Failure_SyntaxError,
                        "ERC-7730 calldata does not match definition")
         self.assertEqual((buttons, passes), (0, 1))
+
+    # Phase D: groups, "optional" fields and one iteration at a time. Every
+    # element gets its own numbered screens; nothing is ever hidden.
+    def _titled_fields(self, descriptor, signature, arguments):
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        start = self._audit_start(program, 4 + len(arguments))
+        result, _, _, _ = self._walk(start, envelope, arguments=arguments)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        fields = []
+        for screen in self.screens:
+            if screen[0].startswith("Signer field") and (
+                    not fields or fields[-1] != screen):
+                fields.append(screen)
+        return fields
+
+    def test_iteration_shows_every_element_numbered(self):
+        signature = "pay(address[] recipients)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Pay", "fields": [{
+                "path": "recipients.[]", "label": "Recipient",
+                "format": "addressName"}]}}}}
+        arguments = (self._word(32) + self._word(2) +
+                     self._word(OTHER_ADDRESS) + self._word(ADDRESS))
+        self.assertEqual(
+            self._titled_fields(descriptor, signature, arguments), [
+                ("Signer field 1/2", "Recipient:\n0x" + OTHER_ADDRESS.hex()),
+                ("Signer field 2/2", "Recipient:\n0x" + ADDRESS.hex()),
+            ])
+        # An empty array shows no element and still signs.
+        self.assertEqual(
+            self._titled_fields(descriptor, signature,
+                                self._word(32) + self._word(0)), [])
+
+    def test_grouped_tuple_iteration_and_optional_fields(self):
+        signature = "batch((address to,uint256 amount)[] items,uint256 fee)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Batch", "fields": [
+                {"path": "items.[]", "label": "Transfer", "fields": [
+                    {"path": "to", "label": "To", "format": "addressName"},
+                    {"path": "amount", "label": "Amount", "format": "raw"}]},
+                {"path": "fee", "label": "Fee", "format": "raw",
+                 "visible": "optional"}]}}}}
+        arguments = (self._word(64) + self._word(9) + self._word(2) +
+                     self._word(OTHER_ADDRESS) + self._word(5) +
+                     self._word(ADDRESS) + self._word(6))
+        self.assertEqual(
+            self._titled_fields(descriptor, signature, arguments), [
+                ("Signer field 1/2", "To:\n0x" + OTHER_ADDRESS.hex()),
+                ("Signer field 1/2", "Amount:\n5"),
+                ("Signer field 2/2", "To:\n0x" + ADDRESS.hex()),
+                ("Signer field 2/2", "Amount:\n6"),
+                ("Signer field", "Fee:\n9"),
+            ])

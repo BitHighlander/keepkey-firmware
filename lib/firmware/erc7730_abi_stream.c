@@ -95,6 +95,18 @@ static void pop_frame(Erc7730AbiStream* s) {
   s->depth--;
 }
 
+/* A capture that names an array returns its element count as a word. */
+static void capture_array_length(Erc7730AbiStream* s,
+                                 const Erc7730AbiStreamFrame* f, size_t count) {
+  if (!f->target_prefix || f->path_depth != s->capture_path_count) return;
+  memzero(s->capture.data, sizeof(s->capture.data));
+  s->capture.data[30] = (uint8_t)(count >> 8);
+  s->capture.data[31] = (uint8_t)count;
+  s->capture.length = 32;
+  s->capture.node = f->node;
+  s->capture_found = true;
+}
+
 static Erc7730AbiResult make_sequence(const Erc7730AbiStream* s,
                                       Erc7730AbiStreamFrame* f,
                                       uint16_t first_child,
@@ -141,6 +153,7 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
             (uint32_t)ERC7730_ABI_MAX_ARRAY_ELEMENTS - n->array_length)
           return ERC7730_ABI_RESOURCE_LIMIT;
         s->elements += n->array_length;
+        capture_array_length(s, f, n->array_length);
         Erc7730AbiResult r = make_sequence(s, f, n->first_child,
                                            n->array_length, true, word_start);
         if (r != ERC7730_ABI_OK) return r;
@@ -332,6 +345,7 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
         s->elements > ERC7730_ABI_MAX_ARRAY_ELEMENTS - count)
       return ERC7730_ABI_RESOURCE_LIMIT;
     s->elements += (uint32_t)count;
+    capture_array_length(s, f, count);
     r = make_sequence(s, f, n->first_child, (uint16_t)count, true, s->received);
   } else {
     return ERC7730_ABI_BAD_PROGRAM;
