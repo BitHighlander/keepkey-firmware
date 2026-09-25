@@ -104,6 +104,7 @@ typedef struct {
   uint32_t section_offset;
   uint64_t abi_child_mask;
   uint64_t literal_set_mask;
+  uint8_t literal_classes[32]; /* ERC7730_CLASS_* per literal, 4 bits each */
   uint16_t cert_length;
   uint16_t field_received;
   uint16_t section_mask;

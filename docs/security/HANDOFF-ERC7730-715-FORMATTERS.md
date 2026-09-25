@@ -78,6 +78,36 @@ Exit: registry signable = 92 exactly. Every program outside the table is refused
 - DebugLink: device-protocol `DebugLinkState.confirm_title` (16) and `confirm_body` (17), filled from the last `confirm_helper()` call in DEBUG_LINK builds only; python-keepkey `DebugLink.read_confirm_text()`.
 - Tests: `Erc7730Catalog.PreloadRefuses*`, `PreloadWalksEveryPathAgainstTheAbi`, `RuntimePathPredicateMatchesTheTable`; wire tests `test_program_outside_capability_table_is_refused_at_preload`, `test_path_outside_abi_is_refused_at_preload`, `test_raw_field_screens_show_exact_text` in `scripts/emulator/test_stack07_regressions.py`. Negative controls: removing each verifier check fails a named unit test (the two formatter checks overlap and fail together); removing the capability checks or the walk and leaf check fails the matching wire test.
 
+### Real per-phase targets (measured 2026-09-25 with the python mirror)
+
+The plan's counts assumed values came only from calldata. Measured with container and literal sources: 0 = 92, A = 812 (a loose estimate gave 833; see below), B ≈ 987, C ≈ 1,172, D ≈ 1,383, E ≈ 1,412. The rest need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
+
+### Phase A status (2026-09-25): block 7b, stacked on 7a
+
+- Table: formatter kinds 1, 3 (tokenAmount: value, token, threshold, message, native aliases) and 10 (addressName); path sources 1, 2 (containers `@.from`, `@.to`; calldata definitions only) and 3 (literals). `@.value` and `@.chainId` are left to Phase C; no registry format uses them with a Phase A formatter.
+- Every argument is type-checked at preload (`erc7730_cap_value()`, shared with the runtime): the amount and the threshold are integers; the token and an addressName value are addresses; a raw literal is an integer, an address or a string reference; an alias set names at most `ERC7730_CAP_ALIAS_SET_MAX` (4) addresses. The verifier keeps a class per path in `signature[]` (idle from the ABI to the display section) and a class per literal in 32 bytes of nibbles.
+- Runtime (`fsm_msg_ethereum.h`): each argument is resolved in its own definition replay or calldata/typed-data pass. The amount is copied out before the token pass, and every pass is hash-committed as before. The threshold message is fetched last, and only when the amount is at or above the threshold.
+- Display (`erc7730_field.c`):
+  - An address is always shown in full, EIP-55, with "(this wallet)" when it is the signing account, which is derived on device.
+  - A token known to the firmware table for the chain is shown with that table's ticker and decimals, rendered as the ordinary Ethereum review renders it.
+  - Any other token, including the zero address, is shown as the exact integer, then "unknown token" and its address.
+  - A native alias shows the chain's native asset.
+  - The threshold message appears above the value, never instead of it.
+- Refused on purpose: 21 registry formats apply addressName to `uint256`/`bytes32` words that pack an address with flags (1inch), and 12 apply tokenAmount to encrypted `bytes32` amounts. Showing them would mean reinterpreting bytes the calldata does not declare as an address or an integer.
+- Costs: SRAM reserve 18,336 → 18,208 B (−128 B). ROM text +4,096 B. The deepest new stack chain is definition chunk (2,320 B) → signer derivation (1,480 B) → key derivation.
+- Behaviour change: `@.from` and "(this wallet)" derive the signing key during the review. With passphrase protection and no cached passphrase, the PassphraseRequest now comes during the review, not after it.
+- Tests:
+  - Native: `Erc7730Catalog.PreloadTypeChecks*`, `ContainersAreCalldataOnly`, `Erc7730Field.*` (EIP-55 spec vectors, firmware table entries, 2^256−1).
+  - Wire, exact text:
+    - `test_token_amount_uses_the_firmware_token_table`
+    - `test_token_named_by_calldata_wins_over_the_hosts_claim`
+    - `test_signer_label_cannot_name_an_unknown_token`
+    - `test_threshold_message_is_shown_beside_the_exact_amount`
+    - `test_native_alias_shows_the_chains_native_asset`
+    - `test_address_name_marks_only_the_signing_account` (signer vs one byte off)
+    - `test_containers_and_signed_constants`
+  - Negative controls: forcing "(this wallet)", letting the message replace the value, ignoring aliases and dropping the verifier type check each fail the matching test.
+
 ## 4. Formatter designs and trust sources
 
 | Kind | Name | Trust source | Display (body under a device-owned title; the signer's label leads) |

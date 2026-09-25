@@ -339,6 +339,9 @@ static bool finish_path_step(Erc7730CatalogVerifier* v) {
     if (v->path_node >= v->table_counts[1] ||
         (abi_entry(v, v->path_node) >> 12) > ERC7730_ABI_STRING)
       return false;
+    /* Formatter arguments are type-checked against this class. signature[]
+     * is idle from the end of the ABI section until the display section. */
+    v->signature[v->entry_index] = (uint8_t)(abi_entry(v, v->path_node) >> 12);
     v->entry_index++;
     v->field_received = 0;
     v->path_step_index = 0;
@@ -383,6 +386,18 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       if ((v->path_source == 2 && (source_index == 0 || source_index > 6)) ||
           (v->path_source == 3 && source_index == UINT16_MAX))
         return false;
+      if (v->path_source == 2) {
+        /* @.from and @.to are addresses; containers exist for calldata only.
+         */
+        if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
+            v->header[7] != ERC7730_DEFINITION_CALLDATA)
+          return false;
+        v->signature[v->entry_index] = ERC7730_CLASS_ADDRESS;
+      } else {
+        /* The literal table follows; resolve the class at the formatter. */
+        if (source_index >= 64) return false;
+        v->signature[v->entry_index] = (uint8_t)(0x40u | source_index);
+      }
     }
     v->field_received = 0;
     if (v->path_step_count == 0) {
@@ -431,9 +446,19 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   return finish_path_step(v);
 }
 
+static uint8_t literal_class(const Erc7730CatalogVerifier* v,
+                             uint16_t literal) {
+  if (literal >= v->table_counts[3] || literal >= 64) return ERC7730_CLASS_NONE;
+  return (uint8_t)((v->literal_classes[literal / 2u] >> (4u * (literal % 2u))) &
+                   0x0fu);
+}
+
 static void finish_literal(Erc7730CatalogVerifier* v) {
   if (v->literal_kind == 9)
     v->literal_set_mask |= UINT64_C(1) << v->entry_index;
+  v->literal_classes[v->entry_index / 2u] |=
+      (uint8_t)(erc7730_cap_literal_class(v->literal_kind, v->literal_subcount)
+                << (4u * (v->entry_index % 2u)));
   v->entry_index++;
   v->entry_length = 0;
   v->entry_offset = 0;
@@ -665,6 +690,11 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       (source == 2 && index >= v->table_counts[3]) ||
       (source == 3 && index >= v->table_counts[0]))
     return false;
+  if (source != 3) {
+    uint8_t cls = source == 2 ? literal_class(v, index) : v->signature[index];
+    if (source == 1 && (cls & 0x40u) != 0) cls = literal_class(v, cls & 0x3fu);
+    if (!erc7730_cap_value(v->formatter_kind, role, cls)) return false;
+  }
   v->formatter_last_role = role;
   v->formatter_roles |= FORMAT_ROLE_BIT(role);
   v->formatter_arg_index++;

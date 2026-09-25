@@ -36,6 +36,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_capabilities.c
       erc7730_catalog.c
       erc7730_condition.c
+      erc7730_field.c
       erc7730_format.c
       erc7730_program.c
       erc7730_tx.c

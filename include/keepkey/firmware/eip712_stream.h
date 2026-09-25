@@ -141,6 +141,9 @@ bool eip712_domain_facts_observe(
     const uint8_t* value, uint16_t value_len);
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts);
+/* The signing account's path while a certified definition is in use, so the
+ * ERC-7730 runtime can recognise the signer's own address. */
+bool eip712_stream_signer_path(uint32_t address_n[6], size_t* count);
 bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
                                   const uint8_t* value, size_t length,
                                   bool require_absent);
