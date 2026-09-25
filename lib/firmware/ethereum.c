@@ -128,15 +128,19 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
-bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
-      msg->data_initial_chunk.size == 68 &&
+static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
+  if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size >= 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\x09\x5e\xa7\xb3\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
              16) == 0) {
     return true;
   }
   return false;
+}
+
+bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
+  return msg->value.size == 0 && msg->data_initial_chunk.size == 68 &&
+         ethereum_isERC20ApproveCall(msg);
 }
 
 bool ethereum_getStandardERC20Recipient(const EthereumSignTx* msg,
@@ -1010,6 +1014,35 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  // Keep the selector and both ABI words available to the allowance policy.
+  // Otherwise a host could split an approval prefix across streamed chunks.
+  const size_t selector_bytes =
+      msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      msg->data_initial_chunk.size < 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3",
+             selector_bytes) == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Approval requires at least 68 initial bytes"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  if (data_total >= 68 && ethereum_isERC20ApproveCall(msg)) {
+    // Native value cannot exempt a payable token from this allowance policy.
+    // Unlimited approval grants open-ended authority and is refused before
+    // any generic transaction confirmation can mask this policy decision.
+    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
+    bool unlimited = true;
+    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
+    if (unlimited) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Unlimited ERC20 approval is disabled"));
+      ethereum_signing_abort();
+      return;
+    }
+  }
+
   bool data_needs_confirm = true;
   if (ethereum_contractHandled(data_total, msg, node)) {
     if (!ethereum_contractConfirmed(data_total, msg, node)) {
@@ -1068,9 +1101,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
-  // (then it must survive to bind the signature). Prevents stale reuse when the
-  // contractHandled / ERC-20 paths bypass the metadata check above.
+  // Keep metadata only when its decoded screens were approved, so their
+  // attestation remains bound to the signature. Otherwise prevent stale reuse
+  // when contractHandled / ERC-20 paths bypassed metadata review.
   if (!signed_metadata_relied()) {
     signed_metadata_clear();
   }

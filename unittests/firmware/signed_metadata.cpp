@@ -315,6 +315,15 @@ TEST_F(SignedMetadataTest, RuntimeMetadataIsInertOutsideAdvancedMode) {
       TEST_KEY_ID, data, sizeof(data) - 1, sig, sizeof(sig)));
 
   set_advanced_mode_for_test(true);
+  // Re-enabling the policy must not resurrect a revoked session signer.
+  EXPECT_FALSE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
+  ExpectMalformed(blob, TEST_KEY_ID);
+  ASSERT_TRUE(signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB,
+                                           TEST_ALIAS, NULL, 0, 0, 0, false));
+  EXPECT_TRUE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
+  EXPECT_STREQ(alias, TEST_ALIAS);
 }
 
 TEST_F(SignedMetadataTest, ValidOpaqueClassification) {

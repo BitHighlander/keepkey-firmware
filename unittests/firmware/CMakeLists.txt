@@ -7,6 +7,9 @@
 set(sources
     ctap2.cpp
     ctap2_cbor.cpp
+    app_confirm.cpp
+    nanopb_bounds.cpp
+    authenticator.cpp
     confirm_test_utils.cpp
     dice.cpp
     fsm.cpp
@@ -28,6 +31,7 @@ set(sources
     transaction.cpp
     usb_rx.cpp
     usb_callbacks.cpp
+    messages_probe.c
     u2f.cpp)
 
 # Coin/token unit tests exercise handlers/helpers that are compiled out of the
@@ -48,6 +52,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       eip712_stream.cpp
       hive.cpp
       review_integer.cpp
+      liquidity_key_probe.c
       mayachain.cpp
       nano.cpp
       osmosis.cpp

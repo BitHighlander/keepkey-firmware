@@ -50,6 +50,7 @@
 #include "keepkey/firmware/signed_metadata.h"
 #endif
 #include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
@@ -994,18 +995,20 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  /* Policy state is NEVER trusted from flash, at any version. Reading the
-   * legacy record put a FLASH-CONTROLLED NAME into policies[0]: because
-   * storage_upgradePolicies only fills indices from policies_count upward, and
-   * storage_isPolicyEnabled_impl returns on the FIRST name match scanning from
-   * index 0, a crafted record naming itself "AdvancedMode" with enabled=1 was
-   * answered before the real entry at index 3 was ever reached -- re-enabling
-   * blind signing from unauthenticated storage.
-   *
-   * Nothing is lost by discarding it: the only policy this record could name
-   * legitimately is ShapeShift, which every V11+ reader already forces to
-   * false, and which has no storage_isPolicyEnabled consumer anywhere. */
+  // A legacy flash record can supply a policy name. Never let it shadow the
+  // compiled AdvancedMode entry when the policy table is upgraded.
   storage_resetPolicies(storage);
+  if (storage->version != 1) {
+    PolicyType legacy_policy = {0};
+    storage_readPolicyV1(&legacy_policy, ptr + 464, 17);
+    // Only ShapeShift existed in this format. Preserve its preference while
+    // refusing injected names that could enable later security policies.
+    if (legacy_policy.has_policy_name && legacy_policy.has_enabled &&
+        strcmp(legacy_policy.policy_name, "ShapeShift") == 0) {
+      storage_setPolicy_impl(storage->pub.policies, "ShapeShift",
+                             legacy_policy.enabled);
+    }
+  }
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
@@ -1899,6 +1902,13 @@ void session_clear(bool clear_pin) {
    * and the PIN-failure path (pin_sm.c) both tear the session down without
    * going through Initialize or ClearSession, and both left the key live. */
   zcash_signing_abort();
+  /* Every session loss is an authorization boundary even when Initialize asks
+   * to preserve the cached PIN. Abort signing and discard all plaintext
+   * setup/authenticator state before the caller can report success. */
+  signing_abort();
+  setup_abort();
+  authenticator_clear_cache();
+  fsm_clearDerivedNode();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -2748,6 +2758,9 @@ bool storage_hasNode(void) { return shadow_config.storage.pub.has_node; }
 Allocation storage_getLocation(void) { return storage_location; }
 
 bool storage_setPolicy(const char* policy_name, bool enabled) {
+  if (!enabled && strcmp(policy_name, "AdvancedMode") == 0) {
+    signed_metadata_clear_signers();
+  }
   return storage_setPolicy_impl(shadow_config.storage.pub.policies, policy_name,
                                 enabled);
 }

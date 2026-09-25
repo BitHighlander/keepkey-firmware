@@ -2441,6 +2441,13 @@ void fsm_msgEthereumClearSignDefinitionChunk(
 
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_INITIALIZED
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    ethereum_signing_abort();
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("AdvancedMode required for clearsign metadata"));
+    layoutHome();
+    return;
+  }
   CHECK_PIN
 
   /* Metadata must arrive before signing starts. signed_metadata_process()

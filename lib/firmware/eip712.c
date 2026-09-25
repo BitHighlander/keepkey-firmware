@@ -31,7 +31,6 @@
    strings and address should be prefixed by 0x
 */
 
-#include <errno.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -214,12 +213,60 @@ static bool type_is_bytes(const char* type, unsigned* byte_size,
    value the host sent. */
 static bool hex_string_is_valid(const char* string, size_t expected_bytes,
                                 bool exact_size) {
-  if (!string || string[0] != '0' || string[1] != 'x') return false;
+  if (!string || strlen(string) < 2 || string[0] != '0' || string[1] != 'x')
+    return false;
   const size_t chars = strlen(string + 2);
   if ((chars & 1) != 0 || (exact_size && chars != 2 * expected_bytes))
     return false;
   for (size_t i = 0; i < chars; i++) {
     if (hex_nibble(string[i + 2]) < 0) return false;
+  }
+  return true;
+}
+
+/* Encode canonical decimal integers directly into a 256-bit ABI word.
+ * strtoll rejects valid uint64..uint256 values above INT64_MAX. */
+static bool encode_canonical_integer(const char* type, const char* text,
+                                     bool is_uint, uint8_t encoded[32]) {
+  if (!text) return false;
+  const bool negative = text[0] == '-';
+  if (negative && is_uint) return false;
+  const char* digits = text + (negative ? 1 : 0);
+  if (*digits == '\0' || (digits[0] == '0' && (digits[1] != '\0' || negative)))
+    return false;
+
+  uint8_t magnitude[32] = {0};
+  for (const char* p = digits; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+    uint16_t carry = (uint16_t)(*p - '0');
+    for (size_t i = sizeof(magnitude); i-- > 0;) {
+      carry += (uint16_t)magnitude[i] * 10;
+      magnitude[i] = (uint8_t)carry;
+      carry >>= 8;
+    }
+    if (carry != 0) return false;
+  }
+
+  const unsigned bits = integer_type_width(type, is_uint ? "uint" : "int");
+  uint8_t limit[32] = {0};
+  if (is_uint) {
+    memset(limit + sizeof(limit) - bits / 8, 0xff, bits / 8);
+  } else {
+    const size_t byte = sizeof(limit) - 1 - (bits - 1) / 8;
+    const uint8_t sign_bit = (uint8_t)(1u << ((bits - 1) % 8));
+    limit[byte] = negative ? sign_bit : (uint8_t)(sign_bit - 1);
+    if (!negative) memset(limit + byte + 1, 0xff, sizeof(limit) - byte - 1);
+  }
+  if (memcmp(magnitude, limit, sizeof(magnitude)) > 0) return false;
+
+  memcpy(encoded, magnitude, sizeof(magnitude));
+  if (negative) {
+    uint16_t carry = 1;
+    for (size_t i = sizeof(magnitude); i-- > 0;) {
+      carry += (uint8_t)~encoded[i];
+      encoded[i] = (uint8_t)carry;
+      carry >>= 8;
+    }
   }
   return true;
 }
@@ -559,6 +606,7 @@ static void clearDsVals(void) {
    hashed into the domain separator via the ordinary per-field dispatch in
    parseVals(), with nothing on any screen ever showing it. */
 bool marshallDsVals(const char* value) {
+  if (!nameForValue || !value) return false;
   if (0 == strncmp(nameForValue, "name", sizeof("name"))) {
     dsname = value;
     return true;
@@ -824,58 +872,13 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             if (value_type != JSON_TEXT && value_type != JSON_INTEGER)
               return GENERAL_ERROR;
             const bool is_uint = type_is_integer(typeType, "uint");
-            /* A leading '-' only tells the digit scan where the number starts;
-             * it does not decide the sign of the encoded word. Sign-extending
-             * on the character encoded "-0" as -2^64 while the screen showed
-             * "-0", which reads as zero -- the one thing a signing device must
-             * never do. The fill below keys on the parsed value instead. */
-            const uint8_t hasMinus = (!is_uint && *valStr == '-') ? 1 : 0;
-            // all int strings are assumed to be base 10 and fit into 64 bits
-            const char* digits = valStr + hasMinus;
-            if (*digits == '\0') return GENERAL_ERROR;
-            for (const char* p = digits; *p; p++) {
-              if (*p < '0' || *p > '9') return GENERAL_ERROR;
-            }
-            errno = 0;
-            char* endptr = NULL;
-            long long intVal = strtoll(valStr, &endptr, 10);
-            if (errno == ERANGE || endptr == valStr || *endptr != '\0') {
+            if (!encode_canonical_integer(typeType, valStr, is_uint,
+                                          encBytes)) {
               return GENERAL_ERROR;
-            }
-            if (is_uint && intVal < 0) {
-              return GENERAL_ERROR;
-            }
-            const unsigned declared_bits =
-                integer_type_width(typeType, is_uint ? "uint" : "int");
-            if (declared_bits < 64) {
-              if (is_uint) {
-                const uint64_t max_value = (UINT64_C(1) << declared_bits) - 1;
-                if ((uint64_t)intVal > max_value) return GENERAL_ERROR;
-              } else {
-                const int64_t min_value = -(INT64_C(1) << (declared_bits - 1));
-                const int64_t max_value =
-                    (INT64_C(1) << (declared_bits - 1)) - 1;
-                if (intVal < min_value || intVal > max_value)
-                  return GENERAL_ERROR;
-              }
             }
             if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
               return errRet;
             }
-            for (ctr = 0; ctr < 32; ctr++) {
-              // sign extend negative values, zero pad positive ones
-              encBytes[ctr] = (intVal < 0) ? 0xFF : 0;
-            }
-            // Needs to be big endian, so add to encBytes appropriately
-            const uint64_t intBits = (uint64_t)intVal;
-            encBytes[24] = (intBits >> 56) & 0xff;
-            encBytes[25] = (intBits >> 48) & 0xff;
-            encBytes[26] = (intBits >> 40) & 0xff;
-            encBytes[27] = (intBits >> 32) & 0xff;
-            encBytes[28] = (intBits >> 24) & 0xff;
-            encBytes[29] = (intBits >> 16) & 0xff;
-            encBytes[30] = (intBits >> 8) & 0xff;
-            encBytes[31] = intBits & 0xff;
           }
 
         } else {
@@ -1034,8 +1037,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
   return SUCCESS;
 }
 
-int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
-           uint8_t* hashRet) {
+static int encode_impl(const json_t* jsonTypes, const json_t* jsonVals,
+                       const char* typeS, uint8_t* hashRet) {
   int ctr;
   char encTypeStr[STRBUFSIZE + 1] = {0};
   uint8_t typeHash[32];
@@ -1112,4 +1115,15 @@ int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
   memzero(encTypeStr, sizeof(encTypeStr));
 
   return SUCCESS;
+}
+
+/* Domain pointers refer into the caller's JSON. No attempt may retain them. */
+int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
+           uint8_t* hashRet) {
+  clearDsVals();
+  nameForValue = NULL;
+  const int result = encode_impl(jsonTypes, jsonVals, typeS, hashRet);
+  clearDsVals();
+  nameForValue = NULL;
+  return result;
 }

@@ -716,13 +716,8 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
-  // Was `true` here, read straight out of the legacy flash record. Policy state
-  // is no longer trusted from flash at any version (see
-  // LegacyPolicyRecordCannotNameAdvancedMode), so this is now the compiled
-  // default. Nothing regresses: every V11+ reader already forced ShapeShift to
-  // false, so the migrated `true` never survived the first commit -- it was
-  // transient and inconsistent with what the very next boot would see.
-  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, false);
+  // The known legacy preference survives; arbitrary names cannot enable trust.
+  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);
