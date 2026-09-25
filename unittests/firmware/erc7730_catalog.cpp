@@ -13,6 +13,7 @@ void setup(void);
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -647,9 +648,9 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
 
   // Slices, whole-array steps, container and literal sources are not in the
   // capability table: the runtime cannot capture them, so preload refuses.
-  // @.from, @.to and a literal are executable value sources.
+  // @.from, @.to, @.value and a literal are executable value sources.
   for (const auto& entries : std::vector<std::vector<uint8_t>>{
-           {2, 0, 0, 1}, {2, 0, 0, 2}, {3, 0, 0, 0}}) {
+           {2, 0, 0, 1}, {2, 0, 0, 2}, {2, 0, 0, 3}, {3, 0, 0, 0}}) {
     p = programWithPaths(entries, 1);
     EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_UNTRUSTED);
   }
@@ -659,7 +660,6 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   const std::vector<std::vector<uint8_t>> refused = {
       {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 3, 1, 0xff, 0xff, 0xff, 0xec},
       {1, 1, 0xff, 0xff, 2},
-      {2, 0, 0, 3},
       {2, 0, 0, 4},
       {3, 0, 0, 64},
       {1, 2, 0xff, 0xff, 3, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0},
@@ -1226,14 +1226,18 @@ TEST(Erc7730Catalog, PreloadRefusesFormatterKindsTheRuntimeCannotRun) {
   formatter.kind = 1;
   EXPECT_TRUE(erc7730_cap_formatter(&formatter));
   for (uint8_t kind = 2; kind <= 14; kind++) {
-    // With only a uint256 value, no kind but raw is executable: tokenAmount
-    // lacks its token and addressName needs an address.
+    // A lone uint256 value runs as amount, date (a timestamp) or duration.
+    // tokenAmount, nftName, unit and enum lack a required argument,
+    // addressName needs an address, and kinds 9 and 11-14 never run.
+    const bool runs = kind == 2 || kind == 5 || kind == 6;
     auto p = replaceTable(rawFieldProgram(path), 6, {kind, 0, 1, 1, 1, 0, 0},
                           1);
-    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
+    EXPECT_EQ(feedAll(envelope(p), 7), runs ? ERC7730_CATALOG_UNTRUSTED
+                                            : ERC7730_CATALOG_BAD_PROGRAM)
         << (int)kind;
     formatter.kind = kind;
-    EXPECT_EQ(erc7730_cap_formatter(&formatter), kind == 10) << (int)kind;
+    EXPECT_EQ(erc7730_cap_formatter(&formatter), runs || kind == 10)
+        << (int)kind;
   }
   // raw with a second, signer-supplied operand is not raw.
   formatter.kind = 1;
@@ -1458,4 +1462,92 @@ TEST(Erc7730Catalog, DisplayReaderCountsTheInterpolatedIntentRun) {
   ASSERT_TRUE(erc7730_program_display_feed(&reader, 0, display.data(),
                                            display.size()));
   EXPECT_EQ(reader.intent_parts, 3);
+}
+
+namespace {
+
+// Replace the string table of `p` (entries must already be sorted).
+std::vector<uint8_t> withStrings(std::vector<uint8_t> p,
+                                 const std::vector<std::string>& strings) {
+  std::vector<uint8_t> payload;
+  append16(payload, (uint16_t)strings.size());
+  size_t longest = 0;
+  for (const auto& value : strings) {
+    append16(payload, (uint16_t)value.size());
+    payload.insert(payload.end(), value.begin(), value.end());
+    longest = std::max(longest, value.size());
+  }
+  std::vector<uint8_t> encoded;
+  section(encoded, 1, payload);
+  const size_t old = sectionOffset(p, 1);
+  const uint32_t old_payload = ((uint32_t)p[old + 1] << 24) |
+                               ((uint32_t)p[old + 2] << 16) |
+                               ((uint32_t)p[old + 3] << 8) | p[old + 4];
+  p.erase(p.begin() + old, p.begin() + old + 5 + old_payload);
+  p.insert(p.begin() + old, encoded.begin(), encoded.end());
+  const size_t resource = sectionOffset(p, 9) + 5;
+  p[resource] = (uint8_t)(strings.size() >> 8);
+  p[resource + 1] = (uint8_t)strings.size();
+  p[resource + 20] = (uint8_t)(longest >> 8);
+  p[resource + 21] = (uint8_t)longest;
+  return p;
+}
+
+Erc7730CatalogResult phaseC(const std::vector<uint8_t>& formatter,
+                            const std::vector<uint8_t>& literals = {},
+                            uint16_t literal_count = 0) {
+  // strings: 0 "Test", 1 "blockheight", 2 "kg", 3 "timestamp" (sorted)
+  auto p = withStrings(tokenProgram(formatter, literals, literal_count),
+                       {"Test", "blockheight", "kg", "timestamp"});
+  return feedAll(envelope(p), 13);
+}
+
+}  // namespace
+
+// Phase C: every argument of amount, nftName, date, duration, unit and enum
+// is type-checked at preload, including the values the runtime interprets:
+// a date encoding must be "timestamp" or "blockheight", unit decimals must
+// fit a byte, and an enum map is bounded.
+TEST(Erc7730Catalog, PreloadTypeChecksPhaseCArguments) {
+  // amount: an integer; the fixture's @.to (path 3) is an address.
+  EXPECT_EQ(phaseC({2, 0, 1, 1, 1, 0, 1}), ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(phaseC({2, 0, 1, 1, 1, 0, 3}), ERC7730_CATALOG_BAD_PROGRAM);
+  // nftName: token id, collection address
+  EXPECT_EQ(phaseC({4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0}),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(phaseC({4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 1}),
+            ERC7730_CATALOG_BAD_PROGRAM);
+  // date: the encoding names a date encoding
+  EXPECT_EQ(phaseC({5, 0, 2, 1, 1, 0, 1, 9, 3, 0, 3}),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(phaseC({5, 0, 2, 1, 1, 0, 1, 9, 3, 0, 1}),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(phaseC({5, 0, 2, 1, 1, 0, 1, 9, 3, 0, 2}),
+            ERC7730_CATALOG_BAD_PROGRAM);  // "kg"
+  // unit: decimals (one byte), base, prefix flag
+  const std::vector<uint8_t> unit = {7, 0, 4, 1, 1, 0, 1, 4, 2, 0,
+                                     0, 5, 3, 0, 2, 6, 2, 0, 1};
+  EXPECT_EQ(phaseC(unit, {1, 0, 1, 18, 6, 0, 1, 1}, 2),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(phaseC(unit, {1, 0, 2, 1, 0, 6, 0, 1, 1}, 2),
+            ERC7730_CATALOG_BAD_PROGRAM);  // 256 decimals
+  // enum: a map of at most ERC7730_CAP_ENUM_MAX entries
+  auto enumMap = [](uint16_t entries) {
+    std::vector<uint8_t> out;
+    for (uint16_t i = 0; i < entries; i++)
+      out.insert(out.end(), {1, 0, 1, (uint8_t)(i + 1)});
+    out.insert(out.end(), {8, 0, (uint8_t)(2 + 4 * entries), 0,
+                           (uint8_t)entries});
+    for (uint16_t i = 0; i < entries; i++)
+      out.insert(out.end(), {0, (uint8_t)i, 0, 0});
+    return out;
+  };
+  for (uint16_t entries : {(uint16_t)ERC7730_CAP_ENUM_MAX,
+                           (uint16_t)(ERC7730_CAP_ENUM_MAX + 1)}) {
+    EXPECT_EQ(phaseC({8, 0, 2, 1, 1, 0, 1, 10, 2, 0, (uint8_t)entries},
+                     enumMap(entries), (uint16_t)(entries + 1)),
+              entries <= ERC7730_CAP_ENUM_MAX ? ERC7730_CATALOG_UNTRUSTED
+                                              : ERC7730_CATALOG_BAD_PROGRAM)
+        << entries;
+  }
 }
