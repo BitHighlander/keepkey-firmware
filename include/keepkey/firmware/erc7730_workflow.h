@@ -112,6 +112,7 @@ typedef struct {
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
+  bool calldata_validated; /* the first, validating calldata pass is done */
   bool intent_confirmed;
   bool identity_confirmed;
   SHA256_CTX calldata_hash;
