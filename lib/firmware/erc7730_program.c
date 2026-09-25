@@ -599,6 +599,12 @@ bool erc7730_program_display_feed(Erc7730ProgramDisplay* display,
       display->selected.b = read_be16(display->entry + 4);
       display->selected.c = read_be16(display->entry + 6);
     }
+    if (display->instruction_index != 0 && !display->intent_run_closed) {
+      if (display->entry[0] == 2 || display->entry[0] == 3)
+        display->intent_parts++;
+      else
+        display->intent_run_closed = true;
+    }
     display->instruction_index++;
     display->entry_received = 0;
   }

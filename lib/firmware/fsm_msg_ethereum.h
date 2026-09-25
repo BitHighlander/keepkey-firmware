@@ -342,7 +342,18 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
                                  : _("Signing cancelled by user"));
     return;
   }
-  if (!confirm_erc7730_field(workflow->label, formatted)) {
+  bool confirmed;
+  if (workflow->intent_part != 0) {
+    /* A part of the interpolated intent: a device-owned numbered title and
+     * no label. */
+    char title[TITLE_CHAR_MAX];
+    snprintf(title, sizeof(title), "Intent %u/%u",
+             (unsigned)workflow->intent_part, (unsigned)workflow->intent_parts);
+    confirmed = confirm_erc7730_text(title, NULL, formatted);
+  } else {
+    confirmed = confirm_erc7730_field(workflow->label, formatted);
+  }
+  if (!confirmed) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
                        _("Signing cancelled by user"));
     return;
@@ -704,8 +715,8 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     layoutHome();
     return;
   }
-  const bool had_field = workflow->label[0] != '\0';
-  if (had_field) {
+  /* A field or intent value in progress: this pass captured its argument. */
+  if (workflow->field.kind != 0) {
     deliver_erc7730_capture(workflow);
     return;
   }
@@ -1089,6 +1100,33 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       } else {
         start_erc7730_calldata(workflow, NULL);
       }
+      return;
+    }
+    if (workflow->display_stage == ERC7730_DISPLAY_INSTRUCTION &&
+        (instruction.opcode == 2 || instruction.opcode == 3) && executable) {
+      const uint16_t parts = erc7730_workflow_intent_parts(workflow);
+      if (workflow->display_index > parts || parts > UINT8_MAX) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 intent instruction"));
+        return;
+      }
+      workflow->intent_part = (uint8_t)workflow->display_index;
+      workflow->intent_parts = (uint8_t)parts;
+      bool selected;
+      if (instruction.opcode == 2) {
+        selected = erc7730_workflow_select_string(workflow, instruction.a);
+        workflow->display_stage = ERC7730_DISPLAY_ARG_STRING;
+      } else {
+        workflow->current_formatter = instruction.a;
+        selected = erc7730_workflow_select_formatter(workflow, instruction.a);
+        workflow->display_stage = ERC7730_DISPLAY_FORMATTER;
+      }
+      if (!selected) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 intent instruction"));
+        return;
+      }
+      send_erc7730_definition_request();
       return;
     }
     if (workflow->display_stage != ERC7730_DISPLAY_INSTRUCTION ||

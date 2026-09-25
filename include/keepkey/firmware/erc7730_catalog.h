@@ -148,6 +148,7 @@ typedef struct {
   uint8_t formatter_arg_index;
   uint8_t formatter_last_role;
   uint8_t display_depth;
+  bool display_intent_run_closed;
   uint8_t display_max_depth;
   uint8_t binding_kind;
   uint8_t binding_previous_kind;

@@ -719,6 +719,14 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   if (opcode < 1 || opcode > 10 || flags != 0 ||
       !erc7730_cap_display(&executable, pc))
     return false;
+  /* Interpolated-intent parts form one run directly after the intent. */
+  if (pc != 0) {
+    if (opcode == 2 || opcode == 3) {
+      if (v->display_intent_run_closed) return false;
+    } else {
+      v->display_intent_run_closed = true;
+    }
+  }
   switch (opcode) {
     case 1:
       return a < v->table_counts[0] && optional_index(b, v->table_counts[4]) &&

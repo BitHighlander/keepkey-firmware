@@ -728,6 +728,8 @@ bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
     return false;
   memzero(workflow->label, sizeof(workflow->label));
   memzero(&workflow->field, sizeof(workflow->field));
+  workflow->intent_part = 0;
+  workflow->intent_parts = 0;
   erc7730_abi_stream_clear(&workflow->calldata);
   workflow->phase = ERC7730_WORKFLOW_READY;
   workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;
@@ -796,6 +798,13 @@ bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
     default:
       return false;
   }
+}
+
+uint16_t erc7730_workflow_intent_parts(const Erc7730Workflow* workflow) {
+  return workflow && workflow->selection_kind == ERC7730_SELECTION_DISPLAY &&
+                 workflow->selection.display.complete
+             ? workflow->selection.display.intent_parts
+             : 0;
 }
 
 bool erc7730_workflow_resume_field(Erc7730Workflow* workflow) {

@@ -108,6 +108,20 @@ The plan's counts assumed values came only from calldata. Measured with containe
     - `test_containers_and_signed_constants`
   - Negative controls: forcing "(this wallet)", letting the message replace the value, ignoring aliases and dropping the verifier type check each fail the matching test.
 
+### Phase B status (2026-09-25): block 7b
+
+- Display opcodes 2 (text) and 3 (value) execute, but only as one run directly after the plain intent. The verifier refuses a part after a field, and the plain intent stays mandatory at pc 0.
+- Each part is its own required confirmation titled "Intent i/n". The display reader counts the run while it streams, so no extra replay is needed.
+  - A text part is the signer's fragment, escaped.
+  - A value part runs the referenced formatter through the same argument pipeline as a field, so it shows exactly the same text as that field.
+- Not a single assembled sentence: that needs a sentence buffer of about 513 B of SRAM, which the 256 B rule sends to the owner for review. The parts design adds no SRAM.
+- python-keepkey trims fragment edges, because the device would otherwise show edge spaces as `\x20`.
+- Registry: 954 signable (from 812). SRAM unchanged (18,208 B reserve); ROM +448 B.
+- Tests:
+  - `Erc7730Catalog.DisplayReaderCountsTheInterpolatedIntentRun` and the part-after-field refusals.
+  - Wire: `test_interpolated_intent_parts_show_the_same_values_as_fields`, exact text of every part plus the field.
+  - Control: removing the run rule fails the refusal test.
+
 ## 4. Formatter designs and trust sources
 
 | Kind | Name | Trust source | Display (body under a device-owned title; the signer's label leads) |
