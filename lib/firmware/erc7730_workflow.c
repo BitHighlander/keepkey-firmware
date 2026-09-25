@@ -604,8 +604,10 @@ bool erc7730_workflow_restore_complete(const Erc7730Workflow* workflow,
 
 bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
                                     EthereumSignTx* tx) {
+  /* READY: the display program ended after a field that captured nothing. */
   if (!workflow || workflow->typed_data ||
-      workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
+      (workflow->phase != ERC7730_WORKFLOW_COMPLETE &&
+       workflow->phase != ERC7730_WORKFLOW_READY) ||
       !workflow->reviewed_digest_set) {
     fail(workflow);
     return false;

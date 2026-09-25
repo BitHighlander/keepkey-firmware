@@ -459,7 +459,8 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
                                          formatted, sizeof(formatted));
         break;
       case 8: {
-        char value[80]; /* an integer or a boolean: at most 78 digits and sign */
+        char
+            value[80]; /* an integer or a boolean: at most 78 digits and sign */
         ok = format_erc7730_word(field, value, sizeof(value)) &&
              erc7730_format_enum(value, text ? escaped : NULL, formatted,
                                  sizeof(formatted));
@@ -826,6 +827,20 @@ static bool erc7730_enum_key_word(const Erc7730Literal* key, uint8_t word[32]) {
 
 static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  if (!workflow->calldata_validated) {
+    /* The first pass only checked the calldata and fixed its digest; every
+     * later pass must match it. Now run the display program. */
+    (void)tx;
+    workflow->calldata_validated = true;
+    if (!erc7730_workflow_resume_field(workflow) ||
+        !erc7730_workflow_select_display(workflow, 0)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 display program"));
+      return;
+    }
+    send_erc7730_definition_request();
+    return;
+  }
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
     erc7730_workflow_abort(workflow);
@@ -838,18 +853,36 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     return;
   }
   /* A field or intent value in progress: this pass captured its argument. */
-  if (workflow->field.kind != 0) {
-    deliver_erc7730_capture(workflow);
+  if (workflow->field.kind == 0) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 display continuation"));
     return;
   }
-  if (!erc7730_workflow_start_signing(workflow, tx)) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 signing replay"));
-    layoutHome();
+  deliver_erc7730_capture(workflow);
+}
+
+/* The display program has ended: sign, replaying the calldata once more
+ * against the digest every earlier pass matched. */
+static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
+    fail_erc7730_field(
+        workflow,
+        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                 : FailureType_Failure_ActionCancelled,
+        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                 : _("Signing cancelled by user"));
     return;
   }
-  continue_ethereum_sign_tx(tx);
+  EthereumSignTx tx;
+  if (!erc7730_workflow_start_signing(workflow, &tx)) {
+    memzero(&tx, sizeof(tx));
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 signing replay"));
+    return;
+  }
+  continue_ethereum_sign_tx(&tx);
+  memzero(&tx, sizeof(tx));
 }
 
 static void start_erc7730_calldata(Erc7730Workflow* workflow,
@@ -1099,14 +1132,9 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       if (!continue_erc7730_domain_checks(workflow)) fail_erc7730_domain();
       return;
     }
-    if (!erc7730_workflow_select_display(workflow, 0)) {
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid ERC-7730 display program"));
-      layoutHome();
-      return;
-    }
-    send_erc7730_definition_request();
+    /* Validate the whole calldata against the ABI before the first screen:
+     * a field may show a constant before any value is captured. */
+    start_erc7730_calldata(workflow, NULL);
     return;
   }
   if (selection_kind == ERC7730_SELECTION_LITERAL &&
@@ -1235,7 +1263,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         }
         eip712_pump();
       } else {
-        start_erc7730_calldata(workflow, NULL);
+        finish_erc7730_calldata(workflow);
       }
       return;
     }

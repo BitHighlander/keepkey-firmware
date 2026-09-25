@@ -824,3 +824,23 @@ class TestStack07Regressions(common.KeepKeyTest):
             self._one_field(field, self._word(42) + self._word(self.USDC)),
             ["Item:\nToken ID 42\nCollection\n"
              "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"])
+
+    def test_malformed_calldata_is_refused_before_a_constant_field(self):
+        # The first field shows a signed constant and captures nothing, so
+        # only the up-front validation pass stands between malformed calldata
+        # and the first screen.
+        signature = "pay(address recipient)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Pay", "fields": [
+                {"value": "Audit protocol", "label": "Protocol"},
+                {"path": "recipient", "label": "Recipient",
+                 "format": "addressName"}]}}}}
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        dirty = b"\x01" + bytes(11) + OTHER_ADDRESS  # non-canonical address
+        result, buttons, passes, _ = self._walk(
+            self._audit_start(program, 36), envelope, arguments=dirty)
+        assert_failure(self, result, types.Failure_SyntaxError,
+                       "ERC-7730 calldata does not match definition")
+        self.assertEqual((buttons, passes), (0, 1))
