@@ -34,6 +34,8 @@ void toggle_screensaver(void);
 void increment_idle_time(uint32_t increment_ms);
 void reset_idle_time(void);
 void note_host_activity(void);
+// Renew the idle timer only after validated workflow progress.
+void note_workflow_progress(void);
 HomeState home_get_state(void);
 
 #endif

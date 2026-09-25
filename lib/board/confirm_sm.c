@@ -276,8 +276,12 @@ static bool confirm_screen(const char* request_title_param,
           break;
 #endif
 
+        case MSG_TINY_TYPE_ERROR:
+          break;
         default:
-          break; /* break from switch statement and stay in the while loop*/
+          msg_reject_unexpected_tiny();
+          ret_stat = false;
+          goto confirm_screen_exit;
       }
     }
 
@@ -320,25 +324,9 @@ confirm_screen_exit:
 }
 
 bool confirm_body_fits(const char* body, uint16_t body_width) {
-  /* This used to count rows with calc_str_line() and compare against
-   * BODY_ROWS. That was a second model of the screen, and the attacker picks
-   * the input on which the two models disagree: the guard has now been broken
-   * three separate ways -- by plain overflow, by a uint8_t line counter
-   * wrapping at 255 newlines, and by space padding that one walk collapses and
-   * the other does not. Each fix taught the model one more rule that
-   * draw_string() already knew.
-   *
-   * So there is no model any more. draw_string_fits() runs draw_string()'s own
-   * loop and its own per-glyph fit test with the pixel writes switched off,
-   * and reports whether the last character was placed. Measuring and drawing
-   * cannot disagree because they are the same code.
-   *
-   * calc_str_line() survives here for one thing only, and it is not a security
-   * decision: layout_standard_notification() uses it to pick the vertical
-   * alignment, so the probe must start at the same sp.y the real draw will
-   * start at. Both call it with the same arguments, so both get the same
-   * answer -- and if that answer were ever wrong, the probe would be wrong in
-   * exactly the way the real draw is, which is the property we want. */
+  /* Measure with the renderer's own per-glyph fit logic. The old row-count
+   * guard diverged on overflow, 255 newlines, and space padding. Keep
+   * calc_str_line() only to match the real layout's vertical alignment. */
   Canvas* canvas = layout_get_canvas();
   const Font* body_font = get_body_font();
   const char* str2 = body ? body : "";
@@ -705,6 +693,7 @@ bool confirm_constant_power_paged(ButtonRequestType type,
       memset(&resp, 0, sizeof(resp));
       resp.has_code = true;
       resp.code = type;
+      button_request_acked = false;
       msg_write(MessageType_MessageType_ButtonRequest, &resp);
       decided_via_debug = false;
     }
@@ -776,13 +765,8 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
                                 ButtonRequestType type,
                                 const char* request_title,
                                 const char* request_body, ...) {
-  /* Custom renderers do not expose their placement geometry, so the confirm
-   * state machine cannot prove that they drew the complete body. Route every
-   * TRANSACTION-CONSENT screen through the measured standard renderer instead:
-   * bespoke amount styling is not worth silently clipping signed fields.
-   *
-   * Address and xpub display screens do NOT come through here -- see
-   * confirm_address_with_custom_layout() below for why they must not. */
+  /* Consent must use the measured standard renderer; custom geometry cannot
+   * prove that all signed fields fit. Address/xpub display is separate. */
   (void)layout_notification_func;
   button_request_acked = false;
 
@@ -812,26 +796,9 @@ bool confirm_with_custom_layout(layout_notification_t layout_notification_func,
 bool confirm_address_with_custom_layout(
     layout_notification_t layout_notification_func, ButtonRequestType type,
     const char* request_title, const char* request_body, ...) {
-  /* Address and xpub verification screens keep their own renderer.
-   *
-   * The measured fallback in confirm_with_custom_layout() exists to stop a
-   * bespoke layout from silently clipping a field the owner is CONSENTING to
-   * sign. An address screen is not that: it displays a public value the device
-   * itself derived, for the owner to check against what the host claims, and
-   * nothing is signed by looking at it. Routing these through the standard
-   * renderer had a cost that the safety argument does not pay for -- the five
-   * address layouts draw the address as a QR code through layout_address(),
-   * and the standard renderer draws no QR at all. Scanning that code is how
-   * the address is actually used, so the fallback removed the feature rather
-   * than hardening it.
-   *
-   * Clipping is still handled, just by the layout rather than the pager: these
-   * renderers wrap the address with draw_string() and drop to the body font
-   * when it will not fit bold.
-   *
-   * confirm_helper() already applies its measured/paged path only to
-   * layout_standard_notification, so handing it a custom layout renders
-   * exactly as it did before this release line. */
+  /* Keep the QR-capable address/xpub renderer: viewing a derived public value
+   * is not transaction consent. Its layout wraps or shrinks long addresses;
+   * routing it through the measured standard renderer would remove the QR. */
   button_request_acked = false;
 
   va_list vl;

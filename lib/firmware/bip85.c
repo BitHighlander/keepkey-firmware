@@ -24,29 +24,32 @@
 static const uint8_t BIP85_HMAC_KEY[] = "bip-entropy-from-k";
 #define BIP85_HMAC_KEY_LEN 18
 
-bool bip85_derive_mnemonic(uint32_t word_count, uint32_t index, char *mnemonic,
-                           size_t mnemonic_len) {
+static bool private_display;
+
+bool bip85_debug_is_private(void) { return private_display; }
+
+void bip85_set_private_display(bool active) { private_display = active; }
+
+static int bip85_entropy_bytes(uint32_t word_count, uint32_t index) {
   /* Reject index >= 0x80000000 to avoid hardened-bit collision */
-  if (index & 0x80000000) {
-    return false;
-  }
+  if (index & 0x80000000) return 0;
 
   /* Validate word count and compute entropy length */
-  int entropy_bytes;
   switch (word_count) {
     case 12:
-      entropy_bytes = 16;
-      break;
+      return 16;
     case 18:
-      entropy_bytes = 24;
-      break;
+      return 24;
     case 24:
-      entropy_bytes = 32;
-      break;
+      return 32;
     default:
-      return false;
+      return 0;
   }
+}
 
+static bool bip85_derive_from_root(HDNode *node, int entropy_bytes,
+                                   uint32_t word_count, uint32_t index,
+                                   char *mnemonic, size_t mnemonic_len) {
   /* BIP-85 derivation path: m/83696968'/39'/0'/<word_count>'/<index>' */
   uint32_t address_n[5];
   address_n[0] = 0x80000000 | 83696968;   /* purpose (hardened) */
@@ -55,28 +58,21 @@ bool bip85_derive_mnemonic(uint32_t word_count, uint32_t index, char *mnemonic,
   address_n[3] = 0x80000000 | word_count; /* word count (hardened) */
   address_n[4] = 0x80000000 | index;      /* child index (hardened) */
 
-  /* Get the master node from storage (respects passphrase) */
-  static CONFIDENTIAL HDNode node;
-  if (!storage_getRootNode(SECP256K1_NAME, true, &node)) {
-    memzero(&node, sizeof(node));
-    return false;
-  }
-
   /* Derive to the BIP-85 path */
   for (int i = 0; i < 5; i++) {
-    if (hdnode_private_ckd(&node, address_n[i]) == 0) {
-      memzero(&node, sizeof(node));
+    if (hdnode_private_ckd(node, address_n[i]) == 0) {
+      memzero(node, sizeof(*node));
       return false;
     }
   }
 
   /* HMAC-SHA512(key="bip-entropy-from-k", msg=private_key) */
   static CONFIDENTIAL uint8_t hmac_out[64];
-  hmac_sha512(BIP85_HMAC_KEY, BIP85_HMAC_KEY_LEN, node.private_key, 32,
+  hmac_sha512(BIP85_HMAC_KEY, BIP85_HMAC_KEY_LEN, node->private_key, 32,
               hmac_out);
 
   /* We no longer need the derived node */
-  memzero(&node, sizeof(node));
+  memzero(node, sizeof(*node));
 
   /* Truncate HMAC output to the required entropy length */
   static CONFIDENTIAL uint8_t entropy[32];
@@ -103,3 +99,30 @@ bool bip85_derive_mnemonic(uint32_t word_count, uint32_t index, char *mnemonic,
 
   return true;
 }
+
+bool bip85_derive_mnemonic(uint32_t word_count, uint32_t index, char *mnemonic,
+                           size_t mnemonic_len) {
+  const int entropy_bytes = bip85_entropy_bytes(word_count, index);
+  if (!entropy_bytes) return false;
+
+  /* Get the master node from storage (respects passphrase). */
+  static CONFIDENTIAL HDNode node;
+  if (!storage_getRootNode(SECP256K1_NAME, true, &node)) {
+    memzero(&node, sizeof(node));
+    return false;
+  }
+  return bip85_derive_from_root(&node, entropy_bytes, word_count, index,
+                                mnemonic, mnemonic_len);
+}
+
+#if DEBUG_LINK
+bool bip85_derive_from_root_for_test(const HDNode *root, uint32_t word_count,
+                                     uint32_t index, char *mnemonic,
+                                     size_t mnemonic_len) {
+  const int entropy_bytes = bip85_entropy_bytes(word_count, index);
+  if (!root || !entropy_bytes) return false;
+  HDNode node = *root;
+  return bip85_derive_from_root(&node, entropy_bytes, word_count, index,
+                                mnemonic, mnemonic_len);
+}
+#endif

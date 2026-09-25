@@ -2,7 +2,10 @@ void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
   /* Initialize ends every in-flight workflow while preserving cached PIN. */
   fsm_abort_workflows();
-  session_clear(false);  // do not clear PIN, and clears the Zcash session
+  session_clear(false);  // do not clear PIN
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
   layoutHome();
   fsm_msgGetFeatures(0);
 }
@@ -48,6 +51,11 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_supports_taproot = true;
   resp->supports_taproot = true;
 
+  /* The protocol pin now exposes this capability. Alpha implements certified
+   * Solana lookup-table attestation; the Bitcoin-only product does not. */
+  resp->has_supports_solana_lut_attestation = true;
+  resp->supports_solana_lut_attestation = !BITCOIN_ONLY;
+
   /* Verifiable dice modes: the on-device consent screen, ResetDevice.dice_only
      and the tagged MIXED derivation. Reported as a capability because older
      firmware skips the unknown dice_only field and would derive a different
@@ -80,6 +88,11 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
      supports_taproot", making a shipped feature invisible in the report. */
   resp->has_supports_taproot = true;
   resp->supports_taproot = true;
+
+  /* The protocol pin now exposes this capability. Alpha implements certified
+   * Solana lookup-table attestation; the Bitcoin-only product does not. */
+  resp->has_supports_solana_lut_attestation = true;
+  resp->supports_solana_lut_attestation = !BITCOIN_ONLY;
 
   /* Security settings */
   resp->has_pin_protection = true;
@@ -158,7 +171,17 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
 }
 
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
-  RESP_INIT(CoinTable);
+  _Static_assert(sizeof(CoinTable) <= MAX_DECODE_SIZE,
+                 "CoinTable exceeds decoded-request scratch");
+  _Static_assert(_Alignof(CoinTable) <= 8,
+                 "CoinTable requires stronger scratch alignment");
+
+  /* The incoming GetCoinTable is held in decode_buffer. Copy its fields and
+   * validate them before reclaiming that storage for the large response. */
+  const bool has_start = msg->has_start;
+  const bool has_end = msg->has_end;
+  const uint32_t start = msg->start;
+  const uint32_t end = msg->end;
 
 #if BITCOIN_ONLY
   const size_t coin_table_count = COINS_COUNT;
@@ -166,15 +189,14 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
 #endif
 
-  CHECK_PARAM(msg->has_start == msg->has_end,
-              "Incorrect GetCoinTable parameters");
+  CHECK_PARAM(has_start == has_end, "Incorrect GetCoinTable parameters");
 
-  resp->has_chunk_size = true;
-  resp->chunk_size = sizeof(resp->table) / sizeof(resp->table[0]);
+  const size_t chunk_size =
+      sizeof(((CoinTable*)0)->table) / sizeof(((CoinTable*)0)->table[0]);
 
-  if (msg->has_start && msg->has_end) {
-    if (coin_table_count <= msg->start || coin_table_count < msg->end ||
-        msg->end < msg->start || resp->chunk_size < msg->end - msg->start) {
+  if (has_start) {
+    if (coin_table_count <= start || coin_table_count < end || end < start ||
+        chunk_size < end - start) {
       fsm_sendFailure(FailureType_Failure_Other,
                       "Incorrect GetCoinTable parameters");
       layoutHome();
@@ -182,25 +204,24 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
     }
   }
 
+  CoinTable* resp = (CoinTable*)msg_decoded_request_response_scratch();
+  memzero(resp, sizeof(*resp));
+  resp->has_chunk_size = true;
+  resp->chunk_size = chunk_size;
   resp->has_num_coins = true;
   resp->num_coins = coin_table_count;
 
-  if (msg->has_start && msg->has_end) {
-    resp->table_count = msg->end - msg->start;
+  if (has_start) {
+    resp->table_count = end - start;
 
-    for (size_t i = 0; i < msg->end - msg->start; i++) {
-      if (msg->start + i < COINS_COUNT) {
-        resp->table[i] = coins[msg->start + i];
-      }
+    for (size_t i = 0; i < end - start; i++) {
+      if (start + i < COINS_COUNT) {
+        resp->table[i] = coins[start + i];
 #if !BITCOIN_ONLY
-      /* Guarded, not just skipped at runtime: the bitcoin-only image defines
-         TOKENS_COUNT as 0 and links neither `tokens` nor coinFromToken(), so
-         this branch is both an unsigned `< 0` comparison that
-         -Werror=type-limits rejects and an undefined reference at link. */
-      else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
-        coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
-      }
+      } else if (start + i < COINS_COUNT + TOKENS_COUNT) {
+        coinFromToken(&resp->table[i], &tokens[start + i - COINS_COUNT]);
 #endif
+      }
     }
   }
 
@@ -290,6 +311,16 @@ void fsm_msgPing(Ping* msg) {
                                          strlen(authMesStr[authMsg]))) {
       break;
     }
+  }
+
+  /* A protected Ping can wait inside confirmation or credential entry. End
+   * an older signing stream first, so cancelling the Ping cannot resume it.
+   * This leaves the session's PIN and passphrase policy intact. */
+  if (authMsg < NUM_AUTHMESSAGES ||
+      (msg->has_button_protection && msg->button_protection) ||
+      (msg->has_pin_protection && msg->pin_protection) ||
+      (msg->has_passphrase_protection && msg->passphrase_protection)) {
+    fsm_abort_signing_workflows();
   }
 
   if (authMsg < NUM_AUTHMESSAGES) {
@@ -388,8 +419,7 @@ void fsm_msgPing(Ping* msg) {
 }
 
 void fsm_msgChangePin(ChangePin* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -440,8 +470,7 @@ void fsm_msgChangePin(ChangePin* msg) {
 }
 
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -606,7 +635,14 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
     return;
   }
 
-  RESP_INIT(Entropy);
+  /* size was copied before any confirmation. No request bytes are needed
+   * while generating or synchronously encoding the response. */
+  _Static_assert(sizeof(Entropy) <= MAX_DECODE_SIZE,
+                 "Entropy exceeds decoded-request scratch");
+  _Static_assert(_Alignof(Entropy) <= 8,
+                 "Entropy requires stronger scratch alignment");
+  Entropy* resp = (Entropy*)msg_decoded_request_response_scratch();
+  memzero(resp, sizeof(*resp));
 
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
@@ -615,6 +651,7 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 }
 
 void fsm_msgLoadDevice(LoadDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
 
   if (!confirm_load_device(msg->has_node)) {
@@ -633,6 +670,9 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
   }
 
   storage_loadDevice(msg);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   storage_commit();
 
@@ -643,8 +683,12 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 }
 
 void fsm_msgResetDevice(ResetDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   // display_random remains in the wire schema for host compatibility, but is
   // intentionally ignored: internal entropy is seed pre-image material and
@@ -681,8 +725,7 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
                  "Do you want to change the label to \"%s\"?", msg->label)) {
@@ -773,6 +816,7 @@ apply_settings_cancelled:
 }
 
 void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NO_CEREMONY
 
   if (msg->has_dry_run && msg->dry_run) {
@@ -790,6 +834,11 @@ void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
    * after both init-state checks have passed: a recovery that is about to be
    * rejected must not tear down work it never replaces. */
   fsm_abort_workflows();
+#if !BITCOIN_ONLY
+  if (!(msg->has_dry_run && msg->dry_run)) {
+    signed_metadata_clear_signers();
+  }
+#endif
 
   recovery_cipher_init(
       msg->has_word_count ? msg->word_count : 0,
@@ -815,8 +864,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 
   for (size_t i = 0; i < msg->policy_count; ++i) {

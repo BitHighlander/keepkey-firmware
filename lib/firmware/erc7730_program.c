@@ -181,6 +181,57 @@ void erc7730_program_loader_begin(Erc7730ProgramLoader* loader,
   loader->failed = loader->index.failed;
 }
 
+static bool domain_bindings_feed(Erc7730DomainBindings* bindings,
+                                 uint32_t offset, const uint8_t* data,
+                                 size_t length) {
+  if (offset != bindings->received) return false;
+  for (size_t i = 0; i < length; i++, bindings->received++) {
+    if (bindings->received < 2) {
+      bindings->scratch[bindings->received] = data[i];
+      if (bindings->received == 1) {
+        bindings->count = read_be16(bindings->scratch);
+        if (bindings->count > 64) return false;
+      }
+      continue;
+    }
+    if (bindings->index >= bindings->count) return false;
+    if (bindings->remaining == 0) {
+      bindings->scratch[bindings->staged++] = data[i];
+      if (bindings->staged == 3) {
+        bindings->remaining = read_be16(bindings->scratch + 1);
+        if (bindings->remaining == 0 || bindings->remaining > 139 ||
+            (bindings->scratch[0] == 1 &&
+             bindings->remaining != sizeof(bindings->deployment)) ||
+            (bindings->scratch[0] == 2 && bindings->remaining != 4))
+          return false;
+        bindings->deployment_mismatch = false;
+      }
+      continue;
+    }
+    if (bindings->scratch[0] == 1 &&
+        data[i] != bindings->deployment[sizeof(bindings->deployment) -
+                                        bindings->remaining])
+      bindings->deployment_mismatch = true;
+    if (bindings->scratch[0] == 2)
+      bindings->scratch[bindings->staged++] = data[i];
+    if (--bindings->remaining != 0) continue;
+    if (bindings->scratch[0] == 1 && !bindings->deployment_mismatch)
+      bindings->deployment_listed = true;
+    if (bindings->scratch[0] == 2) {
+      const uint8_t field = bindings->scratch[3];
+      const uint8_t operation = bindings->scratch[4];
+      if (field < 1 || field > 5 || operation < 1 || operation > 2 ||
+          bindings->operations[field - 1] != 0)
+        return false;
+      bindings->operations[field - 1] = operation;
+      bindings->literals[field - 1] = read_be16(bindings->scratch + 5);
+    }
+    bindings->index++;
+    bindings->staged = 0;
+  }
+  return true;
+}
+
 bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
                                  uint32_t program_offset, const uint8_t* data,
                                  size_t data_len) {
@@ -218,12 +269,42 @@ bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
     loader->failed = true;
     return false;
   }
+  if (erc7730_program_index_known_section(&loader->index, 8, &section)) {
+    const uint32_t start =
+        program_offset > section.offset ? program_offset : section.offset;
+    const uint32_t end = chunk_end < section.offset + section.length
+                             ? chunk_end
+                             : section.offset + section.length;
+    if (start < end &&
+        !domain_bindings_feed(&loader->domain, start - section.offset,
+                              data + start - program_offset, end - start)) {
+      loader->failed = true;
+      return false;
+    }
+  }
+  return true;
+}
+
+bool erc7730_program_loader_require_deployment(Erc7730ProgramLoader* loader,
+                                               uint64_t chain_id,
+                                               const uint8_t contract[20]) {
+  if (!loader || !contract || loader->failed || loader->index.received != 0 ||
+      chain_id == 0) {
+    if (loader) loader->failed = true;
+    return false;
+  }
+  for (size_t i = 0; i < 8; i++)
+    loader->domain.deployment[i] = (uint8_t)(chain_id >> (56u - 8u * i));
+  memcpy(loader->domain.deployment + 8, contract, 20);
+  loader->domain.deployment_required = true;
   return true;
 }
 
 bool erc7730_program_loader_complete(const Erc7730ProgramLoader* loader,
                                      Erc7730AbiProgram* program) {
   return loader && !loader->failed && loader->abi_started &&
+         (!loader->domain.deployment_required ||
+          loader->domain.deployment_listed) &&
          erc7730_program_index_complete(&loader->index) &&
          erc7730_program_abi_complete(&loader->abi, program);
 }
@@ -293,7 +374,7 @@ bool erc7730_program_path_feed(Erc7730ProgramPath* path,
       const uint8_t source = path->scratch[0];
       const uint8_t steps = path->scratch[1];
       const uint16_t source_index = read_be16(path->scratch + 2);
-      if (source < 1 || source > 3 || steps > ERC7730_ABI_MAX_PATH ||
+      if (source < 1 || source > 3 || steps >= ERC7730_ABI_MAX_DEPTH ||
           (source == 1 && (source_index != UINT16_MAX || steps == 0)) ||
           (source != 1 && steps != 0) ||
           (source == 2 && (source_index == 0 || source_index > 6)) ||
@@ -498,7 +579,8 @@ bool erc7730_program_display_feed(Erc7730ProgramDisplay* display,
       if (display->received == 1) {
         display->instruction_count = read_be16(display->entry);
         if (display->instruction_count == 0 ||
-            display->instruction_count > 64 ||
+            display->instruction_count >
+                ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS ||
             display->target_index >= display->instruction_count ||
             display->section_length !=
                 2u + (uint32_t)display->instruction_count * 8u) {

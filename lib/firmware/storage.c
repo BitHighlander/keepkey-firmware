@@ -46,6 +46,10 @@
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#if !BITCOIN_ONLY
+#include "keepkey/firmware/signed_metadata.h"
+#endif
+#include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
@@ -106,6 +110,8 @@ static ConfigFlash CONFIDENTIAL shadow_config;
  * build understands. Set from the SUS_BitcoinOnlyLocked path in either build.
  */
 static bool btc_only_locked = false;
+static bool firmware_too_old = false;
+bool storage_isFirmwareTooOld(void) { return firmware_too_old; }
 
 bool storage_isBitcoinOnlyLocked(void) { return btc_only_locked; }
 
@@ -967,7 +973,10 @@ void storage_setAuthData(const authType* setData) {
 
 void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
                            size_t len) {
-  if (len < 464 + 17) return;
+  if (len < 464 + 18) return;
+  /* Versions after v1 also contain the cache at offset 484. Validate its
+   * entire extent before mutating the destination or reading that record. */
+  if (read_u32_le(ptr) != 1 && len < 484 + 75) return;
   storage->version = read_u32_le(ptr);
   storage->pub.has_node = read_bool(ptr + 4);
   storage_readHDNode(&storage->sec.node, ptr + 8, 140);
@@ -980,24 +989,28 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->sec.pin, ptr + 393, 10);
   storage->pub.has_language = read_bool(ptr + 403);
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
+  /* Legacy records reserve 17 bytes; the current destination is smaller.
+   * Bound the copy by the destination and retain a terminating NUL. */
   memcpy(storage->pub.language, ptr + 404, sizeof(storage->pub.language) - 1);
   storage->pub.has_label = read_bool(ptr + 421);
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
   memcpy(storage->pub.label, ptr + 422, 33);
   storage->pub.no_backup = false;
   storage->pub.imported = read_bool(ptr + 456);
-  /* Policy state is NEVER trusted from flash, at any version. Reading the
-   * legacy record put a FLASH-CONTROLLED NAME into policies[0]: because
-   * storage_upgradePolicies only fills indices from policies_count upward, and
-   * storage_isPolicyEnabled_impl returns on the FIRST name match scanning from
-   * index 0, a crafted record naming itself "AdvancedMode" with enabled=1 was
-   * answered before the real entry at index 3 was ever reached -- re-enabling
-   * blind signing from unauthenticated storage.
-   *
-   * Nothing is lost by discarding it: the only policy this record could name
-   * legitimately is ShapeShift, which every V11+ reader already forces to
-   * false, and which has no storage_isPolicyEnabled consumer anywhere. */
+  // A legacy flash record can supply a policy name. Never let it shadow the
+  // compiled AdvancedMode entry when the policy table is upgraded.
   storage_resetPolicies(storage);
+  if (storage->version != 1) {
+    PolicyType legacy_policy = {0};
+    storage_readPolicyV1(&legacy_policy, ptr + 464, 18);
+    // Only ShapeShift existed in this format. Preserve its preference while
+    // refusing injected names that could enable later security policies.
+    if (legacy_policy.has_policy_name && legacy_policy.has_enabled &&
+        strcmp(legacy_policy.policy_name, "ShapeShift") == 0) {
+      storage_setPolicy_impl(storage->pub.policies, "ShapeShift",
+                             legacy_policy.enabled);
+    }
+  }
   storage->pub.has_auto_lock_delay_ms = true;
   storage->pub.auto_lock_delay_ms = STORAGE_DEFAULT_SCREENSAVER_TIMEOUT;
 
@@ -1461,14 +1474,14 @@ void storage_readV1(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len) {
   if (len < 44 + 528) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV1(ss, &dst->storage, flash + 44, 481);
+  storage_readStorageV1(ss, &dst->storage, flash + 44, len - 44);
 }
 
 void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len) {
   if (len < 528 + 75) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV1(ss, &dst->storage, flash + 44, 481);
+  storage_readStorageV1(ss, &dst->storage, flash + 44, len - 44);
 }
 
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len) {
@@ -1543,6 +1556,9 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   // Load config values from active config node.
   uint32_t raw_version = read_u32_le(flash + 44);
   enum StorageVersion version = version_from_int(raw_version);
+  if (raw_version > (uint32_t)STORAGE_VERSION &&
+      raw_version < STORAGE_VERSION_BTC_ONLY_BASE)
+    return SUS_TooNew;
 
   switch (version) {
     case StorageVersion_1:
@@ -1634,6 +1650,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
+      if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
                                                        : SUS_Updated;
     }
@@ -1717,6 +1734,15 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 }
 
 void storage_init(void) {
+#if !BITCOIN_ONLY
+  /* A reopened flash buffer starts a new wallet session, even when an
+   * emulator library remains loaded in the same process. */
+  signed_metadata_clear_signers();
+#endif
+  /* These locks describe the flash buffer being opened, not the prior
+   * emulator lifecycle. Recompute both from this buffer on every init. */
+  btc_only_locked = false;
+  firmware_too_old = false;
   // Find storage sector with valid data and set storage_location variable.
   if (!find_active_storage(&storage_location)) {
     /* A power cut may have landed after the old sector was retired but before
@@ -1768,6 +1794,11 @@ void storage_init(void) {
       // If the version changed, write the new storage to flash so
       // that it's available on next boot without conversion.
       storage_commit();
+      break;
+    case SUS_TooNew:
+      firmware_too_old = true;
+      storage_reset();
+      storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
       break;
     case SUS_BitcoinOnlyLocked:
       // Bitcoin-only wallet in flash: act as an uninitialized, locked device.
@@ -1850,6 +1881,7 @@ void storage_wipe(void) {
 
   // The bitcoin-only wallet (if any) is gone; the device may be used freely.
   btc_only_locked = false;
+  firmware_too_old = false;
 }
 
 void storage_clearKeys(void) {
@@ -1881,6 +1913,14 @@ void session_clear(bool clear_pin) {
    * and the PIN-failure path (pin_sm.c) both tear the session down without
    * going through Initialize or ClearSession, and both left the key live. */
   zcash_signing_abort();
+  /* Every session loss is an authorization boundary even when Initialize asks
+   * to preserve the cached PIN. Abort signing and discard all plaintext
+   * setup/authenticator state before the caller can report success. */
+  signed_metadata_clear_signers();
+  signing_abort();
+  setup_abort();
+  authenticator_clear_cache();
+  fsm_clearDerivedNode();
   if (PIN_REWRAP ==
       session_clear_impl(&session, &shadow_config.storage, clear_pin)) {
     storage_commit();
@@ -1929,7 +1969,9 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      * session_clear(), the auto-lock, Initialize, ClearSession -- call
      * fsm_abort_workflows() themselves. */
     fsm_abort_signing_workflows();
+#if !BITCOIN_ONLY
     signed_metadata_clear_signers();
+#endif
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 
@@ -1987,7 +2029,7 @@ void storage_commit(void) {
   // Never overwrite a bitcoin-only wallet from multi-chain firmware; the
   // only way out is storage_wipe() (which clears the lock). This is the
   // backstop behind the per-handler checks.
-  if (btc_only_locked) return;
+  if (btc_only_locked || firmware_too_old) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
   //
@@ -2728,6 +2770,9 @@ bool storage_hasNode(void) { return shadow_config.storage.pub.has_node; }
 Allocation storage_getLocation(void) { return storage_location; }
 
 bool storage_setPolicy(const char* policy_name, bool enabled) {
+  if (!enabled && strcmp(policy_name, "AdvancedMode") == 0) {
+    signed_metadata_clear_signers();
+  }
   return storage_setPolicy_impl(shadow_config.storage.pub.policies, policy_name,
                                 enabled);
 }

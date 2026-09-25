@@ -33,6 +33,7 @@
     MSG_IN(MessageType_MessageType_RecoveryDevice,                  RecoveryDevice,              fsm_msgRecoveryDevice)
     MSG_IN(MessageType_MessageType_CharacterAck,                    CharacterAck,                fsm_msgCharacterAck)
     MSG_IN(MessageType_MessageType_ApplyPolicies,                   ApplyPolicies,               fsm_msgApplyPolicies)
+    MSG_IN(MessageType_MessageType_GetBip85Mnemonic,             GetBip85Mnemonic,            fsm_msgGetBip85Mnemonic)
 #if !BITCOIN_ONLY
     MSG_IN(MessageType_MessageType_EthereumGetAddress,              EthereumGetAddress,          fsm_msgEthereumGetAddress)
     MSG_IN(MessageType_MessageType_EthereumSignTx,                  EthereumSignTx,              fsm_msgEthereumSignTx)
@@ -76,7 +77,6 @@
     MSG_IN(MessageType_MessageType_MayachainMsgAck,                 MayachainMsgAck,             fsm_msgMayachainMsgAck)
 #endif  // !BITCOIN_ONLY
 
-    MSG_IN(MessageType_MessageType_GetBip85Mnemonic,               GetBip85Mnemonic,            fsm_msgGetBip85Mnemonic)
 
     /* Normal Out Messages */
     MSG_OUT(MessageType_MessageType_Success,                        Success,                     NO_PROCESS_FUNC)
@@ -203,6 +203,8 @@
     MSG_OUT(MessageType_MessageType_HiveSignedMessage,             HiveSignedMessage,           NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_HiveSignedOperations,          HiveSignedOperations,        NO_PROCESS_FUNC)
 #endif  // !BITCOIN_ONLY
+
+
 
 #if DEBUG_LINK
     /* Debug Messages */

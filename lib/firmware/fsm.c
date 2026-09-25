@@ -45,6 +45,7 @@
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts.h"
 #include "keepkey/firmware/erc7730_catalog.h"
+#include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
@@ -149,12 +150,18 @@ bool fsm_test_derivedNodeIsZero(void) {
  * seed. The same reasoning applies to every handler that expects its write to
  * survive a reboot, and those were missed. Refuse before doing the work rather
  * than reporting a success that did not happen. */
-#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                \
-  if (storage_isBitcoinOnlyLocked()) {                               \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
-                    "Bitcoin-only wallet present. Use Wipe first."); \
-    layoutHome();                                                    \
-    return;                                                          \
+#define CHECK_NOT_BITCOIN_ONLY_LOCKED                                    \
+  if (storage_isBitcoinOnlyLocked()) {                                   \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Bitcoin-only wallet present. Use Wipe first.");     \
+    layoutHome();                                                        \
+    return;                                                              \
+  }                                                                      \
+  if (storage_isFirmwareTooOld()) {                                      \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Storage requires newer firmware. Use Wipe first."); \
+    layoutHome();                                                        \
+    return;                                                              \
   }
 
 #define CHECK_NOT_INITIALIZED                                              \
@@ -172,6 +179,11 @@ bool fsm_test_derivedNodeIsZero(void) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
     return;                                                                \
+  }                                                                        \
+  if (storage_isFirmwareTooOld()) {                                        \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
+                    "Storage requires newer firmware. Use Wipe first.");   \
+    return;                                                                \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
@@ -187,17 +199,20 @@ bool fsm_test_derivedNodeIsZero(void) {
     return;                                                   \
   }
 
-/* Only the two ceremony STARTS use this. Every other message that persists
- * anything is handled structurally instead: storage_commit() aborts an armed
- * ceremony, so a handler that writes can never have its write consumed by
- * one -- the worst it can do is end it. */
-#define CHECK_NO_CEREMONY                                     \
-  if (setup_isArmed()) {                                      \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
-                    "Device is in the middle of setup. Send " \
-                    "Initialize or Cancel first.");           \
-    layoutHome();                                             \
-    return;                                                   \
+#define CHECK_STORAGE_WRITABLE                                      \
+  if (storage_isFirmwareTooOld()) {                                 \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Wallet format requires newer firmware. "       \
+                    "Update firmware or wipe the device.");         \
+    layoutHome();                                                   \
+    return;                                                         \
+  }                                                                 \
+  if (storage_isBitcoinOnlyLocked()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Device holds a bitcoin-only wallet. Wipe the " \
+                    "device to use multi-chain firmware.");         \
+    layoutHome();                                                   \
+    return;                                                         \
   }
 
 #define CHECK_PIN              \
@@ -270,15 +285,19 @@ static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
   }
 }
 
-/* msg_resp is sized to the largest registered response instead of
- * MAX_FRAME_SIZE, which over-allocated ~4 KiB the 16 KiB stack reserve needs.
- * RESP_INIT static-asserts that every writer fits, so a response outgrowing
- * this fails the build rather than overrunning at runtime. */
+/* CoinTable and Entropy reuse the decoded request after copying their input
+ * fields; their large responses would otherwise duplicate transport SRAM.
+ * All other registered responses still determine this buffer's exact size.
+ * RESP_INIT checks each ordinary writer against it at compile time. */
 #undef MSG_IN
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
 
 #undef MSG_OUT
-#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) STRUCT_NAME out_##STRUCT_NAME;
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)          \
+  uint8_t out_##STRUCT_NAME[_Generic(((STRUCT_NAME*)0), \
+                                CoinTable *: 1,         \
+                                Entropy *: 1,           \
+                                default: sizeof(STRUCT_NAME))];
 
 #undef RAW_IN
 #define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC)
@@ -292,6 +311,13 @@ static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
 typedef union {
 #include "messagemap.def"
 } FsmResponse;
+
+/* Each generated member contributes to the union's compile-time bound. */
+#undef MSG_OUT
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)                 \
+  _Static_assert(sizeof(((FsmResponse*)0)->out_##STRUCT_NAME), \
+                 "Response size must be nonzero");
+#include "messagemap.def"
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
 
@@ -372,17 +398,11 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
  * application asked for an Ethereum address. (7.14.3 F071.) */
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_signing_workflows();
-  layoutHome();
+  if (!setup_isArmedAs(SETUP_RECOVERY)) {
+    setup_abort();
+    layoutHome();
+  }
   fsm_sendFailure(code, text);
-}
-
-/* Every host frame counts as activity, so a streamed ceremony or signing
- * session the user is still working through is not auto-locked mid-flight.
- * note_host_activity() ignores frames that arrive at the home screen, so a
- * polling host cannot hold an idle device unlocked. */
-static void fsm_usb_rx(const void* msg, size_t len) {
-  note_host_activity();
-  handle_usb_rx(msg, len);
 }
 
 void fsm_init(void) {
@@ -397,11 +417,156 @@ void fsm_init(void) {
 #endif
 
   msg_init();
-  /* after msg_init(), which installs the board's own rx callback */
-  usb_set_rx_callback(&fsm_usb_rx);
 
   txin_dgst_initialize();
 }
+
+/* Reject continuation packets unless their signing workflow is active. */
+static void abort_signing_engines(void);
+
+static bool reject_stale_continuation(const char* text) {
+  /* A decoded request always gets a terminal response. Silently dropping an
+   * inactive ACK leaves the host blocked forever, while dispatching it would
+   * let the handler replace an unrelated recovery screen. End signing, keep
+   * any setup ceremony armed, and reject on the wire without changing OLED
+   * state. */
+  fsm_abort_signing_workflows();
+  fsm_sendFailure(FailureType_Failure_UnexpectedMessage, text);
+  return false;
+}
+
+bool keepkey_before_message_dispatch(MessageType msg_id) {
+  switch (msg_id) {
+    case MessageType_MessageType_GetFeatures:
+    case MessageType_MessageType_GetCoinTable:
+    case MessageType_MessageType_Ping:
+      return true;
+    case MessageType_MessageType_TxAck:
+      if (!signing_is_active())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_EntropyAck:
+      if (!setup_isArmedAs(SETUP_RESET))
+        return reject_stale_continuation("Not in Reset mode");
+      return true;
+    case MessageType_MessageType_CharacterAck:
+      if (!setup_isArmedAs(SETUP_RECOVERY))
+        return reject_stale_continuation("Not in Recovery mode");
+      return true;
+#if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxAck:
+      if (!ethereum_signing_isInProgress() &&
+          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_CALLDATA)
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataStructAck:
+      if (eip712_stream_waiting() != EIP712_WANT_STRUCT)
+        return reject_stale_continuation("No EIP-712 schema requested");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataValueAck:
+      if (eip712_stream_waiting() != EIP712_WANT_VALUE)
+        return reject_stale_continuation("No EIP-712 value requested");
+      return true;
+    case MessageType_MessageType_EthereumClearSignDefinitionChunk:
+      if (erc7730_workflow_state()->phase != ERC7730_WORKFLOW_REPLAY &&
+          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_SELECT)
+        return reject_stale_continuation("No ERC-7730 definition requested");
+      return true;
+    case MessageType_MessageType_CosmosMsgAck:
+      if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
+        return reject_stale_continuation("Cosmos signing not in progress");
+      return true;
+    case MessageType_MessageType_OsmosisMsgAck:
+      if (!osmosis_signingIsInited())
+        return reject_stale_continuation("Osmosis signing not in progress");
+      return true;
+    case MessageType_MessageType_EosTxActionAck:
+      if (!eos_signingIsInited())
+        return reject_stale_continuation("EOS signing not in progress");
+      return true;
+    case MessageType_MessageType_ThorchainMsgAck:
+      if (!thorchain_signingIsInited())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_MayachainMsgAck:
+      if (!mayachain_signingIsInited())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+#endif
+#if ZCASH_PRIVACY
+    case MessageType_MessageType_ZcashPCZTAction:
+    case MessageType_MessageType_ZcashTransparentOutput:
+    case MessageType_MessageType_ZcashTransparentInput:
+      if (!zcash_signing_is_active())
+        return reject_stale_continuation("Zcash signing not in progress");
+      return true;
+#endif
+    default:
+      /* A new signing operation may replace an old signer, but it must never
+       * coexist with recovery/reset and borrow that ceremony's progress or
+       * blocking screens. Administrative requests still preserve ceremonies. */
+      switch (msg_id) {
+        case MessageType_MessageType_SignTx:
+        case MessageType_MessageType_SignMessage:
+        case MessageType_MessageType_SignIdentity:
+        case MessageType_MessageType_CipherKeyValue:
+        /* BIP-85 is available in both variants and starts a private-key
+         * derivation. It must end an armed setup ceremony in either build. */
+        case MessageType_MessageType_GetBip85Mnemonic:
+#if !BITCOIN_ONLY
+        case MessageType_MessageType_EthereumSignTx:
+        case MessageType_MessageType_EthereumSignMessage:
+        case MessageType_MessageType_EthereumSignTypedHash:
+        case MessageType_MessageType_EthereumSignTypedData:
+        case MessageType_MessageType_NanoSignTx:
+        case MessageType_MessageType_CosmosSignTx:
+        case MessageType_MessageType_OsmosisSignTx:
+        case MessageType_MessageType_BinanceSignTx:
+        case MessageType_MessageType_EosSignTx:
+        case MessageType_MessageType_RippleSignTx:
+        case MessageType_MessageType_ThorchainSignTx:
+        case MessageType_MessageType_MayachainSignTx:
+        case MessageType_MessageType_TronSignTx:
+        case MessageType_MessageType_TronSignMessage:
+        case MessageType_MessageType_TronSignTypedHash:
+        case MessageType_MessageType_TonSignTx:
+        case MessageType_MessageType_TonSignMessage:
+        case MessageType_MessageType_SolanaSignTx:
+        case MessageType_MessageType_SolanaSignMessage:
+        case MessageType_MessageType_SolanaSignOffchainMessage:
+        case MessageType_MessageType_HiveSignTx:
+        case MessageType_MessageType_HiveSignAccountCreate:
+        case MessageType_MessageType_HiveSignAccountUpdate:
+        case MessageType_MessageType_HiveSignMessage:
+        case MessageType_MessageType_HiveSignOperations:
+        case MessageType_MessageType_ClearsignAttestorSign:
+#endif
+#if ZCASH_PRIVACY
+        case MessageType_MessageType_ZcashSignPCZT:
+#endif
+          setup_abort();
+          break;
+        default:
+          break;
+      }
+      switch (msg_id) {
+#if !BITCOIN_ONLY
+        case MessageType_MessageType_EthereumClearSignDefinition:
+        case MessageType_MessageType_EthereumSignTx:
+        case MessageType_MessageType_EthereumSignTypedData:
+          /* The preload's own chunks and its consumers keep it. */
+          abort_signing_engines();
+          break;
+#endif
+        default:
+          fsm_abort_signing_workflows();
+          break;
+      }
+      return true;
+  }
+}
+
+void keepkey_after_message_dispatch(void) { fsm_clearDerivedNode(); }
 
 void fsm_sendSuccess(const char* text) {
   if (reset_msg_stack) {
@@ -420,7 +585,16 @@ void fsm_sendSuccess(const char* text) {
   msg_write(MessageType_MessageType_Success, resp);
 }
 
+#if defined(EMULATOR) && DEBUG_LINK
+static FailureType test_failure_code;
+void fsm_test_clearLastFailure(void) { test_failure_code = (FailureType)0; }
+FailureType fsm_test_lastFailureCode(void) { return test_failure_code; }
+#endif
+
 void fsm_sendFailure(FailureType code, const char* text) {
+#if defined(EMULATOR) && DEBUG_LINK
+  test_failure_code = code;
+#endif
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;
@@ -447,27 +621,42 @@ void fsm_abort_workflows(void) {
  * signing state, but must not discard a setup ceremony: recovery stages its
  * ceremony before prompting for the PIN, and every routine PIN entry clears
  * the session while checking the entered digits against the wipe code. */
-void fsm_abort_signing_workflows(void) {
+static void abort_signing_engines(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
-  erc7730_catalog_clear_preload();
+  eip712_stream_abort();
   nano_signingAbort();
   tendermint_signAbort();
   osmosis_signAbort();
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+#if ZCASH_PRIVACY
   zcash_signing_abort();
+#endif
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+}
+
+/* A preloaded ERC-7730 definition is consumed only by the signing request that
+ * follows it. Every other abort -- Initialize, Cancel, ClearSession, autolock,
+ * a rejected frame or any unrelated request -- discards it too. */
+void fsm_abort_signing_workflows(void) {
+  abort_signing_engines();
+#if !BITCOIN_ONLY
+  erc7730_catalog_clear_preload();
+#endif
 }
 
 void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
   fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
   /* Several abort routines -- Binance, Tendermint, Osmosis, THORChain,
      MAYAChain, EOS, Nano -- only clear state and touch no layout, so without
      this the approval screen of the transaction just cancelled stays on the

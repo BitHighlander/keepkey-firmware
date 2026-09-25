@@ -204,14 +204,11 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     }
 
     if (confirmed && parsed.memo_len > 0) {
-      /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
-       * other memo surface. The old single-screen path showed up to 114 chars
-       * unpaged, but 3 OLED lines only guarantee ~84 chars with wide glyphs —
-       * an 85..114-char memo could have its signed tail (affiliate bps,
-       * destination tail) silently clipped. The pager also discloses
-       * non-printable memos as complete hex instead of a byte-count summary. */
-      confirmed = thorchain_confirm_full_memo("Memo", (const char*)parsed.memo,
-                                              parsed.memo_len);
+      /* raw_data.data is signed verbatim. A byte count or one unpaged screen
+       * hides a long memo's tail; confirm_bytes pages and escapes every byte.
+       */
+      confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                                "Memo", parsed.memo, parsed.memo_len);
     }
 
     if (!confirmed) {
@@ -288,6 +285,9 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
     return;
   }
 
+  CHECK_PARAM(msg->has_message && msg->message.size > 0 &&
+                  msg->message.size <= sizeof(msg->message.bytes),
+              _("Invalid TRON message"));
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
                      _("Sign TRON Message"), msg->message.bytes,
                      msg->message.size)) {
@@ -316,7 +316,9 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
 
 void fsm_msgTronVerifyMessage(const TronVerifyMessage* msg) {
   CHECK_PARAM(msg->has_address, _("No address provided"));
-  CHECK_PARAM(msg->has_message, _("No message provided"));
+  CHECK_PARAM(msg->has_message && msg->message.size > 0 &&
+                  msg->message.size <= sizeof(msg->message.bytes),
+              _("Invalid TRON message"));
   CHECK_PARAM(msg->has_signature, _("No signature provided"));
 
   if (tron_message_verify(msg) != 0) {

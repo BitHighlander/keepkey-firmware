@@ -73,16 +73,15 @@ void memory_getDeviceLabel(char *str, size_t len) {
 bool inPrivilegedMode(void) {
   // Check to see if we are in priv mode. If so, return true to drop privs.
   uint32_t creg = 0xffff;
-  // CONTROL register nPRIV,bit[0]: 
+  // CONTROL register nPRIV,bit[0]:
   //    0 Thread mode has privileged access
-  //    1 Thread mode has unprivileged access. 
+  //    1 Thread mode has unprivileged access.
   // Note: In Handler mode, execution is always privileged
   fi_defense_delay(creg);  // vary access time
-  __asm__ volatile(
-       "mrs %0, control" : "=r" (creg));
+  __asm__ volatile("mrs %0, control" : "=r"(creg));
   fi_defense_delay(creg);  // vary test time
-  if (creg & 0x0001) 
-    return false;          // can't drop privs
+  if (creg & 0x0001)
+    return false;  // can't drop privs
   else
     return true;
 
@@ -173,16 +172,20 @@ int main(void) {
   _timerusr_isr = (void *)&timerisr_usr;
   _mmhusr_isr = (void *)&mmhisr;
 
-  { // limit sigRet lifetime to this block
+  {  // limit sigRet lifetime to this block
     int sigRet = SIG_FAIL;
     sigRet = signatures_ok();
-    flash_collectHWEntropy(SIG_OK == sigRet);
+    bool entropy_ok = flash_collectHWEntropy(SIG_OK == sigRet);
 
     /* Drop privileges */
     drop_privs();
 
     /* Init board */
     kk_board_init();
+    if (!entropy_ok) {
+      layout_warning_static("RNG self-test failed. Reboot device!");
+      shutdown();
+    }
 
     /* Program the model into OTP, if we're not in screen-test mode, and it's
      * not already there
@@ -194,8 +197,9 @@ int main(void) {
 
     drbg_init();
 
-    /* Bootloader Verification. Only check if valid signed firmware on-board, allow any other firmware
-    to run with any bootloader. This allows unsigned release firmware to run after warning */
+    /* Bootloader Verification. Only check if valid signed firmware on-board,
+    allow any other firmware to run with any bootloader. This allows unsigned
+    release firmware to run after warning */
     if (SIG_OK == sigRet) {
       check_bootloader();
     }

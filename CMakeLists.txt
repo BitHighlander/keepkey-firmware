@@ -1,12 +1,5 @@
 cmake_minimum_required(VERSION 3.7.2)
 
-# CMP0079: allow target_link_libraries() to reference targets defined in
-# a different directory. Required so tools/emulator can add firmware libs
-# to kkemulator_dylib (defined in lib/emulator).
-if(POLICY CMP0079)
-  cmake_policy(SET CMP0079 NEW)
-endif()
-
 project(
   KeepKeyFirmware
   VERSION 7.17.0
@@ -19,6 +12,8 @@ set(BOOTLOADER_PATCH_VERSION 5)
 option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
+option(KK_BUILD_BOOTLOADER_TOOLS
+       "Build bootloader, bootloader updater, and bootstrap artifacts" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
 # Zcash shielded/Orchard support is part of the regular firmware. It is an
@@ -29,7 +24,7 @@ option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" O
 if(KK_BITCOIN_ONLY)
   set(KK_ZCASH_PRIVACY OFF)
 else()
-  set(KK_ZCASH_PRIVACY ON)
+  option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
@@ -37,8 +32,8 @@ endif()
 # itself be compiled with -fPIC. macOS happens to be lenient and will produce
 # a working .dylib without it; Linux's link step against a non-PIC archive
 # fails with "recompile with -fPIC". Set this BEFORE add_subdirectory(lib)
-# below so all targets pick it up at definition time. CMP0079 (already set
-# above) lets us reach across directories to link them.
+# below so all targets pick it up at definition time. Shared-library links
+# stay in the target's defining directory for the minimum CMake version.
 if(KK_BUILD_DYLIB)
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
@@ -197,7 +192,7 @@ elseif(
   OR "${CMAKE_BUILD_TYPE}" STREQUAL "")
   add_definitions(-DNDEBUG)
   add_definitions(-DMEMORY_PROTECT=1)
-  if(NOT ${KK_EMULATOR})
+  if(NOT ${KK_EMULATOR} AND KK_BUILD_BOOTLOADER_TOOLS)
     message(
       WARNING
         "*********************************************************************\n"
@@ -243,7 +238,7 @@ add_subdirectory(deps/crypto)
 add_subdirectory(deps/qrenc)
 add_subdirectory(deps/sca-hardening)
 
-if(${KK_EMULATOR})
+if(${KK_EMULATOR} AND NOT WIN32)
   add_subdirectory(deps/googletest)
   add_subdirectory(unittests)
   if(${KK_BUILD_FUZZERS})
@@ -266,7 +261,34 @@ if(${KK_EMULATOR})
     COMMAND ${CMAKE_BINARY_DIR}/bin/board-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/board.xml
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
-            --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
+            --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml
+    DEPENDS firmware-unit board-unit crypto-unit)
+  if(TARGET zcash-crypto-unit)
+    add_test(test-zcash-crypto ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit)
+    add_dependencies(xunit zcash-crypto-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-crypto.xml)
+  endif()
+
+  if(TARGET zcash-display-unit)
+    add_test(test-zcash-display ${CMAKE_BINARY_DIR}/bin/zcash-display-unit)
+    add_dependencies(xunit zcash-display-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-display-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-display.xml)
+  endif()
+  if(KK_BUILD_DYLIB AND NOT WIN32)
+    find_package(Threads REQUIRED)
+    add_executable(emulator-unit unittests/emulator/lifecycle.cpp)
+    target_include_directories(emulator-unit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(emulator-unit gtest_main kkemulator_dylib Threads::Threads)
+    add_test(test-emulator ${CMAKE_BINARY_DIR}/bin/emulator-unit)
+    add_dependencies(xunit emulator-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/emulator-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/emulator.xml)
+  endif()
 
   if(${KK_ZCASH_PRIVACY})
     add_custom_command(TARGET xunit POST_BUILD

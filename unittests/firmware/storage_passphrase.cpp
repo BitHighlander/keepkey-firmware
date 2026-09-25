@@ -7,6 +7,9 @@ extern "C" {
 #include "keepkey/board/layout.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/transport/interface.h"
 #include "keepkey/emulator/setup.h"
@@ -14,6 +17,8 @@ extern "C" {
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/memzero.h"
 }
+
+void kk_test_board_init(void);
 
 namespace {
 const char kMnemonic[] = "all all all all all all all all all all all all";
@@ -25,10 +30,7 @@ class PassphraseTransition : public ::testing::Test {
     static bool initialized = false;
     if (!initialized) {
       setup();
-      if (layout_get_canvas() == nullptr) {
-        timer_init();
-        layout_init(display_canvas_init());
-      }
+      kk_test_board_init();
       storage_init();
       initialized = true;
     }
@@ -138,3 +140,22 @@ TEST_F(PassphraseTransition, StagingIsInertAndForeignCommitAborts) {
 }
 
 }  // namespace
+
+TEST_F(PassphraseTransition,
+       InitializeRetainsPinButAbortsSigningAndPassphrase) {
+  fsm_init();
+  storage_setPin("1234");
+  storage_setPassphraseProtected(true);
+  session_cachePassphrase(kHidden);
+  ASSERT_TRUE(session_isPinCached());
+  ASSERT_TRUE(session_isPassphraseCached());
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  ASSERT_TRUE(signing_is_active());
+  fsm_msgInitialize(nullptr);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_TRUE(session_isPinCached());
+  EXPECT_FALSE(session_isPassphraseCached());
+}

@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/eip712_stream.h"  // Public declarations stay guarded.
 #include "messages-ethereum.pb.h"
 #include "sha3.h"
 }
@@ -10,6 +11,7 @@ extern "C" {
 #include <map>
 #include <string>
 #include <vector>
+#include "kkconfirm_driver.h"
 
 namespace {
 
@@ -107,6 +109,12 @@ TEST(Eip712Stream, TypeNameArraysInWrittenOrder) {
   EXPECT_EQ(nameOf(s), "Person[]");
 }
 
+TEST(Eip712Stream, TypeNameRejectsArrayCountPastWireCapacity) {
+  Field f = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 2);
+  f.array_levels_count = sizeof(f.array_levels) / sizeof(f.array_levels[0]) + 1;
+  EXPECT_EQ(nameOf(f), "<refused>");
+}
+
 TEST(Eip712Stream, TypeNameStructNeedsAName) {
   EXPECT_EQ(nameOf(mk(EthereumTypedDataStructAck_EthereumDataType_STRUCT)),
             "<refused>");
@@ -183,7 +191,7 @@ TEST(Eip712Stream, EncodeStringIsHashed) {
 }
 
 TEST(Eip712Stream, AccumulatesOnlyValidatedDomainBindingFacts) {
-  EXPECT_LE(sizeof(Eip712DomainFacts), 64u);
+  EXPECT_LE(sizeof(Eip712DomainFacts), 168u);
   Eip712DomainFacts facts{};
   Field chain = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
   uint8_t chain_id[32] = {0};
@@ -287,6 +295,124 @@ TEST(Eip712Stream, CertifiedDocumentCanBeRehashedForBoundedDisplayReplay) {
             0);
   EXPECT_EQ(memcmp(first_message, eip712_stream_next()->message_hash, 32), 0);
   eip712_stream_abort();
+}
+
+TEST(Eip712Stream, NestedFixedArrayChecksOuterAndInnerDimensions) {
+  for (bool wrong_outer : {false, true}) {
+    EthereumSignTypedData begin{};
+    strcpy(begin.primary_type, "Matrix");
+    ASSERT_TRUE(eip712_stream_begin(&begin, false));
+    EthereumTypedDataStructAck empty{};
+    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+    EthereumTypedDataStructAck matrix{};
+    matrix.members_count = 1;
+    strcpy(matrix.members[0].name, "values");
+    auto& type = matrix.members[0].type;
+    type = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+    type.array_levels_count = 2;
+    type.array_levels[0] = 2;
+    type.array_levels[1] = 3;
+    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&matrix));
+    EthereumTypedDataValueAck length{};
+    length.value.size = 2;
+    length.value.bytes[1] = wrong_outer ? 2 : 3;
+    EXPECT_EQ(eip712_stream_on_value(&length), !wrong_outer);
+    if (!wrong_outer) {
+      length.value.bytes[1] = 1;
+      EXPECT_FALSE(eip712_stream_on_value(&length));
+    }
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  }
+}
+
+TEST(Eip712Stream, RefusesSchemaChangesAfterDiscoveryAndHashing) {
+  for (int repeat_phase : {1, 2}) {
+    EthereumSignTypedData begin{};
+    strcpy(begin.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&begin, false));
+    EthereumTypedDataStructAck schema{};
+    for (int i = 0; i < repeat_phase; i++)
+      ASSERT_TRUE(eip712_stream_on_struct(&schema));
+    schema.members_count = 1;
+    strcpy(schema.members[0].name, "injected");
+    schema.members[0].type =
+        mk(EthereumTypedDataStructAck_EthereumDataType_BOOL);
+    EXPECT_FALSE(eip712_stream_on_struct(&schema));
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  }
+}
+
+TEST(Eip712Stream, EnforcesSignedDomainNameAndAbsenceConstraints) {
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&begin, true));
+  EthereumTypedDataStructAck domain{};
+  domain.members_count = 1;
+  strcpy(domain.members[0].name, "name");
+  domain.members[0].type =
+      mk(EthereumTypedDataStructAck_EthereumDataType_STRING);
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&domain));
+  EthereumTypedDataValueAck value{};
+  value.value.size = 3;
+  memcpy(value.value.bytes, "App", 3);
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(eip712_stream_on_value(&value));
+  EXPECT_EQ(kkconfirm_drain(), 0);
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 2; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DEFINITION);
+  EXPECT_TRUE(
+      eip712_stream_domain_matches(1, 4, (const uint8_t*)"App", 3, false));
+  EXPECT_FALSE(
+      eip712_stream_domain_matches(1, 4, (const uint8_t*)"Other", 5, false));
+  EXPECT_FALSE(eip712_stream_domain_matches(1, 0, nullptr, 0, true));
+  EXPECT_TRUE(eip712_stream_domain_matches(2, 0, nullptr, 0, true));
+  EXPECT_FALSE(
+      eip712_stream_domain_matches(2, 4, (const uint8_t*)"1", 1, false));
+  eip712_stream_abort();
+  EXPECT_FALSE(
+      eip712_stream_domain_matches(1, 4, (const uint8_t*)"App", 3, false));
+}
+
+TEST(Eip712Stream, CertifiedFieldReplayPreservesDomainAndSigningPath) {
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "Mail");
+  begin.address_n_count = 1;
+  begin.address_n[0] = 0x8000002c;
+  ASSERT_TRUE(eip712_stream_begin(&begin, true));
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+  EthereumTypedDataStructAck schema{};
+  schema.members_count = 1;
+  strcpy(schema.members[0].name, "amount");
+  schema.members[0].type =
+      mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  for (int i = 0; i < 2; i++) ASSERT_TRUE(eip712_stream_on_struct(&schema));
+  ASSERT_TRUE(eip712_stream_resume_for_field());
+  ASSERT_TRUE(eip712_stream_on_struct(&schema));
+  EthereumTypedDataValueAck value{};
+  value.value.size = 32;
+  value.value.bytes[31] = 42;
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(eip712_stream_on_value(&value));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  const auto first = *eip712_stream_next();
+  EXPECT_EQ(kkconfirm_drain(), 0);
+  ASSERT_TRUE(eip712_stream_resume_for_field());
+  EXPECT_STREQ(eip712_stream_next()->struct_name, "Mail");
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&schema));
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(eip712_stream_on_value(&value));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(memcmp(first.domain_separator,
+                   eip712_stream_next()->domain_separator, 32),
+            0);
+  EXPECT_EQ(memcmp(first.message_hash, eip712_stream_next()->message_hash, 32),
+            0);
+  EXPECT_EQ(eip712_stream_next()->address_n[0], begin.address_n[0]);
+  EXPECT_EQ(kkconfirm_drain(), 0);
+  eip712_stream_abort();
+  EXPECT_FALSE(eip712_stream_resume_for_field());
 }
 
 TEST(Eip712Stream, EncodeAddressIsLeftPadded) {
@@ -702,7 +828,8 @@ Eip712ReqKind walkMatrix(const std::vector<uint32_t>& written_levels,
 
   EthereumSignTypedData begin{};
   strcpy(begin.primary_type, "Matrix");
-  // Certified, so accepted leaves are hashed without a confirm screen.
+  // Raw typed leaves are disclosed even when a definition is supplied.
+  kkconfirm_preload(rows * cols, 0);
   eip712_stream_begin(&begin, true);
   for (int step = 0; step < 100; step++) {
     const Eip712Next* next = eip712_stream_next();
@@ -729,6 +856,7 @@ Eip712ReqKind walkMatrix(const std::vector<uint32_t>& written_levels,
       }
       default: {
         Eip712ReqKind kind = next->kind;
+        kkconfirm_drain();
         eip712_stream_abort();
         return kind;
       }
@@ -736,6 +864,61 @@ Eip712ReqKind walkMatrix(const std::vector<uint32_t>& written_levels,
   }
   eip712_stream_abort();
   return EIP712_REQ_NONE;
+}
+
+}  // namespace
+
+// ── Review screens and signing policy ────────────────────────────────
+namespace {
+
+typedef EthereumTypedDataStructAck Struct;
+typedef std::vector<uint8_t> Bytes;
+
+Bytes word(uint8_t low) {
+  Bytes b(32, 0);
+  b[31] = low;
+  return b;
+}
+
+// Drive the walk to its end, answering every request from `types` and
+// `value(path)`, with `screens` accepted confirmations available. Returns how
+// many were used; -1 means more screens were shown than were accepted.
+int walk(const char* primary, const std::map<std::string, Struct>& types,
+         Bytes (*value)(const std::vector<uint32_t>&), int screens,
+         bool certified = false) {
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, primary);
+  if (!kkconfirm_preload(screens, 0)) return -2;
+  if (!eip712_stream_begin(&begin, certified))
+    return screens - kkconfirm_drain() / 2;
+  for (;;) {
+    const Eip712Next* next = eip712_stream_next();
+    if (next->kind == EIP712_REQ_STRUCT) {
+      auto it = types.find(next->struct_name);
+      Struct empty{};
+      eip712_stream_on_struct(it == types.end() ? &empty : &it->second);
+    } else if (next->kind == EIP712_REQ_VALUE) {
+      std::vector<uint32_t> path(next->member_path,
+                                 next->member_path + next->member_path_len);
+      Bytes v = value(path);
+      EthereumTypedDataValueAck ack{};
+      ack.value.size = v.size();
+      memcpy(ack.value.bytes, v.data(), v.size());
+      eip712_stream_on_value(&ack);
+    } else {
+      break;
+    }
+  }
+  // Two messages per screen; negative means the rejection sentinel was used.
+  const int unused = kkconfirm_drain();
+  return unused < 0 ? -1 : screens - unused / 2;
+}
+
+std::string decimal(Field f, const Bytes& v) {
+  char out[82];
+  if (!eip712_render_integer(&f, v.data(), v.size(), out, sizeof(out)))
+    return "<refused>";
+  return out;
 }
 
 }  // namespace
@@ -756,4 +939,196 @@ TEST(Eip712Stream, InnerDimensionsAreCheckedToo) {
   // int16[][4]: exactly four rows, of any width.
   EXPECT_EQ(walkMatrix({0, 4}, 4, 3), EIP712_REQ_DONE);
   EXPECT_EQ(walkMatrix({0, 4}, 3, 3), EIP712_REQ_FAIL);
+}
+
+TEST(Eip712Stream, IntegersRenderInDecimalWithTheirSign) {
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  Field i8 = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 1);
+  Field i16 = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 2);
+  Field i256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, 32);
+  Bytes thousand(32, 0);
+  thousand[30] = 0x03;
+  thousand[31] = 0xe8;
+  EXPECT_EQ(decimal(u256, thousand), "1000");
+  EXPECT_EQ(decimal(u256, Bytes(32, 0)), "0");
+  EXPECT_EQ(decimal(u256, Bytes(32, 0xff)),
+            "115792089237316195423570985008687907853269984665640564039457584"
+            "007913129639935");
+  EXPECT_EQ(decimal(i8, Bytes{0x80}), "-128");
+  EXPECT_EQ(decimal(i8, Bytes{0x7f}), "127");
+  EXPECT_EQ(decimal(i16, Bytes{0xff, 0xff}), "-1");
+  Bytes min256(32, 0);
+  min256[0] = 0x80;
+  EXPECT_EQ(decimal(i256, min256),
+            "-57896044618658097711785492504343953926634992332820282019728792"
+            "003956564819968");
+  // uint does not sign-extend a set top bit.
+  Field u8 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 1);
+  EXPECT_EQ(decimal(u8, Bytes{0x80}), "128");
+}
+
+// A dynamic value longer than one screen body used to be refused by confirm()
+// and reported to the host as a user cancel. It is now disclosed in numbered
+// parts, each its own confirmation, and the document signs.
+TEST(Eip712Stream, LongValuesAreDisclosedInPartsAndSign) {
+  std::map<std::string, Struct> types;
+  addMember(types["Blob"], "data",
+            mk(EthereumTypedDataStructAck_EthereumDataType_BYTES));
+  addMember(types["Blob"], "note",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  int used = walk(
+      "Blob", types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        if (path[1] == 0) return Bytes(EIP712_MAX_LEAF, 0xab);
+        Bytes s;  // 300 x U+00E9, escaped to four characters per byte
+        for (int i = 0; i < 300; i++) {
+          s.push_back(0xc3);
+          s.push_back(0xa9);
+        }
+        return s;
+      },
+      200);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  // 2,050 hex characters and 2,400 escaped ones cannot fit fewer than
+  // seven and eight 351-character bodies.
+  EXPECT_GE(used, 15);
+  eip712_stream_abort();
+}
+
+TEST(Eip712Stream, UnlimitedPermitsAreRefusedBeforeTheirScreen) {
+  struct Case {
+    const char* primary;
+    const char* container;
+    const char* member;
+    Field type;
+    Bytes unlimited;
+    Bytes finite;
+  };
+  const Case cases[] = {
+      {"Permit", "Permit", "value",
+       mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
+       Bytes(32, 0xff), word(1)},
+      {"Permit", "Permit", "allowed",
+       mk(EthereumTypedDataStructAck_EthereumDataType_BOOL), Bytes{1},
+       Bytes{0}},
+      {"PermitSingle", "PermitDetails", "amount",
+       mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 20),
+       Bytes(20, 0xff),
+       []() {
+         Bytes b(20, 0);
+         b[19] = 1;
+         return b;
+       }()},
+      {"PermitTransferFrom", "TokenPermissions", "amount",
+       mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
+       Bytes(32, 0xff), word(7)},
+  };
+  static const Case* current;
+  static bool unlimited;
+  for (const Case& c : cases) {
+    std::map<std::string, Struct> types;
+    addMember(types[c.container], "token",
+              mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+    addMember(types[c.container], c.member, c.type);
+    if (strcmp(c.primary, c.container) != 0)
+      addMember(types[c.primary], "details", structField(c.container));
+    current = &c;
+    for (bool u : {true, false}) {
+      unlimited = u;
+      int used = walk(
+          c.primary, types,
+          [](const std::vector<uint32_t>& path) -> Bytes {
+            if (path.back() == 0) return Bytes(20, 0x11);
+            return unlimited ? current->unlimited : current->finite;
+          },
+          5);
+      if (u) {
+        EXPECT_EQ(used, 1) << c.member;  // only the token screen
+        ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+        EXPECT_STREQ(eip712_stream_next()->error,
+                     "Unlimited ERC20 approval is disabled");
+      } else {
+        EXPECT_EQ(used, 2) << c.member;
+        EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+      }
+      eip712_stream_abort();
+    }
+  }
+}
+
+// eth-sig-util/MetaMask v4 sign keccak(0x1901 || domainSeparator) when the
+// primary type is EIP712Domain; walking a "message" would sign another digest.
+TEST(Eip712Stream, DomainOnlyPrimaryTypeSignsTheDomainSeparatorAlone) {
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "name",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  int used = walk(
+      "EIP712Domain", types,
+      [](const std::vector<uint32_t>&) -> Bytes {
+        return Bytes{'A', 'p', 'p'};
+      },
+      3);
+  EXPECT_EQ(used, 1);
+  const Eip712Next* next = eip712_stream_next();
+  ASSERT_EQ(next->kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(next->domain_only);
+  EXPECT_STREQ(next->primary_type, "EIP712Domain");
+  // hashStruct(EIP712Domain{name:"App"}) from its spec definition.
+  uint8_t type_hash[32], name_hash[32], encoded[64], expected[32];
+  keccak_256((const uint8_t*)"EIP712Domain(string name)", 25, type_hash);
+  keccak_256((const uint8_t*)"App", 3, name_hash);
+  memcpy(encoded, type_hash, 32);
+  memcpy(encoded + 32, name_hash, 32);
+  keccak_256(encoded, sizeof(encoded), expected);
+  EXPECT_EQ(hexOf(next->domain_separator, 32), hexOf(expected, 32));
+  eip712_stream_abort();
+
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "EIP712Domain");
+  EXPECT_FALSE(eip712_stream_begin(&begin, true));
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+}
+
+TEST(Eip712Stream, EmptyMessageIsFlaggedForTheFinalScreen) {
+  std::map<std::string, Struct> types;
+  types["Nothing"];
+  const int used = walk(
+      "Nothing", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return {}; }, 2);
+  EXPECT_EQ(used, 0);
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(eip712_stream_next()->message_empty);
+  EXPECT_FALSE(eip712_stream_next()->domain_only);
+  eip712_stream_abort();
+}
+
+// Seaport's OrderComponents has 11 members and holds arrays of 5- and
+// 6-member structs, which the former 12-slot pool could never fit.
+TEST(Eip712Stream, SeaportShapedDocumentFitsThePool) {
+  std::map<std::string, Struct> types;
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  Field items = structField("ConsiderationItem");
+  items.array_levels_count = 1;
+  for (int i = 0; i < 10; i++) {
+    char name[8];
+    snprintf(name, sizeof(name), "f%d", i);
+    addMember(types["OrderComponents"], name, u256);
+  }
+  addMember(types["OrderComponents"], "consideration", items);
+  for (int i = 0; i < 6; i++) {
+    char name[8];
+    snprintf(name, sizeof(name), "g%d", i);
+    addMember(types["ConsiderationItem"], name, u256);
+  }
+  int used = walk(
+      "OrderComponents", types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        if (path.size() == 2 && path[1] == 10)
+          return Bytes{0x00, 0x03};  // three items
+        return word(path.back());
+      },
+      40);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(used, 10 + 3 * 6);
+  eip712_stream_abort();
 }

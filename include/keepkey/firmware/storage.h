@@ -42,8 +42,8 @@
  * recognise that version, version_from_int() returns StorageVersion_NONE,
  * storage_fromFlash() returns SUS_Invalid, and storage_init() calls
  * storage_reset() + storage_commit() -- the wallet is gone with no prompt. A
- * DOWNGRADE hitting that path is intended and normal: older firmware cannot be
- * expected to read a newer blob.
+ * DOWNGRADE to a newer normal-band blob now refuses without rewriting flash.
+ * Unknown older/burned layouts keep their explicit invalid-format handling.
  *
  * So STORAGE_VERSION may only ever go UP. Bump this baseline when a release
  * ships, in the release commit, never to make a build compile: lowering it is
@@ -100,6 +100,8 @@ void storage_wipe(void);
 ///
 /// Cleared only by storage_wipe().
 bool storage_isBitcoinOnlyLocked(void);
+/// Refuse normal-band storage written by newer firmware without overwriting it.
+bool storage_isFirmwareTooOld(void);
 
 /// \brief Clear storage key and storage key fingerprint.
 void storage_clearKeys(void);

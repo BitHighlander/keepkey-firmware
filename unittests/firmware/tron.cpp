@@ -1,10 +1,49 @@
 extern "C" {
+#include "keepkey/board/layout.h"
+#include "keepkey/board/memory.h"
+#include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tron.h"
+#include "trezor/crypto/base58.h"
+#include "storage.h"
 }
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
 #include <vector>
+
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+
+TEST(Tron, LongBinaryMemoRequiresApprovalOfEveryPage) {
+  std::vector<uint8_t> memo(114, 'W');
+  memo[40] = 0;
+  memo.back() = 'Z';
+
+  size_t offset = 0;
+  int pages = 0;
+  while (offset < memo.size()) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(
+        memo.data() + offset, memo.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    offset += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1);
+
+  ASSERT_TRUE(kkconfirm_preload(pages - 1, 1));
+  EXPECT_FALSE(confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                             "Memo", memo.data(), memo.size()));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  ASSERT_TRUE(kkconfirm_preload(pages, 0));
+  EXPECT_TRUE(confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
+                            memo.data(), memo.size()));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
 
 /* ------------------------------------------------------------------ */
 /*  Minimal protobuf wire-format writer for building raw_data vectors  */
@@ -38,8 +77,7 @@ void putBytesField(std::vector<uint8_t>& out, uint32_t field,
 
 void putStringField(std::vector<uint8_t>& out, uint32_t field,
                     const char* str) {
-  putBytesField(out, field,
-                std::vector<uint8_t>(str, str + strlen(str)));
+  putBytesField(out, field, std::vector<uint8_t>(str, str + strlen(str)));
 }
 
 /* A 10-byte varint whose final byte's payload has bits above bit 0 set.
@@ -89,7 +127,8 @@ std::vector<uint8_t> trc20Calldata(const std::vector<uint8_t>& to21,
   return d;
 }
 
-/* protocol.TriggerSmartContract { owner=1, contract=2, call_value=3, data=4 } */
+/* protocol.TriggerSmartContract { owner=1, contract=2, call_value=3, data=4 }
+ */
 std::vector<uint8_t> triggerContractValue(const std::vector<uint8_t>& owner,
                                           const std::vector<uint8_t>& contract,
                                           const std::vector<uint8_t>& data) {
@@ -117,12 +156,12 @@ std::vector<uint8_t> contractMsg(uint64_t type, const char* type_url,
 std::vector<uint8_t> rawTx(const std::vector<uint8_t>& contract,
                            const char* memo, uint64_t fee_limit) {
   std::vector<uint8_t> raw;
-  putBytesField(raw, 1, {0xab, 0xcd});                     /* ref_block_bytes */
-  putBytesField(raw, 4, std::vector<uint8_t>(8, 0x5a));    /* ref_block_hash */
-  putVarintField(raw, 8, 1750000000000ULL);                /* expiration */
+  putBytesField(raw, 1, {0xab, 0xcd});                  /* ref_block_bytes */
+  putBytesField(raw, 4, std::vector<uint8_t>(8, 0x5a)); /* ref_block_hash */
+  putVarintField(raw, 8, 1750000000000ULL);             /* expiration */
   if (memo) putStringField(raw, 10, memo);
   putBytesField(raw, 11, contract);
-  putVarintField(raw, 14, 1749999000000ULL);               /* timestamp */
+  putVarintField(raw, 14, 1749999000000ULL); /* timestamp */
   if (fee_limit) putVarintField(raw, 18, fee_limit);
   return raw;
 }
@@ -132,16 +171,85 @@ const char* TRIGGER_URL = "type.googleapis.com/protocol.TriggerSmartContract";
 
 }  // namespace
 
+TEST(Tron, RejectingFinalMemoPageCancelsSignHandler) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  // The native binary has no mapped flash unless a test supplies one.
+  struct ScopedFlash {
+    std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+    uint8_t* previous = emulator_flash_base;
+    ScopedFlash() {
+      emulator_flash_base = bytes.data();
+      storage_init();
+    }
+    ~ScopedFlash() {
+      storage_reset();
+      emulator_flash_base = previous;
+    }
+  } flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+
+  const uint32_t path[] = {0x80000000 | 44, 0x80000000 | 195, 0x80000000};
+  HDNode node = {};
+  ASSERT_TRUE(storage_getRootNode("secp256k1", true, &node));
+  for (uint32_t step : path) ASSERT_TRUE(hdnode_private_ckd(&node, step));
+  hdnode_fill_public_key(&node);
+  char address[TRON_ADDRESS_MAX_LEN];
+  ASSERT_TRUE(tron_getAddress(node.public_key, address, sizeof(address)));
+  std::vector<uint8_t> owner(TRON_RAW_ADDRESS_SIZE);
+  ASSERT_EQ(
+      TRON_RAW_ADDRESS_SIZE,
+      base58_decode_check(address, HASHER_SHA2D, owner.data(), owner.size()));
+
+  std::string memo(114, 'W');
+  memo.back() = 'Z';
+  auto raw = rawTx(contractMsg(1, TRANSFER_URL,
+                               transferContractValue(owner, tronAddr(0x22), 1)),
+                   memo.c_str(), 0);
+  TronSignTx tx = {};
+  tx.address_n_count = 3;
+  std::memcpy(tx.address_n, path, sizeof(path));
+  tx.has_raw_data = true;
+  ASSERT_LE(raw.size(), sizeof(tx.raw_data.bytes));
+  tx.raw_data.size = raw.size();
+  std::memcpy(tx.raw_data.bytes, raw.data(), raw.size());
+
+  TronParsedTx parsed;
+  ASSERT_EQ(TRON_TX_TRANSFER, tron_parseRawTx(raw.data(), raw.size(), &parsed));
+  ASSERT_EQ(memo.size(), parsed.memo_len);
+  size_t offset = 0;
+  int pages = 0;
+  while (offset < parsed.memo_len) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(
+        parsed.memo + offset, parsed.memo_len - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    offset += take;
+    pages++;
+  }
+  ASSERT_GT(pages, 1);
+
+  // Accept the transaction and prior memo pages; decline the signed tail.
+  ASSERT_TRUE(kkconfirm_preload(pages, 1));
+  fsm_test_clearLastFailure();
+  fsm_msgTronSignTx(&tx);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 TEST(Tron, ParseNativeTransfer) {
   auto owner = tronAddr(0x11);
   auto to = tronAddr(0x22);
-  auto raw = rawTx(contractMsg(1, TRANSFER_URL,
-                               transferContractValue(owner, to, 1000000)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(1, TRANSFER_URL, transferContractValue(owner, to, 1000000)),
+      nullptr, 0);
 
   TronParsedTx parsed;
-  EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed),
-            TRON_TX_TRANSFER);
+  EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed), TRON_TX_TRANSFER);
   EXPECT_EQ(memcmp(parsed.owner, owner.data(), 21), 0);
   EXPECT_EQ(memcmp(parsed.to, to.data(), 21), 0);
   EXPECT_EQ(parsed.amount, 1000000u);
@@ -150,15 +258,15 @@ TEST(Tron, ParseNativeTransfer) {
 }
 
 TEST(Tron, ParseNativeTransferWithSwapMemo) {
-  const char* memo = "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0/1/0:kk:75";
+  const char* memo =
+      "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0/1/0:kk:75";
   auto raw = rawTx(contractMsg(1, TRANSFER_URL,
                                transferContractValue(tronAddr(0x11),
                                                      tronAddr(0x22), 5000000)),
                    memo, 0);
 
   TronParsedTx parsed;
-  EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed),
-            TRON_TX_TRANSFER);
+  EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed), TRON_TX_TRANSFER);
   ASSERT_EQ(parsed.memo_len, strlen(memo));
   EXPECT_EQ(memcmp(parsed.memo, memo, parsed.memo_len), 0);
 }
@@ -184,8 +292,8 @@ TEST(Tron, ParseTrc20Transfer) {
     EXPECT_EQ(parsed.fee_limit, 100000000u);
 
     char amount[90];
-    ASSERT_TRUE(tron_formatTrc20Amount(parsed.trc20_amount, amount,
-                                       sizeof(amount)));
+    ASSERT_TRUE(
+        tron_formatTrc20Amount(parsed.trc20_amount, amount, sizeof(amount)));
     EXPECT_STREQ(amount, "123456789");
   }
 }
@@ -209,10 +317,10 @@ TEST(Tron, ParseTrc20TransferWithMemo) {
 TEST(Tron, RejectWrongSelector) {
   auto data = trc20Calldata(tronAddr(0x22), 42, false);
   data[0] = 0x09; /* approve(address,uint256) = 0x095ea7b3... not transfer */
-  auto raw = rawTx(contractMsg(31, TRIGGER_URL,
-                               triggerContractValue(tronAddr(0x11),
-                                                    tronAddr(0x33), data)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(31, TRIGGER_URL,
+                  triggerContractValue(tronAddr(0x11), tronAddr(0x33), data)),
+      nullptr, 0);
 
   TronParsedTx parsed;
   EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed),
@@ -222,10 +330,10 @@ TEST(Tron, RejectWrongSelector) {
 TEST(Tron, RejectDirtyAddressWord) {
   auto data = trc20Calldata(tronAddr(0x22), 42, false);
   data[4 + 3] = 0x01; /* junk in the high bytes of the address word */
-  auto raw = rawTx(contractMsg(31, TRIGGER_URL,
-                               triggerContractValue(tronAddr(0x11),
-                                                    tronAddr(0x33), data)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(31, TRIGGER_URL,
+                  triggerContractValue(tronAddr(0x11), tronAddr(0x33), data)),
+      nullptr, 0);
 
   TronParsedTx parsed;
   EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed),
@@ -235,10 +343,10 @@ TEST(Tron, RejectDirtyAddressWord) {
 TEST(Tron, RejectCalldataLengthMismatch) {
   auto data = trc20Calldata(tronAddr(0x22), 42, false);
   data.push_back(0x00); /* trailing byte — could smuggle params */
-  auto raw = rawTx(contractMsg(31, TRIGGER_URL,
-                               triggerContractValue(tronAddr(0x11),
-                                                    tronAddr(0x33), data)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(31, TRIGGER_URL,
+                  triggerContractValue(tronAddr(0x11), tronAddr(0x33), data)),
+      nullptr, 0);
 
   TronParsedTx parsed;
   EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed),
@@ -284,9 +392,9 @@ TEST(Tron, RejectTrc10Fields) {
 }
 
 TEST(Tron, RejectMultipleContracts) {
-  auto contract = contractMsg(
-      1, TRANSFER_URL,
-      transferContractValue(tronAddr(0x11), tronAddr(0x22), 1));
+  auto contract =
+      contractMsg(1, TRANSFER_URL,
+                  transferContractValue(tronAddr(0x11), tronAddr(0x22), 1));
   std::vector<uint8_t> raw;
   putBytesField(raw, 11, contract);
   putBytesField(raw, 11, contract);
@@ -297,10 +405,10 @@ TEST(Tron, RejectMultipleContracts) {
 }
 
 TEST(Tron, RejectUnknownTopLevelField) {
-  auto raw = rawTx(contractMsg(1, TRANSFER_URL,
-                               transferContractValue(tronAddr(0x11),
-                                                     tronAddr(0x22), 1)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(1, TRANSFER_URL,
+                  transferContractValue(tronAddr(0x11), tronAddr(0x22), 1)),
+      nullptr, 0);
   putBytesField(raw, 9, {0x01}); /* auths — permission delegation */
 
   TronParsedTx parsed;
@@ -367,10 +475,10 @@ TEST(Tron, RejectDuplicateAnyFields) {
 
 TEST(Tron, RejectTypeUrlEnumMismatch) {
   /* enum says TransferContract, Any says TriggerSmartContract */
-  auto raw = rawTx(contractMsg(1, TRIGGER_URL,
-                               transferContractValue(tronAddr(0x11),
-                                                     tronAddr(0x22), 1)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(1, TRIGGER_URL,
+                  transferContractValue(tronAddr(0x11), tronAddr(0x22), 1)),
+      nullptr, 0);
 
   TronParsedTx parsed;
   EXPECT_EQ(tron_parseRawTx(raw.data(), raw.size(), &parsed),
@@ -428,10 +536,10 @@ TEST(Tron, RejectOverlongAmountVarint) {
 
 TEST(Tron, RejectOverlongFeeLimitVarint) {
   /* Top-level fee_limit (field 18) encoded as an overlong varint. */
-  auto raw = rawTx(contractMsg(1, TRANSFER_URL,
-                               transferContractValue(tronAddr(0x11),
-                                                     tronAddr(0x22), 1)),
-                   nullptr, 0);
+  auto raw = rawTx(
+      contractMsg(1, TRANSFER_URL,
+                  transferContractValue(tronAddr(0x11), tronAddr(0x22), 1)),
+      nullptr, 0);
   putOverlongVarintField(raw, 18);
 
   TronParsedTx parsed;
@@ -453,8 +561,7 @@ TEST(Tron, RejectTruncated) {
                             transferContractValue(tronAddr(0x11),
                                                   tronAddr(0x22), 1000000)));
   TronParsedTx sanity;
-  ASSERT_EQ(tron_parseRawTx(raw.data(), raw.size(), &sanity),
-            TRON_TX_TRANSFER);
+  ASSERT_EQ(tron_parseRawTx(raw.data(), raw.size(), &sanity), TRON_TX_TRANSFER);
 
   for (size_t cut = 1; cut < raw.size(); cut++) {
     TronParsedTx parsed;

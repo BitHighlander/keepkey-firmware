@@ -265,7 +265,8 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
       /* BYTES covers an opaque fixed word — an order/request id, say — which
        * a router genuinely cannot render as an address or an amount. It still
        * consumes exactly one 32-byte ABI word, so structural completeness is
-       * unaffected; only the rendering differs (hex, first 16 bytes). */
+       * unaffected; only the rendering differs (hex, every byte on numbered
+       * pages). */
       case ARG_FORMAT_BYTES:
         arg->value_len = 0; /* filled from the tx calldata at decode time */
         break;
@@ -591,6 +592,7 @@ void signed_metadata_clear(void) {
   delegate_chain_id = 0;
   delegate_may_suppress = false;
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 }
 
 void signed_metadata_clear_signers(void) {
@@ -812,7 +814,7 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]) {
   uint8_t digest[32];
   sha256_Raw(pubkey, 33, digest);
-  data2hex(digest, 4, out);
+  data2hex(digest, (METADATA_FINGERPRINT_LEN - 1u) / 2u, out);
   memzero(digest, sizeof(digest));
 }
 
@@ -1044,6 +1046,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
    * signed_metadata_enforce() pass for a v2 blob that did not decode this tx.
    */
   metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 
   if (!metadata_available || !msg ||
       stored_metadata.classification != METADATA_VERIFIED ||
@@ -1168,7 +1171,7 @@ static bool signed_metadata_confirm_screens(void) {
     if (pk) {
       signed_metadata_pubkey_fingerprint(pk, fingerprint);
     } else {
-      strlcpy(fingerprint, "????????", sizeof(fingerprint));
+      strlcpy(fingerprint, "????????????????", sizeof(fingerprint));
     }
     if (!alias) alias = "unknown";
 
@@ -1258,19 +1261,13 @@ static bool signed_metadata_confirm_screens(void) {
         if (is_max && arg->value_len == 32) {
           snprintf(body, sizeof(body), "%s:\nUNLIMITED", arg->name);
         } else {
-          /* bn_format() BLANKS its output buffer and returns 0 when the value
-           * does not fit, so 48 bytes rendered a 256-bit amount as an EMPTY
-           * string: the clear-sign screen showed the argument name and no
-           * value, which is the one rendering a user cannot read as wrong.
-           * Size it beyond the 78-digit worst case and refuse to render a
-           * blank if it ever overflows anyway. */
           char formatted[96];
           if (bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
-                        sizeof(formatted)) == 0) {
-            strlcpy(formatted, "AMOUNT TOO LARGE TO DISPLAY",
-                    sizeof(formatted));
+                        sizeof(formatted)) == 0 ||
+              snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted) >=
+                  (int)sizeof(body)) {
+            return false;
           }
-          snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
         }
         break;
       }
@@ -1306,45 +1303,37 @@ static bool signed_metadata_confirm_screens(void) {
         } else {
           bignum256 amount;
           bn_from_metadata_bytes(amt, amt_len, &amount);
-          /* bn_format() BLANKS its output buffer and returns 0 when the value
-           * does not fit, so 48 bytes rendered a 256-bit amount as an EMPTY
-           * string: the clear-sign screen showed the argument name and no
-           * value, which is the one rendering a user cannot read as wrong.
-           * Size it beyond the 78-digit worst case and refuse to render a
-           * blank if it ever overflows anyway. */
           char formatted[96];
           if (bn_format(&amount, NULL, suffix, decimals, 0, false, formatted,
-                        sizeof(formatted)) == 0) {
-            strlcpy(formatted, "AMOUNT TOO LARGE TO DISPLAY",
-                    sizeof(formatted));
+                        sizeof(formatted)) == 0 ||
+              snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted) >=
+                  (int)sizeof(body)) {
+            return false;
           }
-          snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
         }
         break;
       }
       case ARG_FORMAT_BYTES:
       case ARG_FORMAT_RAW:
       default: {
-        /* The WHOLE value, never an ellipsis.
-         *
-         * This used to show the first 16 bytes and trail a "...". Under 7.15
-         * that was merely terse, because the raw-calldata review followed and
-         * the hidden half was visible there. Under a suppressing KeepKey
-         * delegate there is no such review, and the remaining bytes are
-         * displayed NOWHERE while still being covered by the signature.
-         *
-         * That is a redirection primitive, not a cosmetic limit: a bytes32
-         * recipient (a bridge mintRecipient, say) differing only in its low 16
-         * bytes produced a screen sequence byte-for-byte identical to the
-         * honest one. ADDRESS is already documented as "never truncated" for
-         * exactly this reason; a signed word is no different.
-         *
-         * confirm_helper paginates, so a long body costs screens, not
-         * information. */
-        char hex[(METADATA_MAX_ARG_VALUE_LEN * 2) + 1];
-        data2hex(arg->value, arg->value_len, hex);
-        snprintf(body, sizeof(body), "%s:\n%s", arg->name, hex);
-        break;
+        /* Every byte affects the signed call. A prefix-only screen would
+         * hide changes in the second half of an opaque ABI word. */
+        const size_t pages = (arg->value_len + 15) / 16;
+        for (size_t page = 0; page < (pages ? pages : 1); page++) {
+          size_t offset = page * 16;
+          size_t chunk_len = arg->value_len - offset;
+          if (chunk_len > 16) chunk_len = 16;
+          char hex[33];
+          data2hex(arg->value + offset, chunk_len, hex);
+          snprintf(body, sizeof(body), "%s (%u/%u):\n%s", arg->name,
+                   (unsigned)(page + 1), (unsigned)(pages ? pages : 1), hex);
+          if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                                 screen_icon, stored_metadata.method_name, "%s",
+                                 body)) {
+            return false;
+          }
+        }
+        continue;
       }
     }
 
@@ -1419,4 +1408,29 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
 
 const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
+}
+
+bool signed_metadata_verify_runtime_attestation_for_pubkey(
+    const uint8_t pubkey[33], const uint8_t* data, size_t data_len,
+    const uint8_t* sig, size_t sig_len,
+    char out_alias[METADATA_ALIAS_MAX_LEN + 1]) {
+  if (!pubkey || !data || data_len == 0 || !sig || sig_len != 64 ||
+      !out_alias || !storage_isPolicyEnabled("AdvancedMode")) {
+    return false;
+  }
+  for (uint8_t key_id = 0; key_id < METADATA_MAX_KEYS; key_id++) {
+    if (loaded_pubkeys[key_id][0] == 0x00 ||
+        memcmp(loaded_pubkeys[key_id], pubkey, 33) != 0) {
+      continue;
+    }
+    uint8_t digest[32];
+    sha256_Raw(data, data_len, digest);
+    const bool ok = ecdsa_verify_digest(&secp256k1, loaded_pubkeys[key_id], sig,
+                                        digest) == 0;
+    memzero(digest, sizeof(digest));
+    if (!ok) return false;
+    strlcpy(out_alias, loaded_aliases[key_id], METADATA_ALIAS_MAX_LEN + 1);
+    return true;
+  }
+  return false;
 }

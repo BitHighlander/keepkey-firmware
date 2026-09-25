@@ -128,15 +128,19 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
-bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
-      msg->data_initial_chunk.size == 68 &&
+static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
+  if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size >= 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\x09\x5e\xa7\xb3\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
              16) == 0) {
     return true;
   }
   return false;
+}
+
+bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
+  return msg->value.size == 0 && msg->data_initial_chunk.size == 68 &&
+         ethereum_isERC20ApproveCall(msg);
 }
 
 bool ethereum_getStandardERC20Recipient(const EthereumSignTx* msg,
@@ -391,6 +395,8 @@ static int rlp_calculate_number_length(uint32_t number) {
 }
 
 static void send_request_chunk(void) {
+  // The previous chunk was validated and accepted before requesting more.
+  note_workflow_progress();
   layoutProgress(_("Signing"), (data_total - data_left) * 1000 / data_total);
   msg_tx_request.has_data_length = true;
   msg_tx_request.data_length = data_left <= 1024 ? data_left : 1024;
@@ -867,6 +873,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (!msg->has_to) msg->to.size = 0;
   if (!msg->has_nonce) msg->nonce.size = 0;
 
+  // RLP treats an all-zero integer as zero regardless of its wire length.
+  // Canonicalize before contract and generic classifiers inspect this value.
+  if (msg->value.size > 0) {
+    bool all_zero = true;
+    for (size_t i = 0; i < msg->value.size; ++i) {
+      all_zero &= msg->value.bytes[i] == 0;
+    }
+    if (all_zero) msg->value.size = 0;
+  }
+
   /* eip-155 chain id
    *
    * An absent chain_id is not "some other chain", it is no chain. The bounds
@@ -892,7 +908,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
    * id >= 1; a host omitting the field is malformed, not legacy.
    */
   chain_id = msg->has_chain_id ? msg->chain_id : 0;
-  if (chain_id < 1) {
+  if (!ethereum_chainIdIsValid(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Chain Id out of bounds"));
     ethereum_signing_abort();
@@ -998,6 +1014,44 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  // Keep the selector and both ABI words available to the allowance policy.
+  // Otherwise a host could split an approval prefix across streamed chunks.
+  const size_t selector_bytes =
+      msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      msg->data_initial_chunk.size < 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3",
+             selector_bytes) == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Approval requires at least 68 initial bytes"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  // Match the selector alone. Pre-0.8 Solidity masks the spender word's high
+  // bytes, so a dirty spender word still grants the allowance on chain.
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+    if (!ethereum_isERC20ApproveCall(msg)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Malformed ERC20 approval"));
+      ethereum_signing_abort();
+      return;
+    }
+    // Native value cannot exempt a payable token from this allowance policy.
+    // Unlimited approval grants open-ended authority and is refused before
+    // any generic transaction confirmation can mask this policy decision.
+    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
+    bool unlimited = true;
+    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
+    if (unlimited) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Unlimited ERC20 approval is disabled"));
+      ethereum_signing_abort();
+      return;
+    }
+  }
+
   bool data_needs_confirm = true;
   if (ethereum_contractHandled(data_total, msg, node)) {
     if (!ethereum_contractConfirmed(data_total, msg, node)) {
@@ -1056,9 +1110,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
-  // (then it must survive to bind the signature). Prevents stale reuse when the
-  // contractHandled / ERC-20 paths bypass the metadata check above.
+  // Keep metadata only when its decoded screens were approved, so their
+  // attestation remains bound to the signature. Otherwise prevent stale reuse
+  // when contractHandled / ERC-20 paths bypassed metadata review.
   if (!signed_metadata_relied()) {
     signed_metadata_clear();
   }
@@ -1091,7 +1145,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     bool verified_contact = false;
     const uint8_t* transfer_to = NULL;
     uint32_t transfer_to_len = 0;
-    if (token == UnknownToken) {
+    if (token == UnknownToken && !signed_metadata_schema_moves_value()) {
       if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
                                             sizeof(confirm_body_message))) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1099,7 +1153,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         ethereum_signing_abort();
         return;
       }
-    } else if (token != NULL) {
+    } else if (token != NULL && !signed_metadata_schema_moves_value()) {
       transfer_to = msg->data_initial_chunk.bytes + 16;
       transfer_to_len = 20;
       if (!layoutEthereumConfirmTx(
@@ -1416,11 +1470,11 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 
 void ethereum_signing_abort(void) {
   contact_book_clear();
+  data_hash_pending = false;
+  memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     signed_metadata_clear();
-    data_hash_pending = false;
-    memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     layoutHome();
     ethereum_signing = false;
   }
@@ -1602,7 +1656,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
 void failMessage(int err);
 
-const char* failMsgReturn[LAST_ERROR - 2] = {
+const char* failMsgReturn[] = {
     "EIP-712 general error",  //  3
     "EIP-712 user defined type name too long",
     "EIP-712 too many user defined types",
@@ -1635,6 +1689,10 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 address string is NULL",
     "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
 };
+
+_Static_assert(sizeof(failMsgReturn) / sizeof(failMsgReturn[0]) ==
+                   LAST_ERROR - GENERAL_ERROR + 1,
+               "failMsgReturn must cover GENERAL_ERROR..LAST_ERROR exactly");
 
 void failMessage(int err) {
   if (USER_CANCELLED == err) {

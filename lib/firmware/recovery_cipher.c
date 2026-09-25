@@ -63,6 +63,7 @@ static bool definitely_using_cipher = false;
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
 static CONFIDENTIAL char last_completed_word[12];
+static CONFIDENTIAL char prev_info[32];
 /* Raw cipher bytes for the whole mnemonic entered so far, mirroring
  * `mnemonic` byte-for-byte (same appends, same truncations, always the same
  * length) but holding the literal characters the host sent instead of their
@@ -100,6 +101,7 @@ void recovery_cipher_reset(void) {
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
   memzero(last_completed_word, sizeof(last_completed_word));
+  memzero(prev_info, sizeof(prev_info));
   memzero(current_word_scratch, sizeof(current_word_scratch));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
@@ -442,7 +444,6 @@ void next_character(void) {
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
-  static CONFIDENTIAL char prev_info[32];
   prev_info[0] = '\0';
   if (word_pos > 0 && last_completed_word[0]) {
     snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
@@ -583,6 +584,7 @@ void recovery_character(const char* character) {
   strlcat(coded_mnemonic, character, MNEMONIC_BUF);
 
   next_character();
+  if (setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -650,6 +652,7 @@ void recovery_delete_character(void) {
   get_current_coded_word(coded_word);
 
   next_character();
+  if (len > 0 && setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -731,15 +734,9 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  /* Cipher recovery decodes to BIP-39 words, so every word must
-   * auto-complete regardless of enforce_wordlist. Failing only when
-   * enforce_wordlist was set left the default (host-omitted) path storing a
-   * mistyped/garbage phrase as the seed and reporting success.
-   *
-   * alpha's storage_reset() on this path is deliberately NOT restored: #429
-   * removed the cancelled-recovery path that armed a host-only storage_reset()
-   * with no button press, and setup_abort() below is its replacement. */
-  if (!auto_completed) {
+  /* An enforced recovery must decode to BIP-39 words. Import mode deliberately
+   * accepts non-word phrases; the count/nonempty guard above still applies. */
+  if (enforce_wordlist && !auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");

@@ -38,6 +38,37 @@ TEST(Storage, ReadMeta) {
   }
 }
 
+TEST(Storage, LegacyLanguageIsBoundedAndTerminated) {
+  char record[512] = {};
+  record[0] = 1;
+  record[403] = 1;
+  memset(record + 404, 'x', 17);
+  Storage storage = {};
+  SessionState session = {};
+  storage_readStorageV1(&session, &storage, record, sizeof(record));
+  EXPECT_TRUE(storage.pub.has_language);
+  EXPECT_EQ(15u, strlen(storage.pub.language));
+  EXPECT_EQ('\0', storage.pub.language[15]);
+  for (size_t i = 0; i < 15; ++i) EXPECT_EQ('x', storage.pub.language[i]);
+  EXPECT_FALSE(storage.pub.has_label);
+}
+
+TEST(Storage, TruncatedLegacyCacheDoesNotMutateDestination) {
+  char record[559] = {};
+  record[0] = 2;
+  Storage storage;
+  SessionState session;
+  memset(&storage, 0xa5, sizeof(storage));
+  memset(&session, 0xa5, sizeof(session));
+  const Storage original = storage;
+  const SessionState original_session = session;
+  for (size_t len = 481; len < sizeof(record); ++len) {
+    storage_readStorageV1(&session, &storage, record, len);
+    EXPECT_EQ(0, memcmp(&storage, &original, sizeof(storage))) << len;
+    EXPECT_EQ(0, memcmp(&session, &original_session, sizeof(session))) << len;
+  }
+}
+
 TEST(Storage, WriteMeta) {
   Metadata src;
   memcpy(&src.magic[0], "M1M", sizeof(src.magic));
@@ -685,13 +716,8 @@ TEST(Storage, StorageUpgrade_Normal) {
   EXPECT_EQ(memcmp(shadow.meta.magic, "stor", 4), 0);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[0].policy_name),
             "ShapeShift");
-  // Was `true` here, read straight out of the legacy flash record. Policy state
-  // is no longer trusted from flash at any version (see
-  // LegacyPolicyRecordCannotNameAdvancedMode), so this is now the compiled
-  // default. Nothing regresses: every V11+ reader already forced ShapeShift to
-  // false, so the migrated `true` never survived the first commit -- it was
-  // transient and inconsistent with what the very next boot would see.
-  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, false);
+  // The known legacy preference survives; arbitrary names cannot enable trust.
+  EXPECT_EQ(shadow.storage.pub.policies[0].enabled, true);
   EXPECT_EQ(std::string(shadow.storage.pub.policies[1].policy_name),
             "Pin Caching");
   EXPECT_EQ(shadow.storage.pub.policies[1].enabled, true);
@@ -1820,4 +1846,20 @@ TEST(Storage, FutureBitcoinBandValuesNeverFallThroughToWipe) {
     EXPECT_EQ(SUS_BitcoinOnlyLocked,
               storage_fromFlash(&session, &shadow, flash));
   }
+}
+
+TEST(Storage, LockDisarmsAdvancedModeButInitializeRetainsIt) {
+  Storage storage = {};
+  storage_resetPolicies(&storage);
+  ASSERT_TRUE(
+      storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  SessionState session = {};
+
+  session_clear_impl(&session, &storage, false);
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
+
+  session_clear_impl(&session, &storage, true);
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
 }

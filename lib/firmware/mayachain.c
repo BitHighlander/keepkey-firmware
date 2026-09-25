@@ -159,6 +159,7 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
      is the host's own declared count, and the countdown below underflows if a
      message arrives after it is spent. */
   if (!initialized || msgs_remaining == 0) return false;
+
   const char mainnetp[] = "maya";
   const char testnetp[] = "smaya";
   const char* pfix;
@@ -250,6 +251,14 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
 
 bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
   if (!initialized || msgs_remaining == 0) return false;
+
+  const char* const signer_prefix = testnet ? "smaya" : "maya";
+  if (!depmsg || !depmsg->has_asset || !mayachain_isValidAsset(depmsg->asset) ||
+      !depmsg->has_signer ||
+      !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
+    return false;
+  }
+
   char buffer[64 + 1];
 
   // Defended here too (not just by the FSM caller) so this signing path is
@@ -460,8 +469,9 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   // Split on ':', keeping empty fields
   nfields = 0;
   fields[nfields++] = memoBuf;
-  for (i = 0; memoBuf[i] != '\0' && nfields < 8; i++) {
+  for (i = 0; memoBuf[i] != '\0'; i++) {
     if (memoBuf[i] == ':') {
+      if (nfields == 8) return MAYACHAIN_MEMO_UNPARSED;
       memoBuf[i] = '\0';
       fields[nfields++] = &memoBuf[i + 1];
     }

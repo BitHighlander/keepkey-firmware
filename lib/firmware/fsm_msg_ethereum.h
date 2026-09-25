@@ -187,6 +187,7 @@ static void send_erc7730_definition_request(void) {
                      ? remaining
                      : ERC7730_TRANSPORT_CHUNK_MAX;
   memzero(definition_id, sizeof(definition_id));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EthereumClearSignDefinitionRequest, resp);
 }
 
@@ -205,6 +206,7 @@ static void send_erc7730_calldata_request(void) {
   resp->data_length = remaining < ERC7730_TRANSPORT_CHUNK_MAX
                           ? remaining
                           : ERC7730_TRANSPORT_CHUNK_MAX;
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EthereumTxRequest, resp);
 }
 
@@ -272,6 +274,115 @@ static void continue_erc7730_native_alias(Erc7730Workflow* workflow,
     return;
   }
   send_erc7730_definition_request();
+}
+
+typedef enum {
+  ERC7730_UI_OK,
+  ERC7730_UI_INVALID,
+  ERC7730_UI_CANCELLED,
+} Erc7730UiResult;
+
+/* The end of the longest part of `value` starting at `offset` that fits
+ * `budget` characters without cutting an erc7730_format_text() escape. */
+static size_t erc7730_part_end(const char* value, size_t offset,
+                               size_t budget) {
+  size_t end = offset;
+  while (value[end]) {
+    const size_t step =
+        value[end] != '\\' ? 1u : (value[end + 1] == 'x' ? 4u : 2u);
+    if (end + step - offset > budget) break;
+    end += step;
+  }
+  return end;
+}
+
+/* Show escaped `text` under a device-owned title, led by `label` when one is
+ * given. confirm() refuses a body longer than BODY_CHAR_MAX, so text that does
+ * not fit is split across numbered screens; each repeats the label and each
+ * must be confirmed. */
+static bool confirm_erc7730_text(const char* title, const char* label,
+                                 const char* text) {
+  const size_t label_length = label ? strlen(label) + 2u : 0u; /* ":\n" */
+  const size_t text_length = strlen(text);
+  if ((label && label_length == 2u) || label_length + 1u + 4u >= BODY_CHAR_MAX)
+    return false;
+  const size_t budget = BODY_CHAR_MAX - 1u - label_length;
+  if (text_length <= budget)
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                   "%s%s%s", label ? label : "", label ? ":\n" : "", text);
+  size_t parts = 0;
+  for (size_t offset = 0; offset < text_length;
+       offset = erc7730_part_end(text, offset, budget))
+    parts++;
+  if (parts > 999) return false;
+  char numbered[TITLE_CHAR_MAX];
+  size_t offset = 0;
+  for (size_t i = 0; i < parts; i++) {
+    const size_t end = erc7730_part_end(text, offset, budget);
+    snprintf(numbered, sizeof(numbered), "%s (%u/%u)", title,
+             (unsigned)(i + 1u), (unsigned)parts);
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, numbered,
+                 "%s%s%.*s", label ? label : "", label ? ":\n" : "",
+                 (int)(end - offset), text + offset))
+      return false;
+    offset = end;
+  }
+  return true;
+}
+
+/* Signer-authored program strings reach the screen escaped, exactly like
+ * captured values: the OLED font draws every non-ASCII byte as one glyph and
+ * the pager drops edge spaces, so raw text is not shown one-to-one. */
+static bool confirm_erc7730_escaped(const char* title, const char* label,
+                                    const char* raw) {
+  char text[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  const bool shown = erc7730_format_text((const uint8_t*)raw, strlen(raw), text,
+                                         sizeof(text)) &&
+                     confirm_erc7730_text(title, label, text);
+  memzero(text, sizeof(text));
+  return shown;
+}
+
+static Erc7730UiResult confirm_erc7730_source_and_intent(
+    Erc7730Workflow* workflow) {
+  if (!workflow || workflow->intent[0] == '\0' ||
+      workflow->identity.delegate_alias[0] == '\0' ||
+      workflow->identity.delegate_fingerprint[0] == '\0')
+    return ERC7730_UI_INVALID;
+  if (!workflow->identity_confirmed) {
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 workflow->identity.runtime_signer ? "Runtime signer"
+                                                   : "Certified signer",
+                 "%s (%s)", workflow->identity.delegate_alias,
+                 workflow->identity.delegate_fingerprint) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 workflow->identity.runtime_signer ? "Unverified data"
+                                                   : "Certified data",
+                 "%s",
+                 workflow->identity.runtime_signer
+                     ? "NOT verified by KeepKey"
+                     : "Verified signing definition"))
+      return ERC7730_UI_CANCELLED;
+    workflow->identity_confirmed = true;
+  }
+  if (!workflow->intent_confirmed) {
+    if (!confirm_erc7730_escaped("Contract action", NULL, workflow->intent))
+      return ERC7730_UI_CANCELLED;
+    workflow->intent_confirmed = true;
+  }
+  return ERC7730_UI_OK;
+}
+
+/* The per-field title is device-owned: a signer-chosen label in the title
+ * line could imitate a firmware screen such as "Ethereum Data Hash", so the
+ * escaped label leads the body instead. `value` is already escaped. */
+static bool confirm_erc7730_field(const char* label, const char* value) {
+  char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  const bool shown = erc7730_format_text((const uint8_t*)label, strlen(label),
+                                         escaped, sizeof(escaped)) &&
+                     confirm_erc7730_text("Signer field", escaped, value);
+  memzero(escaped, sizeof(escaped));
+  return shown;
 }
 
 static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
@@ -494,25 +605,17 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     send_erc7730_definition_request();
     return;
   }
-  if (workflow->intent[0] == '\0') {
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
     if (typed_data) eip712_stream_abort();
     erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 intent"));
+    fsm_sendFailure(
+        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                 : FailureType_Failure_ActionCancelled,
+        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                 : _("Signing cancelled by user"));
     layoutHome();
     return;
-  }
-  if (!workflow->intent_confirmed) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Contract action", "%s", workflow->intent)) {
-      if (typed_data) eip712_stream_abort();
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Signing cancelled by user"));
-      layoutHome();
-      return;
-    }
-    workflow->intent_confirmed = true;
   }
   const bool had_field = workflow->label[0] != '\0';
   if (had_field && workflow->current_formatter_kind == 8 &&
@@ -542,8 +645,7 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
       layoutHome();
       return;
     }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, workflow->label,
-                 "%s", formatted)) {
+    if (!confirm_erc7730_field(workflow->label, formatted)) {
       memzero(formatted, sizeof(formatted));
       if (typed_data) eip712_stream_abort();
       erc7730_workflow_abort(workflow);
@@ -564,6 +666,7 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     send_erc7730_definition_request();
     return;
   }
+
   continue_ethereum_sign_tx(tx);
 }
 
@@ -801,6 +904,17 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       layoutHome();
       return;
     }
+    /* Certified calldata starts with a selector only. The ordinary allowance
+     * guard requires the complete 68-byte approval prefix before review, so
+     * this bounded certified path cannot safely annotate approve calls. */
+    if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+      memzero(&definition, sizeof(definition));
+      erc7730_catalog_clear_preload();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("ERC-7730 approval not supported"));
+      layoutHome();
+      return;
+    }
     if (!erc7730_workflow_begin(erc7730_workflow_state(), &definition, msg)) {
       memzero(&definition, sizeof(definition));
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -865,16 +979,7 @@ void fsm_msgEthereumClearSignDefinition(
   CHECK_INITIALIZED
   CHECK_PIN
 
-  if (ethereum_signing_isInProgress() ||
-      eip712_stream_waiting() != EIP712_IDLE) {
-    ethereum_signing_abort();
-    eip712_stream_abort();
-    erc7730_catalog_clear_preload();
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Definition not allowed during signing"));
-    layoutHome();
-    return;
-  }
+  /* Dispatch has already ended any signing session before this runs. */
   if (msg->definition_id.size != 32 || msg->data.size == 0 ||
       msg->data.size > ERC7730_TRANSPORT_CHUNK_MAX) {
     erc7730_catalog_clear_preload();
@@ -903,6 +1008,36 @@ void fsm_msgEthereumClearSignDefinition(
   resp->next_offset = next_offset;
   resp->complete = complete;
   msg_write(MessageType_MessageType_EthereumClearSignDefinitionAck, resp);
+}
+
+static bool continue_erc7730_domain_checks(Erc7730Workflow* workflow) {
+  while (workflow->domain_field < 5) {
+    const uint8_t field = ++workflow->domain_field;
+    const uint8_t operation = workflow->loader.domain.operations[field - 1];
+    if (operation == 0) continue;
+    if (operation == 2) {
+      if (!eip712_stream_domain_matches(field, 0, NULL, 0, true)) return false;
+      continue;
+    }
+    if (operation != 1 ||
+        !erc7730_workflow_select_literal(
+            workflow, workflow->loader.domain.literals[field - 1]))
+      return false;
+    send_erc7730_definition_request();
+    return true;
+  }
+  workflow->display_stage = ERC7730_DISPLAY_NONE;
+  if (!erc7730_workflow_select_display(workflow, 0)) return false;
+  send_erc7730_definition_request();
+  return true;
+}
+
+static void fail_erc7730_domain(void) {
+  erc7730_workflow_abort(erc7730_workflow_state());
+  eip712_stream_abort();
+  fsm_sendFailure(FailureType_Failure_SyntaxError,
+                  _("ERC-7730 domain constraint does not match"));
+  layoutHome();
 }
 
 void fsm_msgEthereumClearSignDefinitionChunk(
@@ -943,6 +1078,10 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     return;
   }
   if (selection_kind == ERC7730_SELECTION_NONE) {
+    if (workflow->typed_data) {
+      if (!continue_erc7730_domain_checks(workflow)) fail_erc7730_domain();
+      return;
+    }
     if (!erc7730_workflow_select_display(workflow, workflow->display_index)) {
       erc7730_workflow_abort(workflow);
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -951,6 +1090,42 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     send_erc7730_definition_request();
+    return;
+  }
+  if (selection_kind == ERC7730_SELECTION_LITERAL) {
+    Erc7730Literal literal;
+    if (!erc7730_program_literal_complete(&workflow->selection.literal,
+                                          &literal)) {
+      fail_erc7730_domain();
+      return;
+    }
+    if (workflow->domain_field <= 2 && literal.kind == 4 &&
+        literal.length == 2) {
+      const uint16_t string_index =
+          (uint16_t)((literal.value[0] << 8) | literal.value[1]);
+      if (!erc7730_workflow_select_string(workflow, string_index)) {
+        fail_erc7730_domain();
+        return;
+      }
+      workflow->display_stage = ERC7730_DISPLAY_DOMAIN_STRING;
+      send_erc7730_definition_request();
+      return;
+    }
+    if (!eip712_stream_domain_matches(workflow->domain_field, literal.kind,
+                                      literal.value, literal.length, false) ||
+        !continue_erc7730_domain_checks(workflow))
+      fail_erc7730_domain();
+    return;
+  }
+  if (selection_kind == ERC7730_SELECTION_STRING &&
+      workflow->display_stage == ERC7730_DISPLAY_DOMAIN_STRING) {
+    const char* value;
+    size_t length;
+    if (!erc7730_workflow_selected_string(workflow, &value, &length) ||
+        !eip712_stream_domain_matches(workflow->domain_field, 4,
+                                      (const uint8_t*)value, length, false) ||
+        !continue_erc7730_domain_checks(workflow))
+      fail_erc7730_domain();
     return;
   }
   if (selection_kind == ERC7730_SELECTION_DISPLAY) {
@@ -1194,7 +1369,27 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         return;
       }
       if (workflow->typed_data) {
+        const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+        if (ui != ERC7730_UI_OK) {
+          erc7730_workflow_abort(workflow);
+          eip712_stream_abort();
+          fsm_sendFailure(
+              ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                       : FailureType_Failure_ActionCancelled,
+              ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                       : _("Signing cancelled by user"));
+          layoutHome();
+          return;
+        }
         erc7730_workflow_abort(workflow);
+        if (eip712_stream_next()->kind != EIP712_REQ_DONE &&
+            !eip712_stream_definition_accepted()) {
+          eip712_stream_abort();
+          fsm_sendFailure(FailureType_Failure_SyntaxError,
+                          _("Unable to resume certified EIP-712"));
+          layoutHome();
+          return;
+        }
         eip712_pump();
       } else {
         start_erc7730_calldata(workflow, NULL);
@@ -2726,7 +2921,7 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   /* Merge note (#432 vs this branch): release/7.14.2 gated Ethereum message
    * signing behind AdvancedMode, which blocks every Sign-In-With-Ethereum flow
    * on a default device until the user explicitly enables blind signing.
-   * AdvancedMode persists across power cycles until explicitly disabled.
+   * AdvancedMode is session-scoped and is cleared on lock.
    * confirm_bytes() paginates and displays EVERY signed byte, which is what
    * that gate was standing in for. Full disclosure is both the stronger
    * security property and the one that does not break default-configuration
@@ -2949,6 +3144,7 @@ static void eip712_pump(void) {
         memzero(&identity, sizeof(identity));
         eip712_stream_abort();
         erc7730_workflow_abort(erc7730_workflow_state());
+        erc7730_catalog_clear_preload();
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("ERC-7730 definition does not match typed data"));
         layout_home();
@@ -2962,6 +3158,7 @@ static void eip712_pump(void) {
     case EIP712_REQ_STRUCT: {
       RESP_INIT(EthereumTypedDataStructRequest);
       strlcpy(resp->name, next->struct_name, sizeof(resp->name));
+      note_workflow_progress();
       msg_write(MessageType_MessageType_EthereumTypedDataStructRequest, resp);
       return;
     }
@@ -2970,14 +3167,18 @@ static void eip712_pump(void) {
       resp->member_path_count = next->member_path_len;
       memcpy(resp->member_path, next->member_path,
              next->member_path_len * sizeof(uint32_t));
+      note_workflow_progress();
       msg_write(MessageType_MessageType_EthereumTypedDataValueRequest, resp);
       return;
     }
     case EIP712_REQ_DONE: {
       Erc7730Workflow* workflow = erc7730_workflow_state();
       if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA) {
-        if (!erc7730_workflow_eip712_finish(workflow)) {
+        if (!erc7730_workflow_eip712_finish(workflow) ||
+            !erc7730_workflow_eip712_commit(workflow, next->domain_separator,
+                                            next->message_hash)) {
           erc7730_workflow_abort(workflow);
+          eip712_stream_abort();
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           _("Certified EIP-712 value was not found"));
           layout_home();
@@ -2989,66 +3190,96 @@ static void eip712_pump(void) {
           confirm_erc7730_replayed_field();
         return;
       }
-      /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))) */
+      /* The walk has finished; keep only its result. */
+      const Eip712Next done = *next;
+      eip712_stream_abort();
+      /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))),
+       * or keccak(0x19 || 0x01 || domainSeparator) for a domain-only type. */
       uint8_t preimage[66];
       preimage[0] = 0x19;
       preimage[1] = 0x01;
-      memcpy(preimage + 2, next->domain_separator, 32);
-      memcpy(preimage + 34, next->message_hash, 32);
+      memcpy(preimage + 2, done.domain_separator, 32);
+      memcpy(preimage + 34, done.message_hash, 32);
       uint8_t sighash[32];
-      keccak_256(preimage, sizeof(preimage), sighash);
+      keccak_256(preimage, done.domain_only ? 34 : sizeof(preimage), sighash);
 
       /* Not const: node is the shared fsm_derived_node scratch and holds a
        * private key, so every exit below scrubs it (same rule as
-       * process_ethereum_xfer(); 7.15 audit F059). */
-      HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, next->address_n,
-                                        next->address_n_count, NULL);
+       * process_ethereum_xfer(); 7.15 audit F059). Neither the node nor the
+       * msg_resp arena is held across the confirmation below: a DebugLink
+       * request answered during it reuses the arena, and dispatch clears the
+       * derived node. The address is kept in a local and the key is derived
+       * again only after approval. */
+      HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, done.address_n,
+                                        done.address_n_count, NULL);
       if (!node) return;
-
-      RESP_INIT(EthereumTypedDataSignature);
       uint8_t pubkeyhash[20];
-      if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-        memzero(node, sizeof(*node));
+      const bool derived = hdnode_get_ethereum_pubkeyhash(node, pubkeyhash);
+      memzero(node, sizeof(*node));
+      if (!derived) {
         fsm_sendFailure(FailureType_Failure_Other,
                         _("Ethereum address derivation failed"));
         layout_home();
         return;
       }
-      resp->address[0] = '0';
-      resp->address[1] = 'x';
-      ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+      char address[2 + 40 + 1];
+      address[0] = '0';
+      address[1] = 'x';
+      ethereum_address_checksum(pubkeyhash, address + 2, false, 0);
 
+      /* The one screen that names the action being authorised and the
+       * account authorising it; every leaf before it was part of the review. */
+      if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
+                   "Sign %s%s%s\nfrom %s?",
+                   done.message_empty && !done.domain_only ? "EMPTY " : "",
+                   done.primary_type, done.domain_only ? " (domain only)" : "",
+                   address)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        _("Signing cancelled by user"));
+        layout_home();
+        return;
+      }
+
+      node = fsm_getDerivedNode(SECP256K1_NAME, done.address_n,
+                                done.address_n_count, NULL);
+      if (!node) return;
       uint8_t sig[64];
       uint8_t v = 0;
-      if (ecdsa_sign_digest(&secp256k1, node->private_key, sighash, sig, &v,
-                            NULL) != 0) {
-        memzero(node, sizeof(*node));
+      const int signed_rc = ecdsa_sign_digest(&secp256k1, node->private_key,
+                                              sighash, sig, &v, NULL);
+      memzero(node, sizeof(*node));
+      if (signed_rc != 0) {
         fsm_sendFailure(FailureType_Failure_Other, _("Signing failed"));
         layout_home();
         return;
       }
-      memzero(node, sizeof(*node));
+      RESP_INIT(EthereumTypedDataSignature);
+      memcpy(resp->address, address, sizeof(address));
       resp->signature.size = 65;
       memcpy(resp->signature.bytes, sig, 64);
       resp->signature.bytes[64] = 27 + v;
       resp->has_domain_separator_hash = true;
       resp->domain_separator_hash.size = 32;
-      memcpy(resp->domain_separator_hash.bytes, next->domain_separator, 32);
-      resp->has_msg_hash = true;
-      resp->has_message_hash = true;
-      resp->message_hash.size = 32;
-      memcpy(resp->message_hash.bytes, next->message_hash, 32);
+      memcpy(resp->domain_separator_hash.bytes, done.domain_separator, 32);
+      resp->has_msg_hash = !done.domain_only;
+      resp->has_message_hash = !done.domain_only;
+      resp->message_hash.size = done.domain_only ? 0 : 32;
+      memcpy(resp->message_hash.bytes, done.message_hash, 32);
       msg_write(MessageType_MessageType_EthereumTypedDataSignature, resp);
       eip712_stream_abort();
       layout_home();
       return;
     }
     case EIP712_REQ_CANCELLED:
+      erc7730_workflow_abort(erc7730_workflow_state());
+      erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("EIP-712 cancelled"));
       layout_home();
       return;
     case EIP712_REQ_FAIL:
+      erc7730_workflow_abort(erc7730_workflow_state());
+      erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       next->error ? next->error : "EIP-712 error");
       layout_home();

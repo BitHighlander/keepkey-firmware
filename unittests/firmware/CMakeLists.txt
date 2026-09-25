@@ -7,22 +7,28 @@
 set(sources
     ctap2.cpp
     ctap2_cbor.cpp
+    app_confirm.cpp
+    nanopb_bounds.cpp
+    authenticator.cpp
     confirm_test_utils.cpp
     dice.cpp
     fsm.cpp
-    nanopb_bounds.cpp
     recovery.cpp
     seed_display.cpp
     test_board.cpp
+    recovery_review_probe.c
+    review_handlers.cpp
     rng_health.cpp
-    signing.cpp
     setup_ceremony.cpp
+    reset_policy_probe.c
+    signing.cpp
     storage.cpp
     storage_cipher_probe.c
     storage_passphrase.cpp
-    test_board.cpp
     transaction.cpp
     usb_rx.cpp
+    usb_callbacks.cpp
+    messages_probe.c
     u2f.cpp)
 
 # Coin/token unit tests exercise handlers/helpers that are compiled out of the
@@ -31,7 +37,6 @@ set(sources
 # coin+token table.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      authenticator.cpp
       coins.cpp
       cosmos.cpp
       eip712.cpp
@@ -42,6 +47,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum.cpp
       eip712_stream.cpp
       hive.cpp
+      review_integer.cpp
+      liquidity_key_probe.c
       mayachain.cpp
       nano.cpp
       osmosis.cpp
@@ -92,3 +99,13 @@ target_link_libraries(firmware-unit
     kkrand
     kkemulator
     kktransport)
+
+# Compile and exercise the dormant Zcash address display without enabling
+# Zcash signing handlers in the foundation firmware.
+if(NOT KK_BITCOIN_ONLY)
+  add_executable(zcash-display-unit
+      zcash_display.cpp zcash_display_confirm_probe.c zcash_display_layout_probe.c
+      confirm_test_utils.cpp test_board.cpp)
+  get_target_property(FIRMWARE_TEST_LIBS firmware-unit LINK_LIBRARIES)
+  target_link_libraries(zcash-display-unit ${FIRMWARE_TEST_LIBS})
+endif()

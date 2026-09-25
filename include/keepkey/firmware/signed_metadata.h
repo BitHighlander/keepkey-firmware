@@ -19,8 +19,10 @@ typedef struct _EthereumSignTx EthereumSignTx;
 /* Session identity icon cap (1bpp mono RLE). Must equal the device-protocol
  * LoadClearsignSigner.icon max_size. Identities are never persisted. */
 #define METADATA_ICON_MAX 384
-/* hex(first 4 bytes of sha256(pubkey)) + NUL */
-#define METADATA_FINGERPRINT_LEN 9
+/* hex(first 8 bytes of sha256(pubkey)) + NUL. 64 bits: a 32-bit prefix
+ * collision can be ground in hours, which would let a different key pass for
+ * the one the user approved. */
+#define METADATA_FINGERPRINT_LEN 17
 
 typedef enum {
   METADATA_OPAQUE = 0,
@@ -107,10 +109,10 @@ bool signed_metadata_delegate_fingerprint(char out[METADATA_FINGERPRINT_LEN]);
  * the fallback, not the product.
  */
 typedef enum {
-  ARG_FORMAT_RAW = 0,     /* hex dump (first 16 bytes) */
+  ARG_FORMAT_RAW = 0,     /* hex dump (all bytes, paginated) */
   ARG_FORMAT_ADDRESS = 1, /* 20 bytes -> full EIP-55 address, never truncated */
   ARG_FORMAT_AMOUNT = 2,  /* big-endian uint256 -> raw integer, "wei" */
-  ARG_FORMAT_BYTES = 3,   /* hex dump (first 16 bytes) */
+  ARG_FORMAT_BYTES = 3,   /* hex dump (all bytes, paginated) */
   /* Attested printable label, e.g. protocol: "Uniswap V2". Same character
    * rules as the signer alias minus length (printable subset, no '%'). */
   ARG_FORMAT_STRING = 4,
@@ -216,7 +218,13 @@ bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
 /* Drop all runtime-loaded signers (and any metadata they verified). */
 void signed_metadata_clear_signers(void);
 
-/* out = hex of the first 4 bytes of sha256(pubkey[33]), NUL-terminated.
+/* Runtime-key verification always requires AdvancedMode and a loaded key. */
+bool signed_metadata_verify_runtime_attestation_for_pubkey(
+    const uint8_t pubkey[33], const uint8_t* data, size_t data_len,
+    const uint8_t* sig, size_t sig_len,
+    char out_alias[METADATA_ALIAS_MAX_LEN + 1]);
+
+/* out = hex of the first 8 bytes of sha256(pubkey[33]), NUL-terminated.
  * Shown at load-confirm and on the per-tx warning screen so the user can
  * correlate the two. */
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],

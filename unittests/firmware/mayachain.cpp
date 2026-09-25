@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/ecdsa.h"
@@ -57,6 +58,40 @@ TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
       mayachain_formatAmount(1, "ETH.ETH\n", rendered, sizeof(rendered)));
   EXPECT_FALSE(
       mayachain_formatAmount(1, "ETH.\\ETH", rendered, sizeof(rendered)));
+}
+
+TEST(Mayachain, RejectingAssetScreenAbortsSendHandler) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  hdnode_fill_public_key(&node);
+
+  MayachainSignTx sign_tx = {};
+  sign_tx.has_msg_count = true;
+  sign_tx.msg_count = 1;
+  sign_tx.has_chain_id = true;
+  std::strcpy(sign_tx.chain_id, "mayachain-mainnet-v1");
+  ASSERT_TRUE(mayachain_signTxInit(&node, &sign_tx));
+
+  MayachainMsgAck ack = {};
+  ack.has_send = true;
+  ack.send.has_to_address = true;
+  std::strcpy(ack.send.to_address,
+              "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  ack.send.has_amount = true;
+  ack.send.amount = 1;
+  ack.send.has_denom = true;
+  std::memset(ack.send.denom, 'a', 68);
+  ack.send.denom[68] = '\0';
+
+  // The amount/recipient screen is accepted; the independent Asset screen is
+  // refused. The handler must abort before serializing this send.
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  fsm_test_clearLastFailure();
+  fsm_msgMayachainMsgAck(&ack);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(mayachain_signingIsInited());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Mayachain, MemoWithMisdeclaredLengthIsRefused) {
@@ -571,4 +606,71 @@ TEST(Mayachain, MayachainSignTxTwoMessages) {
                        "\x4c\xd8\x6f\x72\xb3\xf6\x87\xd1\xec\xa8\x61\xa5\x2e"
                        "\xbf\x9e\xcb\x8a\xc1\x27\x43\x8b\x8e\xbb\x50\x8f",
              64) == 0);
+}
+
+TEST(Mayachain, MemoFieldCapacityFallsBackBeforeAnyApproval) {
+  for (const char* verb : {"SWAP", "ADD"}) {
+    const std::string memo = std::string(verb) + ":ETH.ETH:a:1:b:2:c:3:HIDDEN";
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+              mayachain_parseConfirmMemo(memo.c_str(), memo.size()));
+    EXPECT_EQ(2, kkconfirm_drain());  // rejection pair untouched
+  }
+}
+
+TEST(Mayachain, AssetGrammarRejectsSafeTextOutsideContract) {
+  for (const char* value : {"MAYA.CACAO", "ETH.USDT-0x123", "BTC/BTC"})
+    EXPECT_TRUE(mayachain_isValidAsset(value));
+  for (const char* value : {"MAYA:CACAO", "MAYA_CACAO", "MAYA+CACAO", ""})
+    EXPECT_FALSE(mayachain_isValidAsset(value));
+  EXPECT_FALSE(mayachain_isValidAsset(nullptr));
+}
+
+TEST(Mayachain, SendSerializerRefusesInvalidDenomWithoutConsumingMessage) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  node.private_key[31] = 1;
+  hdnode_fill_public_key(&node);
+  MayachainSignTx tx = {};
+  tx.has_chain_id = tx.has_msg_count = true;
+  strcpy(tx.chain_id, "mayachain");
+  tx.msg_count = 1;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  const char* recipient = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+  for (const char* denom : {"ca:cao", "ca_cao", "ca\"cao", "ca\ncao"}) {
+    EXPECT_FALSE(mayachain_signTxUpdateMsgSend(1, recipient, denom));
+    EXPECT_FALSE(mayachain_signingIsFinished());
+  }
+  EXPECT_TRUE(mayachain_signTxUpdateMsgSend(1, recipient, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
+}
+
+TEST(Mayachain, DepositAssetAndSignerFailClosed) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  MayachainSignTx msg = {};
+  msg.has_chain_id = true;
+  strcpy(msg.chain_id, "mayachain");
+  msg.has_msg_count = true;
+  msg.msg_count = 1;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+
+  MayachainMsgDeposit deposit = {};
+  deposit.has_asset = true;
+  strcpy(deposit.asset, "ETH.ETH\n");
+  deposit.has_signer = true;
+  strcpy(deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.asset, "ETH:ETH");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  strcpy(deposit.asset, "ETH.ETH");
+  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  EXPECT_TRUE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
 }

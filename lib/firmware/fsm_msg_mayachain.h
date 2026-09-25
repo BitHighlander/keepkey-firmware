@@ -114,6 +114,7 @@ void fsm_msgMayachainSignTx(const MayachainSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_MayachainMsgRequest, resp);
   layoutHome();
 }
@@ -129,8 +130,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     layoutHome();
     return;
   }
-  if (msg->has_send && msg->send.has_to_address && msg->send.has_amount &&
-      msg->send.has_denom) {
+  if (msg->has_send && msg->send.has_to_address && msg->send.has_amount) {
     // pass
   } else if (msg->has_deposit && msg->deposit.has_asset &&
              msg->deposit.has_amount && msg->deposit.has_memo &&
@@ -221,14 +221,16 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
-                     "%s", coin_denom)) {
+        /* The amount/recipient layout can clip a long denomination. Show the
+         * complete asset separately before signing its serialized value. */
+        if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           "Asset", (const uint8_t*)coin_denom,
+                           strlen(coin_denom))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
           layoutHome();
           return;
         }
-
         break;
       }
     }
@@ -314,6 +316,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   if (!mayachain_signingIsFinished()) {
     RESP_INIT(MayachainMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_MayachainMsgRequest, resp);
     return;
   }

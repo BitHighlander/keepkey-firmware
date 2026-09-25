@@ -1,0 +1,61 @@
+{
+  "status": "Local integration validation; audit acceptance paused",
+  "evidence_directory": "/private/tmp/kk-alpha-0007-evidence",
+  "reports": {
+    "firmware-full.xml": {
+      "cases": 947,
+      "failed": 0,
+      "skipped": 0,
+      "sha256": "120bd3f5012d93424b40401329244afc7ede88afed8e9a8bbbb7610122dd23bc"
+    },
+    "firmware-btc.xml": {
+      "cases": 212,
+      "failed": 0,
+      "skipped": 0,
+      "sha256": "0ca5f6fc62de657c63877228f63825a63154532384807312f4a74a6dee6e3f8c"
+    },
+    "emulator-lifecycle.xml": {
+      "cases": 4,
+      "failed": 0,
+      "skipped": 0,
+      "sha256": "24368620f46706840998f9b8ba06bf61c057b9869f95ba874f14a4d90645ed24"
+    },
+    "host-full.xml": {
+      "cases": 53,
+      "failed": 0,
+      "skipped": 3,
+      "sha256": "7f862b5010a6d0c23a9fda6f8927effe6298547b55e0102785d205fce5966da3"
+    },
+    "host-btc.xml": {
+      "cases": 53,
+      "failed": 0,
+      "skipped": 35,
+      "sha256": "ea6eb8e59c72614fc51c7015e8e3814156254919d7e31ca9f68f8c950a5101bc"
+    },
+    "host-alpha-compatibility.xml": {
+      "cases": 836,
+      "failed": 0,
+      "skipped": 34,
+      "sha256": "4aeb124b494a1a904f8212576147dce84d62a0a1707e51d12f629f779e2cb753"
+    },
+    "host-solana-lut.xml": {
+      "cases": 4,
+      "failed": 0,
+      "skipped": 0,
+      "sha256": "3f04a8370d1b0009aeba3b2b0eff13d4d630bb969170b49940a44d0d1a47ca21"
+    }
+  },
+  "limitations": [
+    "Official ERC-7730 registry input not provided (3 host skips)",
+    "UDP run excludes 6 dylib host cases; 4 native shared-library lifecycle cases passed",
+    "Power-cycle helper cannot identify the emulated x86 process (2 skips); no physical-device acceptance",
+    "Other host skips cover absent Binance, Bitcoin-only cases in full suite, obsolete rejection cases, emulator PIN timeout, and legacy JSON EIP-712 refusal",
+    "Broad host suite ran before Solana LUT feature advertisement; subsequent 4-case LUT run and affected FSM checks cover that change"
+  ],
+  "final_affected_checks": {
+    "full_fsm": 34,
+    "bitcoin_only_fsm_and_product": 23,
+    "full_arm_link": "passed",
+    "bitcoin_only_arm_link": "passed"
+  }
+}

@@ -348,6 +348,10 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
     storage_ready = true;
   }
   storage_wipe();
+  // Match WipeDevice: erase flash and reset the loaded RAM storage state.
+  storage_reset();
+  storage_resetUuid();
+  storage_commit();
   ASSERT_FALSE(storage_isInitialized());
 
   // enforce_wordlist is omitted by default on the wire, which is what makes
@@ -367,5 +371,28 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
   EXPECT_FALSE(setup_isArmed());
   (void)kkconfirm_drain();
   storage_wipe();
+  // Match WipeDevice: erase flash and reset the loaded RAM storage state.
+  storage_reset();
+  storage_resetUuid();
+  storage_commit();
   layoutHomeForced();
+}
+
+extern "C" {
+void recovery_review_seed_scratch(void);
+bool recovery_review_scratch_empty(void);
+void setup_abort(void);
+void recovery_cipher_reset(void);
+}
+
+TEST(Recovery, AbortAndResetClearPreviousWordAndDisplayEquivalent) {
+  recovery_review_seed_scratch();
+  ASSERT_FALSE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  recovery_review_seed_scratch();
+  recovery_cipher_reset();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
 }

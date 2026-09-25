@@ -18,8 +18,13 @@ extern "C" {
 #include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/board/util.h"
+#include "keepkey/board/keepkey_display.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/firmware/app_confirm.h"
 }
+
+static int progress_refreshes = 0;
+static void count_progress_refresh(const uint8_t *) { ++progress_refreshes; }
 
 TEST(Board, Shutdown) {
   EXPECT_EXIT(shutdown(), ::testing::ExitedWithCode(1), "");
@@ -263,6 +268,17 @@ class BodyFits : public ::testing::Test {
     }
   }
 };
+
+TEST_F(BodyFits, EmulatorPollAdvancesHostWaitProgress) {
+  layoutProgressTrickle("Zcash proof", 100, 300);
+  progress_refreshes = 0;
+  display_set_dump_callback(count_progress_refresh);
+  usbPoll();
+  display_set_dump_callback(nullptr);
+  layoutProgressTrickleStop();
+  EXPECT_GT(progress_refreshes, 0)
+      << "usbPoll must pump the progress animation while waiting for the host";
+}
 
 // draw_string() stops once a glyph no longer fits the canvas and reports
 // nothing, so a confirm body taller than BODY_ROWS was drawn in part with no
@@ -576,4 +592,44 @@ TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
             std::vector<uint8_t>(flash.begin() + start, flash.begin() + end));
   EXPECT_EQ(std::vector<uint8_t>(FLASH_TOTAL_SIZE - end, 0x42),
             std::vector<uint8_t>(flash.begin() + end, flash.end()));
+}
+
+static void timer_test_callback(void *) {}
+static void timer_test_callback_after_reinit(void *) {}
+static void animation_test_callback(void *, uint32_t, uint32_t) {}
+
+TEST(Board, TimerQueueSurvivesReinitialization) {
+  kk_timer_init();
+  post_periodic(timer_test_callback, nullptr, 10, 10);
+  kk_timer_init();
+  // A distinct callback forces the old cyclic active queue to be traversed.
+  post_periodic(timer_test_callback_after_reinit, nullptr, 10, 10);
+  remove_runnable(timer_test_callback_after_reinit);
+  // The legacy timer_init entry point must also discard the old links.
+  timer_init();
+  post_periodic(timer_test_callback, nullptr, 10, 10);
+  remove_runnable(timer_test_callback);
+  ualarm(0, 0);
+  signal(SIGALRM, SIG_IGN);
+}
+
+TEST(Board, AnimationQueueSurvivesReinitialization) {
+  kk_timer_init();
+  layout_init(display_canvas_init());
+  layout_add_animation(animation_test_callback, nullptr, 10);
+  layout_init(display_canvas_init());
+  layout_clear_animations();
+}
+
+TEST(Board, MonochromeEvidencePreservesGrayscaleForeground) {
+  for (uint16_t y = 0; y < 4; y++) {
+    for (uint16_t x = 0; x < 4; x++) {
+      EXPECT_FALSE(display_mono_pixel_is_lit(0x00, x, y));
+      EXPECT_TRUE(display_mono_pixel_is_lit(0xFF, x, y));
+    }
+  }
+  EXPECT_TRUE(display_mono_pixel_is_lit(0x11, 0, 0));
+  EXPECT_FALSE(display_mono_pixel_is_lit(0x11, 1, 0));
+  EXPECT_FALSE(display_mono_pixel_is_lit(0x77, 1, 0));
+  EXPECT_TRUE(display_mono_pixel_is_lit(0x99, 1, 0));
 }

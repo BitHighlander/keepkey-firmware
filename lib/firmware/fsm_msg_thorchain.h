@@ -114,6 +114,7 @@ void fsm_msgThorchainSignTx(const ThorchainSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_ThorchainMsgRequest, resp);
   layoutHome();
 }
@@ -139,6 +140,15 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_FirmwareError,
                     _("Invalid THORChain Message Type"));
+    layoutHome();
+    return;
+  }
+
+  if (msg->has_send && msg->send.has_denom &&
+      strcmp(msg->send.denom, "rune") != 0) {
+    thorchain_signAbort();
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Only native RUNE sends are supported");
     layoutHome();
     return;
   }
@@ -176,13 +186,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
           layoutHome();
           return;
         }
-        /* Validate the recipient BEFORE the screen, not in the serializer.
-           thorchain_signTxUpdateMsgSend() already refuses a
-           malformed or wrong-network address, but it runs after this
-           confirmation, so the owner approved a transfer that was then
-           rejected. This release line's rule is that an invalid signed value
-           fails before approval, so the same check moves ahead of the
-           screen. */
+        /* Reject malformed or wrong-network recipients before approval. */
         if (!tendermint_validateBech32Address(
                 msg->send.to_address,
                 sign_tx->has_testnet && sign_tx->testnet ? "tthor" : "thor")) {
@@ -230,7 +234,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
        document the device's key cannot authorize -- and the confirmation below
        labels that address as though it were a destination, so the screen would
        not have given it away. */
-    if (!tendermint_validateSafeText(msg->deposit.asset) ||
+    if (!thorchain_isValidAsset(msg->deposit.asset) ||
         !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
         !thorchain_addressIsSigner(msg->deposit.signer)) {
       thorchain_signAbort();
@@ -310,6 +314,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   if (!thorchain_signingIsFinished()) {
     RESP_INIT(ThorchainMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_ThorchainMsgRequest, resp);
     return;
   }
