@@ -18,8 +18,13 @@ extern "C" {
 #include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/board/util.h"
+#include "keepkey/board/keepkey_display.h"
+#include "keepkey/board/usb.h"
 #include "keepkey/firmware/app_confirm.h"
 }
+
+static int progress_refreshes = 0;
+static void count_progress_refresh(const uint8_t*) { ++progress_refreshes; }
 
 TEST(Board, Shutdown) {
   EXPECT_EXIT(shutdown(), ::testing::ExitedWithCode(1), "");
@@ -263,6 +268,17 @@ class BodyFits : public ::testing::Test {
     }
   }
 };
+
+TEST_F(BodyFits, EmulatorPollAdvancesHostWaitProgress) {
+  layoutProgressTrickle("Zcash proof", 100, 300);
+  progress_refreshes = 0;
+  display_set_dump_callback(count_progress_refresh);
+  usbPoll();
+  display_set_dump_callback(nullptr);
+  layoutProgressTrickleStop();
+  EXPECT_GT(progress_refreshes, 0)
+      << "usbPoll must pump the progress animation while waiting for the host";
+}
 
 // draw_string() stops once a glyph no longer fits the canvas and reports
 // nothing, so a confirm body taller than BODY_ROWS was drawn in part with no

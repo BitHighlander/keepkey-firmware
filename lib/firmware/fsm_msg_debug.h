@@ -13,6 +13,9 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   resp->has_matrix = true;
   strlcpy(resp->matrix, get_pin_matrix(), sizeof(resp->matrix));
 
+  resp->reset_entropy.size = reset_get_int_entropy(resp->reset_entropy.bytes);
+  resp->has_reset_entropy = resp->reset_entropy.size > 0;
+
   resp->has_reset_word = true;
   strlcpy(resp->reset_word, reset_get_word(), sizeof(resp->reset_word));
 

@@ -186,6 +186,15 @@ void setup_arm(SetupKind kind) {
 
 bool setup_commit(SetupKind kind, const char* mnemonic, bool imported) {
   if (!setup_require(kind, "Setup ceremony was aborted")) return false;
+  /* storage_commit() declines both downgrade states without writing. Reject
+   * before staging the seed so a host can never receive a false Success. */
+  if (storage_isBitcoinOnlyLocked() || storage_isFirmwareTooOld()) {
+    setup_abort();
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Storage is locked for this firmware. Use Wipe first."));
+    layoutHome();
+    return false;
+  }
   /* The ordering below is load-bearing. storage_setPin() derives the storage
    * key that storage_commit() encrypts the secrets with, so it has to run
    * before storage_setMnemonic(). Do not reorder. */
@@ -272,6 +281,11 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   }
 
   strength = _strength;
+  /* Mark dice ceremonies before the entropy draw. DebugLink must never
+   * expose either the draw or its later dice-derived replacement as raw bytes.
+   */
+  dice_mode = dice_entropy ? (dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED)
+                           : DICE_MODE_NONE;
 
   if (_no_backup) {
     // Double confirm, since this is a feature for advanced users only, and
@@ -358,7 +372,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
     uint32_t rolls_needed = dice_rolls_for_strength(strength);
 
-    dice_mode = dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED;
     bool consented =
         dice_only
             ? confirm(ButtonRequestType_ButtonRequest_DiceRoll, _("Dice Only"),
@@ -668,6 +681,7 @@ exit:
 
 #if DEBUG_LINK
 uint32_t reset_get_int_entropy(uint8_t* entropy) {
+  if (dice_mode != DICE_MODE_NONE) return 0;
   memcpy(entropy, int_entropy, 32);
   return 32;
 }

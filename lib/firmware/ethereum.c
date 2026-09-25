@@ -1091,7 +1091,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     bool verified_contact = false;
     const uint8_t* transfer_to = NULL;
     uint32_t transfer_to_len = 0;
-    if (token == UnknownToken) {
+    if (token == UnknownToken && !signed_metadata_schema_moves_value()) {
       if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
                                             sizeof(confirm_body_message))) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1099,7 +1099,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         ethereum_signing_abort();
         return;
       }
-    } else if (token != NULL) {
+    } else if (token != NULL && !signed_metadata_schema_moves_value()) {
       transfer_to = msg->data_initial_chunk.bytes + 16;
       transfer_to_len = 20;
       if (!layoutEthereumConfirmTx(

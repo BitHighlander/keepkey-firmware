@@ -1403,6 +1403,26 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesRelayEthToSolanaDeposit) {
   EXPECT_EQ(memcmp(md->args[1].value, ORDER_ID, 32), 0);
 }
 
+/* A v2 schema commits to calldata only. A payable call may use its decoded
+ * display, but ethereum.c must also show the transaction's native value. */
+TEST_F(SignedMetadataTest, V2PayableCallRequiresNativeValueConfirmation) {
+  std::vector<uint8_t> blob = v2_base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  EthereumSignTx msg;
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true,
+              static_cast<uint32_t>(data.size()));
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+  msg.value.bytes[0] = 0;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+  signed_metadata_clear();
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+}
 /* Relay solver swap: selector 0x02d5f05f(token address, amount, requestId) —
  * three fixed single words, EXACTLY the shape pulled from real relay traffic
  * (100-byte calldata: 4 + 3*32, zero remainder, verified across 22 live

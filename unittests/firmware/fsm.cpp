@@ -34,6 +34,33 @@ TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   }
 }
 
+TEST(Fsm, ZcashPrivacyWireSurfaceMatchesBuildVariant) {
+  fsm_init();
+  const MessageType inbound[] = {MessageType_MessageType_ZcashSignPCZT,
+                                 MessageType_MessageType_ZcashPCZTAction,
+                                 MessageType_MessageType_ZcashGetOrchardFVK,
+                                 MessageType_MessageType_ZcashTransparentOutput,
+                                 MessageType_MessageType_ZcashTransparentInput,
+                                 MessageType_MessageType_ZcashDisplayAddress};
+  const MessageType outbound[] = {
+      MessageType_MessageType_ZcashPCZTActionAck,
+      MessageType_MessageType_ZcashSignedPCZT,
+      MessageType_MessageType_ZcashOrchardFVK,
+      MessageType_MessageType_ZcashTransparentSigned,
+      MessageType_MessageType_ZcashAddress,
+      MessageType_MessageType_ZcashTransparentAck};
+  for (MessageType type : inbound) {
+    EXPECT_EQ(ZCASH_PRIVACY != 0,
+              message_fields(NORMAL_MSG, type, IN_MSG) != nullptr)
+        << type;
+  }
+  for (MessageType type : outbound) {
+    EXPECT_EQ(ZCASH_PRIVACY != 0,
+              message_fields(NORMAL_MSG, type, OUT_MSG) != nullptr)
+        << type;
+  }
+}
+
 #if !BITCOIN_ONLY
 static void expectSigningSessionsCleared(bool initialize) {
   HDNode node = {};
@@ -197,10 +224,9 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
   layoutHomeForced();
 }
 
-/* Host traffic is activity: a ceremony or signing stream the user is still
- * working through outlasts the delay only because nothing else resets the
- * timer once the device has left the home screen. */
-TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
+/* A validated continuation produces another TxRequest, which resets the
+ * timer while the signing stream remains away from home. */
+TEST(Fsm, WorkflowContinuationDefersTheAutoLockWhileStreaming) {
   kk_test_board_init();
   fsm_init();
   layoutHomeForced();
@@ -217,11 +243,12 @@ TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
 
   leave_home();
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  note_host_activity();
+  TxRequest next = {};
+  ASSERT_TRUE(msg_write(MessageType_MessageType_TxRequest, &next));
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
-  EXPECT_TRUE(signing_is_active())
-      << "two sub-delay gaps around a host frame must not add up to a lock";
+  EXPECT_TRUE(signing_is_active()) << "two sub-delay gaps around workflow "
+                                      "progress must not add up to a lock";
 
   // The lock still fires once the host really has stalled for the full delay.
   increment_idle_time(1);
@@ -231,17 +258,49 @@ TEST(Fsm, HostActivityDefersTheAutoLockWhileStreaming) {
   layoutHomeForced();
 }
 
-/* The control: at the home screen the same frames must not hold the device
- * unlocked, or a polling host would defeat auto-lock entirely. */
-TEST(Fsm, HostActivityAtHomeDoesNotDeferTheAutoLock) {
+/* GetFeatures is a valid mapped host request, but cannot advance the signing
+ * stream. Exercise the actual parser and response path rather than calling
+ * the timer helper directly. */
+TEST(Fsm, UnrelatedGetFeaturesDoesNotDeferAnActiveSigningAutoLock) {
   kk_test_board_init();
   fsm_init();
   layoutHomeForced();
   storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  ASSERT_EQ(AT_HOME, home_get_state());
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+
+  leave_home();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  uint8_t get_features[64] = {'?', '#', '#'};
+  get_features[3] =
+      static_cast<uint8_t>(MessageType_MessageType_GetFeatures >> 8);
+  get_features[4] = static_cast<uint8_t>(MessageType_MessageType_GetFeatures);
+  handle_usb_rx(get_features, sizeof(get_features));
+  ASSERT_TRUE(signing_is_active());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+
+  layoutHomeForced();
+}
+
+TEST(Fsm, WorkflowResponseAtHomeDoesNotDeferTheAutoLock) {
+  kk_test_board_init();
+  fsm_init();
+  layoutHomeForced();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
 
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  note_host_activity();
+  TxRequest next = {};
+  ASSERT_TRUE(msg_write(MessageType_MessageType_TxRequest, &next));
   increment_idle_time(1);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());

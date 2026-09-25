@@ -24,7 +24,7 @@ option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" O
 if(KK_BITCOIN_ONLY)
   set(KK_ZCASH_PRIVACY OFF)
 else()
-  set(KK_ZCASH_PRIVACY ON)
+  option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,

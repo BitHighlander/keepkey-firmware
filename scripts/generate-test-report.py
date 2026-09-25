@@ -294,7 +294,7 @@ def validate_arm_manifests(arm_dir, firmware_sha, python_sha):
 def require_native_junit(root):
     """Require each native suite before discovering any additional XML inputs."""
     native_dir = Path(root) / "test-reports" / "firmware-unit"
-    required = ("firmware.xml", "board.xml", "crypto.xml")
+    required = ("firmware.xml", "board.xml", "crypto.xml", "zcash-crypto.xml")
     missing = [name for name in required
                if not (native_dir / name).is_file()
                or (native_dir / name).stat().st_size == 0]
