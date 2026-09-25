@@ -204,14 +204,11 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     }
 
     if (confirmed && parsed.memo_len > 0) {
-      /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
-       * other memo surface. The old single-screen path showed up to 114 chars
-       * unpaged, but 3 OLED lines only guarantee ~84 chars with wide glyphs —
-       * an 85..114-char memo could have its signed tail (affiliate bps,
-       * destination tail) silently clipped. The pager also discloses
-       * non-printable memos as complete hex instead of a byte-count summary. */
-      confirmed = thorchain_confirm_full_memo("Memo", (const char*)parsed.memo,
-                                              parsed.memo_len);
+      /* raw_data.data is signed verbatim. A byte count or one unpaged screen
+       * hides a long memo's tail; confirm_bytes pages and escapes every byte.
+       */
+      confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                                "Memo", parsed.memo, parsed.memo_len);
     }
 
     if (!confirmed) {
