@@ -193,12 +193,12 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
    * field the operator must compare against the contract ABI. */
   bool confirmed =
       contact_request ||
-      confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema", "%s\n%s",
-              schema.program_name, schema.instruction_name) &&
-          confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
-                  program_id) &&
-          confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
-                  disc_hex);
+      (confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+               "%s\n%s", schema.program_name, schema.instruction_name) &&
+       confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
+               program_id) &&
+       confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
+               disc_hex));
 
   /* One label per screen. A structurally valid schema can still lie by
    * labelling the wrong offset ("Amount" over the order id), so the operator

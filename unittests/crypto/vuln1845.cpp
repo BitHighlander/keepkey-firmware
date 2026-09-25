@@ -21,8 +21,8 @@ TEST(Vuln1845, Base58RejectsOversizedAndNegativeLengths) {
 
   EXPECT_FALSE(b58enc(encoded, &encoded_len, data, sizeof(data)));
   EXPECT_FALSE(b58tobin(data, &decoded_len, "1"));
-  EXPECT_EQ(0, base58_encode_check(data, -1, HASHER_SHA2D, encoded,
-                                   sizeof(encoded)));
+  EXPECT_EQ(
+      0, base58_encode_check(data, -1, HASHER_SHA2D, encoded, sizeof(encoded)));
   EXPECT_EQ(0, base58_decode_check("1", HASHER_SHA2D, data, -1));
 }
 

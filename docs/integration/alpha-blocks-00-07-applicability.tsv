@@ -1,0 +1,367 @@
+unit	path	disposition
+00a	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+00a	.github/workflows/release.yml	Retain alpha workflow; source/tests and integration record scope
+00a	deps/crypto/trezor-firmware	Advance to 00b descendant 74908938c562ec89dcae9fb4e3b05ec3ff17f58b; restores Base32/Base58 bounds while retaining RedPallas
+00a	deps/python-keepkey	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	docs/release/REHEARSAL-SOP.md	Evidence preserved; release audit/artifacts outside alpha scope
+00a	docs/release/RELEASE-PROGRAM.md	Evidence preserved; release audit/artifacts outside alpha scope
+00a	docs/release/audit-units/715-00a-release-foundation.md	Evidence preserved; release audit/artifacts outside alpha scope
+00a	include/keepkey/board/keepkey_flash.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	include/keepkey/rand/rng.h	Alpha already declares rng_persistent_error_step
+00a	include/keepkey/rand/rng_health.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	include/pb.h	Alpha already has intended nanopb field options
+00a	lib/board/confirm_sm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/board/keepkey_flash.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/board/layout.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/board/timer.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/emulator/libkkemu.c	Alpha already stops producer and protects unread frame slots
+00a	lib/firmware/ethereum_contracts.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/fsm_msg_crypto.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/fsm_msg_debug.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/fsm_msg_ripple.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/fsm_msg_thorchain.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/nano.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/reset.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/firmware/ripple_base58.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/rand/rng.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	lib/rand/rng_health.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	scripts/emulator/capture-dice-flow.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	scripts/emulator/docker-compose.audit.yml	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	scripts/emulator/docker-compose.bitcoin-only.yml	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	scripts/emulator/docker-compose.yml	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	scripts/emulator/firmware-unit.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	scripts/emulator/python-keepkey.Dockerfile	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	tools/bootloader/usb_flash.c	Alpha already keeps DebugLink watermark
+00a	tools/check_sram_budget.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	tools/firmware/keepkey_main.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	tools/test_check_sram_budget.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/board/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/board/board.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/board/otp_entropy.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/crypto/vuln1845.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/firmware/nano.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/firmware/nanopb_bounds.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/firmware/ripple.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/firmware/rng_health.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00a	unittests/firmware/storage_passphrase.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+00b	CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	deps/crypto/CMakeLists.txt	Alpha already exposes required crypto includes/API
+00b	docs/release/audit-units/715-00b-corrective-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-corrective-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-hardening-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-hardening-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-remediation-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-remediation-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-remediation-evidence-20260923.json	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-review-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-review-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+00b	docs/release/audit-units/715-00b-storage-persistence.md	Evidence preserved; release audit/artifacts outside alpha scope
+00b	include/keepkey/board/layout.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	include/keepkey/firmware/fsm.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	include/keepkey/firmware/osmosis.h	Keep alpha amount formatter API used by existing full feature handlers
+00b	include/keepkey/firmware/reset.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	include/keepkey/firmware/signed_metadata.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	include/keepkey/firmware/tiny-json.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/board/signatures.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/board/timer.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/emulator/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/emulator/libkkemu.c	Alpha already stops producer and protects unread frame slots
+00b	lib/firmware/CMakeLists.txt	Alpha already includes active firmware engines; retain full feature build
+00b	lib/firmware/app_confirm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/eip712.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/ethereum.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm_msg_common.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm_msg_ethereum.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm_msg_mayachain.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm_msg_ripple.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm_msg_thorchain.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/fsm_msg_tron.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/mayachain.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/messagemap.def	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/osmosis.c	Keep alpha integer amount formatter and strict signer guards
+00b	lib/firmware/recovery_cipher.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/reset.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/ripple.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/signed_metadata.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/storage.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/firmware/thorchain.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	lib/rand/rng.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	scripts/build/docker/device/release.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	scripts/emulator/docker-compose.bitcoin-only.yml	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	scripts/emulator/docker-compose.yml	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	scripts/generate-test-report.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	scripts/test_generate_test_report.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	tools/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	tools/bootloader/usb_flash.c	Alpha already keeps DebugLink watermark
+00b	tools/emulator/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/crypto/CMakeLists.txt	Alpha already links required crypto regression targets
+00b	unittests/emulator/lifecycle.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/ethereum.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/mayachain.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/recovery.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/recovery_review_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/review_handlers.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/review_integer.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/ripple.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/setup_ceremony.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/signed_metadata.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/storage.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/thorchain.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/zcash.cpp	Alpha already uses explicit RedPallas randomness API
+00b	unittests/firmware/zcash_display.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/zcash_display_confirm_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+00b	unittests/firmware/zcash_display_layout_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+01	.github/workflows/release.yml	Retain alpha workflow; source/tests and integration record scope
+01	CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	docs/DiceEntropy.md	Evidence preserved; release audit/artifacts outside alpha scope
+01	docs/release/audit-units/715-01-review-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+01	docs/release/audit-units/715-01-review-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+01	docs/security/7.14.3-bitcoin-only-dice-audit-sop.md	Evidence preserved; release audit/artifacts outside alpha scope
+01	include/keepkey/board/messages.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	include/keepkey/rand/rng_health.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/board/messages.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/board/udp.c	Alpha already polls progress animations while waiting
+01	lib/board/usb.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/CMakeLists.txt	Alpha already includes active firmware engines; retain full feature build
+01	lib/firmware/ethereum.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/fsm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/fsm_msg_debug.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/fsm_msg_ripple.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/fsm_msg_zcash.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/home_sm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/messagemap.def	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/reset.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/firmware/signed_metadata.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	lib/rand/rng_health.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	scripts/generate-test-report.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	unittests/board/board.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	unittests/firmware/fsm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	unittests/firmware/rng_health.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	unittests/firmware/signed_metadata.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+01	unittests/firmware/usb_rx.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+02	.gitleaks.toml	Keep alpha secret-scan configuration; no new credentials
+02	CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	deps/python-keepkey	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	docs/DiceEntropy.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/REHEARSAL-SOP.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/715-01-review-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/715-01-review-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-INTERNAL-ROUND2-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-INTERNAL-ROUND2-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-PR-PREFLIGHT-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-RETROSPECTIVE-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-ROUND2-ARTIFACTS-20260923.json	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-ROUND2-COMMIT-INVENTORY-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-ROUND2-SKIPS-20260923.json	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-readiness-20260923-artifacts.json	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-readiness-20260923-skips.json	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-readiness-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-readiness-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-readiness-manifest-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-requalification-20260923-artifacts.json	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-requalification-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/release/audit-units/P02-requalification-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+02	docs/security/7.14.3-bitcoin-only-dice-audit-sop.md	Evidence preserved; release audit/artifacts outside alpha scope
+02	include/keepkey/board/messages.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	include/keepkey/firmware/reset.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	include/keepkey/rand/rng_health.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/board/confirm_sm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/board/messages.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/board/udp.c	Alpha already polls progress animations while waiting
+02	lib/board/usb.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/board/usb_rx_callbacks.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/CMakeLists.txt	Alpha already includes active firmware engines; retain full feature build
+02	lib/firmware/ethereum.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_binance.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_common.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_cosmos.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_debug.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_eos.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_mayachain.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_osmosis.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_tendermint.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/fsm_msg_thorchain.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/passphrase_sm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/pin_sm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/recovery_cipher.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/reset.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/signed_metadata.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/firmware/signing.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	lib/rand/rng_health.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	scripts/emulator/python-keepkey-tests.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	scripts/generate-test-report.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/board/board.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/fsm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/recovery.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/reset_policy_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/rng_health.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/signed_metadata.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/storage_passphrase.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/usb_callbacks.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/firmware/usb_rx.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+02	unittests/host/test_p02_transport.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	docs/firmware/reviews/7.15.0-review-round2-remediation.md	Evidence preserved; release audit/artifacts outside alpha scope
+03	docs/release/audit-units/P03-requalification-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+03	docs/release/audit-units/P03-requalification-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+03	include/keepkey/firmware/bip85.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/bip85.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/fsm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/fsm_msg_bip85.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/fsm_msg_debug.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/fsm_msg_ethereum.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/recovery_cipher.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	lib/firmware/storage.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	scripts/emulator/python-keepkey-tests.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	unittests/firmware/fsm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	unittests/firmware/storage.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+03	unittests/host/test_p03_recovery.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+04	docs/release/audit-units/715-04-review-20260923.md	Evidence preserved; release audit/artifacts outside alpha scope
+04	docs/release/audit-units/715-04-review-20260923.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+04	lib/firmware/fsm_msg_mayachain.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+04	lib/firmware/fsm_msg_tron.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+04	unittests/firmware/mayachain.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+04	unittests/firmware/tron.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+05	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+05	.github/workflows/release.yml	Retain alpha workflow; source/tests and integration record scope
+05	CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+05	docs/release/audit-units/715-05-review-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+05	docs/release/audit-units/715-05-review-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+05	docs/release/audit-units/715-05-skips-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+05	scripts/build/docker/device/release.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+05	scripts/generate-test-report.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+06	.gitmodules	Alpha already uses BitHighlander host fork
+06	deps/python-keepkey	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	docs/release/audit-units/715-06-evidence-sha256-20260924.txt	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-history-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-intake-evidence-20260924.tgz	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-reconciliation-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-review-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-review-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-skips-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-validation-20260924.tgz	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/release/audit-units/715-06-validation-sha256-20260924.txt	Evidence preserved; release audit/artifacts outside alpha scope
+06	docs/security/evidence/rom-printf-integer-percent/README.md	Evidence preserved; release audit/artifacts outside alpha scope
+06	include/keepkey/firmware/eip712.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	include/keepkey/firmware/tiny-json.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	include/keepkey/transport/messages.options	Alpha already has 24 CoinTable entries; preserve 8192-byte entropy API
+06	lib/board/messages.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/eip712.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/ethereum.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/ethereum_contracts/zxliquidtx.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/fsm_msg_common.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/fsm_msg_eos.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/fsm_msg_ethereum.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/fsm_msg_ripple.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/recovery_cipher.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/ripple.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/signing.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	lib/firmware/storage.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	scripts/emulator/python-keepkey-tests.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	scripts/tests/test_usb_receive_callbacks.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/app_confirm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/eip712.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/ethereum.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/fsm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/kkconfirm_driver.cpp	Alpha already uses shared safe board/confirmation test support
+06	unittests/firmware/kkconfirm_driver.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/liquidity_key_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/messages_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/ripple.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/signed_metadata.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/storage.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+06	unittests/firmware/usb_rx.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	.github/workflows/ci.yml	Retain alpha workflow; source/tests and integration record scope
+07	.gitignore	Keep alpha ignores; slice artifact outputs are outside scope
+07	.gitmodules	Alpha already uses BitHighlander host fork
+07	deps/python-keepkey	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	docs/release/audit-units/715-06-history-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-06-reconciliation-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-06-review-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-06-review-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-06-skips-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-06-validation-20260924.tgz	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-06-validation-sha256-20260924.txt	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-first-copilot-retrospective-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-first-copilot-retrospective-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-full-audit-remediation-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-full-audit-remediation-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-history-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-intake-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-review-20260924.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-review-20260924.pdf	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-skips-20260924.tsv	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-validation-20260924.tgz	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/release/audit-units/715-07-validation-sha256-20260924.txt	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/security/HANDOFF-ERC7730-715-FORMATTERS.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/security/HANDOFF-ERC7730-ALPHA.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	docs/security/evidence/rom-printf-integer-percent/README.md	Evidence preserved; release audit/artifacts outside alpha scope
+07	include/keepkey/board/messages.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/eip712.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/eip712_stream.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/erc7730_abi_stream.h	Alpha already owns ABI program view and reorders pending fields
+07	include/keepkey/firmware/erc7730_catalog.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/erc7730_format.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/erc7730_program.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/erc7730_workflow.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/ethereum.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/firmware/signed_metadata.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	include/keepkey/transport/messages.options	Alpha already has 24 CoinTable entries; preserve 8192-byte entropy API
+07	lib/board/messages.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/eip712.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/eip712_stream.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/erc7730_abi.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/erc7730_abi_stream.c	Alpha already owns ABI program view; retained full capture implementation
+07	lib/firmware/erc7730_catalog.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/erc7730_condition.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/erc7730_format.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/erc7730_program.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/erc7730_workflow.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/ethereum.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/fsm.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/fsm_msg_common.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/fsm_msg_eos.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/fsm_msg_ethereum.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/fsm_msg_ripple.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/recovery_cipher.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/ripple.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/signed_metadata.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/signing.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	lib/firmware/storage.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	scripts/emulator/docker-compose.yml	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	scripts/emulator/firmware-unit.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	scripts/emulator/python-keepkey-tests.sh	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	scripts/emulator/test_stack07_regressions.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	scripts/generate-test-report.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	scripts/tests/test_usb_receive_callbacks.py	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	tools/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	tools/erc7730-validate/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	tools/erc7730-validate/main.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/CMakeLists.txt	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/app_confirm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/eip712.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/eip712_stream.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/erc7730_abi.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/erc7730_abi_stream.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/erc7730_catalog.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/erc7730_condition.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/erc7730_format.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/erc7730_workflow.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/ethereum.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/fsm.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/kkconfirm_driver.cpp	Alpha already uses shared safe board/confirmation test support
+07	unittests/firmware/kkconfirm_driver.h	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/liquidity_key_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/messages_probe.c	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/ripple.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/signed_metadata.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/storage.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record
+07	unittests/firmware/usb_rx.cpp	Replayed/reconciled; see adjacent alpha diff and behavior record

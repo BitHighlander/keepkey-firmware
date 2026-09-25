@@ -24,7 +24,7 @@ extern "C" {
 }
 
 static int progress_refreshes = 0;
-static void count_progress_refresh(const uint8_t*) { ++progress_refreshes; }
+static void count_progress_refresh(const uint8_t *) { ++progress_refreshes; }
 
 TEST(Board, Shutdown) {
   EXPECT_EXIT(shutdown(), ::testing::ExitedWithCode(1), "");
@@ -594,9 +594,9 @@ TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
             std::vector<uint8_t>(flash.begin() + end, flash.end()));
 }
 
-static void timer_test_callback(void*) {}
-static void timer_test_callback_after_reinit(void*) {}
-static void animation_test_callback(void*, uint32_t, uint32_t) {}
+static void timer_test_callback(void *) {}
+static void timer_test_callback_after_reinit(void *) {}
+static void animation_test_callback(void *, uint32_t, uint32_t) {}
 
 TEST(Board, TimerQueueSurvivesReinitialization) {
   kk_timer_init();

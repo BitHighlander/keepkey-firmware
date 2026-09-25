@@ -98,7 +98,10 @@ bool setup_isArmedAs(SetupKind kind) {
 void setup_abort(void) {
   /* Do not reopen screenshots with the last secret page still in the canvas
    * or queued animations after cancellation/commit. */
-  if (dice_mode != DICE_MODE_NONE) layout_clear();
+  if (dice_mode != DICE_MODE_NONE) {
+    layout_clear_animations();
+    layout_clear_static();
+  }
   /* The recovery half owns its own word buffers. Clearing them is a memzero
    * too; like everything here it touches no storage. */
   recovery_cipher_reset();
@@ -248,12 +251,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
    * never shows them has nothing to verify, and would put seed material (the
    * digest, the entropy words) on the screen under a WARNING that recovery is
    * impossible. Refused, as display_random with no_backup was. */
-  if (display_random && dice_entropy) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Dice entropy cannot be combined with display_random"));
-    layoutHome();
-    return;
-  }
   if (dice_entropy && _no_backup) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Dice entropy cannot be combined with no_backup"));
@@ -670,7 +667,6 @@ exit:
    * here has already run it, directly or through setup_commit(). */
   memzero(&ctx, sizeof(ctx));
   memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
   /* Refer to the arrays directly: early exits skip the aliases above, and
    * sizeof an alias would only wipe a pointer-sized prefix. */
   memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));

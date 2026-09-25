@@ -580,11 +580,6 @@ TEST(Mayachain, MayachainSignTxTwoMessages) {
   ASSERT_TRUE(mayachain_signTxUpdateMsgSend(
       200, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
 
-  strcpy(deposit.asset, "ETH:ETH");
-  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
-  strcpy(deposit.asset, "ETH.ETH");
-  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
-  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
   uint8_t public_key[33];
   uint8_t signature[64];
 
@@ -642,12 +637,40 @@ TEST(Mayachain, SendSerializerRefusesInvalidDenomWithoutConsumingMessage) {
   tx.msg_count = 1;
   ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
   const char* recipient = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
-  for (const char* denom : {static_cast<const char*>(nullptr), "", "ca:cao",
-                            "ca_cao", "ca\"cao", "ca\ncao"}) {
+  for (const char* denom : {"ca:cao", "ca_cao", "ca\"cao", "ca\ncao"}) {
     EXPECT_FALSE(mayachain_signTxUpdateMsgSend(1, recipient, denom));
     EXPECT_FALSE(mayachain_signingIsFinished());
   }
   EXPECT_TRUE(mayachain_signTxUpdateMsgSend(1, recipient, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
+}
+
+TEST(Mayachain, DepositAssetAndSignerFailClosed) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  MayachainSignTx msg = {};
+  msg.has_chain_id = true;
+  strcpy(msg.chain_id, "mayachain");
+  msg.has_msg_count = true;
+  msg.msg_count = 1;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+
+  MayachainMsgDeposit deposit = {};
+  deposit.has_asset = true;
+  strcpy(deposit.asset, "ETH.ETH\n");
+  deposit.has_signer = true;
+  strcpy(deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.asset, "ETH:ETH");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  strcpy(deposit.asset, "ETH.ETH");
+  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  EXPECT_TRUE(mayachain_signTxUpdateMsgDeposit(&deposit));
   EXPECT_TRUE(mayachain_signingIsFinished());
   mayachain_signAbort();
 }

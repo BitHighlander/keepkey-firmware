@@ -1,0 +1,69 @@
+{
+  "alpha": "0c523dad0cb7532dfb6c2095efa4aca9588121e4",
+  "units": [
+    {
+      "unit": "00a",
+      "original_candidate": "a9173b32eb8515db8130f0bd393bc9b249d83320",
+      "head": "9cb72384fd14b2a688a70d17711a7923941d2290",
+      "ref": "origin/release/715-stack-00-audit-base"
+    },
+    {
+      "unit": "00b",
+      "original_candidate": "fa971c617e16612be0af67ca91a0838b98f38544",
+      "head": "78ba412963c05471da73799592963f3ca7e760dd",
+      "ref": "origin/audit/715-00b-reconciled"
+    },
+    {
+      "unit": "01",
+      "original_candidate": "66ca726662822a9ff102bcd1354cc6a39d5a203b",
+      "head": "752466b2519fadc88881e52c64e604948fe0b615",
+      "ref": "origin/release/715-stack-01-evm"
+    },
+    {
+      "unit": "02",
+      "original_candidate": "51411c4a7c96137bc80f8b99fa1690c4e385f7fd",
+      "head": "9237d0a30004dbc079dcf3c1577b2895bc50c73a",
+      "ref": "origin/release/715-stack-02-chains"
+    },
+    {
+      "unit": "03",
+      "original_candidate": "210e5e155e3ae10b7975a6480e371c48cfc9525a",
+      "head": "5aa047e4d07d8f3a59b25c6cd80a48025aa7e418",
+      "ref": "origin/release/715-stack-03-recovery"
+    },
+    {
+      "unit": "04",
+      "original_candidate": "9e6c56c267c6755f55364f2a48073880b4f6f6e4",
+      "head": "f05bfe96dadc5a2deaf47437a5d3f5e40d6c352f",
+      "ref": "origin/release/715-stack-04-chain-signing"
+    },
+    {
+      "unit": "05",
+      "original_candidate": "fd033f6ef815e7e49964cbdd53212fb35ea46e37",
+      "head": "5c3f2d927f56a8646178d00c0abc9ed01c427393",
+      "ref": "origin/audit/715-stack05-review"
+    },
+    {
+      "unit": "06",
+      "original_candidate": "2ec1e4d6d45f430462e10a9fb4ba09203736fe1c",
+      "head": "9a177aa21253eae866bb408d168c4ea1c1e1c9cb",
+      "ref": "origin/audit/715-stack06-agent1-reconcile"
+    },
+    {
+      "unit": "07",
+      "original_candidate": "632de4f7f9fd864d9bb1555ea5a7179131a203b8",
+      "head": "a94c3507b0321c5be0af1f9b17d0f18a1e0716e1",
+      "ref": "origin/release/715-stack-07-erc7730-core"
+    }
+  ],
+  "audit_status": "Paused by owner; integration does not grant audit acceptance.",
+  "integrated_dependencies": {
+    "deps/crypto/trezor-firmware": "74908938c562ec89dcae9fb4e3b05ec3ff17f58b",
+    "deps/device-protocol": "901b6084a07613d6b840275eadeba08daa3b4cd9",
+    "deps/python-keepkey": "09c52212eacb6b1c2fe6b6322839843e5bae3874"
+  },
+  "later_source_updates": {
+    "00b": "fbcc766725a41c9c873332b36b4b026d0f4ef92a",
+    "07_not_replayed": "8c654bcd8e1c8936a86aaa625a4ab78900a250e9"
+  }
+}

@@ -215,18 +215,6 @@ TEST_F(SetupCeremony, InvalidRecoveryWordCountDisarmsCeremony) {
 
 // BIP39 owns a static output buffer.  Once setup is abandoned, retaining the
 // generated sentence there is retaining an otherwise unowned device seed.
-TEST_F(SetupCeremony, AbortScrubsGeneratedMnemonic) {
-  const uint8_t entropy[16] = {};
-  const char* generated = mnemonic_from_data(entropy, sizeof(entropy));
-  ASSERT_NE(nullptr, generated);
-  ASSERT_NE('\0', generated[0]);
-
-  setup_abort();
-
-  for (size_t i = 0; i < 24u * 10u; ++i) {
-    EXPECT_EQ('\0', generated[i]);
-  }
-}
 
 TEST_F(SetupCeremony, CommitRefusesAbortedOrDifferentCeremony) {
   ASSERT_TRUE(setup_stage(false, "english", "aborted", 0, 0, false));

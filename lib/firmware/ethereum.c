@@ -908,7 +908,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
    * id >= 1; a host omitting the field is malformed, not legacy.
    */
   chain_id = msg->has_chain_id ? msg->chain_id : 0;
-  if (chain_id < 1) {
+  if (!ethereum_chainIdIsValid(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Chain Id out of bounds"));
     ethereum_signing_abort();
@@ -1028,7 +1028,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
-  if (data_total >= 68 && ethereum_isERC20ApproveCall(msg)) {
+  // Match the selector alone. Pre-0.8 Solidity masks the spender word's high
+  // bytes, so a dirty spender word still grants the allowance on chain.
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+    if (!ethereum_isERC20ApproveCall(msg)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Malformed ERC20 approval"));
+      ethereum_signing_abort();
+      return;
+    }
     // Native value cannot exempt a payable token from this allowance policy.
     // Unlimited approval grants open-ended authority and is refused before
     // any generic transaction confirmation can mask this policy decision.
@@ -1461,11 +1470,11 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 
 void ethereum_signing_abort(void) {
   contact_book_clear();
+  data_hash_pending = false;
+  memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     signed_metadata_clear();
-    data_hash_pending = false;
-    memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     layoutHome();
     ethereum_signing = false;
   }
@@ -1647,7 +1656,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
 void failMessage(int err);
 
-const char* failMsgReturn[LAST_ERROR - 2] = {
+const char* failMsgReturn[] = {
     "EIP-712 general error",  //  3
     "EIP-712 user defined type name too long",
     "EIP-712 too many user defined types",
@@ -1680,6 +1689,10 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 address string is NULL",
     "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
 };
+
+_Static_assert(sizeof(failMsgReturn) / sizeof(failMsgReturn[0]) ==
+                   LAST_ERROR - GENERAL_ERROR + 1,
+               "failMsgReturn must cover GENERAL_ERROR..LAST_ERROR exactly");
 
 void failMessage(int err) {
   if (USER_CANCELLED == err) {

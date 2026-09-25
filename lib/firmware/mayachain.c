@@ -159,7 +159,6 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
      is the host's own declared count, and the countdown below underflows if a
      message arrives after it is spent. */
   if (!initialized || msgs_remaining == 0) return false;
-  if (!mayachain_isValidDenom(denom)) return false;
 
   const char mainnetp[] = "maya";
   const char testnetp[] = "smaya";

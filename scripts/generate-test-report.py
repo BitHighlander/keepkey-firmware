@@ -12,6 +12,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -35,10 +36,11 @@ BASE_REQUIRED_CASES = {
     "Eip712.MalformedBytesAndAddressesRejectedBeforeAnyValueScreen",
     "Eip712.BytesNTypeWidthIsStrictInTypeHashAndEncoder",
     "Eip712.MissingFieldRefusedWithoutDereferenceOrHashMutation",
-    "Eip712.DecimalSignPaddingMatchesParsedValue",
+    "Eip712.NonCanonicalDecimalsRefusedWithoutHashMutation",
     "Eip712.IntegerWidthAndValueMustMatchBeforeHashing",
     "Eip712.NarrowIntegerBoundaryMatchesIndependentEncoding",
-    "Recovery.DeleteKeepsTypedCipherCharactersNotTheCurrentMapping",
+    "Recovery.AbortAndResetClearPreviousWordAndDisplayEquivalent",
+    "RecoveryCipher.BackspaceAcross23WordBoundariesRestoresRawBytes",
     "Storage.LegacyLanguageIsBoundedAndTerminated",
     "Storage.TruncatedLegacyCacheDoesNotMutateDestination",
     "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
@@ -64,18 +66,103 @@ BASE_REQUIRED_CASES = {
 
 EVM_REQUIRED_CASES = {
     "Ethereum.TransferAmountUsesTheRequestsSigningChain",
-    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
     "test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx."
     "test_transfer_review_uses_signing_chain_asset",
-    # 7.15 rejects an empty amount at the syntax gate; the 7.14.x form of
-    # this control (..._rejected_before_review) is skipped on 7.15 by design.
+}
+
+OSMOSIS_REQUIRED_CASES = {
+    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
     "test_msg_osmosis_validation.TestOsmosisValidation."
     "test_present_but_empty_amount_is_rejected_as_invalid",
     "test_msg_osmosis_validation.TestOsmosisValidation."
     "test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
-    "test_msg_recoverydevice_cipher.TestDeviceRecovery."
-    "test_unknown_word_count_failure_aborts_recovery",
 }
+
+OSMOSIS_LEGACY_REQUIRED_CASES = {
+    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
+    "test_msg_osmosis_validation.TestOsmosisValidation."
+    "test_present_but_empty_amount_is_rejected_before_review",
+    "test_msg_osmosis_validation.TestOsmosisValidation."
+    "test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
+}
+
+_STACK07 = "test_stack07_regressions."
+_STACK07_COINTABLE = (
+    _STACK07 + "TestStack07CoinTableReuse."
+    "test_cointable_response_reuses_decoded_request_without_truncation")
+_STACK07_EVM = [_STACK07 + "TestStack07Regressions." + name for name in (
+    "test_advanced_mode_off_refuses_runtime_signer_preload",
+    "test_all_typed_fields_are_reviewed_and_signature_is_unchanged",
+    "test_calldata_signing_replay_change_is_refused",
+    "test_calldata_signing_replay_succeeds_with_arguments",
+    "test_certified_approval_refused_before_annotation_screens",
+    "test_declining_source_intent_or_either_field_aborts",
+    "test_domain_name_version_and_salt_mismatches_are_refused",
+    "test_early_typed_failure_clears_preload",
+    "test_empty_message_requires_explicit_consent",
+    "test_failed_certified_domain_clears_preload",
+    "test_intent_only_typed_definition_still_requires_source_and_intent",
+    "test_selector_only_call_signs_after_certified_intent",
+    "test_tampered_envelope_signature_is_refused_at_preload",
+    "test_typed_replay_change_is_refused",
+    "test_unknown_signer_is_refused_at_preload",
+    "test_verifying_contract_mismatch_is_refused_before_certified_review",
+    "test_domain_only_signature_refuses_certified_preload",
+    "test_dirty_approval_spender_word_is_refused_before_any_screen",
+    "test_preload_survives_get_features_and_is_discarded_by_initialize",
+    "test_non_ascii_intent_is_escaped_not_drawn_as_glyphs",
+)]
+_ADDITIVE = [
+    "test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant." + name
+    for name in (
+        "test_failed_signature_falls_back_to_the_unverified_review",
+        "test_no_runtime_slot_can_reach_the_suppression_branch",
+        "test_no_slot_verifies_without_a_runtime_load",
+        "test_successful_decode_still_runs_the_raw_review",
+        "test_v2_schema_decode_still_runs_the_raw_review",
+    )]
+_SESSION = "test_msg_session_trust_lifetime.TestSessionTrustLifetime."
+_SESSION_BOTH = [_SESSION + "test_advanced_mode_survives_initialize_but_not_clear_session"]
+_SESSION_FULL = [_SESSION + name for name in (
+    "test_disabling_advanced_mode_revokes_the_signer",
+    "test_signer_dropped_by_clear_session",
+    "test_signer_dropped_by_initialize",
+)]
+_RIPPLE = [
+    "test_msg_ripple_sign_tx.TestMsgRippleSignTx." + name for name in (
+        "test_memo_length_prefix_boundaries",
+        "test_ripple_sign_invalid_fee",
+        "test_sign",
+        "test_sign_with_thorchain_memo",
+    )]
+
+# Dedicated contract suites run as separate pytest invocations. Each file and
+# each named case is REQUIRED with an exact status per product, so deleting a
+# CI step, a test, or a variant leg cannot go unnoticed. Bitcoin-only must
+# SKIP the EVM/XRP contracts: a pass there would mean the product exposes them.
+CONTRACT_JUNIT = {
+    "junit-stack07.xml": {
+        "full": dict([(_STACK07_COINTABLE, "pass")] +
+                     [(case, "pass") for case in _STACK07_EVM]),
+        "bitcoin-only": dict([(_STACK07_COINTABLE, "pass")] +
+                             [(case, "skip") for case in _STACK07_EVM]),
+    },
+    "junit-stack06-contracts.xml": {
+        "full": dict((case, "pass") for case in
+                     _ADDITIVE + _SESSION_BOTH + _SESSION_FULL + _RIPPLE),
+        "bitcoin-only": dict(
+            [(case, "pass") for case in _SESSION_BOTH] +
+            [(case, "skip") for case in _ADDITIVE + _SESSION_FULL + _RIPPLE]),
+    },
+}
+CONTRACT_JUNIT_DIRS = {
+    "full": Path("test-reports") / "python-keepkey",
+    "bitcoin-only": Path("test-reports") / "bitcoin-only" / "python-keepkey",
+}
+
+CAPABILITY_SKIP_PREFIX = (
+    "Staged release tree does not yet provide capability: "
+)
 
 
 def fail(message):
@@ -163,6 +250,8 @@ def approved_capabilities(workflow_text=None):
     ledgers = re.findall(
         r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]+)[ \t]*$",
         workflow_text, re.MULTILINE)
+    if not ledgers:
+        return set()  # Alpha has every feature: no staged capability waivers.
     if len(ledgers) != 1:
         fail("expected exactly one capability ledger in %s, found %d" %
              (CI_WORKFLOW, len(ledgers)))
@@ -224,6 +313,56 @@ def validate_cases(cases):
     if missing:
         fail("required 7.15 controls missing or not passing: %s" %
              ", ".join(missing))
+
+
+def read_junit_cases(path):
+    try:
+        parsed = ET.parse(path)
+    except ET.ParseError as exc:
+        fail("malformed JUnit %s: %s" % (path, exc))
+    cases = {}
+    for testcase in parsed.getroot().iter("testcase"):
+        name = "%s.%s" % (testcase.get("classname", ""),
+                          testcase.get("name", ""))
+        # A second copy could mask a failing one; evidence must be unambiguous.
+        if name in cases:
+            fail("duplicate JUnit testcase %s in %s" % (name, path))
+        cases[name] = case_status(testcase)
+    return cases
+
+
+def validate_contract_junit(root):
+    """Require every dedicated contract JUnit with exact per-case statuses."""
+    inputs = []
+    for variant, directory in sorted(CONTRACT_JUNIT_DIRS.items()):
+        for filename, by_variant in sorted(CONTRACT_JUNIT.items()):
+            path = Path(root) / directory / filename
+            if not path.is_file() or path.stat().st_size == 0:
+                fail("required %s contract JUnit missing: %s" % (variant, path))
+            cases = read_junit_cases(path)
+            if not cases:
+                fail("contract JUnit contains no test cases: %s" % path)
+            broken = sorted(name for name, status in cases.items()
+                            if status in ("fail", "error"))
+            if broken:
+                fail("%s %s has failing case(s): %s" %
+                     (variant, filename, ", ".join(broken)))
+            wrong = []
+            for required, expected in sorted(by_variant[variant].items()):
+                found = [status for name, status in cases.items()
+                         if name == required or name.endswith("." + required)]
+                if found != [expected]:
+                    wrong.append("%s (expected %s, found %s)" % (
+                        required, expected, ",".join(found) or "missing"))
+            if wrong:
+                fail("%s %s contract cases wrong: %s" %
+                     (variant, filename, "; ".join(wrong)))
+            inputs.append({
+                "variant": variant,
+                "path": str(path.relative_to(root)),
+                "sha256": sha256_file(path),
+            })
+    return inputs
 
 
 def validate_screenshots(screenshot_root):
@@ -341,6 +480,7 @@ def main():
 
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
+    contract_inputs = validate_contract_junit(ROOT)
     # Normalize the shared staged-capability inventory plus the declarations
     # in immutable JUnit before invoking python-keepkey's report validator.
     missing_capabilities = release_missing_capabilities(cases)
@@ -428,6 +568,7 @@ def main():
         "junit": {
             "counts": counts,
             "inputs": junit_inputs,
+            "contract_inputs": contract_inputs,
             "merged_sha256": sha256_file(MERGED_JUNIT),
             "skips": [case for case in cases if case["status"] == "skip"],
         },

@@ -41,10 +41,6 @@ bool thorchain_isValidAsset(const char* asset) {
   return tendermint_isValidAsset(asset);
 }
 
-bool thorchain_isValidAsset(const char* asset) {
-  return tendermint_isValidAsset(asset);
-}
-
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;

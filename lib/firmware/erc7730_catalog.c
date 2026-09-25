@@ -70,6 +70,10 @@ static bool validate_header(const Erc7730CatalogVerifier* v) {
   if (all_zero(h + 70, 32) || all_zero(h + 102, 32) || all_zero(h + 134, 32) ||
       read_be32(h + 166) == 0 || read_be32(h + 170) < read_be32(h + 174))
     return false;
+#if ERC7730_MIN_ISSUANCE_EPOCH > 0
+  /* Compiled only once raised: a zero floor admits every epoch. */
+  if (read_be32(h + 170) < ERC7730_MIN_ISSUANCE_EPOCH) return false;
+#endif
   if (h[178] == 0 || h[178] > ERC7730_PROGRAM_MAX_SECTIONS) return false;
   return true;
 }
@@ -264,8 +268,10 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     v->path_source = v->sibling[0];
     v->path_step_count = v->sibling[1];
     const uint16_t source_index = read_be16(v->sibling + 2);
+    /* Execution captures refuse ERC7730_ABI_MAX_DEPTH or more steps (each
+     * step descends one ABI level), so no longer path may pass preload. */
     if (v->path_source < 1 || v->path_source > 3 ||
-        v->path_step_count > ERC7730_ABI_MAX_PATH)
+        v->path_step_count >= ERC7730_ABI_MAX_DEPTH)
       return false;
     if (v->path_source == 1) {
       if (source_index != UINT16_MAX || v->path_step_count == 0) return false;
@@ -344,19 +350,20 @@ static bool consume_literal_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     v->entry_offset = 0;
     v->field_received = 0;
     v->literal_previous = UINT16_MAX;
-    if (v->literal_kind < 1 || v->literal_kind > 9 ||
+    /* The replay reader refuses empty and over-long literals, so a definition
+     * that preloads must never carry one. */
+    if (v->literal_kind < 1 || v->literal_kind > 9 || v->entry_length == 0 ||
+        v->entry_length > ERC7730_LITERAL_MAX_LENGTH ||
         v->entry_length > v->section_remaining - 1u)
       return false;
     if (((v->literal_kind == 1 || v->literal_kind == 2) &&
-         (v->entry_length == 0 || v->entry_length > 32)) ||
+         v->entry_length > 32) ||
         (v->literal_kind == 4 && v->entry_length != 2) ||
         (v->literal_kind == 5 && v->entry_length != 20) ||
         (v->literal_kind == 6 && v->entry_length != 1) ||
-        (v->literal_kind == 7 &&
-         (v->entry_length == 0 || v->entry_length > 8)) ||
+        (v->literal_kind == 7 && v->entry_length > 8) ||
         ((v->literal_kind == 8 || v->literal_kind == 9) && v->entry_length < 2))
       return false;
-    if (v->entry_length == 0) finish_literal(v);
     return true;
   }
 
@@ -619,7 +626,10 @@ static bool consume_display_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     v->sibling[v->section_offset - 1] = byte;
     if (v->section_offset == 2) {
       v->entry_count = read_be16(v->sibling);
-      if (v->entry_count > 192 ||
+      /* Match the replay reader: executable definitions need at least one
+       * instruction and no program may exceed its 64-instruction table. */
+      if ((v->entry_count == 0 && v->header[7] <= ERC7730_DEFINITION_EIP712) ||
+          v->entry_count > ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS ||
           v->section_remaining - 1u != (uint32_t)v->entry_count * 8u)
         return false;
       v->table_counts[6] = v->entry_count;
@@ -654,10 +664,14 @@ static bool finish_binding(Erc7730CatalogVerifier* v) {
       const uint8_t field = payload[0];
       const uint8_t operation = payload[1];
       const uint16_t literal = read_be16(payload + 2);
+      /* The loader keeps one constraint per domain field and refuses a
+       * second one, so the verifier must as well. */
       if (field == 0 || field > 5 || operation == 0 || operation > 2 ||
           (operation == 1 && literal >= v->table_counts[3]) ||
-          (operation == 2 && literal != UINT16_MAX))
+          (operation == 2 && literal != UINT16_MAX) ||
+          (v->binding_domain_fields & (1u << field)) != 0)
         return false;
+      v->binding_domain_fields |= (uint8_t)(1u << field);
       break;
     }
     case 3: {
@@ -878,6 +892,7 @@ static bool consume_program_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       v->binding_previous_kind = 0;
       v->binding_previous_length = 0;
       v->binding_header_match = false;
+      v->binding_domain_fields = 0;
       if ((type == 9 && length != 22) || (type != 9 && length < 2))
         return false;
     }
@@ -907,21 +922,75 @@ static bool finish_program(const Erc7730CatalogVerifier* v) {
   return (v->section_mask & external_metadata) == external_metadata;
 }
 
+static bool verify_runtime_delegate(
+    const Erc7730CatalogVerifier* v, uint32_t expected_scope,
+    char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1],
+    char out_fingerprint[METADATA_FINGERPRINT_LEN]) {
+  const uint8_t* record = v->cert;
+  if (record[ERC7730_DELEGATE_OFF_VERSION] != 1 || expected_scope == 0 ||
+      read_be32(record + ERC7730_DELEGATE_OFF_SCOPE) != expected_scope) {
+    return false;
+  }
+  bool alias_ended = false;
+  for (size_t i = 0; i < ERC7730_DELEGATE_ALIAS_LEN; i++) {
+    const uint8_t c = record[ERC7730_DELEGATE_OFF_ALIAS + i];
+    if (alias_ended) {
+      if (c != 0) return false;
+    } else if (c == 0) {
+      if (i == 0) return false;
+      alias_ended = true;
+    } else if (c < 0x20 || c > 0x7e) {
+      return false;
+    }
+  }
+  if (!alias_ended) return false;
+
+  const uint8_t* pubkey = record + ERC7730_DELEGATE_OFF_PUBKEY;
+  if (pubkey[0] != 0x02 && pubkey[0] != 0x03) return false;
+  static const uint8_t purpose[] = "KEEPKEY:ERC7730:CATALOG\0";
+  uint8_t attestation[sizeof(purpose) - 1 + 32];
+  memcpy(attestation, purpose, sizeof(purpose) - 1);
+  memcpy(attestation + sizeof(purpose) - 1, v->merkle, 32);
+  char runtime_alias[METADATA_ALIAS_MAX_LEN + 1];
+  const bool ok = signed_metadata_verify_runtime_attestation_for_pubkey(
+      pubkey, attestation, sizeof(attestation), v->signature,
+      sizeof(v->signature), runtime_alias);
+  memzero(attestation, sizeof(attestation));
+  if (!ok) return false;
+  memzero(out_alias, ERC7730_DELEGATE_ALIAS_LEN + 1);
+  strlcpy(out_alias, runtime_alias, ERC7730_DELEGATE_ALIAS_LEN + 1);
+  signed_metadata_pubkey_fingerprint(pubkey, out_fingerprint);
+  memzero(runtime_alias, sizeof(runtime_alias));
+  return true;
+}
+
 static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
                                    Erc7730CatalogIdentity* identity) {
   uint8_t actual_id[32];
   sha256_Final(&v->envelope_hash, actual_id);
-  if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) != 0 ||
-      v->cert_length != CLEARSIGN_CERT_LEN || v->recovery > 1 ||
-      !clearsign_root_verify_erc7730_catalog(
-          v->cert, sizeof(v->cert), (uint32_t)read_be64(v->header + 10),
-          v->merkle, v->signature, sizeof(v->signature),
-          identity->delegate_alias)) {
+  identity->runtime_signer = false;
+  bool authenticated = false;
+  if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) == 0 &&
+      v->cert_length == CLEARSIGN_CERT_LEN && v->recovery <= 1) {
+    authenticated = clearsign_root_verify_erc7730_catalog(
+        v->cert, sizeof(v->cert), (uint32_t)read_be64(v->header + 10),
+        v->merkle, v->signature, sizeof(v->signature),
+        identity->delegate_alias);
+    if (!authenticated) {
+      authenticated = verify_runtime_delegate(
+          v, (uint32_t)read_be64(v->header + 10), identity->delegate_alias,
+          identity->delegate_fingerprint);
+      identity->runtime_signer = authenticated;
+    }
+  }
+  if (!authenticated) {
     memzero(actual_id, sizeof(actual_id));
     v->failed = true;
     return ERC7730_CATALOG_UNTRUSTED;
   }
   memcpy(identity->definition_id, actual_id, sizeof(actual_id));
+  signed_metadata_pubkey_fingerprint(v->cert + CLEARSIGN_CERT_OFF_PUBKEY,
+                                     identity->delegate_fingerprint);
   identity->kind = v->header[7];
   identity->chain_id = read_be64(v->header + 10);
   memcpy(identity->contract_address, v->header + 18, 20);
@@ -1219,9 +1288,14 @@ bool erc7730_catalog_matches_calldata(const Erc7730CatalogIdentity* identity,
                                       uint64_t chain_id,
                                       const uint8_t contract_address[20],
                                       const uint8_t selector[4]) {
+  /* A zero header contract would defer to the deployment records, but no
+   * deployment may name the zero address, so such a definition can never
+   * describe a transaction. */
+  static const uint8_t zero_address[20] = {0};
   if (!identity || !contract_address || !selector ||
       identity->kind != ERC7730_DEFINITION_CALLDATA ||
       identity->chain_id != chain_id ||
+      memcmp(identity->contract_address, zero_address, 20) == 0 ||
       memcmp(identity->contract_address, contract_address, 20) != 0 ||
       memcmp(identity->selector_or_type_hash, selector, 4) != 0) {
     return false;
@@ -1246,14 +1320,17 @@ bool erc7730_catalog_matches_eip712(const Erc7730CatalogIdentity* identity,
       memcmp(identity->selector_or_type_hash, primary_type_hash, 32) != 0)
     return false;
 
-  /* A zero contract in the authenticated header means the definition is
-   * domain-wide. A nonzero contract is an additional mandatory binding fact;
-   * it can never be satisfied by a missing domain member. */
+  /* Every accepted EIP-712 definition carries at least one kind-1 deployment
+   * for its chain, and typed data may only use it at a listed deployment. A
+   * missing verifyingContract can therefore never match. A zero header
+   * contract ("domain-wide") defers the exact check to the replay loader,
+   * which requires the verifyingContract to be one of the signed deployments
+   * (erc7730_program_loader_require_deployment). A nonzero header contract
+   * must equal it here as well. */
+  if (!has_verifying_contract || !verifying_contract) return false;
   static const uint8_t zero_address[20] = {0};
-  if (memcmp(identity->contract_address, zero_address, sizeof(zero_address)) ==
-      0)
-    return true;
-  return has_verifying_contract && verifying_contract &&
+  return memcmp(identity->contract_address, zero_address,
+                sizeof(zero_address)) == 0 ||
          memcmp(identity->contract_address, verifying_contract, 20) == 0;
 }
 

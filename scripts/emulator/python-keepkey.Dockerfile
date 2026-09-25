@@ -31,6 +31,6 @@ COPY ./ /kkemu
 # Some storage-policy regressions must restart the emulator and inspect the
 # boot-time version gate. Reuse the exact product image already built by CI;
 # do not compile a second, potentially different emulator in this image.
-COPY --from=emulator /kkemu/bin/kkemu /kkemu/bin/kkemu
+COPY --from=emulator /kkemu/bin/ /kkemu/bin/
 
 ENTRYPOINT ["/bin/sh", "./scripts/emulator/python-keepkey-tests.sh"]

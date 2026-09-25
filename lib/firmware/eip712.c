@@ -172,7 +172,8 @@ static bool type_is_integer(const char* type, const char* prefix) {
   const char* p = type + prefix_len;
   size_t bits = 0;
   const bool has_bits = *p >= '0' && *p <= '9';
-  if (has_bits && !parse_bounded_decimal(&p, 256, &bits)) return false;
+  if (!has_bits || *p == '0' || !parse_bounded_decimal(&p, 256, &bits))
+    return false;
   if (has_bits && (bits < 8 || bits > 256 || (bits % 8) != 0)) return false;
   return type_array_suffix_is_valid(p);
 }
@@ -198,7 +199,7 @@ static bool type_is_bytes(const char* type, unsigned* byte_size,
     return true;
   }
   size_t size = 0;
-  if (!parse_bounded_decimal(&p, 32, &size) || size == 0 ||
+  if (*p == '0' || !parse_bounded_decimal(&p, 32, &size) || size == 0 ||
       !type_array_suffix_is_valid(p))
     return false;
   *byte_size = (unsigned)size;
@@ -271,10 +272,28 @@ static bool encode_canonical_integer(const char* type, const char* text,
   return true;
 }
 
+/* Preserve custom names such as addressBook and interval, while refusing
+ * malformed widths in the reserved numeric primitive families. */
+static bool malformed_numeric_type(const char* type) {
+  const char* prefixes[] = {"uint", "int", "bytes"};
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+    size_t n = strlen(prefixes[i]);
+    if (strncmp(type, prefixes[i], n) != 0) continue;
+    char c = type[n];
+    if (c && c != '[' && (c < '0' || c > '9')) continue;
+    if (i < 2) return !type_is_integer(type, prefixes[i]);
+    unsigned width;
+    bool dynamic;
+    return !type_is_bytes(type, &width, &dynamic);
+  }
+  return false;
+}
+
 int encodableType(const char* typeStr) {
   int ctr;
 
-  if (!typeStr || typeStr[0] == '\0') return NOT_ENCODABLE;
+  if (!typeStr || typeStr[0] == '\0' || malformed_numeric_type(typeStr))
+    return NOT_ENCODABLE;
 
   if (type_matches(typeStr, "address")) {
     return ADDRESS;
@@ -724,6 +743,44 @@ int dsConfirm(void) {
 
     NOTE: reentrant!
 */
+/* Validate primitive shapes and every array element before opening the
+ * field's first screen. No rejected primitive can consume user approval. */
+static bool primitive_value_valid(const char* type, const json_t* value) {
+  if (!type || !*type || !value || malformed_numeric_type(type)) return false;
+  if (!fixed_array_cardinality_matches(type, value)) return false;
+  const char* suffix = strchr(type, '[');
+  if (suffix) {
+    if (json_getType(value) != JSON_ARRAY) return false;
+    size_t n = (size_t)(suffix - type);
+    if (n == 0 || n >= MAX_TYPESTRING) return false;
+    char base[MAX_TYPESTRING] = {0};
+    memcpy(base, type, n);
+    for (const json_t* item = json_getChild(value); item;
+         item = json_getSibling(item)) {
+      if (!primitive_value_valid(base, item)) return false;
+    }
+    return true;
+  }
+  jsonType_t shape = json_getType(value);
+  const char* text = json_getValue(value);
+  uint8_t encoded[32];
+  if (type_matches(type, "address"))
+    return shape == JSON_TEXT && encAddress(text, encoded) == SUCCESS;
+  if (type_matches(type, "string")) return shape == JSON_TEXT;
+  if (type_matches(type, "bool"))
+    return (shape == JSON_BOOLEAN || shape == JSON_TEXT) && text &&
+           (!strcmp(text, "true") || !strcmp(text, "false"));
+  if (type_is_integer(type, "int") || type_is_integer(type, "uint"))
+    return (shape == JSON_INTEGER || shape == JSON_TEXT) &&
+           encode_canonical_integer(type, text, type_is_integer(type, "uint"),
+                                    encoded);
+  unsigned width;
+  bool dynamic;
+  if (type_is_bytes(type, &width, &dynamic))
+    return shape == JSON_TEXT && hex_string_is_valid(text, width, !dynamic);
+  return shape == JSON_OBJ; /* User-defined structs are parsed recursively. */
+}
+
 int parseVals(const json_t* eip712Types, const json_t* jType,
               const json_t* nextVal, struct SHA3_CTX* msgCtx) {
   if (!eip712Types || !jType || json_getType(jType) != JSON_ARRAY ||
@@ -785,7 +842,7 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         return JSON_TYPE_WNOVAL;
       }
       const jsonType_t value_type = json_getType(walkVals);
-      if (!fixed_array_cardinality_matches(typeType, walkVals)) {
+      if (!primitive_value_valid(typeType, walkVals)) {
         return GENERAL_ERROR;
       }
       const bool hasValue = value_type == JSON_TEXT ||

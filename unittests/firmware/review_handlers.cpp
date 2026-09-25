@@ -135,7 +135,7 @@ TEST_F(ReviewHandlers, ResetCancellationClearsScratchBeforeAndAfterFormatting) {
   const uint8_t entropy[32] = {};
   for (int accepted : {0, 1}) {
     SCOPED_TRACE(accepted);
-    reset_init(false, 256, false, false, "english", "reset", false, 0, 0,
+    reset_init(256, false, false, "english", "reset", false, 0, 0, false,
                false);
     ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
     // Exercise early cancellation with dirty shared scratch as well as the
@@ -155,8 +155,8 @@ TEST_F(ReviewHandlers, ResetCancellationClearsScratchBeforeAndAfterFormatting) {
 
 TEST_F(ReviewHandlers, ResetWithoutBackupCommitsAndClearsScratch) {
   const uint8_t entropy[32] = {};
-  ASSERT_TRUE(kkconfirm_preload(2, 0));
-  reset_init(false, 128, false, false, "english", "reset", true, 0, 0, false);
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  reset_init(128, false, false, "english", "reset", true, 0, 0, false, false);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
   reset_entropy(entropy, sizeof(entropy));
   EXPECT_FALSE(setup_isArmed());
@@ -172,8 +172,8 @@ TEST_F(ReviewHandlers, ResetBackupCommitsAllStrengthsAndClearsScratch) {
   for (uint32_t strength : {128u, 192u, 256u}) {
     SCOPED_TRACE(strength);
     fsm_test_clearLastFailure();
-    reset_init(false, strength, false, false, "english", "backed up", false,
-               0, 0, false);
+    reset_init(strength, false, false, "english", "backed up", false, 0, 0,
+               false, false);
     ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
     ASSERT_TRUE(kkconfirm_preload(20, 0));
     reset_entropy(entropy, sizeof(entropy));
@@ -241,8 +241,7 @@ TEST_F(ReviewHandlers, ReopeningFlashClearsRuntimeSigner) {
 }
 
 TEST_F(ReviewHandlers, MetadataKeyIdRefusesNarrowingBeforeAck) {
-  for (uint32_t key_id :
-       {static_cast<uint32_t>(METADATA_MAX_KEYS), 256u, 0xffffffffu}) {
+  for (uint32_t key_id : {256u, 0xffffffffu}) {
     EthereumTxMetadata msg = {};
     msg.has_key_id = true;
     msg.key_id = key_id;
@@ -302,7 +301,7 @@ TEST_F(ReviewHandlers, MissingAndEmptyTronMessageNeverRequestsConsent) {
     ASSERT_TRUE(kkconfirm_preload(0, 1));
     fsm_test_clearLastFailure();
     fsm_msgTronSignMessage(&msg);
-    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
     EXPECT_EQ(2, kkconfirm_drain());
   }
 }

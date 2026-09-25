@@ -814,7 +814,7 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]) {
   uint8_t digest[32];
   sha256_Raw(pubkey, 33, digest);
-  data2hex(digest, 4, out);
+  data2hex(digest, (METADATA_FINGERPRINT_LEN - 1u) / 2u, out);
   memzero(digest, sizeof(digest));
 }
 
@@ -1171,7 +1171,7 @@ static bool signed_metadata_confirm_screens(void) {
     if (pk) {
       signed_metadata_pubkey_fingerprint(pk, fingerprint);
     } else {
-      strlcpy(fingerprint, "????????", sizeof(fingerprint));
+      strlcpy(fingerprint, "????????????????", sizeof(fingerprint));
     }
     if (!alias) alias = "unknown";
 
@@ -1408,4 +1408,29 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
 
 const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
+}
+
+bool signed_metadata_verify_runtime_attestation_for_pubkey(
+    const uint8_t pubkey[33], const uint8_t* data, size_t data_len,
+    const uint8_t* sig, size_t sig_len,
+    char out_alias[METADATA_ALIAS_MAX_LEN + 1]) {
+  if (!pubkey || !data || data_len == 0 || !sig || sig_len != 64 ||
+      !out_alias || !storage_isPolicyEnabled("AdvancedMode")) {
+    return false;
+  }
+  for (uint8_t key_id = 0; key_id < METADATA_MAX_KEYS; key_id++) {
+    if (loaded_pubkeys[key_id][0] == 0x00 ||
+        memcmp(loaded_pubkeys[key_id], pubkey, 33) != 0) {
+      continue;
+    }
+    uint8_t digest[32];
+    sha256_Raw(data, data_len, digest);
+    const bool ok = ecdsa_verify_digest(&secp256k1, loaded_pubkeys[key_id], sig,
+                                        digest) == 0;
+    memzero(digest, sizeof(digest));
+    if (!ok) return false;
+    strlcpy(out_alias, loaded_aliases[key_id], METADATA_ALIAS_MAX_LEN + 1);
+    return true;
+  }
+  return false;
 }

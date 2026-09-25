@@ -31,6 +31,16 @@ REPORT_VARIANT_ARG="--build-variant=$REPORT_BUILD_VARIANT"
 echo "Expected CI build variant: $REPORT_BUILD_VARIANT"
 # Dice setup keeps every DebugLinkState field private through commit/abort.
 export KK_DICE_DEBUG_PRIVATE=1
+# Exercise the exact firmware parser built alongside this emulator. The
+# Bitcoin-only product intentionally has no ERC-7730 parser target.
+if [ "$REPORT_BUILD_VARIANT" = full ]; then
+    test -x /kkemu/bin/erc7730-validate || {
+        echo "FATAL: full build lacks its ERC-7730 parser validator"
+        exit 1
+    }
+    export ERC7730_FIRMWARE_VALIDATOR=/kkemu/bin/erc7730-validate
+fi
+
 
 mkdir -p /kkemu/test-reports/python-keepkey
 mkdir -p /kkemu/test-reports/screenshots
@@ -47,6 +57,9 @@ for i in $(seq 1 20); do
 done
 
 cd deps/python-keepkey/tests
+# Every suite below runs even if an earlier one fails, so each JUnit file is
+# still produced; the script's exit status reports any failure.
+RC=0
 
 # The tests run from this directory, while keepkeylib lives one level up.
 # Make that package root explicit so direct imports work consistently in the
@@ -108,10 +121,8 @@ KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
   $PYTEST_TIMEOUT_ARGS \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  -s 2>&1 || true
-# pytest exit code is NOT the gate — screenshot count below is.
-# Tests for features not yet merged (gated by requires_firmware/requires_message)
-# may fail or skip here; the real check is: did screenshots get captured?
+  -s 2>&1 || RC=1
+# Both pytest status and the per-test screenshot inventory are required.
 
 # Gate: fail fast if screenshots broken
 echo "=== Screenshot results ==="
@@ -154,6 +165,21 @@ KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py /kkemu/unittests/host/test_p03_recovery.py --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
+
+echo "=== Blocks 06–07 integration contracts ==="
+KK_RELEASE_MISSING_CAPABILITIES= \
+KK_TRANSPORT_MAIN=kkemu:11044 KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v $PYTEST_TIMEOUT_ARGS --tb=short \
+  test_msg_ethereum_clearsign_additive.py \
+  test_msg_session_trust_lifetime.py test_msg_ripple_sign_tx.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack06-contracts.xml || RC=1
+
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_STACK07_FIRMWARE_VARIANT="$REPORT_BUILD_VARIANT" \
+KK_TRANSPORT_MAIN=kkemu:11044 KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v $PYTEST_TIMEOUT_ARGS /kkemu/scripts/emulator/test_stack07_regressions.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack07.xml || RC=1
+if [ "$RC" -ne 0 ]; then PYTEST_RC=1; fi
 
 # Merge in the native firmware unit results before validating or rendering.
 # The test-reports volume is shared rw with the firmware-unit container, which

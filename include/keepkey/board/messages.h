@@ -134,6 +134,11 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
+/* A handler may reuse its decoded request storage for a large response after
+ * copying every request field it still needs. The transport does not dispatch
+ * another normal message until the handler returns. */
+void* msg_decoded_request_response_scratch(void);
+
 bool msg_write(MessageType msg_id, const void* msg);
 /* Called only after a normal response has been encoded and sent. Firmware may
  * use the response type to recognize progress in an active workflow. */

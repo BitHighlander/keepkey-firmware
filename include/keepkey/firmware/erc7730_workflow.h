@@ -55,6 +55,7 @@ typedef enum {
   ERC7730_DISPLAY_INTERPOLATED_TEXT,
   ERC7730_DISPLAY_ARRAY_PATH,
   ERC7730_DISPLAY_ARRAY_SEPARATOR,
+  ERC7730_DISPLAY_DOMAIN_STRING,
 } Erc7730DisplayStage;
 
 typedef struct {
@@ -150,6 +151,10 @@ typedef struct {
   uint32_t signing_calldata_bytes;
   bool calldata_digest_set;
   bool host_calldata_stream;
+  uint8_t domain_field;
+  bool identity_confirmed;
+  uint8_t reviewed_digest[32];
+  bool reviewed_digest_set;
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM
@@ -260,6 +265,9 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
                                      size_t member_path_count,
                                      const uint8_t* value, size_t value_len);
 bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow);
+bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
+                                    const uint8_t domain[32],
+                                    const uint8_t message[32]);
 bool erc7730_workflow_restore_complete(const Erc7730Workflow* workflow,
                                        EthereumSignTx* tx);
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,

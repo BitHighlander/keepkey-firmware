@@ -78,7 +78,6 @@ void layoutHome(void) {
 void layoutHomeForced(void) {
   layout_home();
   layoutLockedState();
-  reset_idle_time();
   home_state = AT_HOME;
 }
 
@@ -94,7 +93,6 @@ void leave_home(void) {
   switch (home_state) {
     case AT_HOME:
       layout_home_reversed();
-      reset_idle_time();
       home_state = AWAY_FROM_HOME;
       break;
 

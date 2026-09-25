@@ -8,3 +8,5 @@ add_subdirectory(emulator)
 add_subdirectory(firmware)
 add_subdirectory(rle-dump)
 add_subdirectory(variant)
+
+add_subdirectory(erc7730-validate)

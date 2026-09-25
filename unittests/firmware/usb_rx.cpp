@@ -13,6 +13,7 @@ extern "C" {
 extern "C" {
 void usb_rx_helper(const void *buf, size_t length, MessageMapType type);
 void set_msg_failure_handler(msg_failure_t failure_func);
+bool test_tiny_buffer_is_clear(void);
 }
 
 static int failure_count;
@@ -137,6 +138,7 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   }
   EXPECT_EQ(MessageType_MessageType_PassphraseAck, id);
   EXPECT_STREQ(secret, reinterpret_cast<PassphraseAck *>(received)->passphrase);
+  EXPECT_TRUE(test_tiny_buffer_is_clear());
 
   memset(frame, 0, sizeof(frame));
   frame[0] = '?';
@@ -190,6 +192,7 @@ static void expectMalformedTinyPacketRejected(size_t packet_length) {
   close(fd);
   EXPECT_EQ(MessageType_MessageType_Cancel, id);
   EXPECT_EQ(1, failure_count);
+  EXPECT_TRUE(test_tiny_buffer_is_clear());
   for (uint8_t byte : received) EXPECT_EQ(0, byte);
 
   // A subsequent normal dispatch resets the tiny rejection state.

@@ -4,6 +4,8 @@
 
 #include "keepkey/firmware/erc7730_condition.h"
 #include "memzero.h"
+#include "keepkey/firmware/eip712_stream.h"
+#include "trezor/crypto/memzero.h"
 
 static Erc7730Workflow active_workflow;
 
@@ -23,6 +25,9 @@ static void fail(Erc7730Workflow* workflow) {
   memzero(workflow->embedded_definition_id,
           sizeof(workflow->embedded_definition_id));
   workflow->embedded_depth = 0;
+  memzero(&workflow->calldata_sha, sizeof(workflow->calldata_sha));
+  memzero(workflow->reviewed_digest, sizeof(workflow->reviewed_digest));
+  workflow->reviewed_digest_set = false;
   workflow->phase = ERC7730_WORKFLOW_FAILED;
 }
 
@@ -70,7 +75,21 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
     return false;
   }
   workflow->typed_data = true;
-  return begin_replay(workflow, identity);
+  if (!begin_replay(workflow, identity)) return false;
+  /* The definition applies only at a signed deployment on the typed data's
+   * own chain; the loader refuses the replay unless one lists it. */
+  Eip712DomainFacts facts;
+  const bool bound =
+      eip712_stream_domain_facts(&facts) && facts.has_chain_id &&
+      facts.has_verifying_contract && facts.chain_id == identity->chain_id &&
+      erc7730_program_loader_require_deployment(
+          &workflow->loader, facts.chain_id, facts.verifying_contract);
+  memzero(&facts, sizeof(facts));
+  if (!bound) {
+    fail(workflow);
+    return false;
+  }
+  return true;
 }
 
 bool erc7730_workflow_waiting(const Erc7730Workflow* workflow,
@@ -1058,8 +1077,11 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
   if (!workflow || !member_path || !value ||
       workflow->phase != ERC7730_WORKFLOW_TYPED_DATA ||
       !workflow->calldata.capture_enabled || member_path_count < 2 ||
-      member_path[0] != 1)
+      member_path[0] > 1)
     return false;
+  /* Alpha replays the complete document. The EIP-712 engine validates and
+   * binds domain values; only message leaves belong to this ABI capture. */
+  if (member_path[0] == 0) return true;
   if (workflow->calldata.capture_array_length &&
       member_path_count == workflow->calldata.capture_path_count + 1u) {
     bool matches = true;
@@ -1129,6 +1151,29 @@ bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow) {
   workflow->calldata.complete = true;
   workflow->phase = ERC7730_WORKFLOW_COMPLETE;
   return true;
+}
+
+bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
+                                    const uint8_t domain[32],
+                                    const uint8_t message[32]) {
+  if (!workflow || !domain || !message || !workflow->typed_data ||
+      workflow->phase != ERC7730_WORKFLOW_COMPLETE)
+    return false;
+  uint8_t digest[32];
+  sha256_Init(&workflow->calldata_sha);
+  sha256_Update(&workflow->calldata_sha, domain, 32);
+  sha256_Update(&workflow->calldata_sha, message, 32);
+  sha256_Final(&workflow->calldata_sha, digest);
+  const bool matches = !workflow->reviewed_digest_set ||
+                       memcmp(workflow->reviewed_digest, digest, 32) == 0;
+  if (matches) {
+    memcpy(workflow->reviewed_digest, digest, 32);
+    workflow->reviewed_digest_set = true;
+  } else {
+    fail(workflow);
+  }
+  memzero(digest, sizeof(digest));
+  return matches;
 }
 
 bool erc7730_workflow_restore_complete(const Erc7730Workflow* workflow,

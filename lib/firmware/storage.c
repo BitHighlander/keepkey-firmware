@@ -973,7 +973,7 @@ void storage_setAuthData(const authType* setData) {
 
 void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
                            size_t len) {
-  if (len < 464 + 17) return;
+  if (len < 464 + 18) return;
   /* Versions after v1 also contain the cache at offset 484. Validate its
    * entire extent before mutating the destination or reading that record. */
   if (read_u32_le(ptr) != 1 && len < 484 + 75) return;
@@ -1002,7 +1002,7 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage_resetPolicies(storage);
   if (storage->version != 1) {
     PolicyType legacy_policy = {0};
-    storage_readPolicyV1(&legacy_policy, ptr + 464, 17);
+    storage_readPolicyV1(&legacy_policy, ptr + 464, 18);
     // Only ShapeShift existed in this format. Preserve its preference while
     // refusing injected names that could enable later security policies.
     if (legacy_policy.has_policy_name && legacy_policy.has_enabled &&
@@ -1557,7 +1557,8 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   uint32_t raw_version = read_u32_le(flash + 44);
   enum StorageVersion version = version_from_int(raw_version);
   if (raw_version > (uint32_t)STORAGE_VERSION &&
-      raw_version < STORAGE_VERSION_BTC_ONLY_BASE) return SUS_TooNew;
+      raw_version < STORAGE_VERSION_BTC_ONLY_BASE)
+    return SUS_TooNew;
 
   switch (version) {
     case StorageVersion_1:
@@ -1915,6 +1916,7 @@ void session_clear(bool clear_pin) {
   /* Every session loss is an authorization boundary even when Initialize asks
    * to preserve the cached PIN. Abort signing and discard all plaintext
    * setup/authenticator state before the caller can report success. */
+  signed_metadata_clear_signers();
   signing_abort();
   setup_abort();
   authenticator_clear_cache();

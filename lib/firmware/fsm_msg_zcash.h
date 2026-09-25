@@ -1288,6 +1288,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   }
 
   zcash_signing.current_action++;
+  note_workflow_progress();
 
   /* Update progress */
   uint32_t progress =
@@ -1472,6 +1473,7 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
          msg->script_pubkey.size);
 
   zcash_signing.current_transparent_output++;
+  note_workflow_progress();
 
   /* Static draw before the dispatch: the actions transition below arms the
    * trickle, and a layoutProgress() after it would clear and freeze it. */
@@ -1663,6 +1665,7 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
          msg->address_n_count * sizeof(msg->address_n[0]));
 
   zcash_signing.current_transparent_input++;
+  note_workflow_progress();
 
   if (zcash_signing.current_transparent_input <
       zcash_signing.n_transparent_inputs) {

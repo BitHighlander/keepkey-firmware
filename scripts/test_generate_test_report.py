@@ -18,12 +18,11 @@ def skipped(capability):
 
 class CapabilityWaivers(unittest.TestCase):
     def test_ledger_is_read_from_the_real_workflow(self):
-        self.assertIn("osmosis-wire-guards", report.approved_capabilities())
+        self.assertEqual(set(), report.approved_capabilities())
 
     def test_ledger_must_be_unique(self):
         line = "    KK_RELEASE_MISSING_CAPABILITIES: a,b\n"
-        with self.assertRaises(RuntimeError):
-            report.approved_capabilities("")
+        self.assertEqual(set(), report.approved_capabilities(""))
         with self.assertRaises(RuntimeError):
             report.approved_capabilities(line + line)
         self.assertEqual({"a", "b"}, report.approved_capabilities(line))
@@ -41,6 +40,19 @@ class CapabilityWaivers(unittest.TestCase):
                       [skipped("")]):
             with self.assertRaises(RuntimeError):
                 report.release_missing_capabilities(cases, approved=set())
+
+
+class CompleteRequirements(unittest.TestCase):
+    def test_current_alpha_requires_all_controls_without_waivers(self):
+        required = (report.BASE_REQUIRED_CASES | report.EVM_REQUIRED_CASES |
+                    report.OSMOSIS_REQUIRED_CASES)
+        cases = [{"classname": name.rsplit(".", 1)[0],
+                  "name": name.rsplit(".", 1)[1], "status": "pass",
+                  "skip_reason": ""} for name in sorted(required)]
+        with unittest.mock.patch.dict(report.os.environ, {"FW_VERSION": "7.17.0"}):
+            report.validate_cases(cases)
+            with self.assertRaises(RuntimeError):
+                report.validate_cases(cases[:-1])
 
 
 class RequiredCaseMatching(unittest.TestCase):

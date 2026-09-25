@@ -8,12 +8,24 @@
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/erc7730_abi.h"
 #include "sha2.h"
+#include "keepkey/firmware/signed_metadata.h"
 
 #define ERC7730_PROGRAM_MAX_SIZE (16u * 1024u)
 #define ERC7730_TRANSPORT_CHUNK_MAX 1024u
 #define ERC7730_CATALOG_MAX_PROOF_DEPTH 16u
 #define ERC7730_PROGRAM_HEADER_SIZE 179u
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
+#define ERC7730_DELEGATE_RECORD_LEN 139u
+#define ERC7730_DELEGATE_ALIAS_LEN 32u
+#define ERC7730_DELEGATE_PUBKEY_LEN 33u
+#define ERC7730_DELEGATE_OFF_VERSION 0u
+#define ERC7730_DELEGATE_OFF_SCOPE 2u
+#define ERC7730_DELEGATE_OFF_ALIAS 10u
+#define ERC7730_DELEGATE_OFF_PUBKEY 42u
+#define ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS 64u
+#define ERC7730_LITERAL_MAX_LENGTH 258u
+/* Firmware-controlled minimum signed issuance epoch. */
+#define ERC7730_MIN_ISSUANCE_EPOCH 0u
 
 typedef enum {
   ERC7730_DEFINITION_CALLDATA = 1,
@@ -45,6 +57,8 @@ typedef struct {
   uint32_t program_length;
   uint32_t envelope_length;
   char delegate_alias[CLEARSIGN_ALIAS_LEN + 1];
+  char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
+  bool runtime_signer;
   uint8_t kind;
 } Erc7730CatalogIdentity;
 
@@ -113,6 +127,7 @@ typedef struct {
   uint8_t binding_kind;
   uint8_t binding_previous_kind;
   uint16_t binding_previous_length;
+  uint8_t binding_domain_fields;
   bool binding_header_match;
   bool leaf_finalized;
   bool failed;

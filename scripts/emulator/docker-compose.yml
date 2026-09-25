@@ -43,7 +43,7 @@ services:
       # infer this from Features: firmware identity is itself under test.
       KK_TEST_BUILD_VARIANT: ${KK_TEST_BUILD_VARIANT:-full}
       KK_RELEASE_MISSING_CAPABILITIES: '${KK_RELEASE_MISSING_CAPABILITIES:-}'
-      KK_EMULATOR_BIN: '${KK_EMULATOR_BIN:-/kkemu-emulator-bin/kkemu}'
+      KK_EMULATOR_BIN: '${KK_EMULATOR_BIN:-/kkemu/bin/kkemu}'
     networks:
       - local-net
     depends_on:

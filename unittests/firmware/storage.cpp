@@ -1851,14 +1851,15 @@ TEST(Storage, FutureBitcoinBandValuesNeverFallThroughToWipe) {
 TEST(Storage, LockDisarmsAdvancedModeButInitializeRetainsIt) {
   Storage storage = {};
   storage_resetPolicies(&storage);
-  ASSERT_TRUE(storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
+  ASSERT_TRUE(
+      storage_setPolicy_impl(storage.pub.policies, "AdvancedMode", true));
   SessionState session = {};
 
   session_clear_impl(&session, &storage, false);
-  EXPECT_TRUE(storage_isPolicyEnabled_impl(storage.pub.policies,
-                                          "AdvancedMode"));
+  EXPECT_TRUE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
 
   session_clear_impl(&session, &storage, true);
-  EXPECT_FALSE(storage_isPolicyEnabled_impl(storage.pub.policies,
-                                           "AdvancedMode"));
+  EXPECT_FALSE(
+      storage_isPolicyEnabled_impl(storage.pub.policies, "AdvancedMode"));
 }

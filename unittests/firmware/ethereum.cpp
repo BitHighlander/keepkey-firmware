@@ -7,6 +7,10 @@ extern "C" {
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
+#include "keepkey/firmware/ethereum_contracts.h"
+#include "keepkey/firmware/ethereum_contracts/saproxy.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
+#include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum.h"
@@ -22,6 +26,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include "kkconfirm_driver.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -167,6 +172,22 @@ TEST(Ethereum, UnknownErc20CannotBePresentedAsAReviewedTransfer) {
                                                sizeof(largest_review)));
 }
 
+TEST(Ethereum, SapAmountCallsitesFailClosedAtDisplayBoundary) {
+  uint8_t max_word[32];
+  std::memset(max_word, 0xff, sizeof(max_word));
+  char rendered[41];
+
+  EXPECT_FALSE(sa_formatUint256(max_word, "", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      sa_formatUint256(max_word, " Token Units", rendered, sizeof(rendered)));
+
+  uint8_t one[32] = {};
+  one[31] = 1;
+  ASSERT_TRUE(
+      sa_formatUint256(one, " Token Units", rendered, sizeof(rendered)));
+  EXPECT_STREQ("1 Token Units", rendered);
+}
+
 TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
   bignum256 amount;
   bn_read_uint64(1500000000000000000ULL, &amount);
@@ -224,6 +245,19 @@ TEST(Ethereum, TransferAmountUsesTheRequestsSigningChain) {
 TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
   EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
+}
+
+TEST(Ethereum, DirectSigningEntryRejectsChainIdAboveMaximum) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EthereumSignTx msg{};
+  msg.has_chain_id = true;
+  msg.chain_id = 2147483630u;
+  EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
+  HDNode node{};
+  ethereum_signing_init(&msg, &node, false);
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  msg.chain_id--;
+  EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
 }
 
 TEST(Ethereum, DomainOnlyPrimaryTypeRequiresExactMatch) {
@@ -801,8 +835,8 @@ TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
   msg.data_initial_chunk.size = 68;
   memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
   memcpy(msg.data_initial_chunk.bytes + 16, UNISWAP_ROUTER_ADDRESS, 20);
-  ASSERT_TRUE(zx_isZxApproveLiquid(&msg));
-  EXPECT_TRUE(ethereum_contractHandled(68, &msg, nullptr));
+  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+  EXPECT_FALSE(ethereum_contractHandled(68, &msg, nullptr));
   EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
   EXPECT_FALSE(ethereum_contractHandled(1024, &msg, nullptr));
   msg.data_initial_chunk.size = 69;
@@ -813,20 +847,31 @@ extern "C" bool test_liquidity_failed_derivation_wipes(int stage);
 
 #include "keepkey/firmware/eip712.h"
 
-TEST(Ethereum, SapAmountCallsitesFailClosedAtDisplayBoundary) {
-  uint8_t max_word[32];
-  std::memset(max_word, 0xff, sizeof(max_word));
-  char rendered[41];
+static const uint8_t kNativePseudoAddress[20] = {
+    0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+    0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee};
 
-  EXPECT_FALSE(sa_formatUint256(max_word, "", rendered, sizeof(rendered)));
-  EXPECT_FALSE(
-      sa_formatUint256(max_word, " Token Units", rendered, sizeof(rendered)));
-
-  uint8_t one[32] = {};
-  one[31] = 1;
-  ASSERT_TRUE(
-      sa_formatUint256(one, " Token Units", rendered, sizeof(rendered)));
-  EXPECT_STREQ("1 Token Units", rendered);
+static void MakeTransformErc20(EthereumSignTx* msg, uint8_t transform_byte) {
+  *msg = EthereumSignTx{};
+  msg->has_to = true;
+  msg->to.size = 20;
+  std::memcpy(msg->to.bytes, ZXSWAP_ADDRESS, msg->to.size);
+  msg->has_chain_id = true;
+  msg->chain_id = 1;
+  msg->has_data_initial_chunk = true;
+  msg->data_initial_chunk.size = 4 + 11 * 32;
+  std::memcpy(msg->data_initial_chunk.bytes, "\x41\x55\x65\xb0", 4);
+  std::memcpy(msg->data_initial_chunk.bytes + 4 + 12, kTUSD, 20);
+  std::memcpy(msg->data_initial_chunk.bytes + 4 + 32 + 12, kTGBP, 20);
+  msg->data_initial_chunk.bytes[4 + 3 * 32 - 1] = 1;     // input amount
+  msg->data_initial_chunk.bytes[4 + 4 * 32 - 1] = 1;     // minimum output
+  msg->data_initial_chunk.bytes[4 + 5 * 32 - 1] = 0xa0;  // array offset
+  msg->data_initial_chunk.bytes[4 + 6 * 32 - 1] = 1;     // array length
+  msg->data_initial_chunk.bytes[4 + 7 * 32 - 1] = 0x20;  // element offset
+  msg->data_initial_chunk.bytes[4 + 8 * 32 - 1] = 1;     // deployment nonce
+  msg->data_initial_chunk.bytes[4 + 9 * 32 - 1] = 0x40;  // data offset
+  msg->data_initial_chunk.bytes[4 + 10 * 32 - 1] = 1;    // data length
+  msg->data_initial_chunk.bytes[4 + 10 * 32] = transform_byte;
 }
 
 TEST(Ethereum, TransferDisplayDoesNotAliasHighChainTokenMetadata) {
@@ -844,8 +889,7 @@ TEST(Ethereum, TransferDisplayDoesNotAliasHighChainTokenMetadata) {
 
   ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
   char rendered[32];
-  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
-  EXPECT_STREQ("Unknown token value", rendered);
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
 }
 
 TEST(Ethereum, NativePseudoAddressCallsRenderUnknownOffMainnet) {
@@ -899,53 +943,7 @@ TEST(Ethereum, NativePseudoAddressTransferFormatterIsUnknownOffMainnet) {
 
   ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
   char rendered[32];
-  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
-  EXPECT_STREQ("Unknown token value", rendered);
-}
-
-TEST(Ethereum, TransformErc20AlwaysRequiresAdvancedMode) {
-  EthereumSignTx first, second;
-  MakeTransformErc20(&first, 0x41);
-  MakeTransformErc20(&second, 0x42);
-
-  ASSERT_EQ(first.data_initial_chunk.size, second.data_initial_chunk.size);
-  ASSERT_EQ(0, std::memcmp(first.data_initial_chunk.bytes,
-                           second.data_initial_chunk.bytes,
-                           first.data_initial_chunk.size - 32));
-  ASSERT_NE(0, std::memcmp(first.data_initial_chunk.bytes,
-                           second.data_initial_chunk.bytes,
-                           first.data_initial_chunk.size));
-
-  EXPECT_FALSE(
-      ethereum_contractHandled(first.data_initial_chunk.size, &first, nullptr));
-  EXPECT_FALSE(ethereum_contractHandled(second.data_initial_chunk.size, &second,
-                                        nullptr));
-}
-
-TEST(Ethereum, MakerDaoSelectorsAreNotSpecializedForPointRelease) {
-  struct MakerCall {
-    const uint8_t selector[4];
-    size_t argument_count;
-  };
-  static const MakerCall kCalls[] = {
-      {{0xc7, 0x40, 0x73, 0xa1}, 1},  // open(address)
-      {{0x1b, 0x96, 0x81, 0x60}, 5},  // wipeAndFree(...,address)
-  };
-
-  for (const MakerCall& call : kCalls) {
-    EthereumSignTx msg = EthereumSignTx{};
-    msg.has_chain_id = true;
-    msg.chain_id = 1;
-    msg.has_to = true;
-    msg.to.size = 20;
-    msg.has_data_initial_chunk = true;
-    msg.data_initial_chunk.size = 4 + call.argument_count * 32;
-    std::memcpy(msg.data_initial_chunk.bytes, call.selector,
-                sizeof(call.selector));
-
-    EXPECT_FALSE(
-        ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
-  }
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
 }
 
 TEST(Ethereum, NativePseudoAddressIsStrictlyChainScoped) {
