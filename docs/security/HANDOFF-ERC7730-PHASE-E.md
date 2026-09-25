@@ -43,7 +43,7 @@ Everything shown must be taken from the bytes being signed.
   | `calleePath` + `amountPath` + `spenderPath` | 6 |
 
   `chainIdPath` and `selectorPath` do not appear.
-- Phase A–D blocks 29 of the formats. Of the remaining unsignable formats, about 130 are refused on purpose: slices, packed words, nested arrays, ABIs deeper than 8.
+- Phase A–D blocks 32 of the formats, one per embedded field (measured: removing only kind 13 from the mirror moves the signable count from 1,326 to 1,294). Of the remaining unsignable formats, about 130 are refused on purpose: slices, packed words, nested arrays, ABIs deeper than 8.
 - **Not yet measured:**
   - how long the inner calldata really is (a Safe `setup` can be long);
   - how many inner calls have a registry definition of their own;
@@ -159,7 +159,7 @@ The target is to add back at most ~10% of what was deleted.
   1. At the embedded field, after the outer signer and intent screens, the device requests the inner definition by (calldata, chain, callee, selector, `recursion_depth=1`). The request carries only facts it read from the signed calldata, and the reply streams into the preload slot.
   2. An empty chunk (offset 0, `total_length` 0) means "none", and the E1 blind path follows. python-keepkey's `Catalog.chunk` sends it for an unknown nested lookup.
   3. Before any inner screen, the device checks the binding (H8). It then shows the call's context (callee, selector, length, value, authority) and runs the inner program titled "Inner signer", "Inner action", "Inner field" and "Inner intent i/n".
-  4. Inside it, `@.to`/`@.value`/`@.from` mean the callee, the value moved (zero if unnamed) and the spender (the outer contract if unnamed).
+  4. Inside it, `@.to`/`@.value`/`@.from` mean the callee, the value moved and the spender (the outer contract if unnamed). When the outer formatter names no `amountPath`, the calldata does not say what the inner call moves: an inner definition that shows `@.value` is then refused before any inner screen and the call is shown blind (the verifier records `reads_value`; `erc7730_workflow_fetch_feed` checks it).
   5. Every inner pass, including the inner validation pass, replays the whole outer calldata, hashes it against the reviewed digest and feeds only the located inner arguments to the ABI stream.
   6. At the inner end the device re-fetches the outer definition by its id, re-authenticates it and resumes after the instruction that held the inner call.
 - **Not clear-signed (blind in 7.15):**
@@ -174,6 +174,26 @@ The target is to add back at most ~10% of what was deleted.
   - `test_inner_bytes_changed_in_an_inner_pass_are_refused` (refused on pass 5, before any inner field).
 - Negative controls: removing the binding, feeding the whole outer calldata to the inner stream, or reading inner containers from the outer transaction each fail the matching test.
 - Found while testing: the dispatcher's stale-continuation guard (`fsm.c`) had to accept definition chunks in the new FETCH phase. A replay must reset the pending selection kind, or the first inner replay is taken for the outer program's last path selection.
+
+## 9c. Audit remediation (2026-09-25)
+
+An adversarial audit of the 7b diff (102 agents) confirmed 42 findings, clustered into D1–D19; none was P1. Fixed:
+
+- **Mid-review failures the preload now refuses or the runtime now handles:** numeric constants as values (widened to words; D1); an embedded call as an intent part (D2); signer text over 64 bytes and unit decimals over 77 (D3); a literal callee (D9); control characters, which are escaped as `\xNN` (D8); a raw value over the 128-byte capture, shown blind with "Not shown: N bytes" (D8); an inner definition the device refuses (bad program, unknown signer), shown blind instead of aborting (D17); an inner definition that shows `@.value` with no `amountPath` (critic gap, above).
+- **Wrong source for a fact:** a Wanchain transaction type leaking into a native amount (D4); a signer's native alias overriding the firmware token table (D5).
+- **Presentation:** distinct titles "Intent text i of n", "Intent value i of n" and "Signer field i of N", so a signer fragment cannot pass for a device-rendered value (D6/D14); pages split between lines, so an address is not cut (D7); a unit's base and a threshold message are labelled as the signer's, and a unit always shows the raw integer (D16).
+- **Mirror:** the python-keepkey table limits match the device's (D11). A root path is handled (D12). Wire tests filter pager continuation pages instead of de-duplicating (D15).
+
+Documented, not changed (fail closed, no signature):
+
+- **D10, parallel arrays.** Inside an iteration only the value argument must walk the iterated array; any other `[]` path (a token, a collection, a callee) is paired with it by index, as ERC-7730 pairs arrays. If that array is shorter, the capture fails mid-review with "calldata does not match definition". If it is longer, its extra elements are not shown. Test: `test_parallel_arrays_pair_by_index_and_a_short_one_fails_closed`.
+- **D18, fixed indices into dynamic arrays.** Preload cannot know a dynamic array's length, so `path.[0]` over an empty array fails mid-review with the same message. Test: `test_a_fixed_index_into_a_short_array_fails_closed`.
+- **The inner validation pass runs after the outer screens.** Inner bytes that are not canonical for the inner ABI (trailing words, non-minimal offsets) abort with "calldata does not match definition" instead of taking the blind path.
+- **Typed data repeats leaf reviews.** Each captured typed-data field replays the whole typed data, and every leaf is confirmed on each walk: N+1 complete leaf reviews for N captured fields. The UX cost is not measured.
+- **DELEGATECALL is not tied to the inner review (owner decision for 7.16).** The Safe `operation` word is shown only as the outer descriptor's own field. An inner definition is clear-signed the same way under `operation = 1`, where the callee runs against the Safe's storage. §8 item 5 has no code path. In 7.15 the outer review shows the operation value; 7.16 must decide whether a DELEGATECALL inner call is rejected.
+- **Hidden fields.** The compiler omits every field the descriptor marks `visible: "never"` (for example Safe's `safeTxGas` and `signatures`). Those fields are not in the signed program, so the device cannot know they exist. The device hides nothing it is given.
+
+New wire tests: `test_numeric_constants_are_values`, `test_control_characters_in_a_value_are_escaped`, `test_a_raw_value_too_long_to_capture_is_shown_blind`, `test_multiline_values_split_between_lines`, `test_an_inner_definition_the_device_refuses_falls_back_to_blind`, `test_inner_definition_for_another_callee_or_chain_is_refused`, `test_inner_containers_and_depth_two`, `test_embedded_calls_inside_an_iteration_are_shown_blind`, `test_an_inner_value_the_calldata_does_not_carry_is_never_shown`, plus the two fail-closed tests above. Every certified walk first signs the same transaction on the ordinary path and requires an identical signature. Negative controls: reverting each of 14 fixes on its own fails its named wire or unit test. The callee/chain binding is checked twice (header screen and `erc7730_workflow_fetch_complete`), so its control removes both.
 
 ## 9. Decisions needed from the owner before design
 

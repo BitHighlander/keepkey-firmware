@@ -111,7 +111,7 @@ The plan's counts assumed values came only from calldata. Measured with containe
 ### Phase B status (2026-09-25): block 7b
 
 - Display opcodes 2 (text) and 3 (value) execute, but only as one run directly after the plain intent. The verifier refuses a part after a field, and the plain intent stays mandatory at pc 0.
-- Each part is its own required confirmation titled "Intent i/n". The display reader counts the run while it streams, so no extra replay is needed.
+- Each part is its own required confirmation, titled "Intent text i of n" or "Intent value i of n". The display reader counts the run while it streams, so no extra replay is needed.
   - A text part is the signer's fragment, escaped.
   - A value part runs the referenced formatter through the same argument pipeline as a field, so it shows exactly the same text as that field.
 - Not a single assembled sentence: that needs a sentence buffer of about 513 B of SRAM, which the 256 B rule sends to the owner for review. The parts design adds no SRAM.
@@ -133,7 +133,7 @@ The plan's counts assumed values came only from calldata. Measured with containe
   - amount: the ordinary review's native rendering.
   - date: "YYYY-MM-DD HH:MM:SS UTC" plus the raw seconds; outside 1970–9999 it shows the raw integer, marked "not a date". Block height: "Block N".
   - duration: "Nd Nh Nm Ns" plus the raw seconds.
-  - unit: the exact scaled value with the signer's base, escaped, plus the raw integer. The SI prefix flag is accepted, but the value is always shown exactly.
+  - unit: the exact scaled value with the signer's base, escaped, marked "unit set by signer", plus the raw integer (always, even with zero decimals). The SI prefix flag is accepted, but the value is always shown exactly.
   - enum: "label (value)", or "value (unmapped)".
   - nftName: the token ID and the collection address. There is no collection name.
 - Enum lookup: key and label indices are stored (64 B, shared with the alias slots). Each key costs one replay, compared as a zero-extended unsigned, sign-extended signed or 0/1 boolean word.
@@ -145,13 +145,14 @@ The plan's counts assumed values came only from calldata. Measured with containe
 
 ### Phase D status (2026-09-25): block 7b
 
-- **Conditions.** The registry uses only "optional" (condition opcode 3), and only on fields. Condition opcode 3 is the only one executed, and it always shows. A field, group or iteration that references it is shown exactly as one that does not. Every opcode that could hide or veto a value (never, ifIn/ifNotIn, mustMatch, ifEmpty) is refused at preload. The owner's §8.4 hiding policy is therefore never exercised: nothing is hidden.
+- **Conditions.** The registry uses only "optional" (condition opcode 3), and only on fields. Condition opcode 3 is the only one executed, and it always shows. A field, group or iteration that references it is shown exactly as one that does not. Every opcode that could hide or veto a value (never, ifIn/ifNotIn, mustMatch, ifEmpty) is refused at preload. The owner's §8.4 hiding policy is therefore never exercised: the device hides nothing it is given. The compiler, however, omits every field the descriptor marks `visible: "never"` (for example Safe's `safeTxGas` and `signatures`); those are not in the program, and the device cannot know they exist.
 - **Groups (5/6).** Executed as grouping only; each field shows its own label.
 - **Iteration (7/8).** Runs over one array at a time, calldata only.
   - The array must be reached through tuples only (no array index before the `[]` step), so its ABI node identifies it.
   - Every field inside must read that array; a field that iterates must be inside an iteration; nesting is refused.
-  - The runtime captures the array's length in one pass, then shows each element's fields titled "Signer field i/N", binding `[]` to element i. An empty array shows no element.
+  - The runtime captures the array's length in one pass, then shows each element's fields titled "Signer field i of N", binding `[]` to element i. An empty array shows no element.
   - The stream's 64-element limit is enforced by the up-front validation pass, before the first screen.
+  - Any other `[]` argument (a token, a collection) is paired with the iterated array by index; a shorter one fails closed mid-review (PHASE-E §9c, D10).
   - A path ending in `[]` is iterable. It is also a value when its element is a leaf (`address[] recipients`).
 - **Slices (path step 3).** Still refused. Their registry uses cut an address out of `bytes`, which would reinterpret bytes.
 - Registry: 1,294 signable (from 1,138). SRAM reserve 18,048 B (−96 B). ROM about +1.2 KB.
