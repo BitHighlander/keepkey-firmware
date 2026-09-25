@@ -134,7 +134,7 @@ The plan's counts assumed values came only from calldata. Measured with containe
   - date: "YYYY-MM-DD HH:MM:SS UTC" plus the raw seconds; outside 1970–9999 it shows the raw integer, marked "not a date". Block height: "Block N".
   - duration: "Nd Nh Nm Ns" plus the raw seconds.
   - unit: the exact scaled value with the signer's base, escaped, marked "unit set by signer", plus the raw integer (always, even with zero decimals). The SI prefix flag is accepted, but the value is always shown exactly.
-  - enum: "label (value)", or "value (unmapped)".
+  - enum: "label (value)" marked "label set by signer", or "value (unmapped)".
   - nftName: the token ID and the collection address. There is no collection name.
 - Enum lookup: key and label indices are stored (64 B, shared with the alias slots). Each key costs one replay, compared as a zero-extended unsigned, sign-extended signed or 0/1 boolean word.
 - Registry: 1,138 signable, from 954. SRAM reserve 18,144 B (−64 B). ROM text about +3.9 KB.
@@ -172,7 +172,7 @@ The plan's counts assumed values came only from calldata. Measured with containe
 | 5 | date | Role 9 encoding (timestamp or block height) from the signed program. | Timestamp: UTC `YYYY-MM-DD HH:MM:SS` with the raw integer. Block height: "block N". Refuse values that do not fit uint64. |
 | 6 | duration | None needed. | `Nd Nh Nm Ns` plus the raw seconds. |
 | 7 | unit | Roles 4–6 (base, decimals, prefix) are signer claims. | The formatted value with the unit escaped **and** the raw integer. |
-| 8 | enum | Role 10 enum table from the signed program. | `label (value)`, escaped; an unmatched value shows the raw integer, labelled "unmapped". |
+| 8 | enum | Role 10 enum table from the signed program. | `label (value)`, escaped and marked "label set by signer"; an unmatched value shows the raw integer, labelled "unmapped". |
 | 4 | nftName | No NFT registry on device. | Collection address (EIP-55) and token ID. Never a signer-claimed collection name without the address. |
 | 13 | embedded calldata | Nested definitions, which need on-demand requests. | Phase E; see §6. |
 | 9, 11, 12, 14 | chainId, tokenTicker, interoperable address, encrypted | Not used by the registry today. | Leave outside the capability table (refused at preload) until needed. |
