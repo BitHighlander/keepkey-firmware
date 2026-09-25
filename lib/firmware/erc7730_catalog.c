@@ -227,6 +227,7 @@ static bool walk_path_index(Erc7730CatalogVerifier* v, int32_t index,
       return false;
     v->path_node = (uint8_t)(first_child + (uint32_t)index);
   } else if (kind == 9 || kind == 10) {
+    if (!whole_array) v->path_array_indexed = true;
     const uint32_t length = kind == 9 ? extent : ERC7730_ABI_MAX_ARRAY_ELEMENTS;
     if ((index >= 0 && (uint32_t)index >= length) ||
         (index < 0 && (uint32_t)(-(int64_t)index) > length))
@@ -344,12 +345,22 @@ static bool finish_path_step(Erc7730CatalogVerifier* v) {
   v->path_slice_flags = 0;
   if (v->path_step_index == v->path_step_count) {
     /* The value must be a leaf the capture returns: never a tuple or array. */
-    if (v->path_node >= v->table_counts[1] ||
-        (abi_entry(v, v->path_node) >> 12) > ERC7730_ABI_STRING)
+    if (v->path_node >= v->table_counts[1]) return false;
+    const uint8_t leaf = (uint8_t)(abi_entry(v, v->path_node) >> 12);
+    if (v->path_last_full) {
+      /* Ends on its "every element" step: the path an iteration walks. An
+       * element that is a leaf is also a value (address[] recipients); a
+       * tuple element names none (class NONE), so no formatter reads it. */
+      v->path_iterable_mask |= UINT64_C(1) << v->entry_index;
+      v->signature[v->entry_index] =
+          leaf <= ERC7730_ABI_STRING ? leaf : ERC7730_CLASS_NONE;
+    } else if (leaf > ERC7730_ABI_STRING) {
       return false;
-    /* Formatter arguments are type-checked against this class. signature[]
-     * is idle from the end of the ABI section until the display section. */
-    v->signature[v->entry_index] = (uint8_t)(abi_entry(v, v->path_node) >> 12);
+    } else {
+      /* Formatter arguments are type-checked against this class. signature[]
+       * is idle from the end of the ABI section until the display section. */
+      v->signature[v->entry_index] = leaf;
+    }
     v->entry_index++;
     v->field_received = 0;
     v->path_step_index = 0;
@@ -387,6 +398,9 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
         v->path_step_count >= ERC7730_ABI_MAX_DEPTH)
       return false;
     v->path_node = 0; /* every value path starts at the root tuple */
+    v->path_array_indexed = false;
+    v->path_last_full = false;
+    v->path_arrays[v->entry_index] = 0xff; /* no "every element" step */
     if (v->path_source == 1) {
       if (source_index != UINT16_MAX || v->path_step_count == 0) return false;
     } else {
@@ -424,9 +438,13 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (byte == 1) {
       v->path_step_remaining = 4;
     } else if (byte == 2) {
-      if (v->path_full_seen) return false;
+      /* One "every element" step per path, reached through tuples only, so
+       * the array's ABI node alone identifies the array iterated. */
+      if (v->path_full_seen || v->path_array_indexed) return false;
       v->path_full_seen = true;
+      v->path_arrays[v->entry_index] = v->path_node;
       if (!walk_path_index(v, 0, true)) return false;
+      v->path_last_full = true;
       return finish_path_step(v);
     } else if (byte == 3) {
       if (v->path_step_index + 1 != v->path_step_count) return false;
@@ -452,6 +470,7 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->path_step_opcode == 1 &&
       !walk_path_index(v, (int32_t)read_be32(v->sibling + 4), false))
     return false;
+  v->path_last_full = false;
   return finish_path_step(v);
 }
 
@@ -575,7 +594,8 @@ static bool validate_condition(Erc7730CatalogVerifier* v) {
   const uint16_t path = read_be16(v->sibling + 1);
   const uint16_t set = read_be16(v->sibling + 3);
   if (opcode < 1 || opcode > 8 || v->sibling[5] != 0 || v->sibling[6] != 0 ||
-      v->sibling[7] != 0)
+      v->sibling[7] != 0 ||
+      (ERC7730_CAP_CONDITION_OPCODES & ERC7730_CAP_BIT(opcode)) == 0)
     return false;
   if (opcode <= 3) return path == UINT16_MAX && set == UINT16_MAX;
   if (path >= v->table_counts[2]) return false;
@@ -663,8 +683,15 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
         (FORMAT_ROLE_BIT(19) | FORMAT_ROLE_BIT(20) | FORMAT_ROLE_BIT(23))) !=
            (FORMAT_ROLE_BIT(19) | FORMAT_ROLE_BIT(20) | FORMAT_ROLE_BIT(23))))
     return false;
-  /* The display section must not name a signer constant as an intent value. */
-  v->cert[64u + v->entry_index] = v->formatter_value_literal ? 1u : 0u;
+  /* The display section checks iteration against these; cert[] is idle from
+   * the end of the path section until the bindings. */
+  v->cert[v->entry_index] = v->formatter_value_array;
+  /* bit 0: an argument iterates; bit 2: the value is a signer constant. */
+  v->cert[64u + v->entry_index] =
+      (uint8_t)((v->formatter_any_array ? 1u : 0u) |
+                (v->formatter_value_literal ? 4u : 0u));
+  v->formatter_value_array = 0xff;
+  v->formatter_any_array = false;
   v->formatter_value_literal = false;
   v->entry_index++;
   v->formatter_kind = 0;
@@ -733,6 +760,10 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (v->formatter_kind != 1) return false;
     v->formatter_value_literal = true;
   }
+  if (source == 1 && v->path_arrays[index] != 0xff) {
+    v->formatter_any_array = true;
+    if (role == 1) v->formatter_value_array = v->path_arrays[index];
+  }
   v->formatter_last_role = role;
   v->formatter_roles |= FORMAT_ROLE_BIT(role);
   v->formatter_arg_index++;
@@ -757,8 +788,27 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   if (opcode < 1 || opcode > 10 || flags != 0 ||
       !erc7730_cap_display(&executable, pc))
     return false;
-  if (opcode == 3 && a < 64 && v->cert[64u + a] != 0) return false;
+  if (opcode == 3 && a < 64 && (v->cert[64u + a] & 4u) != 0) return false;
   if (opcode == 4 && !short_string(v, a)) return false;
+  /* Iteration: one array at a time, calldata only, and every field inside
+   * reads that array; an argument that iterates only inside it. */
+  if (opcode == 7) {
+    if (a >= 64 || ((v->path_iterable_mask >> a) & 1u) == 0 ||
+        v->display_in_iteration || v->header[7] != ERC7730_DEFINITION_CALLDATA)
+      return false;
+    v->display_in_iteration = true;
+    v->display_iteration_array = v->path_arrays[a];
+  } else if (opcode == 8) {
+    v->display_in_iteration = false;
+  } else if (opcode == 3 || opcode == 4) {
+    const uint16_t formatter = opcode == 3 ? a : b;
+    if (formatter >= 64) return false;
+    const uint8_t value_array = v->cert[formatter];
+    if (((v->cert[64u + formatter] & 1u) != 0 && !v->display_in_iteration) ||
+        (v->display_in_iteration && value_array != 0xff &&
+         value_array != v->display_iteration_array))
+      return false;
+  }
   /* Interpolated-intent parts form one run directly after the intent. */
   if (pc != 0) {
     if (opcode == 2 || opcode == 3) {
@@ -1088,6 +1138,8 @@ static bool consume_program_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       v->formatter_arg_index = 0;
       v->formatter_last_role = 0;
       v->formatter_roles = 0;
+      v->formatter_value_array = 0xff;
+      v->formatter_any_array = false;
       v->display_depth = 0;
       v->binding_kind = 0;
       v->binding_previous_kind = 0;

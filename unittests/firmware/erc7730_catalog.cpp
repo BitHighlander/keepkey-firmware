@@ -713,14 +713,17 @@ TEST(Erc7730Catalog, ValidatesCanonicalLiteralsAndConditions) {
   p = programWithTable(4, literals, 2);  // set 0 refers forward to literal 1
   EXPECT_EQ(feedAll(envelope(p), 13), ERC7730_CATALOG_BAD_PROGRAM);
 
-  // The runtime does not evaluate conditions, so any condition is refused;
-  // an empty condition table is still accepted.
-  static_assert(!ERC7730_CAP_CONDITIONS, "update this test with conditions");
+  // The runtime executes only condition opcode 3, "optional", and always
+  // shows the field; every opcode that could hide a field is refused.
   p = programWithTable(5, {}, 0);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
-  std::vector<uint8_t> conditions = {1, 0xff, 0xff, 0xff, 0xff, 0, 0, 0};
-  p = programWithTable(5, conditions, 1);
-  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithTable(5, {3, 0xff, 0xff, 0xff, 0xff, 0, 0, 0}, 1);
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+  for (uint8_t opcode : {1, 2}) {
+    p = programWithTable(5, {opcode, 0xff, 0xff, 0xff, 0xff, 0, 0, 0}, 1);
+    EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)opcode;
+  }
 }
 
 TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
@@ -1175,12 +1178,11 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
        4,
        {3, 0, 0, 0, UINT16_MAX},
        2},
-      // a group around the field
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 5, 0, 0xff, 0xff, 0xff, 0xff, 0,
-        3, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 6, 0, 0, 1, 0xff, 0xff, 0xff, 0xff,
-        10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       5,
-       {5, 0, UINT16_MAX, UINT16_MAX, 3},
+      // a group end that names no group
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 6, 0, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       3,
+       {6, 0, UINT16_MAX, UINT16_MAX, UINT16_MAX},
        1},
       // opcode 9
       {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 9, 0, 0xff, 0xff, 0, 0, 0xff,
@@ -1213,9 +1215,19 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
     EXPECT_FALSE(erc7730_cap_display(&c.refused, c.pc))
         << (int)c.refused.opcode << "@" << c.pc;
   }
-  // A field with a condition index: conditions are not executed.
+  // A field may carry an "optional" condition, which only ever shows it.
   const Erc7730DisplayInstruction conditional = {4, 0, 0, 0, 0};
-  EXPECT_FALSE(erc7730_cap_display(&conditional, 1));
+  EXPECT_TRUE(erc7730_cap_display(&conditional, 1));
+  // A plain group around the field is executable.
+  const std::vector<uint8_t> group = {
+      1, 0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      5, 0, 0xff, 0xff, 0xff, 0xff, 0,    3,     //
+      4, 0, 0,    0,    0,    0,    0xff, 0xff,  //
+      6, 0, 0,    1,    0xff, 0xff, 0xff, 0xff,  //
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  auto grouped = replaceTable(rawFieldProgram(path), 7, group, 5);
+  grouped[sectionOffset(grouped, 9) + 5 + 18] = 1;  // declared display depth
+  EXPECT_EQ(feedAll(envelope(grouped), 7), ERC7730_CATALOG_UNTRUSTED);
 }
 
 TEST(Erc7730Catalog, PreloadRefusesFormatterKindsTheRuntimeCannotRun) {
@@ -1304,7 +1316,7 @@ TEST(Erc7730Catalog, RuntimePathPredicateMatchesTheTable) {
   path.steps[0].opcode = 1;
   EXPECT_TRUE(erc7730_cap_path(&path));
   path.steps[0].opcode = 2;
-  EXPECT_FALSE(erc7730_cap_path(&path));
+  EXPECT_TRUE(erc7730_cap_path(&path));
   path.steps[0].opcode = 3;
   EXPECT_FALSE(erc7730_cap_path(&path));
   path.steps[0].opcode = 1;
@@ -1631,4 +1643,93 @@ TEST(Erc7730Catalog, SignerTextAndDecimalsFitTheScreenAtPreload) {
     EXPECT_EQ(signerText(enumeration, label_map, 2, text), expected)
         << "enum label " << text.size();
   }
+}
+
+namespace {
+
+// f(address[] a, address[] b); paths 0 = a.[] and 1 = b.[]; formatters
+// 0 = addressName(a.[]) and 1 = addressName(b.[]); then `display`.
+std::vector<uint8_t> iterationProgram(const std::vector<uint8_t>& display,
+                                      uint16_t count, uint8_t depth) {
+  auto p = withAbi(rawFieldProgram({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}),
+                   {8, 0, 0, 0, 1, 0, 2, 0,    0,     // root
+                    9, 0, 0, 0, 3, 0, 1, 0xff, 0xff,  // a: address[]
+                    9, 0, 0, 0, 4, 0, 1, 0xff, 0xff,  // b: address[]
+                    3, 0, 0, 0, 0, 0, 0, 0,    0,     //
+                    3, 0, 0, 0, 0, 0, 0, 0,    0},    //
+                   3);
+  p = replaceTable(p, 3,
+                   {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 2,  // a.[]
+                    1, 2, 0xff, 0xff, 1, 0, 0, 0, 1, 2},  // b.[]
+                   2);
+  p = replaceTable(p, 6, {10, 0, 1, 1, 1, 0, 0, 10, 0, 1, 1, 1, 0, 1}, 2);
+  p = replaceTable(p, 7, display, count);
+  p[sectionOffset(p, 9) + 5 + 17] = 64;  // declares iteration
+  p[sectionOffset(p, 9) + 5 + 18] = depth;
+  return p;
+}
+
+const uint8_t kIntent[] = {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+const uint8_t kEnd[] = {10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+
+std::vector<uint8_t> displays(
+    std::initializer_list<std::vector<uint8_t>> body) {
+  std::vector<uint8_t> out(kIntent, kIntent + 8);
+  for (const auto& instruction : body)
+    out.insert(out.end(), instruction.begin(), instruction.end());
+  out.insert(out.end(), kEnd, kEnd + 8);
+  return out;
+}
+
+}  // namespace
+
+// Phase D: an iteration walks one array, reached through tuples only, in a
+// calldata definition; every field inside reads that array, and a field that
+// iterates appears only inside an iteration.
+TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
+  const std::vector<uint8_t> begin_a = {7, 0, 0, 0, 0xff, 0xff, 0, 3};
+  const std::vector<uint8_t> field_a = {4, 0, 0, 0, 0, 0, 0xff, 0xff};
+  const std::vector<uint8_t> field_b = {4, 0, 0, 0, 0, 1, 0xff, 0xff};
+  const std::vector<uint8_t> end = {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff};
+  auto p = iterationProgram(displays({begin_a, field_a, end}), 5, 1);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_UNTRUSTED);
+  // Typed data never iterates.
+  p[7] = ERC7730_DEFINITION_EIP712;
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  // A field inside that reads another array.
+  p = iterationProgram(displays({begin_a, field_b, end}), 5, 1);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  // An iterating field outside any iteration.
+  p = iterationProgram(displays({field_a}), 3, 0);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  // An iteration inside an iteration.
+  p = iterationProgram(displays({{7, 0, 0, 0, 0xff, 0xff, 0, 5},
+                                 {7, 0, 0, 1, 0xff, 0xff, 0, 4},
+                                 field_b,
+                                 {8, 0, 0, 2, 0xff, 0xff, 0xff, 0xff},
+                                 {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff}}),
+                       7, 2);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, IterationPathsReachTheirArrayThroughTuplesOnly) {
+  // (address[] x)[2] items: items.[1].x.[] indexes an array before iterating.
+  const std::vector<uint8_t> nodes = {
+      8, 0, 0, 0, 1, 0, 1, 0,    0,     // root
+      9, 0, 0, 0, 2, 0, 1, 0,    2,     // items: (..)[2]
+      8, 0, 0, 0, 3, 0, 1, 0,    0,     // (address[] x)
+      9, 0, 0, 0, 4, 0, 1, 0xff, 0xff,  // x
+      3, 0, 0, 0, 0, 0, 0, 0,    0};    // address
+  auto indexed = withAbi(
+      programWithPaths({1, 4, 0xff, 0xff, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0,
+                        0, 0, 0, 2},
+                       1),
+      nodes, 5);
+  EXPECT_EQ(feedAll(envelope(indexed), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  // items.[].x.[0]: iterating the outer array, then indexing, is fine.
+  auto outer = withAbi(programWithPaths({1, 4, 0xff, 0xff, 1, 0, 0, 0, 0, 2, 1,
+                                         0, 0, 0, 0, 1, 0, 0, 0, 0},
+                                        1),
+                       nodes, 5);
+  EXPECT_EQ(feedAll(envelope(outer), 11), ERC7730_CATALOG_UNTRUSTED);
 }

@@ -17,12 +17,15 @@
 
 #define ERC7730_CAP_BIT(n) (UINT32_C(1) << (n))
 
-/* Display opcodes: 1 intent, 2 intent text, 3 intent value, 4 field, 10 end.
- * Opcodes 2 and 3 form one run directly after the intent; each is shown as a
- * numbered part of the interpolated intent. */
+/* Display opcodes: 1 intent, 2 intent text, 3 intent value, 4 field, 5/6 a
+ * group, 7/8 an iteration over one array, 10 end. Opcodes 2 and 3 form one
+ * run directly after the intent; each is shown as a numbered part of the
+ * interpolated intent. Groups only group; an iteration shows its fields once
+ * per element, numbered. */
 #define ERC7730_CAP_DISPLAY_OPCODES                               \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) | \
-   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(10))
+   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) | \
+   ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10))
 /* Formatter kinds: 1 raw, 2 amount (native), 3 tokenAmount, 4 nftName,
  * 5 date, 6 duration, 7 unit, 8 enum, 10 addressName. */
 #define ERC7730_CAP_FORMATTER_KINDS                               \
@@ -33,14 +36,19 @@
  */
 #define ERC7730_CAP_PATH_SOURCES \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
-#define ERC7730_CAP_PATH_STEP_OPCODES ERC7730_CAP_BIT(1)
+/* Path step opcodes: 1 index, 2 every element (bound to the iteration's
+ * current element). Slices (3) are not executed. */
+#define ERC7730_CAP_PATH_STEP_OPCODES (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2))
 /* Containers the runtime reads, for calldata definitions only: 1 @.from (the
  * signing account, derived on device), 2 @.to (the transaction target) and
  * 3 @.value (the transaction's native value). */
 #define ERC7730_CAP_CONTAINERS \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
-/* Display conditions (program section 5) are not executed. */
-#define ERC7730_CAP_CONDITIONS false
+/* Display conditions (program section 5): only opcode 3, "optional", which
+ * the runtime always shows, so a field, group or iteration that references
+ * a condition is shown exactly as one that does not. Nothing is hidden. */
+#define ERC7730_CAP_CONDITION_OPCODES ERC7730_CAP_BIT(3)
+#define ERC7730_CAP_CONDITIONS true
 /* A tokenAmount native-currency alias set may name at most this many
  * addresses, so the runtime can hold their literal indices. */
 #define ERC7730_CAP_ALIAS_SET_MAX 4u
