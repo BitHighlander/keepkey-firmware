@@ -321,6 +321,11 @@ static bool consume_string_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (v->utf8_remaining != 0 ||
         (v->entry_index != 0 && v->compare_state == 0))
       return false;
+    /* cert[] holds the whole string now: note the date encodings. */
+    if (erc7730_cap_string_class((const char*)v->cert, v->entry_length) ==
+        ERC7730_CLASS_DATE_ENCODING)
+      v->date_strings[v->entry_index / 8u] |=
+          (uint8_t)(1u << (v->entry_index % 8u));
     v->previous_length = v->entry_length;
     v->entry_length = 0;
     v->entry_offset = 0;
@@ -392,7 +397,8 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
         if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
             v->header[7] != ERC7730_DEFINITION_CALLDATA)
           return false;
-        v->signature[v->entry_index] = ERC7730_CLASS_ADDRESS;
+        v->signature[v->entry_index] =
+            source_index == 3 ? ERC7730_CLASS_UINT : ERC7730_CLASS_ADDRESS;
       } else {
         /* The literal table follows; resolve the class at the formatter. */
         if (source_index >= 64) return false;
@@ -457,7 +463,9 @@ static void finish_literal(Erc7730CatalogVerifier* v) {
   if (v->literal_kind == 9)
     v->literal_set_mask |= UINT64_C(1) << v->entry_index;
   v->literal_classes[v->entry_index / 2u] |=
-      (uint8_t)(erc7730_cap_literal_class(v->literal_kind, v->literal_subcount)
+      (uint8_t)(erc7730_cap_literal_class(
+                    v->literal_kind, v->literal_kind == 1 ? v->entry_length
+                                                          : v->literal_subcount)
                 << (4u * (v->entry_index % 2u)));
   v->entry_index++;
   v->entry_length = 0;
@@ -690,11 +698,16 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       (source == 2 && index >= v->table_counts[3]) ||
       (source == 3 && index >= v->table_counts[0]))
     return false;
-  if (source != 3) {
-    uint8_t cls = source == 2 ? literal_class(v, index) : v->signature[index];
+  uint8_t cls;
+  if (source == 3) {
+    cls = (v->date_strings[index / 8u] >> (index % 8u)) & 1u
+              ? ERC7730_CLASS_DATE_ENCODING
+              : ERC7730_CLASS_STRING;
+  } else {
+    cls = source == 2 ? literal_class(v, index) : v->signature[index];
     if (source == 1 && (cls & 0x40u) != 0) cls = literal_class(v, cls & 0x3fu);
-    if (!erc7730_cap_value(v->formatter_kind, role, cls)) return false;
   }
+  if (!erc7730_cap_value(v->formatter_kind, role, cls)) return false;
   v->formatter_last_role = role;
   v->formatter_roles |= FORMAT_ROLE_BIT(role);
   v->formatter_arg_index++;

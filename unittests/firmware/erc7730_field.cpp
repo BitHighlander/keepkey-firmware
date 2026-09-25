@@ -129,7 +129,7 @@ TEST(Erc7730Field, TokenAmountArgumentsAreTypedAndOrdered) {
   const auto token = hex(kUsdc);
   EXPECT_TRUE(erc7730_workflow_field_value(&workflow, ERC7730_CLASS_ADDRESS,
                                            token.data(), 20));
-  EXPECT_EQ(0, memcmp(workflow.field.token, token.data(), 20));
+  EXPECT_EQ(0, memcmp(workflow.field.address, token.data(), 20));
   // amount >= threshold, and one more than the amount is not reached.
   workflow.field.pending_role = 7;
   EXPECT_TRUE(erc7730_workflow_field_value(&workflow, ERC7730_CLASS_UINT,
@@ -140,4 +140,85 @@ TEST(Erc7730Field, TokenAmountArgumentsAreTypedAndOrdered) {
                                            above, sizeof(above)));
   EXPECT_FALSE(workflow.field.threshold_reached);
   memset(&workflow, 0, sizeof(workflow));
+}
+
+namespace {
+
+std::string render(bool (*format)(const uint8_t*, char*, size_t),
+                   const std::vector<uint8_t>& value) {
+  char out[600];
+  return format(value.data(), out, sizeof(out)) ? out : "<refused>";
+}
+
+std::string date(uint64_t seconds, bool block) {
+  char out[600];
+  const auto value = word(seconds);
+  return erc7730_format_date(value.data(), block, out, sizeof(out))
+             ? out
+             : "<refused>";
+}
+
+}  // namespace
+
+// Calendar vectors: the epoch, 2023-11-14T22:13:20Z, the 2000 leap day and
+// the last second of year 9999. Anything later is shown, never refused.
+TEST(Erc7730Field, DateIsUtcWithTheRawValue) {
+  EXPECT_EQ(date(0, false), "1970-01-01 00:00:00 UTC\n(0)");
+  EXPECT_EQ(date(1700000000, false),
+            "2023-11-14 22:13:20 UTC\n(1700000000)");
+  EXPECT_EQ(date(951782400, false), "2000-02-29 00:00:00 UTC\n(951782400)");
+  EXPECT_EQ(date(253402300799ull, false),
+            "9999-12-31 23:59:59 UTC\n(253402300799)");
+  EXPECT_EQ(date(253402300800ull, false), "253402300800\n(not a date)");
+  EXPECT_EQ(date(19000000, true), "Block 19000000");
+  std::vector<uint8_t> huge(32, 0);
+  huge[0] = 1;  // 2^248
+  char out[600];
+  ASSERT_TRUE(erc7730_format_date(huge.data(), false, out, sizeof(out)));
+  EXPECT_NE(std::string(out).find("(not a date)"), std::string::npos);
+}
+
+TEST(Erc7730Field, DurationSplitsDaysHoursMinutesSeconds) {
+  EXPECT_EQ(render(erc7730_format_duration, word(93784)),
+            "1d 2h 3m 4s\n(93784 s)");
+  EXPECT_EQ(render(erc7730_format_duration, word(0)), "0s\n(0 s)");
+  EXPECT_EQ(render(erc7730_format_duration, word(3600)), "1h\n(3600 s)");
+  std::vector<uint8_t> big = word(0);
+  big[23] = 1;  // 2^64
+  EXPECT_EQ(render(erc7730_format_duration, big), "18446744073709551616 s");
+}
+
+TEST(Erc7730Field, UnitIsExactWithTheRawValue) {
+  char out[600];
+  const auto value = word(1500);
+  ASSERT_TRUE(erc7730_format_unit(value.data(), 3, "kg", out, sizeof(out)));
+  EXPECT_STREQ(out, "1.5 kg\n(1500)");
+  ASSERT_TRUE(erc7730_format_unit(value.data(), 0, "kg", out, sizeof(out)));
+  EXPECT_STREQ(out, "1500 kg");
+}
+
+TEST(Erc7730Field, EnumLabelsTheValueAndMarksUnmapped) {
+  char out[64];
+  ASSERT_TRUE(erc7730_format_enum("1", "Buy", out, sizeof(out)));
+  EXPECT_STREQ(out, "Buy (1)");
+  ASSERT_TRUE(erc7730_format_enum("7", nullptr, out, sizeof(out)));
+  EXPECT_STREQ(out, "7 (unmapped)");
+}
+
+TEST(Erc7730Field, NftShowsTheIdAndTheCollectionAddress) {
+  char out[128];
+  const auto id = word(42);
+  const auto collection = hex("5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
+  ASSERT_TRUE(
+      erc7730_format_nft(id.data(), collection.data(), out, sizeof(out)));
+  EXPECT_STREQ(out,
+               "Token ID 42\nCollection\n"
+               "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+}
+
+TEST(Erc7730Field, NativeAmountRendersLikeTheOrdinaryReview) {
+  char out[128];
+  const auto value = word(1500000000000000000ull);
+  ASSERT_TRUE(erc7730_format_native_amount(value.data(), 1, out, sizeof(out)));
+  EXPECT_STREQ(out, "1.5 ETH");
 }

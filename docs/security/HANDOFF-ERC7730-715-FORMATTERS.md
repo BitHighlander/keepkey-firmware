@@ -122,6 +122,27 @@ The plan's counts assumed values came only from calldata. Measured with containe
   - Wire: `test_interpolated_intent_parts_show_the_same_values_as_fields`, exact text of every part plus the field.
   - Control: removing the run rule fails the refusal test.
 
+### Phase C status (2026-09-25): block 7b
+
+- New kinds: 2 amount, 4 nftName, 5 date, 6 duration, 7 unit, 8 enum. New container: 3 `@.value` (calldata only). All arguments are type-checked at preload by the shared `erc7730_cap_value()`.
+- The verifier now also checks the facts the runtime interprets:
+  - a date encoding must be the program string "timestamp" or "blockheight" (the verifier records those string indices while streaming the string table);
+  - unit decimals must be a one-byte literal, and the prefix a boolean literal;
+  - an enum map may hold at most `ERC7730_CAP_ENUM_MAX` (16) entries; the registry's largest has 10.
+- Display (`erc7730_field.c`). Nothing value-dependent is refused mid-review; it is displayed.
+  - amount: the ordinary review's native rendering.
+  - date: "YYYY-MM-DD HH:MM:SS UTC" plus the raw seconds; outside 1970–9999 it shows the raw integer, marked "not a date". Block height: "Block N".
+  - duration: "Nd Nh Nm Ns" plus the raw seconds.
+  - unit: the exact scaled value with the signer's base, escaped, plus the raw integer. The SI prefix flag is accepted, but the value is always shown exactly.
+  - enum: "label (value)", or "value (unmapped)".
+  - nftName: the token ID and the collection address. There is no collection name.
+- Enum lookup: key and label indices are stored (64 B, shared with the alias slots). Each key costs one replay, compared as a zero-extended unsigned, sign-extended signed or 0/1 boolean word.
+- Registry: 1,138 signable, from 954. SRAM reserve 18,144 B (−64 B). ROM text about +3.9 KB.
+- Tests:
+  - Native: `Erc7730Catalog.PreloadTypeChecksPhaseCArguments`; `Erc7730Field.{Date,Duration,Unit,Enum,Nft,NativeAmount}*`, with calendar vectors (epoch, 2023-11-14T22:13:20Z, 2000-02-29, 9999-12-31T23:59:59Z, then not a date).
+  - Wire: `test_phase_c_formatters_show_exact_text`, `test_enum_labels_are_the_signers_claim_beside_the_value`, `test_nft_shows_the_collection_address`.
+  - Controls: a label replacing the enum value, dropping the date-encoding check, and treating an out-of-range timestamp as a date each fail.
+
 ## 4. Formatter designs and trust sources
 
 | Kind | Name | Trust source | Display (body under a device-owned title; the signer's label leads) |

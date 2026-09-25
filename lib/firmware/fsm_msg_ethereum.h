@@ -398,21 +398,78 @@ static void show_erc7730_address(Erc7730Workflow* workflow,
   show_erc7730_field(workflow, formatted);
 }
 
-/* tokenAmount, once every argument is in hand. `message` is the program's
- * threshold message, unescaped, or NULL. */
-static void show_erc7730_token_amount(Erc7730Workflow* workflow,
-                                      const char* message) {
+/* Render the field's value word as raw does, for an enum's value. */
+static bool format_erc7730_word(const Erc7730Field* field, char* output,
+                                size_t output_size) {
+  const Erc7730AbiNode node = {field->value_class,
+                               field->value_class == ERC7730_ABI_BOOL ? 0 : 256,
+                               0, 0, 0};
+  const Erc7730AbiProgram program = {&node, 1, 0};
+  Erc7730AbiCapture word;
+  memcpy(word.data, field->value, 32);
+  word.length = 32;
+  word.node = 0;
+  const bool ok = erc7730_format_raw(&program, &word, output, output_size);
+  memzero(&word, sizeof(word));
+  return ok;
+}
+
+/* A multi-argument field, once every argument is in hand. `text` is the one
+ * program string an argument named (tokenAmount message, date encoding, unit
+ * base, enum label), unescaped, or NULL. */
+static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   const Erc7730Field* field = &workflow->field;
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
   char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  const bool ok =
-      field->has_amount && field->has_token &&
-      (!message || erc7730_format_text((const uint8_t*)message, strlen(message),
-                                       escaped, sizeof(escaped))) &&
-      erc7730_format_token_amount(
-          field->amount, field->token, field->token_native,
-          workflow->identity.chain_id, message ? escaped : NULL, formatted,
-          sizeof(formatted));
+  bool ok = field->has_value &&
+            (!text || erc7730_format_text((const uint8_t*)text, strlen(text),
+                                          escaped, sizeof(escaped)));
+  const uint64_t chain_id = workflow->identity.chain_id;
+  if (ok) {
+    switch (field->kind) {
+      case 2:
+        ok = erc7730_format_native_amount(field->value, chain_id, formatted,
+                                          sizeof(formatted));
+        break;
+      case 3:
+        ok = field->has_address &&
+             erc7730_format_token_amount(
+                 field->value, field->address, field->token_native, chain_id,
+                 text ? escaped : NULL, formatted, sizeof(formatted));
+        break;
+      case 4:
+        ok = field->has_address &&
+             erc7730_format_nft(field->value, field->address, formatted,
+                                sizeof(formatted));
+        break;
+      case 5: {
+        /* The verifier admitted only "timestamp" and "blockheight". */
+        const bool block_height = text && strcmp(text, "blockheight") == 0;
+        ok = (!text || block_height || strcmp(text, "timestamp") == 0) &&
+             erc7730_format_date(field->value, block_height, formatted,
+                                 sizeof(formatted));
+        break;
+      }
+      case 6:
+        ok =
+            erc7730_format_duration(field->value, formatted, sizeof(formatted));
+        break;
+      case 7:
+        ok = text && erc7730_format_unit(field->value, field->decimals, escaped,
+                                         formatted, sizeof(formatted));
+        break;
+      case 8: {
+        char value[80]; /* an integer or a boolean: at most 78 digits and sign */
+        ok = format_erc7730_word(field, value, sizeof(value)) &&
+             erc7730_format_enum(value, text ? escaped : NULL, formatted,
+                                 sizeof(formatted));
+        memzero(value, sizeof(value));
+        break;
+      }
+      default:
+        ok = false;
+    }
+  }
   memzero(escaped, sizeof(escaped));
   if (!ok) {
     memzero(formatted, sizeof(formatted));
@@ -424,7 +481,7 @@ static void show_erc7730_token_amount(Erc7730Workflow* workflow,
   memzero(formatted, sizeof(formatted));
 }
 
-/* Record a tokenAmount argument's value and resolve the next argument. */
+/* Record an argument's value and resolve the next argument. */
 static void deliver_erc7730_argument(Erc7730Workflow* workflow, uint8_t cls,
                                      const uint8_t* value, size_t length) {
   if (!erc7730_workflow_field_value(workflow, cls, value, length)) {
@@ -447,16 +504,7 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
                        _("Unable to format ERC-7730 field"));
     return;
   }
-  if (workflow->field.kind == 3) {
-    const bool resumed = erc7730_workflow_resume_field(workflow);
-    if (!resumed) {
-      memzero(&capture, sizeof(capture));
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 display continuation"));
-      return;
-    }
-    deliver_erc7730_argument(workflow, cls, capture.data, capture.length);
-  } else if (workflow->field.kind == 10) {
+  if (workflow->field.kind == 10) {
     /* An address word: twelve zero bytes, then the address. */
     bool clean = capture.length == 32;
     for (size_t i = 0; clean && i < 12; i++) clean = capture.data[i] == 0;
@@ -466,7 +514,7 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
     } else {
       show_erc7730_address(workflow, capture.data + 12);
     }
-  } else {
+  } else if (workflow->field.kind == 1) {
     char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
     if (!erc7730_workflow_format_captured_raw(workflow, formatted,
                                               sizeof(formatted))) {
@@ -476,40 +524,76 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
       show_erc7730_field(workflow, formatted);
     }
     memzero(formatted, sizeof(formatted));
+  } else if (!erc7730_workflow_resume_field(workflow)) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 display continuation"));
+  } else {
+    deliver_erc7730_argument(workflow, cls, capture.data, capture.length);
   }
   memzero(&capture, sizeof(capture));
 }
 
-/* Check the next native-asset alias against the token, one literal replay per
- * alias, then continue with the remaining arguments. */
-static void next_erc7730_alias(Erc7730Workflow* workflow) {
+/* Select the next literal of the field's list (native aliases or enum keys),
+ * one replay each. */
+static bool select_next_erc7730_list_item(Erc7730Workflow* workflow,
+                                          uint8_t stage) {
   Erc7730Field* field = &workflow->field;
-  if (field->token_native || field->alias_next >= field->alias_count) {
+  const uint16_t literal = stage == ERC7730_DISPLAY_ARG_ALIAS
+                               ? field->list.aliases[field->list_next]
+                               : field->list.enum_entries[field->list_next][0];
+  field->list_next++;
+  if (!erc7730_workflow_select_literal(workflow, literal)) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 formatter argument"));
+    return false;
+  }
+  workflow->display_stage = stage;
+  send_erc7730_definition_request();
+  return true;
+}
+
+static void next_erc7730_alias(Erc7730Workflow* workflow) {
+  const Erc7730Field* field = &workflow->field;
+  if (field->token_native || field->list_next >= field->list_count) {
     resolve_erc7730_argument(workflow);
     return;
   }
-  if (!erc7730_workflow_select_literal(workflow,
-                                       field->aliases[field->alias_next++])) {
+  select_next_erc7730_list_item(workflow, ERC7730_DISPLAY_ARG_ALIAS);
+}
+
+static void next_erc7730_enum_key(Erc7730Workflow* workflow) {
+  const Erc7730Field* field = &workflow->field;
+  if (field->list_next >= field->list_count) {
+    show_erc7730_value(workflow, NULL); /* unmapped */
+    return;
+  }
+  select_next_erc7730_list_item(workflow, ERC7730_DISPLAY_ARG_ENUM_KEY);
+}
+
+/* Fetch one string an argument named, then show the field with it. */
+static void fetch_erc7730_text(Erc7730Workflow* workflow, uint16_t index) {
+  if (!erc7730_workflow_select_string(workflow, index)) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 formatter argument"));
     return;
   }
-  workflow->display_stage = ERC7730_DISPLAY_ARG_ALIAS;
+  workflow->display_stage = ERC7730_DISPLAY_ARG_MESSAGE;
   send_erc7730_definition_request();
 }
 
 /* Fetch the field's next argument. Arguments arrive in ascending role order,
- * so the value precedes the token, the threshold and the aliases. The
- * threshold message is fetched last, and only when the threshold is met. */
+ * so the value comes first. The one string argument (a tokenAmount message,
+ * a date encoding or a unit base) is fetched last; a tokenAmount message only
+ * when the threshold is met. */
 static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   Erc7730Field* field = &workflow->field;
   while (field->next_argument < field->argument_count) {
     const Erc7730FormatterArgument* argument =
         &field->arguments[field->next_argument++];
     field->pending_role = argument->role;
-    if (argument->role == 8) {
-      field->message = argument->index;
-      field->has_message = true;
+    if (argument->source == 3) {
+      field->text = argument->index;
+      field->has_text = true;
       continue;
     }
     bool selected = false;
@@ -528,23 +612,48 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     send_erc7730_definition_request();
     return;
   }
-  if (field->kind != 3) {
+  if (field->kind == 8) {
+    field->list_next = 0;
+    next_erc7730_enum_key(workflow);
+  } else if (field->has_text &&
+             (field->kind != 3 || field->threshold_reached)) {
+    fetch_erc7730_text(workflow, field->text);
+  } else if (field->kind == 7) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 formatter argument"));
+  } else {
+    show_erc7730_value(workflow, NULL);
+  }
+}
+
+/* A raw or addressName value that did not come from a capture. */
+static void show_erc7730_single(Erc7730Workflow* workflow, uint8_t cls,
+                                const uint8_t* value, size_t length) {
+  if (cls == ERC7730_CLASS_ADDRESS && length == 20) {
+    show_erc7730_address(workflow, value);
+    return;
+  }
+  if (workflow->field.kind != 1 ||
+      (cls != ERC7730_CLASS_UINT && cls != ERC7730_CLASS_UINT_SMALL) ||
+      length > 32) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 formatter argument"));
     return;
   }
-  if (field->has_message && field->threshold_reached) {
-    field->has_message = false;
-    if (!erc7730_workflow_select_string(workflow, field->message)) {
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 formatter argument"));
-      return;
-    }
-    workflow->display_stage = ERC7730_DISPLAY_ARG_MESSAGE;
-    send_erc7730_definition_request();
-    return;
+  /* An integer: format it through a uint256 node, as a captured word. */
+  static const Erc7730AbiNode uint256 = {ERC7730_ABI_UINT, 256, 0, 0, 0};
+  const Erc7730AbiProgram program = {&uint256, 1, 0};
+  Erc7730AbiCapture word = {{0}, 32, 0};
+  memcpy(word.data + 32 - length, value, length);
+  char formatted[80];
+  if (erc7730_format_raw(&program, &word, formatted, sizeof(formatted))) {
+    show_erc7730_field(workflow, formatted);
+  } else {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Unable to format ERC-7730 field"));
   }
-  show_erc7730_token_amount(workflow, NULL);
+  memzero(&word, sizeof(word));
+  memzero(formatted, sizeof(formatted));
 }
 
 /* A value path has been selected: capture it, read the container, or fetch
@@ -568,7 +677,9 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
   }
   if (path->source == 2) {
     /* Containers are calldata-only (refused at preload for typed data). */
-    uint8_t address[20];
+    uint8_t value[32];
+    size_t length = 0;
+    uint8_t cls = ERC7730_CLASS_ADDRESS;
     if (workflow->typed_data) {
       fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                          _("Invalid ERC-7730 value path"));
@@ -576,23 +687,35 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
     }
     if (path->source_index == 1) {
       const Erc7730SignerResult result =
-          erc7730_signer_address(workflow, address);
+          erc7730_signer_address(workflow, value);
       if (result == ERC7730_SIGNER_REPORTED) {
         erc7730_workflow_abort(workflow);
         return;
       }
       if (result != ERC7730_SIGNER_OK) {
-        memzero(address, sizeof(address));
+        memzero(value, sizeof(value));
         fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                            _("Unable to derive the signing address"));
         return;
       }
+      length = 20;
     } else {
       EthereumSignTx tx;
-      const bool restored =
-          erc7730_tx_continuation_restore(&workflow->continuation, &tx) &&
-          tx.has_to && tx.to.size == 20;
-      if (restored) memcpy(address, tx.to.bytes, 20);
+      bool restored =
+          erc7730_tx_continuation_restore(&workflow->continuation, &tx);
+      if (restored && path->source_index == 2) {
+        restored = tx.has_to && tx.to.size == 20;
+        if (restored) memcpy(value, tx.to.bytes, 20);
+        length = 20;
+      } else if (restored) { /* @.value: an unsigned word */
+        restored = tx.value.size <= 32;
+        if (restored) {
+          memzero(value, sizeof(value));
+          memcpy(value + 32 - tx.value.size, tx.value.bytes, tx.value.size);
+        }
+        length = 32;
+        cls = ERC7730_CLASS_UINT;
+      }
       memzero(&tx, sizeof(tx));
       if (!restored) {
         fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
@@ -600,12 +723,12 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
         return;
       }
     }
-    if (workflow->field.kind == 3) {
-      deliver_erc7730_argument(workflow, ERC7730_CLASS_ADDRESS, address, 20);
+    if (workflow->field.kind == 1 || workflow->field.kind == 10) {
+      show_erc7730_single(workflow, cls, value, length);
     } else {
-      show_erc7730_address(workflow, address);
+      deliver_erc7730_argument(workflow, cls, value, length);
     }
-    memzero(address, sizeof(address));
+    memzero(value, sizeof(value));
     return;
   }
   if (workflow->typed_data) {
@@ -631,31 +754,39 @@ static void follow_erc7730_literal(Erc7730Workflow* workflow) {
     return;
   }
   Erc7730Field* field = &workflow->field;
-  const uint16_t set_count =
-      literal.kind == 9 && literal.length >= 2
+  const uint16_t count =
+      (literal.kind == 8 || literal.kind == 9) && literal.length >= 2
           ? (uint16_t)((literal.value[0] << 8) | literal.value[1])
           : 0;
-  const uint8_t cls = erc7730_cap_literal_class(literal.kind, set_count);
-  if (!erc7730_cap_value(field->kind, field->pending_role, cls)) {
+  const uint8_t cls = erc7730_cap_literal_class(
+      literal.kind, literal.kind == 1 ? literal.length : count);
+  const size_t stride = literal.kind == 8 ? 4u : 2u;
+  if (!erc7730_cap_value(field->kind, field->pending_role, cls) ||
+      ((cls == ERC7730_CLASS_ALIAS_SET || cls == ERC7730_CLASS_ENUM_MAP) &&
+       literal.length != 2u + stride * count)) {
     memzero(&literal, sizeof(literal));
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 formatter argument"));
     return;
   }
-  if (cls == ERC7730_CLASS_ALIAS_SET) {
-    if (literal.length != 2u + 2u * set_count) {
-      memzero(&literal, sizeof(literal));
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 formatter argument"));
-      return;
+  if (cls == ERC7730_CLASS_ALIAS_SET || cls == ERC7730_CLASS_ENUM_MAP) {
+    field->list_count = (uint8_t)count;
+    field->list_next = 0;
+    for (uint16_t i = 0; i < count; i++) {
+      const uint8_t* entry = literal.value + 2 + stride * i;
+      if (cls == ERC7730_CLASS_ALIAS_SET) {
+        field->list.aliases[i] = (uint16_t)((entry[0] << 8) | entry[1]);
+      } else {
+        field->list.enum_entries[i][0] = (uint16_t)((entry[0] << 8) | entry[1]);
+        field->list.enum_entries[i][1] = (uint16_t)((entry[2] << 8) | entry[3]);
+      }
     }
-    field->alias_count = (uint8_t)set_count;
-    field->alias_next = 0;
-    for (uint16_t i = 0; i < set_count; i++)
-      field->aliases[i] = (uint16_t)((literal.value[2 + 2 * i] << 8) |
-                                     literal.value[3 + 2 * i]);
     memzero(&literal, sizeof(literal));
-    next_erc7730_alias(workflow);
+    if (cls == ERC7730_CLASS_ALIAS_SET) {
+      next_erc7730_alias(workflow);
+    } else {
+      resolve_erc7730_argument(workflow);
+    }
     return;
   }
   if (cls == ERC7730_CLASS_STRING_REF) { /* raw: a signed constant string */
@@ -673,33 +804,24 @@ static void follow_erc7730_literal(Erc7730Workflow* workflow) {
     send_erc7730_definition_request();
     return;
   }
-  if (field->kind == 3) {
-    deliver_erc7730_argument(workflow, cls, literal.value, literal.length);
-  } else if (cls == ERC7730_CLASS_ADDRESS && literal.length == 20) {
-    show_erc7730_address(workflow, literal.value);
-  } else if (cls == ERC7730_CLASS_UINT && literal.length <= 32) {
-    Erc7730AbiProgram program;
-    Erc7730AbiCapture word = {{0}, 32, 0};
-    memcpy(word.data + 32 - literal.length, literal.value, literal.length);
-    char formatted[80];
-    /* Format through a uint256 node, as a captured word would be. */
-    static const Erc7730AbiNode uint256 = {ERC7730_ABI_UINT, 256, 0, 0, 0};
-    program.nodes = &uint256;
-    program.node_count = 1;
-    program.root = 0;
-    if (erc7730_format_raw(&program, &word, formatted, sizeof(formatted))) {
-      show_erc7730_field(workflow, formatted);
-    } else {
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Unable to format ERC-7730 field"));
-    }
-    memzero(&word, sizeof(word));
-    memzero(formatted, sizeof(formatted));
+  if (field->kind == 1 || field->kind == 10) {
+    show_erc7730_single(workflow, cls, literal.value, literal.length);
   } else {
-    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                       _("Invalid ERC-7730 formatter argument"));
+    deliver_erc7730_argument(workflow, cls, literal.value, literal.length);
   }
   memzero(&literal, sizeof(literal));
+}
+
+/* The word an enum key literal stands for: unsigned integers zero-extend,
+ * signed ones sign-extend, booleans are 0 or 1. Anything else matches no
+ * value. */
+static bool erc7730_enum_key_word(const Erc7730Literal* key, uint8_t word[32]) {
+  if (key->length == 0 || key->length > 32 ||
+      (key->kind != 1 && key->kind != 2 && key->kind != 6))
+    return false;
+  memset(word, key->kind == 2 && (key->value[0] & 0x80u) ? 0xff : 0, 32);
+  memcpy(word + 32 - key->length, key->value, key->length);
+  return true;
 }
 
 static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
@@ -993,20 +1115,35 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     return;
   }
   if (selection_kind == ERC7730_SELECTION_LITERAL &&
-      workflow->display_stage == ERC7730_DISPLAY_ARG_ALIAS) {
-    Erc7730Literal alias;
+      (workflow->display_stage == ERC7730_DISPLAY_ARG_ALIAS ||
+       workflow->display_stage == ERC7730_DISPLAY_ARG_ENUM_KEY)) {
+    Erc7730Literal item;
     if (!erc7730_program_literal_complete(&workflow->selection.literal,
-                                          &alias)) {
+                                          &item)) {
       fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                          _("Invalid ERC-7730 formatter argument"));
       return;
     }
-    /* A member that is not an address simply does not match. */
-    workflow->field.token_native =
-        alias.kind == 5 && alias.length == 20 &&
-        memcmp(alias.value, workflow->field.token, 20) == 0;
-    memzero(&alias, sizeof(alias));
-    next_erc7730_alias(workflow);
+    Erc7730Field* field = &workflow->field;
+    if (workflow->display_stage == ERC7730_DISPLAY_ARG_ALIAS) {
+      /* A member that is not an address simply does not match. */
+      field->token_native = item.kind == 5 && item.length == 20 &&
+                            memcmp(item.value, field->address, 20) == 0;
+      memzero(&item, sizeof(item));
+      next_erc7730_alias(workflow);
+      return;
+    }
+    uint8_t word[32];
+    const bool match = erc7730_enum_key_word(&item, word) &&
+                       memcmp(word, field->value, 32) == 0;
+    memzero(word, sizeof(word));
+    memzero(&item, sizeof(item));
+    if (match) {
+      fetch_erc7730_text(workflow,
+                         field->list.enum_entries[field->list_next - 1u][1]);
+    } else {
+      next_erc7730_enum_key(workflow);
+    }
     return;
   }
   if (selection_kind == ERC7730_SELECTION_LITERAL) {
@@ -1184,7 +1321,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       memcpy(text, value, length);
       text[length] = '\0';
       if (workflow->display_stage == ERC7730_DISPLAY_ARG_MESSAGE) {
-        show_erc7730_token_amount(workflow, text);
+        show_erc7730_value(workflow, text);
       } else {
         char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
         if (erc7730_format_text((const uint8_t*)text, length, escaped,

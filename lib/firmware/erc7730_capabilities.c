@@ -1,45 +1,100 @@
 #include "keepkey/firmware/erc7730_capabilities.h"
 
-uint32_t erc7730_cap_formatter_roles(uint8_t kind) {
-  if (kind > 31 || (ERC7730_CAP_FORMATTER_KINDS & ERC7730_CAP_BIT(kind)) == 0)
-    return 0;
-  if (kind == 3) /* value, token, threshold, message, native aliases */
-    return ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(7) |
-           ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(22);
-  return ERC7730_CAP_BIT(1);
-}
+#include <string.h>
 
-uint32_t erc7730_cap_formatter_required_roles(uint8_t kind) {
-  if (erc7730_cap_formatter_roles(kind) == 0) return 0;
-  return kind == 3 ? ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2)
-                   : ERC7730_CAP_BIT(1);
-}
+/* Per formatter kind: the roles it may carry, those it requires, and for each
+ * role the permitted sources (a bitmask of ERC7730_CAP_BIT(source)). */
+typedef struct {
+  uint8_t role;
+  uint8_t sources;
+} Erc7730RoleSources;
 
-uint8_t erc7730_cap_argument_sources(uint8_t kind, uint8_t role) {
-  if (role > 31 ||
-      (erc7730_cap_formatter_roles(kind) & ERC7730_CAP_BIT(role)) == 0)
-    return 0;
-  switch (role) {
-    case 7:  /* threshold: a literal */
-    case 22: /* native aliases: a literal set */
-      return (uint8_t)ERC7730_CAP_BIT(2);
-    case 8: /* message: a string */
-      return (uint8_t)ERC7730_CAP_BIT(3);
-    default: /* value and token: a path */
-      return (uint8_t)ERC7730_CAP_BIT(1);
+#define PATH ((uint8_t)ERC7730_CAP_BIT(1))
+#define LITERAL ((uint8_t)ERC7730_CAP_BIT(2))
+#define STRING ((uint8_t)ERC7730_CAP_BIT(3))
+
+static const Erc7730RoleSources* formatter_roles(uint8_t kind, size_t* count,
+                                                 uint32_t* required) {
+  static const Erc7730RoleSources value_only[] = {{1, PATH}};
+  static const Erc7730RoleSources token_amount[] = {
+      {1, PATH}, {2, PATH}, {7, LITERAL}, {8, STRING}, {22, LITERAL}};
+  static const Erc7730RoleSources nft[] = {{1, PATH}, {3, PATH}};
+  static const Erc7730RoleSources date[] = {{1, PATH}, {9, STRING}};
+  static const Erc7730RoleSources unit[] = {
+      {1, PATH}, {4, LITERAL}, {5, STRING}, {6, LITERAL}};
+  static const Erc7730RoleSources enumeration[] = {{1, PATH}, {10, LITERAL}};
+  *required = ERC7730_CAP_BIT(1);
+  if (kind > 31 || (ERC7730_CAP_FORMATTER_KINDS & ERC7730_CAP_BIT(kind)) == 0) {
+    *count = 0;
+    *required = 0;
+    return NULL;
+  }
+  switch (kind) {
+    case 3:
+      *required |= ERC7730_CAP_BIT(2);
+      *count = sizeof(token_amount) / sizeof(token_amount[0]);
+      return token_amount;
+    case 4:
+      *required |= ERC7730_CAP_BIT(3);
+      *count = sizeof(nft) / sizeof(nft[0]);
+      return nft;
+    case 5:
+      *count = sizeof(date) / sizeof(date[0]);
+      return date;
+    case 7:
+      *required |= ERC7730_CAP_BIT(5);
+      *count = sizeof(unit) / sizeof(unit[0]);
+      return unit;
+    case 8:
+      *required |= ERC7730_CAP_BIT(10);
+      *count = sizeof(enumeration) / sizeof(enumeration[0]);
+      return enumeration;
+    default: /* 1 raw, 2 amount, 6 duration, 10 addressName */
+      *count = 1;
+      return value_only;
   }
 }
 
-uint8_t erc7730_cap_literal_class(uint8_t kind, uint16_t set_count) {
+uint32_t erc7730_cap_formatter_roles(uint8_t kind) {
+  size_t count;
+  uint32_t required, roles = 0;
+  const Erc7730RoleSources* table = formatter_roles(kind, &count, &required);
+  for (size_t i = 0; i < count; i++) roles |= ERC7730_CAP_BIT(table[i].role);
+  return roles;
+}
+
+uint32_t erc7730_cap_formatter_required_roles(uint8_t kind) {
+  size_t count;
+  uint32_t required;
+  formatter_roles(kind, &count, &required);
+  return required;
+}
+
+uint8_t erc7730_cap_argument_sources(uint8_t kind, uint8_t role) {
+  size_t count;
+  uint32_t required;
+  const Erc7730RoleSources* table = formatter_roles(kind, &count, &required);
+  for (size_t i = 0; i < count; i++)
+    if (table[i].role == role) return table[i].sources;
+  return 0;
+}
+
+uint8_t erc7730_cap_literal_class(uint8_t kind, uint16_t extent) {
   switch (kind) {
     case 1:
-      return ERC7730_CLASS_UINT;
+      return extent == 1 ? ERC7730_CLASS_UINT_SMALL : ERC7730_CLASS_UINT;
     case 4:
       return ERC7730_CLASS_STRING_REF;
     case 5:
       return ERC7730_CLASS_ADDRESS;
+    case 6:
+      return ERC7730_CLASS_FLAG;
+    case 8:
+      return extent != 0 && extent <= ERC7730_CAP_ENUM_MAX
+                 ? ERC7730_CLASS_ENUM_MAP
+                 : ERC7730_CLASS_NONE;
     case 9:
-      return set_count != 0 && set_count <= ERC7730_CAP_ALIAS_SET_MAX
+      return extent != 0 && extent <= ERC7730_CAP_ALIAS_SET_MAX
                  ? ERC7730_CLASS_ALIAS_SET
                  : ERC7730_CLASS_NONE;
     default:
@@ -47,25 +102,64 @@ uint8_t erc7730_cap_literal_class(uint8_t kind, uint16_t set_count) {
   }
 }
 
+uint8_t erc7730_cap_string_class(const char* text, size_t length) {
+  if (text && ((length == 9 && memcmp(text, "timestamp", 9) == 0) ||
+               (length == 11 && memcmp(text, "blockheight", 11) == 0)))
+    return ERC7730_CLASS_DATE_ENCODING;
+  return ERC7730_CLASS_STRING;
+}
+
+static bool unsigned_class(uint8_t cls) {
+  return cls == ERC7730_CLASS_UINT || cls == ERC7730_CLASS_UINT_SMALL;
+}
+
 bool erc7730_cap_value(uint8_t kind, uint8_t role, uint8_t cls) {
   if (cls == ERC7730_CLASS_NONE) return false;
-  if (kind == 1 && role == 1) /* raw: any ABI leaf, a string or an address */
-    return cls <= ERC7730_CLASS_STRING_REF;
-  if (kind == 10 && role == 1) return cls == ERC7730_CLASS_ADDRESS;
-  if (kind == 3) {
-    switch (role) {
-      case 1:
-      case 7:
-        return cls == ERC7730_CLASS_UINT;
-      case 2:
-        return cls == ERC7730_CLASS_ADDRESS;
-      case 22:
-        return cls == ERC7730_CLASS_ALIAS_SET;
-      default:
-        return false;
-    }
+  switch (kind) {
+    case 1: /* raw: an ABI leaf, an integer, an address or a string */
+      return role == 1 && (cls <= ERC7730_CLASS_STRING_REF ||
+                           cls == ERC7730_CLASS_UINT_SMALL);
+    case 10: /* addressName */
+      return role == 1 && cls == ERC7730_CLASS_ADDRESS;
+    case 2: /* amount */
+    case 6: /* duration */
+      return role == 1 && cls == ERC7730_CLASS_UINT;
+    case 3: /* tokenAmount */
+      switch (role) {
+        case 1:
+          return cls == ERC7730_CLASS_UINT;
+        case 7:
+          return unsigned_class(cls);
+        case 2:
+          return cls == ERC7730_CLASS_ADDRESS;
+        case 8:
+          return cls == ERC7730_CLASS_STRING ||
+                 cls == ERC7730_CLASS_DATE_ENCODING;
+        case 22:
+          return cls == ERC7730_CLASS_ALIAS_SET;
+        default:
+          return false;
+      }
+    case 4: /* nftName: token id, collection */
+      return (role == 1 && cls == ERC7730_CLASS_UINT) ||
+             (role == 3 && cls == ERC7730_CLASS_ADDRESS);
+    case 5: /* date: value, encoding */
+      return (role == 1 && cls == ERC7730_CLASS_UINT) ||
+             (role == 9 && cls == ERC7730_CLASS_DATE_ENCODING);
+    case 7: /* unit: value, decimals, base, prefix */
+      return (role == 1 && cls == ERC7730_CLASS_UINT) ||
+             (role == 4 && cls == ERC7730_CLASS_UINT_SMALL) ||
+             (role == 5 && (cls == ERC7730_CLASS_STRING ||
+                            cls == ERC7730_CLASS_DATE_ENCODING)) ||
+             (role == 6 && cls == ERC7730_CLASS_FLAG);
+    case 8: /* enum: value, map */
+      return (role == 1 &&
+              (cls == ERC7730_CLASS_UINT || cls == ERC7730_CLASS_INT ||
+               cls == ERC7730_CLASS_BOOL)) ||
+             (role == 10 && cls == ERC7730_CLASS_ENUM_MAP);
+    default:
+      return false;
   }
-  return false;
 }
 
 bool erc7730_cap_display(const Erc7730DisplayInstruction* instruction,

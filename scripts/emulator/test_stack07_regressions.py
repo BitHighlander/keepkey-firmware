@@ -555,11 +555,10 @@ class TestStack07Regressions(common.KeepKeyTest):
 
     def test_program_outside_capability_table_is_refused_at_preload(self):
         signature = "audit(uint256 first,uint256 second)"
+        # Shapes the runtime does not execute yet (Phase D).
         fields = {
-            "amount": {"path": "first", "label": "First value",
-                       "format": "amount"},
-            "date": {"path": "first", "label": "First value", "format": "date",
-                     "params": {"encoding": "timestamp"}},
+            "group": {"label": "Group", "fields": [
+                {"path": "first", "label": "First value", "format": "raw"}]},
             "condition": {"path": "first", "label": "First value",
                           "format": "raw", "visible": {"ifNotIn": [0]}},
         }
@@ -772,3 +771,56 @@ class TestStack07Regressions(common.KeepKeyTest):
             ("Intent 3/3", "now"),
             ("Signer field", "Amount:\n1.5 USDC"),
         ])
+
+    # Phase C: amount, date, duration, unit, enum and nftName. Signer-supplied
+    # units and enum labels appear beside the raw value, never instead.
+    def _one_field(self, field, arguments, signature="act(uint256 a,address b)",
+                   metadata=None):
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Act", "fields": [field]}}}}
+        if metadata:
+            descriptor["metadata"] = metadata
+        return self._field_screens(descriptor, signature, arguments)
+
+    def test_phase_c_formatters_show_exact_text(self):
+        pad = self._word(OTHER_ADDRESS)
+        cases = [
+            ({"path": "a", "label": "Value", "format": "amount"},
+             1500000000000000000, "Value:\n1.5 ETH"),
+            ({"path": "a", "label": "When", "format": "date",
+              "params": {"encoding": "timestamp"}},
+             1700000000, "When:\n2023-11-14 22:13:20 UTC\n(1700000000)"),
+            ({"path": "a", "label": "At", "format": "date",
+              "params": {"encoding": "blockheight"}},
+             19000000, "At:\nBlock 19000000"),
+            ({"path": "a", "label": "Lock", "format": "duration"},
+             93784, "Lock:\n1d 2h 3m 4s\n(93784 s)"),
+            ({"path": "a", "label": "Weight", "format": "unit",
+              "params": {"base": "kg", "decimals": 3}},
+             93784, "Weight:\n93.784 kg\n(93784)"),
+        ]
+        for field, value, expected in cases:
+            self.assertEqual(
+                (field["format"],
+                 self._one_field(field, self._word(value) + pad)),
+                (field["format"], [expected]))
+
+    def test_enum_labels_are_the_signers_claim_beside_the_value(self):
+        field = {"path": "a", "label": "Side", "format": "enum",
+                 "params": {"$ref": "$.metadata.enums.side"}}
+        metadata = {"enums": {"side": {"0": "Buy", "1": "Sell"}}}
+        pad = self._word(OTHER_ADDRESS)
+        self.assertEqual(self._one_field(field, self._word(1) + pad,
+                                         metadata=metadata),
+                         ["Side:\nSell (1)"])
+        self.assertEqual(self._one_field(field, self._word(5) + pad,
+                                         metadata=metadata),
+                         ["Side:\n5 (unmapped)"])
+
+    def test_nft_shows_the_collection_address(self):
+        field = {"path": "a", "label": "Item", "format": "nftName",
+                 "params": {"collectionPath": "b"}}
+        self.assertEqual(
+            self._one_field(field, self._word(42) + self._word(self.USDC)),
+            ["Item:\nToken ID 42\nCollection\n"
+             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"])

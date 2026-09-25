@@ -767,31 +767,40 @@ bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len) {
   if (!workflow || !value) return false;
   Erc7730Field* field = &workflow->field;
-  if (field->kind != 3 ||
-      !erc7730_cap_value(field->kind, field->pending_role, cls))
+  const uint8_t role = field->pending_role;
+  if (field->kind == 1 || field->kind == 10 ||
+      !erc7730_cap_value(field->kind, role, cls))
     return false;
-  switch (field->pending_role) {
-    case 1: /* the amount: a 32-byte word */
-      if (value_len != 32 || field->has_amount) return false;
-      memcpy(field->amount, value, 32);
-      field->has_amount = true;
+  switch (role) {
+    case 1: /* the value: a 32-byte word */
+      if (value_len != 32 || field->has_value) return false;
+      memcpy(field->value, value, 32);
+      field->value_class = cls;
+      field->has_value = true;
       return true;
-    case 2: /* the token: a word from calldata, or 20 bytes */
-      if (field->has_token || (value_len != 20 && value_len != 32))
+    case 2: /* tokenAmount token */
+    case 3: /* nftName collection: a word from calldata, or 20 bytes */
+      if (field->has_address || (value_len != 20 && value_len != 32))
         return false;
       if (value_len == 32) {
         for (size_t i = 0; i < 12; i++)
           if (value[i] != 0) return false;
         value += 12;
       }
-      memcpy(field->token, value, 20);
-      field->has_token = true;
+      memcpy(field->address, value, 20);
+      field->has_address = true;
       return true;
+    case 4: /* unit decimals: one byte */
+      if (value_len != 1) return false;
+      field->decimals = value[0];
+      return true;
+    case 6: /* unit prefix: shown exactly either way */
+      return value_len == 1;
     case 7: { /* the threshold: a minimal big-endian literal */
-      if (!field->has_amount || value_len == 0 || value_len > 32) return false;
+      if (!field->has_value || value_len == 0 || value_len > 32) return false;
       uint8_t threshold[32] = {0};
       memcpy(threshold + 32 - value_len, value, value_len);
-      field->threshold_reached = memcmp(field->amount, threshold, 32) >= 0;
+      field->threshold_reached = memcmp(field->value, threshold, 32) >= 0;
       memzero(threshold, sizeof(threshold));
       return true;
     }

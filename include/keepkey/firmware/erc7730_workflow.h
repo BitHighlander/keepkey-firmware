@@ -40,10 +40,12 @@ typedef enum {
   ERC7730_DISPLAY_FORMATTER,
   ERC7730_DISPLAY_PATH,
   ERC7730_DISPLAY_DOMAIN_STRING,
-  ERC7730_DISPLAY_ARG_LITERAL, /* a literal argument or literal path */
-  ERC7730_DISPLAY_ARG_STRING,  /* the string a raw literal refers to */
-  ERC7730_DISPLAY_ARG_ALIAS,   /* one native-asset alias address */
-  ERC7730_DISPLAY_ARG_MESSAGE, /* the tokenAmount threshold message */
+  ERC7730_DISPLAY_ARG_LITERAL,  /* a literal argument or literal path */
+  ERC7730_DISPLAY_ARG_STRING,   /* the string a raw literal refers to */
+  ERC7730_DISPLAY_ARG_ALIAS,    /* one native-asset alias address */
+  ERC7730_DISPLAY_ARG_MESSAGE,  /* the field's string: message, date
+                                   encoding, unit base or enum label */
+  ERC7730_DISPLAY_ARG_ENUM_KEY, /* one enum entry's key */
 } Erc7730DisplayStage;
 
 /* The most arguments an executable formatter carries (tokenAmount: value,
@@ -59,15 +61,20 @@ typedef struct {
   uint8_t argument_count;
   uint8_t next_argument;
   uint8_t pending_role;
-  uint8_t amount[32];
-  uint8_t token[20];
-  uint16_t aliases[ERC7730_CAP_ALIAS_SET_MAX];
-  uint16_t message;
-  uint8_t alias_count;
-  uint8_t alias_next;
-  bool has_amount;
-  bool has_token;
-  bool has_message;
+  uint8_t value[32];   /* the role-1 word, for every kind but raw/addressName */
+  uint8_t address[20]; /* tokenAmount token, nftName collection */
+  union {
+    uint16_t aliases[ERC7730_CAP_ALIAS_SET_MAX];    /* tokenAmount */
+    uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */
+  } list;
+  uint16_t text; /* the one string an argument names, fetched last */
+  uint8_t list_count;
+  uint8_t list_next;
+  uint8_t value_class;
+  uint8_t decimals;
+  bool has_value;
+  bool has_address;
+  bool has_text;
   bool token_native;
   bool threshold_reached;
 } Erc7730Field;
@@ -192,8 +199,9 @@ bool erc7730_workflow_field_begin(Erc7730Workflow* workflow,
  */
 bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
                                Erc7730AbiCapture* capture, uint8_t* cls);
-/* Record the value of the pending tokenAmount argument. Values of the wrong
- * class are refused, as the preload verifier already refused them. */
+/* Record the value of the pending argument of a multi-argument formatter.
+ * Values of the wrong class are refused, as the preload verifier already
+ * refused them. */
 bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len);
 /* Return from a completed capture pass to program selection within the same
