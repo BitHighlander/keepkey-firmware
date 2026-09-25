@@ -1651,16 +1651,22 @@ TEST(Erc7730Catalog, IterationPathsReachTheirArrayThroughTuplesOnly) {
 // Audit remediation (Phases 0-E): shapes that preloaded and then failed
 // mid-review, or took a fact from the wrong source, are now decided at
 // preload. Each refusal sits next to its accepted neighbour.
-TEST(Erc7730Catalog, NumericConstantsAreValuesOfEveryWidth) {
-  // amount(literal): one byte and two bytes both run (the runtime widens a
-  // constant to a word), where two bytes used to preload and then fail.
+TEST(Erc7730Catalog, OnlyARawFieldShowsASignerConstant) {
+  // A formatter shows a value the device decodes. amount(literal) of one or
+  // two bytes is refused; amount(the uint256 argument) and raw(literal) run.
   for (const auto& literal : std::vector<std::vector<uint8_t>>{
            {1, 0, 1, 0x05}, {1, 0, 2, 0x03, 0xe8}}) {
     EXPECT_EQ(
         feedAll(envelope(tokenProgram({2, 0, 1, 1, 1, 0, 2}, literal, 1)), 9),
+        ERC7730_CATALOG_BAD_PROGRAM)
+        << literal.size();
+    EXPECT_EQ(
+        feedAll(envelope(tokenProgram({1, 0, 1, 1, 1, 0, 2}, literal, 1)), 9),
         ERC7730_CATALOG_UNTRUSTED)
         << literal.size();
   }
+  EXPECT_EQ(feedAll(envelope(tokenProgram({2, 0, 1, 1, 1, 0, 1})), 9),
+            ERC7730_CATALOG_UNTRUSTED);
 }
 
 TEST(Erc7730Catalog, AnEnumMapsADecodedValueNeverAConstant) {
@@ -1765,6 +1771,16 @@ TEST(Erc7730Catalog, EmbeddedCallsTakeTheirCalleeFromCalldata) {
       feedAll(envelope(embeddedProgram({13, 0, 2, 1, 1, 0, 1, 15, 1, 0, 2})),
               9),
       ERC7730_CATALOG_BAD_PROGRAM);  // a signer constant
+  // Nor its authority (role 18, literal 0 is an address). The value (role
+  // 17) is checked the same way; the fixture has no numeric literal path.
+  EXPECT_EQ(feedAll(envelope(embeddedProgram(
+                        {13, 0, 3, 1, 1, 0, 1, 15, 1, 0, 0, 18, 1, 0, 0})),
+                    9),
+            ERC7730_CATALOG_UNTRUSTED);  // authority from calldata
+  EXPECT_EQ(feedAll(envelope(embeddedProgram(
+                        {13, 0, 3, 1, 1, 0, 1, 15, 1, 0, 0, 18, 1, 0, 2})),
+                    9),
+            ERC7730_CATALOG_BAD_PROGRAM);  // a signer constant
   // Typed data never runs embedded calls.
   auto typed = embeddedProgram({13, 0, 2, 1, 1, 0, 1, 15, 1, 0, 0});
   auto typed_paths = replaceTable(

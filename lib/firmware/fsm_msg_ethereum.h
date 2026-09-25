@@ -606,13 +606,17 @@ static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
                                  : _("Signing cancelled by user"));
     return;
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
-               "The value is too long to show")) {
+  /* Typed data: the walk that captured this value has just shown every leaf
+   * in full, this one among them, so nothing is blind. */
+  const bool typed = workflow->typed_data;
+  if (!typed && !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                         "Blind signature", "The value is too long to show")) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
                        _("Signing cancelled by user"));
     return;
   }
-  snprintf(formatted, sizeof(formatted), "Not shown: %lu bytes",
+  snprintf(formatted, sizeof(formatted),
+           typed ? "Shown above in full: %lu bytes" : "Not shown: %lu bytes",
            (unsigned long)length);
   show_erc7730_field(workflow, formatted);
 }
@@ -998,18 +1002,6 @@ static void follow_erc7730_literal(Erc7730Workflow* workflow) {
   }
   if (field->kind == 1 || field->kind == 10) {
     show_erc7730_single(workflow, cls, literal.value, literal.length);
-  } else if ((cls == ERC7730_CLASS_UINT || cls == ERC7730_CLASS_UINT_SMALL) &&
-             (field->pending_role == 1 || field->pending_role == 17)) {
-    /* A signed constant used as the value: literals are minimal big-endian,
-     * values are 32-byte words, as a captured argument would be. */
-    uint8_t word[32] = {0};
-    if (literal.length <= sizeof(word))
-      memcpy(word + sizeof(word) - literal.length, literal.value,
-             literal.length);
-    memzero(&literal, sizeof(literal));
-    deliver_erc7730_argument(workflow, cls, word, sizeof(word));
-    memzero(word, sizeof(word));
-    return;
   } else {
     deliver_erc7730_argument(workflow, cls, literal.value, literal.length);
   }

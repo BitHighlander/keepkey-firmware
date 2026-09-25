@@ -215,8 +215,9 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
   if (ok) {
     const int length =
         /* The base is the signer's word, printed where a firmware ticker
-         * would be: say so, and always give the raw integer it came from. */
-        snprintf(output, output_size, "%s\nunit set by signer\nraw %s", scaled,
+         * would be: say so first, so the mark is never on a later OLED page
+         * than the value, and always give the raw integer it came from. */
+        snprintf(output, output_size, "unit set by signer\n%s\nraw %s", scaled,
                  raw);
     ok = length > 0 && (size_t)length < output_size;
   }
@@ -231,8 +232,9 @@ bool erc7730_format_enum(const char* value, const char* label, char* output,
                          size_t output_size) {
   if (!value || !output || output_size == 0) return false;
   const int length =
-      /* The label is the signer's claim, marked as such like a unit. */
-      label ? snprintf(output, output_size, "%s (%s)\nlabel set by signer",
+      /* The label is the signer's claim, marked as such first, like a
+       * unit. */
+      label ? snprintf(output, output_size, "label set by signer\n%s (%s)",
                        label, value)
             : snprintf(output, output_size, "%s (unmapped)", value);
   if (length < 0 || (size_t)length >= output_size) {

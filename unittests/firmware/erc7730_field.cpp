@@ -202,10 +202,10 @@ TEST(Erc7730Field, UnitIsExactWithTheRawValue) {
   // The base is the signer's word: it is marked, and the raw integer is
   // always shown, so "USDC" or a leading digit cannot pass for a fact.
   ASSERT_TRUE(erc7730_format_unit(value.data(), 3, "kg", out, sizeof(out)));
-  EXPECT_STREQ(out, "1.5 kg\nunit set by signer\nraw 1500");
+  EXPECT_STREQ(out, "unit set by signer\n1.5 kg\nraw 1500");
   ASSERT_TRUE(
       erc7730_format_unit(value.data(), 0, "000 USDC", out, sizeof(out)));
-  EXPECT_STREQ(out, "1500 000 USDC\nunit set by signer\nraw 1500");
+  EXPECT_STREQ(out, "unit set by signer\n1500 000 USDC\nraw 1500");
   // The widest rendering fits: 77 decimals, a 64-byte base escaped to 256.
   const std::string base(4u * 64u, 'x');
   const auto one = word(1);
@@ -216,7 +216,7 @@ TEST(Erc7730Field, UnitIsExactWithTheRawValue) {
 TEST(Erc7730Field, EnumLabelsTheValueAndMarksUnmapped) {
   char out[64];
   ASSERT_TRUE(erc7730_format_enum("1", "Buy", out, sizeof(out)));
-  EXPECT_STREQ(out, "Buy (1)\nlabel set by signer");
+  EXPECT_STREQ(out, "label set by signer\nBuy (1)");
   ASSERT_TRUE(erc7730_format_enum("7", nullptr, out, sizeof(out)));
   EXPECT_STREQ(out, "7 (unmapped)");
 }

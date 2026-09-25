@@ -763,14 +763,13 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->formatter_kind == 7 && role == 4 &&
       (index >= 64 || ((v->literal_decimals_mask >> index) & 1u) == 0))
     return false;
-  /* An embedded call's callee is read from the signed calldata (or its @.to
-   * container), never taken from a signer constant. */
-  if (v->formatter_kind == 13 && role == 15 &&
-      (v->signature[index] & 0x40u) != 0)
-    return false;
-  /* An enum maps a value decoded from the signed data; a constant has none
-   * to map (python-keepkey's compiler refuses it too). */
-  if (v->formatter_kind == 8 && role == 1 && (v->signature[index] & 0x40u) != 0)
+  /* Formatters show values the device decodes from the signed data. Only
+   * raw may show a signer constant, as the signer's own field. An embedded
+   * call's callee, value and authority are read from calldata or a
+   * transaction container, never from a signer constant. */
+  if (source == 1 && (v->signature[index] & 0x40u) != 0 &&
+      ((role == 1 && v->formatter_kind != 1) ||
+       (v->formatter_kind == 13 && (role == 15 || role == 17 || role == 18))))
     return false;
   if (role == 1 && (v->signature[index] & 0x40u) != 0)
     v->formatter_value_literal = true;

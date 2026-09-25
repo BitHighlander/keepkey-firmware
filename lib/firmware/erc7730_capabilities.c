@@ -129,10 +129,11 @@ bool erc7730_cap_value(uint8_t kind, uint8_t role, uint8_t cls) {
       return role == 1 && cls == ERC7730_CLASS_ADDRESS;
     case 2: /* amount */
     case 6: /* duration */
-      return role == 1 && unsigned_class(cls);
+      return role == 1 && cls == ERC7730_CLASS_UINT;
     case 3: /* tokenAmount */
       switch (role) {
         case 1:
+          return cls == ERC7730_CLASS_UINT;
         case 7:
           return unsigned_class(cls);
         case 2:
@@ -146,13 +147,13 @@ bool erc7730_cap_value(uint8_t kind, uint8_t role, uint8_t cls) {
           return false;
       }
     case 4: /* nftName: token id, collection */
-      return (role == 1 && unsigned_class(cls)) ||
+      return (role == 1 && cls == ERC7730_CLASS_UINT) ||
              (role == 3 && cls == ERC7730_CLASS_ADDRESS);
     case 5: /* date: value, encoding */
-      return (role == 1 && unsigned_class(cls)) ||
+      return (role == 1 && cls == ERC7730_CLASS_UINT) ||
              (role == 9 && cls == ERC7730_CLASS_DATE_ENCODING);
     case 7: /* unit: value, decimals, base, prefix */
-      return (role == 1 && unsigned_class(cls)) ||
+      return (role == 1 && cls == ERC7730_CLASS_UINT) ||
              (role == 4 && cls == ERC7730_CLASS_UINT_SMALL) ||
              (role == 5 && (cls == ERC7730_CLASS_STRING ||
                             cls == ERC7730_CLASS_DATE_ENCODING)) ||
@@ -160,11 +161,12 @@ bool erc7730_cap_value(uint8_t kind, uint8_t role, uint8_t cls) {
     case 13: /* embedded calldata: inner bytes, callee, value, authority */
       return (role == 1 && cls == ERC7730_CLASS_BYTES) ||
              (role == 15 && cls == ERC7730_CLASS_ADDRESS) ||
-             (role == 17 && unsigned_class(cls)) ||
+             (role == 17 && cls == ERC7730_CLASS_UINT) ||
              (role == 18 && cls == ERC7730_CLASS_ADDRESS);
     case 8: /* enum: value, map */
-      return (role == 1 && (unsigned_class(cls) || cls == ERC7730_CLASS_INT ||
-                            cls == ERC7730_CLASS_BOOL)) ||
+      return (role == 1 &&
+              (cls == ERC7730_CLASS_UINT || cls == ERC7730_CLASS_INT ||
+               cls == ERC7730_CLASS_BOOL)) ||
              (role == 10 && cls == ERC7730_CLASS_ENUM_MAP);
     default:
       return false;
