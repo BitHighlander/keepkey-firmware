@@ -602,9 +602,7 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         return errRet;
       }
 
-      if (walkVals == 0) {
-        return JSON_TYPE_WNOVAL;
-      } else {
+      {  // walkVals is non-NULL: refused above, before any screen
         if (0 == strncmp("address", typeType, strlen("address"))) {
           if (']' == typeType[strlen(typeType) - 1]) {
             // array of addresses
