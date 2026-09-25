@@ -1000,7 +1000,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
-  if (data_total >= 68 && ethereum_isERC20ApproveCall(msg)) {
+  // Match the selector alone. Pre-0.8 Solidity masks the spender word's high
+  // bytes, so a dirty spender word still grants the allowance on chain.
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+    if (!ethereum_isERC20ApproveCall(msg)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Malformed ERC20 approval"));
+      ethereum_signing_abort();
+      return;
+    }
     // Native value cannot exempt a payable token from this allowance policy.
     // Unlimited approval grants open-ended authority and is refused before
     // any generic transaction confirmation can mask this policy decision.

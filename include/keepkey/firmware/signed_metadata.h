@@ -20,8 +20,10 @@ typedef struct _EthereumSignTx EthereumSignTx;
  * LoadClearsignSigner.icon max_size and storage.h CLEARSIGN_ICON_MAX
  * (static-asserted in signed_metadata.c). */
 #define METADATA_ICON_MAX 384
-/* hex(first 4 bytes of sha256(pubkey)) + NUL */
-#define METADATA_FINGERPRINT_LEN 9
+/* hex(first 8 bytes of sha256(pubkey)) + NUL. 64 bits: a 32-bit prefix
+ * collision can be ground in hours, which would let a different key pass for
+ * the one the user approved. */
+#define METADATA_FINGERPRINT_LEN 17
 
 typedef enum {
   METADATA_OPAQUE = 0,
@@ -157,7 +159,7 @@ bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
 /* Drop all runtime-loaded signers (and any metadata they verified). */
 void signed_metadata_clear_signers(void);
 
-/* out = hex of the first 4 bytes of sha256(pubkey[33]), NUL-terminated.
+/* out = hex of the first 8 bytes of sha256(pubkey[33]), NUL-terminated.
  * Shown at load-confirm and on the per-tx warning screen so the user can
  * correlate the two. */
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
@@ -192,7 +194,7 @@ bool signed_metadata_verify_runtime_attestation_for_pubkey(
     const uint8_t* sig, size_t sig_len,
     char out_alias[METADATA_ALIAS_MAX_LEN + 1]);
 
-/* Fingerprint (hex of sha256(pubkey)[0:4]) of the runtime signer loaded in
+/* Fingerprint (hex of sha256(pubkey)[0:8]) of the runtime signer loaded in
  * `key_id`, written NUL-terminated to `out`. Returns false if no signer is
  * present. Lets non-EVM callers disambiguate signers (aliases are not unique)
  * the same way the EVM per-tx warning does. */

@@ -47,12 +47,21 @@ TEST(Erc7730Format, FormatsUnsignedAndSigned256BitIntegers) {
 }
 
 TEST(Erc7730Format, FormatsAddressBoolAndBytesCanonically) {
+  // EIP-55 specification test vector.
+  const uint8_t address[20] = {0x5a, 0xae, 0xb6, 0x05, 0x3f, 0x3e, 0x94,
+                               0xc9, 0xb9, 0xa0, 0x9f, 0x33, 0x66, 0x94,
+                               0x35, 0xe7, 0xef, 0x1b, 0xea, 0xed};
   uint8_t value[32] = {0};
-  for (size_t i = 0; i < 20; i++) value[12 + i] = i;
+  memcpy(value + 12, address, sizeof(address));
   char output[ERC7730_FORMATTED_VALUE_MAX + 1];
   ASSERT_TRUE(format(ERC7730_ABI_ADDRESS, 0, value, sizeof(value), output,
                      sizeof(output)));
-  EXPECT_STREQ(output, "0x000102030405060708090a0b0c0d0e0f10111213");
+  EXPECT_STREQ(output, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+  char exact[43];
+  EXPECT_TRUE(format(ERC7730_ABI_ADDRESS, 0, value, sizeof(value), exact,
+                     sizeof(exact)));
+  EXPECT_FALSE(format(ERC7730_ABI_ADDRESS, 0, value, sizeof(value), exact,
+                      sizeof(exact) - 1));
   memset(value, 0, sizeof(value));
   value[31] = 1;
   ASSERT_TRUE(format(ERC7730_ABI_BOOL, 0, value, sizeof(value), output,
@@ -64,15 +73,93 @@ TEST(Erc7730Format, FormatsAddressBoolAndBytesCanonically) {
   EXPECT_STREQ(output, "0xaa00ff");
 }
 
-TEST(Erc7730Format, PreservesValidatedUtf8AndRejectsSmallOutput) {
+TEST(Erc7730Format, EscapesStringCapturesAndRejectsSmallOutput) {
   const uint8_t value[] = {'h', 'i', 0xe2, 0x82, 0xac};
   char output[16];
   ASSERT_TRUE(format(ERC7730_ABI_STRING, 0, value, sizeof(value), output,
                      sizeof(output)));
-  EXPECT_EQ(memcmp(output, value, sizeof(value)), 0);
+  EXPECT_STREQ(output, "hi\\xe2\\x82\\xac");
   char small[5];
   EXPECT_FALSE(format(ERC7730_ABI_STRING, 0, value, sizeof(value), small,
                       sizeof(small)));
+  EXPECT_STREQ(small, "");
+
+  // An embedded NUL used to end the confirm("%s") body early.
+  const uint8_t nul[] = {'O', 'K', 0x00, 'X'};
+  EXPECT_FALSE(
+      format(ERC7730_ABI_STRING, 0, nul, sizeof(nul), output, sizeof(output)));
+  EXPECT_STREQ(output, "");
+
+  // A full-size capture of non-ASCII bytes fits the documented maximum.
+  uint8_t wide[ERC7730_ABI_CAPTURE_MAX];
+  memset(wide, 0xff, sizeof(wide));
+  char widest[ERC7730_FORMATTED_VALUE_MAX + 1];
+  ASSERT_TRUE(format(ERC7730_ABI_STRING, 0, wide, sizeof(wide), widest,
+                     sizeof(widest)));
+  EXPECT_EQ(strlen(widest), (size_t)ERC7730_FORMATTED_VALUE_MAX);
+}
+
+namespace {
+
+bool text(const char* input, size_t length, char* output, size_t size) {
+  return erc7730_format_text(reinterpret_cast<const uint8_t*>(input), length,
+                             output, size);
+}
+
+}  // namespace
+
+TEST(Erc7730Format, TextRejectsNulControlsAndDelete) {
+  char output[32];
+  for (int byte = 0; byte < 0x20; byte++) {
+    const char input[3] = {'a', (char)byte, 'b'};
+    strcpy(output, "stale");
+    EXPECT_FALSE(text(input, sizeof(input), output, sizeof(output))) << byte;
+    EXPECT_STREQ(output, "");
+  }
+  EXPECT_FALSE(text("a\x7f", 2, output, sizeof(output)));
+  EXPECT_STREQ(output, "");
+  EXPECT_FALSE(text("\t", 1, output, sizeof(output)));
+}
+
+TEST(Erc7730Format, TextEscapesBackslashEdgeSpacesAndNonAscii) {
+  char output[64];
+  ASSERT_TRUE(text("a\\b", 3, output, sizeof(output)));
+  EXPECT_STREQ(output, "a\\\\b");
+  ASSERT_TRUE(text("a b", 3, output, sizeof(output)));
+  EXPECT_STREQ(output, "a b");
+  ASSERT_TRUE(text(" ab", 3, output, sizeof(output)));
+  EXPECT_STREQ(output, "\\x20ab");
+  ASSERT_TRUE(text("ab ", 3, output, sizeof(output)));
+  EXPECT_STREQ(output, "ab\\x20");
+  ASSERT_TRUE(text("a  b", 4, output, sizeof(output)));
+  EXPECT_STREQ(output, "a\\x20\\x20b");
+  ASSERT_TRUE(text(" ", 1, output, sizeof(output)));
+  EXPECT_STREQ(output, "\\x20");
+  // U+00E9 and U+1F600 in UTF-8.
+  ASSERT_TRUE(text("\xc3\xa9", 2, output, sizeof(output)));
+  EXPECT_STREQ(output, "\\xc3\\xa9");
+  ASSERT_TRUE(text("x\xf0\x9f\x98\x80", 5, output, sizeof(output)));
+  EXPECT_STREQ(output, "x\\xf0\\x9f\\x98\\x80");
+  ASSERT_TRUE(text("!~", 2, output, sizeof(output)));
+  EXPECT_STREQ(output, "!~");
+  ASSERT_TRUE(text("", 0, output, sizeof(output)));
+  EXPECT_STREQ(output, "");
+}
+
+TEST(Erc7730Format, TextFitsExactlyOrFailsClosed) {
+  char output[8];
+  ASSERT_TRUE(text("abcdefg", 7, output, 8));
+  EXPECT_STREQ(output, "abcdefg");
+  EXPECT_FALSE(text("abcdefgh", 8, output, 8));
+  EXPECT_STREQ(output, "");
+  ASSERT_TRUE(text("ab\xff", 3, output, 7));
+  EXPECT_STREQ(output, "ab\\xff");
+  EXPECT_FALSE(text("ab\xff", 3, output, 6));
+  EXPECT_STREQ(output, "");
+  ASSERT_TRUE(text("a\\", 2, output, 4));
+  EXPECT_FALSE(text("a\\", 2, output, 3));
+  EXPECT_FALSE(text("a", 1, output, 0));
+  EXPECT_FALSE(text("a", 1, nullptr, 8));
 }
 
 TEST(Erc7730Format, FormatsDecimalAmountsWithoutFloatingPoint) {

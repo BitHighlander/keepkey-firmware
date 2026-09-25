@@ -1,5 +1,7 @@
 #include "keepkey/firmware/erc7730_program.h"
 
+#include <string.h>
+
 #include "trezor/crypto/memzero.h"
 
 static uint32_t read_be32(const uint8_t* p) {
@@ -198,14 +200,23 @@ static bool domain_bindings_feed(Erc7730DomainBindings* bindings,
       if (bindings->staged == 3) {
         bindings->remaining = read_be16(bindings->scratch + 1);
         if (bindings->remaining == 0 || bindings->remaining > 139 ||
+            (bindings->scratch[0] == 1 &&
+             bindings->remaining != sizeof(bindings->deployment)) ||
             (bindings->scratch[0] == 2 && bindings->remaining != 4))
           return false;
+        bindings->deployment_mismatch = false;
       }
       continue;
     }
+    if (bindings->scratch[0] == 1 &&
+        data[i] != bindings->deployment[sizeof(bindings->deployment) -
+                                        bindings->remaining])
+      bindings->deployment_mismatch = true;
     if (bindings->scratch[0] == 2)
       bindings->scratch[bindings->staged++] = data[i];
     if (--bindings->remaining != 0) continue;
+    if (bindings->scratch[0] == 1 && !bindings->deployment_mismatch)
+      bindings->deployment_listed = true;
     if (bindings->scratch[0] == 2) {
       const uint8_t field = bindings->scratch[3];
       const uint8_t operation = bindings->scratch[4];
@@ -274,9 +285,26 @@ bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
   return true;
 }
 
+bool erc7730_program_loader_require_deployment(Erc7730ProgramLoader* loader,
+                                               uint64_t chain_id,
+                                               const uint8_t contract[20]) {
+  if (!loader || !contract || loader->failed || loader->index.received != 0 ||
+      chain_id == 0) {
+    if (loader) loader->failed = true;
+    return false;
+  }
+  for (size_t i = 0; i < 8; i++)
+    loader->domain.deployment[i] = (uint8_t)(chain_id >> (56u - 8u * i));
+  memcpy(loader->domain.deployment + 8, contract, 20);
+  loader->domain.deployment_required = true;
+  return true;
+}
+
 bool erc7730_program_loader_complete(const Erc7730ProgramLoader* loader,
                                      Erc7730AbiProgram* program) {
   return loader && !loader->failed && loader->abi_started &&
+         (!loader->domain.deployment_required ||
+          loader->domain.deployment_listed) &&
          erc7730_program_index_complete(&loader->index) &&
          erc7730_program_abi_complete(&loader->abi, program);
 }
@@ -551,7 +579,8 @@ bool erc7730_program_display_feed(Erc7730ProgramDisplay* display,
       if (display->received == 1) {
         display->instruction_count = read_be16(display->entry);
         if (display->instruction_count == 0 ||
-            display->instruction_count > 64 ||
+            display->instruction_count >
+                ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS ||
             display->target_index >= display->instruction_count ||
             display->section_length !=
                 2u + (uint32_t)display->instruction_count * 8u) {

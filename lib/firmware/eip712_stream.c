@@ -38,6 +38,9 @@
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/erc7730_format.h"
+#include "trezor/crypto/address.h"
+#include "trezor/crypto/bignum.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/sha3.h"
 
@@ -504,6 +507,9 @@ bool eip712_type_hash(const char* name, Eip712StructLookup lookup, void* ctx,
  */
 typedef struct {
   char name[EIP712_MAX_STRUCT_NAME];
+  /* The parent member this frame was pushed for; empty for an array element,
+   * which is labelled by its index. Only used to spell review paths. */
+  char label[EIP712_MAX_STRUCT_NAME];
   uint8_t slot_base;    /* first slot in the pool belonging to this frame */
   uint8_t member_count; /* members declared by the struct */
   uint8_t member_index; /* next member to absorb */
@@ -625,55 +631,230 @@ void eip712_stream_abort(void) { memzero(&e712, sizeof(e712)); }
 
 /* ── Display ─────────────────────────────────────────────────────────
  *
- * One screen per leaf, drawn from the SAME bytes that are about to be
- * absorbed. The field NAME comes from the struct definition, which is the same
- * text hashed into encodeType -- so the label and the commitment cannot
- * disagree either.
+ * One review per leaf, drawn from the SAME bytes that are about to be
+ * absorbed. The title names what is being signed -- the domain, or the
+ * primary type -- and the body opens with the member's full path from that
+ * root, so from.wallet, to.wallet and the elements of an array never draw
+ * the same screen. Member names are the same text hashed into encodeType, so
+ * the label and the commitment cannot disagree either.
  *
- * Values render as hex with an 0x prefix, except strings, which render as
- * themselves, and bool. Hex is unambiguous and needs no bignum; it is also
- * plainly worse to read than a decimal amount, and that is a known v1
- * limitation rather than a considered end state.
+ * Integers render in decimal (signed for intN), addresses with their EIP-55
+ * checksum, bytes as 0x hex and strings through erc7730_format_text(), which
+ * escapes every byte the OLED font or pager cannot show one-to-one.
+ *
+ * confirm() refuses a body longer than BODY_CHAR_MAX rather than truncate it,
+ * so a value that does not fit one body is shown in numbered parts, each a
+ * required confirmation of its own.
  */
-static bool eip712_confirm_leaf(const char* name, const Eip712FieldType* field,
-                                const uint8_t* value, uint16_t len) {
+#define EIP712_BODY_MAX (BODY_CHAR_MAX - 1)
+
+typedef enum {
+  EIP712_LEAF_OK = 0,
+  EIP712_LEAF_CANCELLED,
+  EIP712_LEAF_INVALID,
+} Eip712LeafResult;
+
+typedef enum {
+  EIP712_RENDER_TEXT,    /* already-rendered ASCII, split by character */
+  EIP712_RENDER_HEX,     /* raw bytes as 0x hex */
+  EIP712_RENDER_ESCAPED, /* raw string bytes through erc7730_format_text() */
+} Eip712Render;
+
+/* Render as much of value[offset..len) as fits `budget` characters. */
+static bool render_part(Eip712Render how, const uint8_t* value, size_t len,
+                        size_t offset, char* out, size_t budget,
+                        size_t* consumed) {
+  const size_t left = len - offset;
+  *consumed = 0;
+  out[0] = '\0';
+  if (how == EIP712_RENDER_HEX) {
+    static const char digits[] = "0123456789abcdef";
+    const size_t lead = offset == 0 ? 2 : 0;
+    if (budget < lead + 2) return false;
+    size_t n = (budget - lead) / 2;
+    if (n > left) n = left;
+    char* p = out;
+    if (lead) {
+      *p++ = '0';
+      *p++ = 'x';
+    }
+    for (size_t i = 0; i < n; i++) {
+      *p++ = digits[value[offset + i] >> 4];
+      *p++ = digits[value[offset + i] & 0x0F];
+    }
+    *p = '\0';
+    *consumed = n;
+    return true;
+  }
+  if (left == 0) return true;
+  if (how == EIP712_RENDER_TEXT) {
+    const size_t n = left < budget ? left : budget;
+    memcpy(out, value + offset, n);
+    out[n] = '\0';
+    *consumed = n;
+    return true;
+  }
+  /* An escaped prefix is never shorter than its source, and one byte escapes
+   * to at most four characters, so a budget of four always makes progress.
+   * Longer prefixes are not monotonic in length (an edge space escapes), so
+   * this finds a fitting prefix, not necessarily the longest one. */
+  if (budget < 4) return false;
+  size_t lo = 1, hi = left < budget ? left : budget;
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo + 1) / 2;
+    if (erc7730_format_text(value + offset, mid, out, budget + 1)) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (!erc7730_format_text(value + offset, lo, out, budget + 1)) return false;
+  *consumed = lo;
+  return true;
+}
+
+static Eip712LeafResult confirm_parts(const char* title, const char* path,
+                                      const char* type_name, Eip712Render how,
+                                      const uint8_t* value, size_t len) {
+  char part[BODY_CHAR_MAX];
+  size_t consumed = 0;
+  const size_t fixed = strlen(path) + 1 + strlen(type_name) + 2;
+  /* " (999/999)" is the widest part counter. */
+  if (fixed + 10 + 8 > EIP712_BODY_MAX) return EIP712_LEAF_INVALID;
+
+  if (!render_part(how, value, len, 0, part, EIP712_BODY_MAX - fixed,
+                   &consumed))
+    return EIP712_LEAF_INVALID;
+  if (consumed == len)
+    return confirm(ButtonRequestType_ButtonRequest_Other, title, "%s\n%s: %s",
+                   path, type_name, part)
+               ? EIP712_LEAF_OK
+               : EIP712_LEAF_CANCELLED;
+
+  const size_t budget = EIP712_BODY_MAX - fixed - 10;
+  size_t parts = 0;
+  for (size_t offset = 0; offset < len; offset += consumed) {
+    if (!render_part(how, value, len, offset, part, budget, &consumed) ||
+        consumed == 0 || ++parts > 999)
+      return EIP712_LEAF_INVALID;
+  }
+  size_t offset = 0;
+  for (size_t i = 1; i <= parts; i++, offset += consumed) {
+    if (!render_part(how, value, len, offset, part, budget, &consumed))
+      return EIP712_LEAF_INVALID;
+    if (!confirm(ButtonRequestType_ButtonRequest_Other, title,
+                 "%s (%u/%u)\n%s: %s", path, (unsigned)i, (unsigned)parts,
+                 type_name, part))
+      return EIP712_LEAF_CANCELLED;
+  }
+  return EIP712_LEAF_OK;
+}
+
+/* The member's path from the root being walked: "amount", "from.wallet",
+ * "to[1].wallet", "values[0][2]". */
+static bool leaf_path(char* out, size_t out_size) {
+  size_t used = 0;
+  out[0] = '\0';
+  for (uint8_t i = 1; i <= e712.depth; i++) {
+    const bool leaf = i == e712.depth;
+    const Eip712Frame* parent = &e712.stack[i - 1];
+    const char* label = leaf ? e712.pending_name : e712.stack[i].label;
+    int n;
+    if (parent->is_array) {
+      n = snprintf(out + used, out_size - used, "[%u]",
+                   (unsigned)parent->member_index);
+    } else {
+      n = snprintf(out + used, out_size - used, "%s%s", used ? "." : "", label);
+    }
+    if (n < 0 || (size_t)n >= out_size - used) return false;
+    used += (size_t)n;
+  }
+  return true;
+}
+
+bool eip712_render_integer(const Eip712FieldType* field, const uint8_t* value,
+                           uint16_t len, char* out, size_t out_size) {
+  uint8_t word[32];
+  if (len == 0 || len > sizeof(word)) return false;
+  memzero(word, sizeof(word));
+  memcpy(word + sizeof(word) - len, value, len);
+  const bool negative =
+      field->data_type == EthereumTypedDataStructAck_EthereumDataType_INT &&
+      (value[0] & 0x80);
+  if (negative) {
+    /* Two's-complement magnitude within the declared width. */
+    for (size_t i = sizeof(word) - len; i < sizeof(word); i++)
+      word[i] = (uint8_t)~word[i];
+    for (size_t i = sizeof(word); i-- > sizeof(word) - len;)
+      if (++word[i] != 0) break;
+  }
+  bignum256 amount;
+  bn_read_be(word, &amount);
+  const size_t written = bn_format(&amount, negative ? "-" : NULL, NULL, 0, 0,
+                                   false, out, out_size);
+  memzero(&amount, sizeof(amount));
+  return written > 0;
+}
+
+static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
+                                            const uint8_t* value,
+                                            uint16_t len) {
   char type_name[EIP712_MAX_TYPE_NAME];
-  if (!eip712_type_name(field, type_name, sizeof(type_name))) return false;
+  char path[160];
+  char text[82]; /* "-" + 78 digits, or a checksummed address */
+  if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
+      !leaf_path(path, sizeof(path)))
+    return EIP712_LEAF_INVALID;
+  const char* title = e712.root == 0 ? "EIP-712 Domain" : e712.primary_type;
 
-  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_STRING) {
-    /* Already validated as printable UTF-8, so it can be shown as text. */
-    char text[EIP712_MAX_LEAF + 1];
-    if (len > EIP712_MAX_LEAF) return false;
-    memcpy(text, value, len);
-    text[len] = '\0';
-    return confirm(ButtonRequestType_ButtonRequest_Other, name, "%s", text);
+  switch (field->data_type) {
+    case EthereumTypedDataStructAck_EthereumDataType_STRING:
+      return confirm_parts(title, path, type_name, EIP712_RENDER_ESCAPED, value,
+                           len);
+    case EthereumTypedDataStructAck_EthereumDataType_BOOL:
+      strlcpy(text, value[0] ? "true" : "false", sizeof(text));
+      break;
+    case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
+      text[0] = '0';
+      text[1] = 'x';
+      ethereum_address_checksum(value, text + 2, false, 0);
+      break;
+    case EthereumTypedDataStructAck_EthereumDataType_UINT:
+    case EthereumTypedDataStructAck_EthereumDataType_INT:
+      if (!eip712_render_integer(field, value, len, text, sizeof(text)))
+        return EIP712_LEAF_INVALID;
+      break;
+    case EthereumTypedDataStructAck_EthereumDataType_BYTES:
+      return confirm_parts(title, path, type_name, EIP712_RENDER_HEX, value,
+                           len);
+    default:
+      return EIP712_LEAF_INVALID;
   }
+  return confirm_parts(title, path, type_name, EIP712_RENDER_TEXT,
+                       (const uint8_t*)text, strlen(text));
+}
 
-  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BOOL) {
-    return confirm(ButtonRequestType_ButtonRequest_Other, name, "%s",
-                   value[0] ? "true" : "false");
-  }
-
-  /* Everything else as 0x hex. confirm_helper paginates, so a long dynamic
-   * bytes value is disclosed across screens rather than truncated -- the
-   * exact-byte disclosure rule 7.14.2 established. */
-  /* Sized for a WHOLE leaf, so nothing signed is ever cut off the screen.
-   * confirm_helper paginates a long body across screens, which is the
-   * exact-byte disclosure rule 7.14.2 established -- a cap here would either
-   * truncate a signed value or refuse a valid one. This is ~2 KB of stack
-   * inside a 16 KB stack, and stack is not what the linker gate measures. */
-  char hex[2 + 2 * EIP712_MAX_LEAF + 1];
-  if (len > EIP712_MAX_LEAF) return false;
-  hex[0] = '0';
-  hex[1] = 'x';
-  for (uint16_t i = 0; i < len; i++) {
-    static const char d[] = "0123456789abcdef";
-    hex[2 + 2 * i] = d[value[i] >> 4];
-    hex[3 + 2 * i] = d[value[i] & 0x0F];
-  }
-  hex[2 + 2 * len] = '\0';
-  return confirm(ButtonRequestType_ButtonRequest_Other, name, "%s: %s",
-                 type_name, hex);
+/* Unlimited token authority is refused in typed data exactly as it is in an
+ * EthereumSignTx approve(): EIP-2612 and DAI permits, and Permit2's
+ * allowance and transfer permits. */
+static bool is_unlimited_permit(const Eip712FieldType* field,
+                                const uint8_t* value, uint16_t len) {
+  if (e712.root != 1) return false;
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  if (f->is_array) return false;
+  const char* member = e712.pending_name;
+  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BOOL)
+    return strcmp(f->name, "Permit") == 0 && strcmp(member, "allowed") == 0 &&
+           value[0] == 1;
+  if (field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
+      !((strcmp(f->name, "Permit") == 0 && strcmp(member, "value") == 0) ||
+        ((strcmp(f->name, "PermitDetails") == 0 ||
+          strcmp(f->name, "TokenPermissions") == 0) &&
+         strcmp(member, "amount") == 0)))
+    return false;
+  for (uint16_t i = 0; i < len; i++)
+    if (value[i] != 0xff) return false;
+  return len > 0;
 }
 
 /* ── The walk ────────────────────────────────────────────────────────
@@ -769,10 +950,13 @@ static void complete_frame(void) {
     return;
   }
 
+  const bool domain_only = strcmp(e712.primary_type, "EIP712Domain") == 0;
   if (e712.root == 0) {
-    /* The domain is hashed. Now the message, under the same session. */
     memcpy(e712.domain_separator, digest, 32);
     e712.have_domain_separator = true;
+  }
+  if (e712.root == 0 && !domain_only) {
+    /* The domain is hashed. Now the message, under the same session. */
     e712.root = 1;
     e712.depth = 1;
     e712.slots_used = 0;
@@ -782,21 +966,19 @@ static void complete_frame(void) {
     return;
   }
 
-  /* Both halves are in hand. The FSM derives the key and signs: the response
-   * buffer and the node live there, and keeping key material out of this
-   * translation unit keeps it unit-testable. */
-  if (!e712.message_value_confirmed &&
-      !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Message",
-               "Sign empty EIP-712 message?")) {
-    eip712_stream_abort();
-    memzero(&next_step, sizeof(next_step));
-    next_step.kind = EIP712_REQ_CANCELLED;
-    return;
-  }
+  /* Both halves are in hand. The FSM derives the key, shows the final signing
+   * screen and signs: the response buffer and the node live there, and keeping
+   * key material out of this translation unit keeps it unit-testable. */
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_DONE;
   memcpy(next_step.domain_separator, e712.domain_separator, 32);
-  memcpy(next_step.message_hash, digest, 32);
+  /* MetaMask v4 / eth-sig-util sign keccak(0x1901 || domainSeparator) when the
+   * primary type is the domain itself: there is no message hash. */
+  next_step.domain_only = domain_only;
+  next_step.message_empty = domain_only || !e712.message_value_confirmed;
+  if (!domain_only) memcpy(next_step.message_hash, digest, 32);
+  strlcpy(next_step.primary_type, e712.primary_type,
+          sizeof(next_step.primary_type));
   memcpy(next_step.address_n, e712.address_n,
          e712.address_n_count * sizeof(uint32_t));
   next_step.address_n_count = e712.address_n_count;
@@ -905,6 +1087,10 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
    * only, and refusing v3 is better than signing it under v4 rules. */
   if (msg->has_metamask_v4_compat && !msg->metamask_v4_compat) {
     fail("Only MetaMask v4 array hashing is supported");
+    return false;
+  }
+  if (require_definition && strcmp(msg->primary_type, "EIP712Domain") == 0) {
+    fail("ERC-7730 cannot describe a domain-only signature");
     return false;
   }
 
@@ -1096,6 +1282,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         memzero(arr, sizeof(*arr));
         arr->is_array = true;
         arr->slot_base = f->slot_base + f->member_count;
+        strlcpy(arr->label, m->name, sizeof(arr->label));
         arr->elem_data_type = (uint8_t)m->type.data_type;
         arr->elem_has_size = m->type.has_size;
         arr->elem_size = m->type.size;
@@ -1128,6 +1315,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         Eip712Frame* child = &e712.stack[e712.depth];
         memzero(child, sizeof(*child));
         strlcpy(child->name, m->type.struct_name, EIP712_MAX_STRUCT_NAME);
+        strlcpy(child->label, m->name, sizeof(child->label));
         child->slot_base = f->slot_base + f->member_count;
         e712.depth++;
         begin_type_hash();
@@ -1208,10 +1396,20 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     return false;
   }
 
+  if (is_unlimited_permit(field, bytes, len)) {
+    fail("Unlimited ERC20 approval is disabled");
+    return false;
+  }
+
   /* Display and absorb from the SAME buffer in the same call. This is the
    * property the old JSON parser could not offer and the reason it was
    * withdrawn: there is no second read that could return something else. */
-  if (!eip712_confirm_leaf(e712.pending_name, field, bytes, len)) {
+  const Eip712LeafResult shown = eip712_confirm_leaf(field, bytes, len);
+  if (shown == EIP712_LEAF_INVALID) {
+    fail("EIP-712 value cannot be displayed");
+    return false;
+  }
+  if (shown != EIP712_LEAF_OK) {
     eip712_stream_abort();
     memzero(&next_step, sizeof(next_step));
     next_step.kind = EIP712_REQ_CANCELLED;

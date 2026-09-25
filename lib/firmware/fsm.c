@@ -412,6 +412,8 @@ void fsm_init(void) {
 }
 
 /* Reject continuation packets unless their signing workflow is active. */
+static void abort_signing_engines(void);
+
 static bool reject_stale_continuation(const char* text) {
   /* A decoded request always gets a terminal response. Silently dropping an
    * inactive ACK leaves the host blocked forever, while dispatching it would
@@ -539,7 +541,19 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         default:
           break;
       }
-      fsm_abort_signing_workflows();
+      switch (msg_id) {
+#if !BITCOIN_ONLY
+        case MessageType_MessageType_EthereumClearSignDefinition:
+        case MessageType_MessageType_EthereumSignTx:
+        case MessageType_MessageType_EthereumSignTypedData:
+          /* The preload's own chunks and its consumers keep it. */
+          abort_signing_engines();
+          break;
+#endif
+        default:
+          fsm_abort_signing_workflows();
+          break;
+      }
       return true;
   }
 }
@@ -595,7 +609,7 @@ void fsm_abort_workflows(void) {
  * signing state, but must not discard a setup ceremony: recovery stages its
  * ceremony before prompting for the PIN, and every routine PIN entry clears
  * the session while checking the entered digits against the wipe code. */
-void fsm_abort_signing_workflows(void) {
+static void abort_signing_engines(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
@@ -611,6 +625,16 @@ void fsm_abort_signing_workflows(void) {
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+}
+
+/* A preloaded ERC-7730 definition is consumed only by the signing request that
+ * follows it. Every other abort -- Initialize, Cancel, ClearSession, autolock,
+ * a rejected frame or any unrelated request -- discards it too. */
+void fsm_abort_signing_workflows(void) {
+  abort_signing_engines();
+#if !BITCOIN_ONLY
+  erc7730_catalog_clear_preload();
+#endif
 }
 
 void fsm_msgClearSession(ClearSession* msg) {

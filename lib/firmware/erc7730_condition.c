@@ -61,11 +61,16 @@ bool erc7730_condition_evaluate_basic(const Erc7730Condition* condition,
   return false;
 }
 
+/* Canonical unsigned integer: big-endian with every leading zero byte
+ * removed, so zero is the empty string. The compiled literal table encodes
+ * zero as the single byte 0x00 and a captured uint256 is a 32-byte word; both
+ * normalize to this form, so every encoding of the same value compares equal
+ * (including an empty literal and [0x00] for zero). */
 static void canonical_unsigned(const uint8_t* value, size_t length,
                                const uint8_t** canonical,
                                size_t* canonical_length) {
   size_t offset = 0;
-  while (offset + 1u < length && value[offset] == 0) offset++;
+  while (offset < length && value[offset] == 0) offset++;
   *canonical = value + offset;
   *canonical_length = length - offset;
 }
@@ -78,8 +83,11 @@ bool erc7730_capture_equals_literal(const Erc7730AbiProgram* program,
   const Erc7730AbiNode* node = &program->nodes[capture->node];
   const uint8_t* value = capture->data;
   size_t length = capture->length;
+  const uint8_t* expected = literal->value;
+  size_t expected_length = literal->length;
   if (literal->kind == 1 && node->kind == ERC7730_ABI_UINT && length == 32) {
     canonical_unsigned(value, length, &value, &length);
+    canonical_unsigned(expected, expected_length, &expected, &expected_length);
   } else if (literal->kind == 3 && node->kind == ERC7730_ABI_FIXED_BYTES &&
              length == 32) {
     length = node->size;
@@ -96,6 +104,6 @@ bool erc7730_capture_equals_literal(const Erc7730AbiProgram* program,
   } else {
     return false;
   }
-  return length == literal->length &&
-         (length == 0 || memcmp(value, literal->value, length) == 0);
+  return length == expected_length &&
+         (length == 0 || memcmp(value, expected, length) == 0);
 }

@@ -266,50 +266,250 @@ TEST(Erc7730Catalog, LoaderRetainsEveryDomainConstraintAcrossChunkBoundaries) {
   }
 }
 
-TEST(Erc7730Catalog, SignatureAuthenticatesHeaderAndRuntimeKeyContext) {
+namespace {
+
+const uint8_t kPurpose[] = "KEEPKEY:ERC7730:CATALOG\0";
+
+struct SignedFixture {
+  uint8_t key[32];
+  uint8_t pubkey[33];
+};
+
+void loadRuntimeSigner(SignedFixture* fixture, const char* alias) {
   if (storage_getLocation() == FLASH_INVALID) {
     setup();
     storage_init();
   }
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
   signed_metadata_clear_signers();
-  uint8_t key[32] = {0};
-  key[31] = 1;
-  uint8_t pubkey[33];
-  ecdsa_get_public_key33(&secp256k1, key, pubkey);
-  ASSERT_TRUE(signed_metadata_store_signer(3, pubkey, "Approved signer",
-                                           nullptr, 0, 0, 0, false));
-  auto program = minimalProgram();
-  auto e = envelope(program);
-  const size_t cert = 10 + program.size() + 3;
-  e[cert] = 1;
-  e[cert + ERC7730_DELEGATE_OFF_SCOPE + 3] = 1;
-  memcpy(e.data() + cert + ERC7730_DELEGATE_OFF_ALIAS, "Host alias", 10);
-  memcpy(e.data() + cert + ERC7730_DELEGATE_OFF_PUBKEY, pubkey, 33);
+  memset(fixture->key, 0, sizeof(fixture->key));
+  fixture->key[31] = 1;
+  ecdsa_get_public_key33(&secp256k1, fixture->key, fixture->pubkey);
+  ASSERT_TRUE(signed_metadata_store_signer(3, fixture->pubkey, alias, nullptr,
+                                           0, 0, 0, false));
+}
+
+// Sorted-pair node per erc7730-compiled-format.md, computed independently of
+// the verifier: SHA256(0x01 || min(a, b) || max(a, b)).
+std::vector<uint8_t> merkleParent(const std::vector<uint8_t>& a,
+                                  const std::vector<uint8_t>& b) {
+  std::vector<uint8_t> input{1};
+  const bool a_first =
+      std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+  const auto& first = a_first ? a : b;
+  const auto& second = a_first ? b : a;
+  input.insert(input.end(), first.begin(), first.end());
+  input.insert(input.end(), second.begin(), second.end());
+  return digest(input);
+}
+
+// Builds K773 || program || proof || certificate || signature || recovery,
+// signing SHA256(purpose || root) with the fixture key.
+std::vector<uint8_t> signedEnvelope(
+    const SignedFixture& fixture, const std::vector<uint8_t>& program,
+    const std::vector<std::vector<uint8_t>>& proof = {},
+    const std::vector<uint8_t>& purpose =
+        std::vector<uint8_t>(kPurpose, kPurpose + sizeof(kPurpose) - 1)) {
+  std::vector<uint8_t> e = {'K', '7', '7', '3', 1, 1};
+  append32(e, (uint32_t)program.size());
+  e.insert(e.end(), program.begin(), program.end());
+  e.push_back((uint8_t)proof.size());
   std::vector<uint8_t> leaf{0};
   leaf.insert(leaf.end(), program.begin(), program.end());
   auto root = digest(leaf);
-  static const uint8_t purpose[] = "KEEPKEY:ERC7730:CATALOG\0";
-  std::vector<uint8_t> attestation(purpose, purpose + sizeof(purpose) - 1);
+  for (const auto& sibling : proof) {
+    e.insert(e.end(), sibling.begin(), sibling.end());
+    root = merkleParent(root, sibling);
+  }
+  append16(e, ERC7730_DELEGATE_RECORD_LEN);
+  const size_t cert = e.size();
+  e.resize(e.size() + ERC7730_DELEGATE_RECORD_LEN + 64 + 1, 0);
+  e[cert] = 1;
+  e[cert + ERC7730_DELEGATE_OFF_SCOPE + 3] = 1;  // chain id 1
+  memcpy(e.data() + cert + ERC7730_DELEGATE_OFF_ALIAS, "Host alias", 10);
+  memcpy(e.data() + cert + ERC7730_DELEGATE_OFF_PUBKEY, fixture.pubkey, 33);
+  std::vector<uint8_t> attestation(purpose);
   attestation.insert(attestation.end(), root.begin(), root.end());
   auto hash = digest(attestation);
-  ASSERT_EQ(ecdsa_sign_digest(&secp256k1, key, hash.data(),
+  uint8_t recovery = 0;
+  EXPECT_EQ(ecdsa_sign_digest(&secp256k1, fixture.key, hash.data(),
                               e.data() + cert + ERC7730_DELEGATE_RECORD_LEN,
-                              nullptr, nullptr),
+                              &recovery, nullptr),
             0);
-  ASSERT_EQ(feedAll(e, 31), ERC7730_CATALOG_COMPLETE);
+  e.back() = recovery;
+  return e;
+}
+
+size_t certOffset(const std::vector<uint8_t>& program, size_t proof_count) {
+  return 10 + program.size() + 1 + 32 * proof_count + 2;
+}
+
+Erc7730CatalogResult feedIdentity(const std::vector<uint8_t>& e,
+                                  Erc7730CatalogIdentity* identity) {
+  auto id = digest(e);
+  Erc7730CatalogVerifier verifier;
+  erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
+  Erc7730CatalogResult result = ERC7730_CATALOG_MORE;
+  for (size_t offset = 0; offset < e.size() && result == ERC7730_CATALOG_MORE;
+       offset += 29) {
+    result =
+        erc7730_catalog_feed(&verifier, (uint32_t)offset, e.data() + offset,
+                             std::min<size_t>(29, e.size() - offset), identity);
+  }
+  erc7730_catalog_abort(&verifier);
+  return result;
+}
+
+}  // namespace
+
+// The envelope signature covers the purpose tag and the Merkle root, which
+// commits to the whole program (header included). The certificate record is
+// NOT signed: its pubkey must name a user-loaded runtime signer and verify the
+// signature, and its scope must equal the signed header's chain id, but its
+// other bytes carry no authority (see erc7730_catalog.h).
+TEST(Erc7730Catalog, SignatureAuthenticatesProgramUnderLoadedDelegateKey) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  auto program = minimalProgram();
+  auto e = signedEnvelope(fixture, program);
+  const size_t cert = certOffset(program, 0);
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(e, &identity), ERC7730_CATALOG_COMPLETE);
+  // The alias shown is the one the user approved, never the record's.
+  EXPECT_STREQ(identity.delegate_alias, "Approved signer");
+
   auto changed = e;
   changed[10 + 173]++;  // Signed issuance epoch, still structurally valid.
   EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
   changed = e;
+  changed[cert + ERC7730_DELEGATE_OFF_PUBKEY] ^= 1;
+  EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
+  // Scope is a consistency check against the signed header, not a signed
+  // field: any value other than the header chain id is refused.
+  changed = e;
   changed[cert + ERC7730_DELEGATE_OFF_SCOPE + 3] = 2;
   EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
   changed = e;
-  changed[cert + ERC7730_DELEGATE_OFF_PUBKEY] ^= 1;
+  changed[cert + ERC7730_DELEGATE_OFF_VERSION] = 2;
   EXPECT_EQ(feedAll(changed, 31), ERC7730_CATALOG_UNTRUSTED);
+
+  // Unsigned record bytes are ignored: changing them changes nothing the
+  // device shows or relies on.
+  for (size_t offset : {size_t{1}, size_t{6}, size_t{9}, size_t{75},
+                        size_t{ERC7730_DELEGATE_RECORD_LEN - 1}}) {
+    changed = e;
+    changed[cert + offset] ^= 0x5a;
+    Erc7730CatalogIdentity other{};
+    ASSERT_EQ(feedIdentity(changed, &other), ERC7730_CATALOG_COMPLETE)
+        << offset;
+    EXPECT_STREQ(other.delegate_alias, "Approved signer");
+    EXPECT_STREQ(other.delegate_fingerprint, identity.delegate_fingerprint);
+  }
+  changed = e;
+  memcpy(changed.data() + cert + ERC7730_DELEGATE_OFF_ALIAS, "Other name", 10);
+  Erc7730CatalogIdentity other{};
+  ASSERT_EQ(feedIdentity(changed, &other), ERC7730_CATALOG_COMPLETE);
+  EXPECT_STREQ(other.delegate_alias, "Approved signer");
+
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
   EXPECT_EQ(feedAll(e, 31), ERC7730_CATALOG_UNTRUSTED);
   signed_metadata_clear_signers();
+}
+
+TEST(Erc7730Catalog, RejectsWrongPurposeRecoveryCertLengthAndClearedSigner) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  auto program = minimalProgram();
+  auto e = signedEnvelope(fixture, program);
+  ASSERT_EQ(feedAll(e, 64), ERC7730_CATALOG_COMPLETE);
+
+  const char legacy[] = "KEEPKEY:ERC7730:CATALOG";  // missing the NUL byte
+  EXPECT_EQ(feedAll(signedEnvelope(fixture, program, {},
+                                   std::vector<uint8_t>(
+                                       legacy, legacy + sizeof(legacy) - 1)),
+                    64),
+            ERC7730_CATALOG_UNTRUSTED);
+  const char other[] = "KEEPKEY:ERC7730:CATALOH\0";
+  EXPECT_EQ(feedAll(signedEnvelope(
+                        fixture, program, {},
+                        std::vector<uint8_t>(other, other + sizeof(other) - 1)),
+                    64),
+            ERC7730_CATALOG_UNTRUSTED);
+
+  auto changed = e;
+  changed.back() = 2;
+  EXPECT_EQ(feedAll(changed, 64), ERC7730_CATALOG_UNTRUSTED);
+  changed.back() = 0xff;
+  EXPECT_EQ(feedAll(changed, 64), ERC7730_CATALOG_UNTRUSTED);
+
+  const size_t cert_length = certOffset(program, 0) - 2;
+  changed = e;
+  changed[cert_length + 1] = ERC7730_DELEGATE_RECORD_LEN - 1;
+  EXPECT_EQ(feedAll(changed, 64), ERC7730_CATALOG_BAD_ENVELOPE);
+  changed = e;
+  changed[cert_length + 1] = ERC7730_DELEGATE_RECORD_LEN + 1;
+  EXPECT_EQ(feedAll(changed, 64), ERC7730_CATALOG_BAD_ENVELOPE);
+
+  // A different key loaded under the same alias does not verify.
+  uint8_t other_key[32] = {0};
+  other_key[31] = 2;
+  uint8_t other_pubkey[33];
+  ecdsa_get_public_key33(&secp256k1, other_key, other_pubkey);
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(signed_metadata_store_signer(3, other_pubkey, "Approved signer",
+                                           nullptr, 0, 0, 0, false));
+  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+
+  // The same key reloaded under another alias verifies and shows the new one.
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(signed_metadata_store_signer(1, fixture.pubkey, "Renamed signer",
+                                           nullptr, 0, 0, 0, false));
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(e, &identity), ERC7730_CATALOG_COMPLETE);
+  EXPECT_STREQ(identity.delegate_alias, "Renamed signer");
+
+  // Replaying an accepted envelope after the signers are cleared fails.
+  signed_metadata_clear_signers();
+  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+TEST(Erc7730Catalog, AuthenticatesMerkleProofPathsUpToDepthLimit) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  auto program = minimalProgram();
+  std::vector<std::vector<uint8_t>> proof;
+  for (size_t i = 0; i < ERC7730_CATALOG_MAX_PROOF_DEPTH; i++) {
+    // Alternate siblings above and below the running node so both orderings
+    // of the sorted pair are exercised.
+    proof.push_back(std::vector<uint8_t>(32, i % 2 ? 0x00 : 0xff));
+    proof.back()[31] = (uint8_t)i;
+  }
+  for (size_t depth : {size_t{1}, size_t{2}, size_t{7},
+                       size_t{ERC7730_CATALOG_MAX_PROOF_DEPTH}}) {
+    std::vector<std::vector<uint8_t>> path(proof.begin(),
+                                           proof.begin() + depth);
+    auto e = signedEnvelope(fixture, program, path);
+    EXPECT_EQ(feedAll(e, 1), ERC7730_CATALOG_COMPLETE) << depth;
+    EXPECT_EQ(feedAll(e, 1024), ERC7730_CATALOG_COMPLETE) << depth;
+    // Tamper with one sibling byte: the root, and so the signature, changes.
+    auto tampered = e;
+    tampered[10 + program.size() + 1 + 32 * (depth - 1) + 5] ^= 1;
+    EXPECT_EQ(feedAll(tampered, 31), ERC7730_CATALOG_UNTRUSTED) << depth;
+    // Dropping the proof leaves a signature over a different root.
+    if (depth == 1) {
+      auto unproven = signedEnvelope(fixture, program, path);
+      unproven.erase(unproven.begin() + 10 + program.size() + 1,
+                     unproven.begin() + 10 + program.size() + 1 + 32);
+      unproven[10 + program.size()] = 0;
+      EXPECT_EQ(feedAll(unproven, 31), ERC7730_CATALOG_UNTRUSTED);
+    }
+  }
+  proof.push_back(std::vector<uint8_t>(32, 0x42));
+  auto too_deep = signedEnvelope(fixture, program, proof);
+  EXPECT_EQ(feedAll(too_deep, 64), ERC7730_CATALOG_BAD_ENVELOPE);
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
 }
 
 TEST(Erc7730Catalog, RejectsOutOfOrderAndDuplicateChunks) {
@@ -566,6 +766,12 @@ TEST(Erc7730Catalog, CalldataIdentityMatchesExactLookupTuple) {
       erc7730_catalog_matches_calldata(&identity, 1, other_address, selector));
   EXPECT_FALSE(erc7730_catalog_matches_calldata(
       &identity, 10, identity.contract_address, selector));
+
+  // No deployment record may name the zero address, so a zero header
+  // contract can never describe a transaction, not even one sent to 0x0.
+  memset(identity.contract_address, 0, sizeof(identity.contract_address));
+  EXPECT_FALSE(erc7730_catalog_matches_calldata(
+      &identity, 1, identity.contract_address, selector));
 }
 
 TEST(Erc7730Catalog, Eip712IdentityMatchesOnlyDeviceProvenFacts) {
@@ -594,13 +800,19 @@ TEST(Erc7730Catalog, Eip712IdentityMatchesOnlyDeviceProvenFacts) {
   EXPECT_FALSE(
       erc7730_catalog_matches_eip712(&identity, 1, contract, true, type_hash));
 
+  // A zero ("domain-wide") header contract still needs a verifyingContract;
+  // the replay loader then requires it to be a signed deployment.
   memset(identity.contract_address, 0, sizeof(identity.contract_address));
   type_hash[0] ^= 1;
-  EXPECT_TRUE(
-      erc7730_catalog_matches_eip712(&identity, 1, nullptr, false, type_hash));
-  identity.kind = ERC7730_DEFINITION_CALLDATA;
   EXPECT_FALSE(
       erc7730_catalog_matches_eip712(&identity, 1, nullptr, false, type_hash));
+  EXPECT_FALSE(
+      erc7730_catalog_matches_eip712(&identity, 1, contract, false, type_hash));
+  EXPECT_TRUE(
+      erc7730_catalog_matches_eip712(&identity, 1, contract, true, type_hash));
+  identity.kind = ERC7730_DEFINITION_CALLDATA;
+  EXPECT_FALSE(
+      erc7730_catalog_matches_eip712(&identity, 1, contract, true, type_hash));
 }
 
 TEST(Erc7730Catalog, ExtractsProgramOnlyFromEnvelopeReplayChunks) {
@@ -675,4 +887,167 @@ TEST(Erc7730Catalog, ReplayIsContiguousAndFailsClosedBeforeAuthentication) {
             ERC7730_CATALOG_UNTRUSTED);
   EXPECT_EQ(program_length, 0u);
   EXPECT_EQ(program_data, nullptr);
+}
+
+namespace {
+
+bool loadProgram(const std::vector<uint8_t>& p, uint64_t chain_id,
+                 const uint8_t* contract) {
+  Erc7730ProgramLoader loader{};
+  erc7730_program_loader_begin(&loader, p.size());
+  if (contract &&
+      !erc7730_program_loader_require_deployment(&loader, chain_id, contract))
+    return false;
+  for (size_t offset = 0; offset < p.size(); offset += 13) {
+    if (!erc7730_program_loader_feed(&loader, offset, p.data() + offset,
+                                     std::min<size_t>(13, p.size() - offset)))
+      return false;
+  }
+  Erc7730AbiProgram abi{};
+  return erc7730_program_loader_complete(&loader, &abi);
+}
+
+std::vector<uint8_t> deployment(uint8_t chain, uint8_t address_byte) {
+  std::vector<uint8_t> record = {1, 0, 28, 0, 0, 0, 0, 0, 0, 0, chain};
+  record.resize(record.size() + 20, address_byte);
+  return record;
+}
+
+}  // namespace
+
+TEST(Erc7730Catalog, TypedDataMustUseListedSignedDeployment) {
+  // Two deployments, sorted by payload: chain 1 at 0x11.., chain 1 at 0x22..
+  auto p = minimalProgram();
+  std::vector<uint8_t> records = deployment(1, 0x11);
+  auto second = deployment(1, 0x22);
+  records.insert(records.end(), second.begin(), second.end());
+  p = replaceTable(p, 8, records, 2);
+  p[18] = 0;  // zero ("domain-wide") header contract
+  EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_UNTRUSTED);
+
+  uint8_t listed[20];
+  memset(listed, 0x22, sizeof(listed));
+  EXPECT_TRUE(loadProgram(p, 1, listed));
+  memset(listed, 0x11, sizeof(listed));
+  EXPECT_TRUE(loadProgram(p, 1, listed));
+
+  uint8_t unlisted[20];
+  memset(unlisted, 0x22, sizeof(unlisted));
+  unlisted[19] = 0x23;
+  EXPECT_FALSE(loadProgram(p, 1, unlisted));
+  memset(unlisted, 0x33, sizeof(unlisted));
+  EXPECT_FALSE(loadProgram(p, 1, unlisted));
+  // Listed address, but on a chain no deployment names.
+  EXPECT_FALSE(loadProgram(p, 2, listed));
+  // Calldata replay does not ask for a deployment and is unaffected.
+  EXPECT_TRUE(loadProgram(p, 0, nullptr));
+
+  // The requirement must precede the first program byte.
+  Erc7730ProgramLoader loader{};
+  erc7730_program_loader_begin(&loader, p.size());
+  ASSERT_TRUE(erc7730_program_loader_feed(&loader, 0, p.data(), 1));
+  EXPECT_FALSE(erc7730_program_loader_require_deployment(&loader, 1, listed));
+  EXPECT_TRUE(loader.failed);
+}
+
+TEST(Erc7730Catalog, IssuanceEpochFloorIsEnforced) {
+  auto p = minimalProgram();
+  p[170] = p[171] = p[172] = 0;
+  p[173] = 0;
+  p[174] = p[175] = p[176] = p[177] = 0;
+  p[170] = (uint8_t)(ERC7730_MIN_ISSUANCE_EPOCH >> 24);
+  p[171] = (uint8_t)(ERC7730_MIN_ISSUANCE_EPOCH >> 16);
+  p[172] = (uint8_t)(ERC7730_MIN_ISSUANCE_EPOCH >> 8);
+  p[173] = (uint8_t)ERC7730_MIN_ISSUANCE_EPOCH;
+  EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_UNTRUSTED);
+  if (ERC7730_MIN_ISSUANCE_EPOCH != 0) {
+    const uint32_t below = ERC7730_MIN_ISSUANCE_EPOCH - 1u;
+    p[170] = (uint8_t)(below >> 24);
+    p[171] = (uint8_t)(below >> 16);
+    p[172] = (uint8_t)(below >> 8);
+    p[173] = (uint8_t)below;
+    EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+  }
+  // Issuance below the signed revocation epoch is refused.
+  p = minimalProgram();
+  p[173] = 2;
+  EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, VerifierEnforcesReplayReaderDisplayLimit) {
+  auto displayProgram = [](uint16_t count) {
+    std::vector<uint8_t> display = {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+    for (uint16_t i = 0; i + 2u < count; i++)
+      display.insert(display.end(), {2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff});
+    display.insert(display.end(), {10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff});
+    return replaceTable(minimalProgram(), 7, display, count);
+  };
+  auto reads = [](const std::vector<uint8_t>& p, uint16_t count) {
+    Erc7730ProgramDisplay display{};
+    const size_t payload = 2u + 8u * count;
+    erc7730_program_display_begin(&display, payload, 0);
+    return erc7730_program_display_feed(
+        &display, 0, p.data() + sectionOffset(p, 7) + 5, payload);
+  };
+  auto p = displayProgram(ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS);
+  EXPECT_EQ(feedAll(envelope(p), 97), ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_TRUE(reads(p, ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS));
+  p = displayProgram(ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS + 1);
+  EXPECT_FALSE(reads(p, ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS + 1));
+  EXPECT_EQ(feedAll(envelope(p), 97), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // An executable definition with no display instruction cannot replay.
+  p = replaceTable(minimalProgram(), 7, {}, 0);
+  EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, VerifierEnforcesReplayReaderLiteralLengths) {
+  auto reads = [](const std::vector<uint8_t>& p) {
+    const size_t section = sectionOffset(p, 4);
+    const uint32_t length = ((uint32_t)p[section + 1] << 24) |
+                            ((uint32_t)p[section + 2] << 16) |
+                            ((uint32_t)p[section + 3] << 8) | p[section + 4];
+    Erc7730ProgramLiteral literal{};
+    erc7730_program_literal_begin(&literal, length, 0);
+    return erc7730_program_literal_feed(&literal, 0, p.data() + section + 5,
+                                        length);
+  };
+  std::vector<uint8_t> literal = {3, 0x01, 0x02};
+  literal.resize(3 + ERC7730_LITERAL_MAX_LENGTH, 0xaa);
+  auto p = programWithTable(4, literal, 1);
+  EXPECT_TRUE(reads(p));
+  EXPECT_EQ(feedAll(envelope(p), 61), ERC7730_CATALOG_UNTRUSTED);
+
+  literal = {3, 0x01, 0x03};
+  literal.resize(3 + ERC7730_LITERAL_MAX_LENGTH + 1, 0xaa);
+  p = programWithTable(4, literal, 1);
+  EXPECT_FALSE(reads(p));
+  EXPECT_EQ(feedAll(envelope(p), 61), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // An empty bytes literal (e.g. a "0x" salt) is not a replayable literal.
+  literal = {3, 0, 0};
+  p = programWithTable(4, literal, 1);
+  EXPECT_FALSE(reads(p));
+  EXPECT_EQ(feedAll(envelope(p), 5), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, VerifierRejectsDuplicateDomainFieldLikeLoader) {
+  auto base = programWithTable(4, {1, 0, 1, 7}, 1);  // literal 0 = uint 7
+  base[18] = 0;  // zero header contract; the deployment below is 0x11..11
+  const auto deployed = deployment(1, 0x11);
+  auto withConstraints = [&](const std::vector<uint8_t>& constraints,
+                             uint16_t count) {
+    std::vector<uint8_t> records = deployed;
+    records.insert(records.end(), constraints.begin(), constraints.end());
+    return replaceTable(base, 8, records, (uint16_t)(count + 1u));
+  };
+  // name == literal 0, version absent: distinct fields.
+  auto p = withConstraints({2, 0, 4, 1, 1, 0, 0, 2, 0, 4, 2, 2, 0xff, 0xff}, 2);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_TRUE(loadProgram(p, 0, nullptr));
+
+  // name == literal 0 and name absent: contradictory duplicate field.
+  p = withConstraints({2, 0, 4, 1, 1, 0, 0, 2, 0, 4, 1, 2, 0xff, 0xff}, 2);
+  EXPECT_FALSE(loadProgram(p, 0, nullptr));
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
 }

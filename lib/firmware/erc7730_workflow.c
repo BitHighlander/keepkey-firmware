@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "keepkey/firmware/eip712_stream.h"
 #include "trezor/crypto/memzero.h"
 
 static Erc7730Workflow active_workflow;
@@ -65,7 +66,21 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
     return false;
   }
   workflow->typed_data = true;
-  return begin_replay(workflow, identity);
+  if (!begin_replay(workflow, identity)) return false;
+  /* The definition applies only at a signed deployment on the typed data's
+   * own chain; the loader refuses the replay unless one lists it. */
+  Eip712DomainFacts facts;
+  const bool bound =
+      eip712_stream_domain_facts(&facts) && facts.has_chain_id &&
+      facts.has_verifying_contract && facts.chain_id == identity->chain_id &&
+      erc7730_program_loader_require_deployment(
+          &workflow->loader, facts.chain_id, facts.verifying_contract);
+  memzero(&facts, sizeof(facts));
+  if (!bound) {
+    fail(workflow);
+    return false;
+  }
+  return true;
 }
 
 bool erc7730_workflow_waiting(const Erc7730Workflow* workflow,

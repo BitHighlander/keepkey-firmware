@@ -50,16 +50,20 @@
  * open per container costs 2,000 bytes at depth 5 -- more than the entire SRAM
  * reserve above the linker floor. Buffering 32-byte encodings instead costs
  * EIP712_MAX_SLOTS * 32, and only ONE SHA3_CTX is ever live: the one folding a
- * finished container. */
-#define EIP712_MAX_SLOTS 12
+ * finished container.
+ *
+ * Slots along one path add up: a child starts after all of its parent's
+ * members. Seaport's OrderComponents (11 members) holding an offer or
+ * consideration array of n items (6-member ConsiderationItem) needs
+ * 11 + n + 6, so 24 slots take up to seven items. */
+#define EIP712_MAX_SLOTS 24
 
 /* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
  * hashed, not stored, so this bounds one chunk rather than the whole value. */
 #define EIP712_MAX_LEAF 1024
 
-/* Distinct struct types one document may reference, including EIP712Domain
- * and the primary type. Permit2's PermitSingle needs 2, Seaport's
- * OrderComponents 3. */
+/* Distinct struct types one primary type may reference, including itself.
+ * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3. */
 #define EIP712_MAX_STRUCTS 3
 
 /* Longest struct name we will hold. The wire allows 80; names this long do
@@ -116,6 +120,12 @@ bool eip712_type_name(const EthereumTypedDataStructAck_EthereumFieldType* field,
 bool eip712_encode_leaf(
     const EthereumTypedDataStructAck_EthereumFieldType* field,
     const uint8_t* value, uint16_t value_len, uint8_t out[32]);
+
+/* A validated uintN/intN leaf (exactly N big-endian bytes) in decimal, signed
+ * for intN. This is the text the review screen shows. */
+bool eip712_render_integer(
+    const EthereumTypedDataStructAck_EthereumFieldType* field,
+    const uint8_t* value, uint16_t len, char* out, size_t out_size);
 
 /* Reject a leaf whose bytes cannot mean what its declared type says.
  * Runs BEFORE encoding and before display, so nothing unvalidated is shown. */
@@ -182,6 +192,10 @@ typedef struct {
   uint8_t message_hash[32];
   uint32_t address_n[6];
   size_t address_n_count;
+  /* For the final signing screen. */
+  char primary_type[EIP712_MAX_STRUCT_NAME];
+  bool message_empty;
+  bool domain_only; /* primaryType EIP712Domain: sign keccak(0x1901 || ds) */
 } Eip712Next;
 
 const Eip712Next* eip712_stream_next(void);

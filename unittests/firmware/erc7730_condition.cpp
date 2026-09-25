@@ -65,6 +65,35 @@ TEST(Erc7730Condition, ComparesCapturedValuesToTypedLiterals) {
   EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
 }
 
+TEST(Erc7730Condition, EveryEncodingOfUnsignedZeroCompareEqual) {
+  Erc7730AbiCapture capture{};
+  capture.node = 1;
+  capture.length = 32;  // uint256 zero word
+  Erc7730Literal literal{};
+  literal.kind = 1;
+  literal.length = 1;  // compiler form of zero: [0x00]
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.length = 0;  // empty literal
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+
+  capture.data[31] = 1;
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.length = 1;
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.value[0] = 1;
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+
+  // Multi-byte values still compare exactly after normalization.
+  capture.data[30] = 1;  // 0x0101
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.length = 2;
+  literal.value[0] = 1;
+  literal.value[1] = 1;
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.value[1] = 0;
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+}
+
 TEST(Erc7730Condition, RejectsMembershipWithoutAuthenticatedSet) {
   Erc7730Condition condition{6, 0, 0, 0};
   Erc7730AbiCapture capture{};

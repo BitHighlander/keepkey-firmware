@@ -47,11 +47,17 @@ typedef struct {
   uint16_t literals[5];
   uint8_t operations[5];
   uint8_t scratch[7];
+  /* Required kind-1 payload (chain_id:u64 || verifyingContract) for typed
+   * data; see erc7730_program_loader_require_deployment(). */
+  uint8_t deployment[28];
   uint32_t received;
   uint16_t count;
   uint16_t index;
   uint16_t remaining;
   uint8_t staged;
+  bool deployment_required;
+  bool deployment_mismatch;
+  bool deployment_listed;
 } Erc7730DomainBindings;
 
 typedef struct {
@@ -188,8 +194,6 @@ typedef struct {
   bool failed;
 } Erc7730ProgramCondition;
 
-#define ERC7730_LITERAL_MAX_LENGTH 258u
-
 typedef struct {
   uint8_t kind;
   uint16_t length;
@@ -235,6 +239,13 @@ void erc7730_program_loader_begin(Erc7730ProgramLoader* loader,
 bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
                                  uint32_t program_offset, const uint8_t* data,
                                  size_t data_len);
+/* Typed data may only use a definition at one of its signed kind-1
+ * deployments. Call after erc7730_program_loader_begin() and before the first
+ * feed; loader_complete() then fails unless a deployment record equals
+ * (chain_id, contract) exactly. */
+bool erc7730_program_loader_require_deployment(Erc7730ProgramLoader* loader,
+                                               uint64_t chain_id,
+                                               const uint8_t contract[20]);
 bool erc7730_program_loader_complete(const Erc7730ProgramLoader* loader,
                                      Erc7730AbiProgram* program);
 void erc7730_program_loader_clear(Erc7730ProgramLoader* loader);

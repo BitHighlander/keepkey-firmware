@@ -21,6 +21,35 @@
 #define ERC7730_DELEGATE_OFF_SCOPE 2u
 #define ERC7730_DELEGATE_OFF_ALIAS 10u
 #define ERC7730_DELEGATE_OFF_PUBKEY 42u
+/* Limits shared by the preload verifier and the replay readers. The verifier
+ * enforces the readers' limits so a definition that preloads cannot fail a
+ * later replay. */
+#define ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS 64u
+#define ERC7730_LITERAL_MAX_LENGTH 258u
+
+/* Revocation lever. The device keeps no revocation state and never writes
+ * flash for it: a firmware update that raises this floor refuses every
+ * definition whose signed issuance epoch is below it. Enforced facts are
+ * exactly: issuance_epoch >= ERC7730_MIN_ISSUANCE_EPOCH and
+ * issuance_epoch >= revocation_epoch (both from the signed header). The
+ * header's revocation_epoch and provider_id are otherwise NOT enforced; they
+ * are retained in Erc7730CatalogIdentity for hosts and audit only. The floor
+ * is 0 because the reference compiler (python-keepkey erc7730_compiler)
+ * emits issuance epoch 0 by default. */
+#define ERC7730_MIN_ISSUANCE_EPOCH 0u
+
+/* Delegate certificate record (139 bytes), as authenticated today:
+ *   [0]        version, must be 1 (checked, not signed);
+ *   [2..5]     scope, must equal the header chain id (checked, not signed);
+ *   [10..41]   alias, format-checked only; the alias shown to the user is the
+ *              one the user approved when loading the runtime signer;
+ *   [42..74]   delegate pubkey. It must equal a runtime signer the user
+ *              loaded, and the envelope signature must verify under it.
+ * Bytes 1, 6..9 and 75..138 are ignored. Real certificates carry a root
+ * signature and validity data there that this firmware (which embeds no
+ * ClearSign root) cannot check, so they carry no meaning on the device. The
+ * envelope signature covers only the purpose tag and the Merkle root, which
+ * commits to the program; it does not cover any certificate byte. */
 
 typedef enum {
   ERC7730_DEFINITION_CALLDATA = 1,
@@ -121,6 +150,7 @@ typedef struct {
   uint8_t binding_kind;
   uint8_t binding_previous_kind;
   uint16_t binding_previous_length;
+  uint8_t binding_domain_fields;
   bool binding_header_match;
   bool leaf_finalized;
   bool failed;
