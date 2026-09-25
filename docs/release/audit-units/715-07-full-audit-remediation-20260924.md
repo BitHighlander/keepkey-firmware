@@ -53,9 +53,18 @@ The owner authorized one request on `f600da9d9`. [Review 5313258873](https://git
 | 4100999081 | Bitcoin-only runs required the ERC-7730 registry that only the full product uses. | Fixed. The registry export and check, and the CI fetch and pin check, now run only for the full variant. |
 | 4100999118 | The report's JUnit reader let a later duplicate testcase overwrite an earlier failing one. | Fixed. Duplicate testcases are refused. A synthetic duplicate is rejected, the real Stack 06/07 files contain none, and the report validator tests pass. |
 
+## Copilot review of the round-3 fixes
+
+On owner approval, [review 5313747274](https://github.com/BitHighlander/keepkey-firmware/pull/837#pullrequestreview-5313747274) (Lite) on `a74532eb9` marked all three round-3 findings resolved and raised two new ones:
+
+| Comment | Finding | Disposition |
+| --- | --- | --- |
+| 4101396205 | The typed-data response was initialised in the shared `msg_resp` arena before the final "Sign Typed Data" confirmation. A DebugLink `GetState` answered during that screen runs `RESP_INIT` on the same arena. | Real, introduced by this remediation, and limited to DEBUG_LINK builds. The address is now kept in a local, the node is scrubbed before the confirmation and derived again after approval, and the response is built only after signing. The pyk streaming tests now also assert the reported address. Under screenshot capture, which reads state at every button request, `a74532eb9` returned an empty address and 5 of 5 signing tests failed; the fix passes 5 of 5. |
+| 4101396237 | `python-keepkey-tests.sh` was said to run contract JUnit validation before those files exist. | Not a defect. The script calls python-keepkey's report script, which has no contract validation. The firmware `scripts/generate-test-report.py` that holds `validate_contract_junit()` runs only in CI's `generate-test-report` job, after both integration legs upload their JUnit files. Hosted runs 36085522402 and 36096967483 and the local compose run all passed through this sequence. |
+
 ## Open items for the owner
 
 - SRAM: the full product's reserve fell by 560 B. `tools/sram-budgets.json` requires explicit review of any single-commit increase above 256 B; 384 B of it is the Seaport-capable slot pool.
 - `increaseAllowance`, `setApprovalForAll` and Permit2 `approve` calldata are still outside the allowance policy. That predates this stack and was not an audit finding against it.
 - Physical-device verification, including OLED photographs of the new typed-data screens, has not been done.
-- Copilot has not reviewed the fixes for its third-round findings. A further request needs separate owner approval.
+- Copilot has not reviewed the fix for its fourth-round finding. A further request needs separate owner approval.

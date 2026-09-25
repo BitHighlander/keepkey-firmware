@@ -1373,23 +1373,27 @@ static void eip712_pump(void) {
 
       /* Not const: node is the shared fsm_derived_node scratch and holds a
        * private key, so every exit below scrubs it (same rule as
-       * process_ethereum_xfer(); 7.15 audit F059). */
+       * process_ethereum_xfer(); 7.15 audit F059). Neither the node nor the
+       * msg_resp arena is held across the confirmation below: a DebugLink
+       * request answered during it reuses the arena, and dispatch clears the
+       * derived node. The address is kept in a local and the key is derived
+       * again only after approval. */
       HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, done.address_n,
                                         done.address_n_count, NULL);
       if (!node) return;
-
-      RESP_INIT(EthereumTypedDataSignature);
       uint8_t pubkeyhash[20];
-      if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-        memzero(node, sizeof(*node));
+      const bool derived = hdnode_get_ethereum_pubkeyhash(node, pubkeyhash);
+      memzero(node, sizeof(*node));
+      if (!derived) {
         fsm_sendFailure(FailureType_Failure_Other,
                         _("Ethereum address derivation failed"));
         layout_home();
         return;
       }
-      resp->address[0] = '0';
-      resp->address[1] = 'x';
-      ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
+      char address[2 + 40 + 1];
+      address[0] = '0';
+      address[1] = 'x';
+      ethereum_address_checksum(pubkeyhash, address + 2, false, 0);
 
       /* The one screen that names the action being authorised and the
        * account authorising it; every leaf before it was part of the review. */
@@ -1397,24 +1401,28 @@ static void eip712_pump(void) {
                    "Sign %s%s%s\nfrom %s?",
                    done.message_empty && !done.domain_only ? "EMPTY " : "",
                    done.primary_type, done.domain_only ? " (domain only)" : "",
-                   resp->address)) {
-        memzero(node, sizeof(*node));
+                   address)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled by user"));
         layout_home();
         return;
       }
 
+      node = fsm_getDerivedNode(SECP256K1_NAME, done.address_n,
+                                done.address_n_count, NULL);
+      if (!node) return;
       uint8_t sig[64];
       uint8_t v = 0;
-      if (ecdsa_sign_digest(&secp256k1, node->private_key, sighash, sig, &v,
-                            NULL) != 0) {
-        memzero(node, sizeof(*node));
+      const int signed_rc = ecdsa_sign_digest(&secp256k1, node->private_key,
+                                              sighash, sig, &v, NULL);
+      memzero(node, sizeof(*node));
+      if (signed_rc != 0) {
         fsm_sendFailure(FailureType_Failure_Other, _("Signing failed"));
         layout_home();
         return;
       }
-      memzero(node, sizeof(*node));
+      RESP_INIT(EthereumTypedDataSignature);
+      memcpy(resp->address, address, sizeof(address));
       resp->signature.size = 65;
       memcpy(resp->signature.bytes, sig, 64);
       resp->signature.bytes[64] = 27 + v;
