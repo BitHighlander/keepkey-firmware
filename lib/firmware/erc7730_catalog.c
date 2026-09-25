@@ -690,12 +690,15 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
   /* The display section checks iteration against these; cert[] is idle from
    * the end of the path section until the bindings. */
   v->cert[v->entry_index] = v->formatter_value_array;
-  /* bit 0: an argument iterates; bit 1: embedded calldata */
+  /* bit 0: an argument iterates; bit 1: embedded calldata; bit 2: the value
+   * is a signer constant */
   v->cert[64u + v->entry_index] =
       (uint8_t)((v->formatter_any_array ? 1u : 0u) |
-                (v->formatter_kind == 13 ? 2u : 0u));
+                (v->formatter_kind == 13 ? 2u : 0u) |
+                (v->formatter_value_literal ? 4u : 0u));
   v->formatter_value_array = 0xff;
   v->formatter_any_array = false;
+  v->formatter_value_literal = false;
   v->entry_index++;
   v->formatter_kind = 0;
   v->formatter_arg_count = 0;
@@ -765,6 +768,12 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->formatter_kind == 13 && role == 15 &&
       (v->signature[index] & 0x40u) != 0)
     return false;
+  /* An enum maps a value decoded from the signed data; a constant has none
+   * to map (python-keepkey's compiler refuses it too). */
+  if (v->formatter_kind == 8 && role == 1 && (v->signature[index] & 0x40u) != 0)
+    return false;
+  if (role == 1 && (v->signature[index] & 0x40u) != 0)
+    v->formatter_value_literal = true;
   if (source == 1 && v->path_arrays[index] != 0xff) {
     v->formatter_any_array = true;
     if (role == 1) v->formatter_value_array = v->path_arrays[index];
@@ -808,7 +817,9 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
     if (formatter >= 64) return false;
     const uint8_t value_array = v->cert[formatter];
     /* An embedded call is its own screens, never a part of the intent. */
-    if (opcode == 3 && (v->cert[64u + formatter] & 2u) != 0) return false;
+    /* "Intent value" names what the device decodes: never an embedded
+     * call, never a signer constant (which is intent text). */
+    if (opcode == 3 && (v->cert[64u + formatter] & 6u) != 0) return false;
     /* A field label is signer text shown with its value. */
     if (opcode == 4 && !short_string(v, a)) return false;
     if (((v->cert[64u + formatter] & 1u) != 0 && !v->display_in_iteration) ||

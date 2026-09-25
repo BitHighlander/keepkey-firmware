@@ -162,6 +162,7 @@ typedef struct {
   uint8_t display_depth;
   bool display_intent_run_closed;
   bool reads_value;
+  bool formatter_value_literal; /* its value is a signer constant */
   uint8_t display_max_depth;
   uint8_t binding_kind;
   uint8_t binding_previous_kind;

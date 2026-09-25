@@ -271,13 +271,23 @@ TEST(Erc7730Field, NativeAmountNeverInheritsAWanchainTransaction) {
   wanchain.chain_id = 1;
   wanchain.has_tx_type = true;
   wanchain.tx_type = 1;
-  wanchain.has_value = true;
-  wanchain.value.size = 1;
-  wanchain.value.bytes[0] = 1;
+  wanchain.has_value = true;  // 1.5e18: large enough to carry a ticker
+  wanchain.value.size = 8;
+  memcpy(wanchain.value.bytes, "\x14\xd1\x12\x0d\x7b\x16\x00\x00", 8);
   char primed[64];
   ASSERT_TRUE(ethereumFormatTransferAmount(&wanchain, primed, sizeof(primed)));
+  // The global really is primed: the Wanchain transfer itself is WAN.
+  ASSERT_NE(strstr(primed, " WAN"), nullptr) << primed;
   char out[64];
   const auto value = word(1500000000000000000ull);
   ASSERT_TRUE(erc7730_format_native_amount(value.data(), 1, out, sizeof(out)));
   EXPECT_STREQ(out, "1.5 ETH");
+  // tokenAmount's native branch as well.
+  EXPECT_EQ(amount(value, "4444444444444444444444444444444444444444", true, 1),
+            "1.5 ETH");
+  // Leave the module global as an ordinary transaction would.
+  EthereumSignTx ordinary = wanchain;
+  ordinary.has_tx_type = false;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&ordinary, primed, sizeof(primed)));
+  EXPECT_EQ(strstr(primed, " WAN"), nullptr) << primed;
 }

@@ -1663,6 +1663,21 @@ TEST(Erc7730Catalog, NumericConstantsAreValuesOfEveryWidth) {
   }
 }
 
+TEST(Erc7730Catalog, AnEnumMapsADecodedValueNeverAConstant) {
+  // literal 0 = 1 (the constant, also the map's key); literal 1 = a
+  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument.
+  const std::vector<uint8_t> literals = {1, 0, 1, 1,  //
+                                         8, 0, 6, 0, 1, 0, 0, 0, 0};
+  EXPECT_EQ(feedAll(envelope(tokenProgram({8, 0, 2, 1, 1, 0, 1, 10, 2, 0, 1},
+                                          literals, 2)),
+                    11),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(feedAll(envelope(tokenProgram({8, 0, 2, 1, 1, 0, 2, 10, 2, 0, 1},
+                                          literals, 2)),
+                    11),
+            ERC7730_CATALOG_BAD_PROGRAM);
+}
+
 TEST(Erc7730Catalog, SignerTextAndDecimalsFitTheScreenAtPreload) {
   const std::string fits(ERC7730_CAP_SIGNER_TEXT_MAX, 'L');
   const std::string long_text(ERC7730_CAP_SIGNER_TEXT_MAX + 1u, 'L');
@@ -1680,6 +1695,35 @@ TEST(Erc7730Catalog, SignerTextAndDecimalsFitTheScreenAtPreload) {
             ERC7730_CATALOG_UNTRUSTED);
   EXPECT_EQ(phaseC(unit, {1, 0, 1, 78, 6, 0, 1, 1}, 2),
             ERC7730_CATALOG_BAD_PROGRAM);
+  // Signer text inside a value's screen: a unit base, a threshold message
+  // and an enum label. String 2 is the text under test; strings sort, and
+  // "k..." falls between "blockheight" and "timestamp".
+  const std::string fits_k(ERC7730_CAP_SIGNER_TEXT_MAX, 'k');
+  const std::string long_k(ERC7730_CAP_SIGNER_TEXT_MAX + 1u, 'k');
+  auto signerText = [](const std::vector<uint8_t>& formatter,
+                       const std::vector<uint8_t>& literals, uint16_t count,
+                       const std::string& text) {
+    return feedAll(
+        envelope(withStrings(tokenProgram(formatter, literals, count),
+                             {"Test", "blockheight", text, "timestamp"})),
+        13);
+  };
+  const std::vector<uint8_t> threshold = {3, 0, 4, 1, 1, 0, 1, 2, 1, 0,
+                                          0, 7, 2, 0, 0, 8, 3, 0, 2};
+  const std::vector<uint8_t> enumeration = {8, 0, 2, 1, 1, 0, 1, 10, 2, 0, 1};
+  const std::vector<uint8_t> label_map = {1, 0, 1, 1,  //
+                                          8, 0, 6, 0, 1, 0, 0, 0, 2};
+  for (const auto& text : {fits_k, long_k}) {
+    const auto expected = text.size() <= ERC7730_CAP_SIGNER_TEXT_MAX
+                              ? ERC7730_CATALOG_UNTRUSTED
+                              : ERC7730_CATALOG_BAD_PROGRAM;
+    EXPECT_EQ(signerText(unit, {1, 0, 1, 18, 6, 0, 1, 1}, 2, text), expected)
+        << "unit base " << text.size();
+    EXPECT_EQ(signerText(threshold, {1, 0, 1, 5}, 1, text), expected)
+        << "threshold message " << text.size();
+    EXPECT_EQ(signerText(enumeration, label_map, 2, text), expected)
+        << "enum label " << text.size();
+  }
 }
 
 namespace {
@@ -1745,4 +1789,30 @@ TEST(Erc7730Catalog, AnEmbeddedCallIsNeverAnIntentPart) {
       10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   EXPECT_EQ(feedAll(envelope(embeddedProgram(formatter, as_intent, 4)), 9),
             ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, ASignerConstantIsNeverAnIntentValue) {
+  // "Intent value i of n" names a value the device decoded. raw(literal 0,
+  // a signed address) may be a field but not an intent value; raw(to), read
+  // from calldata, may be both.
+  const std::vector<uint8_t> as_intent = {
+      1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      3,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      4,  0, 0,    0,    0,    0,    0xff, 0xff,  //
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  EXPECT_EQ(
+      feedAll(envelope(embeddedProgram({1, 0, 1, 1, 1, 0, 0}, as_intent, 4)),
+              9),
+      ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(
+      feedAll(envelope(embeddedProgram({1, 0, 1, 1, 1, 0, 2}, as_intent, 4)),
+              9),
+      ERC7730_CATALOG_BAD_PROGRAM);
+  const std::vector<uint8_t> as_field = {
+      1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      4,  0, 0,    0,    0,    0,    0xff, 0xff,  //
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  EXPECT_EQ(
+      feedAll(envelope(embeddedProgram({1, 0, 1, 1, 1, 0, 2}, as_field, 3)), 9),
+      ERC7730_CATALOG_UNTRUSTED);
 }

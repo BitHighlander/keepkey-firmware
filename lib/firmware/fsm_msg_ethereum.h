@@ -401,9 +401,10 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
      * no label. */
     char title[TITLE_CHAR_MAX];
     /* "i of n", never the pager's "i/n"; the signer's text and the device's
-     * values are titled apart. */
+     * values are titled apart. Inner parts drop "intent" so the title still
+     * fits the OLED with the pager's page suffix. */
     snprintf(title, sizeof(title), "%s%s %u of %u",
-             workflow->depth ? "Inner intent" : "Intent",
+             workflow->depth ? "Inner" : "Intent",
              workflow->intent_value ? " value" : " text",
              (unsigned)workflow->intent_part, (unsigned)workflow->intent_parts);
     confirmed = confirm_erc7730_text(title, NULL, formatted);
@@ -1189,10 +1190,12 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       layoutHome();
       return;
     }
-    const bool calldata_shape = msg->has_to && msg->to.size == 20 &&
-                                msg->has_data_length && msg->data_length >= 4 &&
-                                msg->has_data_initial_chunk &&
-                                msg->data_initial_chunk.size == 4;
+    /* A definition describes an Ethereum call; a Wanchain transaction
+     * (tx_type) names its value in WAN, which the review would call ETH. */
+    const bool calldata_shape =
+        msg->has_to && msg->to.size == 20 && msg->has_data_length &&
+        msg->data_length >= 4 && msg->has_data_initial_chunk &&
+        msg->data_initial_chunk.size == 4 && !msg->has_tx_type;
     const bool matches =
         calldata_shape && erc7730_catalog_matches_calldata(
                               &definition, msg->chain_id, msg->to.bytes,
