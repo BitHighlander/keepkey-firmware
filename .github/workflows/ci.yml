@@ -635,8 +635,28 @@ jobs:
         if: steps.cache-base.outputs.cache-hit == 'true'
         run: docker load -i /tmp/base-image.tar
 
+      # Official ERC-7730 registry, pinned to an exact commit (never a moving
+      # branch). 9f37816a is the registry revision whose bounded-include
+      # expansion yields the 1,450 calldata formats asserted by
+      # test_official_registry_all_calldata_formats_reach_firmware. It lands in
+      # the build context, so the python-keepkey image carries it.
+      - name: Fetch pinned ERC-7730 registry
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: ethereum/clear-signing-erc7730-registry
+          ref: 9f37816afde954ff6617fb5baa346133e5af26c5
+          path: build-inputs/erc7730-registry
+          persist-credentials: false
+
+      - name: Verify ERC-7730 registry pin
+        run: |
+          test "$(git -C build-inputs/erc7730-registry rev-parse HEAD)" = \
+            9f37816afde954ff6617fb5baa346133e5af26c5
+
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
+        env:
+          KK_FIRMWARE_VARIANT: ${{ matrix.variant }}
         run: |
           COMPOSE_ARGS=(-f docker-compose.yml)
           if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
@@ -958,6 +978,15 @@ jobs:
         with:
           name: python-test-results
           path: test-reports/python-keepkey/
+
+      - name: Download bitcoin-only python test results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          # Only the dedicated contract JUnit files are consumed from this leg;
+          # they prove bitcoin-only still runs Stack 06/07 with the expected
+          # intentional skips.
+          name: python-test-results-bitcoin-only
+          path: test-reports/bitcoin-only/python-keepkey/
 
       - name: Download OLED screenshots
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
