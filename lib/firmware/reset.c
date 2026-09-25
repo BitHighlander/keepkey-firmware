@@ -96,6 +96,10 @@ void setup_abort(void) {
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
   memzero(current_words, sizeof(current_words));
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   /* reset_entropy() receives its generated sentence from bip39.c's static
    * `mnemo` buffer.  A cancelled/error ceremony has no owner for that secret,
    * so the common abort path must clear it along with the setup scratch. */
@@ -519,9 +523,11 @@ exit:
   memzero(&ctx, sizeof(ctx));
   memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
-  memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
-  memzero(mnemonic_display, sizeof(mnemonic_display));
-  memzero(formatted_word, sizeof(formatted_word));
+  /* Refer to the arrays directly: early exits skip the aliases above, and
+   * sizeof an alias would only wipe a pointer-sized prefix. */
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   mnemonic_clear();
   layoutHome();
 }

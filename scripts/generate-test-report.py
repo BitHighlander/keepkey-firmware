@@ -23,10 +23,25 @@ REPORT_PDF = REPORT_DIR / "test-report.pdf"
 MERGED_JUNIT = REPORT_DIR / "junit-merged.xml"
 
 BASE_REQUIRED_CASES = {
+    "Eip712.MalformedHexNeverPublishesEncodedOutput",
+    "Eip712.ByteEncodingMatchesIndependentHashAndRightPadding",
+    "Eip712.MismatchedJsonShapesAndFixedArraysAreRejectedBeforeHashing",
+    "Eip712.MalformedBytesAndAddressesRejectedBeforeAnyValueScreen",
+    "Eip712.BytesNTypeWidthIsStrictInTypeHashAndEncoder",
+    "Eip712.MissingFieldRefusedWithoutDereferenceOrHashMutation",
+    "Eip712.DecimalSignPaddingMatchesParsedValue",
+    "Eip712.IntegerWidthAndValueMustMatchBeforeHashing",
+    "Eip712.NarrowIntegerBoundaryMatchesIndependentEncoding",
+    "Storage.LegacyLanguageIsBoundedAndTerminated",
+    "Storage.TruncatedLegacyCacheDoesNotMutateDestination",
     "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
     "EmulatorLifecycle.ConcurrentCaptureNeverTearsOrReordersUnreadSlots",
     "EmulatorLifecycle.ShutdownStopsPollThreadAndAllowsRestart",
     "EmulatorLifecycle.ShutdownWakesConfirmationWaitingForHostDecision",
+    "ReviewHandlers.ResetCancellationClearsScratchBeforeAndAfterFormatting",
+    "ReviewHandlers.ResetWithoutBackupCommitsAndClearsScratch",
+    "ReviewHandlers.ResetBackupCommitsAllStrengthsAndClearsScratch",
+    "SetupCeremony.AbortScrubsEveryByteOfSharedMnemonicDisplayScratch",
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
 }

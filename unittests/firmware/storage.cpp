@@ -32,6 +32,37 @@ TEST(Storage, ReadMeta) {
   }
 }
 
+TEST(Storage, LegacyLanguageIsBoundedAndTerminated) {
+  char record[512] = {};
+  record[0] = 1;
+  record[403] = 1;
+  memset(record + 404, 'x', 17);
+  Storage storage = {};
+  SessionState session = {};
+  storage_readStorageV1(&session, &storage, record, sizeof(record));
+  EXPECT_TRUE(storage.pub.has_language);
+  EXPECT_EQ(15u, strlen(storage.pub.language));
+  EXPECT_EQ('\0', storage.pub.language[15]);
+  for (size_t i = 0; i < 15; ++i) EXPECT_EQ('x', storage.pub.language[i]);
+  EXPECT_FALSE(storage.pub.has_label);
+}
+
+TEST(Storage, TruncatedLegacyCacheDoesNotMutateDestination) {
+  char record[559] = {};
+  record[0] = 2;
+  Storage storage;
+  SessionState session;
+  memset(&storage, 0xa5, sizeof(storage));
+  memset(&session, 0xa5, sizeof(session));
+  const Storage original = storage;
+  const SessionState original_session = session;
+  for (size_t len = 481; len < sizeof(record); ++len) {
+    storage_readStorageV1(&session, &storage, record, len);
+    EXPECT_EQ(0, memcmp(&storage, &original, sizeof(storage))) << len;
+    EXPECT_EQ(0, memcmp(&session, &original_session, sizeof(session))) << len;
+  }
+}
+
 TEST(Storage, WriteMeta) {
   Metadata src;
   memcpy(&src.magic[0], "M1M", sizeof(src.magic));

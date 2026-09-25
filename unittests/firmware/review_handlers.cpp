@@ -14,6 +14,7 @@ extern "C" {
 }
 #include "gtest/gtest.h"
 #include <cstring>
+#include <algorithm>
 #include <vector>
 
 bool kkconfirm_preload(int, int);
@@ -119,6 +120,73 @@ TEST_F(ReviewHandlers, StorageReinitializationRecomputesFirmwareLock) {
   strcpy(load.mnemonic, "all all all all all all all all all all all all");
   storage_loadDevice(&load);
   EXPECT_TRUE(storage_isInitialized());
+}
+
+static void expect_mnemonic_scratch_cleared() {
+  for (char c : mnemonic_scratch_tokened) EXPECT_EQ(0, c);
+  for (const auto& page : mnemonic_scratch_formatted)
+    for (char c : page) EXPECT_EQ(0, c);
+  for (char c : mnemonic_scratch_display) EXPECT_EQ(0, c);
+  for (char c : mnemonic_scratch_word) EXPECT_EQ(0, c);
+}
+
+TEST_F(ReviewHandlers, ResetCancellationClearsScratchBeforeAndAfterFormatting) {
+  const auto unchanged = flash;
+  const uint8_t entropy[32] = {};
+  for (int accepted : {0, 1}) {
+    SCOPED_TRACE(accepted);
+    reset_init(false, 256, false, false, "english", "reset", false, 0, 0,
+               false);
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+    // Exercise early cancellation with dirty shared scratch as well as the
+    // cancellation reached after actual seed formatting.
+    memset(mnemonic_scratch_formatted, 's', sizeof(mnemonic_scratch_formatted));
+    memset(mnemonic_scratch_display, 's', sizeof(mnemonic_scratch_display));
+    memset(mnemonic_scratch_word, 's', sizeof(mnemonic_scratch_word));
+    ASSERT_TRUE(kkconfirm_preload(accepted, 1));
+    reset_entropy(entropy, sizeof(entropy));
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_EQ(unchanged, flash);
+    EXPECT_EQ(0, kkconfirm_drain());
+    expect_mnemonic_scratch_cleared();
+  }
+}
+
+TEST_F(ReviewHandlers, ResetWithoutBackupCommitsAndClearsScratch) {
+  const uint8_t entropy[32] = {};
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  reset_init(false, 128, false, false, "english", "reset", true, 0, 0, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+  reset_entropy(entropy, sizeof(entropy));
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_TRUE(storage_isInitialized());
+  EXPECT_STREQ("reset", storage_getLabel());
+  expect_mnemonic_scratch_cleared();
+}
+
+TEST_F(ReviewHandlers, ResetBackupCommitsAllStrengthsAndClearsScratch) {
+  const uint8_t entropy[32] = {};
+  for (uint32_t strength : {128u, 192u, 256u}) {
+    SCOPED_TRACE(strength);
+    fsm_test_clearLastFailure();
+    reset_init(false, strength, false, false, "english", "backed up", false,
+               0, 0, false);
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+    ASSERT_TRUE(kkconfirm_preload(20, 0));
+    reset_entropy(entropy, sizeof(entropy));
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_EQ(0, fsm_test_lastFailureCode());
+    EXPECT_GE(kkconfirm_drain(), 0);
+    EXPECT_STREQ("backed up", storage_getLabel());
+    const char* words = storage_getMnemonic();
+    ASSERT_NE(nullptr, words);
+    EXPECT_EQ(strength * 3 / 32,
+              1u + std::count(words, words + strlen(words), ' '));
+    expect_mnemonic_scratch_cleared();
+  }
 }
 
 #if !BITCOIN_ONLY
