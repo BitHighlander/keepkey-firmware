@@ -155,6 +155,26 @@ The target is to add back at most ~10% of what was deleted.
   - The code carries the 7.16 note: reject there instead.
   - Registry: 1,326 signable. SRAM reserve 18,000 B (−48 B).
 
+- **E2 is implemented (block 7b).** The inner call is clear-signed with its own definition, one level deep.
+  1. At the embedded field, after the outer signer and intent screens, the device requests the inner definition by (calldata, chain, callee, selector, `recursion_depth=1`). The request carries only facts it read from the signed calldata, and the reply streams into the preload slot.
+  2. An empty chunk (offset 0, `total_length` 0) means "none", and the E1 blind path follows. python-keepkey's `Catalog.chunk` sends it for an unknown nested lookup.
+  3. Before any inner screen, the device checks the binding (H8). It then shows the call's context (callee, selector, length, value, authority) and runs the inner program titled "Inner signer", "Inner action", "Inner field" and "Inner intent i/n".
+  4. Inside it, `@.to`/`@.value`/`@.from` mean the callee, the value moved (zero if unnamed) and the spender (the outer contract if unnamed).
+  5. Every inner pass, including the inner validation pass, replays the whole outer calldata, hashes it against the reviewed digest and feeds only the located inner arguments to the ABI stream.
+  6. At the inner end the device re-fetches the outer definition by its id, re-authenticates it and resumes after the instruction that held the inner call.
+- **Not clear-signed (blind in 7.15):**
+  - an inner call inside an iteration (multicall: E3);
+  - a call at depth 2;
+  - inner bytes without a selector, or not whole ABI words.
+- Resident set, measured on ARM: the workflow grew 3,424 → 3,608 B over E1 and E2. SRAM reserve 18,000 → 17,864 B for E2 (−136 B). The deepest frame is still the definition-chunk handler (2,344 B).
+- Wire tests (exact text):
+  - `test_inner_call_is_clear_signed_with_its_own_definition` (the outer field after the inner call proves the resume);
+  - `test_inner_call_without_a_definition_is_blind_in_715`;
+  - `test_inner_definition_for_another_call_is_refused` (a hostile host substitutes the selector);
+  - `test_inner_bytes_changed_in_an_inner_pass_are_refused` (refused on pass 5, before any inner field).
+- Negative controls: removing the binding, feeding the whole outer calldata to the inner stream, or reading inner containers from the outer transaction each fail the matching test.
+- Found while testing: the dispatcher's stale-continuation guard (`fsm.c`) had to accept definition chunks in the new FETCH phase. A replay must reset the pending selection kind, or the first inner replay is taken for the outer program's last path selection.
+
 ## 9. Decisions needed from the owner before design
 
 1. **P5:** without an inner definition, show the minimum (callee, selector, value, operation, bytes hash or data) with a "not clear-signed" label, or refuse?

@@ -149,7 +149,7 @@ class TestStack07Regressions(common.KeepKeyTest):
         return response
 
     def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None,
-              arguments=None):
+              arguments=None, catalog=None, altered=None):
         response = self.client.call_raw(start)
         self.definition_requests = 0
         self.button_codes = []
@@ -165,6 +165,9 @@ class TestStack07Regressions(common.KeepKeyTest):
                 self.client.capture_oled()
                 self.client.debug.press_yes() if buttons != cancel_button else self.client.debug.press_no()
                 response = self.client.call_raw(proto.ButtonAck())
+            elif isinstance(response, eth.EthereumClearSignDefinitionRequest) and catalog:
+                self.definition_requests += 1
+                response = self.client.call_raw(catalog.chunk(response))
             elif isinstance(response, eth.EthereumClearSignDefinitionRequest):
                 self.definition_requests += 1
                 offset = response.offset
@@ -189,6 +192,8 @@ class TestStack07Regressions(common.KeepKeyTest):
             elif isinstance(response, eth.EthereumTxRequest) and response.HasField("data_length"):
                 calldata_passes += 1
                 data = arguments
+                if altered and altered[0] == calldata_passes:
+                    data = altered[1]
                 if data is None:
                     data = (43 if change_pass == calldata_passes else 42).to_bytes(32, "big")
                     data += (7).to_bytes(32, "big")
@@ -946,3 +951,130 @@ class TestStack07Regressions(common.KeepKeyTest):
              "Transaction:\nTo 0x" + OTHER_ADDRESS.hex() +
              "\nNo data\nValue 0 Wei\nAs 0x" + ADDRESS.hex()),
         ])
+
+    # Phase E2: the inner call is clear-signed with its own definition, bound
+    # to the callee and selector in the signed calldata. Every inner pass
+    # replays the whole outer calldata against the reviewed digest.
+    EXEC = ("execTransaction(address to,uint256 value,bytes data,"
+            "uint8 operation)")
+    TRANSFER = "transfer(address to,uint256 amount)"
+
+    def _exec_setup(self):
+        outer_descriptor = {"display": {"formats": {self.EXEC: {
+            "intent": "sign multisig operation", "fields": [
+                {"path": "data", "label": "Transaction", "format": "calldata",
+                 "params": {"calleePath": "to", "amountPath": "value",
+                            "spenderPath": "@.to"}},
+                {"path": "operation", "label": "Operation", "format": "raw"}]}}}}
+        inner_descriptor = {"display": {"formats": {self.TRANSFER: {
+            "intent": "Transfer", "fields": [
+                {"path": "to", "label": "Recipient", "format": "addressName"},
+                {"path": "amount", "label": "Amount", "format": "tokenAmount",
+                 "params": {"tokenPath": "@.to"}}]}}}}
+        outer = erc7730_compiler.compile_calldata(
+            outer_descriptor, self.EXEC, 1, ADDRESS)
+        inner = erc7730_compiler.compile_calldata(
+            inner_descriptor, self.TRANSFER, 1, self.USDC)
+        self._load_signer()
+        outer_env = self._envelope(outer)
+        inner_def = erc7730.Definition(self._envelope(inner), 1, 1, self.USDC,
+                                       inner[38:42])
+        outer_def = self._definition(outer, outer_env)
+        erc7730.preload(self.client, outer_def)
+        self._drop_setup_screenshots()
+        call = (bytes.fromhex("a9059cbb") + self._word(OTHER_ADDRESS) +
+                self._word(1500000))
+        arguments = (self._word(self.USDC) + self._word(0) +
+                     self._word(128) + self._word(0) +
+                     self._word(len(call)) + call +
+                     bytes(-len(call) % 32))
+        start = self._audit_start(outer, 4 + len(arguments))
+        return start, arguments, outer_def, inner_def
+
+    @staticmethod
+    def _relevant(screens):
+        titles = ("Runtime signer", "Inner signer", "Contract action",
+                  "Inner action", "Signer field", "Inner field",
+                  "Blind signature")
+        shown = []
+        for screen in screens:
+            if screen[0] in titles and (not shown or shown[-1] != screen):
+                shown.append(screen)
+        return shown
+
+    def test_inner_call_is_clear_signed_with_its_own_definition(self):
+        start, arguments, outer_def, inner_def = self._exec_setup()
+        result, _, _, _ = self._walk(
+            start, arguments=arguments,
+            catalog=erc7730.Catalog((outer_def, inner_def)))
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        shown = [s for s in self._relevant(self.screens)
+                 if s[0] not in ("Runtime signer", "Inner signer")]
+        self.assertEqual(shown, [
+            ("Contract action", "sign multisig operation"),
+            ("Signer field",
+             "Transaction:\nTo 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+             "\nFunction 0xa9059cbb\nData 68 bytes\nValue 0 Wei\nAs 0x" +
+             ADDRESS.hex()),
+            ("Inner action", "Transfer"),
+            ("Inner field", "Recipient:\n0x" + OTHER_ADDRESS.hex()),
+            ("Inner field", "Amount:\n1.5 USDC"),
+            ("Signer field", "Operation:\n0"),
+        ])
+        self.assertIn("Inner signer", [s[0] for s in self.screens])
+
+    def test_inner_call_without_a_definition_is_blind_in_715(self):
+        start, arguments, outer_def, _ = self._exec_setup()
+        result, _, _, _ = self._walk(start, arguments=arguments,
+                                     catalog=erc7730.Catalog((outer_def,)))
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        shown = [s for s in self._relevant(self.screens)
+                 if s[0] != "Runtime signer"]
+        self.assertEqual(shown[1:3], [
+            ("Blind signature", "The inner call is not clear-signed"),
+            ("Signer field",
+             "Transaction:\nTo 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+             "\nFunction 0xa9059cbb\nData 68 bytes\nValue 0 Wei\nAs 0x" +
+             ADDRESS.hex()),
+        ])
+
+    def test_inner_definition_for_another_call_is_refused(self):
+        start, arguments, outer_def, inner_def = self._exec_setup()
+        # A host that answers the inner request with a definition for another
+        # selector: the device binds it to the signed selector and refuses.
+        approve = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {"approve(address spender,uint256 amount)": {
+                "intent": "Approve", "fields": []}}}},
+            "approve(address spender,uint256 amount)", 1, self.USDC)
+        wrong = erc7730.Definition(self._envelope(approve), 1, 1, self.USDC,
+                                   approve[38:42])
+
+        class Substituting(erc7730.Catalog):
+            def chunk(self, request):
+                if request.HasField("recursion_depth"):
+                    request = copy.deepcopy(request)
+                    request.selector_or_type_hash = wrong.selector_or_type_hash
+                return erc7730.Catalog.chunk(self, request)
+
+        result, _, _, _ = self._walk(
+            start, arguments=arguments,
+            catalog=Substituting((outer_def, inner_def, wrong)))
+        assert_failure(self, result, types.Failure_SyntaxError,
+                       "ERC-7730 inner definition does not match")
+        self.assertNotIn("Inner action", [s[0] for s in self.screens])
+
+    def test_inner_bytes_changed_in_an_inner_pass_are_refused(self):
+        start, arguments, outer_def, inner_def = self._exec_setup()
+        # Pass 1 validates and fixes the digest; passes 2-4 capture the outer
+        # fields up to the inner call. Pass 5 is the inner call's own
+        # validation pass: change one byte of its recipient there.
+        altered = bytearray(arguments)
+        altered[-40] ^= 1
+        result, buttons, passes, _ = self._walk(
+            start, arguments=arguments, altered=(5, bytes(altered)),
+            catalog=erc7730.Catalog((outer_def, inner_def)))
+        assert_failure(self, result, types.Failure_SyntaxError,
+                       "ERC-7730 calldata does not match definition")
+        self.assertEqual(passes, 5)
+        self.assertNotIn("Inner field", [s[0] for s in self.screens])
