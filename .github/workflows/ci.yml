@@ -639,8 +639,10 @@ jobs:
       # branch). 9f37816a is the registry revision whose bounded-include
       # expansion yields the 1,450 calldata formats asserted by
       # test_official_registry_all_calldata_formats_reach_firmware. It lands in
-      # the build context, so the python-keepkey image carries it.
+      # the build context, so the python-keepkey image carries it. Bitcoin-only
+      # has no ERC-7730 engine and neither fetches nor needs it.
       - name: Fetch pinned ERC-7730 registry
+        if: matrix.variant == 'full'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: ethereum/clear-signing-erc7730-registry
@@ -649,6 +651,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify ERC-7730 registry pin
+        if: matrix.variant == 'full'
         run: |
           test "$(git -C build-inputs/erc7730-registry rev-parse HEAD)" = \
             9f37816afde954ff6617fb5baa346133e5af26c5

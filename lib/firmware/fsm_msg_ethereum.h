@@ -180,6 +180,67 @@ typedef enum {
   ERC7730_UI_CANCELLED,
 } Erc7730UiResult;
 
+/* The end of the longest part of `value` starting at `offset` that fits
+ * `budget` characters without cutting an erc7730_format_text() escape. */
+static size_t erc7730_part_end(const char* value, size_t offset,
+                               size_t budget) {
+  size_t end = offset;
+  while (value[end]) {
+    const size_t step =
+        value[end] != '\\' ? 1u : (value[end + 1] == 'x' ? 4u : 2u);
+    if (end + step - offset > budget) break;
+    end += step;
+  }
+  return end;
+}
+
+/* Show escaped `text` under a device-owned title, led by `label` when one is
+ * given. confirm() refuses a body longer than BODY_CHAR_MAX, so text that does
+ * not fit is split across numbered screens; each repeats the label and each
+ * must be confirmed. */
+static bool confirm_erc7730_text(const char* title, const char* label,
+                                 const char* text) {
+  const size_t label_length = label ? strlen(label) + 2u : 0u; /* ":\n" */
+  const size_t text_length = strlen(text);
+  if ((label && label_length == 2u) || label_length + 1u + 4u >= BODY_CHAR_MAX)
+    return false;
+  const size_t budget = BODY_CHAR_MAX - 1u - label_length;
+  if (text_length <= budget)
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                   "%s%s%s", label ? label : "", label ? ":\n" : "", text);
+  size_t parts = 0;
+  for (size_t offset = 0; offset < text_length;
+       offset = erc7730_part_end(text, offset, budget))
+    parts++;
+  if (parts > 999) return false;
+  char numbered[TITLE_CHAR_MAX];
+  size_t offset = 0;
+  for (size_t i = 0; i < parts; i++) {
+    const size_t end = erc7730_part_end(text, offset, budget);
+    snprintf(numbered, sizeof(numbered), "%s (%u/%u)", title,
+             (unsigned)(i + 1u), (unsigned)parts);
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, numbered,
+                 "%s%s%.*s", label ? label : "", label ? ":\n" : "",
+                 (int)(end - offset), text + offset))
+      return false;
+    offset = end;
+  }
+  return true;
+}
+
+/* Signer-authored program strings reach the screen escaped, exactly like
+ * captured values: the OLED font draws every non-ASCII byte as one glyph and
+ * the pager drops edge spaces, so raw text is not shown one-to-one. */
+static bool confirm_erc7730_escaped(const char* title, const char* label,
+                                    const char* raw) {
+  char text[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  const bool shown = erc7730_format_text((const uint8_t*)raw, strlen(raw), text,
+                                         sizeof(text)) &&
+                     confirm_erc7730_text(title, label, text);
+  memzero(text, sizeof(text));
+  return shown;
+}
+
 static Erc7730UiResult confirm_erc7730_source_and_intent(
     Erc7730Workflow* workflow) {
   if (!workflow || workflow->intent[0] == '\0' ||
@@ -196,8 +257,7 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
     workflow->identity_confirmed = true;
   }
   if (!workflow->intent_confirmed) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Contract action", "%s", workflow->intent))
+    if (!confirm_erc7730_escaped("Contract action", NULL, workflow->intent))
       return ERC7730_UI_CANCELLED;
     workflow->intent_confirmed = true;
   }
@@ -206,50 +266,14 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
 
 /* The per-field title is device-owned: a signer-chosen label in the title
  * line could imitate a firmware screen such as "Ethereum Data Hash", so the
- * label leads the body instead. confirm() refuses a body longer than
- * BODY_CHAR_MAX, so a value that does not fit beside the label is split across
- * numbered screens; each repeats the label and each must be confirmed. */
-/* The end of the longest part of `value` starting at `offset` that fits
- * `budget` characters without cutting an erc7730_format_text() escape. */
-static size_t erc7730_field_part_end(const char* value, size_t offset,
-                                     size_t budget) {
-  size_t end = offset;
-  while (value[end]) {
-    const size_t step =
-        value[end] != '\\' ? 1u : (value[end + 1] == 'x' ? 4u : 2u);
-    if (end + step - offset > budget) break;
-    end += step;
-  }
-  return end;
-}
-
+ * escaped label leads the body instead. `value` is already escaped. */
 static bool confirm_erc7730_field(const char* label, const char* value) {
-  const size_t label_length = strlen(label);
-  const size_t value_length = strlen(value);
-  /* The longest body confirm() accepts, less the label and ":\n". */
-  if (label_length == 0 || label_length + 3u + 4u >= BODY_CHAR_MAX)
-    return false;
-  const size_t budget = BODY_CHAR_MAX - 1u - label_length - 2u;
-  if (value_length <= budget)
-    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Signer field", "%s:\n%s", label, value);
-  size_t parts = 0;
-  for (size_t offset = 0; offset < value_length;
-       offset = erc7730_field_part_end(value, offset, budget))
-    parts++;
-  if (parts > 999) return false;
-  char title[sizeof("Signer field (999/999)")];
-  size_t offset = 0;
-  for (size_t i = 0; i < parts; i++) {
-    const size_t end = erc7730_field_part_end(value, offset, budget);
-    snprintf(title, sizeof(title), "Signer field (%u/%u)", (unsigned)(i + 1u),
-             (unsigned)parts);
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                 "%s:\n%.*s", label, (int)(end - offset), value + offset))
-      return false;
-    offset = end;
-  }
-  return true;
+  char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  const bool shown = erc7730_format_text((const uint8_t*)label, strlen(label),
+                                         escaped, sizeof(escaped)) &&
+                     confirm_erc7730_text("Signer field", escaped, value);
+  memzero(escaped, sizeof(escaped));
+  return shown;
 }
 
 static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {

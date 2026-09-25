@@ -18,13 +18,13 @@ esac
 if [ "$KK_FIRMWARE_VARIANT" = full ]; then
   export KK_REQUIRE_ERC7730_EVIDENCE=1
   export ERC7730_FIRMWARE_VALIDATOR=/kkemu-emulator-bin/erc7730-validate
+  export ERC7730_REGISTRY=/kkemu/build-inputs/erc7730-registry
+  if [ ! -d "$ERC7730_REGISTRY/registry" ]; then
+    echo "FATAL: pinned ERC-7730 registry missing at $ERC7730_REGISTRY"
+    exit 1
+  fi
 else
   export KK_REQUIRE_ERC7730_EVIDENCE=0
-fi
-export ERC7730_REGISTRY=/kkemu/build-inputs/erc7730-registry
-if [ ! -d "$ERC7730_REGISTRY/registry" ]; then
-  echo "FATAL: pinned ERC-7730 registry missing at $ERC7730_REGISTRY"
-  exit 1
 fi
 
 mkdir -p /kkemu/test-reports/python-keepkey

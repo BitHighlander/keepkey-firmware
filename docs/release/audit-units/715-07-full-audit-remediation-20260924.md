@@ -43,9 +43,19 @@ All local runs used the CI base image `kktech/firmware@sha256:7438e539…`.
 - cppcheck 2.13 (Ubuntu 24.04, CI flags): zero findings. clang-format 20: clean on every changed file. actionlint and shell syntax: clean.
 - CI-equivalent `docker compose` integration on the committed head, both variants: results are recorded in the PR description with the hosted run.
 
+## Copilot review of the remediated head
+
+The owner authorized one request on `f600da9d9`. [Review 5313258873](https://github.com/BitHighlander/keepkey-firmware/pull/837#pullrequestreview-5313258873) (Lite) returned **Changes recommended**. It listed all seven second-round findings as resolved and raised three new ones. All three were real:
+
+| Comment | Finding | Disposition |
+| --- | --- | --- |
+| 4100999029 | ERC-7730 intent text and field labels reached the screen raw, although the catalog accepts non-ASCII bytes and edge or doubled spaces in program strings. | Fixed. Intent and labels go through `erc7730_format_text()` like values and split into numbered screens when long. The official registry uses edge spaces as sentence fragments in 379 of its 6,396 compiled strings, so the verifier does not reject them. The registry has no non-ASCII or doubled spaces, so real descriptors display unchanged. Wire test `test_non_ascii_intent_is_escaped_not_drawn_as_glyphs` compares against a same-length ASCII intent. It fails on `f600da9d9`, where both drew the same number of screens (4 and 4), and passes after the fix (8 and 4). |
+| 4100999081 | Bitcoin-only runs required the ERC-7730 registry that only the full product uses. | Fixed. The registry export and check, and the CI fetch and pin check, now run only for the full variant. |
+| 4100999118 | The report's JUnit reader let a later duplicate testcase overwrite an earlier failing one. | Fixed. Duplicate testcases are refused. A synthetic duplicate is rejected, the real Stack 06/07 files contain none, and the report validator tests pass. |
+
 ## Open items for the owner
 
 - SRAM: the full product's reserve fell by 560 B. `tools/sram-budgets.json` requires explicit review of any single-commit increase above 256 B; 384 B of it is the Seaport-capable slot pool.
 - `increaseAllowance`, `setApprovalForAll` and Permit2 `approve` calldata are still outside the allowance policy. That predates this stack and was not an audit finding against it.
 - Physical-device verification, including OLED photographs of the new typed-data screens, has not been done.
-- Copilot has not reviewed the remediated head. A further request needs separate owner approval.
+- Copilot has not reviewed the fixes for its third-round findings. A further request needs separate owner approval.

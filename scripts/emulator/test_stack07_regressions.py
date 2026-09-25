@@ -370,6 +370,33 @@ class TestStack07Regressions(common.KeepKeyTest):
         self.assertEqual(buttons, baseline_buttons + 3)
         self.assertEqual(passes, 0)
 
+    def test_non_ascii_intent_is_escaped_not_drawn_as_glyphs(self):
+        # The OLED draws every non-ASCII byte as one identical glyph, so signer
+        # strings are escaped like values. Drawn raw, 64 x U+00E9 (128 bytes)
+        # pages exactly like 128 ASCII bytes; escaped it is 512 characters and
+        # needs more screens. Equal counts would mean raw glyphs were shown.
+        def certified_buttons(intent):
+            signature = "audit()"
+            descriptor = {"display": {"formats": {signature: {
+                "intent": intent, "fields": []}}}}
+            program = erc7730_compiler.compile_calldata(
+                descriptor, signature, 1, ADDRESS)
+            start = eth.EthereumSignTx(address_n=PATH, nonce=b"",
+                gas_price=b"\x01", gas_limit=b"\xff\xff", to=ADDRESS,
+                value=b"", chain_id=1, data_length=4,
+                data_initial_chunk=program[38:42])
+            baseline, baseline_buttons, _, _ = self._walk(start)
+            result, buttons, passes, _ = self._walk(
+                start, self._preload(program))
+            self.assertIsInstance(result, eth.EthereumTxRequest)
+            self.assertEqual(result.signature_r, baseline.signature_r)
+            self.assertEqual(result.signature_s, baseline.signature_s)
+            self.assertEqual(passes, 0)
+            return buttons - baseline_buttons
+
+        self.assertGreater(certified_buttons("\u00e9" * 64),
+                           certified_buttons("e" * 128))
+
     def test_certified_approval_refused_before_annotation_screens(self):
         signature = "approve(address spender,uint256 amount)"
         descriptor = {"display": {"formats": {signature: {

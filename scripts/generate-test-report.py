@@ -73,6 +73,7 @@ _STACK07_EVM = [_STACK07 + "TestStack07Regressions." + name for name in (
     "test_domain_only_signature_refuses_certified_preload",
     "test_dirty_approval_spender_word_is_refused_before_any_screen",
     "test_preload_survives_get_features_and_is_discarded_by_initialize",
+    "test_non_ascii_intent_is_escaped_not_drawn_as_glyphs",
 )]
 _ADDITIVE = [
     "test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant." + name
@@ -254,6 +255,9 @@ def read_junit_cases(path):
     for testcase in parsed.getroot().iter("testcase"):
         name = "%s.%s" % (testcase.get("classname", ""),
                           testcase.get("name", ""))
+        # A second copy could mask a failing one; evidence must be unambiguous.
+        if name in cases:
+            fail("duplicate JUnit testcase %s in %s" % (name, path))
         cases[name] = case_status(testcase)
     return cases
 
