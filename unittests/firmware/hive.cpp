@@ -1,5 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/hive.h"
+#include "trezor/crypto/bip32.h"
+#include "trezor/crypto/curves.h"
 }
 
 #include "gtest/gtest.h"
@@ -780,4 +782,54 @@ TEST(Hive, TrailingBytesRejected) {
 
   HiveParsedTx parsed;
   EXPECT_NE(nullptr, hive_parseOperations(tx.data(), tx.size(), &parsed));
+}
+
+TEST(Hive, TransferAssetShownIsAssetSigned) {
+  const char* symbol = nullptr;
+  uint8_t precision = 0;
+  HiveSignTx msg = {};
+  ASSERT_TRUE(hive_transfer_asset(&msg, &symbol, &precision));  // default
+  EXPECT_STREQ("HIVE", symbol);
+  EXPECT_EQ(3, precision);
+  for (const char* ok : {"HIVE", "HBD"}) {
+    msg = {};
+    msg.has_asset_symbol = true;
+    strcpy(msg.asset_symbol, ok);
+    msg.has_decimals = true;
+    msg.decimals = 3;
+    EXPECT_TRUE(hive_transfer_asset(&msg, &symbol, &precision)) << ok;
+  }
+  // HIVE12345 would be shown in full but signed as "HIVE12"; VESTS is not
+  // transferable; any other precision moves the displayed decimal point.
+  for (const char* bad : {"HIVE12345", "HIVEX", "VESTS", "hive", ""}) {
+    msg = {};
+    msg.has_asset_symbol = true;
+    strcpy(msg.asset_symbol, bad);
+    EXPECT_FALSE(hive_transfer_asset(&msg, &symbol, &precision)) << bad;
+  }
+  msg = {};
+  msg.has_decimals = true;
+  msg.decimals = 6;
+  EXPECT_FALSE(hive_transfer_asset(&msg, &symbol, &precision));
+
+  // The serializer enforces the same rule: no signature for a refused asset,
+  // while the same key signs a valid transfer (positive control).
+  HDNode node;
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  hdnode_fill_public_key(&node);
+  HiveSignTx tx = {};
+  tx.has_from = true;
+  strcpy(tx.from, "alice");
+  tx.has_to = true;
+  strcpy(tx.to, "bob");
+  tx.amount = 1000;
+  HiveSignedTx resp = {};
+  hive_signTx(&node, &tx, &resp);
+  EXPECT_TRUE(resp.has_signature);
+  tx.has_asset_symbol = true;
+  strcpy(tx.asset_symbol, "HIVE12345");
+  resp = {};
+  hive_signTx(&node, &tx, &resp);
+  EXPECT_FALSE(resp.has_signature);
 }

@@ -823,6 +823,19 @@ void hive_signMessage(const HDNode* node, const HiveSignMessage* msg,
 
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
 
+bool hive_transfer_asset(const HiveSignTx* msg, const char** symbol,
+                         uint8_t* precision) {
+  // The Graphene symbol field holds six characters, and only HIVE and HBD are
+  // transferable. Anything else would be displayed as sent but signed
+  // truncated or with a different decimal point, so refuse it here.
+  const char* sym = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
+  if (strcmp(sym, "HIVE") != 0 && strcmp(sym, "HBD") != 0) return false;
+  if (msg->has_decimals && msg->decimals != HIVE_DECIMALS) return false;
+  *symbol = sym;
+  *precision = HIVE_DECIMALS;
+  return true;
+}
+
 static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
                                       size_t buf_len) {
   uint8_t* p = buf;
@@ -834,8 +847,9 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
   append_string(&p, end, msg->has_from ? msg->from : "");
   append_string(&p, end, msg->has_to ? msg->to : "");
 
-  const char* sym = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
-  uint8_t prec = (uint8_t)(msg->has_decimals ? msg->decimals : HIVE_DECIMALS);
+  const char* sym;
+  uint8_t prec;
+  if (!hive_transfer_asset(msg, &sym, &prec)) return 0;
   append_asset(&p, end, msg->amount, prec, sym);
 
   append_string(&p, end, msg->has_memo ? msg->memo : "");
@@ -850,6 +864,7 @@ void hive_signTx(const HDNode* node, const HiveSignTx* msg,
 
   uint8_t tx_buf[512];
   size_t tx_len = hive_serialize_transfer(msg, tx_buf, sizeof(tx_buf));
+  if (tx_len == 0) return;
 
   if (!hive_sign_tx_sig(node, msg->has_chain_id, msg->chain_id.bytes,
                         msg->chain_id.size, tx_buf, tx_len,

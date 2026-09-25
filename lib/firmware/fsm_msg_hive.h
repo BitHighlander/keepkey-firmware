@@ -189,18 +189,17 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // Display precision MUST match the precision the serializer signs
-  // (append_asset uses msg->decimals), otherwise the user approves an
-  // amount that differs from what is signed. Reject implausible precision.
-  uint8_t prec = msg->has_decimals ? (uint8_t)msg->decimals : HIVE_DECIMALS;
-  if (prec > 18) {
+  // Display and serializer take the asset from one helper, so the symbol
+  // and precision shown are exactly the ones signed.
+  const char* symbol;
+  uint8_t prec;
+  if (!hive_transfer_asset(msg, &symbol, &prec)) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive asset precision"));
+                    _("Hive transfers support HIVE or HBD at 3 decimals"));
     layoutHome();
     return;
   }
-  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
   char suffix[sizeof(msg->asset_symbol) + 2];  // leading space + symbol + NUL
   snprintf(suffix, sizeof(suffix), " %s", symbol);
   char amount_str[32];

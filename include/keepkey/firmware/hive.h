@@ -121,6 +121,12 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
  * Sign a Hive transfer transaction (op type 2).
  * Rejects memos longer than HIVE_MAX_MEMO_LEN (440 bytes).
  */
+/// Asset for a HiveSignTx transfer: HIVE or HBD only, at the protocol-fixed
+/// precision. The confirmation and the serializer both use this, so the symbol
+/// shown is the symbol signed. Returns false for anything else.
+bool hive_transfer_asset(const HiveSignTx* msg, const char** symbol,
+                         uint8_t* precision);
+
 void hive_signTx(const HDNode* node, const HiveSignTx* msg, HiveSignedTx* resp);
 
 // ── Parsed operations (HiveSignOperations) ────────────────────────────────
