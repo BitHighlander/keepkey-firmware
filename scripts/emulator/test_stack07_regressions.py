@@ -105,10 +105,11 @@ class TestStack07Regressions(common.KeepKeyTest):
         self.setup_mnemonic_nopin_nopassphrase()
         self.client.apply_policy("AdvancedMode", 1)
 
-    def _envelope(self, program, signer_key=TEST_PRIVATE_KEY, signer_pub=None):
+    def _envelope(self, program, signer_key=TEST_PRIVATE_KEY, signer_pub=None,
+                  chain=1):
         cert = bytearray(139)
         cert[0] = 1
-        cert[2:6] = (1).to_bytes(4, "big")
+        cert[2:6] = chain.to_bytes(4, "big")
         cert[10:21] = b"Host alias\0"
         cert[42:75] = signer_pub if signer_pub is not None else signer_pubkey()
         return erc7730.sign_envelope(program, cert, signer_key)
@@ -147,6 +148,14 @@ class TestStack07Regressions(common.KeepKeyTest):
                 return response
             offset += len(data)
         return response
+
+    def _first_pages(self):
+        """(title, body) of each confirmation's first page. A body that pages
+        continues under ButtonRequest_Other with the same text; any other
+        repeat is a second confirmation and is kept, so a double display
+        stays visible."""
+        return [screen for screen, code in zip(self.screens, self.button_codes)
+                if code != types.ButtonRequest_Other]
 
     def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None,
               arguments=None, catalog=None, altered=None):
@@ -637,23 +646,31 @@ class TestStack07Regressions(common.KeepKeyTest):
     # Asset facts come only from the firmware token table; an address is always
     # shown in full; the signer's message sits beside the value.
     USDC = bytes.fromhex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
-    NATIVE = bytes.fromhex("ee" * 20)
+    # Not in the firmware token table on chain 1 (0xeeee..ee is: there the
+    # table's own entry wins over any signer alias).
+    NATIVE = bytes.fromhex("44" * 20)
+
+    def _certified(self, program, arguments, preload=None, catalog=None):
+        """Sign once on the ordinary path, then with the definition, and
+        require the same signature: the annotations are additive only."""
+        start = self._audit_start(program, 4 + len(arguments))
+        baseline, _, _, _ = self._walk(start, arguments=arguments)
+        self.assertIsInstance(baseline, eth.EthereumTxRequest)
+        self.assertTrue(baseline.HasField("signature_r"))
+        envelope = self._preload(program) if preload is None else preload()
+        result, _, passes, _ = self._walk(start, envelope, arguments=arguments,
+                                          catalog=catalog)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertEqual((result.signature_r, result.signature_s),
+                         (baseline.signature_r, baseline.signature_s))
+        return result
 
     def _field_screens(self, descriptor, signature, arguments):
         program = erc7730_compiler.compile_calldata(
             descriptor, signature, 1, ADDRESS)
-        envelope = self._preload(program)
-        start = self._audit_start(program, 4 + len(arguments))
-        result, _, _, _ = self._walk(start, envelope, arguments=arguments)
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        self.assertTrue(result.HasField("signature_r"))
-        # A body that pages is one confirmation under several ButtonRequests,
-        # each reporting the same text: count it once.
-        fields = []
-        for title, body in self.screens:
-            if title == "Signer field" and (not fields or fields[-1] != body):
-                fields.append(body)
-        return fields
+        self._certified(program, arguments)
+        return [body for title, body in self._first_pages()
+                if title == "Signer field"]
 
     @staticmethod
     def _word(value):
@@ -694,7 +711,7 @@ class TestStack07Regressions(common.KeepKeyTest):
     def test_threshold_message_is_shown_beside_the_exact_amount(self):
         params = {"threshold": 1000000, "message": "Large amount"}
         self.assertEqual(self._token_screen(self.USDC, 1500000, params),
-                         ["Amount:\nLarge amount\n1.5 USDC"])
+                         ["Amount:\nSigner: Large amount\n1.5 USDC"])
         self.assertEqual(self._token_screen(self.USDC, 999999, params),
                          ["Amount:\n0.999999 USDC"])
 
@@ -763,17 +780,15 @@ class TestStack07Regressions(common.KeepKeyTest):
                                      arguments=arguments)
         self.assertIsInstance(result, eth.EthereumTxRequest)
         self.assertTrue(result.HasField("signature_r"))
-        shown = []
-        for screen in self.screens:
-            if screen[0] in ("Contract action", "Intent 1/3", "Intent 2/3",
-                             "Intent 3/3", "Signer field") and (
-                                 not shown or shown[-1] != screen):
-                shown.append(screen)
+        shown = [screen for screen in self._first_pages()
+                 if screen[0] in ("Contract action", "Intent text 1 of 3",
+                                  "Intent value 2 of 3", "Intent text 3 of 3",
+                                  "Signer field")]
         self.assertEqual(shown, [
             ("Contract action", "Send tokens"),
-            ("Intent 1/3", "Send"),
-            ("Intent 2/3", "1.5 USDC"),
-            ("Intent 3/3", "now"),
+            ("Intent text 1 of 3", "Send"),
+            ("Intent value 2 of 3", "1.5 USDC"),
+            ("Intent text 3 of 3", "now"),
             ("Signer field", "Amount:\n1.5 USDC"),
         ])
 
@@ -802,7 +817,7 @@ class TestStack07Regressions(common.KeepKeyTest):
              93784, "Lock:\n1d 2h 3m 4s\n(93784 s)"),
             ({"path": "a", "label": "Weight", "format": "unit",
               "params": {"base": "kg", "decimals": 3}},
-             93784, "Weight:\n93.784 kg\n(93784)"),
+             93784, "Weight:\n93.784 kg\nunit set by signer\nraw 93784"),
         ]
         for field, value, expected in cases:
             self.assertEqual(
@@ -855,17 +870,9 @@ class TestStack07Regressions(common.KeepKeyTest):
     def _titled_fields(self, descriptor, signature, arguments):
         program = erc7730_compiler.compile_calldata(
             descriptor, signature, 1, ADDRESS)
-        envelope = self._preload(program)
-        start = self._audit_start(program, 4 + len(arguments))
-        result, _, _, _ = self._walk(start, envelope, arguments=arguments)
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        self.assertTrue(result.HasField("signature_r"))
-        fields = []
-        for screen in self.screens:
-            if screen[0].startswith("Signer field") and (
-                    not fields or fields[-1] != screen):
-                fields.append(screen)
-        return fields
+        self._certified(program, arguments)
+        return [screen for screen in self._first_pages()
+                if screen[0].startswith("Signer field")]
 
     def test_iteration_shows_every_element_numbered(self):
         signature = "pay(address[] recipients)"
@@ -877,8 +884,8 @@ class TestStack07Regressions(common.KeepKeyTest):
                      self._word(OTHER_ADDRESS) + self._word(ADDRESS))
         self.assertEqual(
             self._titled_fields(descriptor, signature, arguments), [
-                ("Signer field 1/2", "Recipient:\n0x" + OTHER_ADDRESS.hex()),
-                ("Signer field 2/2", "Recipient:\n0x" + ADDRESS.hex()),
+                ("Signer field 1 of 2", "Recipient:\n0x" + OTHER_ADDRESS.hex()),
+                ("Signer field 2 of 2", "Recipient:\n0x" + ADDRESS.hex()),
             ])
         # An empty array shows no element and still signs.
         self.assertEqual(
@@ -899,10 +906,10 @@ class TestStack07Regressions(common.KeepKeyTest):
                      self._word(ADDRESS) + self._word(6))
         self.assertEqual(
             self._titled_fields(descriptor, signature, arguments), [
-                ("Signer field 1/2", "To:\n0x" + OTHER_ADDRESS.hex()),
-                ("Signer field 1/2", "Amount:\n5"),
-                ("Signer field 2/2", "To:\n0x" + ADDRESS.hex()),
-                ("Signer field 2/2", "Amount:\n6"),
+                ("Signer field 1 of 2", "To:\n0x" + OTHER_ADDRESS.hex()),
+                ("Signer field 1 of 2", "Amount:\n5"),
+                ("Signer field 2 of 2", "To:\n0x" + ADDRESS.hex()),
+                ("Signer field 2 of 2", "Amount:\n6"),
                 ("Signer field", "Fee:\n9"),
             ])
 
@@ -923,18 +930,9 @@ class TestStack07Regressions(common.KeepKeyTest):
                      self._word(len(inner)) + padded)
         program = erc7730_compiler.compile_calldata(
             descriptor, signature, 1, ADDRESS)
-        envelope = self._preload(program)
-        result, _, _, _ = self._walk(
-            self._audit_start(program, 4 + len(arguments)), envelope,
-            arguments=arguments)
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        self.assertTrue(result.HasField("signature_r"))
-        shown = []
-        for screen in self.screens:
-            if screen[0] in ("Blind signature", "Signer field") and (
-                    not shown or shown[-1] != screen):
-                shown.append(screen)
-        return shown
+        self._certified(program, arguments)
+        return [screen for screen in self._first_pages()
+                if screen[0] in ("Blind signature", "Signer field")]
 
     def test_embedded_call_is_shown_under_a_blind_sign_warning(self):
         inner = bytes.fromhex("a9059cbb") + bytes(296)  # 300 bytes: no capture
@@ -959,12 +957,14 @@ class TestStack07Regressions(common.KeepKeyTest):
             "uint8 operation)")
     TRANSFER = "transfer(address to,uint256 amount)"
 
-    def _exec_setup(self):
+    def _exec_setup(self, amount_path=True):
+        params = {"calleePath": "to", "spenderPath": "@.to"}
+        if amount_path:
+            params["amountPath"] = "value"
         outer_descriptor = {"display": {"formats": {self.EXEC: {
             "intent": "sign multisig operation", "fields": [
                 {"path": "data", "label": "Transaction", "format": "calldata",
-                 "params": {"calleePath": "to", "amountPath": "value",
-                            "spenderPath": "@.to"}},
+                 "params": params},
                 {"path": "operation", "label": "Operation", "format": "raw"}]}}}}
         inner_descriptor = {"display": {"formats": {self.TRANSFER: {
             "intent": "Transfer", "fields": [
@@ -980,8 +980,7 @@ class TestStack07Regressions(common.KeepKeyTest):
         inner_def = erc7730.Definition(self._envelope(inner), 1, 1, self.USDC,
                                        inner[38:42])
         outer_def = self._definition(outer, outer_env)
-        erc7730.preload(self.client, outer_def)
-        self._drop_setup_screenshots()
+        self._exec_outer = (outer, outer_def)
         call = (bytes.fromhex("a9059cbb") + self._word(OTHER_ADDRESS) +
                 self._word(1500000))
         arguments = (self._word(self.USDC) + self._word(0) +
@@ -991,25 +990,26 @@ class TestStack07Regressions(common.KeepKeyTest):
         start = self._audit_start(outer, 4 + len(arguments))
         return start, arguments, outer_def, inner_def
 
-    @staticmethod
-    def _relevant(screens):
+    def _exec_certified(self, arguments, catalog):
+        outer, outer_def = self._exec_outer
+
+        def preload():
+            erc7730.preload(self.client, outer_def)
+            self._drop_setup_screenshots()
+            return b""
+        return self._certified(outer, arguments, preload=preload,
+                               catalog=catalog)
+
+    def _relevant(self):
         titles = ("Runtime signer", "Inner signer", "Contract action",
                   "Inner action", "Signer field", "Inner field",
                   "Blind signature")
-        shown = []
-        for screen in screens:
-            if screen[0] in titles and (not shown or shown[-1] != screen):
-                shown.append(screen)
-        return shown
+        return [screen for screen in self._first_pages() if screen[0] in titles]
 
     def test_inner_call_is_clear_signed_with_its_own_definition(self):
         start, arguments, outer_def, inner_def = self._exec_setup()
-        result, _, _, _ = self._walk(
-            start, arguments=arguments,
-            catalog=erc7730.Catalog((outer_def, inner_def)))
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        self.assertTrue(result.HasField("signature_r"))
-        shown = [s for s in self._relevant(self.screens)
+        self._exec_certified(arguments, erc7730.Catalog((outer_def, inner_def)))
+        shown = [s for s in self._relevant()
                  if s[0] not in ("Runtime signer", "Inner signer")]
         self.assertEqual(shown, [
             ("Contract action", "sign multisig operation"),
@@ -1026,10 +1026,8 @@ class TestStack07Regressions(common.KeepKeyTest):
 
     def test_inner_call_without_a_definition_is_blind_in_715(self):
         start, arguments, outer_def, _ = self._exec_setup()
-        result, _, _, _ = self._walk(start, arguments=arguments,
-                                     catalog=erc7730.Catalog((outer_def,)))
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        shown = [s for s in self._relevant(self.screens)
+        self._exec_certified(arguments, erc7730.Catalog((outer_def,)))
+        shown = [s for s in self._relevant()
                  if s[0] != "Runtime signer"]
         self.assertEqual(shown[1:3], [
             ("Blind signature", "The inner call is not clear-signed"),
@@ -1057,6 +1055,7 @@ class TestStack07Regressions(common.KeepKeyTest):
                     request.selector_or_type_hash = wrong.selector_or_type_hash
                 return erc7730.Catalog.chunk(self, request)
 
+        erc7730.preload(self.client, outer_def)
         result, _, _, _ = self._walk(
             start, arguments=arguments,
             catalog=Substituting((outer_def, inner_def, wrong)))
@@ -1068,9 +1067,10 @@ class TestStack07Regressions(common.KeepKeyTest):
         start, arguments, outer_def, inner_def = self._exec_setup()
         # Pass 1 validates and fixes the digest; passes 2-4 capture the outer
         # fields up to the inner call. Pass 5 is the inner call's own
-        # validation pass: change one byte of its recipient there.
+        # validation pass: change one byte of its amount there.
         altered = bytearray(arguments)
         altered[-40] ^= 1
+        erc7730.preload(self.client, outer_def)
         result, buttons, passes, _ = self._walk(
             start, arguments=arguments, altered=(5, bytes(altered)),
             catalog=erc7730.Catalog((outer_def, inner_def)))
@@ -1078,3 +1078,248 @@ class TestStack07Regressions(common.KeepKeyTest):
                        "ERC-7730 calldata does not match definition")
         self.assertEqual(passes, 5)
         self.assertNotIn("Inner field", [s[0] for s in self.screens])
+
+    # ---- Audit remediation: each of these used to fail mid-review, take a
+    # fact from the wrong source, or was untested. ----
+
+    def test_numeric_constants_are_values(self):
+        pad = self._word(OTHER_ADDRESS)
+        for constant, expected in ((5, "Fee:\n5 Wei"), (1000, "Fee:\n1000 Wei")):
+            self.assertEqual(
+                self._one_field({"value": constant, "label": "Fee",
+                                 "format": "amount"},
+                                self._word(1) + pad),
+                [expected])
+
+    def test_control_characters_in_a_value_are_escaped(self):
+        signature = "note(string text)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Note", "fields": [
+                {"path": "text", "label": "Text", "format": "raw"}]}}}}
+        text = b"a\nb\tc"
+        arguments = (self._word(32) + self._word(len(text)) + text +
+                     bytes(-len(text) % 32))
+        self.assertEqual(self._field_screens(descriptor, signature, arguments),
+                         ["Text:\na\\x0ab\\x09c"])
+
+    def test_a_raw_value_too_long_to_capture_is_shown_blind(self):
+        signature = "blob(bytes data)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Blob", "fields": [
+                {"path": "data", "label": "Data", "format": "raw"}]}}}}
+        data = bytes(range(200))
+        arguments = (self._word(32) + self._word(len(data)) + data +
+                     bytes(-len(data) % 32))
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        self._certified(program, arguments)
+        self.assertEqual(
+            [s for s in self._first_pages()
+             if s[0] in ("Blind signature", "Signer field")],
+            [("Blind signature", "The value is too long to show"),
+             ("Signer field", "Data:\nNot shown: 200 bytes")])
+
+    def test_multiline_values_split_between_lines(self):
+        # A label of 64 non-ASCII bytes escapes to 256 characters, leaving 93
+        # per screen: the unknown-token body splits, but between lines, so
+        # the token address is never cut.
+        label = "é" * 32
+        signature = "send(address token,uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send", "fields": [{
+                "path": "amount", "label": label, "format": "tokenAmount",
+                "params": {"tokenPath": "token"}}]}}}}
+        arguments = self._word(OTHER_ADDRESS) + self._word(10 ** 60)
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        self._certified(program, arguments)
+        parts = [body for title, body in self._first_pages()
+                 if title.startswith("Signer field")]
+        self.assertGreater(len(parts), 1)
+        address = "0x" + OTHER_ADDRESS.hex()
+        self.assertEqual(sum(1 for body in parts if body.endswith(address)), 1)
+        for body in parts:
+            self.assertFalse(body.endswith(address[:10]), body)
+
+    def _exec_inner_catalog(self, inner_program, chain=1, signer=None):
+        env = (self._envelope(inner_program, chain=chain) if signer is None
+               else self._envelope(inner_program, *signer, chain=chain))
+        return erc7730.Definition(env, 1, chain, inner_program[18:38],
+                                  inner_program[38:42])
+
+    def test_an_inner_definition_the_device_refuses_falls_back_to_blind(self):
+        start, arguments, outer_def, _ = self._exec_setup()
+        refused = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {self.TRANSFER: {
+                "intent": "Transfer", "fields": [{
+                    "path": "to", "label": "Recipient", "format": "raw",
+                    "visible": {"ifNotIn": ["0x" + ADDRESS.hex()]}}]}}}},
+            self.TRANSFER, 1, self.USDC, executable_only=False)
+        from ecdsa import SigningKey, SECP256k1
+        unknown = SigningKey.from_string(
+            UNKNOWN_SIGNER_KEY, curve=SECP256k1).get_verifying_key().to_string(
+                "compressed")
+        clear = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {self.TRANSFER: {
+                "intent": "Transfer", "fields": []}}}},
+            self.TRANSFER, 1, self.USDC)
+        for inner in (self._exec_inner_catalog(refused),
+                      self._exec_inner_catalog(
+                          clear, signer=(UNKNOWN_SIGNER_KEY, unknown))):
+            self._exec_certified(arguments,
+                                 erc7730.Catalog((outer_def, inner)))
+            shown = self._relevant()
+            self.assertIn(("Blind signature",
+                           "The inner call is not clear-signed"), shown)
+            self.assertNotIn("Inner action", [s[0] for s in shown])
+            self.assertEqual(shown[-1], ("Signer field", "Operation:\n0"))
+
+    def test_inner_definition_for_another_callee_or_chain_is_refused(self):
+        start, arguments, outer_def, inner_def = self._exec_setup()
+        other_callee = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {self.TRANSFER: {
+                "intent": "Transfer", "fields": []}}}},
+            self.TRANSFER, 1, OTHER_ADDRESS)
+        other_chain = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {self.TRANSFER: {
+                "intent": "Transfer", "fields": []}}}},
+            self.TRANSFER, 56, self.USDC)
+        for wrong in (self._exec_inner_catalog(other_callee),
+                      self._exec_inner_catalog(other_chain, chain=56)):
+            class Substituting(erc7730.Catalog):
+                def chunk(self, request):
+                    if request.HasField("recursion_depth") and request.recursion_depth:
+                        replaced = copy.deepcopy(request)
+                        replaced.chain_id = wrong.chain_id
+                        replaced.contract_address = wrong.contract_address
+                        return erc7730.Catalog.chunk(self, replaced)
+                    return erc7730.Catalog.chunk(self, request)
+            erc7730.preload(self.client, outer_def)
+            result, _, _, _ = self._walk(
+                start, arguments=arguments,
+                catalog=Substituting((outer_def, inner_def, wrong)))
+            assert_failure(self, result, types.Failure_SyntaxError,
+                           "ERC-7730 inner definition does not match")
+            self.assertNotIn("Inner action", [s[0] for s in self.screens])
+
+    def test_inner_containers_and_depth_two(self):
+        # Inside the inner call @.value is the value it moves and @.from
+        # whose authority it runs with; a call inside it is shown blind.
+        start, arguments, outer_def, _ = self._exec_setup()
+        inner = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {self.TRANSFER: {
+                "intent": "Transfer", "fields": [
+                    {"path": "@.value", "label": "Moves", "format": "amount"},
+                    {"path": "@.from", "label": "As", "format": "addressName"},
+                    {"path": "@.to", "label": "Token", "format": "addressName"},
+                ]}}}},
+            self.TRANSFER, 1, self.USDC)
+        # Give the outer call a value: the inner call moves 2 ETH.
+        moving = bytearray(arguments)
+        moving[32:64] = self._word(2 * 10 ** 18)
+        self._exec_certified(bytes(moving),
+                             erc7730.Catalog((outer_def,
+                                              self._exec_inner_catalog(inner))))
+        inner_fields = [s[1] for s in self._relevant() if s[0] == "Inner field"]
+        self.assertEqual(inner_fields, [
+            "Moves:\n2 ETH",
+            "As:\n0x" + ADDRESS.hex(),
+            "Token:\n0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        ])
+
+    def test_embedded_calls_inside_an_iteration_are_shown_blind(self):
+        signature = "multicall(bytes[] calls)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Multicall", "fields": [{
+                "path": "calls.[]", "label": "Call", "format": "calldata",
+                "params": {"calleePath": "@.to"}}]}}}}
+        call = bytes.fromhex("a9059cbb") + self._word(OTHER_ADDRESS) + self._word(1)
+        padded = call + bytes(-len(call) % 32)
+        element = self._word(len(call)) + padded
+        arguments = (self._word(32) + self._word(2) + self._word(64) +
+                     self._word(64 + len(element)) + element + element)
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        self._certified(program, arguments)
+        shown = [s for s in self._first_pages()
+                 if s[0] == "Blind signature" or s[0].startswith("Signer field")]
+        body = ("Call:\nTo 0x" + ADDRESS.hex() +
+                "\nFunction 0xa9059cbb\nData 68 bytes")
+        self.assertEqual(shown, [
+            ("Blind signature", "The inner call is not clear-signed"),
+            ("Signer field 1 of 2", body),
+            ("Blind signature", "The inner call is not clear-signed"),
+            ("Signer field 2 of 2", body),
+        ])
+
+    def test_a_fixed_index_into_a_short_array_fails_closed(self):
+        # Data-dependent: preload cannot know the array's length. The device
+        # refuses without a signature when it reaches the field.
+        signature = "swap(address[] path,uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Swap", "fields": [{
+                "path": "amount", "label": "Amount", "format": "tokenAmount",
+                "params": {"tokenPath": "path.[0]"}}]}}}}
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        arguments = self._word(64) + self._word(5) + self._word(0)
+        envelope = self._preload(program)
+        result, _, _, _ = self._walk(
+            self._audit_start(program, 4 + len(arguments)), envelope,
+            arguments=arguments)
+        self.assertIsInstance(result, proto.Failure)
+        self.assertEqual(result.message,
+                         "ERC-7730 calldata does not match definition")
+        self.assertNotIn(types.ButtonRequest_SignTx, self.button_codes)
+
+    def test_an_inner_value_the_calldata_does_not_carry_is_never_shown(self):
+        # Without amountPath the calldata does not say what the inner call
+        # moves: an inner definition that shows @.value is shown blind, while
+        # one that does not is still clear-signed.
+        _, arguments, outer_def, _ = self._exec_setup(amount_path=False)
+        shows_value = erc7730_compiler.compile_calldata(
+            {"display": {"formats": {self.TRANSFER: {
+                "intent": "Transfer", "fields": [
+                    {"path": "@.value", "label": "Moves", "format": "amount"}]}}}},
+            self.TRANSFER, 1, self.USDC)
+        self._exec_certified(arguments, erc7730.Catalog(
+            (outer_def, self._exec_inner_catalog(shows_value))))
+        shown = self._relevant()
+        self.assertIn(("Blind signature",
+                       "The inner call is not clear-signed"), shown)
+        self.assertNotIn("Inner field", [s[0] for s in shown])
+        _, arguments, outer_def, inner_def = self._exec_setup(amount_path=False)
+        self._exec_certified(arguments, erc7730.Catalog((outer_def, inner_def)))
+        self.assertIn("Inner field", [s[0] for s in self._relevant()])
+
+    def test_parallel_arrays_pair_by_index_and_a_short_one_fails_closed(self):
+        # ERC-7730 pairs a field's arrays by index: amounts[i] with tokens[i].
+        # When the second array is shorter the device stops without signing.
+        signature = "batch(address[] tokens,uint256[] amounts)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Batch", "fields": [{
+                "path": "amounts.[]", "label": "Amount", "format": "tokenAmount",
+                "params": {"tokenPath": "tokens.[]"}}]}}}}
+
+        def arguments(tokens):
+            return (self._word(64) + self._word(96 + 32 * len(tokens)) +
+                    self._word(len(tokens)) +
+                    b"".join(self._word(t) for t in tokens) +
+                    self._word(2) + self._word(7) + self._word(8))
+        both = self._titled_fields(descriptor, signature,
+                                   arguments([OTHER_ADDRESS, ADDRESS]))
+        self.assertEqual([t for t, _ in both],
+                         ["Signer field 1 of 2", "Signer field 2 of 2"])
+        self.assertTrue(both[0][1].endswith(OTHER_ADDRESS.hex()), both[0][1])
+        self.assertTrue(both[1][1].endswith(ADDRESS.hex()), both[1][1])
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        short = arguments([OTHER_ADDRESS])
+        envelope = self._preload(program)
+        result, _, _, _ = self._walk(
+            self._audit_start(program, 4 + len(short)), envelope,
+            arguments=short)
+        self.assertIsInstance(result, proto.Failure)
+        self.assertEqual(result.message,
+                         "ERC-7730 calldata does not match definition")
+        self.assertNotIn(types.ButtonRequest_SignTx, self.button_codes)

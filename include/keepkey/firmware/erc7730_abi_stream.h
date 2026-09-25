@@ -63,6 +63,9 @@ typedef struct {
   size_t located_length;
   size_t located_offset;
   bool capture_locate;
+  /* A captured bytes/string value longer than the capture buffer: only its
+   * length is kept (located_length); nothing of it is copied. */
+  bool capture_overflow;
   uint8_t capture_path_count;
   bool capture_enabled;
   bool capture_found;

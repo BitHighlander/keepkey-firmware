@@ -236,6 +236,12 @@ static size_t erc7730_part_end(const char* value, size_t offset,
     if (end + step - offset > budget) break;
     end += step;
   }
+  /* Split between lines when there is one: a number, an address or a token
+   * name is never cut across two screens unless its own line is too long. */
+  if (value[end]) {
+    for (size_t i = end; i > offset + 1u; i--)
+      if (value[i - 1u] == '\n') return i;
+  }
   return end;
 }
 
@@ -360,7 +366,6 @@ static Erc7730SignerResult erc7730_signer_address(
     EthereumSignTx tx;
     const bool restored =
         erc7730_tx_continuation_restore(&workflow->continuation, &tx) &&
-        tx.address_n_count != 0 &&
         tx.address_n_count <= sizeof(address_n) / sizeof(address_n[0]);
     if (restored) {
       count = tx.address_n_count;
@@ -395,15 +400,18 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
     /* A part of the interpolated intent: a device-owned numbered title and
      * no label. */
     char title[TITLE_CHAR_MAX];
-    snprintf(title, sizeof(title),
-             workflow->depth ? "Inner intent %u/%u" : "Intent %u/%u",
+    /* "i of n", never the pager's "i/n"; the signer's text and the device's
+     * values are titled apart. */
+    snprintf(title, sizeof(title), "%s%s %u of %u",
+             workflow->depth ? "Inner intent" : "Intent",
+             workflow->intent_value ? " value" : " text",
              (unsigned)workflow->intent_part, (unsigned)workflow->intent_parts);
     confirmed = confirm_erc7730_text(title, NULL, formatted);
   } else if (workflow->iterating) {
     /* One screen per element of the array, numbered by the device. */
     char title[TITLE_CHAR_MAX];
     snprintf(title, sizeof(title),
-             workflow->depth ? "Inner field %u/%u" : "Signer field %u/%u",
+             workflow->depth ? "Inner field %u of %u" : "Signer field %u of %u",
              (unsigned)workflow->iteration_index + 1u,
              (unsigned)workflow->iteration_count);
     confirmed = confirm_erc7730_field(title, workflow->label, formatted);
@@ -546,6 +554,7 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
  * 7.16: AdvancedMode is a hard gate; reject here instead (owner rule,
  * docs/security/HANDOFF-ERC7730-PHASE-E.md section 9a). */
 static void show_erc7730_embedded(Erc7730Workflow* workflow) {
+  workflow->inner_refused = false; /* consumed: the next call may fetch */
   const Erc7730Field* field = &workflow->field;
   char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
   if (!field->has_inner || !field->has_address ||
@@ -581,6 +590,32 @@ static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   memzero(formatted, sizeof(formatted));
 }
 
+/* A raw bytes/string value longer than the device captures. 7.15 shows its
+ * length under a blind-sign warning. 7.16: AdvancedMode is a hard gate;
+ * reject here instead (owner rule, HANDOFF-ERC7730-PHASE-E.md section 9a). */
+static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
+  char formatted[48];
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
+    fail_erc7730_field(
+        workflow,
+        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                 : FailureType_Failure_ActionCancelled,
+        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                 : _("Signing cancelled by user"));
+    return;
+  }
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
+               "The value is too long to show")) {
+    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                       _("Signing cancelled by user"));
+    return;
+  }
+  snprintf(formatted, sizeof(formatted), "Not shown: %lu bytes",
+           (unsigned long)length);
+  show_erc7730_field(workflow, formatted);
+}
+
 /* Record an argument's value and resolve the next argument. */
 static void deliver_erc7730_argument(Erc7730Workflow* workflow, uint8_t cls,
                                      const uint8_t* value, size_t length) {
@@ -614,6 +649,8 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
     } else {
       show_erc7730_address(workflow, capture.data + 12);
     }
+  } else if (workflow->field.kind == 1 && workflow->calldata.capture_overflow) {
+    show_erc7730_long_value(workflow, workflow->calldata.located_length);
   } else if (workflow->field.kind == 1) {
     char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
     if (!erc7730_workflow_format_captured_raw(workflow, formatted,
@@ -725,10 +762,11 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     /* Clear-sign the inner call when its definition exists: one level, not
      * inside an iteration, and only for inner bytes that hold a selector and
      * whole ABI words. Otherwise it is shown blind (7.15). */
-    const bool fetchable =
-        workflow->depth == 0 && !workflow->iterating && field->has_address &&
-        field->inner_selector_length == 4 && field->inner_length >= 4 &&
-        (field->inner_length - 4u) % 32u == 0;
+    const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
+                           !workflow->inner_refused && field->has_address &&
+                           field->inner_selector_length == 4 &&
+                           field->inner_length >= 4 &&
+                           (field->inner_length - 4u) % 32u == 0;
     if (!fetchable) {
       show_erc7730_embedded(workflow);
       return;
@@ -959,6 +997,18 @@ static void follow_erc7730_literal(Erc7730Workflow* workflow) {
   }
   if (field->kind == 1 || field->kind == 10) {
     show_erc7730_single(workflow, cls, literal.value, literal.length);
+  } else if ((cls == ERC7730_CLASS_UINT || cls == ERC7730_CLASS_UINT_SMALL) &&
+             (field->pending_role == 1 || field->pending_role == 17)) {
+    /* A signed constant used as the value: literals are minimal big-endian,
+     * values are 32-byte words, as a captured argument would be. */
+    uint8_t word[32] = {0};
+    if (literal.length <= sizeof(word))
+      memcpy(word + sizeof(word) - literal.length, literal.value,
+             literal.length);
+    memzero(&literal, sizeof(literal));
+    deliver_erc7730_argument(workflow, cls, word, sizeof(word));
+    memzero(word, sizeof(word));
+    return;
   } else {
     deliver_erc7730_argument(workflow, cls, literal.value, literal.length);
   }
@@ -1545,6 +1595,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       }
       workflow->intent_part = (uint8_t)workflow->display_index;
       workflow->intent_parts = (uint8_t)parts;
+      workflow->intent_value = instruction.opcode == 3;
       bool selected;
       if (instruction.opcode == 2) {
         selected = erc7730_workflow_select_string(workflow, instruction.a);

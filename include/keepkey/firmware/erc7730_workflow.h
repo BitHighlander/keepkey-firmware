@@ -120,6 +120,7 @@ typedef struct {
    * interpolated intent; such a part has no label. */
   uint8_t intent_part;
   uint8_t intent_parts;
+  bool intent_value; /* the part is a device-formatted value, not text */
   /* An iteration (display opcodes 7..8) in progress: its instructions, and
    * the element its "every element" path steps are bound to. */
   uint16_t iteration_begin;
@@ -149,6 +150,10 @@ typedef struct {
   bool outer_identity_confirmed;
   bool outer_intent_confirmed;
   bool resuming; /* the outer program restarts after its inner call */
+  /* The inner definition was refused (a shape this firmware does not run, or
+   * an unknown signer): the outer program is restored and re-runs the
+   * embedded field on the 7.15 blind path. */
+  bool inner_refused;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;

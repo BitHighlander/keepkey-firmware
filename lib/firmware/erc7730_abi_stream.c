@@ -314,8 +314,13 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
       s->capture.length = length < 4 ? length : 4;
       s->capture.node = f->node;
     } else if (f->capture) {
-      if (length > sizeof(s->capture.data)) return ERC7730_ABI_RESOURCE_LIMIT;
-      s->capture.length = length;
+      if (length > sizeof(s->capture.data)) {
+        s->capture_overflow = true;
+        s->located_length = length;
+        s->capture.length = 0;
+      } else {
+        s->capture.length = length;
+      }
       s->capture.node = f->node;
     }
     if (rounded == 0) {
@@ -335,7 +340,7 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
       const size_t done = s->located_length - f->payload_remaining;
       for (size_t i = 0; i < used && done + i < s->capture.length; i++)
         s->capture.data[done + i] = s->word[i];
-    } else if (f->capture && used != 0) {
+    } else if (f->capture && !s->capture_overflow && used != 0) {
       memcpy(s->capture.data + (s->capture.length - f->payload_remaining),
              s->word, used);
     }

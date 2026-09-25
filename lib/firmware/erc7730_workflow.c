@@ -591,10 +591,19 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
   if (workflow->calldata.capture_found) return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program) ||
-      workflow->calldata.capture.node >= program.node_count ||
-      !normalize_eip712_capture(&program.nodes[workflow->calldata.capture.node],
-                                value, value_len, &workflow->calldata.capture))
+      workflow->calldata.capture.node >= program.node_count)
     return false;
+  const Erc7730AbiNode* leaf = &program.nodes[workflow->calldata.capture.node];
+  if ((leaf->kind == ERC7730_ABI_BYTES || leaf->kind == ERC7730_ABI_STRING) &&
+      value_len > sizeof(workflow->calldata.capture.data)) {
+    /* Too long to capture: keep only its length, as a calldata pass does. */
+    workflow->calldata.capture_overflow = true;
+    workflow->calldata.located_length = value_len;
+    workflow->calldata.capture.length = 0;
+  } else if (!normalize_eip712_capture(leaf, value, value_len,
+                                       &workflow->calldata.capture)) {
+    return false;
+  }
   workflow->calldata.capture_found = true;
   return true;
 }
@@ -789,6 +798,7 @@ bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
   memzero(&workflow->field, sizeof(workflow->field));
   workflow->intent_part = 0;
   workflow->intent_parts = 0;
+  workflow->intent_value = false;
   erc7730_abi_stream_clear(&workflow->calldata);
   workflow->phase = ERC7730_WORKFLOW_READY;
   workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;
@@ -830,6 +840,13 @@ bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
                       workflow->field.inner_selector_length != 4)) ||
       (depth == 0 && workflow->depth != 1))
     return false;
+  if (depth == 1) {
+    /* What restores the outer program, whichever way the inner call ends. */
+    memcpy(workflow->outer_definition_id, workflow->identity.definition_id, 32);
+    workflow->outer_resume = workflow->display_index;
+    workflow->outer_identity_confirmed = workflow->identity_confirmed;
+    workflow->outer_intent_confirmed = workflow->intent_confirmed;
+  }
   workflow->fetch_depth = depth;
   workflow->fetch_offset = 0;
   workflow->fetch_total = 0;
@@ -872,6 +889,24 @@ Erc7730CatalogResult erc7730_workflow_fetch_feed(
   const Erc7730CatalogResult result = erc7730_catalog_preload_chunk(
       chunk->definition_id.bytes, chunk->offset, chunk->total_length,
       chunk->data.bytes, chunk->data.size, &next_offset, complete);
+  /* An inner definition that shows @.value needs the value from the signed
+   * calldata; with no amountPath there is none to show, only a default. */
+  const bool unsourced_value = result == ERC7730_CATALOG_COMPLETE &&
+                               !workflow->field.has_value &&
+                               erc7730_catalog_preloaded_reads_value();
+  if (workflow->fetch_depth == 1 &&
+      (result == ERC7730_CATALOG_BAD_PROGRAM ||
+       result == ERC7730_CATALOG_UNTRUSTED || unsourced_value)) {
+    /* The device cannot clear-sign this inner call: restore the outer
+     * definition (the slot now holds nothing) and show the call blind. */
+    erc7730_catalog_clear_preload();
+    if (complete) *complete = false;
+    workflow->inner_refused = true;
+    workflow->fetch_depth = 0;
+    workflow->fetch_offset = 0;
+    workflow->fetch_total = 0;
+    return ERC7730_CATALOG_MORE;
+  }
   if (result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) {
     fail(workflow);
     return result;
@@ -897,16 +932,12 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
         &identity, workflow->identity.chain_id, workflow->field.address,
         workflow->field.inner_selector);
     if (bound) {
-      memcpy(workflow->outer_definition_id, workflow->identity.definition_id,
-             32);
-      workflow->outer_resume = workflow->display_index;
-      workflow->outer_identity_confirmed = workflow->identity_confirmed;
-      workflow->outer_intent_confirmed = workflow->intent_confirmed;
       workflow->inner_offset = workflow->field.inner_offset;
       workflow->inner_length = workflow->field.inner_length;
       /* ERC-7730: inside the inner call @.to is the callee, @.value the value
-       * it moves (none: zero) and @.from whose authority it runs with (none:
-       * the outer contract). */
+       * it moves (without one, an inner definition that shows it was refused
+       * in erc7730_workflow_fetch_feed) and @.from whose authority it runs
+       * with (none: the outer contract). */
       memcpy(workflow->inner_to, workflow->field.address, 20);
       memzero(workflow->inner_value, sizeof(workflow->inner_value));
       if (workflow->field.has_value)
@@ -925,7 +956,11 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
     bound =
         memcmp(identity.definition_id, workflow->outer_definition_id, 32) == 0;
     if (bound) {
-      workflow->display_index = workflow->outer_resume;
+      /* Resume after the embedded field, or re-run it blind when its inner
+       * definition was refused (outer_resume >= 1: never the intent). */
+      workflow->display_index = workflow->inner_refused
+                                    ? (uint16_t)(workflow->outer_resume - 1u)
+                                    : workflow->outer_resume;
       workflow->depth = 0;
       workflow->identity_confirmed = workflow->outer_identity_confirmed;
       workflow->intent_confirmed = workflow->outer_intent_confirmed;
