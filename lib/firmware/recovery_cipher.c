@@ -734,15 +734,9 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  /* Cipher recovery decodes to BIP-39 words, so every word must
-   * auto-complete regardless of enforce_wordlist. Failing only when
-   * enforce_wordlist was set left the default (host-omitted) path storing a
-   * mistyped/garbage phrase as the seed and reporting success.
-   *
-   * alpha's storage_reset() on this path is deliberately NOT restored: #429
-   * removed the cancelled-recovery path that armed a host-only storage_reset()
-   * with no button press, and setup_abort() below is its replacement. */
-  if (!auto_completed) {
+  /* An enforced recovery must decode to BIP-39 words. Import mode deliberately
+   * accepts non-word phrases; the count/nonempty guard above still applies. */
+  if (enforce_wordlist && !auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");

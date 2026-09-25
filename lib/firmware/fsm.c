@@ -454,6 +454,124 @@ void fsm_init(void) {
   txin_dgst_initialize();
 }
 
+/* Reject continuation packets unless their signing workflow is active. */
+static bool reject_stale_continuation(const char* text) {
+  /* A decoded request always gets a terminal response. Silently dropping an
+   * inactive ACK leaves the host blocked forever, while dispatching it would
+   * let the handler replace an unrelated recovery screen. End signing, keep
+   * any setup ceremony armed, and reject on the wire without changing OLED
+   * state. */
+  fsm_abort_signing_workflows();
+  fsm_sendFailure(FailureType_Failure_UnexpectedMessage, text);
+  return false;
+}
+
+bool keepkey_before_message_dispatch(MessageType msg_id) {
+  switch (msg_id) {
+    case MessageType_MessageType_GetFeatures:
+    case MessageType_MessageType_GetCoinTable:
+    case MessageType_MessageType_Ping:
+      return true;
+    case MessageType_MessageType_TxAck:
+      if (!signing_is_active())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_EntropyAck:
+      if (!setup_isArmedAs(SETUP_RESET))
+        return reject_stale_continuation("Not in Reset mode");
+      return true;
+    case MessageType_MessageType_CharacterAck:
+      if (!setup_isArmedAs(SETUP_RECOVERY))
+        return reject_stale_continuation("Not in Recovery mode");
+      return true;
+#if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxAck:
+      if (!ethereum_signing_isInProgress())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_CosmosMsgAck:
+      if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
+        return reject_stale_continuation("Cosmos signing not in progress");
+      return true;
+    case MessageType_MessageType_OsmosisMsgAck:
+      if (!osmosis_signingIsInited())
+        return reject_stale_continuation("Osmosis signing not in progress");
+      return true;
+    case MessageType_MessageType_EosTxActionAck:
+      if (!eos_signingIsInited())
+        return reject_stale_continuation("EOS signing not in progress");
+      return true;
+    case MessageType_MessageType_ThorchainMsgAck:
+      if (!thorchain_signingIsInited())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_MayachainMsgAck:
+      if (!mayachain_signingIsInited())
+        return reject_stale_continuation("Signing not in progress");
+      return true;
+#endif
+#if ZCASH_PRIVACY
+    case MessageType_MessageType_ZcashPCZTAction:
+    case MessageType_MessageType_ZcashTransparentOutput:
+    case MessageType_MessageType_ZcashTransparentInput:
+      if (!zcash_signing_is_active())
+        return reject_stale_continuation("Zcash signing not in progress");
+      return true;
+#endif
+    default:
+      /* A new signing operation may replace an old signer, but it must never
+       * coexist with recovery/reset and borrow that ceremony's progress or
+       * blocking screens. Administrative requests still preserve ceremonies. */
+      switch (msg_id) {
+        case MessageType_MessageType_SignTx:
+        case MessageType_MessageType_SignMessage:
+        case MessageType_MessageType_SignIdentity:
+        case MessageType_MessageType_CipherKeyValue:
+        /* BIP-85 is available in both variants and starts a private-key
+         * derivation. It must end an armed setup ceremony in either build. */
+        case MessageType_MessageType_GetBip85Mnemonic:
+#if !BITCOIN_ONLY
+        case MessageType_MessageType_EthereumSignTx:
+        case MessageType_MessageType_EthereumSignMessage:
+        case MessageType_MessageType_EthereumSignTypedHash:
+        case MessageType_MessageType_NanoSignTx:
+        case MessageType_MessageType_CosmosSignTx:
+        case MessageType_MessageType_OsmosisSignTx:
+        case MessageType_MessageType_BinanceSignTx:
+        case MessageType_MessageType_EosSignTx:
+        case MessageType_MessageType_RippleSignTx:
+        case MessageType_MessageType_ThorchainSignTx:
+        case MessageType_MessageType_MayachainSignTx:
+        case MessageType_MessageType_TronSignTx:
+        case MessageType_MessageType_TronSignMessage:
+        case MessageType_MessageType_TronSignTypedHash:
+        case MessageType_MessageType_TonSignTx:
+        case MessageType_MessageType_TonSignMessage:
+        case MessageType_MessageType_SolanaSignTx:
+        case MessageType_MessageType_SolanaSignMessage:
+        case MessageType_MessageType_SolanaSignOffchainMessage:
+        case MessageType_MessageType_HiveSignTx:
+        case MessageType_MessageType_HiveSignAccountCreate:
+        case MessageType_MessageType_HiveSignAccountUpdate:
+        case MessageType_MessageType_HiveSignMessage:
+        case MessageType_MessageType_HiveSignOperations:
+        case MessageType_MessageType_ClearsignAttestorSign:
+#endif
+#if ZCASH_PRIVACY
+        case MessageType_MessageType_ZcashSignPCZT:
+#endif
+          setup_abort();
+          break;
+        default:
+          break;
+      }
+      fsm_abort_signing_workflows();
+      return true;
+  }
+}
+
+void keepkey_after_message_dispatch(void) { fsm_clearDerivedNode(); }
+
 void fsm_sendSuccess(const char* text) {
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);

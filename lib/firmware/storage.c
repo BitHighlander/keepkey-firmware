@@ -46,7 +46,9 @@
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#if !BITCOIN_ONLY
 #include "keepkey/firmware/signed_metadata.h"
+#endif
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
@@ -1640,6 +1642,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
+      if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return (underlying == (uint32_t)STORAGE_VERSION) ? SUS_Valid
                                                        : SUS_Updated;
     }
@@ -1944,7 +1947,9 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
      * session_clear(), the auto-lock, Initialize, ClearSession -- call
      * fsm_abort_workflows() themselves. */
     fsm_abort_signing_workflows();
+#if !BITCOIN_ONLY
     signed_metadata_clear_signers();
+#endif
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 

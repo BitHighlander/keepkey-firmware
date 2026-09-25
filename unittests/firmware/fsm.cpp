@@ -6,8 +6,10 @@ extern "C" {
 #include "keepkey/board/keepkey_flash.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
+#include "trezor/crypto/bip32.h"
 #include "trezor/crypto/bip39.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/ethereum.h"
@@ -74,6 +76,69 @@ TEST(Fsm, ZcashPrivacyWireSurfaceMatchesBuildVariant) {
               message_fields(NORMAL_MSG, type, OUT_MSG) != nullptr)
         << type;
   }
+}
+
+TEST(Fsm, Bip85WireSurfaceIsPresentInBothVariants) {
+  fsm_init();
+  EXPECT_NE(nullptr,
+            message_fields(NORMAL_MSG, MessageType_MessageType_GetBip85Mnemonic,
+                           IN_MSG));
+}
+
+TEST(Fsm, Bip85PrivateDisplayRefusesDebugMemoryReads) {
+  kk_test_board_init();
+  fsm_init();
+  DebugLinkFlashDump dump = {};
+  dump.has_address = dump.has_length = true;
+  dump.address = 0x20000000;
+  dump.length = 32;
+  bip85_set_private_display(true);
+  fsm_test_clearLastFailure();
+  fsm_msgDebugLinkFlashDump(&dump);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+  bip85_set_private_display(false);
+}
+
+TEST(Fsm, Bip85DerivationMatchesPublishedVectors) {
+  // BIP-85 BIP-39 English vectors, m/83696968'/39'/0'/words'/0'.
+  const char* root_xprv =
+      "xprv9s21ZrQH143K2LBWUUQRFXhucrQqBpKdRRxNVq2zBqsx8HVqFk2uYo8kmbaLL"
+      "HRdqtQpUm98uKfu3vca1LqdGhUtyoFnCNkfmXRyPXLjbKb";
+  HDNode root = {};
+  ASSERT_EQ(0, hdnode_deserialize_private(root_xprv, 0x0488ade4, SECP256K1_NAME,
+                                          &root, nullptr));
+  struct Vector {
+    uint32_t words;
+    const char* mnemonic;
+  };
+  const Vector vectors[] = {
+      {12,
+       "girl mad pet galaxy egg matter matrix prison refuse sense ordinary "
+       "nose"},
+      {18,
+       "near account window bike charge season chef number sketch tomorrow "
+       "excuse sniff circle vital hockey outdoor supply token"},
+      {24,
+       "puppy ocean match cereal symbol another shed magic wrap hammer bulb "
+       "intact gadget divorce twin tonight reason outdoor destroy simple truth "
+       "cigar social volcano"},
+  };
+  char child[256] = {};
+  for (const Vector& vector : vectors) {
+    ASSERT_TRUE(bip85_derive_from_root_for_test(&root, vector.words, 0, child,
+                                                sizeof(child)));
+    EXPECT_STREQ(vector.mnemonic, child);
+  }
+  ASSERT_TRUE(
+      bip85_derive_from_root_for_test(&root, 12, 1, child, sizeof(child)));
+  EXPECT_STRNE(vectors[0].mnemonic, child);
+  ASSERT_TRUE(
+      bip85_derive_from_root_for_test(&root, 12, 0, child, sizeof(child)));
+  EXPECT_STREQ(vectors[0].mnemonic, child);
+  EXPECT_FALSE(
+      bip85_derive_from_root_for_test(&root, 15, 0, child, sizeof(child)));
+  EXPECT_FALSE(bip85_derive_from_root_for_test(&root, 12, 0x80000000, child,
+                                               sizeof(child)));
 }
 
 #if !BITCOIN_ONLY
@@ -457,6 +522,22 @@ TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
 
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(signing_is_active());
+  layoutHomeForced();
+}
+
+TEST_F(AutoLockProgress, Bip85RequestEndsAnArmedCeremonyInBothVariants) {
+  signing_abort();
+  setup_abort();
+  for (SetupKind kind : {SETUP_RECOVERY, SETUP_RESET}) {
+    ASSERT_TRUE(setup_stage(false, "english", "bip85", 0, 0, false));
+    setup_arm(kind);
+    ASSERT_TRUE(setup_isArmedAs(kind));
+
+    EXPECT_TRUE(keepkey_before_message_dispatch(
+        MessageType_MessageType_GetBip85Mnemonic));
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_FALSE(signing_is_active());
+  }
   layoutHomeForced();
 }
 

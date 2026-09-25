@@ -152,7 +152,7 @@ KK_EXPECT_PERSIST_REJECTED=1 \
 KK_EXPECT_ENTROPY_BUDGET=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
+pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py /kkemu/unittests/host/test_p03_recovery.py --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
 # Merge in the native firmware unit results before validating or rendering.
