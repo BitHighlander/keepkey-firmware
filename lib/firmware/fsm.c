@@ -518,7 +518,9 @@ void fsm_abort_signing_workflows(void) {
   thorchain_signAbort();
   mayachain_signAbort();
   eos_signingAbort();
+#if ZCASH_PRIVACY
   zcash_signing_abort();
+#endif
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));

@@ -45,6 +45,11 @@ static void reject_tiny_message(FailureType code, const char* text) {
   tiny_handler_rejected = true;
 }
 
+void msg_reject_unexpected_tiny(void) {
+  reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                      "Unexpected message during protected wait");
+}
+
 #if DEBUG_LINK
 static msg_debug_link_get_state_t msg_debug_link_get_state;
 #endif
@@ -170,6 +175,15 @@ static bool pb_parse(const MessagesMap_t* entry, const uint8_t* msg,
   return pb_decode(&stream, entry->fields, buf);
 }
 
+/* Firmware supplies the authorization boundary; board-only targets use these
+ * defaults so they can share the transport dispatcher. */
+__attribute__((weak)) bool keepkey_before_message_dispatch(MessageType msg_id) {
+  (void)msg_id;
+  return true;
+}
+
+__attribute__((weak)) void keepkey_after_message_dispatch(void) {}
+
 /*
  * dispatch() - Process received message and jump to corresponding process
  * function
@@ -198,12 +212,17 @@ static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
     goto cleanup;
   }
 
+  if (entry->type == NORMAL_MSG &&
+      !keepkey_before_message_dispatch(entry->msg_id)) {
+    goto cleanup;
+  }
   entry->process_func(decode_buffer);
 
 cleanup:
   /* Parsed protobufs can contain PINs, passphrases, authenticator seeds, and
    * other credentials.  Handlers must copy any state they retain; do not keep
    * the source message resident until the next dispatch. */
+  if (entry->type == NORMAL_MSG) keepkey_after_message_dispatch();
   memzero(decode_buffer, sizeof(decode_buffer));
 }
 
@@ -226,7 +245,12 @@ static void raw_dispatch(const MessagesMap_t* entry, const uint8_t* msg,
   raw_msg.length = msg_size;
 
   if (entry->process_func) {
+    if (entry->type == NORMAL_MSG &&
+        !keepkey_before_message_dispatch(entry->msg_id)) {
+      return;
+    }
     ((raw_msg_handler_t)(void*)entry->process_func)(&raw_msg, frame_length);
+    if (entry->type == NORMAL_MSG) keepkey_after_message_dispatch();
   }
 }
 
@@ -366,6 +390,13 @@ static bool msg_tiny_flag = false;
 static CONFIDENTIAL uint8_t msg_tiny[MSG_TINY_BFR_SZ];
 static uint16_t msg_tiny_id = MSG_TINY_TYPE_ERROR; /* Default to error type */
 
+void msg_reject_short_tiny_packet(void) {
+  if (msg_tiny_flag) {
+    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
+                        "Malformed tiny packet");
+  }
+}
+
 _Static_assert(sizeof(msg_tiny) >= sizeof(Cancel), "msg_tiny too tiny");
 _Static_assert(sizeof(msg_tiny) >= sizeof(Initialize), "msg_tiny too tiny");
 _Static_assert(sizeof(msg_tiny) >= sizeof(PassphraseAck), "msg_tiny too tiny");
@@ -382,8 +413,7 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   memzero(msg_tiny, sizeof(msg_tiny));
   if (len != 64) {
-    reject_tiny_message(FailureType_Failure_UnexpectedMessage,
-                        "Malformed tiny packet");
+    msg_reject_short_tiny_packet();
     return;
   }
 
@@ -470,7 +500,9 @@ void handle_debug_usb_rx(const void* msg, size_t len) {
   if (msg_tiny_flag) {
     msg_read_tiny(msg, len);
   } else {
+    tiny_handler_rejected = false;
     usb_rx_helper(msg, len, DEBUG_MSG);
+    tiny_handler_rejected = false;
   }
 }
 #endif

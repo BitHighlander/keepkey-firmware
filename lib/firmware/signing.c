@@ -280,6 +280,12 @@ scriptSig Compute hash_witness
     Return witness
 */
 
+/* A validated signing stage renews the idle deadline before its response. */
+static void send_signing_request(void) {
+  note_workflow_progress();
+  msg_write(MessageType_MessageType_TxRequest, &resp);
+}
+
 void send_req_1_input(void) {
   D_DISPLAY_UTXO_STAGE("send_req_1_input", idx1);
   signing_stage = STAGE_REQUEST_1_INPUT;
@@ -288,7 +294,7 @@ void send_req_1_input(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx1;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_2_prev_meta(void) {
@@ -301,7 +307,7 @@ void send_req_2_prev_meta(void) {
   resp.details.tx_hash.size = input.prev_hash.size;
   memcpy(resp.details.tx_hash.bytes, input.prev_hash.bytes,
          input.prev_hash.size);
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_2_prev_input(void) {
@@ -316,7 +322,7 @@ void send_req_2_prev_input(void) {
   resp.details.tx_hash.size = input.prev_hash.size;
   memcpy(resp.details.tx_hash.bytes, input.prev_hash.bytes,
          resp.details.tx_hash.size);
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_2_prev_output(void) {
@@ -331,7 +337,7 @@ void send_req_2_prev_output(void) {
   resp.details.tx_hash.size = input.prev_hash.size;
   memcpy(resp.details.tx_hash.bytes, input.prev_hash.bytes,
          resp.details.tx_hash.size);
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_2_prev_extradata(uint32_t chunk_offset, uint32_t chunk_len) {
@@ -348,7 +354,7 @@ void send_req_2_prev_extradata(uint32_t chunk_offset, uint32_t chunk_len) {
   resp.details.tx_hash.size = input.prev_hash.size;
   memcpy(resp.details.tx_hash.bytes, input.prev_hash.bytes,
          resp.details.tx_hash.size);
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_3_output(void) {
@@ -359,7 +365,7 @@ void send_req_3_output(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx1;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_4_input(void) {
@@ -370,7 +376,7 @@ void send_req_4_input(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx2;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_4_output(void) {
@@ -381,7 +387,7 @@ void send_req_4_output(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx2;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_segwit_input(void) {
@@ -392,7 +398,7 @@ void send_req_segwit_input(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx1;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_segwit_witness(void) {
@@ -403,7 +409,7 @@ void send_req_segwit_witness(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx1;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_decred_witness(void) {
@@ -414,7 +420,7 @@ void send_req_decred_witness(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx1;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_5_output(void) {
@@ -425,14 +431,14 @@ void send_req_5_output(void) {
   resp.has_details = true;
   resp.details.has_request_index = true;
   resp.details.request_index = idx1;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void send_req_finished(void) {
   D_DISPLAY_UTXO_STAGE("send_req_finished", -1L);
   resp.has_request_type = true;
   resp.request_type = RequestType_TXFINISHED;
-  msg_write(MessageType_MessageType_TxRequest, &resp);
+  send_signing_request();
 }
 
 void phase1_request_next_input(void) {

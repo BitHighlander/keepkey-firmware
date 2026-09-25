@@ -29,6 +29,8 @@ case "$REPORT_BUILD_VARIANT" in
 esac
 REPORT_VARIANT_ARG="--build-variant=$REPORT_BUILD_VARIANT"
 echo "Expected CI build variant: $REPORT_BUILD_VARIANT"
+# Dice setup keeps every DebugLinkState field private through commit/abort.
+export KK_DICE_DEBUG_PRIVATE=1
 
 mkdir -p /kkemu/test-reports/python-keepkey
 mkdir -p /kkemu/test-reports/screenshots
@@ -150,7 +152,7 @@ KK_EXPECT_PERSIST_REJECTED=1 \
 KK_EXPECT_ENTROPY_BUDGET=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v $PYTEST_TIMEOUT_ARGS --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
+pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
 # Merge in the native firmware unit results before validating or rendering.

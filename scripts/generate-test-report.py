@@ -49,6 +49,15 @@ BASE_REQUIRED_CASES = {
     "ReviewHandlers.ResetWithoutBackupCommitsAndClearsScratch",
     "ReviewHandlers.ResetBackupCommitsAllStrengthsAndClearsScratch",
     "SetupCeremony.AbortScrubsEveryByteOfSharedMnemonicDisplayScratch",
+    "DiceCeremonyPrivacy.Mixed128DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.Mixed256DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.Only128DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.Only256DerivationAndDevicePagesUseIndependentFixture",
+    "DiceCeremonyPrivacy.AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart",
+    "DiceCeremonyPrivacy.AbortClearsCanvasBeforeDiagnosticsResume",
+    "test_msg_resetdevice.TestDeviceReset.test_reset_device_dice_mixed_is_verifiable",
+    "test_msg_resetdevice.TestDeviceReset.test_reset_device_dice_only_is_verifiable",
+    "test_p02_transport.TestP02Transport.test_mixed_entropy_pages_remain_private_and_cancel_clears_state",
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
 }
