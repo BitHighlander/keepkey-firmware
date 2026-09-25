@@ -27,7 +27,7 @@ Measured against the official registry at pinned commit `9f37816afde954ff6617fb5
 
 | Runtime supports | Formats fully signable |
 | --- | --- |
-| 7.15 today (raw only) | 94 (6%) |
+| 7.15 today (raw only) | 92 (6%) |
 | A: + addressName, tokenAmount | 853 (59%) |
 | B: + interpolated intent (opcodes 2/3) | 1,007 (69%) |
 | C: + amount, date, duration, unit, enum, nftName | 1,240 (86%) |
@@ -63,10 +63,20 @@ Create `include/keepkey/firmware/erc7730_capabilities.h` with a single `const` d
 
 - **Verifier.** `erc7730_catalog.c` rejects any program outside the table (formatters, display instructions, paths, conditions) with `ERC7730_CATALOG_BAD_PROGRAM`. The runtime then consults the *same* table, so the two cannot drift. At Phase 0 the table describes exactly today's raw subset. That is option 1 of the owner discussion, and it closes the mid-review failure immediately.
 - **Paths against the ABI.** The verifier already parses the ABI node table. Walk every referenced path against it at preload: tuple index within `child_count`; array index within `array_length` or negative within it; the target must be a leaf the formatter accepts. This closes the remaining residual: a path naming a nonexistent index is currently caught only when that field is reached.
-- **Host.** Give `tools/erc7730-validate` an executable mode driven by the same capability table. Add a python-keepkey registry test that asserts the *signable* count per phase (94 at Phase 0) next to the parse-conformance count. Each later phase raises the asserted number.
+- **Host.** Give `tools/erc7730-validate` an executable mode driven by the same capability table. Add a python-keepkey registry test that asserts the *signable* count per phase (92 at Phase 0) next to the parse-conformance count. Each later phase raises the asserted number.
 - **Test infrastructure (strongly recommended).** DebugLink exposes only OLED pixels, so wire tests cannot assert *what text* was shown. Add a DEBUG_LINK-only field to `DebugLinkState` carrying the last confirm title and body. That is a device-protocol change on the fork's canonical `master` per `docs/release/BRANCHING-SOP.md`, plus python-keepkey accessors. Every formatter phase below depends on exact-text assertions. Screen-count comparisons were shown to be weak in block 7: a count-only test passed on unfixed firmware.
 
-Exit: registry signable = 94 exactly. Every program outside the table is refused at preload, and native plus wire tests show it happens before any ButtonRequest. Full native, both variants' integration suites, both ARM and SRAM gates, cppcheck 2.13 and clang-format 20 all pass.
+Exit: registry signable = 92 exactly. Every program outside the table is refused at preload, and native plus wire tests show it happens before any ButtonRequest. Full native, both variants' integration suites, both ARM and SRAM gates, cppcheck 2.13 and clang-format 20 all pass.
+
+### Phase 0 status (2026-09-25): implemented in block 7a (PR #837)
+
+- `include/keepkey/firmware/erc7730_capabilities.h` / `lib/firmware/erc7730_capabilities.c` hold the table: display opcodes 1, 4, 10 (intent only at pc 0, fields without conditions), formatter kind 1 with one role-1 value argument, path source 1 with index steps, no conditions. The verifier (`erc7730_catalog.c`) and the runtime (`fsm_msg_ethereum.h`, `erc7730_workflow.c`) call the same predicates.
+- The preload verifier walks every value path against the ABI. It keeps the walk table in the delegate-record buffer (`cert[]`, unused from the ABI section until the bindings), two bytes per node, so the verifier grows by one byte and SRAM does not change: the full-product reserve is still 18,336 B.
+- The walk refuses a tuple index out of range, a step into a scalar, a fixed-array index outside `[-length, length)`, a dynamic-array index outside `[-64, 64)`, and a path that ends on a tuple or array.
+- `tools/erc7730-validate` runs the device verifier, so it is now executable-mode by construction. python-keepkey mirrors the table as `erc7730_compiler.DEVICE_CAPABILITIES`; `compile_calldata`/`compile_eip712` refuse non-executable programs with `DeviceCannotExecute` unless `executable_only=False`. The registry test asserts that the device and the compiler agree on all 1,440 compiled formats in both directions, and that exactly 92 are signable.
+- **Correction:** 92, not 94. Two 1inch `increaseEpoch(uint96)` formats show a raw field read from a container path (`@.from`, path source 2); the runtime never captured container values, so they would have failed mid-review. Container values (`@.from`, `@.to`, `@.value`) belong to a later phase.
+- DebugLink: device-protocol `DebugLinkState.confirm_title` (16) and `confirm_body` (17), filled from the last `confirm_helper()` call in DEBUG_LINK builds only; python-keepkey `DebugLink.read_confirm_text()`.
+- Tests: `Erc7730Catalog.PreloadRefuses*`, `PreloadWalksEveryPathAgainstTheAbi`, `RuntimePathPredicateMatchesTheTable`; wire tests `test_program_outside_capability_table_is_refused_at_preload`, `test_path_outside_abi_is_refused_at_preload`, `test_raw_field_screens_show_exact_text` in `scripts/emulator/test_stack07_regressions.py`. Negative controls: removing each verifier check fails a named unit test (the two formatter checks overlap and fail together); removing the capability checks or the walk and leaf check fails the matching wire test.
 
 ## 4. Formatter designs and trust sources
 
@@ -87,7 +97,7 @@ Every formatted string reaches the screen through `erc7730_format_text()` escapi
 
 ## 5. Phases (each is a separate PR stacked on block 7, with its own audit)
 
-- **Phase 0** (§3): capability table, preload enforcement, ABI path walk, executable-mode validator and signable-count test, DebugLink text capture. Signable: 94.
+- **Phase 0** (§3): capability table, preload enforcement, ABI path walk, executable-mode validator and signable-count test, DebugLink text capture. Signable: 92.
 - **Phase A: addressName and tokenAmount.** Firmware token and chain lookups; unknown-token handling; threshold message plus value; "(this wallet)" match. Signable: 853.
   - Adversarial tests:
     - the host claims token X while calldata names token Y;

@@ -152,6 +152,7 @@ class TestStack07Regressions(common.KeepKeyTest):
         response = self.client.call_raw(start)
         self.definition_requests = 0
         self.button_codes = []
+        self.screens = []
         buttons = 0
         calldata_passes = 0
         typed_passes = 0
@@ -159,6 +160,7 @@ class TestStack07Regressions(common.KeepKeyTest):
             if isinstance(response, proto.ButtonRequest):
                 buttons += 1
                 self.button_codes.append(response.code)
+                self.screens.append(self.client.debug.read_confirm_text())
                 self.client.capture_oled()
                 self.client.debug.press_yes() if buttons != cancel_button else self.client.debug.press_no()
                 response = self.client.call_raw(proto.ButtonAck())
@@ -538,3 +540,89 @@ class TestStack07Regressions(common.KeepKeyTest):
                          (baseline.signature_r, baseline.signature_s))
         self.assertEqual((passes, self.definition_requests), (1, 0))
         self.assertEqual(buttons, baseline_buttons)
+
+    # Phase 0 of the ERC-7730 formatter plan: the preload verifier and the
+    # runtime share one capability table, so a program the runtime cannot
+    # finish is refused before the first screen instead of after the user has
+    # approved the signer, intent and earlier fields.
+    def _audit_start(self, program, data_length=68):
+        return eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
+            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
+            data_length=data_length, data_initial_chunk=program[38:42])
+
+    def test_program_outside_capability_table_is_refused_at_preload(self):
+        signature = "audit(uint256 first,uint256 second)"
+        fields = {
+            "tokenAmount": {"path": "first", "label": "First value",
+                            "format": "tokenAmount",
+                            "params": {"token": "0x" + OTHER_ADDRESS.hex()}},
+            "date": {"path": "first", "label": "First value", "format": "date",
+                     "params": {"encoding": "timestamp"}},
+            "condition": {"path": "first", "label": "First value",
+                          "format": "raw", "visible": {"ifNotIn": [0]}},
+        }
+        self._load_signer()
+        for name, field in sorted(fields.items()):
+            descriptor = {"display": {"formats": {signature: {
+                "intent": "Audit action", "fields": [
+                    field,
+                    {"path": "second", "label": "Second value",
+                     "format": "raw"}]}}}}
+            with self.assertRaises(erc7730_compiler.DeviceCannotExecute):
+                erc7730_compiler.compile_calldata(
+                    descriptor, signature, 1, ADDRESS)
+            program = erc7730_compiler.compile_calldata(
+                descriptor, signature, 1, ADDRESS, executable_only=False)
+            result = self._raw_preload(self._envelope(program))
+            assert_failure(self, result, types.Failure_SyntaxError,
+                           "Invalid certified ERC-7730 definition")
+            # Nothing is left preloaded: the transaction takes the ordinary,
+            # uncertified path and never asks for a definition.
+            result, _, passes, _ = self._walk(self._audit_start(program))
+            self.assertIsInstance(result, eth.EthereumTxRequest, msg=name)
+            self.assertTrue(result.HasField("signature_r"), msg=name)
+            self.assertEqual((name, passes, self.definition_requests),
+                             (name, 1, 0))
+
+    def test_path_outside_abi_is_refused_at_preload(self):
+        signature = "audit(uint256 first,uint256 second)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Audit action", "fields": [
+                {"path": "second", "label": "Second value",
+                 "format": "raw"}]}}}}
+        program = bytearray(erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS))
+        # The single value path is (source 1, one step, index 1). Point it at
+        # a third argument the function does not have.
+        step = program.index(bytes([1, 1, 0xff, 0xff, 1, 0, 0, 0, 1]))
+        program[step + 8] = 2
+        self._load_signer()
+        result = self._raw_preload(self._envelope(bytes(program)))
+        assert_failure(self, result, types.Failure_SyntaxError,
+                       "Invalid certified ERC-7730 definition")
+
+    def test_raw_field_screens_show_exact_text(self):
+        signature = "audit(uint256 first,uint256 second)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Audit action", "fields": [
+                {"path": "first", "label": "First value", "format": "raw"},
+                {"path": "second", "label": "Second value",
+                 "format": "raw"}]}}}}
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        result, _, passes, _ = self._walk(self._audit_start(program), envelope)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertEqual(passes, 4)
+        certified = [screen for screen in self.screens if screen[0] in (
+            "Runtime signer", "Unverified data", "Contract action",
+            "Signer field")]
+        self.assertEqual(certified[1:], [
+            ("Unverified data", "NOT verified by KeepKey"),
+            ("Contract action", "Audit action"),
+            ("Signer field", "First value:\n42"),
+            ("Signer field", "Second value:\n7"),
+        ])
+        self.assertEqual(certified[0][0], "Runtime signer")
+        self.assertTrue(certified[0][1].startswith("Audit signer ("),
+                        certified[0][1])

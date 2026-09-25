@@ -1,4 +1,5 @@
 extern "C" {
+#include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_catalog.h"
 #include "keepkey/firmware/erc7730_program.h"
 #include "keepkey/firmware/storage.h"
@@ -188,6 +189,40 @@ std::vector<uint8_t> programWithPaths(const std::vector<uint8_t>& entries,
   p[resource + 4] = (uint8_t)(count >> 8);
   p[resource + 5] = (uint8_t)count;
   return p;
+}
+
+// Replace the ABI with `nodes` (9 bytes each) and declare its depth.
+std::vector<uint8_t> withAbi(std::vector<uint8_t> p,
+                             const std::vector<uint8_t>& nodes, uint8_t depth) {
+  std::vector<uint8_t> payload;
+  append16(payload, (uint16_t)(nodes.size() / 9));
+  payload.insert(payload.end(), nodes.begin(), nodes.end());
+  std::vector<uint8_t> encoded;
+  section(encoded, 2, payload);
+  const size_t old = sectionOffset(p, 2);
+  const uint32_t old_payload = ((uint32_t)p[old + 1] << 24) |
+                               ((uint32_t)p[old + 2] << 16) |
+                               ((uint32_t)p[old + 3] << 8) | p[old + 4];
+  p.erase(p.begin() + old, p.begin() + old + 5 + old_payload);
+  p.insert(p.begin() + old, encoded.begin(), encoded.end());
+  const size_t resource = sectionOffset(p, 9) + 5;
+  p[resource + 2] = (uint8_t)((nodes.size() / 9) >> 8);
+  p[resource + 3] = (uint8_t)(nodes.size() / 9);
+  p[resource + 16] = depth;
+  return p;
+}
+
+// One raw field reading path 0: the executable shape of this firmware.
+std::vector<uint8_t> rawFieldProgram(const std::vector<uint8_t>& path) {
+  auto p = programWithPaths(path, 1);
+  p = replaceTable(p, 6, {1, 0, 1, 1, 1, 0, 0}, 1);
+  return replaceTable(p, 7,
+                      {
+                          1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // intent
+                          4,  0, 0,    0,    0,    0,    0xff, 0xff,  // field
+                          10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,  // end
+                      },
+                      3);
 }
 
 std::vector<uint8_t> envelope(const std::vector<uint8_t>& program) {
@@ -601,39 +636,44 @@ TEST(Erc7730Catalog, ValidatesCanonicalUtf8StringTableIncrementally) {
 }
 
 TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
-  std::vector<uint8_t> entries = {
-      1, 2, 0xff, 0xff,                          // structured, two steps
-      1, 0, 0,    0,    0,                       // index 0
-      3, 1, 0xff, 0xff, 0xff, 0xec,              // slice [-20:]
-      2, 0, 0,    2,                             // @.to
-      1, 2, 0xff, 0xff, 1,    0,    0, 0, 1, 2,  // field 1 then all elements
-  };
-  auto p = programWithPaths(entries, 3);
+  // index 0 reaches the uint256 leaf: executable.
+  auto p = programWithPaths({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}, 1);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
-  entries = {1, 2, 0xff, 0xff, 3, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0};
-  p = programWithPaths(entries, 1);  // slice is not final
-  EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
-
-  entries = {1, 2, 0xff, 0xff, 2, 2};
-  p = programWithPaths(entries, 1);  // two full-array selectors
-  EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
-
-  entries = {2, 1, 0, 2, 1, 0, 0, 0, 0};
-  p = programWithPaths(entries, 1);  // container paths have no steps
-  EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
+  // Slices, whole-array steps, container and literal sources are not in the
+  // capability table: the runtime cannot capture them, so preload refuses.
+  const std::vector<std::vector<uint8_t>> refused = {
+      {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 3, 1, 0xff, 0xff, 0xff, 0xec},
+      {1, 1, 0xff, 0xff, 2},
+      {2, 0, 0, 2},
+      {3, 0, 0, 0},
+      {1, 2, 0xff, 0xff, 3, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0},
+      {1, 2, 0xff, 0xff, 2, 2},
+      {2, 1, 0, 2, 1, 0, 0, 0, 0},
+  };
+  for (const auto& entries : refused) {
+    p = programWithPaths(entries, 1);
+    EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
+  }
 }
 
 // Calldata and typed-data captures refuse ERC7730_ABI_MAX_DEPTH or more path
 // steps, so the preload verifier must too: a longer signed path would pass
 // preload and then fail after the user had approved earlier screens.
 TEST(Erc7730Catalog, PathStepLimitMatchesExecutionCaptures) {
+  // Seven nested tuples above a uint256: depth eight, the ABI maximum, and a
+  // seven-step path to the leaf, the capture maximum.
+  std::vector<uint8_t> nodes;
+  for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH - 1u; i++)
+    nodes.insert(nodes.end(), {8, 0, 0, 0, (uint8_t)(i + 1), 0, 1, 0, 0});
+  nodes.insert(nodes.end(), {1, 1, 0, 0, 0, 0, 0, 0, 0});
   for (uint8_t steps : {(uint8_t)(ERC7730_ABI_MAX_DEPTH - 1u),
                         (uint8_t)ERC7730_ABI_MAX_DEPTH}) {
     std::vector<uint8_t> entries = {1, steps, 0xff, 0xff};
     for (uint8_t i = 0; i < steps; i++)
       entries.insert(entries.end(), {1, 0, 0, 0, 0});
-    const auto p = programWithPaths(entries, 1);
+    const auto p =
+        withAbi(programWithPaths(entries, 1), nodes, ERC7730_ABI_MAX_DEPTH);
     EXPECT_EQ(feedAll(envelope(p), 23), steps < ERC7730_ABI_MAX_DEPTH
                                             ? ERC7730_CATALOG_UNTRUSTED
                                             : ERC7730_CATALOG_BAD_PROGRAM)
@@ -658,13 +698,14 @@ TEST(Erc7730Catalog, ValidatesCanonicalLiteralsAndConditions) {
   p = programWithTable(4, literals, 2);  // set 0 refers forward to literal 1
   EXPECT_EQ(feedAll(envelope(p), 13), ERC7730_CATALOG_BAD_PROGRAM);
 
+  // The runtime does not evaluate conditions, so any condition is refused;
+  // an empty condition table is still accepted.
+  static_assert(!ERC7730_CAP_CONDITIONS, "update this test with conditions");
+  p = programWithTable(5, {}, 0);
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
   std::vector<uint8_t> conditions = {1, 0xff, 0xff, 0xff, 0xff, 0, 0, 0};
   p = programWithTable(5, conditions, 1);
-  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
-
-  conditions[7] = 1;
-  p = programWithTable(5, conditions, 1);
-  EXPECT_EQ(feedAll(envelope(p), 13), ERC7730_CATALOG_BAD_PROGRAM);
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
@@ -995,9 +1036,10 @@ TEST(Erc7730Catalog, VerifierEnforcesReplayReaderDisplayLimit) {
   auto displayProgram = [](uint16_t count) {
     std::vector<uint8_t> display = {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
     for (uint16_t i = 0; i + 2u < count; i++)
-      display.insert(display.end(), {2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff});
+      display.insert(display.end(), {4, 0, 0, 0, 0, 0, 0xff, 0xff});
     display.insert(display.end(), {10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff});
-    return replaceTable(minimalProgram(), 7, display, count);
+    return replaceTable(rawFieldProgram({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}), 7,
+                        display, count);
   };
   auto reads = [](const std::vector<uint8_t>& p, uint16_t count) {
     Erc7730ProgramDisplay display{};
@@ -1067,4 +1109,175 @@ TEST(Erc7730Catalog, VerifierRejectsDuplicateDomainFieldLikeLoader) {
   p = withConstraints({2, 0, 4, 1, 1, 0, 0, 2, 0, 4, 1, 2, 0xff, 0xff}, 2);
   EXPECT_FALSE(loadProgram(p, 0, nullptr));
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+// Phase 0 of the ERC-7730 formatter plan: the preload verifier and the
+// runtime consult one capability table, so every shape the runtime cannot
+// execute is refused before the first screen. Each refusal below is paired
+// with the runtime predicate that would have refused it mid-review.
+TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
+  const std::vector<uint8_t> path = {1, 1, 0xff, 0xff, 1, 0, 0, 0, 0};
+  EXPECT_EQ(feedAll(envelope(rawFieldProgram(path)), 7),
+            ERC7730_CATALOG_UNTRUSTED);
+  const Erc7730DisplayInstruction runnable[] = {
+      {1, 0, 0, UINT16_MAX, UINT16_MAX},
+      {4, 0, 0, 0, UINT16_MAX},
+      {10, 0, UINT16_MAX, UINT16_MAX, UINT16_MAX},
+  };
+  EXPECT_TRUE(erc7730_cap_display(&runnable[0], 0));
+  EXPECT_TRUE(erc7730_cap_display(&runnable[1], 1));
+  EXPECT_TRUE(erc7730_cap_display(&runnable[2], 2));
+
+  struct Case {
+    std::vector<uint8_t> display;
+    uint16_t count;
+    Erc7730DisplayInstruction refused;
+    uint16_t pc;
+  };
+  const Case cases[] = {
+      // interpolated intent text and value
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 2, 0, 0, 0, 0xff, 0xff, 0xff,
+        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       3,
+       {2, 0, 0, UINT16_MAX, UINT16_MAX},
+       1},
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 3, 0, 0, 0, 0xff, 0xff, 0xff,
+        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       3,
+       {3, 0, 0, UINT16_MAX, UINT16_MAX},
+       1},
+      // a group around the field
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 5, 0, 0xff, 0xff, 0xff, 0xff, 0,
+        3, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 6, 0, 0, 1, 0xff, 0xff, 0xff, 0xff,
+        10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       5,
+       {5, 0, UINT16_MAX, UINT16_MAX, 3},
+       1},
+      // opcode 9
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 9, 0, 0xff, 0xff, 0, 0, 0xff,
+        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       3,
+       {9, 0, UINT16_MAX, 0, UINT16_MAX},
+       1},
+      // a second intent
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0xff, 0xff, 0xff,
+        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       3,
+       {1, 0, 0, UINT16_MAX, UINT16_MAX},
+       1},
+      // a field before the intent
+      {{4, 0, 0, 0, 0, 0, 0xff, 0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff},
+       2,
+       {4, 0, 0, 0, UINT16_MAX},
+       0},
+      // an end with no intent
+      {{10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       1,
+       {10, 0, UINT16_MAX, UINT16_MAX, UINT16_MAX},
+       0},
+  };
+  for (const auto& c : cases) {
+    const auto p = replaceTable(rawFieldProgram(path), 7, c.display, c.count);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)c.refused.opcode << "@" << c.pc;
+    EXPECT_FALSE(erc7730_cap_display(&c.refused, c.pc))
+        << (int)c.refused.opcode << "@" << c.pc;
+  }
+  // A field with a condition index: conditions are not executed.
+  const Erc7730DisplayInstruction conditional = {4, 0, 0, 0, 0};
+  EXPECT_FALSE(erc7730_cap_display(&conditional, 1));
+}
+
+TEST(Erc7730Catalog, PreloadRefusesFormatterKindsTheRuntimeCannotRun) {
+  const std::vector<uint8_t> path = {1, 1, 0xff, 0xff, 1, 0, 0, 0, 0};
+  Erc7730Formatter formatter = {};
+  formatter.argument_count = 1;
+  formatter.arguments[0] = {1, 1, 0};
+  formatter.kind = 1;
+  EXPECT_TRUE(erc7730_cap_formatter(&formatter));
+  for (uint8_t kind = 2; kind <= 14; kind++) {
+    auto p = replaceTable(rawFieldProgram(path), 6, {kind, 0, 1, 1, 1, 0, 0},
+                          1);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)kind;
+    formatter.kind = kind;
+    EXPECT_FALSE(erc7730_cap_formatter(&formatter)) << (int)kind;
+  }
+  // raw with a second, signer-supplied operand is not raw.
+  formatter.kind = 1;
+  formatter.argument_count = 2;
+  formatter.arguments[1] = {9, 3, 0};
+  EXPECT_FALSE(erc7730_cap_formatter(&formatter));
+  formatter.argument_count = 0;
+  EXPECT_FALSE(erc7730_cap_formatter(&formatter));
+}
+
+TEST(Erc7730Catalog, PreloadWalksEveryPathAgainstTheAbi) {
+  // (uint256 a, uint256[3] b, address[] c, (bool) d)
+  const std::vector<uint8_t> nodes = {
+      8, 0, 0, 0, 1, 0, 4, 0,    0,     // 0 root
+      1, 1, 0, 0, 0, 0, 0, 0,    0,     // 1 a
+      9, 0, 0, 0, 5, 0, 1, 0,    3,     // 2 b: uint256[3]
+      9, 0, 0, 0, 6, 0, 1, 0xff, 0xff,  // 3 c: address[]
+      8, 0, 0, 0, 7, 0, 1, 0,    0,     // 4 d: (bool)
+      1, 1, 0, 0, 0, 0, 0, 0,    0,     // 5 b[i]
+      3, 0, 0, 0, 0, 0, 0, 0,    0,     // 6 c[i]
+      4, 0, 0, 0, 0, 0, 0, 0,    0,     // 7 d.0
+  };
+  auto step = [](int32_t index) {
+    return std::vector<uint8_t>{1, (uint8_t)((uint32_t)index >> 24),
+                                (uint8_t)((uint32_t)index >> 16),
+                                (uint8_t)((uint32_t)index >> 8),
+                                (uint8_t)index};
+  };
+  struct Case {
+    std::vector<int32_t> steps;
+    bool executable;
+  };
+  const Case cases[] = {
+      {{0}, true},       {{4}, false},       {{-1}, false},
+      {{0, 0}, false},   {{1}, false},       {{1, 2}, true},
+      {{1, 3}, false},   {{1, -3}, true},    {{1, -4}, false},
+      {{2, 63}, true},   {{2, 64}, false},   {{2, -64}, true},
+      {{2, -65}, false}, {{3}, false},       {{3, 0}, true},
+      {{3, 1}, false},   {{3, 0, 0}, false},
+  };
+  for (const auto& c : cases) {
+    std::vector<uint8_t> path = {1, (uint8_t)c.steps.size(), 0xff, 0xff};
+    for (int32_t index : c.steps) {
+      const auto encoded = step(index);
+      path.insert(path.end(), encoded.begin(), encoded.end());
+    }
+    const auto p = withAbi(rawFieldProgram(path), nodes, 3);
+    EXPECT_EQ(feedAll(envelope(p), 5), c.executable
+                                           ? ERC7730_CATALOG_UNTRUSTED
+                                           : ERC7730_CATALOG_BAD_PROGRAM)
+        << c.steps.size() << ":" << c.steps[0];
+  }
+
+  // The argumentless root has no member to read.
+  const auto p = withAbi(rawFieldProgram({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}),
+                         {8, 0, 0, 0, 0, 0, 0, 0, 0}, 1);
+  EXPECT_EQ(feedAll(envelope(p), 5), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, RuntimePathPredicateMatchesTheTable) {
+  Erc7730Path path = {};
+  path.source = 1;
+  path.step_count = 1;
+  path.steps[0].opcode = 1;
+  EXPECT_TRUE(erc7730_cap_path(&path));
+  path.steps[0].opcode = 2;
+  EXPECT_FALSE(erc7730_cap_path(&path));
+  path.steps[0].opcode = 3;
+  EXPECT_FALSE(erc7730_cap_path(&path));
+  path.steps[0].opcode = 1;
+  path.step_count = ERC7730_ABI_MAX_DEPTH;
+  EXPECT_FALSE(erc7730_cap_path(&path));
+  path.step_count = 0;
+  EXPECT_FALSE(erc7730_cap_path(&path));
+  path.step_count = 1;
+  path.source = 3;
+  EXPECT_FALSE(erc7730_cap_path(&path));
 }

@@ -33,6 +33,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts.c
       erc7730_abi.c
       erc7730_abi_stream.c
+      erc7730_capabilities.c
       erc7730_catalog.c
       erc7730_condition.c
       erc7730_format.c

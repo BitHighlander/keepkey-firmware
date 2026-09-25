@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "keepkey/firmware/erc7730_capabilities.h"
 #include "trezor/crypto/memzero.h"
 
 #define ERC7730_ENVELOPE_FIXED_SIZE (4u + 1u + 1u + 4u + 1u + 2u + 64u + 1u)
@@ -157,8 +158,12 @@ static bool validate_abi_node(Erc7730CatalogVerifier* v, const uint8_t* node) {
 
   if (kind == 8 || kind == 9) {
     if (kind == 8 && child_count == 0) {
-      return v->abi_node_index == 0 && v->abi_node_count == 1 &&
-             first_child == 0 && array_length == 0;
+      if (v->abi_node_index != 0 || v->abi_node_count != 1 ||
+          first_child != 0 || array_length != 0)
+        return false;
+      v->cert[0] = 0x80; /* argumentless root: tuple, first_child 0 */
+      v->cert[1] = 0;
+      return true;
     }
     if (first_child <= v->abi_node_index || child_count == 0 ||
         first_child > v->abi_node_count ||
@@ -181,7 +186,56 @@ static bool validate_abi_node(Erc7730CatalogVerifier* v, const uint8_t* node) {
   } else if (first_child != 0 || child_count != 0 || array_length != 0) {
     return false;
   }
+  /* Keep what the path walk needs. The delegate record arrives only after the
+   * program and no section from the ABI up to the bindings uses cert[], so it
+   * holds the table: kind (10 = dynamic array) << 12 | first_child << 6 |
+   * (child count or fixed array length) - 1. */
+  const uint8_t stored_kind =
+      kind == 9 && array_length == UINT16_MAX ? 10 : kind;
+  const uint16_t extent = kind == 8   ? child_count
+                          : kind == 9 ? array_length
+                                      : 1;
+  const uint16_t packed = (uint16_t)((uint16_t)stored_kind << 12 |
+                                     (uint16_t)(first_child & 0x3fu) << 6 |
+                                     (uint16_t)((extent - 1u) & 0x3fu));
+  v->cert[2u * v->abi_node_index] = (uint8_t)(packed >> 8);
+  v->cert[2u * v->abi_node_index + 1u] = (uint8_t)packed;
   return true;
+}
+
+_Static_assert(2u * ERC7730_ABI_MAX_NODES <= ERC7730_DELEGATE_RECORD_LEN,
+               "ABI walk table must fit the delegate record buffer");
+
+static uint16_t abi_entry(const Erc7730CatalogVerifier* v, uint8_t node) {
+  return read_be16(v->cert + 2u * node);
+}
+
+/* Descend one index step from v->path_node, exactly as the calldata capture
+ * and the EIP-712 capture do; anything they would refuse is refused here. */
+static bool walk_path_index(Erc7730CatalogVerifier* v, int32_t index,
+                            bool whole_array) {
+  const uint16_t node_count = v->table_counts[1];
+  if (v->path_node >= node_count) return false;
+  const uint16_t entry = abi_entry(v, v->path_node);
+  const uint8_t kind = (uint8_t)(entry >> 12);
+  const uint8_t first_child = (uint8_t)((entry >> 6) & 0x3fu);
+  const uint32_t extent = (entry & 0x3fu) + 1u;
+  if (kind == 8) {
+    /* first_child 0 marks the argumentless root, which has no children. */
+    if (whole_array || first_child == 0 || index < 0 ||
+        (uint32_t)index >= extent)
+      return false;
+    v->path_node = (uint8_t)(first_child + (uint32_t)index);
+  } else if (kind == 9 || kind == 10) {
+    const uint32_t length = kind == 9 ? extent : ERC7730_ABI_MAX_ARRAY_ELEMENTS;
+    if ((index >= 0 && (uint32_t)index >= length) ||
+        (index < 0 && (uint32_t)(-(int64_t)index) > length))
+      return false;
+    v->path_node = first_child;
+  } else {
+    return false;
+  }
+  return v->path_node < node_count;
 }
 
 static bool consume_utf8(Erc7730CatalogVerifier* v, uint8_t byte) {
@@ -275,19 +329,25 @@ static bool consume_string_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   return true;
 }
 
-static void finish_path_step(Erc7730CatalogVerifier* v) {
+static bool finish_path_step(Erc7730CatalogVerifier* v) {
   v->path_step_index++;
   v->path_step_opcode = 0;
   v->path_step_remaining = 0;
   v->path_slice_flags = 0;
   if (v->path_step_index == v->path_step_count) {
+    /* The value must be a leaf the capture returns: never a tuple or array. */
+    if (v->path_node >= v->table_counts[1] ||
+        (abi_entry(v, v->path_node) >> 12) > ERC7730_ABI_STRING)
+      return false;
     v->entry_index++;
     v->field_received = 0;
     v->path_step_index = 0;
     v->path_step_count = 0;
     v->path_source = 0;
     v->path_full_seen = false;
+    v->path_node = 0;
   }
+  return true;
 }
 
 static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
@@ -312,8 +372,10 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     /* Execution captures refuse ERC7730_ABI_MAX_DEPTH or more steps (each
      * step descends one ABI level), so no longer path may pass preload. */
     if (v->path_source < 1 || v->path_source > 3 ||
+        (ERC7730_CAP_PATH_SOURCES & ERC7730_CAP_BIT(v->path_source)) == 0 ||
         v->path_step_count >= ERC7730_ABI_MAX_DEPTH)
       return false;
+    v->path_node = 0; /* every value path starts at the root tuple */
     if (v->path_source == 1) {
       if (source_index != UINT16_MAX || v->path_step_count == 0) return false;
     } else {
@@ -332,12 +394,16 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
 
   if (v->path_step_opcode == 0) {
     v->path_step_opcode = byte;
+    if (byte > 3 ||
+        (ERC7730_CAP_PATH_STEP_OPCODES & ERC7730_CAP_BIT(byte)) == 0)
+      return false;
     if (byte == 1) {
       v->path_step_remaining = 4;
     } else if (byte == 2) {
       if (v->path_full_seen) return false;
       v->path_full_seen = true;
-      finish_path_step(v);
+      if (!walk_path_index(v, 0, true)) return false;
+      return finish_path_step(v);
     } else if (byte == 3) {
       if (v->path_step_index + 1 != v->path_step_count) return false;
       /* A zero remaining count means the next byte is the slice flags. */
@@ -356,8 +422,13 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   }
 
   if (v->path_step_remaining == 0) return false;
-  if (--v->path_step_remaining == 0) finish_path_step(v);
-  return true;
+  if (v->path_step_opcode == 1)
+    v->sibling[8u - v->path_step_remaining] = byte; /* sibling[4..7] */
+  if (--v->path_step_remaining != 0) return true;
+  if (v->path_step_opcode == 1 &&
+      !walk_path_index(v, (int32_t)read_be32(v->sibling + 4), false))
+    return false;
+  return finish_path_step(v);
 }
 
 static void finish_literal(Erc7730CatalogVerifier* v) {
@@ -475,6 +546,7 @@ static bool consume_condition_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (v->section_offset == 2) {
       v->entry_count = read_be16(v->sibling);
       if (v->entry_count > 32 ||
+          (!ERC7730_CAP_CONDITIONS && v->entry_count != 0) ||
           v->section_remaining - 1u != (uint32_t)v->entry_count * 8u)
         return false;
       v->table_counts[4] = v->entry_count;
@@ -531,8 +603,11 @@ static uint32_t formatter_allowed_roles(uint8_t kind) {
 
 static bool finish_formatter(Erc7730CatalogVerifier* v) {
   const uint32_t roles = v->formatter_roles;
+  const uint32_t required =
+      erc7730_cap_formatter_required_roles(v->formatter_kind);
   if ((roles & FORMAT_ROLE_BIT(1)) == 0 ||
-      (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0)
+      (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0 ||
+      required == 0 || (roles & required) != required)
     return false;
   if ((v->formatter_kind == 3 && (roles & FORMAT_ROLE_BIT(2)) == 0) ||
       (v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
@@ -584,6 +659,8 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   const uint16_t index = read_be16(v->sibling + 2);
   if (role == 0 || role > 23 || role <= v->formatter_last_role || source == 0 ||
       source > 3 || (role == 1 && source != 1) ||
+      (erc7730_cap_argument_sources(v->formatter_kind, role) &
+       ERC7730_CAP_BIT(source)) == 0 ||
       (source == 1 && index >= v->table_counts[2]) ||
       (source == 2 && index >= v->table_counts[3]) ||
       (source == 3 && index >= v->table_counts[0]))
@@ -608,7 +685,10 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   const uint16_t b = read_be16(v->sibling + 4);
   const uint16_t c = read_be16(v->sibling + 6);
   const uint16_t pc = v->entry_index;
-  if (opcode < 1 || opcode > 10 || flags != 0) return false;
+  const Erc7730DisplayInstruction executable = {opcode, flags, a, b, c};
+  if (opcode < 1 || opcode > 10 || flags != 0 ||
+      !erc7730_cap_display(&executable, pc))
+    return false;
   switch (opcode) {
     case 1:
       return a < v->table_counts[0] && optional_index(b, v->table_counts[4]) &&

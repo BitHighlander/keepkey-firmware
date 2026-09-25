@@ -1,4 +1,5 @@
 
+#include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_workflow.h"
 
 /*
@@ -635,9 +636,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     if (workflow->display_stage == ERC7730_DISPLAY_NONE) {
-      if (instruction.opcode != 1 || instruction.flags != 0 ||
-          instruction.a == UINT16_MAX || instruction.b != UINT16_MAX ||
-          instruction.c != UINT16_MAX ||
+      if (instruction.opcode != 1 || !erc7730_cap_display(&instruction, 0) ||
           !erc7730_workflow_select_string(workflow, instruction.a)) {
         erc7730_workflow_abort(workflow);
         fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -649,10 +648,10 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       send_erc7730_definition_request();
       return;
     }
+    const bool executable =
+        erc7730_cap_display(&instruction, workflow->display_index);
     if (workflow->display_stage == ERC7730_DISPLAY_INSTRUCTION &&
-        instruction.opcode == 10 && instruction.flags == 0 &&
-        instruction.a == UINT16_MAX && instruction.b == UINT16_MAX &&
-        instruction.c == UINT16_MAX) {
+        instruction.opcode == 10 && executable) {
       if (workflow->typed_data) {
         const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
         if (ui != ERC7730_UI_OK) {
@@ -682,9 +681,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     if (workflow->display_stage != ERC7730_DISPLAY_INSTRUCTION ||
-        instruction.opcode != 4 || instruction.flags != 0 ||
-        instruction.a == UINT16_MAX || instruction.b == UINT16_MAX ||
-        instruction.c != UINT16_MAX) {
+        instruction.opcode != 4 || !executable) {
       erc7730_workflow_abort(workflow);
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       _("Unsupported ERC-7730 field instruction"));
@@ -742,9 +739,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     Erc7730Formatter formatter;
     if (workflow->display_stage != ERC7730_DISPLAY_FORMATTER ||
         !erc7730_workflow_selected_formatter(workflow, &formatter) ||
-        formatter.kind != 1 || formatter.flags != 0 ||
+        formatter.kind != 1 || !erc7730_cap_formatter(&formatter) ||
         formatter.argument_count != 1 || formatter.arguments[0].role != 1 ||
-        formatter.arguments[0].source != 1 ||
         !erc7730_workflow_select_path(workflow, formatter.arguments[0].index)) {
       memzero(&formatter, sizeof(formatter));
       erc7730_workflow_abort(workflow);

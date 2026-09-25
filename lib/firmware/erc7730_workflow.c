@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/erc7730_capabilities.h"
 #include "trezor/crypto/memzero.h"
 
 static Erc7730Workflow active_workflow;
@@ -414,9 +415,7 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
 bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
                                                 EthereumSignTx* tx,
                                                 const Erc7730Path* path) {
-  if (!workflow || !tx || !path || path->source != 1 || path->step_count == 0 ||
-      path->step_count >= ERC7730_ABI_MAX_DEPTH)
-    return false;
+  if (!workflow || !tx || !path || !erc7730_cap_path(path)) return false;
   int32_t components[ERC7730_ABI_MAX_DEPTH];
   for (uint8_t i = 0; i < path->step_count; i++) {
     if (path->steps[i].opcode != 1) return false;
@@ -439,8 +438,7 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
                                            const Erc7730Path* path) {
   if (!workflow || !path || !workflow->typed_data ||
-      workflow->phase != ERC7730_WORKFLOW_READY || path->source != 1 ||
-      path->step_count == 0 || path->step_count >= ERC7730_ABI_MAX_DEPTH)
+      workflow->phase != ERC7730_WORKFLOW_READY || !erc7730_cap_path(path))
     return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program))

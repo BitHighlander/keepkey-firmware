@@ -135,6 +135,7 @@ typedef struct {
   uint8_t path_step_remaining;
   uint8_t path_slice_flags;
   bool path_full_seen;
+  uint8_t path_node;
   uint8_t literal_kind;
   uint8_t literal_first;
   uint8_t literal_second;
