@@ -148,7 +148,8 @@ class TestStack07Regressions(common.KeepKeyTest):
             offset += len(data)
         return response
 
-    def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None):
+    def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None,
+              arguments=None):
         response = self.client.call_raw(start)
         self.definition_requests = 0
         self.button_codes = []
@@ -187,10 +188,12 @@ class TestStack07Regressions(common.KeepKeyTest):
                 response = self.client.call_raw(eth.EthereumTypedDataValueAck(value=value))
             elif isinstance(response, eth.EthereumTxRequest) and response.HasField("data_length"):
                 calldata_passes += 1
-                arguments = (43 if change_pass == calldata_passes else 42).to_bytes(32, "big")
-                arguments += (7).to_bytes(32, "big")
-                self.assertEqual(response.data_length, len(arguments))
-                response = self.client.call_raw(eth.EthereumTxAck(data_chunk=arguments))
+                data = arguments
+                if data is None:
+                    data = (43 if change_pass == calldata_passes else 42).to_bytes(32, "big")
+                    data += (7).to_bytes(32, "big")
+                self.assertEqual(response.data_length, len(data))
+                response = self.client.call_raw(eth.EthereumTxAck(data_chunk=data))
             else:
                 return response, buttons, calldata_passes, typed_passes
         self.fail("protocol did not terminate")
@@ -553,9 +556,8 @@ class TestStack07Regressions(common.KeepKeyTest):
     def test_program_outside_capability_table_is_refused_at_preload(self):
         signature = "audit(uint256 first,uint256 second)"
         fields = {
-            "tokenAmount": {"path": "first", "label": "First value",
-                            "format": "tokenAmount",
-                            "params": {"token": "0x" + OTHER_ADDRESS.hex()}},
+            "amount": {"path": "first", "label": "First value",
+                       "format": "amount"},
             "date": {"path": "first", "label": "First value", "format": "date",
                      "params": {"encoding": "timestamp"}},
             "condition": {"path": "first", "label": "First value",
@@ -626,3 +628,115 @@ class TestStack07Regressions(common.KeepKeyTest):
         self.assertEqual(certified[0][0], "Runtime signer")
         self.assertTrue(certified[0][1].startswith("Audit signer ("),
                         certified[0][1])
+
+    # Phase A: tokenAmount, addressName, @.from/@.to and signed constants.
+    # Asset facts come only from the firmware token table; an address is always
+    # shown in full; the signer's message sits beside the value.
+    USDC = bytes.fromhex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+    NATIVE = bytes.fromhex("ee" * 20)
+
+    def _field_screens(self, descriptor, signature, arguments):
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        start = self._audit_start(program, 4 + len(arguments))
+        result, _, _, _ = self._walk(start, envelope, arguments=arguments)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        # A body that pages is one confirmation under several ButtonRequests,
+        # each reporting the same text: count it once.
+        fields = []
+        for title, body in self.screens:
+            if title == "Signer field" and (not fields or fields[-1] != body):
+                fields.append(body)
+        return fields
+
+    @staticmethod
+    def _word(value):
+        if isinstance(value, bytes):
+            return bytes(12) + value
+        return value.to_bytes(32, "big")
+
+    def _token_screen(self, token, amount, params=None):
+        signature = "send(address token,uint256 amount)"
+        fields = [{"path": "amount", "label": "Amount", "format": "tokenAmount",
+                   "params": dict({"tokenPath": "token"}, **(params or {}))}]
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send", "fields": fields}}}}
+        return self._field_screens(descriptor, signature,
+                                   self._word(token) + self._word(amount))
+
+    def test_token_amount_uses_the_firmware_token_table(self):
+        self.assertEqual(self._token_screen(self.USDC, 1500000),
+                         ["Amount:\n1.5 USDC"])
+
+    def test_token_named_by_calldata_wins_over_the_hosts_claim(self):
+        # The transaction goes to ADDRESS and a host might call it USDC; the
+        # calldata names another token, which the firmware table does not know.
+        self.assertEqual(self._token_screen(OTHER_ADDRESS, 42), [
+            "Amount:\n42\nunknown token\n0x" + OTHER_ADDRESS.hex()])
+
+    def test_signer_label_cannot_name_an_unknown_token(self):
+        signature = "send(uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send", "fields": [{
+                "path": "amount", "label": "USDC amount",
+                "format": "tokenAmount",
+                "params": {"token": "0x" + OTHER_ADDRESS.hex()}}]}}}}
+        self.assertEqual(
+            self._field_screens(descriptor, signature, self._word(42)),
+            ["USDC amount:\n42\nunknown token\n0x" + OTHER_ADDRESS.hex()])
+
+    def test_threshold_message_is_shown_beside_the_exact_amount(self):
+        params = {"threshold": 1000000, "message": "Large amount"}
+        self.assertEqual(self._token_screen(self.USDC, 1500000, params),
+                         ["Amount:\nLarge amount\n1.5 USDC"])
+        self.assertEqual(self._token_screen(self.USDC, 999999, params),
+                         ["Amount:\n0.999999 USDC"])
+
+    def test_native_alias_shows_the_chains_native_asset(self):
+        params = {"nativeCurrencyAddress": ["0x" + self.NATIVE.hex()]}
+        self.assertEqual(
+            self._token_screen(self.NATIVE, 1500000000000000000, params),
+            ["Amount:\n1.5 ETH"])
+        # An address outside the alias set is not the native asset.
+        self.assertEqual(
+            self._token_screen(OTHER_ADDRESS, 1500000000000000000, params),
+            ["Amount:\n1500000000000000000\nunknown token\n0x" +
+             OTHER_ADDRESS.hex()])
+
+    def test_address_name_marks_only_the_signing_account(self):
+        signer = self.client.ethereum_get_address(PATH)
+        if not isinstance(signer, bytes):
+            signer = bytes.fromhex(signer[2:])
+        signature = "pay(address recipient)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Pay", "fields": [{
+                "path": "recipient", "label": "Recipient",
+                "format": "addressName"}]}}}}
+        from keepkeylib.signed_metadata import keccak256
+
+        def checksummed(address):
+            digest = keccak256(address.hex().encode("ascii")).hex()
+            return "0x" + "".join(
+                c.upper() if c.isalpha() and int(digest[i], 16) >= 8 else c
+                for i, c in enumerate(address.hex()))
+
+        self.assertEqual(
+            self._field_screens(descriptor, signature, self._word(signer)),
+            ["Recipient:\n" + checksummed(signer) + "\n(this wallet)"])
+        near = bytes(signer[:19]) + bytes([signer[19] ^ 1])
+        self.assertEqual(
+            self._field_screens(descriptor, signature, self._word(near)),
+            ["Recipient:\n" + checksummed(near)])
+
+    def test_containers_and_signed_constants(self):
+        signature = "audit(uint256 first,uint256 second)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Audit action", "fields": [
+                {"path": "@.to", "label": "Contract", "format": "addressName"},
+                {"value": "Audit protocol", "label": "Protocol"}]}}}}
+        self.assertEqual(
+            self._field_screens(descriptor, signature,
+                                self._word(42) + self._word(7)),
+            ["Contract:\n0x" + ADDRESS.hex(), "Protocol:\nAudit protocol"])

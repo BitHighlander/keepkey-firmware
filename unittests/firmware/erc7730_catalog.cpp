@@ -129,10 +129,9 @@ size_t sectionOffset(const std::vector<uint8_t>& p, uint8_t wanted) {
   return p.size();
 }
 
-std::vector<uint8_t> programWithTable(uint8_t type,
-                                      const std::vector<uint8_t>& entries,
-                                      uint16_t count) {
-  auto p = minimalProgram();
+std::vector<uint8_t> programWithTableFrom(std::vector<uint8_t> p, uint8_t type,
+                                          const std::vector<uint8_t>& entries,
+                                          uint16_t count) {
   std::vector<uint8_t> payload;
   append16(payload, count);
   payload.insert(payload.end(), entries.begin(), entries.end());
@@ -152,6 +151,12 @@ std::vector<uint8_t> programWithTable(uint8_t type,
   p[resource + (type - 1) * 2] = (uint8_t)(count >> 8);
   p[resource + (type - 1) * 2 + 1] = (uint8_t)count;
   return p;
+}
+
+std::vector<uint8_t> programWithTable(uint8_t type,
+                                      const std::vector<uint8_t>& entries,
+                                      uint16_t count) {
+  return programWithTableFrom(minimalProgram(), type, entries, count);
 }
 
 std::vector<uint8_t> replaceTable(std::vector<uint8_t> p, uint8_t type,
@@ -642,11 +647,21 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
 
   // Slices, whole-array steps, container and literal sources are not in the
   // capability table: the runtime cannot capture them, so preload refuses.
+  // @.from, @.to and a literal are executable value sources.
+  for (const auto& entries : std::vector<std::vector<uint8_t>>{
+           {2, 0, 0, 1}, {2, 0, 0, 2}, {3, 0, 0, 0}}) {
+    p = programWithPaths(entries, 1);
+    EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_UNTRUSTED);
+  }
+
+  // Slices, whole-array steps, the other containers and out-of-table literal
+  // indices are not executed, so preload refuses them.
   const std::vector<std::vector<uint8_t>> refused = {
       {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 3, 1, 0xff, 0xff, 0xff, 0xec},
       {1, 1, 0xff, 0xff, 2},
-      {2, 0, 0, 2},
-      {3, 0, 0, 0},
+      {2, 0, 0, 3},
+      {2, 0, 0, 4},
+      {3, 0, 0, 64},
       {1, 2, 0xff, 0xff, 3, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0},
       {1, 2, 0xff, 0xff, 2, 2},
       {2, 1, 0, 2, 1, 0, 0, 0, 0},
@@ -1197,12 +1212,14 @@ TEST(Erc7730Catalog, PreloadRefusesFormatterKindsTheRuntimeCannotRun) {
   formatter.kind = 1;
   EXPECT_TRUE(erc7730_cap_formatter(&formatter));
   for (uint8_t kind = 2; kind <= 14; kind++) {
+    // With only a uint256 value, no kind but raw is executable: tokenAmount
+    // lacks its token and addressName needs an address.
     auto p = replaceTable(rawFieldProgram(path), 6, {kind, 0, 1, 1, 1, 0, 0},
                           1);
     EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
         << (int)kind;
     formatter.kind = kind;
-    EXPECT_FALSE(erc7730_cap_formatter(&formatter)) << (int)kind;
+    EXPECT_EQ(erc7730_cap_formatter(&formatter), kind == 10) << (int)kind;
   }
   // raw with a second, signer-supplied operand is not raw.
   formatter.kind = 1;
@@ -1280,4 +1297,133 @@ TEST(Erc7730Catalog, RuntimePathPredicateMatchesTheTable) {
   path.step_count = 1;
   path.source = 3;
   EXPECT_FALSE(erc7730_cap_path(&path));
+}
+
+namespace {
+
+// f(address token, uint256 amount) with value paths 0 = token, 1 = amount,
+// 2 = literal 0 and 3 = @.to, plus `literals` and one formatter.
+std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
+                                  const std::vector<uint8_t>& literals = {},
+                                  uint16_t literal_count = 0) {
+  const std::vector<uint8_t> paths = {
+      1, 1, 0xff, 0xff, 1, 0, 0, 0, 0,  // token
+      1, 1, 0xff, 0xff, 1, 0, 0, 0, 1,  // amount
+      3, 0, 0,    0,                    // literal 0
+      2, 0, 0,    2,                    // @.to
+  };
+  auto p = withAbi(rawFieldProgram({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}),
+                   {8, 0, 0, 0, 1, 0, 2, 0, 0,   // (address, uint256)
+                    3, 0, 0, 0, 0, 0, 0, 0, 0,   //
+                    1, 1, 0, 0, 0, 0, 0, 0, 0},  //
+                   2);
+  p = replaceTable(p, 3, paths, 4);
+  if (literal_count) p = programWithTableFrom(p, 4, literals, literal_count);
+  return replaceTable(p, 6, formatter, 1);
+}
+
+}  // namespace
+
+// Phase A: tokenAmount, addressName, container and literal values. Every
+// argument is type-checked at preload against the class the runtime needs, so
+// a mistyped program is refused before the first screen. Each refusal below
+// has an accepted neighbour differing only in the offending byte.
+TEST(Erc7730Catalog, PreloadTypeChecksTokenAmountArguments) {
+  auto result = [](const std::vector<uint8_t>& formatter,
+                   const std::vector<uint8_t>& literals = {},
+                   uint16_t count = 0) {
+    return feedAll(envelope(tokenProgram(formatter, literals, count)), 11);
+  };
+  // value = amount, token = token argument
+  EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 0}),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 0, 2, 1, 0, 1}),
+            ERC7730_CATALOG_BAD_PROGRAM);  // swapped types
+  EXPECT_EQ(result({3, 0, 1, 1, 1, 0, 1}),
+            ERC7730_CATALOG_BAD_PROGRAM);  // no token
+  // token = @.to
+  EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 3}),
+            ERC7730_CATALOG_UNTRUSTED);
+  // token = literal address; a literal integer is not a token
+  const std::vector<uint8_t> address(20, 0x11);
+  std::vector<uint8_t> address_literal = {5, 0, 20};
+  address_literal.insert(address_literal.end(), address.begin(),
+                         address.end());
+  EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 2}, address_literal, 1),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 2}, {1, 0, 1, 7}, 1),
+            ERC7730_CATALOG_BAD_PROGRAM);
+
+  // threshold (role 7) is a literal integer; message (role 8) a string
+  auto literals = address_literal;
+  literals.insert(literals.end(), {1, 0, 1, 9});  // literal 1 = 9
+  EXPECT_EQ(result({3, 0, 4, 1, 1, 0, 1, 2, 1, 0, 0, 7, 2, 0, 1, 8, 3, 0, 0},
+                   literals, 2),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(result({3, 0, 4, 1, 1, 0, 1, 2, 1, 0, 0, 7, 2, 0, 0, 8, 3, 0, 0},
+                   literals, 2),
+            ERC7730_CATALOG_BAD_PROGRAM);  // threshold is an address
+
+  // native aliases (role 22): a set of at most ERC7730_CAP_ALIAS_SET_MAX
+  auto aliasSet = [&](uint16_t members) {
+    std::vector<uint8_t> out;
+    for (uint16_t i = 0; i < members; i++) out.insert(out.end(),
+        address_literal.begin(), address_literal.end());
+    out.insert(out.end(), {9, 0, (uint8_t)(2 + 2 * members), 0,
+                           (uint8_t)members});
+    for (uint16_t i = 0; i < members; i++) out.insert(out.end(), {0, (uint8_t)i});
+    return out;
+  };
+  for (uint16_t members : {(uint16_t)ERC7730_CAP_ALIAS_SET_MAX,
+                           (uint16_t)(ERC7730_CAP_ALIAS_SET_MAX + 1)}) {
+    EXPECT_EQ(result({3, 0, 3, 1, 1, 0, 1, 2, 1, 0, 0, 22, 2, 0,
+                      (uint8_t)members},
+                     aliasSet(members), (uint16_t)(members + 1)),
+              members <= ERC7730_CAP_ALIAS_SET_MAX
+                  ? ERC7730_CATALOG_UNTRUSTED
+                  : ERC7730_CATALOG_BAD_PROGRAM)
+        << members;
+  }
+}
+
+TEST(Erc7730Catalog, PreloadTypeChecksAddressNameAndRawLiterals) {
+  EXPECT_EQ(feedAll(envelope(tokenProgram({10, 0, 1, 1, 1, 0, 0})), 9),
+            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(feedAll(envelope(tokenProgram({10, 0, 1, 1, 1, 0, 1})), 9),
+            ERC7730_CATALOG_BAD_PROGRAM);  // a uint is not an address
+  EXPECT_EQ(feedAll(envelope(tokenProgram({10, 0, 1, 1, 1, 0, 3})), 9),
+            ERC7730_CATALOG_UNTRUSTED);  // @.to
+
+  // raw of a signed constant string (literal kind 4 -> string 0)
+  EXPECT_EQ(
+      feedAll(envelope(tokenProgram({1, 0, 1, 1, 1, 0, 2}, {4, 0, 2, 0, 0}, 1)),
+              9),
+      ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(
+      feedAll(envelope(tokenProgram({1, 0, 1, 1, 1, 0, 2}, {3, 0, 1, 0xaa}, 1)),
+              9),
+      ERC7730_CATALOG_BAD_PROGRAM);  // raw bytes literals are not executed
+}
+
+TEST(Erc7730Catalog, ContainersAreCalldataOnly) {
+  const std::vector<uint8_t> two_paths = {
+      1, 1, 0xff, 0xff, 1, 0, 0, 0, 0,  // token
+      1, 1, 0xff, 0xff, 1, 0, 0, 0, 1,  // amount
+  };
+  auto with_container = two_paths;
+  with_container.insert(with_container.end(), {2, 0, 0, 2});  // @.to
+  for (uint8_t kind :
+       {(uint8_t)ERC7730_DEFINITION_CALLDATA, (uint8_t)ERC7730_DEFINITION_EIP712}) {
+    auto control = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
+                                two_paths, 2);
+    auto p = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
+                          with_container, 3);
+    control[7] = p[7] = kind;
+    EXPECT_EQ(feedAll(envelope(control), 9), ERC7730_CATALOG_UNTRUSTED)
+        << (int)kind;
+    EXPECT_EQ(feedAll(envelope(p), 9), kind == ERC7730_DEFINITION_CALLDATA
+                                           ? ERC7730_CATALOG_UNTRUSTED
+                                           : ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)kind;
+  }
 }
