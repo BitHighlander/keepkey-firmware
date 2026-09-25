@@ -42,3 +42,44 @@ TEST(Recovery, WordlistLengths) {
     }
   }
 }
+
+extern "C" {
+void recovery_review_seed_scratch(void);
+bool recovery_review_scratch_empty(void);
+void setup_abort(void);
+void recovery_cipher_reset(void);
+bool recovery_review_delete_resync(const char*, const char*, bool, char*,
+                                   char*);
+}
+
+TEST(Recovery, DeleteKeepsTypedCipherCharactersNotTheCurrentMapping) {
+  char coded[12], decoded[12];
+  // "ab" remains of word "abc", typed as "qwe" under per-character ciphers.
+  EXPECT_FALSE(recovery_review_delete_resync("zoo ab", "qwe", false, coded,
+                                             decoded));
+  EXPECT_STREQ("qw", coded);  // recomputing from the identity would be "ab"
+  EXPECT_STREQ("ab", decoded);
+
+  // Stepping back over a space into a finished word: its typed characters
+  // were discarded, so the heuristic must not see a guessed coded prefix.
+  EXPECT_TRUE(recovery_review_delete_resync("zoo", "", false, coded, decoded));
+  EXPECT_STREQ("", coded);
+  EXPECT_STREQ("zoo", decoded);
+
+  // Once unknown, stays unknown until the word is emptied.
+  EXPECT_TRUE(recovery_review_delete_resync("zo", "x", true, coded, decoded));
+  EXPECT_STREQ("", coded);
+  EXPECT_FALSE(recovery_review_delete_resync("", "", true, coded, decoded));
+  EXPECT_STREQ("", decoded);
+}
+TEST(Recovery, AbortAndResetClearPreviousWordAndDisplayEquivalent) {
+  recovery_review_seed_scratch();
+  ASSERT_FALSE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  recovery_review_seed_scratch();
+  recovery_cipher_reset();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+}

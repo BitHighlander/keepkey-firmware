@@ -1,12 +1,5 @@
 cmake_minimum_required(VERSION 3.7.2)
 
-# CMP0079: allow target_link_libraries() to reference targets defined in
-# a different directory. Required so tools/emulator can add firmware libs
-# to kkemulator_dylib (defined in lib/emulator).
-if(POLICY CMP0079)
-  cmake_policy(SET CMP0079 NEW)
-endif()
-
 project(
   KeepKeyFirmware
   VERSION 7.14.3
@@ -19,17 +12,27 @@ set(BOOTLOADER_PATCH_VERSION 5)
 option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
+option(KK_BUILD_BOOTLOADER_TOOLS
+       "Build bootloader, bootloader updater, and bootstrap artifacts" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
+option(KK_ZCASH_PRIVACY "Build Zcash shielded privacy firmware" OFF)
+
+# The shielded firmware engine belongs to a later release slice. Reject the
+# requested variant here instead of silently producing a non-privacy image.
+if(KK_ZCASH_PRIVACY)
+  message(FATAL_ERROR
+      "KK_ZCASH_PRIVACY is not available in this foundation slice")
+endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
 # itself be compiled with -fPIC. macOS happens to be lenient and will produce
 # a working .dylib without it; Linux's link step against a non-PIC archive
 # fails with "recompile with -fPIC". Set this BEFORE add_subdirectory(lib)
-# below so all targets pick it up at definition time. CMP0079 (already set
-# above) lets us reach across directories to link them.
+# below so all targets pick it up at definition time. Shared-library links
+# stay in the target's defining directory for the minimum CMake version.
 if(KK_BUILD_DYLIB)
   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
@@ -86,6 +89,13 @@ endif()
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
   add_definitions(-DCONFIDENTIAL=)
+  # macOS/BSD declare strlcpy/strlcat in <string.h>; glibc (Linux) and MinGW
+  # (Windows) do not. Force-include the prototypes so the ~20 call sites build
+  # without -Werror=implicit-function-declaration (definitions come from
+  # lib/board/strlcpy.c + strlcat.c). Apple already has them in <string.h>.
+  if(NOT APPLE)
+    add_compile_options(-include ${CMAKE_SOURCE_DIR}/include/keepkey/board/bsd_compat.h)
+  endif()
 else()
   add_definitions(-DCONFIDENTIAL=__attribute__\(\(section\("confidential"\)\)\))
 endif()
@@ -137,6 +147,10 @@ add_definitions(-DBIP39_WORDLIST_PADDED=1)
 
 add_definitions(-DAES_128=1)
 
+# The later Zcash privacy slice will select its own AES table size. This
+# foundation build rejects that variant above and retains its current AES
+# selection.
+
 if(${KK_DEBUG_LINK})
   add_definitions(-DDEBUG_LINK=1)
 else()
@@ -153,6 +167,10 @@ else()
   add_definitions(-DBITCOIN_ONLY=0)
 endif()
 
+# The unavailable privacy variant was rejected above. Define the guard for
+# this foundation build under the ARM toolchain's -Wundef -Werror policy.
+add_definitions(-DZCASH_PRIVACY=0)
+
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
   add_definitions(-DDEBUG_ON)
   add_definitions(-DMEMORY_PROTECT=0)
@@ -162,7 +180,7 @@ elseif(
   OR "${CMAKE_BUILD_TYPE}" STREQUAL "")
   add_definitions(-DNDEBUG)
   add_definitions(-DMEMORY_PROTECT=1)
-  if(NOT ${KK_EMULATOR})
+  if(NOT ${KK_EMULATOR} AND KK_BUILD_BOOTLOADER_TOOLS)
     message(
       WARNING
         "*********************************************************************\n"
@@ -185,6 +203,12 @@ if(NOT ${KK_EMULATOR})
   link_directories(${LIBOPENCM3_PATH}/lib)
   include_directories(${LIBOPENCM3_PATH}/include)
 
+  # Emit per-function stack-frame sizes (.su files) on device builds. CI's
+  # SRAM budget gate (tools/check_sram_budget.py) reports the largest frames
+  # and fails when the linker-asserted stack reserve minus the largest frame
+  # leaves less than the configured margin. See tools/firmware/keepkey.ld.
+  add_compile_options(-fstack-usage)
+
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.
   file(WRITE ${CMAKE_BINARY_DIR}/ssp.c "")
@@ -202,7 +226,7 @@ add_subdirectory(deps/crypto)
 add_subdirectory(deps/qrenc)
 add_subdirectory(deps/sca-hardening)
 
-if(${KK_EMULATOR})
+if(${KK_EMULATOR} AND NOT WIN32)
   add_subdirectory(deps/googletest)
   add_subdirectory(unittests)
   if(${KK_BUILD_FUZZERS})
@@ -221,6 +245,33 @@ if(${KK_EMULATOR})
     COMMAND ${CMAKE_BINARY_DIR}/bin/board-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/board.xml
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
-            --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
+            --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml
+    DEPENDS firmware-unit board-unit crypto-unit)
+  if(TARGET zcash-crypto-unit)
+    add_test(test-zcash-crypto ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit)
+    add_dependencies(xunit zcash-crypto-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-crypto.xml)
+  endif()
+
+  if(TARGET zcash-display-unit)
+    add_test(test-zcash-display ${CMAKE_BINARY_DIR}/bin/zcash-display-unit)
+    add_dependencies(xunit zcash-display-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-display-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-display.xml)
+  endif()
+  if(KK_BUILD_DYLIB AND NOT WIN32)
+    find_package(Threads REQUIRED)
+    add_executable(emulator-unit unittests/emulator/lifecycle.cpp)
+    target_include_directories(emulator-unit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(emulator-unit gtest_main kkemulator_dylib Threads::Threads)
+    add_test(test-emulator ${CMAKE_BINARY_DIR}/bin/emulator-unit)
+    add_dependencies(xunit emulator-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/emulator-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/emulator.xml)
+  endif()
 
 endif()

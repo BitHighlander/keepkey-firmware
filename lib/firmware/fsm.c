@@ -35,6 +35,7 @@
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
 #include "keepkey/firmware/binance.h"
@@ -56,7 +57,10 @@
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
+#include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -91,6 +95,8 @@
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
+#include "messages-zcash.pb.h"
+#include "messages-hive.pb.h"
 
 #include <stdio.h>
 /* strnlen: the THORChain memo paths measure fixed arrays rather than
@@ -141,6 +147,13 @@ bool fsm_test_derivedNodeIsZero(void) {
    * false. Refuse here, loudly, before the user does the work -- a        \
    * ceremony allowed to run would end in storage_commit() declining to    \
    * write and the handler reporting success anyway. */                    \
+  if (storage_isFirmwareTooOld()) {                                        \
+    fsm_sendFailure(FailureType_Failure_Other,                             \
+                    "Wallet format requires newer firmware. "              \
+                    "Update firmware or wipe the device.");                \
+    layoutHome();                                                          \
+    return;                                                                \
+  }                                                                        \
   if (storage_isBitcoinOnlyLocked()) {                                     \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
@@ -171,6 +184,22 @@ bool fsm_test_derivedNodeIsZero(void) {
                     "Initialize or Cancel first.");           \
     layoutHome();                                             \
     return;                                                   \
+  }
+
+#define CHECK_STORAGE_WRITABLE                                      \
+  if (storage_isFirmwareTooOld()) {                                 \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Wallet format requires newer firmware. "       \
+                    "Update firmware or wipe the device.");         \
+    layoutHome();                                                   \
+    return;                                                         \
+  }                                                                 \
+  if (storage_isBitcoinOnlyLocked()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Device holds a bitcoin-only wallet. Wipe the " \
+                    "device to use multi-chain firmware.");         \
+    layoutHome();                                                   \
+    return;                                                         \
   }
 
 #define CHECK_PIN              \
@@ -322,7 +351,16 @@ void fsm_sendSuccess(const char* text) {
   msg_write(MessageType_MessageType_Success, resp);
 }
 
+#if defined(EMULATOR) && DEBUG_LINK
+static FailureType test_failure_code;
+void fsm_test_clearLastFailure(void) { test_failure_code = (FailureType)0; }
+FailureType fsm_test_lastFailureCode(void) { return test_failure_code; }
+#endif
+
 void fsm_sendFailure(FailureType code, const char* text) {
+#if defined(EMULATOR) && DEBUG_LINK
+  test_failure_code = code;
+#endif
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);
     reset_msg_stack = false;
@@ -361,6 +399,9 @@ void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
   fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
   /* Several abort routines -- Binance, Tendermint, Osmosis, THORChain,
      MAYAChain, EOS, Nano -- only clear state and touch no layout, so without
      this the approval screen of the transaction just cancelled stays on the
@@ -381,6 +422,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_crypto.h"
 #include "fsm_msg_debug.h"
 #if !BITCOIN_ONLY
+#include "fsm_msg_bip85.h"
 #include "fsm_msg_ethereum.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"

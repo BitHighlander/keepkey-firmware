@@ -31,6 +31,7 @@
    strings and address should be prefixed by 0x
 */
 
+#include <errno.h>
 #include <stdio.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -52,6 +53,20 @@ static int hex_nibble(char c) {
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   return -1;
+}
+
+/* "bytesN" (optionally "bytesN[...]") -> N in 1..32; 0 for anything else
+ * (bytes0, bytes01, bytes288). Array suffixes are rejected by parseVals. */
+static unsigned bytesn_width(const char* type) {
+  if (!type || strncmp(type, "bytes", 5) != 0) return 0;
+  const char* digits = type + 5;
+  if (*digits < '1' || *digits > '9') return 0;
+  unsigned width = 0;
+  for (; *digits && *digits != '['; ++digits) {
+    if (*digits < '0' || *digits > '9' || width > 32) return 0;
+    width = width * 10 + (unsigned)(*digits - '0');
+  }
+  return width <= 32 ? width : 0;
 }
 
 static bool decode_address(const char* string, uint8_t decoded[20]) {
@@ -105,13 +120,7 @@ int encodableType(const char* typeStr) {
     if (0 == strcmp(typeStr, "bytes")) {
       return BYTES;
     } else {
-      // parse out the length val
-      uint8_t byteTypeSize = (uint8_t)(strtol((typeStr + 5), NULL, 10));
-      if (byteTypeSize > 32) {
-        return NOT_ENCODABLE;
-      } else {
-        return BYTES_N;
-      }
+      return bytesn_width(typeStr) ? BYTES_N : NOT_ENCODABLE;
     }
   }
   if (0 == strcmp(typeStr, "bool")) {
@@ -278,46 +287,39 @@ int encString(const char* string, uint8_t* encoded) {
   return SUCCESS;
 }
 
-int encodeBytes(const char* string, uint8_t* encoded) {
-  struct SHA3_CTX byteCtx;
-  const char* valStrPtr = string + 2;
-  uint8_t valByte[1];
-  char byteStrBuf[3] = {0};
+/* Reject malformed hex before advancing through pairs or publishing output. */
+static bool valid_hex_bytes(const char* string) {
+  if (!string || string[0] != '0' || string[1] != 'x') return false;
+  const size_t length = strlen(string + 2);
+  if (length % 2) return false;
+  for (size_t i = 0; i < length; ++i) {
+    if (hex_nibble(string[2 + i]) < 0) return false;
+  }
+  return true;
+}
 
+int encodeBytes(const char* string, uint8_t* encoded) {
+  if (!valid_hex_bytes(string)) return GENERAL_ERROR;
+  struct SHA3_CTX byteCtx;
   sha3_256_Init(&byteCtx);
-  while (*valStrPtr != '\0') {
-    strncpy(byteStrBuf, valStrPtr, 2);
-    valByte[0] = (uint8_t)(strtol(byteStrBuf, NULL, 16));
-    sha3_Update(&byteCtx, (const unsigned char*)valByte,
-                (size_t)sizeof(uint8_t));
-    valStrPtr += 2;
+  for (const char* pair = string + 2; *pair; pair += 2) {
+    const uint8_t value =
+        (uint8_t)((hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]));
+    sha3_Update(&byteCtx, &value, 1);
   }
   keccak_Final(&byteCtx, encoded);
   return SUCCESS;
 }
 
 int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
-  char byteStrBuf[3] = {0};
-  unsigned ctr;
-
-  if (MAX_ENCBYTEN_SIZE < strlen(string)) {
+  const unsigned width = bytesn_width(typeT);
+  if (!width) return BYTESN_SIZE_ERROR;
+  if (!valid_hex_bytes(string) || strlen(string) != 2 + 2 * width)
     return BYTESN_STRING_ERROR;
-  }
-
-  // parse out the length val
-  uint8_t byteTypeSize = (uint8_t)(strtol((typeT + 5), NULL, 10));
-  if (32 < byteTypeSize) {
-    return BYTESN_SIZE_ERROR;
-  }
-  for (ctr = 0; ctr < 32; ctr++) {
-    // zero padding
-    encoded[ctr] = 0;
-  }
-  unsigned zeroFillLen = 32 - ((strlen(string) - 2 /* skip '0x' */) / 2);
-  // bytesN are zero padded on the right
-  for (ctr = zeroFillLen; ctr < 32; ctr++) {
-    strncpy(byteStrBuf, &string[2 + 2 * (ctr - zeroFillLen)], 2);
-    encoded[ctr - zeroFillLen] = (uint8_t)(strtol(byteStrBuf, NULL, 16));
+  memset(encoded, 0, 32);
+  for (unsigned i = 0; i < width; ++i) {
+    encoded[i] = (uint8_t)((hex_nibble(string[2 + 2 * i]) << 4) |
+                           hex_nibble(string[3 + 2 * i]));
   }
   return SUCCESS;
 }
@@ -480,6 +482,9 @@ int dsConfirm(void) {
 */
 int parseVals(const json_t* eip712Types, const json_t* jType,
               const json_t* nextVal, struct SHA3_CTX* msgCtx) {
+  if (!eip712Types || !jType || json_getType(jType) != JSON_ARRAY ||
+      !json_getName(jType) || !msgCtx)
+    return GENERAL_ERROR;
   json_t const *tarray, *pairs, *walkVals, *obTest;
   int ctr;
   const char* typeType = NULL;
@@ -511,12 +516,15 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
       if (NULL == (obTest = json_getSibling(pairs))) {
         return JSON_NO_PAIRS_SIB;
       }
-      if (NULL == (typeType = json_getValue(obTest))) {
+      if (json_getType(obTest) != JSON_TEXT ||
+          NULL == (typeType = json_getValue(obTest)) || !*typeType) {
         return JSON_TYPE_T_NOVAL;
       }
       walkVals = nextVal;
       while (0 != walkVals) {
-        if (0 == strcmp(json_getName(walkVals), typeName)) {
+        const char* value_name = json_getName(walkVals);
+        if (!value_name) return GENERAL_ERROR;
+        if (0 == strcmp(value_name, typeName)) {
           valStr = json_getValue(walkVals);
           break;
         } else {
@@ -525,6 +533,68 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         }
       }
 
+      if (!walkVals) return JSON_TYPE_WNOVAL;
+      const jsonType_t value_type = json_getType(walkVals);
+      const bool array_type = typeType[strlen(typeType) - 1] == ']';
+      const bool text_type = strncmp(typeType, "address", 7) == 0 ||
+                             strncmp(typeType, "string", 6) == 0 ||
+                             strncmp(typeType, "bytes", 5) == 0;
+      const bool integer_type =
+          strncmp(typeType, "int", 3) == 0 || strncmp(typeType, "uint", 4) == 0;
+      const bool boolean_type = strcmp(typeType, "bool") == 0;
+      /* json_t overlays scalar text and container children. Never pass a
+       * container's child pointer to strlen/strtoll or traverse scalar text
+       * as though it were a list of json_t nodes. */
+      if (array_type) {
+        if (value_type != JSON_ARRAY) return GENERAL_ERROR;
+        const char* bracket = strchr(typeType, '[');
+        if (!bracket) return GENERAL_ERROR;
+        const char* size_text = bracket + 1;
+        uint32_t declared = 0;
+        const bool fixed_size = *size_text != ']';
+        for (; *size_text && *size_text != ']'; ++size_text) {
+          if (*size_text < '0' || *size_text > '9' ||
+              declared > (UINT32_MAX - 9) / 10)
+            return GENERAL_ERROR;
+          declared = declared * 10 + (uint32_t)(*size_text - '0');
+        }
+        if (*size_text != ']' || size_text[1] || (fixed_size && !declared))
+          return GENERAL_ERROR;
+        if (fixed_size) {
+          uint32_t actual = 0;
+          for (const json_t* item = json_getChild(walkVals); item;
+               item = json_getSibling(item))
+            ++actual;
+          if (actual != declared) return GENERAL_ERROR;
+        }
+        if ((strncmp(typeType, "address", 7) == 0 && bracket != typeType + 7) ||
+            (strncmp(typeType, "string", 6) == 0 && bracket != typeType + 6))
+          return GENERAL_ERROR;
+        /* Validate every address before showing any screen for the array. */
+        if (strncmp(typeType, "address", 7) == 0) {
+          for (const json_t* item = json_getChild(walkVals); item;
+               item = json_getSibling(item)) {
+            if (json_getType(item) != JSON_TEXT) return GENERAL_ERROR;
+            errRet = encAddress(json_getValue(item), encBytes);
+            if (SUCCESS != errRet) return errRet;
+          }
+        }
+      } else if (text_type) {
+        if (value_type != JSON_TEXT) return GENERAL_ERROR;
+        if ((strncmp(typeType, "address", 7) == 0 &&
+             strcmp(typeType, "address")) ||
+            (strncmp(typeType, "string", 6) == 0 && strcmp(typeType, "string")))
+          return GENERAL_ERROR;
+      } else if (integer_type) {
+        if (value_type != JSON_TEXT && value_type != JSON_INTEGER)
+          return GENERAL_ERROR;
+      } else if (boolean_type) {
+        if ((value_type != JSON_BOOLEAN && value_type != JSON_TEXT) ||
+            (strcmp(valStr, "true") != 0 && strcmp(valStr, "false") != 0))
+          return GENERAL_ERROR;
+      } else if (value_type != JSON_OBJ) {
+        return GENERAL_ERROR;
+      }
       bool hasValue = (JSON_TEXT == json_getType(walkVals) ||
                        JSON_INTEGER == json_getType(walkVals));
       errRet = confirmName(typeName, hasValue);
@@ -532,10 +602,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
         return errRet;
       }
 
-      if (walkVals == 0) {
-        return JSON_TYPE_WNOVAL;
-      } else {
-        if (0 == strncmp("address", typeType, strlen("address") - 1)) {
+      {  // walkVals is non-NULL: refused above, before any screen
+        if (0 == strncmp("address", typeType, strlen("address"))) {
           if (']' == typeType[strlen(typeType) - 1]) {
             // array of addresses
             json_t const* addrVals = json_getChild(walkVals);
@@ -561,6 +629,11 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
             keccak_Final(&valCtx, encBytes);
           } else {
+            /* Never show the user a value the encoder will reject. */
+            errRet = encAddress(valStr, encBytes);
+            if (SUCCESS != errRet) {
+              return errRet;
+            }
             if (ds_vals) {
               marshallDsVals(valStr);
             } else {
@@ -569,19 +642,16 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 return errRet;
               }
             }
-            errRet = encAddress(valStr, encBytes);
-            if (SUCCESS != errRet) {
-              return errRet;
-            }
           }
 
-        } else if (0 == strncmp("string", typeType, strlen("string") - 1)) {
+        } else if (0 == strncmp("string", typeType, strlen("string"))) {
           if (']' == typeType[strlen(typeType) - 1]) {
             // array of strings
             json_t const* stringVals = json_getChild(walkVals);
             uint8_t strEncBytes[32];
             sha3_256_Init(&valCtx);  // hash of concatenated encoded strings
             while (0 != stringVals) {
+              if (json_getType(stringVals) != JSON_TEXT) return GENERAL_ERROR;
               // just walk the string values assuming, for fixed sizes, all
               // values are there.
               if (ds_vals) {
@@ -615,11 +685,44 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             }
           }
 
-        } else if ((0 == strncmp("uint", typeType, strlen("uint") - 1)) ||
-                   (0 == strncmp("int", typeType, strlen("int") - 1))) {
+        } else if ((0 == strncmp("uint", typeType, 4)) ||
+                   (0 == strncmp("int", typeType, 3))) {
           if (']' == typeType[strlen(typeType) - 1]) {
             return INT_ARRAY_ERROR;
           } else {
+            const bool is_unsigned = typeType[0] == 'u';
+            const char* width_text = typeType + (is_unsigned ? 4 : 3);
+            unsigned width = 0;
+            if (!hasValue || !valStr || *width_text < '1' ||
+                *width_text > '9') {
+              return GENERAL_ERROR;
+            }
+            for (; *width_text; ++width_text) {
+              if (*width_text < '0' || *width_text > '9' || width > 256) {
+                return GENERAL_ERROR;
+              }
+              width = width * 10 + (unsigned)(*width_text - '0');
+            }
+            if (width < 8 || width > 256 || width % 8) return GENERAL_ERROR;
+            // all int strings are assumed to be base 10 and fit into 64 bits
+            char* endptr = NULL;
+            errno = 0;
+            long long intVal = strtoll(valStr, &endptr, 10);
+            if (errno == ERANGE || endptr == valStr || *endptr != '\0') {
+              return GENERAL_ERROR;
+            }
+            if (is_unsigned && intVal < 0) {
+              return GENERAL_ERROR;
+            }
+            if (width < 64) {
+              if (is_unsigned) {
+                if ((uint64_t)intVal >= (UINT64_C(1) << width))
+                  return GENERAL_ERROR;
+              } else {
+                const int64_t bound = INT64_C(1) << (width - 1);
+                if (intVal < -bound || intVal >= bound) return GENERAL_ERROR;
+              }
+            }
             if (ds_vals) {
               marshallDsVals(valStr);
             } else {
@@ -628,12 +731,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 return errRet;
               }
             }
-            uint8_t negInt = 0;  // 0 is positive, 1 is negative
-            if (0 == strncmp("int", typeType, strlen("int") - 1)) {
-              if (*valStr == '-') {
-                negInt = 1;
-              }
-            }
+            /* strtoll accepts whitespace and signed zero. Derive padding
+             * from the parsed value, not the first character of its text. */
+            const bool negInt = intVal < 0;
             // parse out the length val
             for (ctr = 0; ctr < 32; ctr++) {
               if (negInt) {
@@ -644,8 +744,6 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 encBytes[ctr] = 0;
               }
             }
-            // all int strings are assumed to be base 10 and fit into 64 bits
-            long long intVal = strtoll(valStr, NULL, 10);
             // Needs to be big endian, so add to encBytes appropriately
             encBytes[24] = (intVal >> 56) & 0xff;
             encBytes[25] = (intVal >> 48) & 0xff;
@@ -662,6 +760,15 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             return BYTESN_ARRAY_ERROR;
           } else {
             // This could be 'bytes', 'bytes1', ..., 'bytes32'
+            /* Never show the user a value the encoder will reject. */
+            if (0 == strcmp(typeType, "bytes")) {
+              errRet = encodeBytes(valStr, encBytes);
+            } else {
+              errRet = encodeBytesN(typeType, valStr, encBytes);
+            }
+            if (SUCCESS != errRet) {
+              return errRet;
+            }
             if (ds_vals) {
               marshallDsVals(valStr);
             } else {
@@ -670,21 +777,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 return errRet;
               }
             }
-            if (0 == strcmp(typeType, "bytes")) {
-              errRet = encodeBytes(valStr, encBytes);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-
-            } else {
-              errRet = encodeBytesN(typeType, valStr, encBytes);
-              if (SUCCESS != errRet) {
-                return errRet;
-              }
-            }
           }
 
-        } else if (0 == strncmp("bool", typeType, strlen(typeType))) {
+        } else if (boolean_type) {
           if (']' == typeType[strlen(typeType) - 1]) {
             return BOOL_ARRAY_ERROR;
           } else {
@@ -753,6 +848,7 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
 
             json_t const* udefVals = json_getChild(walkVals);
             while (0 != udefVals) {
+              if (json_getType(udefVals) != JSON_OBJ) return GENERAL_ERROR;
               sha3_256_Init(&eleCtx);
               sha3_Update(&eleCtx, (const unsigned char*)encBytes, 32);
               if (STACK_GOOD != (errRet = memcheck(STACK_SIZE_GUARD))) {

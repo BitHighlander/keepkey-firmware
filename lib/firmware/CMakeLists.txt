@@ -22,6 +22,7 @@ set(sources
 # Non-Bitcoin coin families -- excluded from the bitcoin-only image.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
+      bip85.c
       binance.c
       eip712.c
       eos.c
@@ -37,6 +38,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts/zxtransERC20.c
       ethereum_contracts/zxswap.c
       ethereum_tokens.c
+      signed_metadata.c
       mayachain.c
       nano.c
       osmosis.c

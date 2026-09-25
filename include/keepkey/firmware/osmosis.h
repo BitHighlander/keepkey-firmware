@@ -68,6 +68,12 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
                                  const char* token_in_denom,
                                  const char* token_out_min_amount);
 
+#define OSMOSIS_PRECISION 6
+
+// Longest amount a confirm screen renders: the digits, a point, a space and
+// the longest denom a message can carry.
+#define OSMOSIS_AMOUNT_STR_LEN 103
+
 bool osmosis_signTxFinalize(uint8_t* public_key, uint8_t* signature);
 bool osmosis_signingIsInited(void);
 bool osmosis_signingIsFinished(void);

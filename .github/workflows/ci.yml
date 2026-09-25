@@ -435,6 +435,22 @@ jobs:
               find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T -; \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
+      - name: Enforce firmware-only 7.15 artifacts (${{ matrix.variant }})
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          outputs = Path("bin")
+          forbidden = sorted(
+              p.name for p in outputs.iterdir()
+              if p.is_file() and p.name.startswith(
+                  ("bootloader.", "blupdater.", "bootstrap.")))
+          if forbidden:
+              raise SystemExit(
+                  "C-2 forbids bootloader/updater/bootstrap artifacts: "
+                  + ", ".join(forbidden))
+          PY
+
       # SRAM budget gate — RC7's zcash-privacy variant hard-faulted on boot
       # because static SRAM left an 11.2 KB gap while msg_write() carried a
       # 12.4 KB stack frame. keepkey.ld now ASSERTs a 16 KiB reserve at link
@@ -638,6 +654,9 @@ jobs:
           # Point its boot-test stage at the exact artifact tag loaded above,
           # never at a same-named registry image.
           export KK_EMULATOR_IMAGE="${EMU_IMAGE}-${{ matrix.variant }}"
+          # CI does not start firmware-unit to populate the shared volume.
+          # The companion image already copies this exact variant binary.
+          export KK_EMULATOR_BIN=/kkemu/bin/kkemu
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
             build python-keepkey
           set +e
@@ -856,6 +875,12 @@ jobs:
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
           echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
+      - name: Run emulator lifecycle and concurrency regressions
+        run: |
+          cmake --build build-emu --target emulator-unit -j "$(sysctl -n hw.ncpu)"
+          mkdir -p test-reports/emulator
+          build-emu/bin/emulator-unit --gtest_output=xml:test-reports/emulator/lifecycle.xml
+
       - name: Upload libkkemu.dylib
         # Always upload, even on later test failure — the binary is
         # what vault and external auditors actually consume from this
@@ -899,7 +924,9 @@ jobs:
         if: always()
         with:
           name: python-dylib-test-results
-          path: test-reports/dylib-junit.xml
+          path: |
+            test-reports/dylib-junit.xml
+            test-reports/emulator/lifecycle.xml
           retention-days: 30
           if-no-files-found: warn
 
@@ -964,6 +991,9 @@ jobs:
         run: |
           git submodule update --init deps/python-keepkey
           echo "sha=$(git rev-parse HEAD:deps/python-keepkey)" >> "$GITHUB_OUTPUT"
+
+      - name: Check report gate regressions
+        run: python3 -m unittest scripts/test_generate_test_report.py -v
 
       - name: Generate test report PDF
         env:

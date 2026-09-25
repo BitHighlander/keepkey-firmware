@@ -152,9 +152,22 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   const ThorchainSignTx* sign_tx = thorchain_getThorchainSignTx();
 
   if (msg->has_send) {
+    const char* coin_denom =
+        (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
+
+    // Validate before any display so untrusted strings never reach the UI.
+    if (!thorchain_isValidDenom(coin_denom)) {
+      thorchain_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
+      layoutHome();
+      return;
+    }
+
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
+        // amount_str only needs to hold the numeric part (no denom suffix).
+        // Denom is confirmed on a separate screen so no truncation is possible.
         char amount_str[32];
         if (!thorchain_formatAmount(msg->send.amount, "RUNE", amount_str,
                                     sizeof(amount_str))) {
@@ -182,12 +195,20 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
           layoutHome();
           return;
         }
+        // Confirm the asset denom on its own screen.
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
+                     "%s", coin_denom)) {
+          thorchain_signAbort();
+          fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+          layoutHome();
+          return;
+        }
 
         break;
       }
     }
-    if (!thorchain_signTxUpdateMsgSend(msg->send.amount,
-                                       msg->send.to_address)) {
+    if (!thorchain_signTxUpdateMsgSend(msg->send.amount, msg->send.to_address,
+                                       coin_denom)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       "Failed to include send message in transaction");
@@ -204,7 +225,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
        document the device's key cannot authorize -- and the confirmation below
        labels that address as though it were a destination, so the screen would
        not have given it away. */
-    if (!tendermint_validateSafeText(msg->deposit.asset) ||
+    if (!thorchain_isValidAsset(msg->deposit.asset) ||
         !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
         !thorchain_addressIsSigner(msg->deposit.signer)) {
       thorchain_signAbort();

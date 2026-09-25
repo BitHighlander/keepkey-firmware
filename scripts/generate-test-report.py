@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -18,21 +19,61 @@ REPORT_GENERATOR = (
     "generate-test-report.py"
 )
 REPORT_DIR = ROOT / "test-report"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 REPORT_PDF = REPORT_DIR / "test-report.pdf"
 MERGED_JUNIT = REPORT_DIR / "junit-merged.xml"
 
-REQUIRED_CASES = {
+BASE_REQUIRED_CASES = {
+    "Eip712.MalformedHexNeverPublishesEncodedOutput",
+    "Eip712.ByteEncodingMatchesIndependentHashAndRightPadding",
+    "Eip712.MismatchedJsonShapesAndFixedArraysAreRejectedBeforeHashing",
+    "Eip712.MalformedBytesAndAddressesRejectedBeforeAnyValueScreen",
+    "Eip712.BytesNTypeWidthIsStrictInTypeHashAndEncoder",
+    "Eip712.MissingFieldRefusedWithoutDereferenceOrHashMutation",
+    "Eip712.DecimalSignPaddingMatchesParsedValue",
+    "Eip712.IntegerWidthAndValueMustMatchBeforeHashing",
+    "Eip712.NarrowIntegerBoundaryMatchesIndependentEncoding",
+    "Recovery.DeleteKeepsTypedCipherCharactersNotTheCurrentMapping",
+    "Ripple.TruncatedBufferFailsWithoutWritingPastEnd",
+    "Storage.LegacyLanguageIsBoundedAndTerminated",
+    "Storage.TruncatedLegacyCacheDoesNotMutateDestination",
+    "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
+    "EmulatorLifecycle.ConcurrentCaptureNeverTearsOrReordersUnreadSlots",
+    "EmulatorLifecycle.ShutdownStopsPollThreadAndAllowsRestart",
+    "EmulatorLifecycle.ShutdownWakesConfirmationWaitingForHostDecision",
+    "ReviewHandlers.ResetCancellationClearsScratchBeforeAndAfterFormatting",
+    "ReviewHandlers.ResetWithoutBackupCommitsAndClearsScratch",
+    "ReviewHandlers.ResetBackupCommitsAllStrengthsAndClearsScratch",
+    "SetupCeremony.AbortScrubsEveryByteOfSharedMnemonicDisplayScratch",
+    "test_msg_recoverydevice_cipher.TestDeviceRecovery."
+    "test_unknown_word_count_failure_aborts_recovery",
+}
+
+EVM_REQUIRED_CASES = {
     "Ethereum.TransferAmountUsesTheRequestsSigningChain",
-    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
     "test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx."
     "test_transfer_review_uses_signing_chain_asset",
+}
+
+OSMOSIS_REQUIRED_CASES = {
+    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
+    "test_msg_osmosis_validation.TestOsmosisValidation."
+    "test_present_but_empty_amount_is_rejected_as_invalid",
+    "test_msg_osmosis_validation.TestOsmosisValidation."
+    "test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
+}
+
+OSMOSIS_LEGACY_REQUIRED_CASES = {
+    "Osmosis.RequiredValuesRejectEmptyAndNonDecimalAmounts",
     "test_msg_osmosis_validation.TestOsmosisValidation."
     "test_present_but_empty_amount_is_rejected_before_review",
     "test_msg_osmosis_validation.TestOsmosisValidation."
     "test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
-    "test_msg_recoverydevice_cipher.TestDeviceRecovery."
-    "test_unknown_word_count_failure_aborts_recovery",
 }
+
+CAPABILITY_SKIP_PREFIX = (
+    "Staged release tree does not yet provide capability: "
+)
 
 
 def fail(message):
@@ -104,6 +145,55 @@ def canonical_case_name(case):
     return "%s.%s" % (case["classname"], case["name"])
 
 
+def firmware_version_tuple():
+    raw = os.environ.get("FW_VERSION", "")
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", raw)
+    if match is None:
+        fail("FW_VERSION is missing or malformed: %r" % raw)
+    return tuple(int(value) for value in match.groups())
+
+
+def approved_capabilities(workflow_text=None):
+    """The one staged-capability ledger: the integration job's
+    KK_RELEASE_MISSING_CAPABILITIES line in ci.yml, bound to this checkout."""
+    if workflow_text is None:
+        workflow_text = CI_WORKFLOW.read_text()
+    ledgers = re.findall(
+        r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]+)[ \t]*$",
+        workflow_text, re.MULTILINE)
+    if len(ledgers) != 1:
+        fail("expected exactly one capability ledger in %s, found %d" %
+             (CI_WORKFLOW, len(ledgers)))
+    return {value for value in ledgers[0].split(",") if value}
+
+
+def release_missing_capabilities(cases, approved=None):
+    if approved is None:
+        approved = approved_capabilities()
+    missing_capabilities = {
+        value.strip() for value in
+        os.environ.get("KK_RELEASE_MISSING_CAPABILITIES", "").split(",")
+        if value.strip()
+    }
+    # The report job consumes immutable JUnit from the integration job but
+    # intentionally does not inherit that job's partial-stack environment.
+    # Bind the report to the artifact itself by recovering the explicit
+    # capability declarations from canonical skip reasons.
+    missing_capabilities.update(
+        case["skip_reason"][len(CAPABILITY_SKIP_PREFIX):]
+        for case in cases
+        if case["status"] == "skip" and
+        case["skip_reason"].startswith(CAPABILITY_SKIP_PREFIX)
+    )
+    # A skip reason is free text. Never let it shrink the release gate
+    # unless it names a capability the workflow ledger already waives.
+    unapproved = sorted(missing_capabilities - approved)
+    if unapproved:
+        fail("capability waivers not in the ci.yml ledger: %s" %
+             ", ".join(unapproved))
+    return missing_capabilities
+
+
 def validate_cases(cases):
     failures = [case for case in cases
                 if case["status"] in ("fail", "error")]
@@ -111,10 +201,27 @@ def validate_cases(cases):
         fail("authoritative JUnit has %d failure/error case(s)" % len(failures))
     passed = {canonical_case_name(case) for case in cases
               if case["status"] == "pass"}
-    missing = sorted(required for required in REQUIRED_CASES
-                     if not any(name.endswith(required) for name in passed))
+    missing_capabilities = release_missing_capabilities(cases)
+    required_cases = set(BASE_REQUIRED_CASES)
+    if "evm-max-amount-review" not in missing_capabilities:
+        required_cases.update(EVM_REQUIRED_CASES)
+    if "osmosis-wire-guards" not in missing_capabilities:
+        # Match the actual firmware version in the artifacts, rather than the
+        # 7.15 audit program name. Block 00b still builds 7.14.3 and declares
+        # this later-slice capability missing; once the product version is
+        # raised to 7.15 and the capability is present, require the new case.
+        if firmware_version_tuple() >= (7, 15, 0):
+            required_cases.update(OSMOSIS_REQUIRED_CASES)
+        else:
+            required_cases.update(OSMOSIS_LEGACY_REQUIRED_CASES)
+    # Match whole dotted components: "XEip712.Case" must not satisfy
+    # "Eip712.Case". Python classnames may carry a module-path prefix.
+    missing = sorted(required for required in required_cases
+                     if not any(name == required or
+                                name.endswith("." + required)
+                                for name in passed))
     if missing:
-        fail("required 7.14.2 controls missing or not passing: %s" %
+        fail("required release controls missing or not passing: %s" %
              ", ".join(missing))
 
 
@@ -207,12 +314,23 @@ def main():
     junit_paths += [Path(path) for path in sorted(glob.glob(
         str(ROOT / "test-reports" / "firmware-unit" / "*.xml")))]
     junit_paths.append(ROOT / "test-reports" / "dylib-junit.xml")
+    junit_paths.append(ROOT / "test-reports" / "emulator" / "lifecycle.xml")
     missing_junit = [str(path) for path in junit_paths if not path.is_file()]
     if missing_junit:
         fail("required JUnit inputs missing: %s" % ", ".join(missing_junit))
 
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
+    # Normalize the artifact-bound staged capability ledger into the existing
+    # canonical environment contract before invoking python-keepkey's report
+    # validator.  The report job does not inherit the integration job's env;
+    # its immutable JUnit is therefore the authority.
+    missing_capabilities = release_missing_capabilities(cases)
+    if missing_capabilities:
+        os.environ["KK_RELEASE_MISSING_CAPABILITIES"] = ",".join(
+            sorted(missing_capabilities))
+    else:
+        os.environ.pop("KK_RELEASE_MISSING_CAPABILITIES", None)
 
     screenshot_root = ROOT / "test-reports" / "screenshots"
     pngs, sequences = validate_screenshots(screenshot_root)

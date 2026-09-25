@@ -58,6 +58,19 @@ set(sources
     #trezor-firmware/crypto/aes/aestst.c
     trezor-firmware/crypto/aes/aestab.c)
 
+# Pallas/Orchard curve arithmetic (~2.4k LOC) -- only the Zcash shielded engine
+# uses it. Also built for full emulator crypto tests; production default and
+# Bitcoin-only firmware still omit it.
+if(KK_ZCASH_PRIVACY OR (KK_EMULATOR AND NOT KK_BITCOIN_ONLY))
+  list(APPEND sources
+      trezor-firmware/crypto/pallas.c
+      trezor-firmware/crypto/pallas_ct.c
+      trezor-firmware/crypto/pallas_sinsemilla.c
+      trezor-firmware/crypto/pallas_swu.c
+      trezor-firmware/crypto/redpallas.c
+      trezor-firmware/crypto/zcash_zip316.c)
+endif()
+
     # Clang 5.0 in the docker image (kktech/firmware:v7) is missing
     # <xmmintrin.h>, which breaks these. Until they're needed, we'll just elide
     # them.
