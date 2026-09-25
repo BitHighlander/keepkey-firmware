@@ -47,6 +47,7 @@
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/rand/rng.h"
@@ -968,6 +969,9 @@ void storage_setAuthData(const authType* setData) {
 void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
                            size_t len) {
   if (len < 464 + 17) return;
+  /* Versions after v1 also contain the cache at offset 484. Validate its
+   * entire extent before mutating the destination or reading that record. */
+  if (read_u32_le(ptr) != 1 && len < 484 + 75) return;
   storage->version = read_u32_le(ptr);
   storage->pub.has_node = read_bool(ptr + 4);
   storage_readHDNode(&storage->sec.node, ptr + 8, 140);
@@ -980,6 +984,8 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   memcpy(storage->sec.pin, ptr + 393, 10);
   storage->pub.has_language = read_bool(ptr + 403);
   memset(storage->pub.language, 0, sizeof(storage->pub.language));
+  /* Legacy records reserve 17 bytes; the current destination is smaller.
+   * Bound the copy by the destination and retain a terminating NUL. */
   memcpy(storage->pub.language, ptr + 404, sizeof(storage->pub.language) - 1);
   storage->pub.has_label = read_bool(ptr + 421);
   memset(storage->pub.label, 0, sizeof(storage->pub.label));
@@ -1461,14 +1467,14 @@ void storage_readV1(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len) {
   if (len < 44 + 528) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV1(ss, &dst->storage, flash + 44, 481);
+  storage_readStorageV1(ss, &dst->storage, flash + 44, len - 44);
 }
 
 void storage_readV2(SessionState* ss, ConfigFlash* dst, const char* flash,
                     size_t len) {
   if (len < 528 + 75) return;
   storage_readMeta(&dst->meta, flash, 44);
-  storage_readStorageV1(ss, &dst->storage, flash + 44, 481);
+  storage_readStorageV1(ss, &dst->storage, flash + 44, len - 44);
 }
 
 void storage_readV11(ConfigFlash* dst, const char* flash, size_t len) {
@@ -1717,6 +1723,15 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 }
 
 void storage_init(void) {
+#if !BITCOIN_ONLY
+  /* A reopened flash buffer starts a new wallet session, even when an
+   * emulator library remains loaded in the same process. */
+  signed_metadata_clear_signers();
+#endif
+  /* These locks describe the flash buffer being opened, not the prior
+   * emulator lifecycle. Recompute both from this buffer on every init. */
+  btc_only_locked = false;
+  firmware_too_old = false;
   // Find storage sector with valid data and set storage_location variable.
   if (!find_active_storage(&storage_location)) {
     /* A power cut may have landed after the old sector was retired but before

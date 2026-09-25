@@ -107,10 +107,10 @@ bool signed_metadata_delegate_fingerprint(char out[METADATA_FINGERPRINT_LEN]);
  * the fallback, not the product.
  */
 typedef enum {
-  ARG_FORMAT_RAW = 0,     /* hex dump (first 16 bytes) */
+  ARG_FORMAT_RAW = 0,     /* hex dump (all bytes, paginated) */
   ARG_FORMAT_ADDRESS = 1, /* 20 bytes -> full EIP-55 address, never truncated */
   ARG_FORMAT_AMOUNT = 2,  /* big-endian uint256 -> raw integer, "wei" */
-  ARG_FORMAT_BYTES = 3,   /* hex dump (first 16 bytes) */
+  ARG_FORMAT_BYTES = 3,   /* hex dump (all bytes, paginated) */
   /* Attested printable label, e.g. protocol: "Uniswap V2". Same character
    * rules as the signer alias minus length (printable subset, no '%'). */
   ARG_FORMAT_STRING = 4,

@@ -678,6 +678,9 @@ int dsConfirm(void) {
 */
 int parseVals(const json_t* eip712Types, const json_t* jType,
               const json_t* nextVal, struct SHA3_CTX* msgCtx) {
+  if (!eip712Types || !jType || json_getType(jType) != JSON_ARRAY ||
+      !json_getName(jType) || !msgCtx)
+    return GENERAL_ERROR;
   json_t const *tarray, *pairs, *walkVals, *obTest;
   int ctr;
   const char* typeType = NULL;
@@ -720,7 +723,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
       }
       walkVals = nextVal;
       while (0 != walkVals) {
-        if (0 == strcmp(json_getName(walkVals), typeName)) {
+        const char* value_name = json_getName(walkVals);
+        if (!value_name) return GENERAL_ERROR;
+        if (0 == strcmp(value_name, typeName)) {
           break;
         } else {
           // keep looking for val
@@ -769,11 +774,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             keccak_Final(&valCtx, encBytes);
           } else {
             if (value_type != JSON_TEXT) return GENERAL_ERROR;
-            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
-              return errRet;
-            }
             errRet = encAddress(valStr, encBytes);
-            if (SUCCESS != errRet) {
+            if (SUCCESS != errRet) return errRet;
+            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
               return errRet;
             }
           }
@@ -820,9 +823,6 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
           } else {
             if (value_type != JSON_TEXT && value_type != JSON_INTEGER)
               return GENERAL_ERROR;
-            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
-              return errRet;
-            }
             const bool is_uint = type_is_integer(typeType, "uint");
             /* A leading '-' only tells the digit scan where the number starts;
              * it does not decide the sign of the encoded word. Sign-extending
@@ -859,6 +859,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                   return GENERAL_ERROR;
               }
             }
+            if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+              return errRet;
+            }
             for (ctr = 0; ctr < 32; ctr++) {
               // sign extend negative values, zero pad positive ones
               encBytes[ctr] = (intVal < 0) ? 0xFF : 0;
@@ -884,9 +887,6 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
             } else {
               if (value_type != JSON_TEXT) return GENERAL_ERROR;
               // This could be 'bytes', 'bytes1', ..., 'bytes32'
-              if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
-                return errRet;
-              }
               if (dynamic_bytes) {
                 errRet = encodeBytes(valStr, encBytes);
                 if (SUCCESS != errRet) {
@@ -898,6 +898,9 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                 if (SUCCESS != errRet) {
                   return errRet;
                 }
+              }
+              if (SUCCESS != (errRet = confirmTypedValue(ds_vals, valStr))) {
+                return errRet;
               }
             }
 

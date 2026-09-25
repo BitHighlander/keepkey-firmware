@@ -984,3 +984,11 @@ TEST(Thorchain, ConfirmThorTxRejectsOverlongDeclaredMemo) {
   EXPECT_FALSE(thor_confirmThorTx((uint32_t)data.size(), &msg));
   EXPECT_EQ(0, kkconfirm_drain());
 }
+
+TEST(Thorchain, DeclaredDepositAssetValidatorEnforcesGrammar) {
+  EXPECT_TRUE(thorchain_isValidAsset("THOR.RUNE"));
+  EXPECT_TRUE(thorchain_isValidAsset("BTC/BTC"));
+  EXPECT_FALSE(thorchain_isValidAsset("THOR:RUNE"));
+  EXPECT_FALSE(thorchain_isValidAsset("THOR_RUNE"));
+  EXPECT_FALSE(thorchain_isValidAsset(nullptr));
+}

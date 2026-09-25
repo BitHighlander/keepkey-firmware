@@ -288,6 +288,9 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
     return;
   }
 
+  CHECK_PARAM(msg->has_message && msg->message.size > 0 &&
+                  msg->message.size <= sizeof(msg->message.bytes),
+              _("Invalid TRON message"));
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
                      _("Sign TRON Message"), msg->message.bytes,
                      msg->message.size)) {
@@ -316,7 +319,9 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
 
 void fsm_msgTronVerifyMessage(const TronVerifyMessage* msg) {
   CHECK_PARAM(msg->has_address, _("No address provided"));
-  CHECK_PARAM(msg->has_message, _("No message provided"));
+  CHECK_PARAM(msg->has_message && msg->message.size > 0 &&
+                  msg->message.size <= sizeof(msg->message.bytes),
+              _("Invalid TRON message"));
   CHECK_PARAM(msg->has_signature, _("No signature provided"));
 
   if (tron_message_verify(msg) != 0) {

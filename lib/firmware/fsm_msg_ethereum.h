@@ -2457,6 +2457,9 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
+  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
+              _("key_id out of range"));
+
   RESP_INIT(EthereumMetadataAck);
 
   /* A user-owned contact proof is verified against this seed's dedicated

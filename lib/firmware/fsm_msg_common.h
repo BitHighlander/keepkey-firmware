@@ -2,7 +2,10 @@ void fsm_msgInitialize(Initialize* msg) {
   (void)msg;
   /* Initialize ends every in-flight workflow while preserving cached PIN. */
   fsm_abort_workflows();
-  session_clear(false);  // do not clear PIN, and clears the Zcash session
+  session_clear(false);  // do not clear PIN
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
   layoutHome();
   fsm_msgGetFeatures(0);
 }
@@ -388,8 +391,7 @@ void fsm_msgPing(Ping* msg) {
 }
 
 void fsm_msgChangePin(ChangePin* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -440,8 +442,7 @@ void fsm_msgChangePin(ChangePin* msg) {
 }
 
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -615,6 +616,7 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 }
 
 void fsm_msgLoadDevice(LoadDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
 
   if (!confirm_load_device(msg->has_node)) {
@@ -633,6 +635,9 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
   }
 
   storage_loadDevice(msg);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   storage_commit();
 
@@ -643,8 +648,12 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 }
 
 void fsm_msgResetDevice(ResetDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   // display_random remains in the wire schema for host compatibility, but is
   // intentionally ignored: internal entropy is seed pre-image material and
@@ -681,8 +690,7 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
                  "Do you want to change the label to \"%s\"?", msg->label)) {
@@ -773,6 +781,7 @@ apply_settings_cancelled:
 }
 
 void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
+  CHECK_STORAGE_WRITABLE
   CHECK_NO_CEREMONY
 
   if (msg->has_dry_run && msg->dry_run) {
@@ -790,6 +799,11 @@ void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
    * after both init-state checks have passed: a recovery that is about to be
    * rejected must not tear down work it never replaces. */
   fsm_abort_workflows();
+#if !BITCOIN_ONLY
+  if (!(msg->has_dry_run && msg->dry_run)) {
+    signed_metadata_clear_signers();
+  }
+#endif
 
   recovery_cipher_init(
       msg->has_word_count ? msg->word_count : 0,
@@ -815,8 +829,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
-
+  CHECK_STORAGE_WRITABLE
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 
   for (size_t i = 0; i < msg->policy_count; ++i) {

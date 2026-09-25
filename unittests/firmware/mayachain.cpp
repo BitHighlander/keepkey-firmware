@@ -545,6 +545,11 @@ TEST(Mayachain, MayachainSignTxTwoMessages) {
   ASSERT_TRUE(mayachain_signTxUpdateMsgSend(
       200, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
 
+  strcpy(deposit.asset, "ETH:ETH");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  strcpy(deposit.asset, "ETH.ETH");
+  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
   uint8_t public_key[33];
   uint8_t signature[64];
 
@@ -571,4 +576,43 @@ TEST(Mayachain, MayachainSignTxTwoMessages) {
                        "\x4c\xd8\x6f\x72\xb3\xf6\x87\xd1\xec\xa8\x61\xa5\x2e"
                        "\xbf\x9e\xcb\x8a\xc1\x27\x43\x8b\x8e\xbb\x50\x8f",
              64) == 0);
+}
+
+TEST(Mayachain, MemoFieldCapacityFallsBackBeforeAnyApproval) {
+  for (const char* verb : {"SWAP", "ADD"}) {
+    const std::string memo = std::string(verb) + ":ETH.ETH:a:1:b:2:c:3:HIDDEN";
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    EXPECT_EQ(MAYACHAIN_MEMO_UNPARSED,
+              mayachain_parseConfirmMemo(memo.c_str(), memo.size()));
+    EXPECT_EQ(2, kkconfirm_drain());  // rejection pair untouched
+  }
+}
+
+TEST(Mayachain, AssetGrammarRejectsSafeTextOutsideContract) {
+  for (const char* value : {"MAYA.CACAO", "ETH.USDT-0x123", "BTC/BTC"})
+    EXPECT_TRUE(mayachain_isValidAsset(value));
+  for (const char* value : {"MAYA:CACAO", "MAYA_CACAO", "MAYA+CACAO", ""})
+    EXPECT_FALSE(mayachain_isValidAsset(value));
+  EXPECT_FALSE(mayachain_isValidAsset(nullptr));
+}
+
+TEST(Mayachain, SendSerializerRefusesInvalidDenomWithoutConsumingMessage) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  node.private_key[31] = 1;
+  hdnode_fill_public_key(&node);
+  MayachainSignTx tx = {};
+  tx.has_chain_id = tx.has_msg_count = true;
+  strcpy(tx.chain_id, "mayachain");
+  tx.msg_count = 1;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  const char* recipient = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+  for (const char* denom : {static_cast<const char*>(nullptr), "", "ca:cao",
+                            "ca_cao", "ca\"cao", "ca\ncao"}) {
+    EXPECT_FALSE(mayachain_signTxUpdateMsgSend(1, recipient, denom));
+    EXPECT_FALSE(mayachain_signingIsFinished());
+  }
+  EXPECT_TRUE(mayachain_signTxUpdateMsgSend(1, recipient, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
 }

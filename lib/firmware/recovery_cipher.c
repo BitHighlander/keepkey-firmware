@@ -63,6 +63,7 @@ static bool definitely_using_cipher = false;
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
 static CONFIDENTIAL char last_completed_word[12];
+static CONFIDENTIAL char prev_info[32];
 /* Raw cipher bytes for the whole mnemonic entered so far, mirroring
  * `mnemonic` byte-for-byte (same appends, same truncations, always the same
  * length) but holding the literal characters the host sent instead of their
@@ -100,6 +101,7 @@ void recovery_cipher_reset(void) {
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
   memzero(last_completed_word, sizeof(last_completed_word));
+  memzero(prev_info, sizeof(prev_info));
   memzero(current_word_scratch, sizeof(current_word_scratch));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
@@ -442,7 +444,6 @@ void next_character(void) {
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
-  static CONFIDENTIAL char prev_info[32];
   prev_info[0] = '\0';
   if (word_pos > 0 && last_completed_word[0]) {
     snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,

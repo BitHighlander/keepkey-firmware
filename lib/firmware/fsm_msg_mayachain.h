@@ -129,8 +129,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     layoutHome();
     return;
   }
-  if (msg->has_send && msg->send.has_to_address && msg->send.has_amount &&
-      msg->send.has_denom) {
+  if (msg->has_send && msg->send.has_to_address && msg->send.has_amount) {
     // pass
   } else if (msg->has_deposit && msg->deposit.has_asset &&
              msg->deposit.has_amount && msg->deposit.has_memo &&

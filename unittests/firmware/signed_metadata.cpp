@@ -21,6 +21,9 @@ extern "C" {
 #include "keepkey/board/draw.h"   /* draw_bitmap_mono_rle (icon decoder) */
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/storage.h"
+#include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/solana.h" /* SolanaTokenInfo, solana_token_info_trusted */
 #include "keepkey/firmware/storage.h"
 #include "trezor/crypto/ecdsa.h"
@@ -37,6 +40,9 @@ void setup(void);
 #include <cstring>
 #include <string>
 #include <vector>
+
+bool kkconfirm_preload(int, int);
+int kkconfirm_drain(void);
 
 namespace {
 
@@ -231,9 +237,22 @@ void set_advanced_mode_for_test(bool enabled) {
   }
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", enabled));
 }
+// Runtime-loaded keys are usable only after the user opts into AdvancedMode.
+// Fixtures establish that policy precondition and restore it after each test.
+class ScopedRuntimeSignerPolicy {
+  bool previous = storage_isPolicyEnabled("AdvancedMode");
+
+ public:
+  ScopedRuntimeSignerPolicy() {
+    storage_reset();
+    EXPECT_TRUE(storage_setPolicy("AdvancedMode", true));
+  }
+  ~ScopedRuntimeSignerPolicy() { storage_setPolicy("AdvancedMode", previous); }
+};
 
 class SignedMetadataTest : public ::testing::Test {
  protected:
+  ScopedRuntimeSignerPolicy policy;
   void SetUp() override {
     set_advanced_mode_for_test(true);
     signed_metadata_clear_signers();
@@ -1284,14 +1303,13 @@ TEST_F(SignedMetadataTest, V2SchemaPayableKeepsValueScreen) {
   make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true, (uint32_t)data.size());
   msg.has_value = true;
   msg.value.size = 1;
-  msg.value.bytes[0] = 0x01;  // 1 wei — any nonzero value is "payable"
-
-  /* Clear-signs, AND flags that the amount screen must still run. */
+  msg.value.bytes[0] = 0x01;
   EXPECT_TRUE(signed_metadata_matches_tx(&msg));
   EXPECT_TRUE(signed_metadata_schema_moves_value());
+  EXPECT_FALSE(signed_metadata_matches_tx(nullptr));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
 
-  /* Zero value: same match, but no extra screen is demanded — proving the
-   * flag tracks the value rather than being always-on. */
+  /* A later zero-value match must clear the additional-confirmation flag. */
   msg.value.size = 0;
   msg.has_value = false;
   EXPECT_TRUE(signed_metadata_matches_tx(&msg));
@@ -2322,6 +2340,63 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
+}
+
+TEST_F(SignedMetadataTest, RuntimeKeyCannotAuthenticateWithAdvancedModeOff) {
+  auto blob = base_blob();
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  EXPECT_EQ(METADATA_MALFORMED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  EXPECT_FALSE(signed_metadata_available());
+}
+
+TEST_F(SignedMetadataTest, PayableSchemaCannotSkipNativeAmountConsent) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  auto blob = v2_base_blob();
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  EthereumSignTx msg;
+  auto data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, true, data.size());
+  msg.has_value = msg.has_gas_price = msg.has_gas_limit = true;
+  msg.value.size = msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.value.bytes[0] = msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  node.private_key[31] = 1;
+  hdnode_fill_public_key(&node);
+  // Five metadata screens + native transfer must precede the fee approval.
+  // With the old caller the sixth approval signs, ignoring the queued refusal.
+  ASSERT_TRUE(kkconfirm_preload(6, 1));
+  fsm_test_clearLastFailure();
+  ethereum_signing_init(&msg, &node, true);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST_F(SignedMetadataTest, FixedBytesSchemaDecodesEntireWord) {
+  V2Spec spec = v2_base_spec();
+  spec.args[1] = V2Arg{"data", ARG_FORMAT_BYTES, 0, ""};
+  auto blob = sign_body(build_v2_body(spec));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  auto data = v2_transfer_calldata();
+  for (size_t i = 36; i < data.size(); ++i) data[i] = i;
+  EthereumSignTx msg;
+  make_v2_msg(&msg, CONTRACT_A, data, true, data.size());
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  const SignedMetadata* decoded = signed_metadata_get();
+  ASSERT_NE(nullptr, decoded);
+  ASSERT_EQ(32u, decoded->args[1].value_len);
+  EXPECT_EQ(0, memcmp(decoded->args[1].value, data.data() + 36, 32));
+  ASSERT_TRUE(kkconfirm_preload(
+      5, 1));  // identity, method, contract, address, byte page 1
+  EXPECT_FALSE(signed_metadata_confirm());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 }  // namespace

@@ -11,6 +11,10 @@ extern "C" {
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts.h"
+#include "keepkey/firmware/ethereum_contracts/saproxy.h"
+#include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
+#include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
@@ -788,4 +792,19 @@ TEST(Ethereum, TransformErc20DisclosesCompleteRoute) {
   ASSERT_TRUE(kkconfirm_preload(static_cast<int>(pages), 0));
   EXPECT_TRUE(zx_confirmZxTransformRoute(route.data(), route.size()));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memcpy(msg.data_initial_chunk.bytes + 16, UNISWAP_ROUTER_ADDRESS, 20);
+  ASSERT_TRUE(zx_isZxApproveLiquid(&msg));
+  EXPECT_TRUE(ethereum_contractHandled(68, &msg, nullptr));
+  EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
+  EXPECT_FALSE(ethereum_contractHandled(1024, &msg, nullptr));
+  msg.data_initial_chunk.size = 69;
+  EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
 }

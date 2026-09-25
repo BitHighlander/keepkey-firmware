@@ -23,6 +23,10 @@
 
 #ifdef EMULATOR
 #include "keepkey/emulator/emulator.h"
+#ifdef _WIN32
+#include <windows.h>
+#include <bcrypt.h>
+#endif
 #endif
 
 #ifndef EMULATOR

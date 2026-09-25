@@ -242,3 +242,29 @@ TEST(Ripple, SerializerAcceptsMaximumProtocolAmount) {
       << "the protocol maximum must serialize, not trip "
          "ripple_serializeAmount()'s bound assert";
 }
+TEST(Ripple, MemoDataUsesCanonicalBlob13AndLengthBoundary) {
+  // Independent oracle: XRPLF ripple-binary-codec definitions.json:
+  // MemoData is Blob(7), nth 13; Memo STObject(14), nth 10.
+  for (size_t length : {size_t(191), size_t(192), size_t(193), size_t(199)}) {
+    RippleSignTx tx = {};
+    tx.has_memo = true;
+    memset(tx.memo, 'm', length);
+    tx.memo[length] = 0;
+    uint8_t output[512] = {};
+    uint8_t public_key[33] = {2};
+    uint8_t* end = output;
+    ASSERT_TRUE(ripple_serialize(&end, output + sizeof(output), &tx,
+                                 "rNaqKtKrMSwpwZSzRckPf7S96DkimjkF4H",
+                                 public_key, nullptr, 0));
+    const size_t prefix_len = length <= 192 ? 1 : 2;
+    const uint8_t* memo = end - (3 + prefix_len + length + 2);
+    EXPECT_EQ(0xf9, memo[0]);
+    EXPECT_EQ(0xea, memo[1]);
+    EXPECT_EQ(0x7d, memo[2]);
+    EXPECT_EQ(length <= 192 ? length : 193, memo[3]);
+    if (length > 192) EXPECT_EQ(length - 193, memo[4]);
+    EXPECT_EQ(0, memcmp(memo + 3 + prefix_len, tx.memo, length));
+    EXPECT_EQ(0xe1, end[-2]);
+    EXPECT_EQ(0xf1, end[-1]);
+  }
+}
