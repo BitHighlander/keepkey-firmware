@@ -273,11 +273,12 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
 /* The per-field title is device-owned: a signer-chosen label in the title
  * line could imitate a firmware screen such as "Ethereum Data Hash", so the
  * escaped label leads the body instead. `value` is already escaped. */
-static bool confirm_erc7730_field(const char* label, const char* value) {
+static bool confirm_erc7730_field(const char* title, const char* label,
+                                  const char* value) {
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
   const bool shown = erc7730_format_text((const uint8_t*)label, strlen(label),
                                          escaped, sizeof(escaped)) &&
-                     confirm_erc7730_text("Signer field", escaped, value);
+                     confirm_erc7730_text(title, escaped, value);
   memzero(escaped, sizeof(escaped));
   return shown;
 }
@@ -354,8 +355,16 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
              workflow->intent_value ? "value" : "text",
              (unsigned)workflow->intent_part, (unsigned)workflow->intent_parts);
     confirmed = confirm_erc7730_text(title, NULL, formatted);
+  } else if (workflow->iterating) {
+    /* One screen per element of the array, numbered by the device. */
+    char title[TITLE_CHAR_MAX];
+    snprintf(title, sizeof(title), "Signer field %u/%u",
+             (unsigned)workflow->iteration_index + 1u,
+             (unsigned)workflow->iteration_count);
+    confirmed = confirm_erc7730_field(title, workflow->label, formatted);
   } else {
-    confirmed = confirm_erc7730_field(workflow->label, formatted);
+    confirmed =
+        confirm_erc7730_field("Signer field", workflow->label, formatted);
   }
   if (!confirmed) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
@@ -884,6 +893,34 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     layoutHome();
     return;
   }
+  if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
+    /* The pass captured the array's element count. */
+    Erc7730AbiCapture capture;
+    uint8_t cls = 0;
+    const bool counted = erc7730_workflow_captured(workflow, &capture, &cls) &&
+                         cls == ERC7730_ABI_ARRAY && capture.length == 32;
+    const uint16_t count =
+        (uint16_t)((capture.data[30] << 8) | capture.data[31]);
+    memzero(&capture, sizeof(capture));
+    if (!counted || count > ERC7730_ABI_MAX_ARRAY_ELEMENTS ||
+        !erc7730_workflow_resume_field(workflow)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 iteration"));
+      return;
+    }
+    workflow->iteration_index = 0;
+    workflow->iteration_count = (uint8_t)count;
+    workflow->iterating = count != 0;
+    /* An empty array shows nothing: continue after the iteration's end. */
+    if (count == 0) workflow->display_index = workflow->iteration_end;
+    if (!erc7730_workflow_advance_display(workflow)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 display continuation"));
+      return;
+    }
+    send_erc7730_definition_request();
+    return;
+  }
   /* A field or intent value in progress: this pass captured its argument. */
   if (workflow->field.kind == 0) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
@@ -921,8 +958,10 @@ static void start_erc7730_calldata(Erc7730Workflow* workflow,
                                    const Erc7730Path* path) {
   EthereumSignTx tx;
   const bool started =
-      path ? erc7730_workflow_restore_and_start_capture(workflow, &tx, path)
-           : erc7730_workflow_restore_and_start_calldata(workflow, &tx);
+      !path ? erc7730_workflow_restore_and_start_calldata(workflow, &tx)
+      : workflow->display_stage == ERC7730_DISPLAY_ITERATION
+          ? erc7730_workflow_restore_and_start_length(workflow, &tx, path)
+          : erc7730_workflow_restore_and_start_capture(workflow, &tx, path);
   if (!started) {
     erc7730_workflow_abort(workflow);
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1327,6 +1366,37 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       send_erc7730_definition_request();
       return;
     }
+    if (workflow->display_stage == ERC7730_DISPLAY_INSTRUCTION && executable &&
+        instruction.opcode >= 5 && instruction.opcode <= 8) {
+      bool ok = true;
+      if (instruction.opcode == 7) {
+        /* Count the array first; the verifier refused nesting. */
+        ok = !workflow->iterating &&
+             erc7730_workflow_select_path(workflow, instruction.a);
+        if (ok) {
+          workflow->iteration_begin = workflow->display_index;
+          workflow->iteration_end = instruction.c;
+          workflow->display_stage = ERC7730_DISPLAY_ITERATION;
+          send_erc7730_definition_request();
+          return;
+        }
+      } else if (instruction.opcode == 8) {
+        ok = workflow->iterating && instruction.a == workflow->iteration_begin;
+        if (ok && ++workflow->iteration_index < workflow->iteration_count) {
+          workflow->display_index = workflow->iteration_begin;
+        } else {
+          workflow->iterating = false;
+        }
+      }
+      /* Groups only group: their fields show their own labels. */
+      if (!ok || !erc7730_workflow_advance_display(workflow)) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 display instruction"));
+        return;
+      }
+      send_erc7730_definition_request();
+      return;
+    }
     if (workflow->display_stage != ERC7730_DISPLAY_INSTRUCTION ||
         instruction.opcode != 4 || !executable) {
       erc7730_workflow_abort(workflow);
@@ -1434,7 +1504,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     return;
   }
   Erc7730Path path;
-  if (workflow->display_stage != ERC7730_DISPLAY_PATH ||
+  if ((workflow->display_stage != ERC7730_DISPLAY_PATH &&
+       workflow->display_stage != ERC7730_DISPLAY_ITERATION) ||
       !erc7730_workflow_selected_path(workflow, &path)) {
     memzero(&path, sizeof(path));
     erc7730_workflow_abort(workflow);
@@ -1443,7 +1514,17 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     layoutHome();
     return;
   }
-  follow_erc7730_path(workflow, &path);
+  if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
+    if (workflow->typed_data) { /* refused at preload */
+      memzero(&path, sizeof(path));
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 iteration"));
+      return;
+    }
+    start_erc7730_calldata(workflow, &path);
+  } else {
+    follow_erc7730_path(workflow, &path);
+  }
   memzero(&path, sizeof(path));
 }
 
