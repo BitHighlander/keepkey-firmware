@@ -662,6 +662,9 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
       (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0 ||
       required == 0 || (roles & required) != required)
     return false;
+  /* Embedded calldata is executed for calldata definitions only. */
+  if (v->formatter_kind == 13 && v->header[7] != ERC7730_DEFINITION_CALLDATA)
+    return false;
   if ((v->formatter_kind == 3 && (roles & FORMAT_ROLE_BIT(2)) == 0) ||
       (v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
       (v->formatter_kind == 8 && (roles & FORMAT_ROLE_BIT(10)) == 0) ||

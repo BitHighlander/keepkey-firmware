@@ -900,3 +900,49 @@ class TestStack07Regressions(common.KeepKeyTest):
                 ("Signer field 2/2", "Amount:\n6"),
                 ("Signer field", "Fee:\n9"),
             ])
+
+    # Phase E1 (7.15): an embedded call the device cannot clear-sign is shown
+    # under a blind-sign warning: its callee, selector, length, value and
+    # authority, all read from the signed calldata. 7.16 rejects it instead.
+    def _exec_screens(self, inner, value=1500000000000000000):
+        signature = ("execTransaction(address to,uint256 value,bytes data,"
+                     "uint8 operation)")
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "sign multisig operation", "fields": [
+                {"path": "data", "label": "Transaction", "format": "calldata",
+                 "params": {"calleePath": "to", "amountPath": "value",
+                            "spenderPath": "@.to"}}]}}}}
+        padded = inner + bytes(-len(inner) % 32)
+        arguments = (self._word(OTHER_ADDRESS) + self._word(value) +
+                     self._word(128) + self._word(0) +
+                     self._word(len(inner)) + padded)
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        result, _, _, _ = self._walk(
+            self._audit_start(program, 4 + len(arguments)), envelope,
+            arguments=arguments)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        shown = []
+        for screen in self.screens:
+            if screen[0] in ("Blind signature", "Signer field") and (
+                    not shown or shown[-1] != screen):
+                shown.append(screen)
+        return shown
+
+    def test_embedded_call_is_shown_under_a_blind_sign_warning(self):
+        inner = bytes.fromhex("a9059cbb") + bytes(296)  # 300 bytes: no capture
+        self.assertEqual(self._exec_screens(inner), [
+            ("Blind signature", "The inner call is not clear-signed"),
+            ("Signer field",
+             "Transaction:\nTo 0x" + OTHER_ADDRESS.hex() +
+             "\nFunction 0xa9059cbb\nData 300 bytes\nValue 1.5 ETH\nAs 0x" +
+             ADDRESS.hex()),
+        ])
+        self.assertEqual(self._exec_screens(b"", value=0), [
+            ("Blind signature", "The inner call is not clear-signed"),
+            ("Signer field",
+             "Transaction:\nTo 0x" + OTHER_ADDRESS.hex() +
+             "\nNo data\nValue 0 Wei\nAs 0x" + ADDRESS.hex()),
+        ])

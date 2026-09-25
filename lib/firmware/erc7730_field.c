@@ -229,3 +229,45 @@ bool erc7730_format_enum(const char* value, const char* label, char* output,
   }
   return true;
 }
+
+bool erc7730_format_embedded(const uint8_t callee[20], const uint8_t* selector,
+                             size_t selector_length, uint32_t data_length,
+                             const uint8_t* amount, uint64_t chain_id,
+                             const uint8_t* spender, char* output,
+                             size_t output_size) {
+  if (!callee || !output || output_size == 0 ||
+      (selector_length && !selector) || selector_length > 4)
+    return false;
+  output[0] = '\0';
+  char to[43], function[24] = "", value[128] = "", as[64] = "";
+  bool ok = erc7730_format_address(callee, false, to, sizeof(to));
+  if (ok && selector_length == 4)
+    ok = (size_t)snprintf(function, sizeof(function),
+                          "\nFunction 0x%02x%02x%02x%02x", selector[0],
+                          selector[1], selector[2],
+                          selector[3]) < sizeof(function);
+  if (ok && amount) {
+    char native[100];
+    ok = erc7730_format_native_amount(amount, chain_id, native,
+                                      sizeof(native)) &&
+         (size_t)snprintf(value, sizeof(value), "\nValue %s", native) <
+             sizeof(value);
+    memzero(native, sizeof(native));
+  }
+  if (ok && spender) {
+    char address[43];
+    ok = erc7730_format_address(spender, false, address, sizeof(address)) &&
+         (size_t)snprintf(as, sizeof(as), "\nAs %s", address) < sizeof(as);
+  }
+  if (ok) {
+    const int length =
+        data_length == 0
+            ? snprintf(output, output_size, "To %s\nNo data%s%s", to, value, as)
+            : snprintf(output, output_size, "To %s%s\nData %lu bytes%s%s", to,
+                       function, (unsigned long)data_length, value, as);
+    ok = length > 0 && (size_t)length < output_size;
+  }
+  if (!ok) output[0] = '\0';
+  memzero(value, sizeof(value));
+  return ok;
+}

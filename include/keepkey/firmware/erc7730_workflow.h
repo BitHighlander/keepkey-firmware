@@ -69,6 +69,15 @@ typedef struct {
     uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */
   } list;
   uint16_t text; /* the one string an argument names, fetched last */
+  /* embedded calldata: the inner bytes as located (never copied), and whose
+   * authority the inner call runs with */
+  uint32_t inner_length;
+  uint32_t inner_offset; /* of the payload within the outer arguments */
+  uint8_t inner_selector[4];
+  uint8_t inner_selector_length;
+  uint8_t spender[20];
+  bool has_inner;
+  bool has_spender;
   uint8_t list_count;
   uint8_t list_next;
   uint8_t value_class;
@@ -218,6 +227,8 @@ bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
  * refused them. */
 bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len);
+/* Record the embedded calldata a completed locate pass found. */
+bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow);
 /* Return from a completed capture pass to program selection within the same
  * field, discarding the calldata stream. */
 bool erc7730_workflow_resume_field(Erc7730Workflow* workflow);

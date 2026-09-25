@@ -145,6 +145,16 @@ The target is to add back at most ~10% of what was deleted.
 - **7.15:** the whole ERC-7730 runtime already sits behind AdvancedMode and shows "NOT verified by KeepKey". It is not clear-signing in the 7.16 sense. An inner call the device cannot clear-sign may therefore be shown under a **blind-sign warning**, with AdvancedMode on, which the runtime already requires.
 - **7.16:** AdvancedMode becomes a **hard gate**. Anything that cannot be clear-signed must be **rejected**, with no blind-sign fallback. This applies to inner calls, and to every refusal class in the formatter plan: slices, packed words, missing definitions.
 
+## 9b. Owner decisions (2026-09-25) and status
+
+- A "no definition" reply is allowed. Build order: E1, the 7.15 blind-sign path, then E2, inner clear-signing, then `multicall` and Safe typed data.
+- **E1 is implemented (block 7b).**
+  - Formatter kind 13 runs for calldata definitions. Its roles are 1 (the inner bytes), 15 (callee), 17 (value) and 18 (authority); python-keepkey now emits 17 and 18 from `amountPath` and `spenderPath`.
+  - The inner bytes are located, not copied: a new ABI-stream locate mode keeps only the first four bytes, the length and the payload offset, so an inner call of any length works.
+  - Display: a "Blind signature: The inner call is not clear-signed" screen, then the field with the callee, `Function 0x<selector>`, `Data N bytes` (or `No data`), `Value <native>` and `As <address>`.
+  - The code carries the 7.16 note: reject there instead.
+  - Registry: 1,326 signable. SRAM reserve 18,000 B (−48 B).
+
 ## 9. Decisions needed from the owner before design
 
 1. **P5:** without an inner definition, show the minimum (callee, selector, value, operation, bytes hash or data) with a "not clear-signed" label, or refuse?

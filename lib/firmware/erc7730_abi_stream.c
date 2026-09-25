@@ -308,7 +308,12 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
     f->base = rounded;
     f->mode = STREAM_BYTES_PAYLOAD;
     f->capture = f->target_prefix && f->path_depth == s->capture_path_count;
-    if (f->capture) {
+    if (f->capture && s->capture_locate) {
+      s->located_length = length;
+      s->located_offset = s->received; /* the payload starts next */
+      s->capture.length = length < 4 ? length : 4;
+      s->capture.node = f->node;
+    } else if (f->capture) {
       if (length > sizeof(s->capture.data)) return ERC7730_ABI_RESOURCE_LIMIT;
       s->capture.length = length;
       s->capture.node = f->node;
@@ -325,9 +330,15 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
         if (r != ERC7730_ABI_OK) return r;
       }
     }
-    if (f->capture && used != 0)
+    if (f->capture && s->capture_locate) {
+      /* Keep only the leading bytes: the selector of an embedded call. */
+      const size_t done = s->located_length - f->payload_remaining;
+      for (size_t i = 0; i < used && done + i < s->capture.length; i++)
+        s->capture.data[done + i] = s->word[i];
+    } else if (f->capture && used != 0) {
       memcpy(s->capture.data + (s->capture.length - f->payload_remaining),
              s->word, used);
+    }
     for (size_t i = used; i < 32; i++) {
       if (s->word[i] != 0) return ERC7730_ABI_NON_CANONICAL;
     }

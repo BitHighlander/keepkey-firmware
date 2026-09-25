@@ -23,6 +23,8 @@ static const Erc7730RoleSources* formatter_roles(uint8_t kind, size_t* count,
   static const Erc7730RoleSources unit[] = {
       {1, PATH}, {4, LITERAL}, {5, STRING}, {6, LITERAL}};
   static const Erc7730RoleSources enumeration[] = {{1, PATH}, {10, LITERAL}};
+  static const Erc7730RoleSources embedded[] = {
+      {1, PATH}, {15, PATH}, {17, PATH}, {18, PATH}};
   *required = ERC7730_CAP_BIT(1);
   if (kind > 31 || (ERC7730_CAP_FORMATTER_KINDS & ERC7730_CAP_BIT(kind)) == 0) {
     *count = 0;
@@ -49,6 +51,10 @@ static const Erc7730RoleSources* formatter_roles(uint8_t kind, size_t* count,
       *required |= ERC7730_CAP_BIT(10);
       *count = sizeof(enumeration) / sizeof(enumeration[0]);
       return enumeration;
+    case 13:
+      *required |= ERC7730_CAP_BIT(15);
+      *count = sizeof(embedded) / sizeof(embedded[0]);
+      return embedded;
     default: /* 1 raw, 2 amount, 6 duration, 10 addressName */
       *count = 1;
       return value_only;
@@ -152,6 +158,11 @@ bool erc7730_cap_value(uint8_t kind, uint8_t role, uint8_t cls) {
              (role == 5 && (cls == ERC7730_CLASS_STRING ||
                             cls == ERC7730_CLASS_DATE_ENCODING)) ||
              (role == 6 && cls == ERC7730_CLASS_FLAG);
+    case 13: /* embedded calldata: inner bytes, callee, value, authority */
+      return (role == 1 && cls == ERC7730_CLASS_BYTES) ||
+             (role == 15 && cls == ERC7730_CLASS_ADDRESS) ||
+             (role == 17 && cls == ERC7730_CLASS_UINT) ||
+             (role == 18 && cls == ERC7730_CLASS_ADDRESS);
     case 8: /* enum: value, map */
       return (role == 1 &&
               (cls == ERC7730_CLASS_UINT || cls == ERC7730_CLASS_INT ||

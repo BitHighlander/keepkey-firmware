@@ -56,4 +56,13 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
 bool erc7730_format_enum(const char* value, const char* label, char* output,
                          size_t output_size);
 
+/* embedded calldata, not clear-signed: the callee, the inner function's
+ * selector (when the inner bytes hold one), their length, and when given the
+ * native value it moves and whose authority it runs with. */
+bool erc7730_format_embedded(const uint8_t callee[20], const uint8_t* selector,
+                             size_t selector_length, uint32_t data_length,
+                             const uint8_t* amount, uint64_t chain_id,
+                             const uint8_t* spender, char* output,
+                             size_t output_size);
+
 #endif

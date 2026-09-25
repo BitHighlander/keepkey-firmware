@@ -491,6 +491,46 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
+/* An embedded call the device cannot clear-sign. 7.15 shows it under a
+ * blind-sign warning (AdvancedMode is already required for ERC-7730).
+ * 7.16: AdvancedMode is a hard gate; reject here instead (owner rule,
+ * docs/security/HANDOFF-ERC7730-PHASE-E.md section 9a). */
+static void show_erc7730_embedded(Erc7730Workflow* workflow) {
+  const Erc7730Field* field = &workflow->field;
+  char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  if (!field->has_inner || !field->has_address ||
+      !erc7730_format_embedded(
+          field->address, field->inner_selector, field->inner_selector_length,
+          field->inner_length, field->has_value ? field->value : NULL,
+          workflow->identity.chain_id,
+          field->has_spender ? field->spender : NULL, formatted,
+          sizeof(formatted))) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Unable to format ERC-7730 field"));
+    return;
+  }
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
+    memzero(formatted, sizeof(formatted));
+    fail_erc7730_field(
+        workflow,
+        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                 : FailureType_Failure_ActionCancelled,
+        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                 : _("Signing cancelled by user"));
+    return;
+  }
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
+               "The inner call is not clear-signed")) {
+    memzero(formatted, sizeof(formatted));
+    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                       _("Signing cancelled by user"));
+    return;
+  }
+  show_erc7730_field(workflow, formatted);
+  memzero(formatted, sizeof(formatted));
+}
+
 /* Record an argument's value and resolve the next argument. */
 static void deliver_erc7730_argument(Erc7730Workflow* workflow, uint8_t cls,
                                      const uint8_t* value, size_t length) {
@@ -534,6 +574,15 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
       show_erc7730_field(workflow, formatted);
     }
     memzero(formatted, sizeof(formatted));
+  } else if (workflow->field.kind == 13 && workflow->field.pending_role == 1) {
+    /* The inner call: located, never copied. */
+    if (!erc7730_workflow_field_embedded(workflow) ||
+        !erc7730_workflow_resume_field(workflow)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 embedded call"));
+    } else {
+      resolve_erc7730_argument(workflow);
+    }
   } else if (!erc7730_workflow_resume_field(workflow)) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 display continuation"));
@@ -622,7 +671,9 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     send_erc7730_definition_request();
     return;
   }
-  if (field->kind == 8) {
+  if (field->kind == 13) {
+    show_erc7730_embedded(workflow);
+  } else if (field->kind == 8) {
     field->list_next = 0;
     next_erc7730_enum_key(workflow);
   } else if (field->has_text &&

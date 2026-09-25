@@ -434,6 +434,9 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
   }
   const Erc7730AbiResult result = erc7730_abi_stream_capture_path(
       &workflow->calldata, components, path->step_count);
+  /* Embedded calldata is located, not captured: it may be any length. */
+  workflow->calldata.capture_locate =
+      workflow->field.kind == 13 && workflow->field.pending_role == 1;
   memzero(components, sizeof(components));
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
@@ -785,6 +788,29 @@ bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
   return true;
 }
 
+bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
+  Erc7730AbiCapture capture;
+  uint8_t cls = 0;
+  if (!workflow || workflow->field.kind != 13 ||
+      workflow->field.pending_role != 1 || workflow->field.has_inner ||
+      !workflow->calldata.capture_locate ||
+      !erc7730_workflow_captured(workflow, &capture, &cls) ||
+      cls != ERC7730_CLASS_BYTES || capture.length > 4 ||
+      workflow->calldata.located_length > UINT32_MAX ||
+      workflow->calldata.located_offset > UINT32_MAX) {
+    memzero(&capture, sizeof(capture));
+    return false;
+  }
+  Erc7730Field* field = &workflow->field;
+  memcpy(field->inner_selector, capture.data, capture.length);
+  field->inner_selector_length = (uint8_t)capture.length;
+  field->inner_length = (uint32_t)workflow->calldata.located_length;
+  field->inner_offset = (uint32_t)workflow->calldata.located_offset;
+  field->has_inner = true;
+  memzero(&capture, sizeof(capture));
+  return true;
+}
+
 bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len) {
   if (!workflow || !value) return false;
@@ -793,6 +819,26 @@ bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
   if (field->kind == 1 || field->kind == 10 ||
       !erc7730_cap_value(field->kind, role, cls))
     return false;
+  if (field->kind == 13) {
+    /* callee, value and authority of an embedded call */
+    if (role == 17) {
+      if (value_len != 32 || field->has_value) return false;
+      memcpy(field->value, value, 32);
+      field->has_value = true;
+      return true;
+    }
+    uint8_t* out = role == 15 ? field->address : field->spender;
+    bool* has = role == 15 ? &field->has_address : &field->has_spender;
+    if (*has || (value_len != 20 && value_len != 32)) return false;
+    if (value_len == 32) {
+      for (size_t i = 0; i < 12; i++)
+        if (value[i] != 0) return false;
+      value += 12;
+    }
+    memcpy(out, value, 20);
+    *has = true;
+    return true;
+  }
   switch (role) {
     case 1: /* the value: a 32-byte word */
       if (value_len != 32 || field->has_value) return false;
