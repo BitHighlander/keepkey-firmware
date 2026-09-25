@@ -149,7 +149,9 @@ jobs:
           gitleaks detect --source . --log-opts="${LOG_OPTS}" --verbose --redact
 
   static-analysis:
-    runs-on: ubuntu-latest
+    # Pinned: cppcheck comes from the runner's apt, so the image version is the
+    # analyzer version. Moving it is a deliberate change with its own triage.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout

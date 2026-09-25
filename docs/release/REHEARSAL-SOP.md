@@ -247,6 +247,53 @@ and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
 unit, not additional unchanged review prompts.
 
+## Pre-push gate, self-review classes and agent handoff
+
+Owner request: 2026-09-25, after the 00b retrospective
+(`audit-units/715-00b-retro-20260925.md`). The rules above were already
+correct in principle; 00b broke them in sequencing and enforcement. These
+rules are mechanical so they do not depend on memory.
+
+**Pre-push gate.** Run `scripts/preflight.sh` after the last edit and
+immediately before every push. It mirrors CI Stage-1 (a red Stage-1 job skips
+the whole build graph) and fails closed. Do not push on a failure, with one
+recorded exception: if only the Docker-backed step failed because Docker is
+unavailable, push and state in the PR that hosted CI is the only
+static-analysis evidence for that head. Do not
+treat a local tool that differs from CI's version as a substitute. Local
+qualification runs pinned, clean submodules only; a dirty submodule is a
+different product.
+
+**Negative controls.** A new check, script, poll or gate counts as evidence
+only after it has been shown to fail on a known-bad input. A silent tool is
+not a passing tool until its control has fired. This applies to agent
+scripts: API polls must paginate, and batch writes must be verified by
+reading the result back.
+
+**Self-review classes.** Before any external review, walk the block's own
+diff for these recurring classes and fix or disposition each hit:
+
+| Class | Question to answer in the diff |
+| --- | --- |
+| Invariant in a comment | Which comment states a fact? What code, `_Static_assert` or test proves it? |
+| Consent order | Is every value validated before it is displayed, and displayed before it is hashed or signed? |
+| Buffer bounds | Is every bound computed by subtraction from the end, never by forming a pointer past it? |
+| Configuration duplication | Does any option, pin or ledger entry now appear twice? |
+| Gate trust | Does any gate read free text from an artifact instead of a checked-in ledger or an exact identity? |
+| Dead guards | Did a new early return make a later check unreachable? |
+
+**Local runtime health.** Before starting a long local job, check
+`docker info` with a timeout, and run images for the host architecture.
+Give every background job a time limit. If a job makes no progress for
+10 minutes, stop it and report. If Docker is unavailable, qualify on hosted
+CI and say so explicitly (owner direction, 2026-09-24).
+
+**Agent handoff record.** Work handed from one agent to another must be
+committed, as a WIP commit if needed, never left as an uncommitted tree. It
+must carry a short note listing: head SHA, dirty or unpinned dependencies,
+the checks that ran and the exact tree each ran against, open findings, and
+the next step. A pasted transcript is not a handoff record.
+
 ## Copilot only with explicit owner authorization
 
 Do not request Copilot during authoring, local hardening, predecessor propagation,
