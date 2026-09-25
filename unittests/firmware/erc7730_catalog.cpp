@@ -624,6 +624,23 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
+// Calldata and typed-data captures refuse ERC7730_ABI_MAX_DEPTH or more path
+// steps, so the preload verifier must too: a longer signed path would pass
+// preload and then fail after the user had approved earlier screens.
+TEST(Erc7730Catalog, PathStepLimitMatchesExecutionCaptures) {
+  for (uint8_t steps : {(uint8_t)(ERC7730_ABI_MAX_DEPTH - 1u),
+                        (uint8_t)ERC7730_ABI_MAX_DEPTH}) {
+    std::vector<uint8_t> entries = {1, steps, 0xff, 0xff};
+    for (uint8_t i = 0; i < steps; i++)
+      entries.insert(entries.end(), {1, 0, 0, 0, 0});
+    const auto p = programWithPaths(entries, 1);
+    EXPECT_EQ(feedAll(envelope(p), 23), steps < ERC7730_ABI_MAX_DEPTH
+                                            ? ERC7730_CATALOG_UNTRUSTED
+                                            : ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)steps;
+  }
+}
+
 TEST(Erc7730Catalog, ValidatesCanonicalLiteralsAndConditions) {
   std::vector<uint8_t> literals = {
       1, 0, 1, 1,                    // uint 1

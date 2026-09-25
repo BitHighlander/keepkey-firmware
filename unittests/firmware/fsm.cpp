@@ -887,6 +887,13 @@ TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
   session_clear(/*clear_pin=*/true);  // autolock and PIN revocation
   EXPECT_EQ(continued(), ERC7730_CATALOG_BAD_SEQUENCE);
 
+  // A new definition ends any older certified workflow, and with it the
+  // preload that workflow was using, before its own chunks begin.
+  erc7730_workflow_state()->phase = ERC7730_WORKFLOW_REPLAY;
+  EXPECT_TRUE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumClearSignDefinition));
+  EXPECT_EQ(erc7730_workflow_state()->phase, ERC7730_WORKFLOW_IDLE);
+
   for (auto consumer : {MessageType_MessageType_EthereumClearSignDefinition,
                         MessageType_MessageType_EthereumSignTx,
                         MessageType_MessageType_EthereumSignTypedData}) {

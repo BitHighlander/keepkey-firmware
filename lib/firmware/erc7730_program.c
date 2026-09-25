@@ -374,7 +374,7 @@ bool erc7730_program_path_feed(Erc7730ProgramPath* path,
       const uint8_t source = path->scratch[0];
       const uint8_t steps = path->scratch[1];
       const uint16_t source_index = read_be16(path->scratch + 2);
-      if (source < 1 || source > 3 || steps > ERC7730_ABI_MAX_PATH ||
+      if (source < 1 || source > 3 || steps >= ERC7730_ABI_MAX_DEPTH ||
           (source == 1 && (source_index != UINT16_MAX || steps == 0)) ||
           (source != 1 && steps != 0) ||
           (source == 2 && (source_index == 0 || source_index > 6)) ||

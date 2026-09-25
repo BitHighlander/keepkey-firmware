@@ -309,8 +309,10 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     v->path_source = v->sibling[0];
     v->path_step_count = v->sibling[1];
     const uint16_t source_index = read_be16(v->sibling + 2);
+    /* Execution captures refuse ERC7730_ABI_MAX_DEPTH or more steps (each
+     * step descends one ABI level), so no longer path may pass preload. */
     if (v->path_source < 1 || v->path_source > 3 ||
-        v->path_step_count > ERC7730_ABI_MAX_PATH)
+        v->path_step_count >= ERC7730_ABI_MAX_DEPTH)
       return false;
     if (v->path_source == 1) {
       if (source_index != UINT16_MAX || v->path_step_count == 0) return false;

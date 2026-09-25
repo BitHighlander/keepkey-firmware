@@ -62,9 +62,18 @@ On owner approval, [review 5313747274](https://github.com/BitHighlander/keepkey-
 | 4101396205 | The typed-data response was initialised in the shared `msg_resp` arena before the final "Sign Typed Data" confirmation. A DebugLink `GetState` answered during that screen runs `RESP_INIT` on the same arena. | Real, introduced by this remediation, and limited to DEBUG_LINK builds. The address is now kept in a local, the node is scrubbed before the confirmation and derived again after approval, and the response is built only after signing. The pyk streaming tests now also assert the reported address. Under screenshot capture, which reads state at every button request, `a74532eb9` returned an empty address and 5 of 5 signing tests failed; the fix passes 5 of 5. |
 | 4101396237 | `python-keepkey-tests.sh` was said to run contract JUnit validation before those files exist. | Not a defect. The script calls python-keepkey's report script, which has no contract validation. The firmware `scripts/generate-test-report.py` that holds `validate_contract_junit()` runs only in CI's `generate-test-report` job, after both integration legs upload their JUnit files. Hosted runs 36085522402 and 36096967483 and the local compose run all passed through this sequence. |
 
+## Final owner-approved Copilot review
+
+[Review 5314053769](https://github.com/BitHighlander/keepkey-firmware/pull/837#pullrequestreview-5314053769) (Lite) on `197df86a2` marked both round-4 findings resolved and raised two new ones:
+
+| Comment | Finding | Disposition |
+| --- | --- | --- |
+| 4101618988 | An initial `EthereumClearSignDefinition` was said to leave an older non-idle `Erc7730Workflow` alive, so the following `SignTx` would clear the new preload. | Not a defect. Dispatch calls `abort_signing_engines()`, which calls `ethereum_signing_abort()`. That aborts any non-idle workflow (`ethereum.c`), and the abort clears the old preload, before the new definition's handler runs. `Fsm.Erc7730PreloadEndsAtEverySessionBoundary` now pins this: a workflow in REPLAY is IDLE after the definition's dispatch, and a following `SignTx` keeps the new preload. |
+| 4101619035 | The catalog verifier and replay reader accepted up to 16 path steps (`ERC7730_ABI_MAX_PATH`), while calldata and typed-data captures refuse `ERC7730_ABI_MAX_DEPTH` (8) or more. A signed program could therefore pass preload and fail mid-review. | Real. The verifier, the reader and the host compiler now all refuse 8 or more steps; each step descends one ABI level, so no valid path is that long. `Erc7730Catalog.PathStepLimitMatchesExecutionCaptures` accepts 7 steps and refuses 8, and it fails with the old limit. No official registry format is affected: 1,440 reach firmware and 10 are refused for named limits, as before. |
+
 ## Open items for the owner
 
 - SRAM: the full product's reserve fell by 560 B. `tools/sram-budgets.json` requires explicit review of any single-commit increase above 256 B; 384 B of it is the Seaport-capable slot pool.
 - `increaseAllowance`, `setApprovalForAll` and Permit2 `approve` calldata are still outside the allowance policy. That predates this stack and was not an audit finding against it.
 - Physical-device verification, including OLED photographs of the new typed-data screens, has not been done.
-- Copilot has not reviewed the fix for its fourth-round finding. A further request needs separate owner approval.
+- Copilot has not reviewed the fix for its final-round finding. The owner designated review 5314053769 as the last authorized request.
