@@ -15,6 +15,8 @@ extern "C" {
 #include "trezor/crypto/memzero.h"
 }
 
+void kk_test_board_init(void);
+
 namespace {
 const char kMnemonic[] = "all all all all all all all all all all all all";
 const char kHidden[] = "hidden wallet";
@@ -25,10 +27,7 @@ class PassphraseTransition : public ::testing::Test {
     static bool initialized = false;
     if (!initialized) {
       setup();
-      if (layout_get_canvas() == nullptr) {
-        timer_init();
-        layout_init(display_canvas_init());
-      }
+      kk_test_board_init();
       storage_init();
       initialized = true;
     }

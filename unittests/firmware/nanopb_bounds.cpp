@@ -92,7 +92,7 @@ TEST(NanopbBounds, OddSizedBytesRejectsAlignmentPaddingByte) {
 }
 
 TEST(NanopbBounds, DescriptorKeepsCapacitySeparateFromAlignedStride) {
-  const pb_field_t &signatures = MultisigRedeemScriptType_fields[1];
+  const pb_field_t& signatures = MultisigRedeemScriptType_fields[1];
   EXPECT_EQ(73u, signatures.bytes_capacity);
   EXPECT_EQ(sizeof(MultisigRedeemScriptType_signatures_t),
             signatures.data_size);

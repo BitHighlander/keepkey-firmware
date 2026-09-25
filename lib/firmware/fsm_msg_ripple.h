@@ -80,6 +80,13 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
 
   CHECK_INITIALIZED
 
+  if (msg->has_memo) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Ripple memos are not supported");
+    layoutHome();
+    return;
+  }
+
   CHECK_PIN
 
   bool needs_confirm = true;
@@ -91,13 +98,7 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* Absent fields are not zero-valued fields. Without these, an omitted
-     payment/amount/destination reached the screens as 0 XRP to an empty
-     address, and ripple_serialize() simply omitted what was missing -- so the
-     owner approved one transaction and the device signed another. The
-     destination is checked here too: ripple_serializeAddress() enforces the
-     21-byte decode with assert(), which is compiled out of release builds, and
-     runs only after both confirmations. */
+  /* Reject absent fields and invalid recipients before either approval. */
   if (!msg->has_payment || !msg->payment.has_amount ||
       !msg->payment.has_destination ||
       !ripple_validateAddress(msg->payment.destination)) {

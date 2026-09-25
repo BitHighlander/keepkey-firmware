@@ -577,3 +577,43 @@ TEST(Board, EmulatorEraseClearsOnlyTheSelectedStorageSector) {
   EXPECT_EQ(std::vector<uint8_t>(FLASH_TOTAL_SIZE - end, 0x42),
             std::vector<uint8_t>(flash.begin() + end, flash.end()));
 }
+
+static void timer_test_callback(void*) {}
+static void timer_test_callback_after_reinit(void*) {}
+static void animation_test_callback(void*, uint32_t, uint32_t) {}
+
+TEST(Board, TimerQueueSurvivesReinitialization) {
+  kk_timer_init();
+  post_periodic(timer_test_callback, nullptr, 10, 10);
+  kk_timer_init();
+  // A distinct callback forces the old cyclic active queue to be traversed.
+  post_periodic(timer_test_callback_after_reinit, nullptr, 10, 10);
+  remove_runnable(timer_test_callback_after_reinit);
+  // The legacy timer_init entry point must also discard the old links.
+  timer_init();
+  post_periodic(timer_test_callback, nullptr, 10, 10);
+  remove_runnable(timer_test_callback);
+  ualarm(0, 0);
+  signal(SIGALRM, SIG_IGN);
+}
+
+TEST(Board, AnimationQueueSurvivesReinitialization) {
+  kk_timer_init();
+  layout_init(display_canvas_init());
+  layout_add_animation(animation_test_callback, nullptr, 10);
+  layout_init(display_canvas_init());
+  layout_clear_animations();
+}
+
+TEST(Board, MonochromeEvidencePreservesGrayscaleForeground) {
+  for (uint16_t y = 0; y < 4; y++) {
+    for (uint16_t x = 0; x < 4; x++) {
+      EXPECT_FALSE(display_mono_pixel_is_lit(0x00, x, y));
+      EXPECT_TRUE(display_mono_pixel_is_lit(0xFF, x, y));
+    }
+  }
+  EXPECT_TRUE(display_mono_pixel_is_lit(0x11, 0, 0));
+  EXPECT_FALSE(display_mono_pixel_is_lit(0x11, 1, 0));
+  EXPECT_FALSE(display_mono_pixel_is_lit(0x77, 1, 0));
+  EXPECT_TRUE(display_mono_pixel_is_lit(0x99, 1, 0));
+}

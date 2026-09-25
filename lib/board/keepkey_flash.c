@@ -322,36 +322,54 @@ const char* flash_programModel(void) {
 #endif
 }
 
-void flash_collectHWEntropy(bool privileged) {
+bool flash_collectOtpEntropy(uint8_t* output, const FlashEntropyOps* ops) {
+  uint8_t entropy[FLASH_OTP_BLOCK_SIZE] = {0};
+  bool ok = output && ops && ops->is_locked && ops->draw && ops->write &&
+            ops->read && ops->lock;
+  if (!ok) return false;
+  memzero(output, FLASH_OTP_BLOCK_SIZE);
+  if (!ops->is_locked(FLASH_OTP_BLOCK_RANDOMNESS)) {
+    ok = ops->draw(entropy, sizeof(entropy));
+    if (ok)
+      ok = ops->write(FLASH_OTP_BLOCK_RANDOMNESS, 0, entropy, sizeof(entropy));
+    /* Verify the irreversible write before permanently locking the block. */
+    if (ok)
+      ok = ops->read(FLASH_OTP_BLOCK_RANDOMNESS, 0, output,
+                     FLASH_OTP_BLOCK_SIZE) &&
+           memcmp(output, entropy, sizeof(entropy)) == 0;
+    if (ok) ok = ops->lock(FLASH_OTP_BLOCK_RANDOMNESS);
+    memzero(entropy, sizeof(entropy));
+    if (!ok) goto fail;
+  }
+  if (!ops->is_locked(FLASH_OTP_BLOCK_RANDOMNESS) ||
+      !ops->read(FLASH_OTP_BLOCK_RANDOMNESS, 0, output, FLASH_OTP_BLOCK_SIZE))
+    goto fail;
+  return true;
+fail:
+  memzero(output, FLASH_OTP_BLOCK_SIZE);
+  return false;
+}
+
+bool flash_collectHWEntropy(bool privileged) {
 #ifdef EMULATOR
   (void)privileged;
   memzero(HW_ENTROPY_DATA, HW_ENTROPY_LEN);
 #else
   if (privileged) {
     desig_get_unique_id((uint32_t*)HW_ENTROPY_DATA);
-    // set entropy in the OTP randomness block
-    if (!flash_otp_is_locked(FLASH_OTP_BLOCK_RANDOMNESS)) {
-      uint8_t entropy[FLASH_OTP_BLOCK_SIZE] = {0};
-      /* Written once and then locked forever, and it feeds the PIN KDF salt
-       * via flash_readHWEntropy(). A block filled from a dead generator can
-       * never be corrected, so on a failed draw write nothing: the block stays
-       * unlocked and a later healthy boot claims it. Halting is wrong here --
-       * this runs before kk_board_init(), so there is no display to warn on. */
-      if (random_buffer_checked(entropy, FLASH_OTP_BLOCK_SIZE)) {
-        flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, 0, entropy,
-                        FLASH_OTP_BLOCK_SIZE);
-        flash_otp_lock(FLASH_OTP_BLOCK_RANDOMNESS);
-      }
-      memzero(entropy, sizeof(entropy));
+    static const FlashEntropyOps ops = {flash_otp_is_locked,
+                                        random_buffer_checked, flash_otp_write,
+                                        flash_otp_read, flash_otp_lock};
+    if (!flash_collectOtpEntropy(HW_ENTROPY_DATA + 12, &ops)) {
+      memzero(HW_ENTROPY_DATA, HW_ENTROPY_LEN);
+      return false;
     }
-    // collect entropy from OTP randomness block
-    flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0, HW_ENTROPY_DATA + 12,
-                   FLASH_OTP_BLOCK_SIZE);
   } else {
     // unprivileged mode => use fixed HW_ENTROPY
     memset(HW_ENTROPY_DATA, 0x3C, HW_ENTROPY_LEN);
   }
 #endif
+  return true;
 }
 
 void flash_readHWEntropy(uint8_t* buff, size_t size) {

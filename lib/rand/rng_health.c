@@ -221,6 +221,12 @@ bool rng_health_analyze(const uint8_t* buf, size_t len) {
   return rng_health_final(&ctx);
 }
 
+#ifdef EMULATOR
+__attribute__((weak)) void rng_health_test_draw_completed(size_t len) {
+  (void)len;
+}
+#endif
+
 static bool rng_health_gate(void) {
   if (!rng_source_live()) return false;
 
@@ -233,6 +239,14 @@ static bool rng_health_gate(void) {
   for (size_t drawn = 0; drawn < RNG_HEALTH_SAMPLE_BYTES;
        drawn += sizeof(chunk)) {
     random_buffer(chunk, sizeof(chunk));
+#ifdef EMULATOR
+    rng_health_test_draw_completed(sizeof(chunk));
+#endif
+    if (rng_seed_error_latched()) {
+      memzero(chunk, sizeof(chunk));
+      memzero(&ctx, sizeof(ctx));
+      return false;
+    }
     rng_health_update(&ctx, chunk, sizeof(chunk));
   }
   memzero(chunk, sizeof(chunk));
@@ -301,6 +315,20 @@ bool random_buffer_checked(uint8_t* buf, size_t len) {
   }
 
   random_buffer(buf, len);
+#ifdef EMULATOR
+  rng_health_test_draw_completed(len);
+#endif
+
+  /* Re-read the hardware fault mirror AFTER the draw. rng_health_check() above
+   * only proves the source was sound when the draw started; a seed or clock
+   * fault that latches while these very bytes are being produced would
+   * otherwise be noticed on the NEXT call, having already handed this one out.
+   * rng_health_gate() re-reads SEIS/CEIS on every sampling iteration for the
+   * same reason -- this is that rule applied to the consumer path. */
+  if (rng_seed_error_latched()) {
+    memzero(buf, len);
+    return false;
+  }
 
   /* Re-read the hardware fault mirror AFTER the draw. rng_health_check() above
    * only proves the source was sound when the draw started; a seed or clock
@@ -368,6 +396,11 @@ bool rng_health_observe(const uint8_t* buf, size_t len) {
 }
 
 #ifdef EMULATOR
+void rng_health_test_reset(void) {
+  rng_verdict = RNG_UNTESTED;
+  memzero(&rng_continuous, sizeof(rng_continuous));
+}
+
 void rng_health_force_verdict(bool passed) {
   if (passed) {
     rng_verdict = RNG_PASSED;

@@ -204,9 +204,17 @@ static Animation* animation_queue_get(AnimationQueue* queue,
 void layout_init(Canvas* new_canvas) {
   canvas = new_canvas;
 
-  int i;
+  /* A repeated board init must discard old animation links and callbacks. */
+  active_queue.head = NULL;
+  active_queue.size = 0;
+  free_queue.head = NULL;
+  free_queue.size = 0;
+  memset(animations, 0, sizeof(animations));
+  animate_flag = false;
+  leaving_handler = NULL;
+  iconLayout = false;
 
-  for (i = 0; i < MAX_ANIMATIONS; i++) {
+  for (int i = 0; i < MAX_ANIMATIONS; i++) {
     animation_queue_push(&free_queue, &animations[i]);
   }
 
