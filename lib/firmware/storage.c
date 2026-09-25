@@ -110,6 +110,8 @@ static ConfigFlash CONFIDENTIAL shadow_config;
  * build understands. Set from the SUS_BitcoinOnlyLocked path in either build.
  */
 static bool btc_only_locked = false;
+static bool firmware_too_old = false;
+bool storage_isFirmwareTooOld(void) { return firmware_too_old; }
 
 bool storage_isBitcoinOnlyLocked(void) { return btc_only_locked; }
 
@@ -1554,6 +1556,8 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
   // Load config values from active config node.
   uint32_t raw_version = read_u32_le(flash + 44);
   enum StorageVersion version = version_from_int(raw_version);
+  if (raw_version > (uint32_t)STORAGE_VERSION &&
+      raw_version < STORAGE_VERSION_BTC_ONLY_BASE) return SUS_TooNew;
 
   switch (version) {
     case StorageVersion_1:
@@ -1790,6 +1794,11 @@ void storage_init(void) {
       // that it's available on next boot without conversion.
       storage_commit();
       break;
+    case SUS_TooNew:
+      firmware_too_old = true;
+      storage_reset();
+      storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
+      break;
     case SUS_BitcoinOnlyLocked:
       // Bitcoin-only wallet in flash: act as an uninitialized, locked device.
       // Do NOT commit -- flash stays untouched so reflashing bitcoin-only
@@ -1871,6 +1880,7 @@ void storage_wipe(void) {
 
   // The bitcoin-only wallet (if any) is gone; the device may be used freely.
   btc_only_locked = false;
+  firmware_too_old = false;
 }
 
 void storage_clearKeys(void) {
@@ -2017,7 +2027,7 @@ void storage_commit(void) {
   // Never overwrite a bitcoin-only wallet from multi-chain firmware; the
   // only way out is storage_wipe() (which clears the lock). This is the
   // backstop behind the per-handler checks.
-  if (btc_only_locked) return;
+  if (btc_only_locked || firmware_too_old) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
   //

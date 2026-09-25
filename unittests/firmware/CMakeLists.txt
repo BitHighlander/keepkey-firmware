@@ -13,7 +13,6 @@ set(sources
     confirm_test_utils.cpp
     dice.cpp
     fsm.cpp
-    nanopb_bounds.cpp
     recovery.cpp
     seed_display.cpp
     test_board.cpp
@@ -23,11 +22,9 @@ set(sources
     setup_ceremony.cpp
     reset_policy_probe.c
     signing.cpp
-    setup_ceremony.cpp
     storage.cpp
     storage_cipher_probe.c
     storage_passphrase.cpp
-    test_board.cpp
     transaction.cpp
     usb_rx.cpp
     usb_callbacks.cpp
@@ -40,7 +37,6 @@ set(sources
 # coin+token table.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      authenticator.cpp
       coins.cpp
       cosmos.cpp
       eip712.cpp

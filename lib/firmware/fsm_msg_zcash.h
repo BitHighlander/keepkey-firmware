@@ -130,6 +130,8 @@ static struct {
 } zcash_signing;
 
 /* Public API; declared in keepkey/firmware/zcash.h. */
+bool zcash_signing_is_active(void) { return zcash_signing.active; }
+
 void zcash_signing_abort(void) {
   /* Centralized cleanup: stop the trickle progress animation here so every
    * abort path (Cancel, ClearSession, failures) kills it even when the caller

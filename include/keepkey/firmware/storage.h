@@ -100,6 +100,8 @@ void storage_wipe(void);
 ///
 /// Cleared only by storage_wipe().
 bool storage_isBitcoinOnlyLocked(void);
+/// Refuse normal-band storage written by newer firmware without overwriting it.
+bool storage_isFirmwareTooOld(void);
 
 /// \brief Clear storage key and storage key fingerprint.
 void storage_clearKeys(void);

@@ -174,13 +174,6 @@ bool fsm_test_derivedNodeIsZero(void) {
    * false. Refuse here, loudly, before the user does the work -- a        \
    * ceremony allowed to run would end in storage_commit() declining to    \
    * write and the handler reporting success anyway. */                    \
-  if (storage_isFirmwareTooOld()) {                                        \
-    fsm_sendFailure(FailureType_Failure_Other,                             \
-                    "Wallet format requires newer firmware. "              \
-                    "Update firmware or wipe the device.");                \
-    layoutHome();                                                          \
-    return;                                                                \
-  }                                                                        \
   if (storage_isBitcoinOnlyLocked()) {                                     \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Bitcoin-only wallet present. Use Wipe first.");       \
@@ -190,19 +183,6 @@ bool fsm_test_derivedNodeIsZero(void) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,                 \
                     "Storage requires newer firmware. Use Wipe first.");   \
     return;                                                                \
-  }
-
-/* Only the two ceremony STARTS use this. Every other message that persists
- * anything is handled structurally instead: storage_commit() aborts an armed
- * ceremony, so a handler that writes can never have its write consumed by
- * one -- the worst it can do is end it. */
-#define CHECK_NO_CEREMONY                                     \
-  if (setup_isArmed()) {                                      \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
-                    "Device is in the middle of setup. Send " \
-                    "Initialize or Cancel first.");           \
-    layoutHome();                                             \
-    return;                                                   \
   }
 
 /* Only the two ceremony STARTS use this. Every other message that persists
@@ -671,7 +651,6 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_debug.h"
 #include "fsm_msg_bip85.h"
 #if !BITCOIN_ONLY
-#include "fsm_msg_bip85.h"
 #include "fsm_msg_ethereum.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"

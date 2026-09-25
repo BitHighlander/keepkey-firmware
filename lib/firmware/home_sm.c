@@ -205,3 +205,7 @@ void note_host_activity(void) {
  *     the state toggle_screensaver() last settled on
  */
 HomeState home_get_state(void) { return home_state; }
+
+void note_workflow_progress(void) {
+  if (home_state != SCREENSAVER) reset_idle_time();
+}
