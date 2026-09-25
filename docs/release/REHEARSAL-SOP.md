@@ -307,14 +307,45 @@ instruction to complete, audit, publish or prepare the release is not Copilot
 authorization. If authorized, enter the checkpoint only after the release and
 its proposed upstream units pass internal acceptance. Audit the small final units
 and their affected interactions; do not substitute a broad product diff for them.
-Never automatically start a repeat-until-silent Copilot loop. If findings arrive,
-triage and fix them locally in a batch; a re-request needs a concrete reason tied
-to that external checkpoint. Preserve prior dispositions and review counts.
+Never start an unbounded repeat-until-silent Copilot loop. The bounded loop in
+"Review budget and block splitting" below is the standing authorization for
+re-requests. Preserve prior dispositions and review counts.
 
 A failed, missing or quota-limited review is not a clean review. Report Copilot's
 actual status separately from internal readiness. Existing substantive findings
 must still be resolved or explicitly declined on technical grounds; deferring
 Copilot does not waive known defects or any upstream-required review gate.
+
+## Review budget and block splitting
+
+Owner decision: 2026-09-25, after the 00b retrospective. This is the
+standing authorization for Copilot on frozen blocks; no per-round approval
+is needed.
+
+1. **Budget.** Each frozen block gets up to **3 Copilot rounds**, requested
+   by the agent without asking. Use Balanced effort where it is available.
+2. **Each round.** Fix every actionable finding and audit its class across
+   the block. Reply to and resolve every thread. Then run
+   `scripts/preflight.sh` and get hosted CI green on the new head. Only then
+   request the next round.
+3. **Pass.** A round passes when a delivered review on the current head has
+   no finding that needs a code change. A decline needs technical evidence
+   on the thread. A finding the agent would decline on a security-relevant
+   path goes to the owner instead of being declined.
+4. **Failure.** A round with any finding that needs a code change is a
+   failure. A quota failure, or a review that never arrives, is neither a
+   pass nor a failure; it does not use up the budget.
+5. **Split after 3 failures.** Re-cut the block into smaller consecutive
+   blocks, using the next unused IDs in sequence (for example, 00b becomes
+   00b, 00c and 00d). Each piece holds one bounded behavior or subsystem, is
+   stacked in dependency order, and gets a fresh 3-round budget. Repeat for
+   any piece that fails 3 rounds, until the entire block is approved. The
+   agent plans and performs the split without asking. It records the split
+   in a receipt that maps every file, finding and disposition from the
+   parent to exactly one piece, so no fix or evidence is lost. Splitting
+   never waives an open finding.
+6. **00b transition.** 00b's seven earlier rounds do not count. The owner
+   authorized 3 more rounds on 00b before any split (2026-09-25).
 
 ## Final upstream SOP
 
