@@ -123,9 +123,13 @@ Refuted but acted on anyway:
 
 SRAM: 7b spends 496 B of reserve over nine commits; no single commit exceeds the 256 B single-change review rule.
 
+## First Copilot review
+
+The first Copilot review of `ed6c8e3a7` reported four findings. One found that a scalar formatter value could be repeated inside an iteration; the firmware verifier and python-keepkey mirror now require the value to walk the active array, with a positive and negative lockstep test. Parallel auxiliary arrays still pair by index as documented in D10. The other three findings were stale phase counts, E1/E2 status and the EX test count; the handoffs now match the final implementation and 38-test inventory. The focused firmware catalog suite passed (46 tests), and the compiler suite passed with the pinned registry and rebuilt device validator (16 tests). A fresh Copilot review is needed on the remediation head.
+
 ## Not verified
 
 - **Physical device.** No 7b build has been flashed or run on hardware, and there are no OLED photographs from a device. The emulator frames above are the only display evidence.
-- **Copilot review** of 7b has not been requested.
+- **Copilot convergence.** The first review found issues; a review of the remediation head is pending.
 - Pre-existing duplicate nanopb options in `messages-osmosis.options` and `messages-solana.options` (from the 00b stack, `4c56e19e3`), flagged by `scripts/preflight.sh`, are outside 7b.
 - Presentation limits: the board pager wraps by pixel width, so a checksummed address can continue on the next OLED page of the same confirmation. An array element whose value needs numbered parts and also pages can exceed the title width.

@@ -822,8 +822,7 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
     /* A field label is signer text shown with its value. */
     if (opcode == 4 && !short_string(v, a)) return false;
     if (((v->cert[64u + formatter] & 1u) != 0 && !v->display_in_iteration) ||
-        (v->display_in_iteration && value_array != 0xff &&
-         value_array != v->display_iteration_array))
+        (v->display_in_iteration && value_array != v->display_iteration_array))
       return false;
   }
   /* Interpolated-intent parts form one run directly after the intent. */

@@ -23,7 +23,7 @@ The **preload verifier** (`lib/firmware/erc7730_catalog.c`) accepts far more:
 
 A signed definition using any of these loads fine. It then fails with "Unsupported ERC-7730 formatter/field instruction" **after** the user has approved the source, intent and earlier field screens. It fails closed (no signature), but the device has shown screens it cannot finish. Copilot flagged this class twice for narrower cases: the verifier/reader limits and the path step count, both fixed.
 
-Measured against the official registry at pinned commit `9f37816afde954ff6617fb5baa346133e5af26c5` (1,450 calldata formats):
+The original planning estimates against the official registry at pinned commit `9f37816afde954ff6617fb5baa346133e5af26c5` (1,450 calldata formats) were as follows. The implemented lockstep counts appear below.
 
 | Runtime supports | Formats fully signable |
 | --- | --- |
@@ -78,9 +78,9 @@ Exit: registry signable = 92 exactly. Every program outside the table is refused
 - DebugLink: device-protocol `DebugLinkState.confirm_title` (16) and `confirm_body` (17), filled from the last `confirm_helper()` call in DEBUG_LINK builds only; python-keepkey `DebugLink.read_confirm_text()`.
 - Tests: `Erc7730Catalog.PreloadRefuses*`, `PreloadWalksEveryPathAgainstTheAbi`, `RuntimePathPredicateMatchesTheTable`; wire tests `test_program_outside_capability_table_is_refused_at_preload`, `test_path_outside_abi_is_refused_at_preload`, `test_raw_field_screens_show_exact_text` in `scripts/emulator/test_stack07_regressions.py`. Negative controls: removing each verifier check fails a named unit test (the two formatter checks overlap and fail together); removing the capability checks or the walk and leaf check fails the matching wire test.
 
-### Real per-phase targets (measured 2026-09-25 with the python mirror)
+### Implemented per-phase counts (measured 2026-09-25 with the python mirror)
 
-The plan's counts assumed values came only from calldata. Measured with container and literal sources: 0 = 92, A = 812 (a loose estimate gave 833; see below), B ≈ 987, C ≈ 1,172, D ≈ 1,383, E ≈ 1,412. The rest need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
+With container and literal sources, the lockstep counts are 0 = 92, A = 812, B = 954, C = 1,138, D = 1,294 and E1 = 1,326. The earlier estimates assumed values came only from calldata. The remaining formats need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
 
 ### Phase A status (2026-09-25): block 7b, stacked on 7a
 

@@ -1,6 +1,6 @@
 # Handoff: ERC-7730 embedded calldata (Phase E): goals, needs, hard requirements
 
-Date: 2026-09-25. Status: **framing only; nothing is designed or decided.** Blocks 7a (#837) and 7b (#863) are the base. Phase 0–D status is in `HANDOFF-ERC7730-715-FORMATTERS.md`.
+Date: 2026-09-25. Status: **E1 and E2 implemented in block 7b; 7.16 decisions remain.** Blocks 7a (#837) and 7b (#863) are the base. Phase 0–D status is in `HANDOFF-ERC7730-715-FORMATTERS.md`.
 
 This document replaces the earlier "three options" summary (lower the SRAM floor, redesign memory, or defer). Those options followed from an assumption nobody had required: that the outer and inner programs must be resident at the same time. Section 3 questions that assumption and the others behind the earlier ">2 KB" estimate.
 
@@ -200,12 +200,10 @@ These sign, and are recorded as limits:
 
 New wire tests: `test_only_a_raw_field_shows_a_signer_constant`, `test_a_long_typed_data_value_points_to_the_walk_not_blind`, `test_declining_any_certified_screen_returns_no_signature`, `test_a_wanchain_transaction_is_never_certified`, `test_control_characters_in_a_value_are_escaped`, `test_a_raw_value_too_long_to_capture_is_shown_blind`, `test_multiline_values_split_between_lines`, `test_an_inner_definition_the_device_refuses_falls_back_to_blind`, `test_inner_definition_for_another_callee_or_chain_is_refused`, `test_inner_calls_read_their_own_containers`, `test_a_call_at_depth_two_is_shown_blind` (asserts no request deeper than depth 1), `test_embedded_calls_inside_an_iteration_are_shown_blind`, `test_an_inner_value_the_calldata_does_not_carry_is_never_shown`, plus the two fail-closed tests above. Every test that signs first signs the same transaction on the ordinary path and requires an identical signature. Negative controls: reverting each of 15 checks on its own fails its named wire or unit test. The callee/chain binding is checked twice (header screen and `erc7730_workflow_fetch_complete`), so its control removes both.
 
-**Where the tests live.** The Phase 0–E runtime tests (34) moved from `scripts/emulator/test_stack07_regressions.py` to python-keepkey `tests/test_msg_ethereum_erc7730_runtime.py`. Only pyk tests get OLED captures in the release PDF. They are rows EX1–EX34 of report section EX (7.15.0+), and the module is in `MUST_RUN_MODULES` from 7.15.0 (full product only): a skip there fails the report. The firmware file keeps the 7a contracts and imports the harness (`Erc7730Harness`) from the pyk module. Captures cover the screens the definition adds; the ordinary review that follows is not captured, since the identical signature proves it unchanged.
+**Where the tests live.** The Phase 0–E runtime tests (38) moved from `scripts/emulator/test_stack07_regressions.py` to python-keepkey `tests/test_msg_ethereum_erc7730_runtime.py`. Only pyk tests get OLED captures in the release PDF. They are rows EX1–EX38 of report section EX (7.15.0+), and the module is in `MUST_RUN_MODULES` from 7.15.0 (full product only): a skip there fails the report. The firmware file keeps the 7a contracts and imports the harness (`Erc7730Harness`) from the pyk module. Captures cover the screens the definition adds; the ordinary review that follows is not captured, since the identical signature proves it unchanged.
 
-## 9. Decisions needed from the owner before design
+## 10. Remaining 7.16 work
 
-1. **P5:** without an inner definition, show the minimum (callee, selector, value, operation, bytes hash or data) with a "not clear-signed" label, or refuse?
-2. **P4:** is a device-protocol change on the canonical branch acceptable if the existing request is not enough?
-3. **P7 and P8:** first cut = single embedded call in calldata only, or include `multicall` and/or EIP-712 `SafeTx.data`?
-4. **P6:** confirm the one-level cap.
-5. **H9:** is the 256 B review threshold the budget for the resident set, or is a stated larger number acceptable with review?
+- Apply the hard gate from §9a: reject calls the device cannot clear-sign.
+- Decide whether to reject DELEGATECALL inner calls, whose execution context is currently shown only by the outer descriptor.
+- Scope `multicall` iteration and EIP-712 `SafeTx.data` for a later implementation.

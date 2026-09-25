@@ -1614,6 +1614,16 @@ TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
   // A field inside that reads another array.
   p = iterationProgram(displays({begin_a, field_b, end}), 5, 1);
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  // A scalar value inside an iteration cannot be repeated for every item.
+  const std::vector<uint8_t> scalar_field = {4, 0, 0, 0, 0, 2, 0xff, 0xff};
+  p = iterationProgram(displays({begin_a, scalar_field, end}), 5, 1);
+  p = replaceTable(p, 3, {1,    2,    0xff, 0xff, 1, 0, 0, 0, 0, 2, 1, 2,
+                          0xff, 0xff, 1,    0,    0, 0, 1, 2, 2, 0, 0, 2},
+                   3);
+  p = replaceTable(
+      p, 6, {10, 0, 1, 1, 1, 0, 0, 10, 0, 1, 1, 1, 0, 1, 10, 0, 1, 1, 1, 0, 2},
+      3);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
   // An iterating field outside any iteration.
   p = iterationProgram(displays({field_a}), 3, 0);
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
