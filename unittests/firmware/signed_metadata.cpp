@@ -1048,16 +1048,13 @@ TEST(SignedMetadataSignerStore, RejectsPersistenceBeforeSessionMutation) {
 
 /* ---- signed_metadata_pubkey_fingerprint -------------------------------- */
 
-TEST(SignedMetadataFingerprint, IsSha256Prefix) {
+TEST(SignedMetadataFingerprint, Is64BitSha256Prefix) {
   char fp[METADATA_FINGERPRINT_LEN];
   signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
-
-  uint8_t digest[32];
-  sha256_Raw(EXPECTED_SLOT3_PUB, 33, digest);
-  char expected[METADATA_FINGERPRINT_LEN];
-  snprintf(expected, sizeof(expected), "%02X%02X%02X%02X", digest[0], digest[1],
-           digest[2], digest[3]);
-  EXPECT_STREQ(fp, expected);
+  // First 8 bytes of sha256(EXPECTED_SLOT3_PUB), computed off-device.
+  EXPECT_STREQ(fp, "0C2CB8B9F467F147");
+  EXPECT_EQ(strlen(fp), 16u);
+  EXPECT_EQ(sizeof(fp), 17u);
 }
 
 /* ===================================================================== *

@@ -9,6 +9,9 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/firmware/erc7730_catalog.h"
+#include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
@@ -453,8 +456,7 @@ TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
   setup_arm(SETUP_RECOVERY);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 
-  EXPECT_TRUE(
-      keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
+  EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
 
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(signing_is_active());
@@ -586,6 +588,65 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   }
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, TypedDataProgressRenewsButPollingEventuallyLocks) {
+  signing_abort();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  ASSERT_TRUE(storage_isInitialized());
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                 EthereumSignTypedData_fields, &start);
+  ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 2; i++) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                   EthereumTypedDataStructAck_fields, &empty);
+    toggle_screensaver();
+    ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  }
+  GetFeatures poll{};
+  for (int i = 0; i < 4; i++) {
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+    receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                   &poll);
+    toggle_screensaver();
+  }
+  EXPECT_EQ(home_get_state(), SCREENSAVER);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  EXPECT_FALSE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumTypedDataStructAck));
+}
+
+TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
+  kk_test_board_init();
+  fsm_init();
+  for (auto boundary :
+       {MessageType_MessageType_Initialize, MessageType_MessageType_Cancel,
+        MessageType_MessageType_ClearSession,
+        MessageType_MessageType_EthereumGetAddress}) {
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&start, false));
+    EXPECT_TRUE(keepkey_before_message_dispatch(
+        MessageType_MessageType_EthereumTypedDataStructAck));
+    EXPECT_TRUE(keepkey_before_message_dispatch(boundary));
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+  auto* workflow = erc7730_workflow_state();
+  workflow->phase = ERC7730_WORKFLOW_REPLAY;
+  EXPECT_TRUE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumClearSignDefinitionChunk));
+  workflow->phase = ERC7730_WORKFLOW_CALLDATA;
+  EXPECT_TRUE(
+      keepkey_before_message_dispatch(MessageType_MessageType_EthereumTxAck));
+  fsm_abort_workflows();
+  EXPECT_FALSE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumClearSignDefinitionChunk));
 }
 
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
@@ -787,6 +848,99 @@ TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
 
   setup_abort();
   layoutHomeForced();
+}
+
+// A preloaded ERC-7730 definition belongs to the signing request that follows
+// it. A partial preload shows the slot's lifetime without a signed fixture: if
+// the slot survived, the next chunk continues it; if it was discarded, the
+// device demands offset zero again.
+TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
+  kk_test_board_init();
+  fsm_init();
+  const uint8_t head[6] = {'K', '7', '7', '3', 1, 1};
+  const uint8_t length[4] = {0, 0, 1, 0};
+  uint8_t id[32] = {7};
+  uint32_t next = 0;
+  bool complete = false;
+  auto preload_head = [&]() {
+    erc7730_catalog_clear_preload();
+    return erc7730_catalog_preload_chunk(id, 0, 300, head, sizeof(head), &next,
+                                         &complete);
+  };
+  auto continued = [&]() {
+    return erc7730_catalog_preload_chunk(id, sizeof(head), 300, length,
+                                         sizeof(length), &next, &complete);
+  };
+
+  for (auto boundary :
+       {MessageType_MessageType_Initialize, MessageType_MessageType_Cancel,
+        MessageType_MessageType_ClearSession,
+        MessageType_MessageType_EthereumGetAddress,
+        MessageType_MessageType_GetPublicKey,
+        MessageType_MessageType_EthereumSignMessage}) {
+    ASSERT_EQ(preload_head(), ERC7730_CATALOG_MORE);
+    EXPECT_TRUE(keepkey_before_message_dispatch(boundary));
+    EXPECT_EQ(continued(), ERC7730_CATALOG_BAD_SEQUENCE) << boundary;
+  }
+
+  ASSERT_EQ(preload_head(), ERC7730_CATALOG_MORE);
+  session_clear(/*clear_pin=*/true);  // autolock and PIN revocation
+  EXPECT_EQ(continued(), ERC7730_CATALOG_BAD_SEQUENCE);
+
+  // A new definition ends any older certified workflow, and with it the
+  // preload that workflow was using, before its own chunks begin.
+  erc7730_workflow_state()->phase = ERC7730_WORKFLOW_REPLAY;
+  EXPECT_TRUE(keepkey_before_message_dispatch(
+      MessageType_MessageType_EthereumClearSignDefinition));
+  EXPECT_EQ(erc7730_workflow_state()->phase, ERC7730_WORKFLOW_IDLE);
+
+  for (auto consumer : {MessageType_MessageType_EthereumClearSignDefinition,
+                        MessageType_MessageType_EthereumSignTx,
+                        MessageType_MessageType_EthereumSignTypedData}) {
+    ASSERT_EQ(preload_head(), ERC7730_CATALOG_MORE);
+    EXPECT_TRUE(keepkey_before_message_dispatch(consumer));
+    EXPECT_EQ(continued(), ERC7730_CATALOG_MORE) << consumer;
+  }
+  erc7730_catalog_clear_preload();
+}
+
+// Pre-0.8 Solidity masks an address argument's high bytes, so a dirty spender
+// word still grants the allowance. It must not slip past the approval policy
+// into generic signing.
+TEST(Fsm, DirtySpenderWordCannotBypassApprovalPolicy) {
+  kk_test_board_init();
+  fsm_init();
+  for (bool unlimited : {true, false}) {
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+    EthereumSignTx msg = {};
+    msg.has_chain_id = true;
+    msg.chain_id = 1;
+    msg.has_gas_price = msg.has_gas_limit = true;
+    msg.gas_price.size = msg.gas_limit.size = 1;
+    msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+    msg.has_to = true;
+    msg.to.size = 20;
+    msg.to.bytes[0] = 1;
+    msg.has_data_length = msg.has_data_initial_chunk = true;
+    msg.data_length = msg.data_initial_chunk.size = 68;
+    memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+    msg.data_initial_chunk.bytes[4] = 0x01;  // dirty high byte
+    memset(msg.data_initial_chunk.bytes + 16, 0x22, 20);
+    memset(msg.data_initial_chunk.bytes + 36, unlimited ? 0xff : 0x00, 32);
+    msg.data_initial_chunk.bytes[67] = 1;
+
+    HDNode node = {};
+    const uint8_t seed[32] = {1};
+    ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+    ethereum_signing_init(&msg, &node, false);
+
+    EXPECT_FALSE(ethereum_signing_isInProgress());
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+  }
 }
 
 TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {

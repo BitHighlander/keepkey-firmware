@@ -1,0 +1,577 @@
+variant	case	reason
+full	tests.test_dylib_confirm_flow.TestDylibConfirmFlow::test_features_round_trip	dylib confirm-flow regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+full	tests.test_dylib_confirm_flow.TestDylibConfirmFlow::test_load_device_with_auto_confirm	dylib confirm-flow regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+full	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_features_dont_corrupt_capture	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+full	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_repeated_reads_no_truncation	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+full	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_round_trip_fits_through_ring	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+full	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_stable_across_idle_reads	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+full	tests.test_erc7730_compiler::test_compiles_official_uniswap_tuple_fixture_through_firmware	official ERC-7730 registry not configured
+full	tests.test_erc7730_compiler::test_official_registry_all_calldata_formats_reach_firmware	official registry and firmware validator are required
+full	tests.test_erc7730_compiler::test_compiles_official_uniswap_eip712_fixture_through_firmware	official ERC-7730 registry not configured
+full	tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx::test_retired_handlers_stay_unregistered	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_altcoin_coin_names_are_refused	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_altcoin_message_handlers_are_absent	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_bitcoin_signing_survives_the_strip	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_coin_table_is_bitcoin_and_testnet_only	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_firmware_variant_names_the_bitcoin_only_product	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_omni_op_return_is_still_decoded	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_op_return_does_not_poison_the_duplicate_detector	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_op_return_refusal_cancels_the_signature	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_op_return_thorchain_memo_is_confirmed_raw	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_repeated_transaction_is_allowed_without_op_return	Bitcoin-only firmware required to run this test
+full	tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant::test_zcash_privacy_is_compiled_out	Bitcoin-only firmware required to run this test
+full	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_multidimensional_arrays_walk_outermost_first_on_device	Staged release tree does not yet provide capability: evm-unknown-token-review
+full	tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20::test_sign_uni_add_liquidity_ETH	Staged release tree does not yet provide capability: evm-unknown-token-review
+full	tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20::test_sign_uni_remove_liquidity_ETH	Staged release tree does not yet provide capability: evm-unknown-token-review
+full	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_native_pseudo_address_is_unknown_off_mainnet	Staged release tree does not yet provide capability: evm-unknown-token-review
+full	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_unrenderable_amounts_are_rejected	Staged release tree does not yet provide capability: evm-max-amount-review
+full	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_native_pseudo_address_transfer_is_unknown_off_mainnet	Staged release tree does not yet provide capability: evm-unknown-token-review
+full	tests.test_msg_getentropy.TestMsgGetentropy::test_entropy	Staged release tree does not yet provide capability: entropy-audit-budget
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_account_create	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_account_ops_reject_non_owner_roles	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_all_roles	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_long_printable_ok	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_max_length_ok	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_nonprintable_bytes	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_posting	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_rejects_bad_paths	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_rejects_chain_id_prefix	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_rejects_oversize	HiveSignMessage not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_account_update2_is_rejected	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_active_tier_value_ops	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_asset_symbol_and_precision_pinned	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_comment	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_comment_options_beneficiary_rules	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_comment_options_binds_to_its_comment	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_custom_json_active	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_custom_json_posting	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_downvote_and_default_chain_id	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_limit_order_cancel	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_limit_order_create	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_posting_tier_ops	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_rejects_excluded_and_unknown_ops	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_rejects_malformed_structure	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_rejects_oversize	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_role_fences	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_truncated_bodies_rejected	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_vote	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_zero_amount_semantics	HiveSignOperations not supported by this firmware build
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_max_memo_ok	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_foreign_path	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_long_memo	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_non_active_roles	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_wrong_network	Staged release tree does not yet provide capability: hive-release-review
+full	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_send_rejects_noncanonical_wire_amounts	Staged release tree does not yet provide capability: osmosis-wire-guards
+full	tests.test_msg_osmosis_validation.TestOsmosisValidation::test_present_but_empty_amount_is_rejected_as_invalid	Staged release tree does not yet provide capability: osmosis-wire-guards
+full	tests.test_msg_osmosis_validation.TestOsmosisValidation::test_present_but_empty_amount_is_rejected_before_review	7.15+ uses the syntax-specific empty amount gate
+full	tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx::test_unsupported_memo_is_rejected	Ripple memos are implemented in 7.15
+full	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_advanced_mode_is_off_after_power_cycle	power cycle needs an emulator process this harness owns; none is bound to udp/11044 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
+full	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_signer_dropped_by_power_cycle	power cycle needs an emulator process this harness owns; none is bound to udp/11044 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
+full	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_attestation_does_not_replay_onto_another_transaction	Staged release tree does not yet provide capability: solana-lut-attestation
+full	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_attested_accounts_are_shown_and_blind_sign_still_follows	Staged release tree does not yet provide capability: solana-lut-attestation
+full	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_bad_signature_degrades_to_todays_flow	Staged release tree does not yet provide capability: solana-lut-attestation
+full	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_no_signer_loaded_means_no_extra_screens	Staged release tree does not yet provide capability: solana-lut-attestation
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_duplicate_compute_budget_refused	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_edited_schema_refused	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_proof_without_schema_signature_refused	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_review_shows_priority_fee	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_schema_signature_one_byte_changed_refused	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_short_schema_signature_refused	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_ignores_blind_sign_policy	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_priority_fee_names_fee_payer	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_reviews_every_screen	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_untrusted_definition_shows_base_units	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_v1_schema_reviews_static_transfer_companion	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_wrong_scope_certificate_refused	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_solana_schema_v2.TestClearsignAttestorTokenAmount::test_token_amount_mint_account_is_attested_before_signing	ClearsignAttestorSign not supported by this firmware build
+full	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_relay_certified_v0_no_lookup_proof_reaches_signer_check	Firmware version 7.16.0 or higher is required to run this test
+full	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_transfer_structured	Structured TRON signing deferred to 7.15+; firmware only supports raw_data blind-sign
+full	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_trc20_transfer	Structured TRON TRC-20 signing deferred to 7.15+; firmware only supports raw_data blind-sign
+full	tests.test_protect_call.TestProtectCall::test_exponential_backoff_with_reboot	Due to a known defect in the emulator, pin timeouts don't work.
+full	tests.test_storage_version_gate.TestStorageVersionGateSource::test_burned_versions_are_dispatched_to_the_wipe_path	no version is declared BURNED in storage_versions.inc on this line -- STORAGE_VERSION is 17 and the whole ladder has readers. Nothing to measure here; the upgrade path is carried by test_every_shipped_version_has_a_reader.
+full	tests.test_verify_typed_data.TestMsgE712Verify::test_verify	structured EIP-712 is disabled in 7.14.2; see test_structured_eip712_is_refused. Re-enable together with a canonical display implementation.
+btc	tests.test_dylib_confirm_flow.TestDylibConfirmFlow::test_features_round_trip	dylib confirm-flow regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+btc	tests.test_dylib_confirm_flow.TestDylibConfirmFlow::test_load_device_with_auto_confirm	dylib confirm-flow regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+btc	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_features_dont_corrupt_capture	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+btc	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_repeated_reads_no_truncation	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+btc	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_round_trip_fits_through_ring	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+btc	tests.test_dylib_screenshot.TestDylibScreenshot::test_layout_stable_across_idle_reads	dylib screenshot regression — set KK_TRANSPORT=dylib KK_DYLIB=...
+btc	tests.test_erc7730_compiler::test_compiles_official_uniswap_tuple_fixture_through_firmware	official ERC-7730 registry not configured
+btc	tests.test_erc7730_compiler::test_official_registry_all_calldata_formats_reach_firmware	official registry and firmware validator are required
+btc	tests.test_erc7730_compiler::test_compiles_official_uniswap_eip712_fixture_through_firmware	official ERC-7730 registry not configured
+btc	tests.test_msg_2thorchain_signtx.TestMsg2ThorChainSignTx::test_thorchain_sign_tx_deposit	Full feature firmware required to run this test
+btc	tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx::test_retired_handlers_stay_unregistered	Full feature firmware required to run this test
+btc	tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx::test_transfer	Full feature firmware required to run this test
+btc	tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx::test_transfer_bep2	Full feature firmware required to run this test
+btc	tests.test_msg_bip85.TestMsgBip85::test_bip85_12word_flow	Full feature firmware required to run this test
+btc	tests.test_msg_bip85.TestMsgBip85::test_bip85_18word_flow	Full feature firmware required to run this test
+btc	tests.test_msg_bip85.TestMsgBip85::test_bip85_24word_flow	Full feature firmware required to run this test
+btc	tests.test_msg_bip85.TestMsgBip85::test_bip85_deterministic_flow	Full feature firmware required to run this test
+btc	tests.test_msg_bip85.TestMsgBip85::test_bip85_different_indices_different_flows	Full feature firmware required to run this test
+btc	tests.test_msg_bip85.TestMsgBip85::test_bip85_invalid_word_count	Full feature firmware required to run this test
+btc	tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure::test_binary_op_return_tail_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure::test_non_ascii_eos_memo_tail_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure::test_unknown_omni_property_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure::test_unknown_omni_type_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress::test_cosmos_get_address_sep	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress::test_nonstandard	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress::test_onchain	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress::test_standard	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx::test_cosmos_sign_tx	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx::test_cosmos_sign_tx_memo	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx::test_onchain1	Full feature firmware required to run this test
+btc	tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx::test_onchain2	Full feature firmware required to run this test
+btc	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_advanced_mode_is_not_required_for_structured_review	Full feature firmware required to run this test
+btc	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_array_of_structs_walks	Full feature firmware required to run this test
+btc	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_fixed_array_length_must_match_the_declared_size	Full feature firmware required to run this test
+btc	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_multidimensional_arrays_walk_outermost_first_on_device	Full feature firmware required to run this test
+btc	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_permit2_batch_walks_realistic_nested_array	Full feature firmware required to run this test
+btc	tests.test_msg_eip712_streaming.TestMsgEip712Streaming::test_spec_example_matches_the_published_hashes	Full feature firmware required to run this test
+btc	tests.test_msg_eos_getpublickey.TestMsgEosGetPublicKey::test	Full feature firmware required to run this test
+btc	tests.test_msg_eos_getpublickey.TestMsgEosGetPublicKey::test_trezor	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_action_deficit	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_action_surplus	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_buyram	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_buyrambytes	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_delegatebw	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_deleteauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_buyram	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_buyrambytes	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_delegate	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_deleteauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_linkauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_newaccount	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_refund	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_sellram	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_setcontract	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_transfer_token	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_undelegate	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_unknown	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_unlinkauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_updateauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_vote	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_eos_signtx_vote_proxy	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_linkauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_name_to_number	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_newaccount	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_refund	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_sellram	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_transfer	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_undelegatebw	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_unknown_advanced	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_unlinkauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_updateauth	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_voteproducer	Full feature firmware required to run this test
+btc	tests.test_msg_eos_signtx.TestMsgEosSignTx::test_wrong_account	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_cfunc.TestMsgEthereumCfunc::test_sign_execTx	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_advanced_mode_gate	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_binding_happy_path_signs_and_recovers	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_cancel_clears_metadata_not_reused	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_aave_v3_pool_borrow	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_aave_v3_pool_repay	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_aave_v3_pool_withdraw	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_across_spokepool_depositv3	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_batch_all_payloads	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_compound_governor_bravo_castvote	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_compound_iii_comet_usdc_supply	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_compound_v3_comet_supply	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_compound_v3_comet_withdraw	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_curve_3pool_exchange	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_dai_permit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_eigenlayer_strategymanager_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_eigenlayer_strategymanager_deposit_steth	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_eip2612_usdc_permit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_eip7702_setcode_authorization	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_ens_public_resolver_setaddr	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc1155_opensea_storefront_set_approval_for_all	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc1155_safe_batch_transfer_from	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc1155_safe_transfer_from	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc20_approve	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc20_approve_unlimited	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc20_transfer	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc20_transferfrom	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc20_usdc_decrease_allowance	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc20_usdc_increase_allowance	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc4337_entrypoint_v0_7_handleops	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc721_bayc_set_approval_for_all	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_erc721_safe_transfer_from	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_etherfi_liquiditypool_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_hop_protocol_l1_bridge_sendtol2	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_lido_steth_submit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_metamorpho_steakhouse_usdc_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_metamorpho_steakhouse_usdc_withdraw	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_permit2_approve	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_permit2_permit_transfer_from	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_rocketpool_deposit_pool_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_safe_addownerwiththreshold	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_safe_exectransaction	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_spark_protocol_supply	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_uniswap_v2_eth_to_token	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_uniswap_v2_token_to_eth	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_uniswap_v3_exact_input	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_uniswap_v3_exact_output_single	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_uniswap_v3_multicall	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_uniswap_v4_universal_router_swap	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_usdt_approve	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_weth_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_weth_withdraw	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_wormhole_token_bridge_transfertokens	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_yearn_v2_yusdc_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_clearsign_yearn_v3_aave_usdc_lender_deposit	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_empty_key_slot_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_empty_payload_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_extra_trailing_bytes_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_load_required_before_verify	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_load_signer_bad_alias_rejected	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_load_signer_cancel_refuses	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_load_signer_invalid_pubkey_rejected	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_load_signer_key_id_out_of_range_rejected	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_no_metadata_then_sign_unchanged	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_persistent_signer_rejected_without_session_mutation	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_replay_rejected_when_digest_differs	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_tampered_contract_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_tampered_method_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_truncated_payload_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_valid_metadata_returns_verified	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_wrong_key_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_wrong_version_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning::test_zero_signature_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestClearSignV2Device::test_v2_calldata_length_mismatch_falls_back_to_raw_review	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestClearSignV2Device::test_v2_transfer_decodes_signs_and_recovers	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clear_signing.TestClearSignV2Device::test_v2_unsupported_arg_format_returns_malformed	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant::test_failed_signature_falls_back_to_the_unverified_review	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant::test_no_runtime_slot_can_reach_the_suppression_branch	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant::test_no_slot_verifies_without_a_runtime_load	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant::test_successful_decode_still_runs_the_raw_review	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant::test_v2_schema_decode_still_runs_the_raw_review	EthereumTxMetadata not supported by this firmware build
+btc	tests.test_msg_ethereum_data_disclosure.TestEthereumDataDisclosure::test_initial_chunk_tail_changes_data_hash_screen	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_data_disclosure.TestEthereumDataDisclosure::test_streamed_tail_changes_data_hash_screen	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20::test__sign_transformERC20	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20::test_sign_0x_swap_ERC20_to_ETH	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20::test_sign_0x_swap_ETH_to_ERC20	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20::test_sign_longdata_swap	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_approve.TestMsgEthereumtxERC20_approve::test_approve_cvc_0	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_approve.TestMsgEthereumtxERC20_approve::test_approve_cvc_100	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_approve.TestMsgEthereumtxERC20_approve::test_approve_cvc_all	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20::test_sign_uni_add_liquidity_ETH	Staged release tree does not yet provide capability: evm-unknown-token-review
+btc	tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20::test_sign_uni_approve_liquidity_ETH	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20::test_sign_uni_remove_liquidity_ETH	Staged release tree does not yet provide capability: evm-unknown-token-review
+btc	tests.test_msg_ethereum_getaddress.TestMsgEthereumGetaddress::test_ethereum_getaddress	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_getaddress.TestMsgEthereumGetaddress::test_ethereum_show_address	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO::test_close	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO::test_deposit	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO::test_free	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO::test_generate	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_message.TestMsgEthereumMessage::test_ethereum_sign_bytes	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_message.TestMsgEthereumMessage::test_ethereum_sign_message	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_message.TestMsgEthereumMessage::test_ethereum_sign_message_from_metamask	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_message.TestMsgEthereumMessage::test_ethereum_sign_message_from_nativedata	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_message.TestMsgEthereumMessage::test_ethereum_verify_bytes	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_message.TestMsgEthereumMessage::test_ethereum_verify_message	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_sablier.TestMsgEthereumSablier::test_sign_salarywithdrawal	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_contract_handler_streamed_calldata_signs_full_data	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_eip1559_no_priority_fee_signs	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_eip1559_requires_chain_id	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_legacy_with_max_fee_rejected	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_streamed_calldata_tail_changes_user_commitment	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_streamed_handler_calldata_is_not_clear_signed	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards::test_type2_without_max_fee_rejected	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_blind_sign_allowed	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_blind_sign_blocked	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_eip_1559	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_eip_1559_multibyte_chain_id	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_erc20_high_chain_id_does_not_alias_mainnet	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_native_pseudo_address_is_unknown_off_mainnet	Staged release tree does not yet provide capability: evm-unknown-token-review
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_sanity_checks	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_data	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_data1_eip_1559	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_data_eip155	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_explicit_zero_chain_id_rejected	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_knownerc20_eip_1559	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_message	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_newcontract	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_nodata	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_nodata_eip155	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_nodata_eip_1559	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_signtx_omitted_chain_id_rejected	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx::test_ethereum_unrenderable_amounts_are_rejected	Staged release tree does not yet provide capability: evm-max-amount-review
+btc	tests.test_msg_ethereum_signtx_chunked_data_eip1559.TestMsgEthereumSigntxChunkedDataEip1559::test_eip1559_chunked_data_signature_recovers_to_device_address	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_erc20_transfer_high_chain_id_does_not_alias_mainnet	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_ethereum_tx_xfer_acc1	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_ethereum_tx_xfer_acc2	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_ethereum_xfer_account_path_error_0	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_ethereum_xfer_account_path_error_1	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_ethereum_xfer_account_path_error_2	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_ethereum_xfer_account_path_error_3	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_native_pseudo_address_transfer_is_unknown_off_mainnet	Staged release tree does not yet provide capability: evm-unknown-token-review
+btc	tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx::test_transfer_review_uses_signing_chain_asset	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit::test_deposit_legacy_selector	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit::test_deposit_unpinned_chain_blind_sign_blocked	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit::test_deposit_with_expiry_avalanche_router	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit::test_deposit_with_expiry_non_thor_address_blind_sign_blocked	Full feature firmware required to run this test
+btc	tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit::test_deposit_with_expiry_selector	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress.TestMsgGetaddress::test_grs	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress.TestMsgGetaddress::test_ltc	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress.TestMsgGetaddress::test_ltc_m_address	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress.TestMsgGetaddress::test_tgrs	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress_segwit.TestMsgGetaddressSegwit::test_grs	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress_segwit.TestMsgGetaddressSegwit::test_tgrs	Full feature firmware required to run this test
+btc	tests.test_msg_getaddress_segwit_native.TestMsgGetaddressSegwitNative::test_show_segwit	Full feature firmware required to run this test
+btc	tests.test_msg_getentropy.TestMsgGetentropy::test_entropy	Staged release tree does not yet provide capability: entropy-audit-budget
+btc	tests.test_msg_hive.TestMsgHive::test_hive_get_public_key_active	HiveGetPublicKey not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_get_public_keys_all_roles	HiveGetPublicKeys not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_account_create	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_account_ops_reject_non_owner_roles	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_account_update	HiveSignAccountUpdate not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_all_roles	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_long_printable_ok	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_max_length_ok	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_nonprintable_bytes	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_posting	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_rejects_bad_paths	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_rejects_chain_id_prefix	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_message_rejects_oversize	HiveSignMessage not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_account_update2_is_rejected	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_active_tier_value_ops	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_asset_symbol_and_precision_pinned	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_comment	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_comment_options_beneficiary_rules	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_comment_options_binds_to_its_comment	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_custom_json_active	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_custom_json_posting	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_downvote_and_default_chain_id	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_limit_order_cancel	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_limit_order_create	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_posting_tier_ops	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_rejects_excluded_and_unknown_ops	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_rejects_malformed_structure	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_rejects_oversize	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_role_fences	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_truncated_bodies_rejected	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_vote	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_ops_zero_amount_semantics	HiveSignOperations not supported by this firmware build
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_max_memo_ok	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_foreign_path	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_long_memo	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_non_active_roles	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_hive.TestMsgHive::test_hive_sign_transfer_rejects_wrong_network	Staged release tree does not yet provide capability: hive-release-review
+btc	tests.test_msg_mayachain_getaddress.TestMsgMayaChainGetAddress::test_mayachain_get_address	Full feature firmware required to run this test
+btc	tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx::test_ack_rejects_send_and_deposit_together	Full feature firmware required to run this test
+btc	tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx::test_mayachain_remove_liquidity	Full feature firmware required to run this test
+btc	tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx::test_mayachain_sign_tx	Full feature firmware required to run this test
+btc	tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx::test_mayachain_sign_tx_memos	Full feature firmware required to run this test
+btc	tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx::test_sign_eth_add_liquidity	Full feature firmware required to run this test
+btc	tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx::test_sign_eth_btc_swap	Full feature firmware required to run this test
+btc	tests.test_msg_nano_getaddress.TestMsgNanoGetAddress::test	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_encode_balance	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_1	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_10	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_11	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_12	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_13	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_14	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_2	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_3	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_4	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_5	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_6	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_7	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_8	Full feature firmware required to run this test
+btc	tests.test_msg_nano_signtx.TestMsgNanoSignTx::test_invalid_block_9	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_amount_is_committed_to_the_signature	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_send_amount_beyond_float_precision	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_send_denom_is_committed_to_the_signature	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_send_rejects_noncanonical_wire_amounts	Staged release tree does not yet provide capability: osmosis-wire-guards
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_send_subunit_amount	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_sign_tx	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_signing_is_deterministic	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx::test_osmosis_swap_max_fields_are_fully_paged	Full feature firmware required to run this test
+btc	tests.test_msg_osmosis_validation.TestOsmosisValidation::test_ibc_omitted_amount_and_receiver_are_rejected_before_review	OsmosisSignTx not supported by this firmware build
+btc	tests.test_msg_osmosis_validation.TestOsmosisValidation::test_present_but_empty_amount_is_rejected_as_invalid	OsmosisSignTx not supported by this firmware build
+btc	tests.test_msg_osmosis_validation.TestOsmosisValidation::test_present_but_empty_amount_is_rejected_before_review	OsmosisSignTx not supported by this firmware build
+btc	tests.test_msg_ripple_get_address.TestMsgRippleGetAddress::test_ripple_get_address	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_get_address.TestMsgRippleGetAddress::test_ripple_get_address_other	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_get_address.TestMsgRippleGetAddress::test_ripple_show_address	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx::test_memo_length_prefix_boundaries	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx::test_ripple_sign_invalid_fee	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx::test_sign	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx::test_sign_with_thorchain_memo	Full feature firmware required to run this test
+btc	tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx::test_unsupported_memo_is_rejected	Full feature firmware required to run this test
+btc	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_advanced_mode_is_off_after_power_cycle	power cycle needs an emulator process this harness owns; none is bound to udp/11044 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
+btc	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_disabling_advanced_mode_revokes_the_signer	Full feature firmware required to run this test
+btc	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_signer_dropped_by_clear_session	Full feature firmware required to run this test
+btc	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_signer_dropped_by_initialize	Full feature firmware required to run this test
+btc	tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime::test_signer_dropped_by_power_cycle	Full feature firmware required to run this test
+btc	tests.test_msg_signmessage.TestMsgSignmessage::test_sign_grs	Full feature firmware required to run this test
+btc	tests.test_msg_signmessage_segwit.TestMsgSignmessageSegwit::test_sign_grs	Full feature firmware required to run this test
+btc	tests.test_msg_signmessage_segwit_native.TestMsgSignmessageSegwitNative::test_sign_grs	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_bgold.TestMsgSigntxBitcoinGold::test_send_bitcoin_gold_nochange	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_dash.TestMsgSigntxDash::test_send_dash	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_dash.TestMsgSigntxDash::test_send_dash_dip2_input	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_ethereum_erc20.TestMsgEthereumSigntxERC20::test_approve_all	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_ethereum_erc20.TestMsgEthereumSigntxERC20::test_approve_none	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_ethereum_erc20.TestMsgEthereumSigntxERC20::test_approve_some	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_grs.TestMsgSigntxGRS::test_one_one_fee	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_segwit_grs.TestMsgSigntxSegwitGRS::test_send_p2sh	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_segwit_grs.TestMsgSigntxSegwitGRS::test_send_p2sh_change	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_segwit_native_grs.TestMsgSigntxNativeSegwitGRS::test_send_native	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_segwit_native_grs.TestMsgSigntxNativeSegwitGRS::test_send_native_change	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_zcash.TestMsgSigntx::test_shieldedIn_one_one_fee_1	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_zcash.TestMsgSigntx::test_shieldedIn_one_one_fee_2	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_zcash.TestMsgSigntx::test_transparent_one_one	Full feature firmware required to run this test
+btc	tests.test_msg_signtx_zcash.TestMsgSigntx::test_transparent_one_one_fee_too_high	Full feature firmware required to run this test
+btc	tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure::test_memo_tail_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure::test_offchain_format_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure::test_offchain_message_tail_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure::test_raw_message_tail_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress::test_solana_deterministic	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress::test_solana_different_accounts	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress::test_solana_get_address	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress::test_solana_show_address	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_all_verified_instruction_fields_change_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_close_account_destination_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_invalid_priority_fee_is_rejected_before_confirmation	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_mint_and_burn_require_opaque_mode	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_priority_fee_payer_changes_oled_review	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_set_authority_roles_require_opaque_mode	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_token_2022_associated_account_is_opaque	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_token_2022_transfer_checked_with_hook_accounts_is_opaque	Full feature firmware required to run this test
+btc	tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure::test_vote_validator_uses_account_not_trailing_data	Full feature firmware required to run this test
+btc	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_attestation_does_not_replay_onto_another_transaction	Full feature firmware required to run this test
+btc	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_attested_accounts_are_shown_and_blind_sign_still_follows	Full feature firmware required to run this test
+btc	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_bad_signature_degrades_to_todays_flow	Full feature firmware required to run this test
+btc	tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation::test_no_signer_loaded_means_no_extra_screens	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_duplicate_compute_budget_refused	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_edited_schema_refused	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_proof_without_schema_signature_refused	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_review_shows_priority_fee	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_schema_signature_one_byte_changed_refused	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_short_schema_signature_refused	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_ignores_blind_sign_policy	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_priority_fee_names_fee_payer	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_reviews_every_screen	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_soltoshi_join_untrusted_definition_shows_base_units	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_v1_schema_reviews_static_transfer_companion	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified::test_certified_wrong_scope_certificate_refused	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime::test_runtime_schema_refuses_transfer_companion	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime::test_runtime_token_amount_trust_comes_from_the_schema_signer	Full feature firmware required to run this test
+btc	tests.test_msg_solana_schema_v2.TestClearsignAttestorTokenAmount::test_token_amount_mint_account_is_attested_before_signing	Full feature firmware required to run this test
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_relay_certified_v0_no_lookup_proof_reaches_signer_check	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_get_address	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_path_3_elements	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_path_wrong_coin_type	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_compute_budget_unit_price	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_create_account_requires_advanced_mode	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_deterministic	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_empty_rejected	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_malformed_bad_account_count	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_malformed_trailing_bytes	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_malformed_truncated	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_memo	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_message	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_message_blocked_without_advanced_mode	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_multi_instruction_2x_transfer	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_multi_instruction_transfer_and_memo	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_oversized_raw_tx	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_plain_text_message_without_advanced_mode	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_set_authority_requires_advanced_mode	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_stake_authorize_clearsigns	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_stake_deactivate	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_stake_delegate	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_stake_withdraw	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_system_transfer	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_token_approve	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_token_transfer	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_token_transfer_checked	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_token_transfer_checked_attested_symbol	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_token_transfer_with_metadata	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_versioned_v0_opaque	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_versioned_v0_static_verified	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_solana_signtx.TestMsgSolanaSignTx::test_solana_sign_x402_zero_lut_usdc_payment	SolanaGetAddress not supported by this firmware build
+btc	tests.test_msg_thorchain_getaddress.TestMsgThorChainGetAddress::test_thorchain_get_address	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_ack_rejects_send_and_deposit_together	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_sign_btc_add_liquidity	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_sign_btc_eth_swap	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_sign_eth_add_liquidity	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_sign_eth_btc_swap	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_thorchain_remove_liquidity	Full feature firmware required to run this test
+btc	tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx::test_thorchain_sign_tx	Full feature firmware required to run this test
+btc	tests.test_msg_ton_display_disclosure.TestTonDisplayDisclosure::test_raw_message_tail_changes_oled_review	TonSignMessage not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_address_format	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_deterministic	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_different_accounts	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_get_address	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_path_too_short	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_path_wrong_coin	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_getaddress.TestMsgTonGetAddress::test_ton_show_address	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_get_address	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_deterministic	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_different_accounts	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_empty_raw_tx	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_legacy_raw_tx	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_missing_fields_rejected	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_oversized_raw_tx	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_structured	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_with_empty_memo	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_with_long_memo	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_with_memo	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_workchain_default	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_ton_signtx.TestMsgTonSignTx::test_ton_sign_workchain_zero	TonGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_getaddress.TestMsgTronGetAddress::test_tron_deterministic	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_getaddress.TestMsgTronGetAddress::test_tron_different_accounts	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_getaddress.TestMsgTronGetAddress::test_tron_get_address	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_getaddress.TestMsgTronGetAddress::test_tron_path_too_short	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_getaddress.TestMsgTronGetAddress::test_tron_path_wrong_coin	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_getaddress.TestMsgTronGetAddress::test_tron_show_address	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_get_address	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_deterministic	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_different_accounts	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_empty_raw_data	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_missing_fields_rejected	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_oversized_raw_data	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_transfer_legacy_raw_data	TronGetAddress not supported by this firmware build
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_transfer_structured	Structured TRON signing deferred to 7.15+; firmware only supports raw_data blind-sign
+btc	tests.test_msg_tron_signtx.TestMsgTronSignTx::test_tron_sign_trc20_transfer	Structured TRON TRC-20 signing deferred to 7.15+; firmware only supports raw_data blind-sign
+btc	tests.test_msg_verifymessage.TestMsgVerifymessage::test_message_grs	Full feature firmware required to run this test
+btc	tests.test_msg_zcash_display_address.TestMsgZcashDisplayAddress::test_zcash_display_address_bad_path_rejected	ZcashDisplayAddress not supported by this firmware build
+btc	tests.test_msg_zcash_display_address.TestMsgZcashDisplayAddress::test_zcash_display_address_basic	ZcashDisplayAddress not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_explicit_account_cannot_alias_across_hardened_bit	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_fvk_abandon_mnemonic	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_fvk_consistency_across_calls	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_fvk_different_accounts	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_fvk_export_requires_consent_even_when_display_is_false	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_fvk_field_ranges	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_orchard.TestZcashOrchardFVK::test_fvk_reference_vectors	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_device_fingerprint_matches_python_helper	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_display_address_helper_accepts_matching_fingerprint	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_display_address_helper_backward_compat	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_display_address_helper_rejects_wrong_fingerprint	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_fingerprint_stable_across_accounts	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_get_orchard_fvk_returns_seed_fingerprint	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint::test_sign_pczt_helper_rejects_wrong_fingerprint	ZcashGetOrchardFVK not supported by this firmware build
+btc	tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice::test_ironwood_note_is_accepted	Full feature firmware required to run this test
+btc	tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice::test_ironwood_rejects_a_non_empty_orchard_bundle	Full feature firmware required to run this test
+btc	tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice::test_note_commitment_binds_the_recipient	Full feature firmware required to run this test
+btc	tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice::test_pool_selection_is_honoured	Full feature firmware required to run this test
+btc	tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice::test_shielded_output_review_is_two_screens	Full feature firmware required to run this test
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_hybrid_multi_input_signatures_verify	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_hybrid_signature_verifies	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_orchard_before_transparent_rejected	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_bad_change	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_hardened_index	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_out_of_order_transparent_index	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_short_path	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_too_many_transparent_inputs	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_unhardened_account	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_wrong_account	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_wrong_coin_type	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_rejects_wrong_purpose	Zcash is not in the bitcoin-only firmware
+btc	tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding::test_wrong_key_does_not_verify	Zcash is not in the bitcoin-only firmware
+btc	tests.test_protect_call.TestProtectCall::test_exponential_backoff_with_reboot	Due to a known defect in the emulator, pin timeouts don't work.
+btc	tests.test_sign_typed_data.TestMsgEthereumSignTypedDataHash::test_ethereum_sign_typed_data_hash	Full feature firmware required to run this test
+btc	tests.test_sign_typed_data.TestMsgEthereumSignTypedDataHash::test_ethereum_sign_x402_eip3009	Full feature firmware required to run this test
+btc	tests.test_storage_version_gate.TestStorageVersionGateSource::test_burned_versions_are_dispatched_to_the_wipe_path	no version is declared BURNED in storage_versions.inc on this line -- STORAGE_VERSION is 17 and the whole ladder has readers. Nothing to measure here; the upgrade path is carried by test_every_shipped_version_has_a_reader.
+btc	tests.test_verify_typed_data.TestMsgE712Verify::test_structured_eip712_is_refused	Full feature firmware required to run this test
+btc	tests.test_verify_typed_data.TestMsgE712Verify::test_verify	structured EIP-712 is disabled in 7.14.2; see test_structured_eip712_is_refused. Re-enable together with a canonical display implementation.

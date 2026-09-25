@@ -36,6 +36,9 @@ static msg_failure_t msg_failure;
 /* A tiny receive failure has already answered the suspended handler. Keep
  * its unwind from producing another reply or waiting for another prompt. */
 static bool tiny_handler_rejected;
+static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(8)));
+
+void* msg_decoded_request_response_scratch(void) { return decode_buffer; }
 
 bool msg_handler_rejected(void) { return tiny_handler_rejected; }
 
@@ -128,13 +131,10 @@ uint16_t* frame_arena_scratch2049(void) {
 static const MessagesMap_t* message_map_entry(MessageMapType type,
                                               MessageType msg_id,
                                               MessageMapDirection dir) {
-  const MessagesMap_t* m = MessagesMap;
-
-  if (map_size > msg_id && m[msg_id].msg_id == msg_id &&
-      m[msg_id].type == type && m[msg_id].dir == dir) {
-    return &m[msg_id];
+  for (size_t i = 0; i < map_size; i++) {
+    const MessagesMap_t* m = &MessagesMap[i];
+    if (m->msg_id == msg_id && m->type == type && m->dir == dir) return m;
   }
-
   return NULL;
 }
 
@@ -152,14 +152,8 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
                                  MessageMapDirection dir) {
   assert(MessagesMap != NULL);
 
-  const MessagesMap_t* m = MessagesMap;
-
-  if (map_size > msg_id && m[msg_id].msg_id == msg_id &&
-      m[msg_id].type == type && m[msg_id].dir == dir) {
-    return m[msg_id].fields;
-  }
-
-  return NULL;
+  const MessagesMap_t* m = message_map_entry(type, msg_id, dir);
+  return m ? m->fields : NULL;
 }
 
 /*
@@ -202,7 +196,6 @@ __attribute__((weak)) void keepkey_after_message_dispatch(void) {}
  */
 static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
                      uint32_t msg_size) {
-  static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(4)));
   memzero(decode_buffer, sizeof(decode_buffer));
 
   if (!pb_parse(entry, msg, msg_size, decode_buffer)) {

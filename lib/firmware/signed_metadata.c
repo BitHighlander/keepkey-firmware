@@ -619,7 +619,7 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]) {
   uint8_t digest[32];
   sha256_Raw(pubkey, 33, digest);
-  data2hex(digest, 4, out);
+  data2hex(digest, (METADATA_FINGERPRINT_LEN - 1u) / 2u, out);
   memzero(digest, sizeof(digest));
 }
 
@@ -835,7 +835,7 @@ static bool signed_metadata_confirm_screens(void) {
     if (pk) {
       signed_metadata_pubkey_fingerprint(pk, fingerprint);
     } else {
-      strlcpy(fingerprint, "????????", sizeof(fingerprint));
+      strlcpy(fingerprint, "????????????????", sizeof(fingerprint));
     }
     if (!alias) alias = "unknown";
 

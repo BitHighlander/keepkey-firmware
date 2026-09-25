@@ -114,6 +114,11 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 /// \param request_title   Title of confirm message.
 /// \param request_body    Body of confirm message.
 /// \returns true iff the device confirmed.
+#if DEBUG_LINK
+const char* confirm_debug_title(void);
+const char* confirm_debug_body(void);
+#endif
+
 bool confirm(ButtonRequestType type, const char* request_title,
              const char* request_body, ...)
     __attribute__((format(printf, 3, 4)));

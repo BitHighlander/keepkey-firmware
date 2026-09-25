@@ -8,6 +8,14 @@ if [ -d /kkemu-emulator-bin ]; then
   cp /kkemu/bin/kkemu /kkemu-emulator-bin/kkemu.tmp
   chmod 0755 /kkemu-emulator-bin/kkemu.tmp
   mv /kkemu-emulator-bin/kkemu.tmp /kkemu-emulator-bin/kkemu
+  # The full product also publishes the firmware-backed ERC-7730 program
+  # validator the host compiler tests run their output through.
+  if [ -x /kkemu/bin/erc7730-validate ]; then
+    cp /kkemu/bin/erc7730-validate /kkemu-emulator-bin/erc7730-validate.tmp
+    chmod 0755 /kkemu-emulator-bin/erc7730-validate.tmp
+    mv /kkemu-emulator-bin/erc7730-validate.tmp \
+      /kkemu-emulator-bin/erc7730-validate
+  fi
 fi
 make xunit
 RC=$?

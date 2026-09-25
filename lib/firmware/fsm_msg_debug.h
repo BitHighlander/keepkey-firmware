@@ -22,6 +22,12 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   resp->dice_digest.size = reset_get_dice_digest(resp->dice_digest.bytes);
   resp->has_dice_digest = resp->dice_digest.size > 0;
 
+  resp->has_confirm_title = true;
+  strlcpy(resp->confirm_title, confirm_debug_title(),
+          sizeof(resp->confirm_title));
+  resp->has_confirm_body = true;
+  strlcpy(resp->confirm_body, confirm_debug_body(), sizeof(resp->confirm_body));
+
   if (storage_hasMnemonic()) {
     resp->has_mnemonic = true;
     strlcpy(resp->mnemonic, storage_getMnemonic(), sizeof(resp->mnemonic));
