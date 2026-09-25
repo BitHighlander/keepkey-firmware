@@ -16,9 +16,12 @@
 
 #define ERC7730_CAP_BIT(n) (UINT32_C(1) << (n))
 
-/* Display opcodes: 1 intent, 4 field, 10 end. */
-#define ERC7730_CAP_DISPLAY_OPCODES \
-  (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(10))
+/* Display opcodes: 1 intent, 2 intent text, 3 intent value, 4 field, 10 end.
+ * Opcodes 2 and 3 form one run directly after the intent; each is shown as a
+ * numbered part of the interpolated intent. */
+#define ERC7730_CAP_DISPLAY_OPCODES                               \
+  (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) | \
+   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(10))
 /* Formatter kinds: 1 raw, 3 tokenAmount, 10 addressName. */
 #define ERC7730_CAP_FORMATTER_KINDS \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(3) | ERC7730_CAP_BIT(10))

@@ -1149,18 +1149,32 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
     Erc7730DisplayInstruction refused;
     uint16_t pc;
   };
+  // Interpolated intent: text (2) and value (3) parts directly after the
+  // intent run; once a field has started they are refused.
+  const std::vector<uint8_t> interpolated = {
+      1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,  // intent
+      2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,  // "Test"
+      3, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,  // formatter 0
+      4, 0, 0, 0, 0,    0,    0xff, 0xff,  // field
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  EXPECT_EQ(feedAll(envelope(replaceTable(rawFieldProgram(path), 7,
+                                          interpolated, 5)),
+                    7),
+            ERC7730_CATALOG_UNTRUSTED);
   const Case cases[] = {
-      // interpolated intent text and value
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 2, 0, 0, 0, 0xff, 0xff, 0xff,
-        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       3,
-       {2, 0, 0, UINT16_MAX, UINT16_MAX},
-       1},
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 3, 0, 0, 0, 0xff, 0xff, 0xff,
-        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       3,
-       {3, 0, 0, UINT16_MAX, UINT16_MAX},
-       1},
+      // an intent part after a field
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 2,
+        0, 0, 0, 0xff, 0xff, 0xff, 0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff},
+       4,
+       {2, 0, 0, UINT16_MAX, 0},
+       2},
+      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 3,
+        0, 0, 0, 0xff, 0xff, 0xff, 0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff},
+       4,
+       {3, 0, 0, 0, UINT16_MAX},
+       2},
       // a group around the field
       {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 5, 0, 0xff, 0xff, 0xff, 0xff, 0,
         3, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 6, 0, 0, 1, 0xff, 0xff, 0xff, 0xff,
@@ -1426,4 +1440,22 @@ TEST(Erc7730Catalog, ContainersAreCalldataOnly) {
                                            : ERC7730_CATALOG_BAD_PROGRAM)
         << (int)kind;
   }
+}
+
+TEST(Erc7730Catalog, DisplayReaderCountsTheInterpolatedIntentRun) {
+  // intent, text, value, text, field, value-after-field, end
+  const std::vector<uint8_t> display = {
+      0, 7,                                          //
+      1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
+      2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
+      3, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
+      2, 0, 0, 1, 0xff, 0xff, 0xff, 0xff,            //
+      4, 0, 0, 0, 0,    0,    0xff, 0xff,            //
+      3, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  Erc7730ProgramDisplay reader{};
+  erc7730_program_display_begin(&reader, display.size(), 2);
+  ASSERT_TRUE(erc7730_program_display_feed(&reader, 0, display.data(),
+                                           display.size()));
+  EXPECT_EQ(reader.intent_parts, 3);
 }

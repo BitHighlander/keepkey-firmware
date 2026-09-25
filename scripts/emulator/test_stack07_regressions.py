@@ -740,3 +740,35 @@ class TestStack07Regressions(common.KeepKeyTest):
             self._field_screens(descriptor, signature,
                                 self._word(42) + self._word(7)),
             ["Contract:\n0x" + ADDRESS.hex(), "Protocol:\nAudit protocol"])
+
+    # Phase B: the interpolated intent is shown as numbered parts after the
+    # plain intent. Each value part is formatted exactly as its field is.
+    def test_interpolated_intent_parts_show_the_same_values_as_fields(self):
+        signature = "send(address token,uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send tokens",
+            "interpolatedIntent": "Send {amount} now",
+            "fields": [{"path": "amount", "label": "Amount",
+                        "format": "tokenAmount",
+                        "params": {"tokenPath": "token"}}]}}}}
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        arguments = self._word(self.USDC) + self._word(1500000)
+        result, _, _, _ = self._walk(self._audit_start(program, 68), envelope,
+                                     arguments=arguments)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        shown = []
+        for screen in self.screens:
+            if screen[0] in ("Contract action", "Intent 1/3", "Intent 2/3",
+                             "Intent 3/3", "Signer field") and (
+                                 not shown or shown[-1] != screen):
+                shown.append(screen)
+        self.assertEqual(shown, [
+            ("Contract action", "Send tokens"),
+            ("Intent 1/3", "Send"),
+            ("Intent 2/3", "1.5 USDC"),
+            ("Intent 3/3", "now"),
+            ("Signer field", "Amount:\n1.5 USDC"),
+        ])

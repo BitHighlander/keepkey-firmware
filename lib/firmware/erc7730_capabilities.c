@@ -77,6 +77,9 @@ bool erc7730_cap_display(const Erc7730DisplayInstruction* instruction,
   switch (instruction->opcode) {
     case 1: /* intent: string a, and only as the first instruction */
       return pc == 0 && a != UINT16_MAX && b == UINT16_MAX && c == UINT16_MAX;
+    case 2: /* intent text: string a */
+    case 3: /* intent value: formatter a */
+      return pc != 0 && a != UINT16_MAX && b == UINT16_MAX && c == UINT16_MAX;
     case 4: /* field: label string a, formatter b, no condition */
       return pc != 0 && a != UINT16_MAX && b != UINT16_MAX &&
              (ERC7730_CAP_CONDITIONS || c == UINT16_MAX);

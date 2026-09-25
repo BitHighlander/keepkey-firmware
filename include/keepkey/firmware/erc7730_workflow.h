@@ -98,6 +98,10 @@ typedef struct {
   uint8_t domain_field;
   uint8_t phase;
   Erc7730Field field;
+  /* Nonzero while showing part intent_part of intent_parts of the
+   * interpolated intent; such a part has no label. */
+  uint8_t intent_part;
+  uint8_t intent_parts;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
@@ -195,6 +199,8 @@ bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
 /* Return from a completed capture pass to program selection within the same
  * field, discarding the calldata stream. */
 bool erc7730_workflow_resume_field(Erc7730Workflow* workflow);
+/* Interpolated-intent parts counted by the last display selection. */
+uint16_t erc7730_workflow_intent_parts(const Erc7730Workflow* workflow);
 void erc7730_workflow_abort(Erc7730Workflow* workflow);
 
 #endif
