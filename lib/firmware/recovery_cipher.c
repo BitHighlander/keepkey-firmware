@@ -55,6 +55,11 @@ static char english_alphabet[ENGLISH_ALPHABET_BUF] =
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
 static int uncyphered_word_count = 0;
 static bool definitely_using_cipher = false;
+/* The cipher is re-scrambled before every character, so coded_word can only
+ * hold what the user actually typed. After a delete steps back into an
+ * earlier word, those characters are gone and this is set until the word
+ * ends. */
+static bool coded_word_unknown = false;
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
 static CONFIDENTIAL char last_completed_word[12];
@@ -81,6 +86,7 @@ void recovery_cipher_reset(void) {
   memzero(cipher, sizeof(cipher));
   uncyphered_word_count = 0;
   definitely_using_cipher = false;
+  coded_word_unknown = false;
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
   memzero(last_completed_word, sizeof(last_completed_word));
@@ -458,6 +464,7 @@ void recovery_character(const char* character) {
   if (!mnemonic[0]) {
     uncyphered_word_count = 0;
     definitely_using_cipher = false;
+    coded_word_unknown = false;
     memzero(coded_word, sizeof(coded_word));
     memzero(decoded_word, sizeof(decoded_word));
     memzero(last_completed_word, sizeof(last_completed_word));
@@ -471,7 +478,7 @@ void recovery_character(const char* character) {
     strlcat(coded_word, character, sizeof(coded_word));
     strlcat(decoded_word, decoded_character, sizeof(decoded_word));
 
-    if (enforce_wordlist && 4 <= strlen(coded_word)) {
+    if (enforce_wordlist && !coded_word_unknown && 4 <= strlen(coded_word)) {
       // Check & bail if the user is entering their seed without using the
       // cipher. Note that for each word, this can give false positives about
       // ~0.4% of the time (2048/26^4).
@@ -521,6 +528,7 @@ void recovery_character(const char* character) {
 
     memzero(coded_word, sizeof(coded_word));
     memzero(decoded_word, sizeof(decoded_word));
+    coded_word_unknown = false;
 
     if (word_count && words_entered == word_count) {
       strlcat(mnemonic, " ", MNEMONIC_BUF);
@@ -543,6 +551,24 @@ void recovery_character(const char* character) {
   strlcat(mnemonic, decoded_character, MNEMONIC_BUF);
 
   next_character();
+}
+
+/* Resync the current-word accumulators with the edited mnemonic so a
+ * corrected word is validated on its real value. decoded_word comes from the
+ * mnemonic. coded_word keeps only characters the user actually typed: it
+ * cannot be recomputed, because the cipher changes after every character. */
+static void resync_current_word_after_delete(void) {
+  char cur[CURRENT_WORD_BUF];
+  get_current_word(cur);
+  strlcpy(decoded_word, cur, sizeof(decoded_word));
+  memzero(cur, sizeof(cur));
+  const size_t wlen = strlen(decoded_word);
+  if (!coded_word_unknown && strlen(coded_word) == wlen + 1) {
+    coded_word[wlen] = '\0';
+  } else {
+    memzero(coded_word, sizeof(coded_word));
+    coded_word_unknown = wlen > 0;
+  }
 }
 
 /*
@@ -569,22 +595,7 @@ void recovery_delete_character(void) {
     mnemonic[len - 1] = '\0';
   }
 
-  /* Resync the current-word accumulators with the edited mnemonic so a
-   * corrected word is validated on its real value (stale bytes here would
-   * fail validation and trigger a storage_reset on a real recovery).
-   * decoded_word is the typed prefix of the current word; coded_word is its
-   * reverse-cipher form (session cipher is fixed, so it is reconstructable). */
-  char cur[CURRENT_WORD_BUF];
-  get_current_word(cur);
-  strlcpy(decoded_word, cur, sizeof(decoded_word));
-  memzero(cur, sizeof(cur));
-  size_t wlen = strlen(decoded_word);
-  for (size_t i = 0; i < wlen && i + 1 < sizeof(coded_word); i++) {
-    char d = decoded_word[i];
-    coded_word[i] = (d >= 'a' && d <= 'z') ? cipher[d - 'a'] : d;
-  }
-  coded_word[wlen < sizeof(coded_word) ? wlen : sizeof(coded_word) - 1] = '\0';
-
+  resync_current_word_after_delete();
   next_character();
 }
 

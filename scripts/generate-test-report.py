@@ -33,6 +33,7 @@ BASE_REQUIRED_CASES = {
     "Eip712.DecimalSignPaddingMatchesParsedValue",
     "Eip712.IntegerWidthAndValueMustMatchBeforeHashing",
     "Eip712.NarrowIntegerBoundaryMatchesIndependentEncoding",
+    "Recovery.DeleteKeepsTypedCipherCharactersNotTheCurrentMapping",
     "Storage.LegacyLanguageIsBoundedAndTerminated",
     "Storage.TruncatedLegacyCacheDoesNotMutateDestination",
     "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
