@@ -184,11 +184,14 @@ An adversarial audit of the 7b diff (102 agents) confirmed 42 findings, clustere
 - **Presentation:** distinct titles "Intent text i of n", "Intent value i of n" and "Signer field i of N", so a signer fragment cannot pass for a device-rendered value (D6/D14); a value too long for one confirmation splits into numbered confirmations between lines (D7). This does not keep an address on one OLED page: the board pager wraps each confirmation by pixel width, so an address or long number can continue on the next page of the same confirmation, which must also be confirmed; a unit's base and a threshold message are labelled as the signer's, and a unit always shows the raw integer (D16).
 - **Mirror:** the python-keepkey table limits match the device's (D11). A root path is handled (D12). Wire tests filter pager continuation pages instead of de-duplicating (D15).
 
-Documented, not changed (fail closed, no signature):
+Documented, not changed. The first three fail closed, with no signature:
 
 - **D10, parallel arrays.** Inside an iteration only the value argument must walk the iterated array; any other `[]` path (a token, a collection, a callee) is paired with it by index, as ERC-7730 pairs arrays. If that array is shorter, the capture fails mid-review with "calldata does not match definition". If it is longer, its extra elements are not shown. Test: `test_parallel_arrays_pair_by_index_and_a_short_one_fails_closed`.
 - **D18, fixed indices into dynamic arrays.** Preload cannot know a dynamic array's length, so `path.[0]` over an empty array fails mid-review with the same message. Test: `test_a_fixed_index_into_a_short_array_fails_closed`.
 - **The inner validation pass runs after the outer screens.** Inner bytes that are not canonical for the inner ABI (trailing words, non-minimal offsets) abort with "calldata does not match definition" instead of taking the blind path.
+
+These sign, and are recorded as limits:
+
 - **Typed data repeats leaf reviews.** Each captured typed-data field replays the whole typed data, and every leaf is confirmed on each walk. The first message walk is also the first field's capture, so N captured fields cost N complete leaf reviews (at least one). The UX cost is not measured.
 - **DELEGATECALL is not tied to the inner review (owner decision for 7.16).** The Safe `operation` word is shown only as the outer descriptor's own field. An inner definition is clear-signed the same way under `operation = 1`, where the callee runs against the Safe's storage. §8 item 5 has no code path. In 7.15 the outer review shows the operation value; 7.16 must decide whether a DELEGATECALL inner call is rejected.
 - **Hidden fields.** The compiler omits every field the descriptor marks `visible: "never"` (for example Safe's `safeTxGas` and `signatures`). Those fields are not in the signed program, so the device cannot know they exist. The device hides nothing it is given.
