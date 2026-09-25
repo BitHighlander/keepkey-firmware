@@ -221,7 +221,9 @@ bool erc7730_format_enum(const char* value, const char* label, char* output,
                          size_t output_size) {
   if (!value || !output || output_size == 0) return false;
   const int length =
-      label ? snprintf(output, output_size, "%s (%s)", label, value)
+      /* The label is the signer's claim, marked as such like a unit. */
+      label ? snprintf(output, output_size, "%s (%s)\nlabel set by signer",
+                       label, value)
             : snprintf(output, output_size, "%s (unmapped)", value);
   if (length < 0 || (size_t)length >= output_size) {
     output[0] = '\0';

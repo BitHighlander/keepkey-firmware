@@ -200,7 +200,7 @@ TEST(Erc7730Field, UnitIsExactWithTheRawValue) {
 TEST(Erc7730Field, EnumLabelsTheValueAndMarksUnmapped) {
   char out[64];
   ASSERT_TRUE(erc7730_format_enum("1", "Buy", out, sizeof(out)));
-  EXPECT_STREQ(out, "Buy (1)");
+  EXPECT_STREQ(out, "Buy (1)\nlabel set by signer");
   ASSERT_TRUE(erc7730_format_enum("7", nullptr, out, sizeof(out)));
   EXPECT_STREQ(out, "7 (unmapped)");
 }
