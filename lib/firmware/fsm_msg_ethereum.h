@@ -358,7 +358,7 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
   } else if (workflow->iterating) {
     /* One screen per element of the array, numbered by the device. */
     char title[TITLE_CHAR_MAX];
-    snprintf(title, sizeof(title), "Signer field %u/%u",
+    snprintf(title, sizeof(title), "Signer field %u of %u",
              (unsigned)workflow->iteration_index + 1u,
              (unsigned)workflow->iteration_count);
     confirmed = confirm_erc7730_field(title, workflow->label, formatted);
