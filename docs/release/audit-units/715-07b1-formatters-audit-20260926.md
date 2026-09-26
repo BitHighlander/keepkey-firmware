@@ -30,7 +30,7 @@ from this unit's added source.
 Immutable inventory range for code and tests:
 `git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..0c4b98f116598bad45a023b4a3fe8af3bc5cc0d1`.
 Frozen inventory range including the source report and PDF:
-`FROZEN_RANGE_PENDING`.
+`git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..fe1c3df9187854807fe2742827fa19b4301d66c9`.
 The report source and PDF are added after that code predecessor. Counts are
 net adjacent-diff counts, including tests, documentation and the companion
 gitlink; they are not a sum of overlapping commit counts. The PR body records
