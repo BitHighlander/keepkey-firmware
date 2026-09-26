@@ -875,8 +875,8 @@ class TestStack07Regressions(common.KeepKeyTest):
                      self._word(OTHER_ADDRESS) + self._word(ADDRESS))
         self.assertEqual(
             self._titled_fields(descriptor, signature, arguments), [
-                ("Signer field 1/2", "Recipient:\n0x" + OTHER_ADDRESS.hex()),
-                ("Signer field 2/2", "Recipient:\n0x" + ADDRESS.hex()),
+                ("Signer field 1 of 2", "Recipient:\n0x" + OTHER_ADDRESS.hex()),
+                ("Signer field 2 of 2", "Recipient:\n0x" + ADDRESS.hex()),
             ])
         # An empty array shows no element and still signs.
         self.assertEqual(
@@ -897,9 +897,9 @@ class TestStack07Regressions(common.KeepKeyTest):
                      self._word(ADDRESS) + self._word(6))
         self.assertEqual(
             self._titled_fields(descriptor, signature, arguments), [
-                ("Signer field 1/2", "To:\n0x" + OTHER_ADDRESS.hex()),
-                ("Signer field 1/2", "Amount:\n5"),
-                ("Signer field 2/2", "To:\n0x" + ADDRESS.hex()),
-                ("Signer field 2/2", "Amount:\n6"),
+                ("Signer field 1 of 2", "To:\n0x" + OTHER_ADDRESS.hex()),
+                ("Signer field 1 of 2", "Amount:\n5"),
+                ("Signer field 2 of 2", "To:\n0x" + ADDRESS.hex()),
+                ("Signer field 2 of 2", "Amount:\n6"),
                 ("Signer field", "Fee:\n9"),
             ])
