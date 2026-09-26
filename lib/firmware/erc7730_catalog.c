@@ -227,6 +227,7 @@ static bool walk_path_index(Erc7730CatalogVerifier* v, int32_t index,
       return false;
     v->path_node = (uint8_t)(first_child + (uint32_t)index);
   } else if (kind == 9 || kind == 10) {
+    if (!whole_array) v->path_array_indexed = true;
     const uint32_t length = kind == 9 ? extent : ERC7730_ABI_MAX_ARRAY_ELEMENTS;
     if ((index >= 0 && (uint32_t)index >= length) ||
         (index < 0 && (uint32_t)(-(int64_t)index) > length))
@@ -321,6 +322,14 @@ static bool consume_string_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (v->utf8_remaining != 0 ||
         (v->entry_index != 0 && v->compare_state == 0))
       return false;
+    if (v->entry_length <= ERC7730_CAP_SIGNER_TEXT_MAX)
+      v->short_strings[v->entry_index / 8u] |=
+          (uint8_t)(1u << (v->entry_index % 8u));
+    /* cert[] holds the whole string now: note the date encodings. */
+    if (erc7730_cap_string_class((const char*)v->cert, v->entry_length) ==
+        ERC7730_CLASS_DATE_ENCODING)
+      v->date_strings[v->entry_index / 8u] |=
+          (uint8_t)(1u << (v->entry_index % 8u));
     v->previous_length = v->entry_length;
     v->entry_length = 0;
     v->entry_offset = 0;
@@ -336,9 +345,22 @@ static bool finish_path_step(Erc7730CatalogVerifier* v) {
   v->path_slice_flags = 0;
   if (v->path_step_index == v->path_step_count) {
     /* The value must be a leaf the capture returns: never a tuple or array. */
-    if (v->path_node >= v->table_counts[1] ||
-        (abi_entry(v, v->path_node) >> 12) > ERC7730_ABI_STRING)
+    if (v->path_node >= v->table_counts[1]) return false;
+    const uint8_t leaf = (uint8_t)(abi_entry(v, v->path_node) >> 12);
+    if (v->path_last_full) {
+      /* Ends on its "every element" step: the path an iteration walks. An
+       * element that is a leaf is also a value (address[] recipients); a
+       * tuple element names none (class NONE), so no formatter reads it. */
+      v->path_iterable_mask |= UINT64_C(1) << v->entry_index;
+      v->signature[v->entry_index] =
+          leaf <= ERC7730_ABI_STRING ? leaf : ERC7730_CLASS_NONE;
+    } else if (leaf > ERC7730_ABI_STRING) {
       return false;
+    } else {
+      /* Formatter arguments are type-checked against this class. signature[]
+       * is idle from the end of the ABI section until the display section. */
+      v->signature[v->entry_index] = leaf;
+    }
     v->entry_index++;
     v->field_received = 0;
     v->path_step_index = 0;
@@ -376,6 +398,9 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
         v->path_step_count >= ERC7730_ABI_MAX_DEPTH)
       return false;
     v->path_node = 0; /* every value path starts at the root tuple */
+    v->path_array_indexed = false;
+    v->path_last_full = false;
+    v->path_arrays[v->entry_index] = 0xff; /* no "every element" step */
     if (v->path_source == 1) {
       if (source_index != UINT16_MAX || v->path_step_count == 0) return false;
     } else {
@@ -383,6 +408,20 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       if ((v->path_source == 2 && (source_index == 0 || source_index > 6)) ||
           (v->path_source == 3 && source_index == UINT16_MAX))
         return false;
+      if (v->path_source == 2) {
+        /* @.from and @.to are addresses; containers exist for calldata only.
+         */
+        if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
+            v->header[7] != ERC7730_DEFINITION_CALLDATA)
+          return false;
+        v->signature[v->entry_index] =
+            source_index == 3 ? ERC7730_CLASS_UINT : ERC7730_CLASS_ADDRESS;
+        if (source_index == 3) v->reads_value = true;
+      } else {
+        /* The literal table follows; resolve the class at the formatter. */
+        if (source_index >= 64) return false;
+        v->signature[v->entry_index] = (uint8_t)(0x40u | source_index);
+      }
     }
     v->field_received = 0;
     if (v->path_step_count == 0) {
@@ -400,9 +439,13 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (byte == 1) {
       v->path_step_remaining = 4;
     } else if (byte == 2) {
-      if (v->path_full_seen) return false;
+      /* One "every element" step per path, reached through tuples only, so
+       * the array's ABI node alone identifies the array iterated. */
+      if (v->path_full_seen || v->path_array_indexed) return false;
       v->path_full_seen = true;
+      v->path_arrays[v->entry_index] = v->path_node;
       if (!walk_path_index(v, 0, true)) return false;
+      v->path_last_full = true;
       return finish_path_step(v);
     } else if (byte == 3) {
       if (v->path_step_index + 1 != v->path_step_count) return false;
@@ -428,12 +471,33 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->path_step_opcode == 1 &&
       !walk_path_index(v, (int32_t)read_be32(v->sibling + 4), false))
     return false;
+  v->path_last_full = false;
   return finish_path_step(v);
 }
 
+static uint8_t literal_class(const Erc7730CatalogVerifier* v,
+                             uint16_t literal) {
+  if (literal >= v->table_counts[3] || literal >= 64) return ERC7730_CLASS_NONE;
+  return (uint8_t)((v->literal_classes[literal / 2u] >> (4u * (literal % 2u))) &
+                   0x0fu);
+}
+
+static bool short_string(const Erc7730CatalogVerifier* v, uint16_t index) {
+  return index < v->table_counts[0] && index < 96u &&
+         ((v->short_strings[index / 8u] >> (index % 8u)) & 1u) != 0;
+}
+
 static void finish_literal(Erc7730CatalogVerifier* v) {
+  if (v->literal_kind == 1 && v->entry_length == 1 &&
+      v->literal_first <= ERC7730_CAP_UNIT_DECIMALS_MAX)
+    v->literal_decimals_mask |= UINT64_C(1) << v->entry_index;
   if (v->literal_kind == 9)
     v->literal_set_mask |= UINT64_C(1) << v->entry_index;
+  v->literal_classes[v->entry_index / 2u] |=
+      (uint8_t)(erc7730_cap_literal_class(
+                    v->literal_kind, v->literal_kind == 1 ? v->entry_length
+                                                          : v->literal_subcount)
+                << (4u * (v->entry_index % 2u)));
   v->entry_index++;
   v->entry_length = 0;
   v->entry_offset = 0;
@@ -499,7 +563,8 @@ static bool consume_literal_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
                                           reference <= v->literal_previous))
         return false;
       if (v->literal_kind == 8 &&
-          read_be16(v->sibling + 2) >= v->table_counts[0])
+          (read_be16(v->sibling + 2) >= v->table_counts[0] ||
+           !short_string(v, read_be16(v->sibling + 2))))
         return false;
       v->literal_previous = reference;
       v->field_received = 0;
@@ -530,7 +595,8 @@ static bool validate_condition(Erc7730CatalogVerifier* v) {
   const uint16_t path = read_be16(v->sibling + 1);
   const uint16_t set = read_be16(v->sibling + 3);
   if (opcode < 1 || opcode > 8 || v->sibling[5] != 0 || v->sibling[6] != 0 ||
-      v->sibling[7] != 0)
+      v->sibling[7] != 0 ||
+      (ERC7730_CAP_CONDITION_OPCODES & ERC7730_CAP_BIT(opcode)) == 0)
     return false;
   if (opcode <= 3) return path == UINT16_MAX && set == UINT16_MAX;
   if (path >= v->table_counts[2]) return false;
@@ -609,6 +675,9 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
       (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0 ||
       required == 0 || (roles & required) != required)
     return false;
+  /* Embedded calldata is executed for calldata definitions only. */
+  if (v->formatter_kind == 13 && v->header[7] != ERC7730_DEFINITION_CALLDATA)
+    return false;
   if ((v->formatter_kind == 3 && (roles & FORMAT_ROLE_BIT(2)) == 0) ||
       (v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
       (v->formatter_kind == 8 && (roles & FORMAT_ROLE_BIT(10)) == 0) ||
@@ -618,6 +687,18 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
         (FORMAT_ROLE_BIT(19) | FORMAT_ROLE_BIT(20) | FORMAT_ROLE_BIT(23))) !=
            (FORMAT_ROLE_BIT(19) | FORMAT_ROLE_BIT(20) | FORMAT_ROLE_BIT(23))))
     return false;
+  /* The display section checks iteration against these; cert[] is idle from
+   * the end of the path section until the bindings. */
+  v->cert[v->entry_index] = v->formatter_value_array;
+  /* bit 0: an argument iterates; bit 1: embedded calldata; bit 2: the value
+   * is a signer constant */
+  v->cert[64u + v->entry_index] =
+      (uint8_t)((v->formatter_any_array ? 1u : 0u) |
+                (v->formatter_kind == 13 ? 2u : 0u) |
+                (v->formatter_value_literal ? 4u : 0u));
+  v->formatter_value_array = 0xff;
+  v->formatter_any_array = false;
+  v->formatter_value_literal = false;
   v->entry_index++;
   v->formatter_kind = 0;
   v->formatter_arg_count = 0;
@@ -665,6 +746,37 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       (source == 2 && index >= v->table_counts[3]) ||
       (source == 3 && index >= v->table_counts[0]))
     return false;
+  uint8_t cls;
+  if (source == 3) {
+    cls = (v->date_strings[index / 8u] >> (index % 8u)) & 1u
+              ? ERC7730_CLASS_DATE_ENCODING
+              : ERC7730_CLASS_STRING;
+  } else {
+    cls = source == 2 ? literal_class(v, index) : v->signature[index];
+    if (source == 1 && (cls & 0x40u) != 0) cls = literal_class(v, cls & 0x3fu);
+  }
+  if (!erc7730_cap_value(v->formatter_kind, role, cls)) return false;
+  /* Signer text shown in a value's screen stays short enough to render. */
+  if (source == 3 && (role == 5 || role == 8) && !short_string(v, index))
+    return false;
+  /* unit decimals: a one-byte literal no greater than the digits of a word. */
+  if (v->formatter_kind == 7 && role == 4 &&
+      (index >= 64 || ((v->literal_decimals_mask >> index) & 1u) == 0))
+    return false;
+  /* Formatters show values the device decodes from the signed data. Only
+   * raw may show a signer constant, as the signer's own field. An embedded
+   * call's callee, value and authority are read from calldata or a
+   * transaction container, never from a signer constant. */
+  if (source == 1 && (v->signature[index] & 0x40u) != 0 &&
+      ((role == 1 && v->formatter_kind != 1) ||
+       (v->formatter_kind == 13 && (role == 15 || role == 17 || role == 18))))
+    return false;
+  if (role == 1 && (v->signature[index] & 0x40u) != 0)
+    v->formatter_value_literal = true;
+  if (source == 1 && v->path_arrays[index] != 0xff) {
+    v->formatter_any_array = true;
+    if (role == 1) v->formatter_value_array = v->path_arrays[index];
+  }
   v->formatter_last_role = role;
   v->formatter_roles |= FORMAT_ROLE_BIT(role);
   v->formatter_arg_index++;
@@ -689,6 +801,38 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   if (opcode < 1 || opcode > 10 || flags != 0 ||
       !erc7730_cap_display(&executable, pc))
     return false;
+  /* Iteration: one array at a time, calldata only, and every field inside
+   * reads that array; an argument that iterates only inside it. */
+  if (opcode == 7) {
+    if (a >= 64 || ((v->path_iterable_mask >> a) & 1u) == 0 ||
+        v->display_in_iteration || v->header[7] != ERC7730_DEFINITION_CALLDATA)
+      return false;
+    v->display_in_iteration = true;
+    v->display_iteration_array = v->path_arrays[a];
+  } else if (opcode == 8) {
+    v->display_in_iteration = false;
+  } else if (opcode == 3 || opcode == 4) {
+    const uint16_t formatter = opcode == 3 ? a : b;
+    if (formatter >= 64) return false;
+    const uint8_t value_array = v->cert[formatter];
+    /* An embedded call is its own screens, never a part of the intent. */
+    /* "Intent value" names what the device decodes: never an embedded
+     * call, never a signer constant (which is intent text). */
+    if (opcode == 3 && (v->cert[64u + formatter] & 6u) != 0) return false;
+    /* A field label is signer text shown with its value. */
+    if (opcode == 4 && !short_string(v, a)) return false;
+    if (((v->cert[64u + formatter] & 1u) != 0 && !v->display_in_iteration) ||
+        (v->display_in_iteration && value_array != v->display_iteration_array))
+      return false;
+  }
+  /* Interpolated-intent parts form one run directly after the intent. */
+  if (pc != 0) {
+    if (opcode == 2 || opcode == 3) {
+      if (v->display_intent_run_closed) return false;
+    } else {
+      v->display_intent_run_closed = true;
+    }
+  }
   switch (opcode) {
     case 1:
       return a < v->table_counts[0] && optional_index(b, v->table_counts[4]) &&
@@ -707,7 +851,7 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
           !optional_index(b, v->table_counts[4]) || c <= pc ||
           c >= v->entry_count || v->display_depth >= ERC7730_ABI_MAX_DEPTH)
         return false;
-      uint8_t* frame = v->signature + v->display_depth * 5u;
+      uint8_t* frame = v->display_frames + v->display_depth * 5u;
       frame[0] = opcode;
       frame[1] = (uint8_t)(pc >> 8);
       frame[2] = (uint8_t)pc;
@@ -724,7 +868,7 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
           (opcode == 6 && b != UINT16_MAX) ||
           (opcode == 8 && !optional_index(b, v->table_counts[0])))
         return false;
-      const uint8_t* frame = v->signature + (v->display_depth - 1u) * 5u;
+      const uint8_t* frame = v->display_frames + (v->display_depth - 1u) * 5u;
       const uint16_t begin = (uint16_t)(((uint16_t)frame[1] << 8) | frame[2]);
       const uint16_t end = (uint16_t)(((uint16_t)frame[3] << 8) | frame[4]);
       if (a != begin || end != pc || (opcode == 6 && frame[0] != 5) ||
@@ -1010,6 +1154,8 @@ static bool consume_program_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       v->formatter_arg_index = 0;
       v->formatter_last_role = 0;
       v->formatter_roles = 0;
+      v->formatter_value_array = 0xff;
+      v->formatter_any_array = false;
       v->display_depth = 0;
       v->binding_kind = 0;
       v->binding_previous_kind = 0;
@@ -1068,6 +1214,7 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   identity->revocation_epoch = read_be32(v->header + 174);
   identity->program_length = v->program_length;
   identity->envelope_length = v->total_length;
+  identity->reads_value = v->reads_value;
   memzero(actual_id, sizeof(actual_id));
   v->state = STREAM_DONE;
   return ERC7730_CATALOG_COMPLETE;
@@ -1253,6 +1400,10 @@ bool erc7730_catalog_preloaded(Erc7730CatalogIdentity* identity) {
   if (!identity || !preload.available) return false;
   memcpy(identity, &preload.data.identity, sizeof(*identity));
   return true;
+}
+
+bool erc7730_catalog_preloaded_reads_value(void) {
+  return preload.available && preload.data.identity.reads_value;
 }
 
 bool erc7730_catalog_preloaded_replay_begin(uint8_t definition_id[32],

@@ -243,6 +243,27 @@ TEST(Erc7730ProgramString, RejectsMissingOversizedAndTruncatedValues) {
       erc7730_program_string_feed(&loader, 0, section.data(), section.size()));
 }
 
+TEST(Erc7730ProgramString, RejectsEmbeddedNulBeforeDisplay) {
+  const std::vector<uint8_t> section = {0, 2, 0, 1, 'A', 0, 3, 'x', 0, 'y'};
+  for (uint16_t selected : {0u, 1u}) {
+    for (size_t chunk : std::vector<size_t>{1u, section.size()}) {
+      Erc7730ProgramString loader;
+      erc7730_program_string_begin(&loader, section.size(), selected);
+      bool rejected = false;
+      for (size_t offset = 0; offset < section.size();) {
+        const size_t length = std::min(chunk, section.size() - offset);
+        if (!erc7730_program_string_feed(&loader, offset,
+                                         section.data() + offset, length)) {
+          rejected = true;
+          break;
+        }
+        offset += length;
+      }
+      EXPECT_TRUE(rejected) << "selected=" << selected << " chunk=" << chunk;
+    }
+  }
+}
+
 TEST(Erc7730ProgramDisplay, SelectsInstructionAcrossChunks) {
   const std::vector<uint8_t> section = {
       0, 3, 1, 0, 0, 2,  0xff, 0xff, 0xff, 0xff, 4,    0,    0,

@@ -42,6 +42,9 @@ static bool begin_replay(Erc7730Workflow* workflow,
     return false;
   }
   workflow->phase = ERC7730_WORKFLOW_REPLAY;
+  /* A replay loads a whole program; no selection is pending (after an
+   * embedded call's fetch the last one belonged to the other program). */
+  workflow->selection_kind = ERC7730_SELECTION_NONE;
   return true;
 }
 
@@ -398,13 +401,22 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
     return false;
   }
   Erc7730AbiProgram program;
+  /* At depth 1 the stream decodes only the inner call's arguments, located
+   * inside the outer arguments that are replayed and hashed in full. */
+  const uint32_t outer = tx->data_length >= 4 ? tx->data_length - 4u : 0;
+  const bool inner = workflow->depth == 1;
   if (tx->data_length < 4 ||
+      (inner && (workflow->inner_length < 4 || workflow->inner_offset > outer ||
+                 workflow->inner_length > outer - workflow->inner_offset)) ||
       !erc7730_program_loader_complete(&workflow->loader, &program) ||
       erc7730_abi_stream_begin(&workflow->calldata, &program,
-                               tx->data_length - 4u) != ERC7730_ABI_OK) {
+                               inner ? workflow->inner_length - 4u : outer) !=
+          ERC7730_ABI_OK) {
     fail(workflow);
     return false;
   }
+  workflow->outer_total = outer;
+  workflow->outer_received = 0;
   workflow->phase = ERC7730_WORKFLOW_CALLDATA;
   sha256_Init(&workflow->calldata_hash);
   sha256_Update(&workflow->calldata_hash, tx->data_initial_chunk.bytes,
@@ -415,11 +427,18 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
 bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
                                                 EthereumSignTx* tx,
                                                 const Erc7730Path* path) {
-  if (!workflow || !tx || !path || !erc7730_cap_path(path)) return false;
+  if (!workflow || !tx || !path || path->source != 1 || !erc7730_cap_path(path))
+    return false;
   int32_t components[ERC7730_ABI_MAX_DEPTH];
   for (uint8_t i = 0; i < path->step_count; i++) {
-    if (path->steps[i].opcode != 1) return false;
-    components[i] = path->steps[i].first;
+    if (path->steps[i].opcode == 2 && workflow->iterating) {
+      /* "every element": the iteration's current element */
+      components[i] = workflow->iteration_index;
+    } else if (path->steps[i].opcode == 1) {
+      components[i] = path->steps[i].first;
+    } else {
+      return false;
+    }
   }
   if (!erc7730_workflow_restore_and_start_calldata(workflow, tx)) {
     memzero(components, sizeof(components));
@@ -427,6 +446,9 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
   }
   const Erc7730AbiResult result = erc7730_abi_stream_capture_path(
       &workflow->calldata, components, path->step_count);
+  /* Embedded calldata is located, not captured: it may be any length. */
+  workflow->calldata.capture_locate =
+      workflow->field.kind == 13 && workflow->field.pending_role == 1;
   memzero(components, sizeof(components));
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
@@ -435,10 +457,25 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
   return true;
 }
 
+bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
+                                               EthereumSignTx* tx,
+                                               const Erc7730Path* path) {
+  if (!workflow || !tx || !path || workflow->iterating || path->source != 1 ||
+      path->step_count < 2 || !erc7730_cap_path(path) ||
+      path->steps[path->step_count - 1u].opcode != 2)
+    return false;
+  Erc7730Path array = *path;
+  array.step_count--;
+  for (uint8_t i = 0; i < array.step_count; i++)
+    if (array.steps[i].opcode != 1) return false;
+  return erc7730_workflow_restore_and_start_capture(workflow, tx, &array);
+}
+
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
                                            const Erc7730Path* path) {
   if (!workflow || !path || !workflow->typed_data ||
-      workflow->phase != ERC7730_WORKFLOW_READY || !erc7730_cap_path(path))
+      workflow->phase != ERC7730_WORKFLOW_READY || path->source != 1 ||
+      !erc7730_cap_path(path))
     return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program))
@@ -554,10 +591,19 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
   if (workflow->calldata.capture_found) return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program) ||
-      workflow->calldata.capture.node >= program.node_count ||
-      !normalize_eip712_capture(&program.nodes[workflow->calldata.capture.node],
-                                value, value_len, &workflow->calldata.capture))
+      workflow->calldata.capture.node >= program.node_count)
     return false;
+  const Erc7730AbiNode* leaf = &program.nodes[workflow->calldata.capture.node];
+  if ((leaf->kind == ERC7730_ABI_BYTES || leaf->kind == ERC7730_ABI_STRING) &&
+      value_len > sizeof(workflow->calldata.capture.data)) {
+    /* Too long to capture: keep only its length, as a calldata pass does. */
+    workflow->calldata.capture_overflow = true;
+    workflow->calldata.located_length = value_len;
+    workflow->calldata.capture.length = 0;
+  } else if (!normalize_eip712_capture(leaf, value, value_len,
+                                       &workflow->calldata.capture)) {
+    return false;
+  }
   workflow->calldata.capture_found = true;
   return true;
 }
@@ -602,8 +648,10 @@ bool erc7730_workflow_restore_complete(const Erc7730Workflow* workflow,
 
 bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
                                     EthereumSignTx* tx) {
+  /* READY: the display program ended after a field that captured nothing. */
   if (!workflow || workflow->typed_data ||
-      workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
+      (workflow->phase != ERC7730_WORKFLOW_COMPLETE &&
+       workflow->phase != ERC7730_WORKFLOW_READY) ||
       !workflow->reviewed_digest_set) {
     fail(workflow);
     return false;
@@ -622,12 +670,31 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     fail(workflow);
     return ERC7730_ABI_BOUNDS;
   }
-  const Erc7730AbiResult result = erc7730_abi_stream_feed(
-      &workflow->calldata, workflow->calldata.received, data, data_len);
+  if (data_len > workflow->outer_total - workflow->outer_received) {
+    fail(workflow);
+    return ERC7730_ABI_BOUNDS;
+  }
+  Erc7730AbiResult result = ERC7730_ABI_OK;
+  if (workflow->depth == 0) {
+    result = erc7730_abi_stream_feed(
+        &workflow->calldata, workflow->calldata.received, data, data_len);
+  } else {
+    /* Feed only the inner call's arguments (after its selector). */
+    const uint32_t start = workflow->inner_offset + 4u;
+    const uint32_t end = workflow->inner_offset + workflow->inner_length;
+    const uint32_t from = workflow->outer_received;
+    const uint32_t to = from + (uint32_t)data_len;
+    const uint32_t lo = from > start ? from : start;
+    const uint32_t hi = to < end ? to : end;
+    if (lo < hi)
+      result = erc7730_abi_stream_feed(&workflow->calldata, lo - start,
+                                       data + (lo - from), hi - lo);
+  }
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
   } else {
     sha256_Update(&workflow->calldata_hash, data, data_len);
+    workflow->outer_received += (uint32_t)data_len;
   }
   return result;
 }
@@ -638,7 +705,9 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
     return ERC7730_ABI_BOUNDS;
   }
   const Erc7730AbiResult result =
-      erc7730_abi_stream_finish(&workflow->calldata);
+      workflow->outer_received != workflow->outer_total
+          ? ERC7730_ABI_BOUNDS
+          : erc7730_abi_stream_finish(&workflow->calldata);
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
     return result;
@@ -665,7 +734,8 @@ bool erc7730_workflow_active(const Erc7730Workflow* workflow) {
                       workflow->phase == ERC7730_WORKFLOW_SELECT ||
                       workflow->phase == ERC7730_WORKFLOW_READY ||
                       workflow->phase == ERC7730_WORKFLOW_CALLDATA ||
-                      workflow->phase == ERC7730_WORKFLOW_TYPED_DATA);
+                      workflow->phase == ERC7730_WORKFLOW_TYPED_DATA ||
+                      workflow->phase == ERC7730_WORKFLOW_FETCH);
 }
 
 bool erc7730_workflow_complete(const Erc7730Workflow* workflow) {
@@ -675,9 +745,9 @@ bool erc7730_workflow_complete(const Erc7730Workflow* workflow) {
 bool erc7730_workflow_calldata_waiting(const Erc7730Workflow* workflow,
                                        size_t* remaining) {
   if (!workflow || !remaining || workflow->phase != ERC7730_WORKFLOW_CALLDATA ||
-      workflow->calldata.received > workflow->calldata.total_length)
+      workflow->outer_received > workflow->outer_total)
     return false;
-  *remaining = workflow->calldata.total_length - workflow->calldata.received;
+  *remaining = workflow->outer_total - workflow->outer_received;
   return *remaining != 0;
 }
 
@@ -718,15 +788,306 @@ bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,
 }
 
 bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
-  if (!workflow || workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
+  /* READY: the field showed a literal or container and captured nothing. */
+  if (!workflow ||
+      (workflow->phase != ERC7730_WORKFLOW_COMPLETE &&
+       workflow->phase != ERC7730_WORKFLOW_READY) ||
       workflow->display_index == UINT16_MAX)
     return false;
   memzero(workflow->label, sizeof(workflow->label));
+  memzero(&workflow->field, sizeof(workflow->field));
+  workflow->intent_part = 0;
+  workflow->intent_parts = 0;
+  workflow->intent_value = false;
   erc7730_abi_stream_clear(&workflow->calldata);
   workflow->phase = ERC7730_WORKFLOW_READY;
   workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;
   workflow->display_index++;
   return erc7730_workflow_select_display(workflow, workflow->display_index);
+}
+
+bool erc7730_workflow_field_begin(Erc7730Workflow* workflow,
+                                  const Erc7730Formatter* formatter) {
+  if (!workflow || !formatter || !erc7730_cap_formatter(formatter) ||
+      formatter->argument_count > ERC7730_FIELD_MAX_ARGUMENTS)
+    return false;
+  memzero(&workflow->field, sizeof(workflow->field));
+  workflow->field.kind = formatter->kind;
+  workflow->field.argument_count = formatter->argument_count;
+  memcpy(workflow->field.arguments, formatter->arguments,
+         formatter->argument_count * sizeof(formatter->arguments[0]));
+  return true;
+}
+
+bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
+                               Erc7730AbiCapture* capture, uint8_t* cls) {
+  Erc7730AbiProgram program;
+  if (!workflow || !capture || !cls ||
+      workflow->phase != ERC7730_WORKFLOW_COMPLETE ||
+      !erc7730_program_loader_complete(&workflow->loader, &program) ||
+      !erc7730_abi_stream_captured(&workflow->calldata, capture) ||
+      capture->node >= program.node_count)
+    return false;
+  *cls = program.nodes[capture->node].kind;
+  return true;
+}
+
+bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
+  if (!workflow || workflow->typed_data || depth > 1 ||
+      workflow->phase != ERC7730_WORKFLOW_READY ||
+      (depth == 1 && (workflow->depth != 0 || !workflow->field.has_inner ||
+                      !workflow->field.has_address ||
+                      workflow->field.inner_selector_length != 4)) ||
+      (depth == 0 && workflow->depth != 1))
+    return false;
+  if (depth == 1) {
+    /* What restores the outer program, whichever way the inner call ends. */
+    memcpy(workflow->outer_definition_id, workflow->identity.definition_id, 32);
+    workflow->outer_resume = workflow->display_index;
+    workflow->outer_identity_confirmed = workflow->identity_confirmed;
+    workflow->outer_intent_confirmed = workflow->intent_confirmed;
+  }
+  workflow->fetch_depth = depth;
+  workflow->fetch_offset = 0;
+  workflow->fetch_total = 0;
+  workflow->phase = ERC7730_WORKFLOW_FETCH;
+  return true;
+}
+
+Erc7730CatalogResult erc7730_workflow_fetch_feed(
+    Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,
+    bool* complete, bool* none) {
+  if (complete) *complete = false;
+  if (none) *none = false;
+  if (!workflow || !chunk || !complete || !none ||
+      workflow->phase != ERC7730_WORKFLOW_FETCH ||
+      chunk->definition_id.size != 32 ||
+      chunk->offset != workflow->fetch_offset ||
+      chunk->data.size > ERC7730_TRANSPORT_CHUNK_MAX) {
+    fail(workflow);
+    return ERC7730_CATALOG_BAD_SEQUENCE;
+  }
+  if (chunk->offset == 0 && chunk->total_length == 0 && chunk->data.size == 0 &&
+      workflow->fetch_depth == 1) {
+    /* No inner definition. Nothing was streamed, so the outer definition is
+     * still the preloaded one. */
+    *none = true;
+    workflow->phase = ERC7730_WORKFLOW_READY;
+    return ERC7730_CATALOG_COMPLETE;
+  }
+  /* The outer definition must come back byte for byte: same id. */
+  if (chunk->data.size == 0 ||
+      (workflow->fetch_depth == 0 &&
+       memcmp(chunk->definition_id.bytes, workflow->outer_definition_id, 32) !=
+           0) ||
+      (workflow->fetch_total != 0 &&
+       chunk->total_length != workflow->fetch_total)) {
+    fail(workflow);
+    return ERC7730_CATALOG_BAD_SEQUENCE;
+  }
+  uint32_t next_offset = 0;
+  const Erc7730CatalogResult result = erc7730_catalog_preload_chunk(
+      chunk->definition_id.bytes, chunk->offset, chunk->total_length,
+      chunk->data.bytes, chunk->data.size, &next_offset, complete);
+  /* An inner definition that shows @.value needs the value from the signed
+   * calldata; with no amountPath there is none to show, only a default. */
+  const bool unsourced_value = result == ERC7730_CATALOG_COMPLETE &&
+                               !workflow->field.has_value &&
+                               erc7730_catalog_preloaded_reads_value();
+  if (workflow->fetch_depth == 1 &&
+      (result == ERC7730_CATALOG_BAD_PROGRAM ||
+       result == ERC7730_CATALOG_UNTRUSTED || unsourced_value)) {
+    /* The device cannot clear-sign this inner call: restore the outer
+     * definition (the slot now holds nothing) and show the call blind. */
+    erc7730_catalog_clear_preload();
+    if (complete) *complete = false;
+    workflow->inner_refused = true;
+    workflow->fetch_depth = 0;
+    workflow->fetch_offset = 0;
+    workflow->fetch_total = 0;
+    return ERC7730_CATALOG_MORE;
+  }
+  if (result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) {
+    fail(workflow);
+    return result;
+  }
+  workflow->fetch_total = chunk->total_length;
+  workflow->fetch_offset = next_offset;
+  return result;
+}
+
+bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
+  Erc7730CatalogIdentity identity;
+  if (!workflow || workflow->phase != ERC7730_WORKFLOW_FETCH ||
+      !erc7730_catalog_preloaded(&identity)) {
+    memzero(&identity, sizeof(identity));
+    fail(workflow);
+    return false;
+  }
+  bool bound;
+  if (workflow->fetch_depth == 1) {
+    /* H8: the inner definition is for this chain, this callee and this
+     * selector, all read from the signed calldata. */
+    bound = erc7730_catalog_matches_calldata(
+        &identity, workflow->identity.chain_id, workflow->field.address,
+        workflow->field.inner_selector);
+    if (bound) {
+      workflow->inner_offset = workflow->field.inner_offset;
+      workflow->inner_length = workflow->field.inner_length;
+      /* ERC-7730: inside the inner call @.to is the callee, @.value the value
+       * it moves (without one, an inner definition that shows it was refused
+       * in erc7730_workflow_fetch_feed) and @.from whose authority it runs
+       * with (none: the outer contract). */
+      memcpy(workflow->inner_to, workflow->field.address, 20);
+      memzero(workflow->inner_value, sizeof(workflow->inner_value));
+      if (workflow->field.has_value)
+        memcpy(workflow->inner_value, workflow->field.value, 32);
+      memcpy(workflow->inner_from,
+             workflow->field.has_spender ? workflow->field.spender
+                                         : workflow->identity.contract_address,
+             20);
+      workflow->depth = 1;
+      workflow->identity_confirmed = false;
+      workflow->intent_confirmed = false;
+      workflow->calldata_validated = false;
+      workflow->resuming = false;
+    }
+  } else {
+    bound =
+        memcmp(identity.definition_id, workflow->outer_definition_id, 32) == 0;
+    if (bound) {
+      /* Resume after the embedded field, or re-run it blind when its inner
+       * definition was refused (outer_resume >= 1: never the intent). */
+      workflow->display_index = workflow->inner_refused
+                                    ? (uint16_t)(workflow->outer_resume - 1u)
+                                    : workflow->outer_resume;
+      workflow->depth = 0;
+      workflow->identity_confirmed = workflow->outer_identity_confirmed;
+      workflow->intent_confirmed = workflow->outer_intent_confirmed;
+      workflow->calldata_validated = true;
+      workflow->resuming = true;
+      workflow->inner_offset = 0;
+      workflow->inner_length = 0;
+      memzero(workflow->inner_to, sizeof(workflow->inner_to));
+      memzero(workflow->inner_value, sizeof(workflow->inner_value));
+      memzero(workflow->inner_from, sizeof(workflow->inner_from));
+    }
+  }
+  if (!bound) {
+    memzero(&identity, sizeof(identity));
+    fail(workflow);
+    return false;
+  }
+  memzero(&workflow->field, sizeof(workflow->field));
+  memzero(workflow->label, sizeof(workflow->label));
+  memzero(workflow->intent, sizeof(workflow->intent));
+  workflow->display_stage = ERC7730_DISPLAY_NONE;
+  const bool started = begin_replay(workflow, &identity);
+  memzero(&identity, sizeof(identity));
+  return started;
+}
+
+bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
+  Erc7730AbiCapture capture;
+  uint8_t cls = 0;
+  if (!workflow || workflow->field.kind != 13 ||
+      workflow->field.pending_role != 1 || workflow->field.has_inner ||
+      !workflow->calldata.capture_locate ||
+      !erc7730_workflow_captured(workflow, &capture, &cls) ||
+      cls != ERC7730_CLASS_BYTES || capture.length > 4 ||
+      workflow->calldata.located_length > UINT32_MAX ||
+      workflow->calldata.located_offset > UINT32_MAX) {
+    memzero(&capture, sizeof(capture));
+    return false;
+  }
+  Erc7730Field* field = &workflow->field;
+  memcpy(field->inner_selector, capture.data, capture.length);
+  field->inner_selector_length = (uint8_t)capture.length;
+  field->inner_length = (uint32_t)workflow->calldata.located_length;
+  field->inner_offset = (uint32_t)workflow->calldata.located_offset;
+  field->has_inner = true;
+  memzero(&capture, sizeof(capture));
+  return true;
+}
+
+bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
+                                  const uint8_t* value, size_t value_len) {
+  if (!workflow || !value) return false;
+  Erc7730Field* field = &workflow->field;
+  const uint8_t role = field->pending_role;
+  if (field->kind == 1 || field->kind == 10 ||
+      !erc7730_cap_value(field->kind, role, cls))
+    return false;
+  if (field->kind == 13) {
+    /* callee, value and authority of an embedded call */
+    if (role == 17) {
+      if (value_len != 32 || field->has_value) return false;
+      memcpy(field->value, value, 32);
+      field->has_value = true;
+      return true;
+    }
+    uint8_t* out = role == 15 ? field->address : field->spender;
+    bool* has = role == 15 ? &field->has_address : &field->has_spender;
+    if (*has || (value_len != 20 && value_len != 32)) return false;
+    if (value_len == 32) {
+      for (size_t i = 0; i < 12; i++)
+        if (value[i] != 0) return false;
+      value += 12;
+    }
+    memcpy(out, value, 20);
+    *has = true;
+    return true;
+  }
+  switch (role) {
+    case 1: /* the value: a 32-byte word */
+      if (value_len != 32 || field->has_value) return false;
+      memcpy(field->value, value, 32);
+      field->value_class = cls;
+      field->has_value = true;
+      return true;
+    case 2: /* tokenAmount token */
+    case 3: /* nftName collection: a word from calldata, or 20 bytes */
+      if (field->has_address || (value_len != 20 && value_len != 32))
+        return false;
+      if (value_len == 32) {
+        for (size_t i = 0; i < 12; i++)
+          if (value[i] != 0) return false;
+        value += 12;
+      }
+      memcpy(field->address, value, 20);
+      field->has_address = true;
+      return true;
+    case 4: /* unit decimals: one byte */
+      if (value_len != 1) return false;
+      field->decimals = value[0];
+      return true;
+    case 6: /* unit prefix: shown exactly either way */
+      return value_len == 1;
+    case 7: { /* the threshold: a minimal big-endian literal */
+      if (!field->has_value || value_len == 0 || value_len > 32) return false;
+      uint8_t threshold[32] = {0};
+      memcpy(threshold + 32 - value_len, value, value_len);
+      field->threshold_reached = memcmp(field->value, threshold, 32) >= 0;
+      memzero(threshold, sizeof(threshold));
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+uint16_t erc7730_workflow_intent_parts(const Erc7730Workflow* workflow) {
+  return workflow && workflow->selection_kind == ERC7730_SELECTION_DISPLAY &&
+                 workflow->selection.display.complete
+             ? workflow->selection.display.intent_parts
+             : 0;
+}
+
+bool erc7730_workflow_resume_field(Erc7730Workflow* workflow) {
+  if (!workflow || workflow->phase != ERC7730_WORKFLOW_COMPLETE) return false;
+  erc7730_abi_stream_clear(&workflow->calldata);
+  workflow->phase = ERC7730_WORKFLOW_READY;
+  return true;
 }
 
 void erc7730_workflow_abort(Erc7730Workflow* workflow) {

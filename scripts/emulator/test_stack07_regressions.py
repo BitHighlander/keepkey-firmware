@@ -5,22 +5,18 @@ Uses only the public test mnemonic and a throwaway catalog signing key.
 """
 
 import copy
-import hashlib
 import os
 
 import common
-from keepkeylib import erc7730, erc7730_compiler, eip712_stream
+from keepkeylib import erc7730_compiler
 from keepkeylib import messages_ethereum_pb2 as eth
 from keepkeylib import messages_pb2 as proto
 from keepkeylib import types_pb2 as types
-from keepkeylib.signed_metadata import TEST_PRIVATE_KEY, test_signer_compressed_pubkey as signer_pubkey
+from keepkeylib.signed_metadata import test_signer_compressed_pubkey as signer_pubkey
+from test_msg_ethereum_erc7730_runtime import (
+    ADDRESS, OTHER_ADDRESS, PATH, UNKNOWN_SIGNER_KEY, Erc7730Harness,
+    assert_failure)
 
-
-PATH = [0x8000002C, 0x8000003C, 0x80000000, 0, 0]
-ADDRESS = bytes.fromhex("11" * 20)
-OTHER_ADDRESS = bytes.fromhex("33" * 20)
-# An unrelated throwaway key that is never loaded into any signer slot.
-UNKNOWN_SIGNER_KEY = bytes.fromhex("42" * 32)
 
 # The product under test is declared by the caller (python-keepkey-tests.sh),
 # never inferred from the device: a regressed full build that answered like
@@ -64,11 +60,6 @@ def expected_variant(test):
     return variant
 
 
-def assert_failure(test, result, code, message):
-    test.assertIsInstance(result, proto.Failure)
-    test.assertEqual((result.code, result.message), (code, message))
-
-
 class TestStack07CoinTableReuse(common.KeepKeyTest):
     def setUp(self):
         super().setUp()
@@ -97,103 +88,13 @@ class TestStack07CoinTableReuse(common.KeepKeyTest):
         self.assertEqual(len(recovered.table), count)
 
 
-class TestStack07Regressions(common.KeepKeyTest):
+class TestStack07Regressions(Erc7730Harness, common.KeepKeyTest):
     def setUp(self):
         super().setUp()
         if expected_variant(self) == "bitcoin-only":
             self.skipTest(BITCOIN_ONLY_SKIP)
         self.setup_mnemonic_nopin_nopassphrase()
         self.client.apply_policy("AdvancedMode", 1)
-
-    def _envelope(self, program, signer_key=TEST_PRIVATE_KEY, signer_pub=None):
-        cert = bytearray(139)
-        cert[0] = 1
-        cert[2:6] = (1).to_bytes(4, "big")
-        cert[10:21] = b"Host alias\0"
-        cert[42:75] = signer_pub if signer_pub is not None else signer_pubkey()
-        return erc7730.sign_envelope(program, cert, signer_key)
-
-    def _definition(self, program, envelope):
-        return erc7730.Definition(
-            envelope, program[7], 1, ADDRESS,
-            program[38:42] if program[7] == 1 else program[38:70])
-
-    def _load_signer(self):
-        self.client.load_clearsign_signer(
-            key_id=3, pubkey=signer_pubkey(), alias="Audit signer")
-
-    def _preload(self, program):
-        self._load_signer()
-        envelope = self._envelope(program)
-        erc7730.preload(self.client, self._definition(program, envelope))
-        self._drop_setup_screenshots()
-        return envelope
-
-    def _raw_preload(self, envelope):
-        """Stream an envelope; return the first non-Ack response.
-
-        Every refusal contract below is a refusal BEFORE any ButtonRequest,
-        so a ButtonRequest here is returned (and fails the caller's Failure
-        assertion) rather than acknowledged.
-        """
-        definition_id = hashlib.sha256(envelope).digest()
-        offset = 0
-        while offset < len(envelope):
-            data = envelope[offset:offset + erc7730.MAX_CHUNK]
-            response = self.client.call_raw(eth.EthereumClearSignDefinition(
-                definition_id=definition_id, offset=offset,
-                total_length=len(envelope), data=data))
-            if not isinstance(response, eth.EthereumClearSignDefinitionAck):
-                return response
-            offset += len(data)
-        return response
-
-    def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None):
-        response = self.client.call_raw(start)
-        self.definition_requests = 0
-        self.button_codes = []
-        self.screens = []
-        buttons = 0
-        calldata_passes = 0
-        typed_passes = 0
-        for _ in range(1000):
-            if isinstance(response, proto.ButtonRequest):
-                buttons += 1
-                self.button_codes.append(response.code)
-                self.screens.append(self.client.debug.read_confirm_text())
-                self.client.capture_oled()
-                self.client.debug.press_yes() if buttons != cancel_button else self.client.debug.press_no()
-                response = self.client.call_raw(proto.ButtonAck())
-            elif isinstance(response, eth.EthereumClearSignDefinitionRequest):
-                self.definition_requests += 1
-                offset = response.offset
-                response = self.client.call_raw(eth.EthereumClearSignDefinitionChunk(
-                    definition_id=hashlib.sha256(envelope).digest(), offset=offset,
-                    total_length=len(envelope), data=envelope[offset:offset + response.length]))
-            elif isinstance(response, eth.EthereumTypedDataStructRequest):
-                response = self.client.call_raw(eip712_stream.build_struct_ack(
-                    eip712_stream.struct_members(doc, response.name)))
-            elif isinstance(response, eth.EthereumTypedDataValueRequest):
-                path = list(response.member_path)
-                if path == [1, 0]:
-                    typed_passes += 1
-                current = copy.deepcopy(doc)
-                if change_pass == typed_passes:
-                    current["message"]["first"] += 1
-                resolved = eip712_stream.resolve_member_path(current, path)
-                value = (eip712_stream.encode_array_length(resolved[1])
-                         if resolved[0] == "length" else
-                         eip712_stream.encode_value(resolved[1], resolved[2]))
-                response = self.client.call_raw(eth.EthereumTypedDataValueAck(value=value))
-            elif isinstance(response, eth.EthereumTxRequest) and response.HasField("data_length"):
-                calldata_passes += 1
-                arguments = (43 if change_pass == calldata_passes else 42).to_bytes(32, "big")
-                arguments += (7).to_bytes(32, "big")
-                self.assertEqual(response.data_length, len(arguments))
-                response = self.client.call_raw(eth.EthereumTxAck(data_chunk=arguments))
-            else:
-                return response, buttons, calldata_passes, typed_passes
-        self.fail("protocol did not terminate")
 
     def _typed_fixture(self, fields=True):
         doc = {
@@ -540,89 +441,3 @@ class TestStack07Regressions(common.KeepKeyTest):
                          (baseline.signature_r, baseline.signature_s))
         self.assertEqual((passes, self.definition_requests), (1, 0))
         self.assertEqual(buttons, baseline_buttons)
-
-    # Phase 0 of the ERC-7730 formatter plan: the preload verifier and the
-    # runtime share one capability table, so a program the runtime cannot
-    # finish is refused before the first screen instead of after the user has
-    # approved the signer, intent and earlier fields.
-    def _audit_start(self, program, data_length=68):
-        return eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
-            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
-            data_length=data_length, data_initial_chunk=program[38:42])
-
-    def test_program_outside_capability_table_is_refused_at_preload(self):
-        signature = "audit(uint256 first,uint256 second)"
-        fields = {
-            "tokenAmount": {"path": "first", "label": "First value",
-                            "format": "tokenAmount",
-                            "params": {"token": "0x" + OTHER_ADDRESS.hex()}},
-            "date": {"path": "first", "label": "First value", "format": "date",
-                     "params": {"encoding": "timestamp"}},
-            "condition": {"path": "first", "label": "First value",
-                          "format": "raw", "visible": {"ifNotIn": [0]}},
-        }
-        self._load_signer()
-        for name, field in sorted(fields.items()):
-            descriptor = {"display": {"formats": {signature: {
-                "intent": "Audit action", "fields": [
-                    field,
-                    {"path": "second", "label": "Second value",
-                     "format": "raw"}]}}}}
-            with self.assertRaises(erc7730_compiler.DeviceCannotExecute):
-                erc7730_compiler.compile_calldata(
-                    descriptor, signature, 1, ADDRESS)
-            program = erc7730_compiler.compile_calldata(
-                descriptor, signature, 1, ADDRESS, executable_only=False)
-            result = self._raw_preload(self._envelope(program))
-            assert_failure(self, result, types.Failure_SyntaxError,
-                           "Invalid certified ERC-7730 definition")
-            # Nothing is left preloaded: the transaction takes the ordinary,
-            # uncertified path and never asks for a definition.
-            result, _, passes, _ = self._walk(self._audit_start(program))
-            self.assertIsInstance(result, eth.EthereumTxRequest, msg=name)
-            self.assertTrue(result.HasField("signature_r"), msg=name)
-            self.assertEqual((name, passes, self.definition_requests),
-                             (name, 1, 0))
-
-    def test_path_outside_abi_is_refused_at_preload(self):
-        signature = "audit(uint256 first,uint256 second)"
-        descriptor = {"display": {"formats": {signature: {
-            "intent": "Audit action", "fields": [
-                {"path": "second", "label": "Second value",
-                 "format": "raw"}]}}}}
-        program = bytearray(erc7730_compiler.compile_calldata(
-            descriptor, signature, 1, ADDRESS))
-        # The single value path is (source 1, one step, index 1). Point it at
-        # a third argument the function does not have.
-        step = program.index(bytes([1, 1, 0xff, 0xff, 1, 0, 0, 0, 1]))
-        program[step + 8] = 2
-        self._load_signer()
-        result = self._raw_preload(self._envelope(bytes(program)))
-        assert_failure(self, result, types.Failure_SyntaxError,
-                       "Invalid certified ERC-7730 definition")
-
-    def test_raw_field_screens_show_exact_text(self):
-        signature = "audit(uint256 first,uint256 second)"
-        descriptor = {"display": {"formats": {signature: {
-            "intent": "Audit action", "fields": [
-                {"path": "first", "label": "First value", "format": "raw"},
-                {"path": "second", "label": "Second value",
-                 "format": "raw"}]}}}}
-        program = erc7730_compiler.compile_calldata(
-            descriptor, signature, 1, ADDRESS)
-        envelope = self._preload(program)
-        result, _, passes, _ = self._walk(self._audit_start(program), envelope)
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        self.assertEqual(passes, 4)
-        certified = [screen for screen in self.screens if screen[0] in (
-            "Runtime signer", "Unverified data", "Contract action",
-            "Signer field")]
-        self.assertEqual(certified[1:], [
-            ("Unverified data", "NOT verified by KeepKey"),
-            ("Contract action", "Audit action"),
-            ("Signer field", "First value:\n42"),
-            ("Signer field", "Second value:\n7"),
-        ])
-        self.assertEqual(certified[0][0], "Runtime signer")
-        self.assertTrue(certified[0][1].startswith("Audit signer ("),
-                        certified[0][1])

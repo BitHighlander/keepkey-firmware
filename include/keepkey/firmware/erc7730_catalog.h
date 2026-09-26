@@ -83,6 +83,7 @@ typedef struct {
   char delegate_alias[ERC7730_DELEGATE_ALIAS_LEN + 1];
   char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
   uint8_t kind;
+  bool reads_value; /* a path reads @.value */
 } Erc7730CatalogIdentity;
 
 /* Incremental verifier. Its size is bounded independently of descriptor size;
@@ -94,6 +95,7 @@ typedef struct {
   uint8_t header[ERC7730_PROGRAM_HEADER_SIZE];
   uint8_t cert[ERC7730_DELEGATE_RECORD_LEN];
   uint8_t signature[64];
+  uint8_t display_frames[ERC7730_ABI_MAX_DEPTH * 5u];
   uint8_t merkle[32];
   uint8_t sibling[32];
   uint32_t total_length;
@@ -104,6 +106,18 @@ typedef struct {
   uint32_t section_offset;
   uint64_t abi_child_mask;
   uint64_t literal_set_mask;
+  uint8_t literal_classes[32]; /* ERC7730_CLASS_* per literal, 4 bits each */
+  uint8_t date_strings[12];    /* strings "timestamp"/"blockheight", 1 bit */
+  uint8_t short_strings[12];   /* strings of at most SIGNER_TEXT_MAX, 1 bit */
+  uint64_t literal_decimals_mask; /* one-byte integers <= UNIT_DECIMALS_MAX */
+  uint8_t path_arrays[64];        /* ABI node of each path's [] step, or 0xff */
+  uint64_t path_iterable_mask;    /* paths that end on their [] step */
+  uint8_t formatter_value_array;
+  uint8_t display_iteration_array;
+  bool formatter_any_array;
+  bool display_in_iteration;
+  bool path_array_indexed;
+  bool path_last_full;
   uint16_t cert_length;
   uint16_t field_received;
   uint16_t section_mask;
@@ -147,6 +161,9 @@ typedef struct {
   uint8_t formatter_arg_index;
   uint8_t formatter_last_role;
   uint8_t display_depth;
+  bool display_intent_run_closed;
+  bool reads_value;
+  bool formatter_value_literal; /* its value is a signer constant */
   uint8_t display_max_depth;
   uint8_t binding_kind;
   uint8_t binding_previous_kind;
@@ -181,6 +198,8 @@ Erc7730CatalogResult erc7730_catalog_preload_chunk(
     const uint8_t* data, size_t data_len, uint32_t* next_offset,
     bool* complete);
 bool erc7730_catalog_preloaded(Erc7730CatalogIdentity* identity);
+/* Whether the preloaded definition shows @.value. */
+bool erc7730_catalog_preloaded_reads_value(void);
 bool erc7730_catalog_preloaded_replay_begin(uint8_t definition_id[32],
                                             uint32_t* total_length);
 bool erc7730_catalog_preloaded_replay_waiting(uint8_t definition_id[32],

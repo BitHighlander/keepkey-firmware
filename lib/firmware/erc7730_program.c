@@ -515,6 +515,12 @@ bool erc7730_program_string_feed(Erc7730ProgramString* string,
       }
       continue;
     }
+    /* Callers display this value as a C string. Keep the replay reader's
+     * contract independent of the earlier catalog validation. */
+    if (byte == 0) {
+      string->failed = true;
+      return false;
+    }
     if (string->string_index == string->target_index)
       string->value[string->current_received] = byte;
     string->current_received++;
@@ -598,6 +604,12 @@ bool erc7730_program_display_feed(Erc7730ProgramDisplay* display,
       display->selected.a = read_be16(display->entry + 2);
       display->selected.b = read_be16(display->entry + 4);
       display->selected.c = read_be16(display->entry + 6);
+    }
+    if (display->instruction_index != 0 && !display->intent_run_closed) {
+      if (display->entry[0] == 2 || display->entry[0] == 3)
+        display->intent_parts++;
+      else
+        display->intent_run_closed = true;
     }
     display->instruction_index++;
     display->entry_received = 0;

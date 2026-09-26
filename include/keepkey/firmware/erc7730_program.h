@@ -137,8 +137,12 @@ typedef struct {
   uint16_t instruction_count;
   uint16_t target_index;
   uint16_t instruction_index;
+  /* Interpolated-intent instructions (opcodes 2 and 3) in the run that
+   * directly follows the intent at index 0. */
+  uint16_t intent_parts;
   uint8_t entry[8];
   uint8_t entry_received;
+  bool intent_run_closed;
   bool complete;
   bool failed;
 } Erc7730ProgramDisplay;
