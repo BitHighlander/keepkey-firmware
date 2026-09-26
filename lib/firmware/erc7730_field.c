@@ -44,10 +44,13 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
   output[0] = '\0';
   static const uint8_t zero[20] = {0};
   const TokenType* known = NULL;
-  if (chain_id <= UINT32_MAX && !native && memcmp(token, zero, 20) != 0) {
+  if (chain_id <= UINT32_MAX && memcmp(token, zero, 20) != 0) {
     known = tokenByChainAddress((uint32_t)chain_id, token);
     if (known == UnknownToken) known = NULL;
   }
+  /* A signer's native-currency alias never overrides the firmware's token
+   * table: a listed token keeps its own ticker and decimals. */
+  if (known) native = false;
 
   char value[160]; /* 78 digits + "\nunknown token\n0x" + 40 */
   bool ok;
@@ -57,8 +60,10 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
     /* The ordinary Ethereum review's own rendering: exact, with the ticker
      * from the token table or the chain's native symbol. */
     ok = chain_id <= UINT32_MAX &&
-         ethereumFormatAmount(&amnt, native ? NULL : known, (uint32_t)chain_id,
-                              value, sizeof(value));
+         (native ? ethereumFormatNativeAmount(&amnt, (uint32_t)chain_id, value,
+                                              sizeof(value))
+                 : ethereumFormatAmount(&amnt, known, (uint32_t)chain_id, value,
+                                        sizeof(value)));
     memzero(&amnt, sizeof(amnt));
     if (ok && native) {
       char checksummed[41], disclosed[160];
@@ -80,8 +85,11 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
   }
   if (ok) {
     const int length =
-        message ? snprintf(output, output_size, "%s\n%s", message, value)
-                : snprintf(output, output_size, "%s", value);
+        /* The threshold message is the signer's; it sits above the value
+         * and is marked as theirs. */
+        message
+            ? snprintf(output, output_size, "Signer: %s\n%s", message, value)
+            : snprintf(output, output_size, "%s", value);
     ok = length > 0 && (size_t)length < output_size;
   }
   if (!ok) output[0] = '\0';
@@ -95,8 +103,8 @@ bool erc7730_format_native_amount(const uint8_t amount[32], uint64_t chain_id,
     return false;
   bignum256 value;
   bn_read_be(amount, &value);
-  const bool ok = ethereumFormatAmount(&value, NULL, (uint32_t)chain_id, output,
-                                       (int)output_size);
+  const bool ok = ethereumFormatNativeAmount(&value, (uint32_t)chain_id, output,
+                                             (int)output_size);
   memzero(&value, sizeof(value));
   if (!ok) output[0] = '\0';
   return ok;
@@ -210,14 +218,17 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
   memcpy(capture.data, value, 32);
   capture.length = 32;
   capture.node = 0;
-  char scaled[128], raw[80];
+  char scaled[344], raw[80]; /* <= 78 digits, '.', 77 zeros, ' ', base */
   bool ok = erc7730_format_amount(&program, &capture, decimals, base, scaled,
                                   sizeof(scaled)) &&
             format_integer(value, raw, sizeof(raw));
   if (ok) {
     const int length =
-        decimals == 0 ? snprintf(output, output_size, "%s", scaled)
-                      : snprintf(output, output_size, "%s\n(%s)", scaled, raw);
+        /* The base is the signer's word, printed where a firmware ticker
+         * would be: say so first, so the mark is never on a later OLED page
+         * than the value, and always give the raw integer it came from. */
+        snprintf(output, output_size, "unit set by signer\n%s\nraw %s", scaled,
+                 raw);
     ok = length > 0 && (size_t)length < output_size;
   }
   if (!ok) output[0] = '\0';
@@ -231,8 +242,9 @@ bool erc7730_format_enum(const char* value, const char* label, char* output,
                          size_t output_size) {
   if (!value || !output || output_size == 0) return false;
   const int length =
-      /* The label is the signer's claim, marked as such like a unit. */
-      label ? snprintf(output, output_size, "%s (%s)\nlabel set by signer",
+      /* The label is the signer's claim, marked as such first, like a
+       * unit. */
+      label ? snprintf(output, output_size, "label set by signer\n%s (%s)",
                        label, value)
             : snprintf(output, output_size, "%s (unmapped)", value);
   if (length < 0 || (size_t)length >= output_size) {

@@ -1,4 +1,5 @@
 extern "C" {
+#include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_field.h"
 #include "keepkey/firmware/erc7730_workflow.h"
@@ -51,7 +52,8 @@ TEST(Erc7730Field, AddressIsEip55AndMarksOnlyTheSigner) {
   EXPECT_STREQ(out, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
   const auto b = hex("fb6916095ca1df60bb79ce92ce3ea74c37c5d359");
   ASSERT_TRUE(erc7730_format_address(b.data(), true, out, sizeof(out)));
-  EXPECT_STREQ(out, "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359\n(this wallet)");
+  EXPECT_STREQ(out,
+               "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359\n(this wallet)");
   EXPECT_FALSE(erc7730_format_address(b.data(), true, out, 43));
 }
 
@@ -60,13 +62,14 @@ TEST(Erc7730Field, AddressIsEip55AndMarksOnlyTheSigner) {
 // unknown tokens, shown as the exact integer and the address.
 TEST(Erc7730Field, TokenAmountUsesOnlyTheFirmwareTokenTable) {
   EXPECT_EQ(amount(word(1500000), kUsdc, false, 1), "1.5 USDC");
-  EXPECT_EQ(amount(word(1500000), kUsdc, false, 137),
-            "1500000\nunknown token\n0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+  EXPECT_EQ(
+      amount(word(1500000), kUsdc, false, 137),
+      "1500000\nunknown token\n0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
   EXPECT_EQ(amount(word(42), kUnknown, false, 1),
             "42\nunknown token\n0x1111111111111111111111111111111111111111");
-  EXPECT_EQ(amount(word(42), "0000000000000000000000000000000000000000", false,
-                   1),
-            "42\nunknown token\n0x0000000000000000000000000000000000000000");
+  EXPECT_EQ(
+      amount(word(42), "0000000000000000000000000000000000000000", false, 1),
+      "42\nunknown token\n0x0000000000000000000000000000000000000000");
   // The largest amount still renders exactly.
   const std::vector<uint8_t> max(32, 0xff);
   EXPECT_EQ(amount(max, kUnknown, false, 1),
@@ -97,7 +100,13 @@ TEST(Erc7730Field, NativeAliasDisclosesSignerMappingAndAddress) {
 // The signer's threshold message is shown above the value, never instead.
 TEST(Erc7730Field, MessageNeverReplacesTheAmount) {
   EXPECT_EQ(amount(word(1500000), kUsdc, false, 1, "Unlimited"),
-            "Unlimited\n1.5 USDC");
+            "Signer: Unlimited\n1.5 USDC");
+}
+
+// A signer's native alias never overrides the firmware token table, and a
+// native amount never inherits a previous Wanchain transaction's asset.
+TEST(Erc7730Field, FirmwareTokenTableBeatsTheSignersNativeAlias) {
+  EXPECT_EQ(amount(word(1500000), kUsdc, true, 1), "1.5 USDC");
 }
 
 namespace {
@@ -146,8 +155,8 @@ TEST(Erc7730Field, TokenAmountArgumentsAreTypedAndOrdered) {
                                            threshold, sizeof(threshold)));
   EXPECT_TRUE(workflow.field.threshold_reached);
   const uint8_t above[] = {0x16, 0xe3, 0x61};
-  EXPECT_TRUE(erc7730_workflow_field_value(&workflow, ERC7730_CLASS_UINT,
-                                           above, sizeof(above)));
+  EXPECT_TRUE(erc7730_workflow_field_value(&workflow, ERC7730_CLASS_UINT, above,
+                                           sizeof(above)));
   EXPECT_FALSE(workflow.field.threshold_reached);
   memset(&workflow, 0, sizeof(workflow));
 }
@@ -174,8 +183,7 @@ std::string date(uint64_t seconds, bool block) {
 // the last second of year 9999. Anything later is shown, never refused.
 TEST(Erc7730Field, DateIsUtcWithTheRawValue) {
   EXPECT_EQ(date(0, false), "1970-01-01 00:00:00 UTC\n(0)");
-  EXPECT_EQ(date(1700000000, false),
-            "2023-11-14 22:13:20 UTC\n(1700000000)");
+  EXPECT_EQ(date(1700000000, false), "2023-11-14 22:13:20 UTC\n(1700000000)");
   EXPECT_EQ(date(951782400, false), "2000-02-29 00:00:00 UTC\n(951782400)");
   EXPECT_EQ(date(253402300799ull, false),
             "9999-12-31 23:59:59 UTC\n(253402300799)");
@@ -201,16 +209,24 @@ TEST(Erc7730Field, DurationSplitsDaysHoursMinutesSeconds) {
 TEST(Erc7730Field, UnitIsExactWithTheRawValue) {
   char out[600];
   const auto value = word(1500);
+  // The base is the signer's word: it is marked, and the raw integer is
+  // always shown, so "USDC" or a leading digit cannot pass for a fact.
   ASSERT_TRUE(erc7730_format_unit(value.data(), 3, "kg", out, sizeof(out)));
-  EXPECT_STREQ(out, "1.5 kg\n(1500)");
-  ASSERT_TRUE(erc7730_format_unit(value.data(), 0, "kg", out, sizeof(out)));
-  EXPECT_STREQ(out, "1500 kg");
+  EXPECT_STREQ(out, "unit set by signer\n1.5 kg\nraw 1500");
+  ASSERT_TRUE(
+      erc7730_format_unit(value.data(), 0, "000 USDC", out, sizeof(out)));
+  EXPECT_STREQ(out, "unit set by signer\n1500 000 USDC\nraw 1500");
+  // The widest rendering fits: 77 decimals, a 64-byte base escaped to 256.
+  const std::string base(4u * 64u, 'x');
+  const auto one = word(1);
+  ASSERT_TRUE(
+      erc7730_format_unit(one.data(), 77, base.c_str(), out, sizeof(out)));
 }
 
 TEST(Erc7730Field, EnumLabelsTheValueAndMarksUnmapped) {
   char out[64];
   ASSERT_TRUE(erc7730_format_enum("1", "Buy", out, sizeof(out)));
-  EXPECT_STREQ(out, "Buy (1)\nlabel set by signer");
+  EXPECT_STREQ(out, "label set by signer\nBuy (1)");
   ASSERT_TRUE(erc7730_format_enum("7", nullptr, out, sizeof(out)));
   EXPECT_STREQ(out, "7 (unmapped)");
 }
@@ -231,4 +247,34 @@ TEST(Erc7730Field, NativeAmountRendersLikeTheOrdinaryReview) {
   const auto value = word(1500000000000000000ull);
   ASSERT_TRUE(erc7730_format_native_amount(value.data(), 1, out, sizeof(out)));
   EXPECT_STREQ(out, "1.5 ETH");
+}
+
+// ethereumFormatAmount() names " WAN" from a module global that a previous
+// Wanchain transaction may have left set. An ERC-7730 native amount must not.
+TEST(Erc7730Field, NativeAmountNeverInheritsAWanchainTransaction) {
+  EthereumSignTx wanchain = {};
+  wanchain.has_chain_id = true;
+  wanchain.chain_id = 1;
+  wanchain.has_tx_type = true;
+  wanchain.tx_type = 1;
+  wanchain.has_value = true;  // 1.5e18: large enough to carry a ticker
+  wanchain.value.size = 8;
+  memcpy(wanchain.value.bytes, "\x14\xd1\x12\x0d\x7b\x16\x00\x00", 8);
+  char primed[64];
+  ASSERT_TRUE(ethereumFormatTransferAmount(&wanchain, primed, sizeof(primed)));
+  // The global really is primed: the Wanchain transfer itself is WAN.
+  ASSERT_NE(strstr(primed, " WAN"), nullptr) << primed;
+  char out[64];
+  const auto value = word(1500000000000000000ull);
+  ASSERT_TRUE(erc7730_format_native_amount(value.data(), 1, out, sizeof(out)));
+  EXPECT_STREQ(out, "1.5 ETH");
+  // tokenAmount's signer-alias branch must disclose its original address.
+  EXPECT_EQ(amount(value, "4444444444444444444444444444444444444444", true, 1),
+            "Signer native alias:\n"
+            "0x4444444444444444444444444444444444444444\n1.5 ETH");
+  // Leave the module global as an ordinary transaction would.
+  EthereumSignTx ordinary = wanchain;
+  ordinary.has_tx_type = false;
+  ASSERT_TRUE(ethereumFormatTransferAmount(&ordinary, primed, sizeof(primed)));
+  EXPECT_EQ(strstr(primed, " WAN"), nullptr) << primed;
 }

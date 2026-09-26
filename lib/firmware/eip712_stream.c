@@ -1435,8 +1435,9 @@ bool eip712_stream_domain_facts(Eip712DomainFacts* facts) {
 }
 
 bool eip712_stream_signer_path(uint32_t address_n[6], size_t* count) {
+  /* An empty path is the root key, exactly as signing derives it. */
   if (!address_n || !count || !e712.require_definition ||
-      e712.address_n_count == 0 || e712.address_n_count > 6)
+      e712.address_n_count > 6)
     return false;
   memcpy(address_n, e712.address_n, e712.address_n_count * sizeof(uint32_t));
   *count = e712.address_n_count;

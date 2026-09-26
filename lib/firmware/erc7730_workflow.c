@@ -556,10 +556,18 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
   if (workflow->calldata.capture_found) return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program) ||
-      workflow->calldata.capture.node >= program.node_count ||
-      !normalize_eip712_capture(&program.nodes[workflow->calldata.capture.node],
-                                value, value_len, &workflow->calldata.capture))
+      workflow->calldata.capture.node >= program.node_count)
     return false;
+  const Erc7730AbiNode* leaf = &program.nodes[workflow->calldata.capture.node];
+  if ((leaf->kind == ERC7730_ABI_BYTES || leaf->kind == ERC7730_ABI_STRING) &&
+      value_len > sizeof(workflow->calldata.capture.data)) {
+    workflow->calldata.capture_overflow = true;
+    workflow->calldata.located_length = value_len;
+    workflow->calldata.capture.length = 0;
+  } else if (!normalize_eip712_capture(leaf, value, value_len,
+                                       &workflow->calldata.capture)) {
+    return false;
+  }
   workflow->calldata.capture_found = true;
   return true;
 }
@@ -732,6 +740,7 @@ bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
   memzero(&workflow->field, sizeof(workflow->field));
   workflow->intent_part = 0;
   workflow->intent_parts = 0;
+  workflow->intent_value = false;
   erc7730_abi_stream_clear(&workflow->calldata);
   workflow->phase = ERC7730_WORKFLOW_READY;
   workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;

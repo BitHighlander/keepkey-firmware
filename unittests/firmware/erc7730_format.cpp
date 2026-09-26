@@ -84,11 +84,11 @@ TEST(Erc7730Format, EscapesStringCapturesAndRejectsSmallOutput) {
                       sizeof(small)));
   EXPECT_STREQ(small, "");
 
-  // An embedded NUL used to end the confirm("%s") body early.
+  // An embedded NUL used to end the confirm("%s") body early; it is escaped.
   const uint8_t nul[] = {'O', 'K', 0x00, 'X'};
-  EXPECT_FALSE(
+  ASSERT_TRUE(
       format(ERC7730_ABI_STRING, 0, nul, sizeof(nul), output, sizeof(output)));
-  EXPECT_STREQ(output, "");
+  EXPECT_STREQ(output, "OK\\x00X");
 
   // A full-size capture of non-ASCII bytes fits the documented maximum.
   uint8_t wide[ERC7730_ABI_CAPTURE_MAX];
@@ -108,17 +108,21 @@ bool text(const char* input, size_t length, char* output, size_t size) {
 
 }  // namespace
 
-TEST(Erc7730Format, TextRejectsNulControlsAndDelete) {
+// Control bytes and DEL are escaped like non-ASCII bytes, so a value that
+// holds one is shown one-to-one instead of failing mid-review.
+TEST(Erc7730Format, TextEscapesNulControlsAndDelete) {
   char output[32];
   for (int byte = 0; byte < 0x20; byte++) {
     const char input[3] = {'a', (char)byte, 'b'};
-    strcpy(output, "stale");
-    EXPECT_FALSE(text(input, sizeof(input), output, sizeof(output))) << byte;
-    EXPECT_STREQ(output, "");
+    char expected[16];
+    snprintf(expected, sizeof(expected), "a\\x%02xb", byte);
+    ASSERT_TRUE(text(input, sizeof(input), output, sizeof(output))) << byte;
+    EXPECT_STREQ(output, expected) << byte;
   }
-  EXPECT_FALSE(text("a\x7f", 2, output, sizeof(output)));
-  EXPECT_STREQ(output, "");
-  EXPECT_FALSE(text("\t", 1, output, sizeof(output)));
+  ASSERT_TRUE(text("a\x7f", 2, output, sizeof(output)));
+  EXPECT_STREQ(output, "a\\x7f");
+  ASSERT_TRUE(text("\t", 1, output, sizeof(output)));
+  EXPECT_STREQ(output, "\\x09");
 }
 
 TEST(Erc7730Format, TextEscapesBackslashEdgeSpacesAndNonAscii) {

@@ -44,6 +44,10 @@
 /* A tokenAmount native-currency alias set may name at most this many
  * addresses, so the runtime can hold their literal indices. */
 #define ERC7730_CAP_ALIAS_SET_MAX 4u
+/* Escaped signer text must fit the value screen and its fixed buffers. */
+#define ERC7730_CAP_SIGNER_TEXT_MAX 64u
+/* A uint256 has at most 78 decimal digits. */
+#define ERC7730_CAP_UNIT_DECIMALS_MAX 77u
 /* An enum map may hold at most this many entries (the registry's largest has
  * ten), so the runtime can hold their key and label indices. */
 #define ERC7730_CAP_ENUM_MAX 16u

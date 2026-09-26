@@ -109,6 +109,7 @@ typedef struct {
    * interpolated intent; such a part has no label. */
   uint8_t intent_part;
   uint8_t intent_parts;
+  bool intent_value;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;

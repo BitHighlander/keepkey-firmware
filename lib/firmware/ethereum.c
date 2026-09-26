@@ -604,6 +604,18 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
   return true;
 }
 
+bool ethereumFormatNativeAmount(const bignum256* amnt, uint32_t cid, char* buf,
+                                int buflen) {
+  /* ERC-7730 values name the chain's own asset. ethereumFormatAmount() keys
+   * " WAN" off the module's wanchain_tx_type, which may still hold a previous
+   * Wanchain transaction's type; never let that name this amount. */
+  const uint32_t saved = wanchain_tx_type;
+  wanchain_tx_type = 0;
+  const bool ok = ethereumFormatAmount(amnt, NULL, cid, buf, buflen);
+  wanchain_tx_type = saved;
+  return ok;
+}
+
 static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
