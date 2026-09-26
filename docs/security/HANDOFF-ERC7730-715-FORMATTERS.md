@@ -90,8 +90,8 @@ With container and literal sources, the lockstep counts are 0 = 92, A = 812, B =
 - Display (`erc7730_field.c`):
   - An address is always shown in full, EIP-55, with "(this wallet)" when it is the signing account, which is derived on device.
   - A token known to the firmware table for the chain is shown with that table's ticker and decimals, rendered as the ordinary Ethereum review renders it.
-  - Any other token, including the zero address, is shown as the exact integer, then "unknown token" and its address.
-  - A native alias shows the chain's native asset.
+  - Any other token, including the zero address, is shown as the exact integer, then "unknown token" and its address, unless the signer-supplied native alias applies.
+  - A signer-supplied native alias shows the original token address and an explicit "Signer native alias" mark before the native-asset interpretation. A firmware-listed token keeps the table's ticker and decimals even if the signer lists it as an alias.
   - The threshold message appears above the value, never instead of it.
 - Refused on purpose: 21 registry formats apply addressName to `uint256`/`bytes32` words that pack an address with flags (1inch), and 12 apply tokenAmount to encrypted `bytes32` amounts. Showing them would mean reinterpreting bytes the calldata does not declare as an address or an integer.
 - Costs: SRAM reserve 18,336 → 18,208 B (−128 B). ROM text +4,096 B. The deepest new stack chain is definition chunk (2,320 B) → signer derivation (1,480 B) → key derivation.
@@ -103,7 +103,7 @@ With container and literal sources, the lockstep counts are 0 = 92, A = 812, B =
     - `test_token_named_by_calldata_wins_over_the_hosts_claim`
     - `test_signer_label_cannot_name_an_unknown_token`
     - `test_threshold_message_is_shown_beside_the_exact_amount`
-    - `test_native_alias_shows_the_chains_native_asset`
+    - `test_native_alias_discloses_signer_mapping_and_token_address`
     - `test_address_name_marks_only_the_signing_account` (signer vs one byte off)
     - `test_containers_and_signed_constants`
   - Negative controls: forcing "(this wallet)", letting the message replace the value, ignoring aliases and dropping the verifier type check each fail the matching test.
@@ -167,7 +167,7 @@ With container and literal sources, the lockstep counts are 0 = 92, A = 812, B =
 | Kind | Name | Trust source | Display (body under a device-owned title; the signer's label leads) |
 | --- | --- | --- | --- |
 | 10 | addressName | None on device. There is no trusted name registry, and roles 12–14 (types and sources) are validated but give no authority. | EIP-55 checksummed address, always. Append "(this wallet)" only when it equals the signing account's address, computed on device. Never show a signer-supplied name without the address; if names are ever shown, label them "name from signer". |
-| 3 | tokenAmount | Decimals and ticker **only** from the firmware token table (`tokenByChainAddress`, `lib/firmware/ethereum_tokens.c`) for the transaction's chain ID, or the role-11 chain resolved through the firmware chain table. | Known token: exact decimal amount with ticker, no rounding (reuse `erc7730_format_amount`, which is correct for 0–255 decimals). Unknown token: the raw integer plus "unknown token 0x…(EIP-55)". Role 22 native aliases map to the chain's native asset from the firmware chain table. Role 7/8 threshold message: show the message **and** the exact value; never replace the value. A 2^256−1 approve-like amount stays covered by the existing Stack 06 and EIP-712 permit policies. |
+| 3 | tokenAmount | A listed token's decimals and ticker come **only** from the firmware token table (`tokenByChainAddress`, `lib/firmware/ethereum_tokens.c`) for the transaction's chain ID, or the role-11 chain resolved through the firmware chain table. The native alias set is signer supplied. | Known token: exact decimal amount with ticker, no rounding (reuse `erc7730_format_amount`, which is correct for 0–255 decimals). Unknown token: the raw integer plus "unknown token 0x…(EIP-55)". Role 22 native aliases use the chain's native amount formatting only with the "Signer native alias" mark and original token address shown first; they never silently turn an unlisted token into a firmware-known asset. Role 7/8 threshold message: show the message **and** the exact value; never replace the value. A 2^256−1 approve-like amount stays covered by the existing Stack 06 and EIP-712 permit policies. |
 | 2 | amount (native) | Chain native symbol and decimals from the firmware chain table. | Exact amount with symbol. An unknown chain shows the raw integer in wei. |
 | 5 | date | Role 9 encoding (timestamp or block height) from the signed program. | Timestamp: UTC `YYYY-MM-DD HH:MM:SS` with the raw integer. Block height: "block N". Refuse values that do not fit uint64. |
 | 6 | duration | None needed. | `Nd Nh Nm Ns` plus the raw seconds. |

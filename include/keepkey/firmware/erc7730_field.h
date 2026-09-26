@@ -14,10 +14,11 @@
 bool erc7730_format_address(const uint8_t address[20], bool this_wallet,
                             char* output, size_t output_size);
 
-/* A token amount. `native` means the program's alias set named `token` as the
- * chain's native asset; otherwise decimals and ticker come only from the
- * firmware token table for `chain_id`. A token the table does not know is
- * shown as the exact integer followed by "unknown token" and its address.
+/* A token amount. `native` means the signer's program named `token` as the
+ * chain's native asset. When the firmware table does not know the token,
+ * disclose that signer-supplied mapping and the original token address before
+ * the native amount. A listed token always uses firmware ticker and decimals.
+ * Other unknown tokens show their exact integer and address.
  * `message`, already escaped, is shown above the amount, never instead of it.
  */
 bool erc7730_format_token_amount(const uint8_t amount[32],
