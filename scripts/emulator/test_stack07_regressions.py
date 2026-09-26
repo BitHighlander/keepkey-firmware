@@ -632,7 +632,8 @@ class TestStack07Regressions(common.KeepKeyTest):
     # Asset facts come only from the firmware token table; an address is always
     # shown in full; the signer's message sits beside the value.
     USDC = bytes.fromhex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
-    NATIVE = bytes.fromhex("ee" * 20)
+    # 0xeeee..ee is a firmware token-table sentinel; use an unlisted alias.
+    NATIVE = bytes.fromhex("44" * 20)
 
     def _field_screens(self, descriptor, signature, arguments):
         program = erc7730_compiler.compile_calldata(
@@ -689,7 +690,7 @@ class TestStack07Regressions(common.KeepKeyTest):
     def test_threshold_message_is_shown_beside_the_exact_amount(self):
         params = {"threshold": 1000000, "message": "Large amount"}
         self.assertEqual(self._token_screen(self.USDC, 1500000, params),
-                         ["Amount:\nLarge amount\n1.5 USDC"])
+                         ["Amount:\nSigner: Large amount\n1.5 USDC"])
         self.assertEqual(self._token_screen(self.USDC, 999999, params),
                          ["Amount:\n0.999999 USDC"])
 
@@ -697,7 +698,8 @@ class TestStack07Regressions(common.KeepKeyTest):
         params = {"nativeCurrencyAddress": ["0x" + self.NATIVE.hex()]}
         self.assertEqual(
             self._token_screen(self.NATIVE, 1500000000000000000, params),
-            ["Amount:\n1.5 ETH"])
+            ["Amount:\nSigner native alias:\n0x" + self.NATIVE.hex() +
+             "\n1.5 ETH"])
         # An address outside the alias set is not the native asset.
         self.assertEqual(
             self._token_screen(OTHER_ADDRESS, 1500000000000000000, params),
@@ -760,15 +762,16 @@ class TestStack07Regressions(common.KeepKeyTest):
         self.assertTrue(result.HasField("signature_r"))
         shown = []
         for screen in self.screens:
-            if screen[0] in ("Contract action", "Intent 1/3", "Intent 2/3",
-                             "Intent 3/3", "Signer field") and (
+            if screen[0] in ("Contract action", "Intent text 1 of 3",
+                             "Intent value 2 of 3", "Intent text 3 of 3",
+                             "Signer field") and (
                                  not shown or shown[-1] != screen):
                 shown.append(screen)
         self.assertEqual(shown, [
             ("Contract action", "Send tokens"),
-            ("Intent 1/3", "Send"),
-            ("Intent 2/3", "1.5 USDC"),
-            ("Intent 3/3", "now"),
+            ("Intent text 1 of 3", "Send"),
+            ("Intent value 2 of 3", "1.5 USDC"),
+            ("Intent text 3 of 3", "now"),
             ("Signer field", "Amount:\n1.5 USDC"),
         ])
 
@@ -797,7 +800,7 @@ class TestStack07Regressions(common.KeepKeyTest):
              93784, "Lock:\n1d 2h 3m 4s\n(93784 s)"),
             ({"path": "a", "label": "Weight", "format": "unit",
               "params": {"base": "kg", "decimals": 3}},
-             93784, "Weight:\n93.784 kg\n(93784)"),
+             93784, "Weight:\nunit set by signer\n93.784 kg\nraw 93784"),
         ]
         for field, value, expected in cases:
             self.assertEqual(
@@ -812,7 +815,7 @@ class TestStack07Regressions(common.KeepKeyTest):
         pad = self._word(OTHER_ADDRESS)
         self.assertEqual(self._one_field(field, self._word(1) + pad,
                                          metadata=metadata),
-                         ["Side:\nSell (1)"])
+                         ["Side:\nlabel set by signer\nSell (1)"])
         self.assertEqual(self._one_field(field, self._word(5) + pad,
                                          metadata=metadata),
                          ["Side:\n5 (unmapped)"])
