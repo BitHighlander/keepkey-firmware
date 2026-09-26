@@ -12,17 +12,20 @@ code, test and dependency head before this report update is
 `5e00cc6d8d62c190d6f60793117fc421652d3ff7`; repair code head
 `2cce087c1160a818109141a805a61223ed4748e5`. Exact-head
 [CI 36197508235](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36197508235)
-passed all 16 required jobs. The final containing report commit belongs in the
+passed all 16 required jobs at the prior head, and
+[CI 36218997106](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36218997106)
+passed all 16 required jobs at report head `2e00d72bf5d2a8a7c31c318605ef56139429ff60`.
+The final containing report commit belongs in the
 PR description, since this source cannot name its own commit.
 
-| Checkpoint | Status through the second-review local repair | Limit |
+| Checkpoint | Status after second-review repair and exact-head CI | Limit |
 | --- | --- | --- |
 | Implementation | Complete for the selected 7.15 Phase A–E subset | 7.16 DELEGATECALL and hard-refusal policy remain outside this block. |
 | Targeted verification | Prior head: 202 focused firmware tests, 38 runtime and 21 inherited 7a wire tests. Local repair: 59 focused firmware tests and the complete 656/135 full/BTC firmware suites pass. | The wire and hosted evidence still describes the earlier code head. |
-| Integration verification | Prior head: exact-head full/BTC hosted CI, ARM and report gates. Local repair: both ARM variants link and pass SRAM gates. | New-head hosted CI remains pending; publication is separate. |
+| Integration verification | Exact-head full/BTC hosted CI, ARM, emulator, runtime and report gates passed on `2e00d72bf`. Local repair also passed both ARM/SRAM gates. | Emulator publication was deliberately skipped. |
 | Adversarial contract verification | Initial and four-round re-audit findings repaired, with regression controls; two second-review regressions have local positive and negative controls. | The re-audit's two-dry-round stop rule was not reached. |
 | External review delivery | First review `5323189342` found four issues and their threads are resolved. Second review `5323944293` on `5e00cc6d8` found two further issues. | Current-head review remains pending. |
-| Finding disposition | Both second-review issues are repaired in `2cce087c1` with independently failing negative controls. | Pushed-source replies, thread resolution and exact-head CI remain pending. |
+| Finding disposition | Both second-review issues are repaired in `2cce087c1` with independently failing negative controls. Each has a pushed-source reply; both threads are resolved. | A third current-head review remains pending. |
 | Release acceptance | Pending | Physical-device checks, assembled release and promotion are separate. |
 
 The firmware pins python-keepkey `4f114707f4401002646febc12c370b766ebd059d`
@@ -162,8 +165,8 @@ The first Copilot review of `ed6c8e3a7` reported four findings. One found that a
 
 [Review 5323944293](https://github.com/BitHighlander/keepkey-firmware/pull/863#pullrequestreview-5323944293)
 assessed exact head `5e00cc6d8` and returned **Changes recommended** with two
-inline findings. Both are security-relevant and remain open on the PR until
-the repaired source is pushed with individual replies:
+inline findings. Both are security-relevant; both are repaired and their PR
+threads have individual source-linked replies and are resolved:
 
 | Finding | Origin, observer and phase | Local repair and falsification |
 | --- | --- | --- |
@@ -175,15 +178,16 @@ workflow tests pass 59/59; the complete full native firmware suite passes
 656/656, board 19/19 and crypto 18/18. Bitcoin-only builds and passes its
 complete 135/135 firmware suite. Both MinSizeRel ARM variants link; the SRAM
 budget gate passes with 17,800 B full and 39,136 B Bitcoin-only reserve,
-largest frame 7,664 B. These are local exact-code-head results, not a
-hosted exact-head CI claim. The local device build needed only a correction
+largest frame 7,664 B. Hosted exact-head CI `36218997106` subsequently passed
+all 16 required jobs, including full and Bitcoin-only integration and report
+generation. The local device build needed only a correction
 to the generated protoc command's plugin name; no firmware source or protocol
 definition was changed for that workaround.
 
 ## Not verified
 
 - **Physical device.** No 7b build has been flashed or run on hardware, and there are no OLED photographs from a device. The emulator frames above are the only display evidence.
-- **Copilot convergence.** The second review found two issues; committed repairs have not yet been pushed or reviewed on their final head.
+- **Copilot convergence.** The second review found two issues. They are repaired, replied to and resolved, but a third review of the current code-bearing head has not yet been delivered.
 - Pre-existing duplicate nanopb options in `messages-osmosis.options` and `messages-solana.options` (from the 00b stack, `4c56e19e3`), flagged by `scripts/preflight.sh`, are outside 7b.
 - **Pre-push gate.** The canonical `scripts/preflight.sh` from `audit/715-00b-review-sop` was run after the repair. It failed on those inherited duplicate options and on `scripts/test_generate_test_report.py`, which is absent from this 7b branch. The local cppcheck invocation in that script also references a missing `.cppcheck-build` path; an updated local copy with `/tmp/cppcheck-build` completed its cppcheck step but still failed the two inherited checks. The script's fail-closed result is preserved; it is not called a passing preflight.
 - **Historical-finding granularity.** The Phase E handoff clusters the first audit's 42 findings under D1–D19 but does not retain a row for each raw finding. The re-audit likewise records its 14 distinct defects in prose and tests. Those source records support the grouped dispositions above, but they cannot satisfy a per-finding closure matrix for every original report without the raw manifests. The two Copilot findings above include their direct source, observer, entry path, positive and negative checks; broader historical matrix completion remains an evidence gap.
@@ -271,9 +275,9 @@ The report source is this Markdown file. Its rendered companion is
 pages); the PDF was opened and its extracted text checked against the source.
 Both artifacts must be present in the final adjacent PR diff. That final diff
 has 34 paths, including the PDF binary. The Markdown source contributes
-280 added lines and zero deletions; all other text paths at the repaired
+284 added lines and zero deletions; all other text paths at the repaired
 code head contribute 3,734 additions and 414 deletions. Thus the final adjacent
-text diff has 4,014 additions and 414 deletions. Reproduce after the
+text diff has 4,018 additions and 414 deletions. Reproduce after the
 containing report commit with `git diff --numstat --no-renames
 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..FINAL_HEAD` and substitute
 the final commit SHA from PR #863 for `FINAL_HEAD`. The PDF is binary and its
