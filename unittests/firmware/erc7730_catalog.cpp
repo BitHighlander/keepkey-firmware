@@ -637,6 +637,10 @@ TEST(Erc7730Catalog, ValidatesCanonicalUtf8StringTableIncrementally) {
   p = programWithStrings({{0xc0, 0x80}});  // overlong NUL
   EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
 
+  p = programWithStrings({{'A', 0, 'B'}});  // no hidden suffix on a C string
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_BAD_PROGRAM);
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+
   p = programWithStrings({{'A', 0x0a, 'B'}});  // display control character
   EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
 }
@@ -1635,6 +1639,31 @@ TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
                                  {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff}}),
                        7, 2);
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+TEST(Erc7730Catalog, DisplayFramesPreservePathClasses) {
+  const std::vector<uint8_t> begin_a = {7, 0, 0, 0, 0xff, 0xff, 0, 3};
+  const std::vector<uint8_t> field_a = {4, 0, 0, 0, 0, 0, 0xff, 0xff};
+  const std::vector<uint8_t> end = {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff};
+  const auto program =
+      iterationProgram(displays({begin_a, field_a, end}), 5, 1);
+  const auto signed_envelope = envelope(program);
+  const auto id = digest(signed_envelope);
+  Erc7730CatalogVerifier verifier;
+  Erc7730CatalogIdentity identity = {};
+  erc7730_catalog_begin(&verifier, id.data(), signed_envelope.size());
+  const size_t before_begin = 10u + sectionOffset(program, 7) + 5u + 2u + 8u;
+  ASSERT_EQ(erc7730_catalog_feed(&verifier, 0, signed_envelope.data(),
+                                 before_begin, &identity),
+            ERC7730_CATALOG_MORE);
+  uint8_t classes[5];
+  memcpy(classes, verifier.signature, sizeof(classes));
+  ASSERT_EQ(erc7730_catalog_feed(&verifier, before_begin,
+                                 signed_envelope.data() + before_begin,
+                                 begin_a.size(), &identity),
+            ERC7730_CATALOG_MORE);
+  EXPECT_EQ(memcmp(classes, verifier.signature, sizeof(classes)), 0);
+  erc7730_catalog_abort(&verifier);
 }
 
 TEST(Erc7730Catalog, IterationPathsReachTheirArrayThroughTuplesOnly) {

@@ -95,6 +95,7 @@ typedef struct {
   uint8_t header[ERC7730_PROGRAM_HEADER_SIZE];
   uint8_t cert[ERC7730_DELEGATE_RECORD_LEN];
   uint8_t signature[64];
+  uint8_t display_frames[ERC7730_ABI_MAX_DEPTH * 5u];
   uint8_t merkle[32];
   uint8_t sibling[32];
   uint32_t total_length;

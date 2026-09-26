@@ -515,6 +515,12 @@ bool erc7730_program_string_feed(Erc7730ProgramString* string,
       }
       continue;
     }
+    /* Callers display this value as a C string. Keep the replay reader's
+     * contract independent of the earlier catalog validation. */
+    if (byte == 0) {
+      string->failed = true;
+      return false;
+    }
     if (string->string_index == string->target_index)
       string->value[string->current_received] = byte;
     string->current_received++;
