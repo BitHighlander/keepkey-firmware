@@ -545,8 +545,7 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
     } else {
       show_erc7730_address(workflow, capture.data + 12);
     }
-  } else if (workflow->field.kind == 1 &&
-             workflow->calldata.capture_overflow) {
+  } else if (workflow->field.kind == 1 && workflow->calldata.capture_overflow) {
     show_erc7730_long_value(workflow, workflow->calldata.located_length);
   } else if (workflow->field.kind == 1) {
     char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
