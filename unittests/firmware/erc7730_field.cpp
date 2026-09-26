@@ -249,6 +249,30 @@ TEST(Erc7730Field, NativeAmountRendersLikeTheOrdinaryReview) {
   EXPECT_STREQ(out, "1.5 ETH");
 }
 
+TEST(Erc7730Field, EmbeddedCallShowsCalleeSelectorLengthValueAndAuthority) {
+  char out[600];
+  const auto callee = hex("5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
+  const auto spender = hex("fb6916095ca1df60bb79ce92ce3ea74c37c5d359");
+  const uint8_t selector[4] = {0xa9, 0x05, 0x9c, 0xbb};
+  const auto value = word(1500000000000000000ull);
+  ASSERT_TRUE(erc7730_format_embedded(callee.data(), selector, 4, 68,
+                                      value.data(), 1, spender.data(), out,
+                                      sizeof(out)));
+  EXPECT_STREQ(out,
+               "To 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed\n"
+               "Function 0xa9059cbb\nData 68 bytes\nValue 1.5 ETH\n"
+               "As 0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359");
+  // Fewer than four bytes hold no selector; none at all is "No data".
+  ASSERT_TRUE(erc7730_format_embedded(callee.data(), selector, 3, 3, nullptr, 1,
+                                      nullptr, out, sizeof(out)));
+  EXPECT_STREQ(out,
+               "To 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed\n"
+               "Data 3 bytes");
+  ASSERT_TRUE(erc7730_format_embedded(callee.data(), nullptr, 0, 0, nullptr, 1,
+                                      nullptr, out, sizeof(out)));
+  EXPECT_STREQ(out, "To 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed\nNo data");
+}
+
 // ethereumFormatAmount() names " WAN" from a module global that a previous
 // Wanchain transaction may have left set. An ERC-7730 native amount must not.
 TEST(Erc7730Field, NativeAmountNeverInheritsAWanchainTransaction) {

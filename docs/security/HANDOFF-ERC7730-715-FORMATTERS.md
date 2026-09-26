@@ -23,7 +23,7 @@ The **preload verifier** (`lib/firmware/erc7730_catalog.c`) accepts far more:
 
 A signed definition using any of these loads fine. It then fails with "Unsupported ERC-7730 formatter/field instruction" **after** the user has approved the source, intent and earlier field screens. It fails closed (no signature), but the device has shown screens it cannot finish. Copilot flagged this class twice for narrower cases: the verifier/reader limits and the path step count, both fixed.
 
-Measured against the official registry at pinned commit `9f37816afde954ff6617fb5baa346133e5af26c5` (1,450 calldata formats):
+The original planning estimates against the official registry at pinned commit `9f37816afde954ff6617fb5baa346133e5af26c5` (1,450 calldata formats) were as follows. The implemented lockstep counts appear below.
 
 | Runtime supports | Formats fully signable |
 | --- | --- |
@@ -78,9 +78,9 @@ Exit: registry signable = 92 exactly. Every program outside the table is refused
 - DebugLink: device-protocol `DebugLinkState.confirm_title` (16) and `confirm_body` (17), filled from the last `confirm_helper()` call in DEBUG_LINK builds only; python-keepkey `DebugLink.read_confirm_text()`.
 - Tests: `Erc7730Catalog.PreloadRefuses*`, `PreloadWalksEveryPathAgainstTheAbi`, `RuntimePathPredicateMatchesTheTable`; wire tests `test_program_outside_capability_table_is_refused_at_preload`, `test_path_outside_abi_is_refused_at_preload`, `test_raw_field_screens_show_exact_text` in `scripts/emulator/test_stack07_regressions.py`. Negative controls: removing each verifier check fails a named unit test (the two formatter checks overlap and fail together); removing the capability checks or the walk and leaf check fails the matching wire test.
 
-### Real per-phase targets (measured 2026-09-25 with the python mirror)
+### Implemented per-phase counts (measured 2026-09-25 with the python mirror)
 
-The plan's counts assumed values came only from calldata. Measured with container and literal sources: 0 = 92, A = 812 (a loose estimate gave 833; see below), B ≈ 987, C ≈ 1,172, D ≈ 1,383, E ≈ 1,412. The rest need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
+With container and literal sources, the lockstep counts are 0 = 92, A = 812, B = 954, C = 1,138, D = 1,294 and E1 = 1,326. The earlier estimates assumed values came only from calldata. The remaining formats need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
 
 ### Phase A status (2026-09-25): block 7b, stacked on 7a
 
@@ -111,7 +111,7 @@ The plan's counts assumed values came only from calldata. Measured with containe
 ### Phase B status (2026-09-25): block 7b
 
 - Display opcodes 2 (text) and 3 (value) execute, but only as one run directly after the plain intent. The verifier refuses a part after a field, and the plain intent stays mandatory at pc 0.
-- Each part is its own required confirmation titled "Intent i/n". The display reader counts the run while it streams, so no extra replay is needed.
+- Each part is its own required confirmation, titled "Intent text i of n" or "Intent value i of n". The display reader counts the run while it streams, so no extra replay is needed.
   - A text part is the signer's fragment, escaped.
   - A value part runs the referenced formatter through the same argument pipeline as a field, so it shows exactly the same text as that field.
 - Not a single assembled sentence: that needs a sentence buffer of about 513 B of SRAM, which the 256 B rule sends to the owner for review. The parts design adds no SRAM.
@@ -133,8 +133,8 @@ The plan's counts assumed values came only from calldata. Measured with containe
   - amount: the ordinary review's native rendering.
   - date: "YYYY-MM-DD HH:MM:SS UTC" plus the raw seconds; outside 1970–9999 it shows the raw integer, marked "not a date". Block height: "Block N".
   - duration: "Nd Nh Nm Ns" plus the raw seconds.
-  - unit: the exact scaled value with the signer's base, escaped, marked "unit set by signer", plus the raw integer (always, even with zero decimals). The SI prefix flag is accepted, but the value is always shown exactly.
-  - enum: "label (value)" marked "label set by signer", or "value (unmapped)".
+  - unit: the exact scaled value with the signer's base, escaped, preceded by "unit set by signer", plus the raw integer (always, even with zero decimals). The SI prefix flag is accepted, but the value is always shown exactly.
+  - enum: "label (value)" preceded by "label set by signer", or "value (unmapped)".
   - nftName: the token ID and the collection address. There is no collection name.
 - Enum lookup: key and label indices are stored (64 B, shared with the alias slots). Each key costs one replay, compared as a zero-extended unsigned, sign-extended signed or 0/1 boolean word.
 - Registry: 1,138 signable, from 954. SRAM reserve 18,144 B (−64 B). ROM text about +3.9 KB.
@@ -145,13 +145,14 @@ The plan's counts assumed values came only from calldata. Measured with containe
 
 ### Phase D status (2026-09-25): block 7b
 
-- **Conditions.** The registry uses only "optional" (condition opcode 3), and only on fields. Condition opcode 3 is the only one executed, and it always shows. A field, group or iteration that references it is shown exactly as one that does not. Every opcode that could hide or veto a value (never, ifIn/ifNotIn, mustMatch, ifEmpty) is refused at preload. The owner's §8.4 hiding policy is therefore never exercised: nothing is hidden.
+- **Conditions.** The registry uses only "optional" (condition opcode 3), and only on fields. Condition opcode 3 is the only one executed, and it always shows. A field, group or iteration that references it is shown exactly as one that does not. Every opcode that could hide or veto a value (never, ifIn/ifNotIn, mustMatch, ifEmpty) is refused at preload. The owner's §8.4 hiding policy is therefore never exercised: the device hides nothing it is given. The compiler, however, omits every field the descriptor marks `visible: "never"` (for example Safe's `safeTxGas` and `signatures`); those are not in the program, and the device cannot know they exist.
 - **Groups (5/6).** Executed as grouping only; each field shows its own label.
 - **Iteration (7/8).** Runs over one array at a time, calldata only.
   - The array must be reached through tuples only (no array index before the `[]` step), so its ABI node identifies it.
   - Every field inside must read that array; a field that iterates must be inside an iteration; nesting is refused.
-  - The runtime captures the array's length in one pass, then shows each element's fields titled "Signer field i/N", binding `[]` to element i. An empty array shows no element.
+  - The runtime captures the array's length in one pass, then shows each element's fields titled "Signer field i of N", binding `[]` to element i. An empty array shows no element.
   - The stream's 64-element limit is enforced by the up-front validation pass, before the first screen.
+  - Any other `[]` argument (a token, a collection) is paired with the iterated array by index; a shorter one fails closed mid-review (PHASE-E §9c, D10).
   - A path ending in `[]` is iterable. It is also a value when its element is a leaf (`address[] recipients`).
 - **Slices (path step 3).** Still refused. Their registry uses cut an address out of `bytes`, which would reinterpret bytes.
 - Registry: 1,294 signable (from 1,138). SRAM reserve 18,048 B (−96 B). ROM about +1.2 KB.
@@ -171,7 +172,7 @@ The plan's counts assumed values came only from calldata. Measured with containe
 | 5 | date | Role 9 encoding (timestamp or block height) from the signed program. | Timestamp: UTC `YYYY-MM-DD HH:MM:SS` with the raw integer. Block height: "block N". Refuse values that do not fit uint64. |
 | 6 | duration | None needed. | `Nd Nh Nm Ns` plus the raw seconds. |
 | 7 | unit | Roles 4–6 (base, decimals, prefix) are signer claims. | The formatted value with the unit escaped **and** the raw integer. |
-| 8 | enum | Role 10 enum table from the signed program. | `label (value)`, escaped and marked "label set by signer"; an unmatched value shows the raw integer, labelled "unmapped". |
+| 8 | enum | Role 10 enum table from the signed program. | `label (value)`, escaped and preceded by "label set by signer"; an unmatched value shows the raw integer, labelled "unmapped". |
 | 4 | nftName | No NFT registry on device. | Collection address (EIP-55) and token ID. Never a signer-claimed collection name without the address. |
 | 13 | embedded calldata | Nested definitions, which need on-demand requests. | Phase E; see §6. |
 | 9, 11, 12, 14 | chainId, tokenTicker, interoperable address, encrypted | Not used by the registry today. | Leave outside the capability table (refused at preload) until needed. |

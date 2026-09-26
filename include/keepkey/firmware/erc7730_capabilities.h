@@ -27,11 +27,16 @@
    ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) | \
    ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10))
 /* Formatter kinds: 1 raw, 2 amount (native), 3 tokenAmount, 4 nftName,
- * 5 date, 6 duration, 7 unit, 8 enum, 10 addressName. */
-#define ERC7730_CAP_FORMATTER_KINDS                               \
-  (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) | \
-   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) | \
-   ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10))
+ * 5 date, 6 duration, 7 unit, 8 enum, 10 addressName, 13 embedded calldata.
+ * Embedded calldata is executed for calldata definitions only; its roles are
+ * 1 the inner calldata (bytes), 15 the callee, 17 the value it moves and
+ * 18 whose authority it runs with (16, the selector, is not executed: the
+ * device reads the selector from the inner bytes). */
+#define ERC7730_CAP_FORMATTER_KINDS                                \
+  (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) |  \
+   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) |  \
+   ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10) | \
+   ERC7730_CAP_BIT(13))
 /* Path sources: 1 value, 2 container, 3 literal. Path step opcodes: 1 index.
  */
 #define ERC7730_CAP_PATH_SOURCES \
@@ -52,9 +57,13 @@
 /* A tokenAmount native-currency alias set may name at most this many
  * addresses, so the runtime can hold their literal indices. */
 #define ERC7730_CAP_ALIAS_SET_MAX 4u
-/* Escaped signer text must fit the value screen and its fixed buffers. */
+/* Signer text shown inside a value's screen (field labels, a tokenAmount
+ * threshold message, a unit base, enum labels) may be at most this many
+ * bytes, so that escaped (at most four characters a byte) it always fits the
+ * screen and the device's value buffers; the registry's longest is 44. */
 #define ERC7730_CAP_SIGNER_TEXT_MAX 64u
-/* A uint256 has at most 78 decimal digits. */
+/* unit decimals at most this: a uint256 has at most 78 digits, so larger
+ * scalings only prepend zeros. */
 #define ERC7730_CAP_UNIT_DECIMALS_MAX 77u
 /* An enum map may hold at most this many entries (the registry's largest has
  * ten), so the runtime can hold their key and label indices. */
@@ -69,6 +78,7 @@ enum {
   ERC7730_CLASS_INT = 2,
   ERC7730_CLASS_ADDRESS = 3,
   ERC7730_CLASS_BOOL = 4,
+  ERC7730_CLASS_BYTES = 6,
   ERC7730_CLASS_STRING = 7,      /* also any program string (source 3) */
   ERC7730_CLASS_STRING_REF = 8,  /* literal kind 4: an index into strings */
   ERC7730_CLASS_ALIAS_SET = 9,   /* literal kind 9 of at most ALIAS_SET_MAX */
