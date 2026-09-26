@@ -57,7 +57,14 @@ typedef struct {
   uint16_t pending_used;
   uint8_t depth;
   uint8_t word_received;
-  size_t located_length; /* length of an uncaptured oversized value */
+  /* Locate mode (embedded calldata): a captured bytes value keeps only its
+   * first four bytes in `capture`; its full length and the offset of its
+   * payload within the stream are recorded here instead of copied. */
+  size_t located_length;
+  size_t located_offset;
+  bool capture_locate;
+  /* A captured bytes/string value longer than the capture buffer: only its
+   * length is kept (located_length); nothing of it is copied. */
   bool capture_overflow;
   uint8_t capture_path_count;
   bool capture_enabled;

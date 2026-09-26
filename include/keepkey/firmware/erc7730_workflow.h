@@ -21,6 +21,7 @@ typedef enum {
   ERC7730_WORKFLOW_TYPED_DATA,
   ERC7730_WORKFLOW_COMPLETE,
   ERC7730_WORKFLOW_FAILED,
+  ERC7730_WORKFLOW_FETCH, /* streaming a definition into the preload slot */
 } Erc7730WorkflowPhase;
 
 typedef enum {
@@ -69,6 +70,15 @@ typedef struct {
     uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */
   } list;
   uint16_t text; /* the one string an argument names, fetched last */
+  /* embedded calldata: the inner bytes as located (never copied), and whose
+   * authority the inner call runs with */
+  uint32_t inner_length;
+  uint32_t inner_offset; /* of the payload within the outer arguments */
+  uint8_t inner_selector[4];
+  uint8_t inner_selector_length;
+  uint8_t spender[20];
+  bool has_inner;
+  bool has_spender;
   uint8_t list_count;
   uint8_t list_next;
   uint8_t value_class;
@@ -110,7 +120,7 @@ typedef struct {
    * interpolated intent; such a part has no label. */
   uint8_t intent_part;
   uint8_t intent_parts;
-  bool intent_value;
+  bool intent_value; /* the part is a device-formatted value, not text */
   /* An iteration (display opcodes 7..8) in progress: its instructions, and
    * the element its "every element" path steps are bound to. */
   uint16_t iteration_begin;
@@ -118,6 +128,32 @@ typedef struct {
   uint8_t iteration_index;
   uint8_t iteration_count;
   bool iterating;
+  /* Embedded call (Phase E2). One level: while depth is 1 the inner
+   * definition occupies the preload slot and the loader, and every calldata
+   * pass still replays the whole outer calldata against the reviewed digest,
+   * feeding only the inner call's bytes to the ABI stream. The outer program
+   * is restored afterwards from its definition id. */
+  uint32_t inner_offset; /* inner call payload within the outer arguments */
+  uint32_t inner_length;
+  uint32_t outer_total;    /* outer argument bytes per pass */
+  uint32_t outer_received; /* ... received so far in this pass */
+  uint32_t fetch_offset;
+  uint32_t fetch_total;
+  uint8_t outer_definition_id[32];
+  /* The inner call's own containers: @.to (callee), @.value, @.from. */
+  uint8_t inner_to[20];
+  uint8_t inner_value[32];
+  uint8_t inner_from[20];
+  uint16_t outer_resume; /* the outer instruction that held the inner call */
+  uint8_t depth;
+  uint8_t fetch_depth; /* 1 fetching the inner definition, 0 the outer */
+  bool outer_identity_confirmed;
+  bool outer_intent_confirmed;
+  bool resuming; /* the outer program restarts after its inner call */
+  /* The inner definition was refused (a shape this firmware does not run, or
+   * an unknown signer): the outer program is restored and re-runs the
+   * embedded field on the 7.15 blind path. */
+  bool inner_refused;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
@@ -219,6 +255,18 @@ bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
  * refused them. */
 bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len);
+/* Phase E2. Begin fetching the inner definition of the located embedded
+ * call (depth 1), or the outer definition again after it (depth 0). */
+bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth);
+/* Feed one fetched chunk. `none` is the host's "no such definition" reply. */
+Erc7730CatalogResult erc7730_workflow_fetch_feed(
+    Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,
+    bool* complete, bool* none);
+/* The fetch completed: bind the inner definition to the embedded call and
+ * start its program, or restore the outer one. */
+bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow);
+/* Record the embedded calldata a completed locate pass found. */
+bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow);
 /* Return from a completed capture pass to program selection within the same
  * field, discarding the calldata stream. */
 bool erc7730_workflow_resume_field(Erc7730Workflow* workflow);
