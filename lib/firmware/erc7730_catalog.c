@@ -321,6 +321,14 @@ static bool consume_string_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (v->utf8_remaining != 0 ||
         (v->entry_index != 0 && v->compare_state == 0))
       return false;
+    if (v->entry_length <= ERC7730_CAP_SIGNER_TEXT_MAX)
+      v->short_strings[v->entry_index / 8u] |=
+          (uint8_t)(1u << (v->entry_index % 8u));
+    /* cert[] holds the whole string now: note the date encodings. */
+    if (erc7730_cap_string_class((const char*)v->cert, v->entry_length) ==
+        ERC7730_CLASS_DATE_ENCODING)
+      v->date_strings[v->entry_index / 8u] |=
+          (uint8_t)(1u << (v->entry_index % 8u));
     v->previous_length = v->entry_length;
     v->entry_length = 0;
     v->entry_offset = 0;
@@ -339,6 +347,9 @@ static bool finish_path_step(Erc7730CatalogVerifier* v) {
     if (v->path_node >= v->table_counts[1] ||
         (abi_entry(v, v->path_node) >> 12) > ERC7730_ABI_STRING)
       return false;
+    /* Formatter arguments are type-checked against this class. signature[]
+     * is idle from the end of the ABI section until the display section. */
+    v->signature[v->entry_index] = (uint8_t)(abi_entry(v, v->path_node) >> 12);
     v->entry_index++;
     v->field_received = 0;
     v->path_step_index = 0;
@@ -383,6 +394,19 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       if ((v->path_source == 2 && (source_index == 0 || source_index > 6)) ||
           (v->path_source == 3 && source_index == UINT16_MAX))
         return false;
+      if (v->path_source == 2) {
+        /* @.from and @.to are addresses; containers exist for calldata only.
+         */
+        if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
+            v->header[7] != ERC7730_DEFINITION_CALLDATA)
+          return false;
+        v->signature[v->entry_index] =
+            source_index == 3 ? ERC7730_CLASS_UINT : ERC7730_CLASS_ADDRESS;
+      } else {
+        /* The literal table follows; resolve the class at the formatter. */
+        if (source_index >= 64) return false;
+        v->signature[v->entry_index] = (uint8_t)(0x40u | source_index);
+      }
     }
     v->field_received = 0;
     if (v->path_step_count == 0) {
@@ -431,9 +455,29 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   return finish_path_step(v);
 }
 
+static uint8_t literal_class(const Erc7730CatalogVerifier* v,
+                             uint16_t literal) {
+  if (literal >= v->table_counts[3] || literal >= 64) return ERC7730_CLASS_NONE;
+  return (uint8_t)((v->literal_classes[literal / 2u] >> (4u * (literal % 2u))) &
+                   0x0fu);
+}
+
+static bool short_string(const Erc7730CatalogVerifier* v, uint16_t index) {
+  return index < v->table_counts[0] && index < 96u &&
+         ((v->short_strings[index / 8u] >> (index % 8u)) & 1u) != 0;
+}
+
 static void finish_literal(Erc7730CatalogVerifier* v) {
+  if (v->literal_kind == 1 && v->entry_length == 1 &&
+      v->literal_first <= ERC7730_CAP_UNIT_DECIMALS_MAX)
+    v->literal_decimals_mask |= UINT64_C(1) << v->entry_index;
   if (v->literal_kind == 9)
     v->literal_set_mask |= UINT64_C(1) << v->entry_index;
+  v->literal_classes[v->entry_index / 2u] |=
+      (uint8_t)(erc7730_cap_literal_class(
+                    v->literal_kind, v->literal_kind == 1 ? v->entry_length
+                                                          : v->literal_subcount)
+                << (4u * (v->entry_index % 2u)));
   v->entry_index++;
   v->entry_length = 0;
   v->entry_offset = 0;
@@ -499,7 +543,8 @@ static bool consume_literal_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
                                           reference <= v->literal_previous))
         return false;
       if (v->literal_kind == 8 &&
-          read_be16(v->sibling + 2) >= v->table_counts[0])
+          (read_be16(v->sibling + 2) >= v->table_counts[0] ||
+           !short_string(v, read_be16(v->sibling + 2))))
         return false;
       v->literal_previous = reference;
       v->field_received = 0;
@@ -618,6 +663,9 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
         (FORMAT_ROLE_BIT(19) | FORMAT_ROLE_BIT(20) | FORMAT_ROLE_BIT(23))) !=
            (FORMAT_ROLE_BIT(19) | FORMAT_ROLE_BIT(20) | FORMAT_ROLE_BIT(23))))
     return false;
+  /* The display section must not name a signer constant as an intent value. */
+  v->cert[64u + v->entry_index] = v->formatter_value_literal ? 1u : 0u;
+  v->formatter_value_literal = false;
   v->entry_index++;
   v->formatter_kind = 0;
   v->formatter_arg_count = 0;
@@ -665,6 +713,26 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       (source == 2 && index >= v->table_counts[3]) ||
       (source == 3 && index >= v->table_counts[0]))
     return false;
+  uint8_t cls;
+  if (source == 3) {
+    cls = (v->date_strings[index / 8u] >> (index % 8u)) & 1u
+              ? ERC7730_CLASS_DATE_ENCODING
+              : ERC7730_CLASS_STRING;
+  } else {
+    cls = source == 2 ? literal_class(v, index) : v->signature[index];
+    if (source == 1 && (cls & 0x40u) != 0) cls = literal_class(v, cls & 0x3fu);
+  }
+  if (!erc7730_cap_value(v->formatter_kind, role, cls)) return false;
+  if (source == 3 && (role == 5 || role == 8) && !short_string(v, index))
+    return false;
+  if (v->formatter_kind == 7 && role == 4 &&
+      (index >= 64 || ((v->literal_decimals_mask >> index) & 1u) == 0))
+    return false;
+  /* Only raw may show a signer constant as its value. */
+  if (source == 1 && (v->signature[index] & 0x40u) != 0 && role == 1) {
+    if (v->formatter_kind != 1) return false;
+    v->formatter_value_literal = true;
+  }
   v->formatter_last_role = role;
   v->formatter_roles |= FORMAT_ROLE_BIT(role);
   v->formatter_arg_index++;
@@ -689,6 +757,16 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   if (opcode < 1 || opcode > 10 || flags != 0 ||
       !erc7730_cap_display(&executable, pc))
     return false;
+  if (opcode == 3 && a < 64 && v->cert[64u + a] != 0) return false;
+  if (opcode == 4 && !short_string(v, a)) return false;
+  /* Interpolated-intent parts form one run directly after the intent. */
+  if (pc != 0) {
+    if (opcode == 2 || opcode == 3) {
+      if (v->display_intent_run_closed) return false;
+    } else {
+      v->display_intent_run_closed = true;
+    }
+  }
   switch (opcode) {
     case 1:
       return a < v->table_counts[0] && optional_index(b, v->table_counts[4]) &&

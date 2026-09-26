@@ -78,17 +78,82 @@ Exit: registry signable = 92 exactly. Every program outside the table is refused
 - DebugLink: device-protocol `DebugLinkState.confirm_title` (16) and `confirm_body` (17), filled from the last `confirm_helper()` call in DEBUG_LINK builds only; python-keepkey `DebugLink.read_confirm_text()`.
 - Tests: `Erc7730Catalog.PreloadRefuses*`, `PreloadWalksEveryPathAgainstTheAbi`, `RuntimePathPredicateMatchesTheTable`; wire tests `test_program_outside_capability_table_is_refused_at_preload`, `test_path_outside_abi_is_refused_at_preload`, `test_raw_field_screens_show_exact_text` in `scripts/emulator/test_stack07_regressions.py`. Negative controls: removing each verifier check fails a named unit test (the two formatter checks overlap and fail together); removing the capability checks or the walk and leaf check fails the matching wire test.
 
+### Real per-phase targets (measured 2026-09-25 with the python mirror)
+
+The plan's counts assumed values came only from calldata. Measured with container and literal sources: 0 = 92, A = 812 (a loose estimate gave 833; see below), B ≈ 987, C ≈ 1,172, D ≈ 1,383, E ≈ 1,412. The rest need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
+
+### Phase A status (2026-09-25): block 7b, stacked on 7a
+
+- Table: formatter kinds 1, 3 (tokenAmount: value, token, threshold, message, native aliases) and 10 (addressName); path sources 1, 2 (containers `@.from`, `@.to`; calldata definitions only) and 3 (literals). `@.value` and `@.chainId` are left to Phase C; no registry format uses them with a Phase A formatter.
+- Every argument is type-checked at preload (`erc7730_cap_value()`, shared with the runtime): the amount and the threshold are integers; the token and an addressName value are addresses; a raw literal is an integer, an address or a string reference; an alias set names at most `ERC7730_CAP_ALIAS_SET_MAX` (4) addresses. The verifier keeps a class per path in `signature[]` (idle from the ABI to the display section) and a class per literal in 32 bytes of nibbles.
+- Runtime (`fsm_msg_ethereum.h`): each argument is resolved in its own definition replay or calldata/typed-data pass. The amount is copied out before the token pass, and every pass is hash-committed as before. The threshold message is fetched last, and only when the amount is at or above the threshold.
+- Display (`erc7730_field.c`):
+  - An address is always shown in full, EIP-55, with "(this wallet)" when it is the signing account, which is derived on device.
+  - A token known to the firmware table for the chain is shown with that table's ticker and decimals, rendered as the ordinary Ethereum review renders it.
+  - Any other token, including the zero address, is shown as the exact integer, then "unknown token" and its address, unless the signer-supplied native alias applies.
+  - A signer-supplied native alias shows the original token address and an explicit "Signer native alias" mark before the native-asset interpretation. A firmware-listed token keeps the table's ticker and decimals even if the signer lists it as an alias.
+  - The threshold message appears above the value, never instead of it.
+- Refused on purpose: 21 registry formats apply addressName to `uint256`/`bytes32` words that pack an address with flags (1inch), and 12 apply tokenAmount to encrypted `bytes32` amounts. Showing them would mean reinterpreting bytes the calldata does not declare as an address or an integer.
+- Costs: SRAM reserve 18,336 → 18,208 B (−128 B). ROM text +4,096 B. The deepest new stack chain is definition chunk (2,320 B) → signer derivation (1,480 B) → key derivation.
+- Behaviour change: `@.from` and "(this wallet)" derive the signing key during the review. With passphrase protection and no cached passphrase, the PassphraseRequest now comes during the review, not after it.
+- Tests:
+  - Native: `Erc7730Catalog.PreloadTypeChecks*`, `ContainersAreCalldataOnly`, `Erc7730Field.*` (EIP-55 spec vectors, firmware table entries, 2^256−1).
+  - Wire, exact text:
+    - `test_token_amount_uses_the_firmware_token_table`
+    - `test_token_named_by_calldata_wins_over_the_hosts_claim`
+    - `test_signer_label_cannot_name_an_unknown_token`
+    - `test_threshold_message_is_shown_beside_the_exact_amount`
+    - `test_native_alias_discloses_signer_mapping_and_token_address`
+    - `test_address_name_marks_only_the_signing_account` (signer vs one byte off)
+    - `test_containers_and_signed_constants`
+  - Negative controls: forcing "(this wallet)", letting the message replace the value, ignoring aliases and dropping the verifier type check each fail the matching test.
+
+### Phase B status (2026-09-25): block 7b
+
+- Display opcodes 2 (text) and 3 (value) execute, but only as one run directly after the plain intent. The verifier refuses a part after a field, and the plain intent stays mandatory at pc 0.
+- Each part is its own required confirmation titled "Intent i/n". The display reader counts the run while it streams, so no extra replay is needed.
+  - A text part is the signer's fragment, escaped.
+  - A value part runs the referenced formatter through the same argument pipeline as a field, so it shows exactly the same text as that field.
+- Not a single assembled sentence: that needs a sentence buffer of about 513 B of SRAM, which the 256 B rule sends to the owner for review. The parts design adds no SRAM.
+- python-keepkey trims fragment edges, because the device would otherwise show edge spaces as `\x20`.
+- Registry: 954 signable (from 812). SRAM unchanged (18,208 B reserve); ROM +448 B.
+- Tests:
+  - `Erc7730Catalog.DisplayReaderCountsTheInterpolatedIntentRun` and the part-after-field refusals.
+  - Wire: `test_interpolated_intent_parts_show_the_same_values_as_fields`, exact text of every part plus the field.
+  - Control: removing the run rule fails the refusal test.
+
+### Phase C status (2026-09-25): block 7b
+
+- New kinds: 2 amount, 4 nftName, 5 date, 6 duration, 7 unit, 8 enum. New container: 3 `@.value` (calldata only). All arguments are type-checked at preload by the shared `erc7730_cap_value()`.
+- The verifier now also checks the facts the runtime interprets:
+  - a date encoding must be the program string "timestamp" or "blockheight" (the verifier records those string indices while streaming the string table);
+  - unit decimals must be a one-byte literal, and the prefix a boolean literal;
+  - an enum map may hold at most `ERC7730_CAP_ENUM_MAX` (16) entries; the registry's largest has 10.
+- Display (`erc7730_field.c`). Nothing value-dependent is refused mid-review; it is displayed.
+  - amount: the ordinary review's native rendering.
+  - date: "YYYY-MM-DD HH:MM:SS UTC" plus the raw seconds; outside 1970–9999 it shows the raw integer, marked "not a date". Block height: "Block N".
+  - duration: "Nd Nh Nm Ns" plus the raw seconds.
+  - unit: the exact scaled value with the signer's base, escaped, marked "unit set by signer", plus the raw integer (always, even with zero decimals). The SI prefix flag is accepted, but the value is always shown exactly.
+  - enum: "label (value)" marked "label set by signer", or "value (unmapped)".
+  - nftName: the token ID and the collection address. There is no collection name.
+- Enum lookup: key and label indices are stored (64 B, shared with the alias slots). Each key costs one replay, compared as a zero-extended unsigned, sign-extended signed or 0/1 boolean word.
+- Registry: 1,138 signable, from 954. SRAM reserve 18,144 B (−64 B). ROM text about +3.9 KB.
+- Tests:
+  - Native: `Erc7730Catalog.PreloadTypeChecksPhaseCArguments`; `Erc7730Field.{Date,Duration,Unit,Enum,Nft,NativeAmount}*`, with calendar vectors (epoch, 2023-11-14T22:13:20Z, 2000-02-29, 9999-12-31T23:59:59Z, then not a date).
+  - Wire: `test_phase_c_formatters_show_exact_text`, `test_enum_labels_are_the_signers_claim_beside_the_value`, `test_nft_shows_the_collection_address`.
+  - Controls: a label replacing the enum value, dropping the date-encoding check, and treating an out-of-range timestamp as a date each fail.
+
 ## 4. Formatter designs and trust sources
 
 | Kind | Name | Trust source | Display (body under a device-owned title; the signer's label leads) |
 | --- | --- | --- | --- |
 | 10 | addressName | None on device. There is no trusted name registry, and roles 12–14 (types and sources) are validated but give no authority. | EIP-55 checksummed address, always. Append "(this wallet)" only when it equals the signing account's address, computed on device. Never show a signer-supplied name without the address; if names are ever shown, label them "name from signer". |
-| 3 | tokenAmount | Decimals and ticker **only** from the firmware token table (`tokenByChainAddress`, `lib/firmware/ethereum_tokens.c`) for the transaction's chain ID, or the role-11 chain resolved through the firmware chain table. | Known token: exact decimal amount with ticker, no rounding (reuse `erc7730_format_amount`, which is correct for 0–255 decimals). Unknown token: the raw integer plus "unknown token 0x…(EIP-55)". Role 22 native aliases map to the chain's native asset from the firmware chain table. Role 7/8 threshold message: show the message **and** the exact value; never replace the value. A 2^256−1 approve-like amount stays covered by the existing Stack 06 and EIP-712 permit policies. |
+| 3 | tokenAmount | A listed token's decimals and ticker come **only** from the firmware token table (`tokenByChainAddress`, `lib/firmware/ethereum_tokens.c`) for the transaction's chain ID, or the role-11 chain resolved through the firmware chain table. The native alias set is signer supplied. | Known token: exact decimal amount with ticker, no rounding (reuse `erc7730_format_amount`, which is correct for 0–255 decimals). Unknown token: the raw integer plus "unknown token 0x…(EIP-55)". Role 22 native aliases use the chain's native amount formatting only with the "Signer native alias" mark and original token address shown first; they never silently turn an unlisted token into a firmware-known asset. Role 7/8 threshold message: show the message **and** the exact value; never replace the value. A 2^256−1 approve-like amount stays covered by the existing Stack 06 and EIP-712 permit policies. |
 | 2 | amount (native) | Chain native symbol and decimals from the firmware chain table. | Exact amount with symbol. An unknown chain shows the raw integer in wei. |
 | 5 | date | Role 9 encoding (timestamp or block height) from the signed program. | Timestamp: UTC `YYYY-MM-DD HH:MM:SS` with the raw integer. Block height: "block N". Refuse values that do not fit uint64. |
 | 6 | duration | None needed. | `Nd Nh Nm Ns` plus the raw seconds. |
 | 7 | unit | Roles 4–6 (base, decimals, prefix) are signer claims. | The formatted value with the unit escaped **and** the raw integer. |
-| 8 | enum | Role 10 enum table from the signed program. | `label (value)`, escaped; an unmatched value shows the raw integer, labelled "unmapped". |
+| 8 | enum | Role 10 enum table from the signed program. | `label (value)`, escaped and marked "label set by signer"; an unmatched value shows the raw integer, labelled "unmapped". |
 | 4 | nftName | No NFT registry on device. | Collection address (EIP-55) and token ID. Never a signer-claimed collection name without the address. |
 | 13 | embedded calldata | Nested definitions, which need on-demand requests. | Phase E; see §6. |
 | 9, 11, 12, 14 | chainId, tokenTicker, interoperable address, encrypted | Not used by the registry today. | Leave outside the capability table (refused at preload) until needed. |

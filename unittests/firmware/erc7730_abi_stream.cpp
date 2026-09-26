@@ -218,8 +218,16 @@ TEST(Erc7730AbiStream, CapturesAtomicWordAndRejectsMissingOrLargeTargets) {
   ASSERT_EQ(erc7730_abi_stream_begin(&state, &bytes_program, encoded.size()),
             ERC7730_ABI_OK);
   ASSERT_EQ(erc7730_abi_stream_capture_path(&state, zero, 1), ERC7730_ABI_OK);
-  EXPECT_EQ(erc7730_abi_stream_feed(&state, 0, encoded.data(), encoded.size()),
-            ERC7730_ABI_RESOURCE_LIMIT);
+  // Longer than the capture buffer: the value is not copied, only its length
+  // is kept, so the device can show it blind instead of failing mid-review.
+  ASSERT_EQ(erc7730_abi_stream_feed(&state, 0, encoded.data(), encoded.size()),
+            ERC7730_ABI_OK);
+  ASSERT_EQ(erc7730_abi_stream_finish(&state), ERC7730_ABI_OK);
+  EXPECT_TRUE(state.capture_overflow);
+  EXPECT_EQ(state.located_length, (size_t)ERC7730_ABI_CAPTURE_MAX + 1u);
+  Erc7730AbiCapture captured;
+  ASSERT_TRUE(erc7730_abi_stream_captured(&state, &captured));
+  EXPECT_EQ(captured.length, 0u);
 }
 
 TEST(Erc7730AbiStream, ExtremeNegativeIndexFailsWithoutArithmeticWrap) {

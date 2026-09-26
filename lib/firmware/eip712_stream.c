@@ -1434,6 +1434,16 @@ bool eip712_stream_domain_facts(Eip712DomainFacts* facts) {
   return true;
 }
 
+bool eip712_stream_signer_path(uint32_t address_n[6], size_t* count) {
+  /* An empty path is the root key, exactly as signing derives it. */
+  if (!address_n || !count || !e712.require_definition ||
+      e712.address_n_count > 6)
+    return false;
+  memcpy(address_n, e712.address_n, e712.address_n_count * sizeof(uint32_t));
+  *count = e712.address_n_count;
+  return true;
+}
+
 bool eip712_stream_definition_accepted(void) {
   if (!e712.active || !e712.require_definition ||
       !e712.domain_facts.has_primary_type_hash || e712.definition_accepted ||

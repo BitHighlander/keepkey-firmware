@@ -57,6 +57,8 @@ typedef struct {
   uint16_t pending_used;
   uint8_t depth;
   uint8_t word_received;
+  size_t located_length; /* length of an uncaptured oversized value */
+  bool capture_overflow;
   uint8_t capture_path_count;
   bool capture_enabled;
   bool capture_found;

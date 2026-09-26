@@ -104,6 +104,10 @@ typedef struct {
   uint32_t section_offset;
   uint64_t abi_child_mask;
   uint64_t literal_set_mask;
+  uint8_t literal_classes[32];    /* ERC7730_CLASS_* per literal, 4 bits each */
+  uint8_t date_strings[12];       /* strings "timestamp"/"blockheight", 1 bit */
+  uint8_t short_strings[12];      /* signer strings that fit value screens */
+  uint64_t literal_decimals_mask; /* one-byte decimals up to 77 */
   uint16_t cert_length;
   uint16_t field_received;
   uint16_t section_mask;
@@ -147,6 +151,8 @@ typedef struct {
   uint8_t formatter_arg_index;
   uint8_t formatter_last_role;
   uint8_t display_depth;
+  bool display_intent_run_closed;
+  bool formatter_value_literal;
   uint8_t display_max_depth;
   uint8_t binding_kind;
   uint8_t binding_previous_kind;

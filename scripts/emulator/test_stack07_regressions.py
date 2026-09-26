@@ -148,7 +148,8 @@ class TestStack07Regressions(common.KeepKeyTest):
             offset += len(data)
         return response
 
-    def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None):
+    def _walk(self, start, envelope=b"", doc=None, change_pass=None, cancel_button=None,
+              arguments=None):
         response = self.client.call_raw(start)
         self.definition_requests = 0
         self.button_codes = []
@@ -187,10 +188,12 @@ class TestStack07Regressions(common.KeepKeyTest):
                 response = self.client.call_raw(eth.EthereumTypedDataValueAck(value=value))
             elif isinstance(response, eth.EthereumTxRequest) and response.HasField("data_length"):
                 calldata_passes += 1
-                arguments = (43 if change_pass == calldata_passes else 42).to_bytes(32, "big")
-                arguments += (7).to_bytes(32, "big")
-                self.assertEqual(response.data_length, len(arguments))
-                response = self.client.call_raw(eth.EthereumTxAck(data_chunk=arguments))
+                data = arguments
+                if data is None:
+                    data = (43 if change_pass == calldata_passes else 42).to_bytes(32, "big")
+                    data += (7).to_bytes(32, "big")
+                self.assertEqual(response.data_length, len(data))
+                response = self.client.call_raw(eth.EthereumTxAck(data_chunk=data))
             else:
                 return response, buttons, calldata_passes, typed_passes
         self.fail("protocol did not terminate")
@@ -552,12 +555,10 @@ class TestStack07Regressions(common.KeepKeyTest):
 
     def test_program_outside_capability_table_is_refused_at_preload(self):
         signature = "audit(uint256 first,uint256 second)"
+        # Shapes the runtime does not execute yet (Phase D).
         fields = {
-            "tokenAmount": {"path": "first", "label": "First value",
-                            "format": "tokenAmount",
-                            "params": {"token": "0x" + OTHER_ADDRESS.hex()}},
-            "date": {"path": "first", "label": "First value", "format": "date",
-                     "params": {"encoding": "timestamp"}},
+            "group": {"label": "Group", "fields": [
+                {"path": "first", "label": "First value", "format": "raw"}]},
             "condition": {"path": "first", "label": "First value",
                           "format": "raw", "visible": {"ifNotIn": [0]}},
         }
@@ -626,3 +627,223 @@ class TestStack07Regressions(common.KeepKeyTest):
         self.assertEqual(certified[0][0], "Runtime signer")
         self.assertTrue(certified[0][1].startswith("Audit signer ("),
                         certified[0][1])
+
+    # Phase A: tokenAmount, addressName, @.from/@.to and signed constants.
+    # Asset facts come only from the firmware token table; an address is always
+    # shown in full; the signer's message sits beside the value.
+    USDC = bytes.fromhex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+    # 0xeeee..ee is a firmware token-table sentinel; use an unlisted alias.
+    NATIVE = bytes.fromhex("44" * 20)
+
+    def _field_screens(self, descriptor, signature, arguments):
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        start = self._audit_start(program, 4 + len(arguments))
+        result, _, _, _ = self._walk(start, envelope, arguments=arguments)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        # A body that pages is one confirmation under several ButtonRequests,
+        # each reporting the same text: count it once.
+        fields = []
+        for title, body in self.screens:
+            if title == "Signer field" and (not fields or fields[-1] != body):
+                fields.append(body)
+        return fields
+
+    @staticmethod
+    def _word(value):
+        if isinstance(value, bytes):
+            return bytes(12) + value
+        return value.to_bytes(32, "big")
+
+    def _token_screen(self, token, amount, params=None):
+        signature = "send(address token,uint256 amount)"
+        fields = [{"path": "amount", "label": "Amount", "format": "tokenAmount",
+                   "params": dict({"tokenPath": "token"}, **(params or {}))}]
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send", "fields": fields}}}}
+        return self._field_screens(descriptor, signature,
+                                   self._word(token) + self._word(amount))
+
+    def test_token_amount_uses_the_firmware_token_table(self):
+        self.assertEqual(self._token_screen(self.USDC, 1500000),
+                         ["Amount:\n1.5 USDC"])
+
+    def test_token_named_by_calldata_wins_over_the_hosts_claim(self):
+        # The transaction goes to ADDRESS and a host might call it USDC; the
+        # calldata names another token, which the firmware table does not know.
+        self.assertEqual(self._token_screen(OTHER_ADDRESS, 42), [
+            "Amount:\n42\nunknown token\n0x" + OTHER_ADDRESS.hex()])
+
+    def test_signer_label_cannot_name_an_unknown_token(self):
+        signature = "send(uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send", "fields": [{
+                "path": "amount", "label": "USDC amount",
+                "format": "tokenAmount",
+                "params": {"token": "0x" + OTHER_ADDRESS.hex()}}]}}}}
+        self.assertEqual(
+            self._field_screens(descriptor, signature, self._word(42)),
+            ["USDC amount:\n42\nunknown token\n0x" + OTHER_ADDRESS.hex()])
+
+    def test_threshold_message_is_shown_beside_the_exact_amount(self):
+        params = {"threshold": 1000000, "message": "Large amount"}
+        self.assertEqual(self._token_screen(self.USDC, 1500000, params),
+                         ["Amount:\nSigner: Large amount\n1.5 USDC"])
+        self.assertEqual(self._token_screen(self.USDC, 999999, params),
+                         ["Amount:\n0.999999 USDC"])
+
+    def test_native_alias_shows_the_chains_native_asset(self):
+        params = {"nativeCurrencyAddress": ["0x" + self.NATIVE.hex()]}
+        self.assertEqual(
+            self._token_screen(self.NATIVE, 1500000000000000000, params),
+            ["Amount:\nSigner native alias:\n0x" + self.NATIVE.hex() +
+             "\n1.5 ETH"])
+        # An address outside the alias set is not the native asset.
+        self.assertEqual(
+            self._token_screen(OTHER_ADDRESS, 1500000000000000000, params),
+            ["Amount:\n1500000000000000000\nunknown token\n0x" +
+             OTHER_ADDRESS.hex()])
+
+    def test_address_name_marks_only_the_signing_account(self):
+        signer = self.client.ethereum_get_address(PATH)
+        if not isinstance(signer, bytes):
+            signer = bytes.fromhex(signer[2:])
+        signature = "pay(address recipient)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Pay", "fields": [{
+                "path": "recipient", "label": "Recipient",
+                "format": "addressName"}]}}}}
+        from keepkeylib.signed_metadata import keccak256
+
+        def checksummed(address):
+            digest = keccak256(address.hex().encode("ascii")).hex()
+            return "0x" + "".join(
+                c.upper() if c.isalpha() and int(digest[i], 16) >= 8 else c
+                for i, c in enumerate(address.hex()))
+
+        self.assertEqual(
+            self._field_screens(descriptor, signature, self._word(signer)),
+            ["Recipient:\n" + checksummed(signer) + "\n(this wallet)"])
+        near = bytes(signer[:19]) + bytes([signer[19] ^ 1])
+        self.assertEqual(
+            self._field_screens(descriptor, signature, self._word(near)),
+            ["Recipient:\n" + checksummed(near)])
+
+    def test_containers_and_signed_constants(self):
+        signature = "audit(uint256 first,uint256 second)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Audit action", "fields": [
+                {"path": "@.to", "label": "Contract", "format": "addressName"},
+                {"value": "Audit protocol", "label": "Protocol"}]}}}}
+        self.assertEqual(
+            self._field_screens(descriptor, signature,
+                                self._word(42) + self._word(7)),
+            ["Contract:\n0x" + ADDRESS.hex(), "Protocol:\nAudit protocol"])
+
+    # Phase B: the interpolated intent is shown as numbered parts after the
+    # plain intent. Each value part is formatted exactly as its field is.
+    def test_interpolated_intent_parts_show_the_same_values_as_fields(self):
+        signature = "send(address token,uint256 amount)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Send tokens",
+            "interpolatedIntent": "Send {amount} now",
+            "fields": [{"path": "amount", "label": "Amount",
+                        "format": "tokenAmount",
+                        "params": {"tokenPath": "token"}}]}}}}
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        arguments = self._word(self.USDC) + self._word(1500000)
+        result, _, _, _ = self._walk(self._audit_start(program, 68), envelope,
+                                     arguments=arguments)
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        shown = []
+        for screen in self.screens:
+            if screen[0] in ("Contract action", "Intent text 1 of 3",
+                             "Intent value 2 of 3", "Intent text 3 of 3",
+                             "Signer field") and (
+                                 not shown or shown[-1] != screen):
+                shown.append(screen)
+        self.assertEqual(shown, [
+            ("Contract action", "Send tokens"),
+            ("Intent text 1 of 3", "Send"),
+            ("Intent value 2 of 3", "1.5 USDC"),
+            ("Intent text 3 of 3", "now"),
+            ("Signer field", "Amount:\n1.5 USDC"),
+        ])
+
+    # Phase C: amount, date, duration, unit, enum and nftName. Signer-supplied
+    # units and enum labels appear beside the raw value, never instead.
+    def _one_field(self, field, arguments, signature="act(uint256 a,address b)",
+                   metadata=None):
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Act", "fields": [field]}}}}
+        if metadata:
+            descriptor["metadata"] = metadata
+        return self._field_screens(descriptor, signature, arguments)
+
+    def test_phase_c_formatters_show_exact_text(self):
+        pad = self._word(OTHER_ADDRESS)
+        cases = [
+            ({"path": "a", "label": "Value", "format": "amount"},
+             1500000000000000000, "Value:\n1.5 ETH"),
+            ({"path": "a", "label": "When", "format": "date",
+              "params": {"encoding": "timestamp"}},
+             1700000000, "When:\n2023-11-14 22:13:20 UTC\n(1700000000)"),
+            ({"path": "a", "label": "At", "format": "date",
+              "params": {"encoding": "blockheight"}},
+             19000000, "At:\nBlock 19000000"),
+            ({"path": "a", "label": "Lock", "format": "duration"},
+             93784, "Lock:\n1d 2h 3m 4s\n(93784 s)"),
+            ({"path": "a", "label": "Weight", "format": "unit",
+              "params": {"base": "kg", "decimals": 3}},
+             93784, "Weight:\nunit set by signer\n93.784 kg\nraw 93784"),
+        ]
+        for field, value, expected in cases:
+            self.assertEqual(
+                (field["format"],
+                 self._one_field(field, self._word(value) + pad)),
+                (field["format"], [expected]))
+
+    def test_enum_labels_are_the_signers_claim_beside_the_value(self):
+        field = {"path": "a", "label": "Side", "format": "enum",
+                 "params": {"$ref": "$.metadata.enums.side"}}
+        metadata = {"enums": {"side": {"0": "Buy", "1": "Sell"}}}
+        pad = self._word(OTHER_ADDRESS)
+        self.assertEqual(self._one_field(field, self._word(1) + pad,
+                                         metadata=metadata),
+                         ["Side:\nlabel set by signer\nSell (1)"])
+        self.assertEqual(self._one_field(field, self._word(5) + pad,
+                                         metadata=metadata),
+                         ["Side:\n5 (unmapped)"])
+
+    def test_nft_shows_the_collection_address(self):
+        field = {"path": "a", "label": "Item", "format": "nftName",
+                 "params": {"collectionPath": "b"}}
+        self.assertEqual(
+            self._one_field(field, self._word(42) + self._word(self.USDC)),
+            ["Item:\nToken ID 42\nCollection\n"
+             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"])
+
+    def test_malformed_calldata_is_refused_before_a_constant_field(self):
+        # The first field shows a signed constant and captures nothing, so
+        # only the up-front validation pass stands between malformed calldata
+        # and the first screen.
+        signature = "pay(address recipient)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Pay", "fields": [
+                {"value": "Audit protocol", "label": "Protocol"},
+                {"path": "recipient", "label": "Recipient",
+                 "format": "addressName"}]}}}}
+        program = erc7730_compiler.compile_calldata(
+            descriptor, signature, 1, ADDRESS)
+        envelope = self._preload(program)
+        dirty = b"\x01" + bytes(11) + OTHER_ADDRESS  # non-canonical address
+        result, buttons, passes, _ = self._walk(
+            self._audit_start(program, 36), envelope, arguments=dirty)
+        assert_failure(self, result, types.Failure_SyntaxError,
+                       "ERC-7730 calldata does not match definition")
+        self.assertEqual((buttons, passes), (0, 1))
