@@ -8,34 +8,38 @@ This report follows the main firmware worktree's
 The code-bearing review is [PR #863](https://github.com/BitHighlander/keepkey-firmware/pull/863),
 targeting `release/715-stack-07-erc7730-core` at immutable base
 `8c654bcd8e1c8936a86aaa625a4ab78900a250e9`. The third-review repair
-code and dependency head is `e54cc14256fa3a3da14b08c59b05623d61016467`.
+code head is `e54cc14256fa3a3da14b08c59b05623d61016467`; the corrected
+dependency head is `c1f5800e9`.
 Exact-head
 [CI 36197508235](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36197508235)
 passed all 16 required jobs at the earlier `5e00cc6d8` head,
 [CI 36218997106](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36218997106)
 passed all 16 required jobs at report head `2e00d72bf5d2a8a7c31c318605ef56139429ff60`,
 and [CI 36219915084](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36219915084)
-passed all 16 required jobs at `69a4cc6a9`. The third-review repair has
-passed local native and ARM checks; its hosted CI is pending.
+passed all 16 required jobs at `69a4cc6a9`. Third-repair
+[CI 36262373437](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36262373437)
+ran the new alias test successfully but failed both integration jobs at the EX8
+screenshot audit because its old report declaration named the renamed test.
+The corrected companion pin requires a new exact-head run.
 The final containing report commit belongs in the
 PR description, since this source cannot name its own commit.
 
 | Checkpoint | Status after third-review local repair | Limit |
 | --- | --- | --- |
 | Implementation | Complete for the selected 7.15 Phase A–E subset | 7.16 DELEGATECALL and hard-refusal policy remain outside this block. |
-| Targeted verification | Earlier head: 202 focused firmware tests, 38 runtime and 21 inherited 7a wire tests. Third repair: full firmware 656/656 and focused alias bounds pass; companion runtime expectation is updated. | Current-head wire test awaits hosted CI. |
-| Integration verification | Exact-head full/BTC hosted CI, ARM, emulator, runtime and report gates passed on `69a4cc6a9`. Third repair locally links both ARM variants and passes SRAM gates. | Third-repair hosted CI pending; emulator publication is separate. |
+| Targeted verification | Earlier head: 202 focused firmware tests, 38 runtime and 21 inherited 7a wire tests. Third repair: full firmware 656/656 and focused alias bounds pass; the new runtime test passed in `36262373437`. | Corrected EX8 report registration awaits exact-head CI. |
+| Integration verification | Exact-head full/BTC hosted CI, ARM, emulator, runtime and report gates passed on `69a4cc6a9`. Third repair locally links both ARM variants and passes SRAM gates. `36262373437` failed only its screenshot audits due to the stale EX8 test name. | Corrected-pin hosted CI pending; emulator publication is separate. |
 | Adversarial contract verification | Initial and four-round re-audit findings repaired with controls; the three Copilot rounds found seven distinct issues, including one in round three. The new alias disclosure control fails when disabled. | The re-audit's two-dry-round stop rule was not reached. |
 | External review delivery | Three reviews delivered on their then-current heads: `5323189342` (four findings), `5323944293` (two), `5324788734` (one). | No clean current-head review; the three-round budget is exhausted. |
-| Finding disposition | First six findings have pushed-source replies and resolved threads. The seventh is repaired locally in `e54cc1425` with a negative control. | Its thread remains open until the fix and exact-head CI are pushed. |
+| Finding disposition | First six findings have pushed-source replies and resolved threads. The seventh is repaired in `e54cc1425` with a negative control and pushed-source reply. | Its thread remains open until corrected-pin exact-head CI passes. |
 | Release acceptance | Pending | Physical-device checks, assembled release and promotion are separate. |
 
-The candidate pins python-keepkey `e68dcd667db2c8a532fe9f58d6c76c88d48fa40e`
+The candidate pins python-keepkey `df376eec6ea7d705f7a70bdd31210f8cf929f97e`
 (upstream PR #228) and device-protocol
 `5fec9e6906a340be5eb3d795ec746769065b2db8` (upstream PR #123).
 Both pins are clean in the local worktree. CI `36219915084` checked the prior
-python-keepkey pin `4f114707f4401002646febc12c370b766ebd059d`;
-current-pin hosted verification is pending.
+python-keepkey pin `4f114707f4401002646febc12c370b766ebd059d`, and
+CI `36262373437` checked `e68dcd6`. Current-pin hosted verification is pending.
 
 ## Scope and identity
 
@@ -210,7 +214,11 @@ Wei, an unknown chain, the maximum 256-bit value and the Wanchain state
 boundary. Disabling the new disclosure branch restores the bare `1.5 ETH`
 output and makes three assertions fail. The companion runtime test in
 python-keepkey `e68dcd6` expects the marked address before `1.5 ETH`; the
-hosted OLED flow has not yet run at this pin.
+hosted OLED flow passed at `e68dcd6` in run `36262373437`, but the screenshot
+audit failed because EX8 in `generate-test-report.py` still named the old test.
+python-keepkey `df376ee` updates EX8's test key, security description and
+screen label; its seven report-variant tests and PR #228 canonical smoke pass.
+This was a report-registration mismatch, not a formatter or runtime failure.
 
 The repaired full native firmware suite passed 656/656 in a fresh emulator
 working directory; running it in a directory with a persisted `emulator.img`
@@ -238,7 +246,7 @@ been performed and no clean review is claimed.
 Each row comes from `git show --format= --numstat COMMIT_SHA`. Counts include
 code, tests, documentation and submodule pointer lines where present. The rows
 overlap in changed lines and must not be summed as the net PR diff. The adjacent
-code-and-report predecessor is `8c654bcd8e1c8936a86aaa625a4ab78900a250e9..e54cc14256fa3a3da14b08c59b05623d61016467`: 34 paths, 4,041 additions and 415 deletions at that snapshot.
+code-and-report predecessor is `8c654bcd8e1c8936a86aaa625a4ab78900a250e9..c1f5800e9`: 34 paths, 4,086 additions and 415 deletions at that snapshot.
 
 | Commit | Paths | Added | Deleted | Prior-to-new behavior and evidence |
 | --- | ---: | ---: | ---: | --- |
@@ -264,6 +272,8 @@ code-and-report predecessor is `8c654bcd8e1c8936a86aaa625a4ab78900a250e9..e54cc1
 | `2e00d72bf` | 2 | 148 | 3 | Adds canonical audit source and PDF; documentation only, binary excluded from line totals. |
 | `69a4cc6a9` | 2 | 15 | 11 | Records passing exact-head CI and resolved second-review threads; documentation only. |
 | `e54cc1425` | 5 | 38 | 16 | Discloses signer-supplied native alias and token address; full native, ARM and negative-control checks pass. |
+| `db53fc540` | 2 | 78 | 33 | Records the third finding and local repair in source/PDF; documentation only. |
+| `c1f5800e9` | 1 | 1 | Pins python-keepkey EX8 screenshot declaration to the renamed runtime test. |
 
 The final inventory must be regenerated after the report source and PDF are
 committed. The containing final PR SHA is recorded in the PR description.
@@ -273,13 +283,13 @@ committed. The containing final PR SHA is recorded in the PR description.
 Reproduce with `git diff --numstat --no-renames
 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..FINAL_HEAD`, substituting
 the containing report commit SHA from PR #863. There are 34 paths, including
-the PDF binary, 4,086 text additions and 415 deletions. The report source
+the PDF binary, 4,096 text additions and 415 deletions. The report source
 cannot name its own containing commit; the PR description records that SHA.
 
 | Path | Added | Deleted | Role |
 | --- | ---: | ---: | --- |
 | `deps/python-keepkey` | 1 | 1 | dependency pin |
-| `docs/release/audit-units/715-07b-formatters-audit-20260925.md` | 329 | 0 | handoff/report |
+| `docs/release/audit-units/715-07b-formatters-audit-20260925.md` | 339 | 0 | handoff/report |
 | `docs/release/audit-units/715-07b-formatters-audit-20260925.pdf` | binary | binary | rendered report |
 | `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 87 | 3 | handoff/report |
 | `docs/security/HANDOFF-ERC7730-PHASE-E.md` | 209 | 0 | handoff/report |
@@ -320,9 +330,9 @@ The report source is this Markdown file. Its rendered companion is
 pages); the PDF was opened and its extracted text checked against the source.
 Both artifacts must be present in the final adjacent PR diff. That final diff
 has 34 paths, including the PDF binary. The Markdown source contributes
-329 added lines and zero deletions; all other text paths at code head
-`e54cc1425` contribute 3,757 additions and 415 deletions. Thus the final
-adjacent text diff has 4,086 additions and 415 deletions. Reproduce after the
+339 added lines and zero deletions; all other text paths at code and pin head
+`c1f5800e9` contribute 3,757 additions and 415 deletions. Thus the final
+adjacent text diff has 4,096 additions and 415 deletions. Reproduce after the
 containing report commit with `git diff --numstat --no-renames
 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..FINAL_HEAD` and substitute
 the final commit SHA from PR #863 for `FINAL_HEAD`. The PDF is binary and its
