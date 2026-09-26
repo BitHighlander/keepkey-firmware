@@ -416,6 +416,7 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
           return false;
         v->signature[v->entry_index] =
             source_index == 3 ? ERC7730_CLASS_UINT : ERC7730_CLASS_ADDRESS;
+        if (source_index == 3) v->reads_value = true;
       } else {
         /* The literal table follows; resolve the class at the formatter. */
         if (source_index >= 64) return false;
@@ -674,6 +675,9 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
       (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0 ||
       required == 0 || (roles & required) != required)
     return false;
+  /* Embedded calldata is executed for calldata definitions only. */
+  if (v->formatter_kind == 13 && v->header[7] != ERC7730_DEFINITION_CALLDATA)
+    return false;
   if ((v->formatter_kind == 3 && (roles & FORMAT_ROLE_BIT(2)) == 0) ||
       (v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
       (v->formatter_kind == 8 && (roles & FORMAT_ROLE_BIT(10)) == 0) ||
@@ -686,9 +690,11 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
   /* The display section checks iteration against these; cert[] is idle from
    * the end of the path section until the bindings. */
   v->cert[v->entry_index] = v->formatter_value_array;
-  /* bit 0: an argument iterates; bit 2: the value is a signer constant. */
+  /* bit 0: an argument iterates; bit 1: embedded calldata; bit 2: the value
+   * is a signer constant */
   v->cert[64u + v->entry_index] =
       (uint8_t)((v->formatter_any_array ? 1u : 0u) |
+                (v->formatter_kind == 13 ? 2u : 0u) |
                 (v->formatter_value_literal ? 4u : 0u));
   v->formatter_value_array = 0xff;
   v->formatter_any_array = false;
@@ -750,16 +756,23 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (source == 1 && (cls & 0x40u) != 0) cls = literal_class(v, cls & 0x3fu);
   }
   if (!erc7730_cap_value(v->formatter_kind, role, cls)) return false;
+  /* Signer text shown in a value's screen stays short enough to render. */
   if (source == 3 && (role == 5 || role == 8) && !short_string(v, index))
     return false;
+  /* unit decimals: a one-byte literal no greater than the digits of a word. */
   if (v->formatter_kind == 7 && role == 4 &&
       (index >= 64 || ((v->literal_decimals_mask >> index) & 1u) == 0))
     return false;
-  /* Only raw may show a signer constant as its value. */
-  if (source == 1 && (v->signature[index] & 0x40u) != 0 && role == 1) {
-    if (v->formatter_kind != 1) return false;
+  /* Formatters show values the device decodes from the signed data. Only
+   * raw may show a signer constant, as the signer's own field. An embedded
+   * call's callee, value and authority are read from calldata or a
+   * transaction container, never from a signer constant. */
+  if (source == 1 && (v->signature[index] & 0x40u) != 0 &&
+      ((role == 1 && v->formatter_kind != 1) ||
+       (v->formatter_kind == 13 && (role == 15 || role == 17 || role == 18))))
+    return false;
+  if (role == 1 && (v->signature[index] & 0x40u) != 0)
     v->formatter_value_literal = true;
-  }
   if (source == 1 && v->path_arrays[index] != 0xff) {
     v->formatter_any_array = true;
     if (role == 1) v->formatter_value_array = v->path_arrays[index];
@@ -788,8 +801,6 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   if (opcode < 1 || opcode > 10 || flags != 0 ||
       !erc7730_cap_display(&executable, pc))
     return false;
-  if (opcode == 3 && a < 64 && (v->cert[64u + a] & 4u) != 0) return false;
-  if (opcode == 4 && !short_string(v, a)) return false;
   /* Iteration: one array at a time, calldata only, and every field inside
    * reads that array; an argument that iterates only inside it. */
   if (opcode == 7) {
@@ -804,6 +815,12 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
     const uint16_t formatter = opcode == 3 ? a : b;
     if (formatter >= 64) return false;
     const uint8_t value_array = v->cert[formatter];
+    /* An embedded call is its own screens, never a part of the intent. */
+    /* "Intent value" names what the device decodes: never an embedded
+     * call, never a signer constant (which is intent text). */
+    if (opcode == 3 && (v->cert[64u + formatter] & 6u) != 0) return false;
+    /* A field label is signer text shown with its value. */
+    if (opcode == 4 && !short_string(v, a)) return false;
     if (((v->cert[64u + formatter] & 1u) != 0 && !v->display_in_iteration) ||
         (v->display_in_iteration && value_array != v->display_iteration_array))
       return false;
@@ -1197,6 +1214,7 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   identity->revocation_epoch = read_be32(v->header + 174);
   identity->program_length = v->program_length;
   identity->envelope_length = v->total_length;
+  identity->reads_value = v->reads_value;
   memzero(actual_id, sizeof(actual_id));
   v->state = STREAM_DONE;
   return ERC7730_CATALOG_COMPLETE;
@@ -1382,6 +1400,10 @@ bool erc7730_catalog_preloaded(Erc7730CatalogIdentity* identity) {
   if (!identity || !preload.available) return false;
   memcpy(identity, &preload.data.identity, sizeof(*identity));
   return true;
+}
+
+bool erc7730_catalog_preloaded_reads_value(void) {
+  return preload.available && preload.data.identity.reads_value;
 }
 
 bool erc7730_catalog_preloaded_replay_begin(uint8_t definition_id[32],
