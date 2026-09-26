@@ -75,13 +75,23 @@ TEST(Erc7730Field, TokenAmountUsesOnlyTheFirmwareTokenTable) {
             "0x1111111111111111111111111111111111111111");
 }
 
-// A native alias is rendered as the ordinary review renders the value field.
-TEST(Erc7730Field, NativeAliasUsesTheChainsNativeAsset) {
-  EXPECT_EQ(amount(word(1500000000000000000ull), kUnknown, true, 1), "1.5 ETH");
-  EXPECT_EQ(amount(word(1000), kUnknown, true, 1), "1000 Wei");
+// An unknown address called native by the signer must stay visible as a
+// signer-supplied interpretation, even when its amount uses native decimals.
+TEST(Erc7730Field, NativeAliasDisclosesSignerMappingAndAddress) {
+  const std::string prefix =
+      "Signer native alias:\n0x1111111111111111111111111111111111111111\n";
+  EXPECT_EQ(amount(word(1500000000000000000ull), kUnknown, true, 1),
+            prefix + "1.5 ETH");
+  EXPECT_EQ(amount(word(1000), kUnknown, true, 1), prefix + "1000 Wei");
   // A chain without a native name here keeps the exact amount in wei.
   EXPECT_EQ(amount(word(1500000000000000000ull), kUnknown, true, 999999),
-            "1500000000000000000 Wei");
+            prefix + "1500000000000000000 Wei");
+  const std::vector<uint8_t> maximum(32, 0xff);
+  EXPECT_EQ(
+      amount(maximum, kUnknown, true, 999999),
+      prefix +
+          "115792089237316195423570985008687907853269984665640564039457584007"
+          "913129639935 Wei");
 }
 
 // The signer's threshold message is shown above the value, never instead.

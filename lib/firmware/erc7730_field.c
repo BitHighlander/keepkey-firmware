@@ -60,6 +60,16 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
          ethereumFormatAmount(&amnt, native ? NULL : known, (uint32_t)chain_id,
                               value, sizeof(value));
     memzero(&amnt, sizeof(amnt));
+    if (ok && native) {
+      char checksummed[41], disclosed[160];
+      ethereum_address_checksum(token, checksummed, false, 0);
+      const int length =
+          snprintf(disclosed, sizeof(disclosed),
+                   "Signer native alias:\n0x%s\n%s", checksummed, value);
+      ok = length > 0 && (size_t)length < sizeof(disclosed);
+      if (ok) memcpy(value, disclosed, (size_t)length + 1u);
+      memzero(disclosed, sizeof(disclosed));
+    }
   } else {
     char digits[80], checksummed[41];
     ethereum_address_checksum(token, checksummed, false, 0);
