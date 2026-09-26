@@ -9,6 +9,8 @@ Target: `release/715-stack-07-erc7730-core` at
 `8c654bcd8e1c8936a86aaa625a4ab78900a250e9` (7a).
 Code predecessor before this report:
 `75824620923c811e0c1e133879eb6d90ca63bdb6`.
+Post-report wire expectation correction:
+`0c4b98f116598bad45a023b4a3fe8af3bc5cc0d1`.
 Python companion: `deps/python-keepkey` at
 `f813519c7c1163783b0e89b5cbd70536831f5e49`,
 [companion draft #114](https://github.com/BitHighlander/python-keepkey/pull/114).
@@ -26,9 +28,9 @@ from this unit's added source.
 ## 2. Git inventory and changed behavior
 
 Immutable inventory range for code and tests:
-`git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..75824620923c811e0c1e133879eb6d90ca63bdb6`.
+`git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..0c4b98f116598bad45a023b4a3fe8af3bc5cc0d1`.
 Frozen inventory range including the source report and PDF:
-`git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..25e9ff8819e91183978a94f549c55b8d858eb82d`.
+`git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..fe1c3df9187854807fe2742827fa19b4301d66c9`.
 The report source and PDF are added after that code predecessor. Counts are
 net adjacent-diff counts, including tests, documentation and the companion
 gitlink; they are not a sum of overlapping commit counts. The PR body records
@@ -38,7 +40,7 @@ the final containing head.
 | Tracked path | Added | Deleted | Change and evidence |
 | --- | ---: | ---: | --- |
 | `deps/python-keepkey` | 1 | 1 | Pins the matching compiler mirror and its tests. |
-| `docs/release/audit-units/715-07b1-formatters-audit-20260926.md` | 126 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b1-formatters-audit-20260926.md` | 128 | 0 | Records exact scope, findings, inventory and validation. |
 | `docs/release/audit-units/715-07b1-formatters-audit-20260926.pdf` | - | - | Rendered audit evidence from the adjacent source report. |
 | `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 67 | 2 | Records on-screen behavior and fail-closed limits. |
 | `include/keepkey/firmware/eip712_stream.h` | 3 | 0 | Declares bounded state and the phase's runtime contract. |
@@ -61,7 +63,7 @@ the final containing head.
 | `lib/firmware/erc7730_workflow.c` | 112 | 7 | Keeps replay, validation and UI state in sequence. |
 | `lib/firmware/ethereum.c` | 12 | 0 | Implements the phase's bounded decoding or display rule. |
 | `lib/firmware/fsm_msg_ethereum.h` | 722 | 88 | Shows and confirms the device-decoded review screens. |
-| `scripts/emulator/test_stack07_regressions.py` | 228 | 10 | Exercises signed wire requests and review screens. |
+| `scripts/emulator/test_stack07_regressions.py` | 231 | 10 | Exercises signed wire requests and review screens. |
 | `unittests/firmware/CMakeLists.txt` | 1 | 0 | Builds the new source or native regression suite. |
 | `unittests/firmware/erc7730_abi_stream.cpp` | 10 | 2 | Covers accepted neighbors and fail-closed boundaries. |
 | `unittests/firmware/erc7730_catalog.cpp` | 370 | 19 | Covers accepted neighbors and fail-closed boundaries. |
@@ -106,8 +108,8 @@ clean external review. Physical-device confirmation remains a release gate.
 | Focused catalog and formatter | `758246209` | 63 catalog/field/format/ABI tests passed; independent NUL test passed. |
 | Host/device mirror | firmware validator built from `758246209`, Python `f813519` | Two targeted compiler/validator cases passed. |
 | Corrected cppcheck | `758246209`, Ubuntu 24.04 CI flags | Zero findings. |
-| First hosted split run | GitHub Actions `36268229311`, head `758246209` | In progress when this source report was prepared; final exact-head status belongs in the PR body. |
-| ARM and wire | Same hosted run | Pending final job status when this source report was prepared; no physical device used. |
+| First hosted split run | GitHub Actions `36269073085`, head `c5bf7433` | ARM, emulator, native and static passed; full Python wire failed on five stale screen expectations. |
+| Wire correction | `0c4b98f11` | Updates signer marks, numbered intent titles and the native alias fixture. The same assertions pass on the source-equivalent final #863 tests; this split head needs its own exact-head wire run. No physical device used. |
 
 The canonical pre-push script failed on inherited duplicate Osmosis/Solana
 nanopb options, the absent `scripts/test_generate_test_report.py` in the 7a
