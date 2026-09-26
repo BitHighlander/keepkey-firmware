@@ -7,32 +7,35 @@ This report follows the main firmware worktree's
 `743843a17139a7394325a961b9a38666c8e8af7a0005e0ff52eb94559ec8dbb7`.
 The code-bearing review is [PR #863](https://github.com/BitHighlander/keepkey-firmware/pull/863),
 targeting `release/715-stack-07-erc7730-core` at immutable base
-`8c654bcd8e1c8936a86aaa625a4ab78900a250e9`. The last fully validated
-code, test and dependency head before this report update is
-`5e00cc6d8d62c190d6f60793117fc421652d3ff7`; repair code head
-`2cce087c1160a818109141a805a61223ed4748e5`. Exact-head
+`8c654bcd8e1c8936a86aaa625a4ab78900a250e9`. The third-review repair
+code and dependency head is `e54cc14256fa3a3da14b08c59b05623d61016467`.
+Exact-head
 [CI 36197508235](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36197508235)
-passed all 16 required jobs at the prior head, and
+passed all 16 required jobs at the earlier `5e00cc6d8` head,
 [CI 36218997106](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36218997106)
-passed all 16 required jobs at report head `2e00d72bf5d2a8a7c31c318605ef56139429ff60`.
+passed all 16 required jobs at report head `2e00d72bf5d2a8a7c31c318605ef56139429ff60`,
+and [CI 36219915084](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36219915084)
+passed all 16 required jobs at `69a4cc6a9`. The third-review repair has
+passed local native and ARM checks; its hosted CI is pending.
 The final containing report commit belongs in the
 PR description, since this source cannot name its own commit.
 
-| Checkpoint | Status after second-review repair and exact-head CI | Limit |
+| Checkpoint | Status after third-review local repair | Limit |
 | --- | --- | --- |
 | Implementation | Complete for the selected 7.15 Phase A–E subset | 7.16 DELEGATECALL and hard-refusal policy remain outside this block. |
-| Targeted verification | Prior head: 202 focused firmware tests, 38 runtime and 21 inherited 7a wire tests. Local repair: 59 focused firmware tests and the complete 656/135 full/BTC firmware suites pass. | The wire and hosted evidence still describes the earlier code head. |
-| Integration verification | Exact-head full/BTC hosted CI, ARM, emulator, runtime and report gates passed on `2e00d72bf`. Local repair also passed both ARM/SRAM gates. | Emulator publication was deliberately skipped. |
-| Adversarial contract verification | Initial and four-round re-audit findings repaired, with regression controls; two second-review regressions have local positive and negative controls. | The re-audit's two-dry-round stop rule was not reached. |
-| External review delivery | First review `5323189342` found four issues and their threads are resolved. Second review `5323944293` on `5e00cc6d8` found two further issues. | Current-head review remains pending. |
-| Finding disposition | Both second-review issues are repaired in `2cce087c1` with independently failing negative controls. Each has a pushed-source reply; both threads are resolved. | A third current-head review remains pending. |
+| Targeted verification | Earlier head: 202 focused firmware tests, 38 runtime and 21 inherited 7a wire tests. Third repair: full firmware 656/656 and focused alias bounds pass; companion runtime expectation is updated. | Current-head wire test awaits hosted CI. |
+| Integration verification | Exact-head full/BTC hosted CI, ARM, emulator, runtime and report gates passed on `69a4cc6a9`. Third repair locally links both ARM variants and passes SRAM gates. | Third-repair hosted CI pending; emulator publication is separate. |
+| Adversarial contract verification | Initial and four-round re-audit findings repaired with controls; the three Copilot rounds found seven distinct issues, including one in round three. The new alias disclosure control fails when disabled. | The re-audit's two-dry-round stop rule was not reached. |
+| External review delivery | Three reviews delivered on their then-current heads: `5323189342` (four findings), `5323944293` (two), `5324788734` (one). | No clean current-head review; the three-round budget is exhausted. |
+| Finding disposition | First six findings have pushed-source replies and resolved threads. The seventh is repaired locally in `e54cc1425` with a negative control. | Its thread remains open until the fix and exact-head CI are pushed. |
 | Release acceptance | Pending | Physical-device checks, assembled release and promotion are separate. |
 
-The firmware pins python-keepkey `4f114707f4401002646febc12c370b766ebd059d`
+The candidate pins python-keepkey `e68dcd667db2c8a532fe9f58d6c76c88d48fa40e`
 (upstream PR #228) and device-protocol
 `5fec9e6906a340be5eb3d795ec746769065b2db8` (upstream PR #123).
-Both pins were clean in the local worktree; the parent PR's exact-head CI
-checked the same pointers.
+Both pins are clean in the local worktree. CI `36219915084` checked the prior
+python-keepkey pin `4f114707f4401002646febc12c370b766ebd059d`;
+current-pin hosted verification is pending.
 
 ## Scope and identity
 
@@ -184,13 +187,50 @@ generation. The local device build needed only a correction
 to the generated protoc command's plugin name; no firmware source or protocol
 definition was changed for that workaround.
 
+## Third Copilot review and alias disclosure repair
+
+[Review 5324788734](https://github.com/BitHighlander/keepkey-firmware/pull/863#pullrequestreview-5324788734)
+assessed `69a4cc6a9` and returned one new P2 security finding,
+[thread 4110352625](https://github.com/BitHighlander/keepkey-firmware/pull/863#discussion_r4110352625).
+The signer controls the signed definition's `nativeCurrencyAddress` alias set.
+During the display-argument replay, `fsm_msg_ethereum.h` sets `token_native`
+when an alias equals the token address from calldata. Before the repair,
+`erc7730_format_token_amount()` rendered an unlisted address as `1.5 ETH`
+without the original address or a signer-text mark. The existing native and
+runtime tests expected that output, confirming the review's trace. The
+forbidden output is a device-owned native-asset claim for an arbitrary token;
+the allowed output discloses the original address and signer-supplied mapping
+before any native-unit interpretation. This applies to full-product ERC-7730
+field and interpolated-intent displays; Bitcoin-only does not dispatch them.
+
+Code head `e54cc1425` now renders `Signer native alias:`, the EIP-55 address,
+then the native-unit amount. A firmware-known token still uses its firmware
+ticker and decimals, even when in the alias set. The native test checks ETH,
+Wei, an unknown chain, the maximum 256-bit value and the Wanchain state
+boundary. Disabling the new disclosure branch restores the bare `1.5 ETH`
+output and makes three assertions fail. The companion runtime test in
+python-keepkey `e68dcd6` expects the marked address before `1.5 ETH`; the
+hosted OLED flow has not yet run at this pin.
+
+The repaired full native firmware suite passed 656/656 in a fresh emulator
+working directory; running it in a directory with a persisted `emulator.img`
+first failed one unrelated recovery storage-state test. The focused recovery
+test and then the full suite passed with isolated fresh storage. Both
+MinSizeRel ARM variants link and pass `check_sram_budget.py` (full reserve
+17,800 B, Bitcoin-only 39,136 B; largest frame 7,664 B).
+
+The third review was the third authorized round and contained a code-change
+finding. The SOP therefore requires a block split before another review, or
+an explicit owner decision to accept a different checkpoint. A split has not
+been performed and no clean review is claimed.
+
 ## Not verified
 
 - **Physical device.** No 7b build has been flashed or run on hardware, and there are no OLED photographs from a device. The emulator frames above are the only display evidence.
-- **Copilot convergence.** The second review found two issues. They are repaired, replied to and resolved, but a third review of the current code-bearing head has not yet been delivered.
+- **Copilot convergence.** Three reviews delivered seven findings in total. The third found the alias defect above, so no review on the repaired code head is clean. The SOP's three-round budget is exhausted; block-split authorization or an explicit owner exception is pending.
 - Pre-existing duplicate nanopb options in `messages-osmosis.options` and `messages-solana.options` (from the 00b stack, `4c56e19e3`), flagged by `scripts/preflight.sh`, are outside 7b.
-- **Pre-push gate.** The canonical `scripts/preflight.sh` from `audit/715-00b-review-sop` was run after the repair. It failed on those inherited duplicate options and on `scripts/test_generate_test_report.py`, which is absent from this 7b branch. The local cppcheck invocation in that script also references a missing `.cppcheck-build` path; an updated local copy with `/tmp/cppcheck-build` completed its cppcheck step but still failed the two inherited checks. The script's fail-closed result is preserved; it is not called a passing preflight.
-- **Historical-finding granularity.** The Phase E handoff clusters the first audit's 42 findings under D1–D19 but does not retain a row for each raw finding. The re-audit likewise records its 14 distinct defects in prose and tests. Those source records support the grouped dispositions above, but they cannot satisfy a per-finding closure matrix for every original report without the raw manifests. The two Copilot findings above include their direct source, observer, entry path, positive and negative checks; broader historical matrix completion remains an evidence gap.
+- **Pre-push gate.** The canonical `scripts/preflight.sh` from `audit/715-00b-review-sop` failed on inherited duplicate options and on `scripts/test_generate_test_report.py`, absent from this 7b branch. Its cppcheck invocation also references a missing `.cppcheck-build` path; a corrected local copy completed cppcheck without findings but still failed the two inherited checks. The owner authorized pushing with these failures recorded. The canonical script's fail-closed result is preserved and is not called a passing preflight.
+- **Historical-finding granularity.** The Phase E handoff clusters the first audit's 42 findings under D1–D19 but does not retain a row for each raw finding. The re-audit likewise records its 14 distinct defects in prose and tests. Those source records support the grouped dispositions above, but they cannot satisfy a per-finding closure matrix for every original report without the raw manifests. The Copilot repair sections include their direct source, observer, entry path, positive and negative checks; broader historical matrix completion remains an evidence gap.
 - Presentation limits: the board pager wraps by pixel width, so a checksummed address can continue on the next OLED page of the same confirmation. An array element whose value needs numbered parts and also pages can exceed the title width.
 
 ## Immutable historical commit inventory
@@ -198,7 +238,7 @@ definition was changed for that workaround.
 Each row comes from `git show --format= --numstat COMMIT_SHA`. Counts include
 code, tests, documentation and submodule pointer lines where present. The rows
 overlap in changed lines and must not be summed as the net PR diff. The adjacent
-code-and-report predecessor is `8c654bcd8e1c8936a86aaa625a4ab78900a250e9..2cce087c1160a818109141a805a61223ed4748e5`: 33 paths, 3,869 additions and 414 deletions at that snapshot.
+code-and-report predecessor is `8c654bcd8e1c8936a86aaa625a4ab78900a250e9..e54cc14256fa3a3da14b08c59b05623d61016467`: 34 paths, 4,041 additions and 415 deletions at that snapshot.
 
 | Commit | Paths | Added | Deleted | Prior-to-new behavior and evidence |
 | --- | ---: | ---: | ---: | --- |
@@ -221,28 +261,33 @@ code-and-report predecessor is `8c654bcd8e1c8936a86aaa625a4ab78900a250e9..2cce08
 | `ed6c8e3a7` | 1 | 131 | 0 | Adds the audit record; documentation only. |
 | `5e00cc6d8` | 6 | 26 | 15 | Repairs first Copilot findings in verifier, mirror, tests and handoffs. |
 | `2cce087c1` | 5 | 59 | 2 | Separates display-frame storage and rejects embedded NUL in replayed strings; native regressions and negative controls pass. |
+| `2e00d72bf` | 2 | 148 | 3 | Adds canonical audit source and PDF; documentation only, binary excluded from line totals. |
+| `69a4cc6a9` | 2 | 15 | 11 | Records passing exact-head CI and resolved second-review threads; documentation only. |
+| `e54cc1425` | 5 | 38 | 16 | Discloses signer-supplied native alias and token address; full native, ARM and negative-control checks pass. |
 
 The final inventory must be regenerated after the report source and PDF are
 committed. The containing final PR SHA is recorded in the PR description.
 
-## Adjacent path inventory at the repaired code head
+## Final adjacent path inventory
 
-Reproduce with `git diff --numstat --no-renames 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..2cce087c1160a818109141a805a61223ed4748e5`.
-This immutable snapshot contains 33 paths, 3,869 additions and 414 deletions.
-The final report/PDF commit will add its documentation delta and PDF path;
-its exact final inventory belongs in the PR description.
+Reproduce with `git diff --numstat --no-renames
+8c654bcd8e1c8936a86aaa625a4ab78900a250e9..FINAL_HEAD`, substituting
+the containing report commit SHA from PR #863. There are 34 paths, including
+the PDF binary, 4,086 text additions and 415 deletions. The report source
+cannot name its own containing commit; the PR description records that SHA.
 
 | Path | Added | Deleted | Role |
 | --- | ---: | ---: | --- |
 | `deps/python-keepkey` | 1 | 1 | dependency pin |
-| `docs/release/audit-units/715-07b-formatters-audit-20260925.md` | 135 | 0 | handoff/report |
-| `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 86 | 2 | handoff/report |
+| `docs/release/audit-units/715-07b-formatters-audit-20260925.md` | 329 | 0 | handoff/report |
+| `docs/release/audit-units/715-07b-formatters-audit-20260925.pdf` | binary | binary | rendered report |
+| `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 87 | 3 | handoff/report |
 | `docs/security/HANDOFF-ERC7730-PHASE-E.md` | 209 | 0 | handoff/report |
 | `include/keepkey/firmware/eip712_stream.h` | 3 | 0 | API/contract |
 | `include/keepkey/firmware/erc7730_abi_stream.h` | 9 | 0 | API/contract |
 | `include/keepkey/firmware/erc7730_capabilities.h` | 80 | 10 | API/contract |
 | `include/keepkey/firmware/erc7730_catalog.h` | 19 | 0 | API/contract |
-| `include/keepkey/firmware/erc7730_field.h` | 68 | 0 | API/contract |
+| `include/keepkey/firmware/erc7730_field.h` | 69 | 0 | API/contract |
 | `include/keepkey/firmware/erc7730_format.h` | 5 | 5 | API/contract |
 | `include/keepkey/firmware/erc7730_program.h` | 4 | 0 | API/contract |
 | `include/keepkey/firmware/erc7730_workflow.h` | 123 | 0 | API/contract |
@@ -252,7 +297,7 @@ its exact final inventory belongs in the PR description.
 | `lib/firmware/erc7730_abi_stream.c` | 34 | 4 | runtime |
 | `lib/firmware/erc7730_capabilities.c` | 184 | 11 | runtime |
 | `lib/firmware/erc7730_catalog.c` | 158 | 7 | runtime |
-| `lib/firmware/erc7730_field.c` | 287 | 0 | runtime |
+| `lib/firmware/erc7730_field.c` | 297 | 0 | runtime |
 | `lib/firmware/erc7730_format.c` | 1 | 5 | runtime |
 | `lib/firmware/erc7730_program.c` | 12 | 0 | runtime |
 | `lib/firmware/erc7730_workflow.c` | 377 | 16 | runtime |
@@ -263,7 +308,7 @@ its exact final inventory belongs in the PR description.
 | `unittests/firmware/CMakeLists.txt` | 1 | 0 | native regression |
 | `unittests/firmware/erc7730_abi_stream.cpp` | 10 | 2 | native regression |
 | `unittests/firmware/erc7730_catalog.cpp` | 639 | 49 | native regression |
-| `unittests/firmware/erc7730_field.cpp` | 293 | 0 | native regression |
+| `unittests/firmware/erc7730_field.cpp` | 304 | 0 | native regression |
 | `unittests/firmware/erc7730_format.cpp` | 14 | 10 | native regression |
 | `unittests/firmware/erc7730_program.cpp` | 21 | 0 | native regression |
 | `unittests/firmware/erc7730_workflow.cpp` | 9 | 5 | native regression |
@@ -271,13 +316,13 @@ its exact final inventory belongs in the PR description.
 ## Final artifact inventory
 
 The report source is this Markdown file. Its rendered companion is
-`docs/release/audit-units/715-07b-formatters-audit-20260925.pdf` (A4, eight
+`docs/release/audit-units/715-07b-formatters-audit-20260925.pdf` (A4, nine
 pages); the PDF was opened and its extracted text checked against the source.
 Both artifacts must be present in the final adjacent PR diff. That final diff
 has 34 paths, including the PDF binary. The Markdown source contributes
-284 added lines and zero deletions; all other text paths at the repaired
-code head contribute 3,734 additions and 414 deletions. Thus the final adjacent
-text diff has 4,018 additions and 414 deletions. Reproduce after the
+329 added lines and zero deletions; all other text paths at code head
+`e54cc1425` contribute 3,757 additions and 415 deletions. Thus the final
+adjacent text diff has 4,086 additions and 415 deletions. Reproduce after the
 containing report commit with `git diff --numstat --no-renames
 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..FINAL_HEAD` and substitute
 the final commit SHA from PR #863 for `FINAL_HEAD`. The PDF is binary and its
