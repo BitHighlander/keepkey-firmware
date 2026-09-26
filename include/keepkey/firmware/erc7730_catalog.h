@@ -94,6 +94,7 @@ typedef struct {
   uint8_t header[ERC7730_PROGRAM_HEADER_SIZE];
   uint8_t cert[ERC7730_DELEGATE_RECORD_LEN];
   uint8_t signature[64];
+  uint8_t display_frames[ERC7730_ABI_MAX_DEPTH * 5u];
   uint8_t merkle[32];
   uint8_t sibling[32];
   uint32_t total_length;
@@ -108,6 +109,14 @@ typedef struct {
   uint8_t date_strings[12];       /* strings "timestamp"/"blockheight", 1 bit */
   uint8_t short_strings[12];      /* signer strings that fit value screens */
   uint64_t literal_decimals_mask; /* one-byte decimals up to 77 */
+  uint8_t path_arrays[64];        /* ABI node of each path's [] step, or 0xff */
+  uint64_t path_iterable_mask;    /* paths that end on their [] step */
+  uint8_t formatter_value_array;
+  uint8_t display_iteration_array;
+  bool formatter_any_array;
+  bool display_in_iteration;
+  bool path_array_indexed;
+  bool path_last_full;
   uint16_t cert_length;
   uint16_t field_received;
   uint16_t section_mask;

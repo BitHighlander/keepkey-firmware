@@ -172,9 +172,17 @@ bool erc7730_cap_display(const Erc7730DisplayInstruction* instruction,
     case 2: /* intent text: string a */
     case 3: /* intent value: formatter a */
       return pc != 0 && a != UINT16_MAX && b == UINT16_MAX && c == UINT16_MAX;
-    case 4: /* field: label string a, formatter b, no condition */
+    case 4: /* field: label string a, formatter b, optional condition c */
       return pc != 0 && a != UINT16_MAX && b != UINT16_MAX &&
              (ERC7730_CAP_CONDITIONS || c == UINT16_MAX);
+    case 5: /* group begin: optional label a, optional condition b, end c */
+      return pc != 0 && c != UINT16_MAX;
+    case 6: /* group end: begin a */
+      return pc != 0 && a != UINT16_MAX && b == UINT16_MAX && c == UINT16_MAX;
+    case 7: /* iteration begin: array path a, optional condition b, end c */
+      return pc != 0 && a != UINT16_MAX && c != UINT16_MAX;
+    case 8: /* iteration end: begin a, optional separator b (not shown) */
+      return pc != 0 && a != UINT16_MAX && c == UINT16_MAX;
     case 10: /* end */
       return pc != 0 && a == UINT16_MAX && b == UINT16_MAX && c == UINT16_MAX;
     default:
