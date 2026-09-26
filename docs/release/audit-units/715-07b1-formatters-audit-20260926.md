@@ -27,6 +27,8 @@ from this unit's added source.
 
 Immutable inventory range for code and tests:
 `git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..75824620923c811e0c1e133879eb6d90ca63bdb6`.
+Frozen inventory range including the source report and PDF:
+`git diff --numstat 8c654bcd8e1c8936a86aaa625a4ab78900a250e9..25e9ff8819e91183978a94f549c55b8d858eb82d`.
 The report source and PDF are added after that code predecessor. Counts are
 net adjacent-diff counts, including tests, documentation and the companion
 gitlink; they are not a sum of overlapping commit counts. The PR body records
@@ -36,7 +38,7 @@ the final containing head.
 | Tracked path | Added | Deleted | Change and evidence |
 | --- | ---: | ---: | --- |
 | `deps/python-keepkey` | 1 | 1 | Pins the matching compiler mirror and its tests. |
-| `docs/release/audit-units/715-07b1-formatters-audit-20260926.md` | 124 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b1-formatters-audit-20260926.md` | 126 | 0 | Records exact scope, findings, inventory and validation. |
 | `docs/release/audit-units/715-07b1-formatters-audit-20260926.pdf` | - | - | Rendered audit evidence from the adjacent source report. |
 | `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 67 | 2 | Records on-screen behavior and fail-closed limits. |
 | `include/keepkey/firmware/eip712_stream.h` | 3 | 0 | Declares bounded state and the phase's runtime contract. |
