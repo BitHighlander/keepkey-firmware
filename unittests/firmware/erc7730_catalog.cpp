@@ -1699,6 +1699,16 @@ TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
   // A field inside that reads another array.
   p = iterationProgram(displays({begin_a, field_b, end}), 5, 1);
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  // A scalar value inside an iteration cannot be repeated for every item.
+  const std::vector<uint8_t> scalar_field = {4, 0, 0, 0, 0, 2, 0xff, 0xff};
+  p = iterationProgram(displays({begin_a, scalar_field, end}), 5, 1);
+  p = replaceTable(p, 3, {1,    2,    0xff, 0xff, 1, 0, 0, 0, 0, 2, 1, 2,
+                          0xff, 0xff, 1,    0,    0, 0, 1, 2, 2, 0, 0, 2},
+                   3);
+  p = replaceTable(
+      p, 6, {10, 0, 1, 1, 1, 0, 0, 10, 0, 1, 1, 1, 0, 1, 10, 0, 1, 1, 1, 0, 2},
+      3);
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
   // An iterating field outside any iteration.
   p = iterationProgram(displays({field_a}), 3, 0);
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
@@ -1732,4 +1742,29 @@ TEST(Erc7730Catalog, IterationPathsReachTheirArrayThroughTuplesOnly) {
                                         1),
                        nodes, 5);
   EXPECT_EQ(feedAll(envelope(outer), 11), ERC7730_CATALOG_UNTRUSTED);
+}
+
+TEST(Erc7730Catalog, DisplayFramesPreservePathClasses) {
+  const std::vector<uint8_t> begin_a = {7, 0, 0, 0, 0xff, 0xff, 0, 3};
+  const std::vector<uint8_t> field_a = {4, 0, 0, 0, 0, 0, 0xff, 0xff};
+  const std::vector<uint8_t> end = {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff};
+  const auto program =
+      iterationProgram(displays({begin_a, field_a, end}), 5, 1);
+  const auto signed_envelope = envelope(program);
+  const auto id = digest(signed_envelope);
+  Erc7730CatalogVerifier verifier;
+  Erc7730CatalogIdentity identity = {};
+  erc7730_catalog_begin(&verifier, id.data(), signed_envelope.size());
+  const size_t before_begin = 10u + sectionOffset(program, 7) + 5u + 2u + 8u;
+  ASSERT_EQ(erc7730_catalog_feed(&verifier, 0, signed_envelope.data(),
+                                 before_begin, &identity),
+            ERC7730_CATALOG_MORE);
+  uint8_t classes[5];
+  memcpy(classes, verifier.signature, sizeof(classes));
+  ASSERT_EQ(erc7730_catalog_feed(&verifier, before_begin,
+                                 signed_envelope.data() + before_begin,
+                                 begin_a.size(), &identity),
+            ERC7730_CATALOG_MORE);
+  EXPECT_EQ(memcmp(classes, verifier.signature, sizeof(classes)), 0);
+  erc7730_catalog_abort(&verifier);
 }
