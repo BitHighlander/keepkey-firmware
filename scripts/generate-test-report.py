@@ -124,6 +124,15 @@ CONTRACT_JUNIT_DIRS = {
     "bitcoin-only": Path("test-reports") / "bitcoin-only" / "python-keepkey",
 }
 
+# These are the actual product guards, not arbitrary reasons for missing tests.
+CONTRACT_SKIP_REASONS = dict(
+    [(case, "Stack 07 EVM contracts are intentionally absent from bitcoin-only")
+     for case in _STACK07_EVM] +
+    [(case, "EthereumTxMetadata not supported by this firmware build")
+     for case in _ADDITIVE] +
+    [(case, "Full feature firmware required to run this test")
+     for case in _SESSION_FULL + _RIPPLE])
+
 CAPABILITY_SKIP_PREFIX = (
     "Staged release tree does not yet provide capability: "
 )
@@ -206,17 +215,69 @@ def firmware_version_tuple():
     return tuple(int(value) for value in match.groups())
 
 
-def approved_capabilities(workflow_text=None):
-    """Read the single staged-capability ledger bound to this checkout."""
-    if workflow_text is None:
-        workflow_text = CI_WORKFLOW.read_text()
+def parse_capability_ledger(workflow_text):
+    """Parse one unambiguous staged-capability declaration."""
     ledgers = re.findall(
-        r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]+)[ \t]*$",
+        r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]*)[ \t]*$",
         workflow_text, re.MULTILINE)
     if len(ledgers) != 1:
         fail("expected exactly one capability ledger in %s, found %d" %
              (CI_WORKFLOW, len(ledgers)))
     return {value for value in ledgers[0].split(",") if value}
+
+
+def waiver_authority_commit():
+    """Use GitHub's event base, never a candidate-authored authority constant.
+
+    Local rehearsal uses the remote accepted 7b base's merge base. CI requires
+    the platform event payload and fails if it cannot identify the authority.
+    Replacing this validator/workflow itself remains a code-review boundary.
+    """
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if event_path:
+        try:
+            event = json.loads(Path(event_path).read_text())
+            if "pull_request" in event:
+                commit = event["pull_request"]["base"]["sha"]
+            elif os.environ.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch"):
+                # CI binds this from the repository Actions variable, outside
+                # the candidate diff. No predecessor/selected-head fallback.
+                commit = os.environ.get("KK_ACCEPTED_WAIVER_SHA", "")
+                if not commit:
+                    fail("non-PR waiver authority requires the independently "
+                         "accepted repository variable KK_ACCEPTED_WAIVER_SHA")
+            else:
+                fail("unsupported event for waiver authority")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            fail("cannot read platform waiver authority: %s" % exc)
+    elif os.environ.get("GITHUB_ACTIONS") == "true":
+        fail("CI waiver authority requires the platform event payload")
+    else:
+        commit = git("merge-base", "HEAD",
+                     "refs/remotes/origin/release/715-stack-07b-consolidated")
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit) or commit == "0" * 40:
+        fail("waiver authority must be a full nonzero commit SHA")
+    return commit
+
+
+def approved_capabilities(workflow_text=None):
+    """Candidate waivers may only narrow the owner-accepted immutable ledger."""
+    if workflow_text is None:
+        workflow_text = CI_WORKFLOW.read_text()
+    candidate = parse_capability_ledger(workflow_text)
+    authority = waiver_authority_commit()
+    try:
+        trusted_text = git("show", authority +
+                           ":.github/workflows/ci.yml")
+    except subprocess.CalledProcessError:
+        fail("immutable waiver authority is unavailable: " +
+             authority)
+    trusted = parse_capability_ledger(trusted_text)
+    added = sorted(candidate - trusted)
+    if added:
+        fail("candidate adds waivers absent from immutable authority: " +
+             ", ".join(added))
+    return candidate
 
 
 def release_missing_capabilities(cases, approved=None):
@@ -237,7 +298,8 @@ def release_missing_capabilities(cases, approved=None):
         case["skip_reason"].startswith(CAPABILITY_SKIP_PREFIX)
     )
     # Environment and JUnit skip reasons are evidence, not authority to
-    # waive additional controls. Only this checkout's CI ledger can do so.
+    # waive additional controls. The candidate ledger must stay within the
+    # separately accepted immutable authority before it can grant a waiver.
     unapproved = sorted(missing_capabilities - approved)
     if unapproved:
         fail("capability waivers not in the ci.yml ledger: %s" %
@@ -282,7 +344,9 @@ def read_junit_cases(path):
         # A second copy could mask a failing one; evidence must be unambiguous.
         if name in cases:
             fail("duplicate JUnit testcase %s in %s" % (name, path))
-        cases[name] = case_status(testcase)
+        skipped = testcase.find("skipped")
+        cases[name] = (case_status(testcase),
+                       skipped.get("message", "") if skipped is not None else "")
     return cases
 
 
@@ -297,18 +361,19 @@ def validate_contract_junit(root):
             cases = read_junit_cases(path)
             if not cases:
                 fail("contract JUnit contains no test cases: %s" % path)
-            broken = sorted(name for name, status in cases.items()
+            broken = sorted(name for name, (status, reason) in cases.items()
                             if status in ("fail", "error"))
             if broken:
                 fail("%s %s has failing case(s): %s" %
                      (variant, filename, ", ".join(broken)))
             wrong = []
             for required, expected in sorted(by_variant[variant].items()):
-                found = [status for name, status in cases.items()
+                found = [result for name, result in cases.items()
                          if name == required or name.endswith("." + required)]
-                if found != [expected]:
+                expected_reason = CONTRACT_SKIP_REASONS[required] if expected == "skip" else ""
+                if found != [(expected, expected_reason)]:
                     wrong.append("%s (expected %s, found %s)" % (
-                        required, expected, ",".join(found) or "missing"))
+                        required, expected + ":" + expected_reason, repr(found) if found else "missing"))
             if wrong:
                 fail("%s %s contract cases wrong: %s" %
                      (variant, filename, "; ".join(wrong)))

@@ -10,7 +10,8 @@ fail() { printf 'FAIL: %s\n' "$1"; failed=1; }
 step() { printf '== %s\n' "$1"; }
 
 step "whitespace (git diff --check)"
-git diff --check HEAD || fail "whitespace errors in the working tree"
+python3 -B scripts/preflight_checks.py whitespace ||
+  fail "whitespace in push range/worktree (set PREFLIGHT_BASE when no upstream exists)"
 
 step "submodules pinned and clean"
 # Local qualification must run the pinned dependencies CI runs. A dirty or
@@ -36,20 +37,11 @@ for f in $(git ls-files '*.options'); do
 done
 
 step "every unit test file is built"
-# A test file no CMakeLists names never runs: hive.cpp sat in 00b with ~20
-# tests that had never executed. Dormant suites for a capability a later
-# block owns are listed here with that owner; nothing else may be unbuilt.
-DORMANT_TESTS="unittests/firmware/hive.cpp"  # hive-release-review block
-cmake_text=$(git ls-files '*CMakeLists.txt' '*.cmake' | xargs cat)
-for f in $(git ls-files 'unittests/*.cpp' 'unittests/**/*.cpp'); do
-  case " $DORMANT_TESTS " in *" $f "*) continue ;; esac
-  printf '%s\n' "$cmake_text" | grep -q "$(basename "$f")" ||
-    fail "$f is not named by any CMakeLists.txt, so it never runs"
-done
+python3 -B scripts/preflight_checks.py sources || fail "unit-test CMake source graph"
 
 step "clang-format 20 (CI pins 20)"
 CF=""
-for c in clang-format-20 /opt/homebrew/opt/llvm@20/bin/clang-format clang-format; do
+for c in clang-format-20 /opt/homebrew/opt/llvm@20/bin/clang-format /usr/local/opt/llvm@20/bin/clang-format clang-format; do
   if command -v "$c" >/dev/null 2>&1 && "$c" --version | grep -q ' 20\.'; then
     CF=$c; break
   fi
@@ -64,44 +56,38 @@ else
   done
 fi
 
-step "cppcheck with CI's exact arguments and version"
-# Homebrew's cppcheck is a different version and does not reproduce CI's
-# findings (verified: it missed the knownConditionTrueFalse CI raised on
-# fd4a2d5ce). Run Ubuntu 24.04's build, natively on this machine's arch.
-if ! timeout 20 docker info >/dev/null 2>&1; then
-  fail "docker unresponsive: cppcheck not run. Hosted CI is then the only static-analysis evidence; record that in the push (SOP pre-push gate)"
+step "shared cppcheck invocation regressions"
+python3 -B -m unittest scripts/test_preflight_cppcheck.py scripts/test_preflight_checks.py || fail "cppcheck invocation tests"
+
+step "cppcheck with CI's pinned package and shared arguments"
+if ! python3 -B scripts/preflight_checks.py docker; then
+  fail "docker unresponsive: cppcheck not run"
 else
-  ARGS=$(awk '/^[[:space:]]+cppcheck \\$/{on=1} on{print} on&&/tools\//{exit}' "$CI" |
-    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*\\$//' -e 's/ || CPPCHECK_RC=\$?//' \
-        -e 's/2>&1.*$//' | grep -v -e '^--template' -e '^--output-file' -e '^cppcheck$' |
-    tr '\n' ' ')
-  case "$ARGS" in *--enable=*tools/*) ;; *) ARGS="" ;; esac
-  case "$ARGS" in *';'*) ARGS="" ;; esac
-  if [ -z "$ARGS" ]; then
-    fail "could not extract the cppcheck invocation from $CI"
-  else
+  version=$(cat scripts/cppcheck-version)
+  case "$version" in ''|*[!0-9a-zA-Z.+:~-]*) fail "invalid cppcheck package pin" ;;
+  *)
+    image="kk-preflight-cppcheck:$version"
     mkdir -p .cppcheck-build || fail "cannot create cppcheck mount point"
-    docker image inspect kk-preflight-cppcheck:24.04 >/dev/null 2>&1 ||
-      printf 'FROM ubuntu:24.04\nRUN apt-get update -qq && apt-get install -y -qq cppcheck\n' |
-        docker build -q -t kk-preflight-cppcheck:24.04 - >/dev/null
-    # Fail closed: a container that dies mid-run must not read as clean.
-    out=$(docker run --rm -v "$PWD":/src:ro --tmpfs /src/.cppcheck-build -w /src kk-preflight-cppcheck:24.04 \
-      sh -c "cppcheck $ARGS --template='{file}:{line}: {severity}: {message} [{id}]' \
-               >/tmp/log 2>&1; rc=\$?; grep -E '\\[[A-Za-z0-9_]+\\]\$' /tmp/log;
-             echo CPPCHECK_DONE rc=\$rc" 2>&1)
-    printf '%s\n' "$out" | grep -v '^CPPCHECK_DONE'
-    case "$out" in
-      *"CPPCHECK_DONE rc=0"*) ;;
-      *CPPCHECK_DONE*) fail "cppcheck findings (zero-warning policy)" ;;
-      *) fail "cppcheck did not complete (container error)" ;;
-    esac
-  fi
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      printf 'FROM ubuntu:24.04\nARG CPPCHECK_VERSION\nRUN apt-get update -qq && apt-get install -y -qq cppcheck="$CPPCHECK_VERSION"\n' |
+        docker build -q --build-arg "CPPCHECK_VERSION=$version" -t "$image" - >/dev/null ||
+        fail "cannot build pinned cppcheck image"
+    fi
+    # The shared entry point verifies package AND executable versions on every
+    # run, including cached images, and supplies argv directly without eval.
+    rc=0
+    docker run --rm -v "$PWD":/src:ro --tmpfs /src/.cppcheck-build -w /src "$image" \
+      sh -c 'rc=0; sh scripts/cppcheck.sh /tmp/cppcheck-report.txt || rc=$?;
+             if [ -f /tmp/cppcheck-report.txt ]; then cat /tmp/cppcheck-report.txt; fi;
+             exit "$rc"' || rc=$?
+    [ "$rc" -eq 0 ] || fail "cppcheck did not complete cleanly (exit $rc)"
+    ;;
+  esac
 fi
 
 step "release-report gate regressions"
-python3 -m unittest scripts/test_generate_test_report.py 2>&1 | tail -1
-python3 -m unittest scripts/test_generate_test_report.py >/dev/null 2>&1 ||
-  fail "report gate tests"
+# Execute once; preserve both diagnostics and the status of that invocation.
+python3 -B -m unittest scripts/test_generate_test_report.py || fail "report gate tests"
 
 step "workflow lint"
 if command -v actionlint >/dev/null 2>&1; then
