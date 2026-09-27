@@ -5,63 +5,138 @@
   "paths": [
     {
       "path": "Dockerfile",
-      "disposition": "Superseded for release qualification: native/ARM/emulator builds select immutable firmware base digest 7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2. The historical top-level image recipe is not rebuilt by these paths and later installs protobuf from source. Do not claim changing its pip line modifies the pinned release toolchain."
+      "disposition": "Superseded for release qualification: native/ARM/emulator builds select immutable firmware base digest 7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2. The historical top-level image recipe is not rebuilt by these paths and later installs protobuf from source. Do not claim changing its pip line modifies the pinned release toolchain.",
+      "historical_numstat": {
+        "added": 1,
+        "deleted": 1
+      }
     },
     {
       "path": "docs/release/audit-units/authenticator-source-cleanup.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 11,
+        "deleted": 0
+      }
     },
     {
       "path": "docs/release/audit-units/decode-boundaries.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 1,
+        "deleted": 1
+      }
     },
     {
       "path": "docs/release/audit-units/product-capability-gates.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 27,
+        "deleted": 0
+      }
     },
     {
       "path": "docs/release/audit-units/provider-icon-placement.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 11,
+        "deleted": 0
+      }
     },
     {
       "path": "docs/release/audit-units/storage-capacities.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 1,
+        "deleted": 1
+      }
     },
     {
       "path": "docs/release/audit-units/storage-revocation.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 3,
+        "deleted": 1
+      }
     },
     {
       "path": "docs/release/audit-units/token-build-dependencies.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 2,
+        "deleted": 1
+      }
     },
     {
       "path": "docs/release/audit-units/zcash-export-authorization.md",
-      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests.",
+      "historical_numstat": {
+        "added": 16,
+        "deleted": 0
+      }
     },
     {
       "path": "include/keepkey/firmware/authenticator.h",
-      "disposition": "Retain 16-byte minimum and duplicate error, and integrate error mapping into Ping."
+      "disposition": "Retain 16-byte minimum and duplicate error, and integrate error mapping into Ping.",
+      "historical_numstat": {
+        "added": 2,
+        "deleted": 0
+      }
     },
     {
       "path": "lib/firmware/authenticator.c",
-      "disposition": "Retain printable bounded identities, secret minimum, two confirmations, duplicate refusal and all-copy removal; additionally reject skipped empty fields and OTP prefix aliases."
+      "disposition": "Retain printable bounded identities, secret minimum, two confirmations, duplicate refusal and all-copy removal; additionally reject skipped empty fields and OTP prefix aliases.",
+      "historical_numstat": {
+        "added": 50,
+        "deleted": 21
+      }
     },
     {
       "path": "lib/firmware/signing.c",
-      "disposition": "Accessor relocation only; signing_is_active already exists and is used by revocation tests. No replay needed."
+      "disposition": "Accessor relocation only; signing_is_active already exists and is used by revocation tests. No replay needed.",
+      "historical_numstat": {
+        "added": 2,
+        "deleted": 2
+      }
     },
     {
       "path": "unittests/firmware/authenticator.cpp",
-      "disposition": "Update existing cases for strong secret and two confirmations without deleting assertions; add boundary/cancellation/duplicate/identity regressions."
+      "disposition": "Update existing cases for strong secret and two confirmations without deleting assertions; add boundary/cancellation/duplicate/identity regressions.",
+      "historical_numstat": {
+        "added": 4,
+        "deleted": 4
+      }
     },
     {
       "path": "unittests/firmware/kkconfirm_driver.cpp",
-      "disposition": "Superseded by confirm_test_utils.cpp and kk_test_board_init in accepted predecessor; keep once-only timer bootstrap and sentinel protections."
+      "disposition": "Superseded by confirm_test_utils.cpp and kk_test_board_init in accepted predecessor; keep once-only timer bootstrap and sentinel protections.",
+      "historical_numstat": {
+        "added": 7,
+        "deleted": 1
+      }
     },
     {
       "path": "unittests/firmware/storage.cpp",
-      "disposition": "All six named capacity and cipher cleanup tests already registered. Current 2600-byte fixture exceeds required maximum 1501+1024=2525; historical move and increase to 3000 add no behavior. Preserve tests unchanged."
+      "disposition": "All six named capacity and cipher cleanup tests already registered. Current 2600-byte fixture exceeds required maximum 1501+1024=2525; historical move and increase to 3000 add no behavior. Preserve tests unchanged.",
+      "historical_numstat": {
+        "added": 56,
+        "deleted": 64
+      }
     }
-  ]
+  ],
+  "historical_totals": {
+    "files": 15,
+    "added": 194,
+    "deleted": 97
+  },
+  "qualified_runtime_source": "2c37cce7f777f3282a4f0c8ad9dc7712a734a44c",
+  "qualified_dependency_pins": {
+    "code-signing-keys": "a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec",
+    "deps/crypto/trezor-firmware": "8a392f70a5d5575ece3dfb35f115d4a4b27f497c",
+    "deps/device-protocol": "5fec9e6906a340be5eb3d795ec746769065b2db8",
+    "deps/googletest": "7888184f28509dba839e3683409443e0b5bb8948",
+    "deps/python-keepkey": "41af909341965c81b8afadd38f299d6f929089af",
+    "deps/qrenc/QR-Code-generator": "6dfbfdad5d9303ed190d1c3cb7bec34b565b6ce8",
+    "deps/sca-hardening/SecAESSTM32": "71d356a1141624994cf613bd2d2583892e8e6d5a"
+  }
 }
