@@ -24,7 +24,25 @@ Frozen code range is `990e34c32..4449ac0f6`; report predecessor is recorded
 in the final PR body. The regenerated table includes every adjacent path and
 final report source line count. Counts are net, not sums of overlapping commits.
 
-<!-- INVENTORY -->
+<!-- INVENTORY_BEGIN -->
+| Tracked path | Added | Deleted | Change and evidence |
+| --- | ---: | ---: | --- |
+| `.github/workflows/ci.yml` | 1 | 1 | Changed as part of this bounded audit unit. |
+| `deps/python-keepkey` | 1 | 1 | Pins the matching compiler mirror and its tests. |
+| `docs/release/audit-units/715-07b2b-iteration-audit-20260927.md` | 121 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b2b-iteration-audit-20260927.pdf` | - | - | Rendered audit evidence from the adjacent source report. |
+| `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 18 | 0 | Records on-screen behavior and fail-closed limits. |
+| `include/keepkey/firmware/erc7730_capabilities.h` | 12 | 7 | Declares bounded state and the phase's runtime contract. |
+| `include/keepkey/firmware/erc7730_catalog.h` | 9 | 0 | Declares bounded state and the phase's runtime contract. |
+| `include/keepkey/firmware/erc7730_workflow.h` | 13 | 0 | Declares bounded state and the phase's runtime contract. |
+| `lib/firmware/erc7730_abi_stream.c` | 14 | 0 | Captures only bounded ABI facts and records overflow. |
+| `lib/firmware/erc7730_capabilities.c` | 5 | 1 | Selects the exact formatter and display capabilities. |
+| `lib/firmware/erc7730_catalog.c` | 69 | 9 | Refuses unexecutable signed programs before review. |
+| `lib/firmware/erc7730_workflow.c` | 22 | 2 | Keeps replay, validation and UI state in sequence. |
+| `lib/firmware/fsm_msg_ethereum.h` | 81 | 11 | Shows and confirms the device-decoded review screens. |
+| `scripts/emulator/test_stack07_regressions.py` | 77 | 3 | Exercises signed wire requests and review screens. |
+| `unittests/firmware/erc7730_catalog.cpp` | 193 | 66 | Covers accepted neighbors and fail-closed boundaries. |
+<!-- INVENTORY_END -->
 
 ABI streaming captures counts only after validating the array structure.
 Catalog path classes bind full-array steps to one ABI array, and formatter
