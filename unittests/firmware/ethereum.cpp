@@ -111,6 +111,98 @@ TEST(Ethereum, SapAmountCallsitesFailClosedAtDisplayBoundary) {
   EXPECT_STREQ("1 Token Units", rendered);
 }
 
+TEST(Ethereum, UnknownErc20CannotBePresentedAsAReviewedTransfer) {
+  char rendered[32] = {};
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  memset(msg.to.bytes, 0x42, msg.to.size);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  const uint8_t selector[4] = {0xa9, 0x05, 0x9c, 0xbb};
+  memcpy(msg.data_initial_chunk.bytes, selector, sizeof(selector));
+  memset(msg.data_initial_chunk.bytes + 16, 0x24, 20);
+  msg.data_initial_chunk.bytes[67] = 1;
+  EXPECT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+
+  char first_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, first_review,
+                                               sizeof(first_review)));
+  EXPECT_NE(std::string::npos,
+            std::string(first_review).find("Unknown token contract 0x"));
+  EXPECT_NE(std::string::npos,
+            std::string(first_review).find("Send 1 base units to 0x"));
+
+  /* Contract substitution must change what the user sees even when calldata,
+   * fee and every later data-hash screen are identical. */
+  memset(msg.to.bytes, 0x43, msg.to.size);
+  char substituted_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, substituted_review,
+                                               sizeof(substituted_review)));
+  EXPECT_STRNE(first_review, substituted_review);
+
+  const uint8_t approve_selector[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  memcpy(msg.data_initial_chunk.bytes, approve_selector,
+         sizeof(approve_selector));
+  char approval_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, approval_review,
+                                               sizeof(approval_review)));
+  EXPECT_NE(std::string::npos, std::string(approval_review).find("Allow 0x"));
+  EXPECT_NE(std::string::npos,
+            std::string(approval_review).find("withdraw up to 1 base units"));
+
+  /* The largest finite approval (unlimited is refused separately) is a
+   * 78-digit amount; its review must still fit the signing body. */
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+  msg.data_initial_chunk.bytes[67] = 0xfe;
+  char largest_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  EXPECT_TRUE(ethereumFormatUnknownTokenReview(&msg, largest_review,
+                                               sizeof(largest_review)));
+}
+
+TEST(Ethereum, UnknownTokenReviewIsExactAndFailsClosedAtCapacity) {
+  EthereumSignTx msg{};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  memset(msg.to.bytes, 0x42, 20);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  const uint8_t selector[] = {0x09, 0x5e, 0xa7, 0xb3};
+  memcpy(msg.data_initial_chunk.bytes, selector, 4);
+  memset(msg.data_initial_chunk.bytes + 16, 0x24, 20);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+  msg.data_initial_chunk.bytes[67] = 0xfe;
+  const std::string expected =
+      "Unknown token contract 0x4242424242424242424242424242424242424242\n"
+      "Allow 0x2424242424242424242424242424242424242424 to withdraw up to "
+      "115792089237316195423570985008687907853269984665640564039457584007913129639934"
+      " base units?";
+  char rendered[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
+  EXPECT_EQ(expected, rendered);
+  EXPECT_TRUE(ethereumFormatUnknownTokenReview(&msg, rendered, expected.size() + 1));
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, rendered, expected.size()));
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, rendered, 1));
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, rendered, 0));
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(nullptr, rendered, sizeof(rendered)));
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, nullptr, sizeof(rendered)));
+  for (size_t size : {0u, 4u, 67u, 69u}) {
+    msg.data_initial_chunk.size = size;
+    EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
+  }
+  msg.data_initial_chunk.size = 68;
+  msg.data_initial_chunk.bytes[4] = 1;
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
+  msg.data_initial_chunk.bytes[4] = 0;
+  msg.to.size = 19;
+  EXPECT_FALSE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
+}
+
 TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
   bignum256 amount;
   bn_read_uint64(1500000000000000000ULL, &amount);
@@ -213,9 +305,15 @@ TEST(Ethereum, TransferDisplayDoesNotAliasHighChainTokenMetadata) {
   msg.address_type = OutputAddressType_TRANSFER;
 
   ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
-  char rendered[32];
-  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
-  EXPECT_STREQ("Unknown token value", rendered);
+  char rendered[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  // An unknown token cannot satisfy the account-only amount review. The
+  // signing path must instead disclose raw units and the token contract.
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
+  EXPECT_EQ(0u, std::string(rendered).find("Unknown token contract 0x"));
+  EXPECT_NE(std::string::npos, std::string(rendered).find("Send 1 base units to 0x"));
+  EXPECT_EQ(std::string::npos, std::string(rendered).find(" TUSD"));
+  EXPECT_EQ(std::string::npos, std::string(rendered).find(" ETH"));
 }
 
 TEST(Ethereum, NativePseudoAddressCallsRenderUnknownOffMainnet) {
@@ -268,9 +366,15 @@ TEST(Ethereum, NativePseudoAddressTransferFormatterIsUnknownOffMainnet) {
   msg.address_type = OutputAddressType_TRANSFER;
 
   ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
-  char rendered[32];
-  ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
-  EXPECT_STREQ("Unknown token value", rendered);
+  char rendered[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  // An unknown token cannot satisfy the account-only amount review. The
+  // signing path must instead disclose raw units and the token contract.
+  EXPECT_FALSE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
+  EXPECT_EQ(0u, std::string(rendered).find("Unknown token contract 0x"));
+  EXPECT_NE(std::string::npos, std::string(rendered).find("Send 1 base units to 0x"));
+  EXPECT_EQ(std::string::npos, std::string(rendered).find(" TUSD"));
+  EXPECT_EQ(std::string::npos, std::string(rendered).find(" ETH"));
 }
 
 // A canonical transformERC20 call with one transformation whose data is one
