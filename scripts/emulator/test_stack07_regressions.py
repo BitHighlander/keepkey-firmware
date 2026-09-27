@@ -555,10 +555,8 @@ class TestStack07Regressions(common.KeepKeyTest):
 
     def test_program_outside_capability_table_is_refused_at_preload(self):
         signature = "audit(uint256 first,uint256 second)"
-        # Shapes the runtime does not execute yet (Phase D).
+        # Conditional visibility remains outside the D-G capability boundary.
         fields = {
-            "group": {"label": "Group", "fields": [
-                {"path": "first", "label": "First value", "format": "raw"}]},
             "condition": {"path": "first", "label": "First value",
                           "format": "raw", "visible": {"ifNotIn": [0]}},
         }
@@ -847,3 +845,22 @@ class TestStack07Regressions(common.KeepKeyTest):
         assert_failure(self, result, types.Failure_SyntaxError,
                        "ERC-7730 calldata does not match definition")
         self.assertEqual((buttons, passes), (0, 1))
+
+    def test_groups_and_optional_fields_are_always_visible(self):
+        signature = "pay(address recipient,uint256 amount,uint256 fee)"
+        descriptor = {"display": {"formats": {signature: {
+            "intent": "Pay", "fields": [
+                {"label": "Payment", "visible": "optional", "fields": [
+                    {"path": "recipient", "label": "Recipient",
+                     "format": "addressName"},
+                    {"label": "Details", "fields": [
+                        {"path": "amount", "label": "Amount", "format": "raw",
+                         "visible": "optional"}]}]},
+                {"path": "fee", "label": "Fee", "format": "raw",
+                 "visible": "optional"}]}}}}
+        for amount, fee in ((0, 0), (5, 9)):
+            self.assertEqual(
+                self._field_screens(descriptor, signature,
+                    self._word(OTHER_ADDRESS) + self._word(amount) + self._word(fee)),
+                ["Recipient:\n0x" + OTHER_ADDRESS.hex(),
+                 "Amount:\n" + str(amount), "Fee:\n" + str(fee)])

@@ -17,12 +17,14 @@
 
 #define ERC7730_CAP_BIT(n) (UINT32_C(1) << (n))
 
-/* Display opcodes: 1 intent, 2 intent text, 3 intent value, 4 field, 10 end.
+/* Display opcodes: 1 intent, 2 intent text, 3 intent value, 4 field,
+ * 5/6 group, 10 end. Groups preserve every field; iteration is not enabled.
  * Opcodes 2 and 3 form one run directly after the intent; each is shown as a
  * numbered part of the interpolated intent. */
 #define ERC7730_CAP_DISPLAY_OPCODES                               \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) | \
-   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(10))
+   ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) | \
+   ERC7730_CAP_BIT(10))
 /* Formatter kinds: 1 raw, 2 amount (native), 3 tokenAmount, 4 nftName,
  * 5 date, 6 duration, 7 unit, 8 enum, 10 addressName. */
 #define ERC7730_CAP_FORMATTER_KINDS                               \
@@ -39,8 +41,9 @@
  * 3 @.value (the transaction's native value). */
 #define ERC7730_CAP_CONTAINERS \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
-/* Display conditions (program section 5) are not executed. */
-#define ERC7730_CAP_CONDITIONS false
+/* Only optional (3) is supported; it always shows the field or group. */
+#define ERC7730_CAP_CONDITION_OPCODES ERC7730_CAP_BIT(3)
+#define ERC7730_CAP_CONDITIONS true
 /* A tokenAmount native-currency alias set may name at most this many
  * addresses, so the runtime can hold their literal indices. */
 #define ERC7730_CAP_ALIAS_SET_MAX 4u

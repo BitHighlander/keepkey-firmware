@@ -575,7 +575,8 @@ static bool validate_condition(Erc7730CatalogVerifier* v) {
   const uint16_t path = read_be16(v->sibling + 1);
   const uint16_t set = read_be16(v->sibling + 3);
   if (opcode < 1 || opcode > 8 || v->sibling[5] != 0 || v->sibling[6] != 0 ||
-      v->sibling[7] != 0)
+      v->sibling[7] != 0 ||
+      (ERC7730_CAP_CONDITION_OPCODES & ERC7730_CAP_BIT(opcode)) == 0)
     return false;
   if (opcode <= 3) return path == UINT16_MAX && set == UINT16_MAX;
   if (path >= v->table_counts[2]) return false;
@@ -785,7 +786,7 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
           !optional_index(b, v->table_counts[4]) || c <= pc ||
           c >= v->entry_count || v->display_depth >= ERC7730_ABI_MAX_DEPTH)
         return false;
-      uint8_t* frame = v->signature + v->display_depth * 5u;
+      uint8_t* frame = v->display_frames + v->display_depth * 5u;
       frame[0] = opcode;
       frame[1] = (uint8_t)(pc >> 8);
       frame[2] = (uint8_t)pc;
@@ -802,7 +803,7 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
           (opcode == 6 && b != UINT16_MAX) ||
           (opcode == 8 && !optional_index(b, v->table_counts[0])))
         return false;
-      const uint8_t* frame = v->signature + (v->display_depth - 1u) * 5u;
+      const uint8_t* frame = v->display_frames + (v->display_depth - 1u) * 5u;
       const uint16_t begin = (uint16_t)(((uint16_t)frame[1] << 8) | frame[2]);
       const uint16_t end = (uint16_t)(((uint16_t)frame[3] << 8) | frame[4]);
       if (a != begin || end != pc || (opcode == 6 && frame[0] != 5) ||

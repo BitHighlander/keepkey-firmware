@@ -713,14 +713,17 @@ TEST(Erc7730Catalog, ValidatesCanonicalLiteralsAndConditions) {
   p = programWithTable(4, literals, 2);  // set 0 refers forward to literal 1
   EXPECT_EQ(feedAll(envelope(p), 13), ERC7730_CATALOG_BAD_PROGRAM);
 
-  // The runtime does not evaluate conditions, so any condition is refused;
-  // an empty condition table is still accepted.
-  static_assert(!ERC7730_CAP_CONDITIONS, "update this test with conditions");
+  // The runtime executes only condition opcode 3, "optional", and always
+  // shows the field; every opcode that could hide a field is refused.
   p = programWithTable(5, {}, 0);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
-  std::vector<uint8_t> conditions = {1, 0xff, 0xff, 0xff, 0xff, 0, 0, 0};
-  p = programWithTable(5, conditions, 1);
-  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithTable(5, {3, 0xff, 0xff, 0xff, 0xff, 0, 0, 0}, 1);
+  EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
+  for (uint8_t opcode : {1, 2}) {
+    p = programWithTable(5, {opcode, 0xff, 0xff, 0xff, 0xff, 0, 0, 0}, 1);
+    EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)opcode;
+  }
 }
 
 TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
@@ -1152,45 +1155,44 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
   // Interpolated intent: text (2) and value (3) parts directly after the
   // intent run; once a field has started they are refused.
   const std::vector<uint8_t> interpolated = {
-      1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,  // intent
-      2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,  // "Test"
-      3, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,  // formatter 0
-      4, 0, 0, 0, 0,    0,    0xff, 0xff,  // field
+      1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // intent
+      2,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // "Test"
+      3,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // formatter 0
+      4,  0, 0,    0,    0,    0,    0xff, 0xff,  // field
       10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
-  EXPECT_EQ(feedAll(envelope(replaceTable(rawFieldProgram(path), 7,
-                                          interpolated, 5)),
-                    7),
-            ERC7730_CATALOG_UNTRUSTED);
+  EXPECT_EQ(
+      feedAll(envelope(replaceTable(rawFieldProgram(path), 7, interpolated, 5)),
+              7),
+      ERC7730_CATALOG_UNTRUSTED);
   const Case cases[] = {
       // an intent part after a field
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 2,
-        0, 0, 0, 0xff, 0xff, 0xff, 0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff},
+      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
+        0,    0,    0,  0xff, 0xff, 2,    0,    0,    0,    0xff, 0xff,
+        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
        4,
        {2, 0, 0, UINT16_MAX, 0},
        2},
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 3,
-        0, 0, 0, 0xff, 0xff, 0xff, 0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff},
+      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
+        0,    0,    0,  0xff, 0xff, 3,    0,    0,    0,    0xff, 0xff,
+        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
        4,
        {3, 0, 0, 0, UINT16_MAX},
        2},
-      // a group around the field
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 5, 0, 0xff, 0xff, 0xff, 0xff, 0,
-        3, 4, 0, 0, 0, 0, 0, 0xff, 0xff, 6, 0, 0, 1, 0xff, 0xff, 0xff, 0xff,
-        10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       5,
-       {5, 0, UINT16_MAX, UINT16_MAX, 3},
+      // a group end that names no group
+      {{1,    0,    0,    0,    0xff, 0xff, 0xff, 0xff, 6,    0,    0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+       3,
+       {6, 0, UINT16_MAX, UINT16_MAX, UINT16_MAX},
        1},
       // opcode 9
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 9, 0, 0xff, 0xff, 0, 0, 0xff,
-        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+      {{1, 0, 0,    0,    0xff, 0xff, 0xff, 0xff, 9,    0,    0xff, 0xff,
+        0, 0, 0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
        3,
        {9, 0, UINT16_MAX, 0, UINT16_MAX},
        1},
       // a second intent
-      {{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0xff, 0xff, 0xff,
-        0xff, 10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+      {{1,    0,    0,    0,    0xff, 0xff, 0xff, 0xff, 1,    0,    0,    0,
+        0xff, 0xff, 0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
        3,
        {1, 0, 0, UINT16_MAX, UINT16_MAX},
        1},
@@ -1213,9 +1215,19 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
     EXPECT_FALSE(erc7730_cap_display(&c.refused, c.pc))
         << (int)c.refused.opcode << "@" << c.pc;
   }
-  // A field with a condition index: conditions are not executed.
+  // A field may carry an "optional" condition, which only ever shows it.
   const Erc7730DisplayInstruction conditional = {4, 0, 0, 0, 0};
-  EXPECT_FALSE(erc7730_cap_display(&conditional, 1));
+  EXPECT_TRUE(erc7730_cap_display(&conditional, 1));
+  // A plain group around the field is executable.
+  const std::vector<uint8_t> group = {
+      1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      5,  0, 0xff, 0xff, 0xff, 0xff, 0,    3,     //
+      4,  0, 0,    0,    0,    0,    0xff, 0xff,  //
+      6,  0, 0,    1,    0xff, 0xff, 0xff, 0xff,  //
+      10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  auto grouped = replaceTable(rawFieldProgram(path), 7, group, 5);
+  grouped[sectionOffset(grouped, 9) + 5 + 18] = 1;  // declared display depth
+  EXPECT_EQ(feedAll(envelope(grouped), 7), ERC7730_CATALOG_UNTRUSTED);
 }
 
 TEST(Erc7730Catalog, PreloadRefusesFormatterKindsTheRuntimeCannotRun) {
@@ -1230,10 +1242,10 @@ TEST(Erc7730Catalog, PreloadRefusesFormatterKindsTheRuntimeCannotRun) {
     // tokenAmount, nftName, unit and enum lack a required argument,
     // addressName needs an address, and kinds 9 and 11-14 never run.
     const bool runs = kind == 2 || kind == 5 || kind == 6;
-    auto p = replaceTable(rawFieldProgram(path), 6, {kind, 0, 1, 1, 1, 0, 0},
-                          1);
-    EXPECT_EQ(feedAll(envelope(p), 7), runs ? ERC7730_CATALOG_UNTRUSTED
-                                            : ERC7730_CATALOG_BAD_PROGRAM)
+    auto p =
+        replaceTable(rawFieldProgram(path), 6, {kind, 0, 1, 1, 1, 0, 0}, 1);
+    EXPECT_EQ(feedAll(envelope(p), 7),
+              runs ? ERC7730_CATALOG_UNTRUSTED : ERC7730_CATALOG_BAD_PROGRAM)
         << (int)kind;
     formatter.kind = kind;
     EXPECT_EQ(erc7730_cap_formatter(&formatter), runs || kind == 10)
@@ -1261,22 +1273,20 @@ TEST(Erc7730Catalog, PreloadWalksEveryPathAgainstTheAbi) {
       4, 0, 0, 0, 0, 0, 0, 0,    0,     // 7 d.0
   };
   auto step = [](int32_t index) {
-    return std::vector<uint8_t>{1, (uint8_t)((uint32_t)index >> 24),
-                                (uint8_t)((uint32_t)index >> 16),
-                                (uint8_t)((uint32_t)index >> 8),
-                                (uint8_t)index};
+    return std::vector<uint8_t>{
+        1, (uint8_t)((uint32_t)index >> 24), (uint8_t)((uint32_t)index >> 16),
+        (uint8_t)((uint32_t)index >> 8), (uint8_t)index};
   };
   struct Case {
     std::vector<int32_t> steps;
     bool executable;
   };
   const Case cases[] = {
-      {{0}, true},       {{4}, false},       {{-1}, false},
-      {{0, 0}, false},   {{1}, false},       {{1, 2}, true},
-      {{1, 3}, false},   {{1, -3}, true},    {{1, -4}, false},
-      {{2, 63}, true},   {{2, 64}, false},   {{2, -64}, true},
-      {{2, -65}, false}, {{3}, false},       {{3, 0}, true},
-      {{3, 1}, false},   {{3, 0, 0}, false},
+      {{0}, true},        {{4}, false},    {{-1}, false},    {{0, 0}, false},
+      {{1}, false},       {{1, 2}, true},  {{1, 3}, false},  {{1, -3}, true},
+      {{1, -4}, false},   {{2, 63}, true}, {{2, 64}, false}, {{2, -64}, true},
+      {{2, -65}, false},  {{3}, false},    {{3, 0}, true},   {{3, 1}, false},
+      {{3, 0, 0}, false},
   };
   for (const auto& c : cases) {
     std::vector<uint8_t> path = {1, (uint8_t)c.steps.size(), 0xff, 0xff};
@@ -1365,8 +1375,7 @@ TEST(Erc7730Catalog, PreloadTypeChecksTokenAmountArguments) {
   // token = literal address; a literal integer is not a token
   const std::vector<uint8_t> address(20, 0x11);
   std::vector<uint8_t> address_literal = {5, 0, 20};
-  address_literal.insert(address_literal.end(), address.begin(),
-                         address.end());
+  address_literal.insert(address_literal.end(), address.begin(), address.end());
   EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 2}, address_literal, 1),
             ERC7730_CATALOG_UNTRUSTED);
   EXPECT_EQ(result({3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 2}, {1, 0, 1, 7}, 1),
@@ -1385,21 +1394,21 @@ TEST(Erc7730Catalog, PreloadTypeChecksTokenAmountArguments) {
   // native aliases (role 22): a set of at most ERC7730_CAP_ALIAS_SET_MAX
   auto aliasSet = [&](uint16_t members) {
     std::vector<uint8_t> out;
-    for (uint16_t i = 0; i < members; i++) out.insert(out.end(),
-        address_literal.begin(), address_literal.end());
-    out.insert(out.end(), {9, 0, (uint8_t)(2 + 2 * members), 0,
-                           (uint8_t)members});
-    for (uint16_t i = 0; i < members; i++) out.insert(out.end(), {0, (uint8_t)i});
+    for (uint16_t i = 0; i < members; i++)
+      out.insert(out.end(), address_literal.begin(), address_literal.end());
+    out.insert(out.end(),
+               {9, 0, (uint8_t)(2 + 2 * members), 0, (uint8_t)members});
+    for (uint16_t i = 0; i < members; i++)
+      out.insert(out.end(), {0, (uint8_t)i});
     return out;
   };
   for (uint16_t members : {(uint16_t)ERC7730_CAP_ALIAS_SET_MAX,
                            (uint16_t)(ERC7730_CAP_ALIAS_SET_MAX + 1)}) {
-    EXPECT_EQ(result({3, 0, 3, 1, 1, 0, 1, 2, 1, 0, 0, 22, 2, 0,
-                      (uint8_t)members},
-                     aliasSet(members), (uint16_t)(members + 1)),
-              members <= ERC7730_CAP_ALIAS_SET_MAX
-                  ? ERC7730_CATALOG_UNTRUSTED
-                  : ERC7730_CATALOG_BAD_PROGRAM)
+    EXPECT_EQ(
+        result({3, 0, 3, 1, 1, 0, 1, 2, 1, 0, 0, 22, 2, 0, (uint8_t)members},
+               aliasSet(members), (uint16_t)(members + 1)),
+        members <= ERC7730_CAP_ALIAS_SET_MAX ? ERC7730_CATALOG_UNTRUSTED
+                                             : ERC7730_CATALOG_BAD_PROGRAM)
         << members;
   }
 }
@@ -1430,10 +1439,10 @@ TEST(Erc7730Catalog, ContainersAreCalldataOnly) {
   };
   auto with_container = two_paths;
   with_container.insert(with_container.end(), {2, 0, 0, 2});  // @.to
-  for (uint8_t kind :
-       {(uint8_t)ERC7730_DEFINITION_CALLDATA, (uint8_t)ERC7730_DEFINITION_EIP712}) {
-    auto control = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
-                                two_paths, 2);
+  for (uint8_t kind : {(uint8_t)ERC7730_DEFINITION_CALLDATA,
+                       (uint8_t)ERC7730_DEFINITION_EIP712}) {
+    auto control =
+        replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3, two_paths, 2);
     auto p = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
                           with_container, 3);
     control[7] = p[7] = kind;
@@ -1449,18 +1458,18 @@ TEST(Erc7730Catalog, ContainersAreCalldataOnly) {
 TEST(Erc7730Catalog, DisplayReaderCountsTheInterpolatedIntentRun) {
   // intent, text, value, text, field, value-after-field, end
   const std::vector<uint8_t> display = {
-      0, 7,                                          //
-      1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
-      2, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
-      3, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
-      2, 0, 0, 1, 0xff, 0xff, 0xff, 0xff,            //
-      4, 0, 0, 0, 0,    0,    0xff, 0xff,            //
-      3, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,            //
+      0,  7,                                      //
+      1,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      2,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      3,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
+      2,  0, 0,    1,    0xff, 0xff, 0xff, 0xff,  //
+      4,  0, 0,    0,    0,    0,    0xff, 0xff,  //
+      3,  0, 0,    0,    0xff, 0xff, 0xff, 0xff,  //
       10, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   Erc7730ProgramDisplay reader{};
   erc7730_program_display_begin(&reader, display.size(), 2);
-  ASSERT_TRUE(erc7730_program_display_feed(&reader, 0, display.data(),
-                                           display.size()));
+  ASSERT_TRUE(
+      erc7730_program_display_feed(&reader, 0, display.data(), display.size()));
   EXPECT_EQ(reader.intent_parts, 3);
 }
 
@@ -1536,14 +1545,14 @@ TEST(Erc7730Catalog, PreloadTypeChecksPhaseCArguments) {
     std::vector<uint8_t> out;
     for (uint16_t i = 0; i < entries; i++)
       out.insert(out.end(), {1, 0, 1, (uint8_t)(i + 1)});
-    out.insert(out.end(), {8, 0, (uint8_t)(2 + 4 * entries), 0,
-                           (uint8_t)entries});
+    out.insert(out.end(),
+               {8, 0, (uint8_t)(2 + 4 * entries), 0, (uint8_t)entries});
     for (uint16_t i = 0; i < entries; i++)
       out.insert(out.end(), {0, (uint8_t)i, 0, 0});
     return out;
   };
-  for (uint16_t entries : {(uint16_t)ERC7730_CAP_ENUM_MAX,
-                           (uint16_t)(ERC7730_CAP_ENUM_MAX + 1)}) {
+  for (uint16_t entries :
+       {(uint16_t)ERC7730_CAP_ENUM_MAX, (uint16_t)(ERC7730_CAP_ENUM_MAX + 1)}) {
     EXPECT_EQ(phaseC({8, 0, 2, 1, 1, 0, 1, 10, 2, 0, (uint8_t)entries},
                      enumMap(entries), (uint16_t)(entries + 1)),
               entries <= ERC7730_CAP_ENUM_MAX ? ERC7730_CATALOG_UNTRUSTED
@@ -1631,4 +1640,32 @@ TEST(Erc7730Catalog, SignerTextAndDecimalsFitTheScreenAtPreload) {
     EXPECT_EQ(signerText(enumeration, label_map, 2, text), expected)
         << "enum label " << text.size();
   }
+}
+
+TEST(Erc7730Catalog, GroupFramesPreservePathClasses) {
+  const std::vector<uint8_t> group = {
+      1,    0,    0,    0,    0xff, 0xff, 0xff, 0xff, 5,    0,
+      0xff, 0xff, 0xff, 0xff, 0,    3,    4,    0,    0,    0,
+      0,    0,    0xff, 0xff, 6,    0,    0,    1,    0xff, 0xff,
+      0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  auto program = replaceTable(
+      rawFieldProgram({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}), 7, group, 5);
+  program[sectionOffset(program, 9) + 5 + 18] = 1;
+  const auto signed_envelope = envelope(program);
+  const auto id = digest(signed_envelope);
+  Erc7730CatalogVerifier verifier;
+  Erc7730CatalogIdentity identity = {};
+  erc7730_catalog_begin(&verifier, id.data(), signed_envelope.size());
+  const size_t before_begin = 10u + sectionOffset(program, 7) + 5u + 2u + 8u;
+  ASSERT_EQ(erc7730_catalog_feed(&verifier, 0, signed_envelope.data(),
+                                 before_begin, &identity),
+            ERC7730_CATALOG_MORE);
+  uint8_t classes[5];
+  memcpy(classes, verifier.signature, sizeof(classes));
+  ASSERT_EQ(
+      erc7730_catalog_feed(&verifier, before_begin,
+                           signed_envelope.data() + before_begin, 8, &identity),
+      ERC7730_CATALOG_MORE);
+  EXPECT_EQ(memcmp(classes, verifier.signature, sizeof(classes)), 0);
+  erc7730_catalog_abort(&verifier);
 }

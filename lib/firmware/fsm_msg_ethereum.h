@@ -1327,6 +1327,17 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       send_erc7730_definition_request();
       return;
     }
+    if (workflow->display_stage == ERC7730_DISPLAY_INSTRUCTION && executable &&
+        (instruction.opcode == 5 || instruction.opcode == 6)) {
+      /* Groups preserve their fields; optional conditions never hide them. */
+      if (!erc7730_workflow_advance_display(workflow)) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 group continuation"));
+        return;
+      }
+      send_erc7730_definition_request();
+      return;
+    }
     if (workflow->display_stage != ERC7730_DISPLAY_INSTRUCTION ||
         instruction.opcode != 4 || !executable) {
       erc7730_workflow_abort(workflow);
