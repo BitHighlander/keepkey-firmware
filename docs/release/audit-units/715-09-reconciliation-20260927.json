@@ -1,0 +1,67 @@
+{
+  "historical_base": "dc8c80ec99a84b7f5381759ac03e041b2aadb92f",
+  "historical_head": "d0c1a7c810107b1ce0a2c885a8f8ca875944a882",
+  "provisional_predecessor": "5037e7f24cd68f11a1815be7a77a2aeae06022d7",
+  "paths": [
+    {
+      "path": "Dockerfile",
+      "disposition": "Superseded for release qualification: native/ARM/emulator builds select immutable firmware base digest 7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2. The historical top-level image recipe is not rebuilt by these paths and later installs protobuf from source. Do not claim changing its pip line modifies the pinned release toolchain."
+    },
+    {
+      "path": "docs/release/audit-units/authenticator-source-cleanup.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/decode-boundaries.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/product-capability-gates.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/provider-icon-placement.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/storage-capacities.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/storage-revocation.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/token-build-dependencies.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "docs/release/audit-units/zcash-export-authorization.md",
+      "disposition": "Historical evidence prose only; do not relabel historical runs as new evidence. Reconcile represented property against predecessor source and final combined tests."
+    },
+    {
+      "path": "include/keepkey/firmware/authenticator.h",
+      "disposition": "Retain 16-byte minimum and duplicate error, and integrate error mapping into Ping."
+    },
+    {
+      "path": "lib/firmware/authenticator.c",
+      "disposition": "Retain printable bounded identities, secret minimum, two confirmations, duplicate refusal and all-copy removal; additionally reject skipped empty fields and OTP prefix aliases."
+    },
+    {
+      "path": "lib/firmware/signing.c",
+      "disposition": "Accessor relocation only; signing_is_active already exists and is used by revocation tests. No replay needed."
+    },
+    {
+      "path": "unittests/firmware/authenticator.cpp",
+      "disposition": "Update existing cases for strong secret and two confirmations without deleting assertions; add boundary/cancellation/duplicate/identity regressions."
+    },
+    {
+      "path": "unittests/firmware/kkconfirm_driver.cpp",
+      "disposition": "Superseded by confirm_test_utils.cpp and kk_test_board_init in accepted predecessor; keep once-only timer bootstrap and sentinel protections."
+    },
+    {
+      "path": "unittests/firmware/storage.cpp",
+      "disposition": "All six named capacity and cipher cleanup tests already registered. Current 2600-byte fixture exceeds required maximum 1501+1024=2525; historical move and increase to 3000 add no behavior. Preserve tests unchanged."
+    }
+  ]
+}
