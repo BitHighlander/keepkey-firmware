@@ -97,7 +97,7 @@ static bool authDisplayFieldValid(const char* value, size_t max_len) {
 /* Decimal fields are host input. Reject signs, suffixes and overflow rather
  * than allowing strtol saturation or an unbounded on-device countdown. */
 static bool authParseUint(const char* text, uint32_t maximum, uint32_t* out) {
-  if (*text == '\0') return false;
+  if (text == NULL || *text == '\0') return false;
   uint32_t value = 0;
   for (; *text; text++) {
     if (*text < '0' || *text > '9') return false;
@@ -380,15 +380,11 @@ cleanup:
 }
 
 unsigned getAuthAccount(const char* slotStr, char acc[]) {
-  uint8_t val;
-  val = (uint8_t)(strtol(slotStr, NULL, 10));
+  uint32_t val;
+  if (!authParseUint(slotStr, AUTHDATA_SIZE - 1, &val)) return NOSLOT;
 
   if (!getAuthData()) {
     return BADPASS;  // fingerprint did not match, passphrase incorrect
-  }
-
-  if (val >= AUTHDATA_SIZE) {
-    return NOSLOT;  // slot index error, has to be less than size of struct
   }
 
   if (authData[val].secretSize == 0) {

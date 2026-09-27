@@ -282,3 +282,21 @@ TEST(Authenticator, OtpTimeFieldsRejectJunkOverflowAndExcessiveCountdown) {
   EXPECT_EQ(CANCELED, generateOTP(boundary, otp));
   EXPECT_EQ(0, kkconfirm_drain());
 }
+
+TEST(Authenticator, AccountSlotRejectsNumericAliasesBeforeLookup) {
+  reset_auth_accounts();
+  ASSERT_EQ(NOERR, add_credential(std::string("example:alice:") + strong_secret, 2, 0));
+  char account[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {};
+  ASSERT_EQ(NOERR, getAuthAccount("0", account));
+  EXPECT_STREQ("example:alice", account);
+  const char* invalid[] = {nullptr, "", "256", "0junk", "+0", "-256", " 0",
+                           "0 ", "1:0", "10", "4294967296", "18446744073709551616"};
+  for (const char* slot : invalid) {
+    memset(account, 0, sizeof(account));
+    EXPECT_EQ(NOSLOT, getAuthAccount(slot, account));
+    EXPECT_STREQ("", account);
+  }
+  EXPECT_EQ(NOACC, getAuthAccount("9", account));
+  EXPECT_EQ(NOERR, getAuthAccount("0", account));
+  EXPECT_STREQ("example:alice", account);
+}
