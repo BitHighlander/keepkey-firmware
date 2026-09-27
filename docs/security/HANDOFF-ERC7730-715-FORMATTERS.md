@@ -80,7 +80,7 @@ Exit: registry signable = 92 exactly. Every program outside the table is refused
 
 ### Implemented per-phase counts (measured 2026-09-25 with the python mirror)
 
-With container and literal sources, the lockstep counts are 0 = 92, A = 812, B = 954, C = 1,138, D = 1,294 and E1 = 1,326. The earlier estimates assumed values came only from calldata. The remaining formats need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
+With container and literal sources, the lockstep counts are 0 = 92, A = 812, B = 954, C = 1,138, D = 1,273 and E1 = 1,297 after strict array binding. The earlier estimates assumed values came only from calldata. The remaining formats need nested iteration, ABIs deeper than 8, or reinterpretation the device will not do.
 
 ### Phase A status (2026-09-25): block 7b, stacked on 7a
 

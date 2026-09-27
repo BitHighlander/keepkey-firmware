@@ -43,7 +43,7 @@ Everything shown must be taken from the bytes being signed.
   | `calleePath` + `amountPath` + `spenderPath` | 6 |
 
   `chainIdPath` and `selectorPath` do not appear.
-- Phase A–D blocks 32 of the formats, one per embedded field (measured: removing only kind 13 from the mirror moves the signable count from 1,326 to 1,294). Of the remaining unsignable formats, about 130 are refused on purpose: slices, packed words, nested arrays, ABIs deeper than 8.
+- Phase E1 adds 24 signable embedded formats after strict array binding (measured: removing kind 13 from the mirror moves the signable count from 1,297 to 1,273). Other formats are refused on purpose for unsupported slices, packed words, nested arrays, deep ABIs or mixed-array formatter arguments.
 - **Not yet measured:**
   - how long the inner calldata really is (a Safe `setup` can be long);
   - how many inner calls have a registry definition of their own;
@@ -153,7 +153,7 @@ The target is to add back at most ~10% of what was deleted.
   - The inner bytes are located, not copied: a new ABI-stream locate mode keeps only the first four bytes, the length and the payload offset, so an inner call of any length works.
   - Display: a "Blind signature: The inner call is not clear-signed" screen, then the field with the callee, `Function 0x<selector>`, `Data N bytes` (or `No data`), `Value <native>` and `As <address>`.
   - The code carries the 7.16 note: reject there instead.
-  - Registry: 1,326 signable. SRAM reserve 18,000 B (−48 B).
+  - Registry: 1,297 signable after strict array binding. SRAM reserve 18,000 B (−48 B).
 
 - **E2 is implemented (block 7b).** The inner call is clear-signed with its own definition, one level deep.
   1. At the embedded field, after the outer signer and intent screens, the device requests the inner definition by (calldata, chain, callee, selector, `recursion_depth=1`). The request carries only facts it read from the signed calldata, and the reply streams into the preload slot.
@@ -186,9 +186,9 @@ An adversarial audit of the 7b diff (102 agents) confirmed 42 findings, clustere
 - **Callee sources:** the callee comes from calldata or a transaction container (`@.to`, or `@.from`, the device-derived signer), never from a signer constant.
 - **Mirror:** the python-keepkey table limits match the device's (D11). A root path is handled (D12). Wire tests filter pager continuation pages instead of de-duplicating (D15).
 
-Documented, not changed. The first three fail closed, with no signature:
+Fail-closed limits, including the later D review correction:
 
-- **D10, parallel arrays.** Inside an iteration only the value argument must walk the iterated array; any other `[]` path (a token, a collection, a callee) is paired with it by index, as ERC-7730 pairs arrays. If that array is shorter, the capture fails mid-review with "calldata does not match definition". If it is longer, its extra elements are not shown. Test: `test_parallel_arrays_pair_by_index_and_a_short_one_fails_closed`.
+- **D10, parallel arrays.** Inside an iteration every source-1 formatter argument must walk the active array. A separate token, collection or callee array is refused before review. A short active array fails closed during capture. Test: `test_parallel_arrays_are_refused_before_preload`.
 - **D18, fixed indices into dynamic arrays.** Preload cannot know a dynamic array's length, so `path.[0]` over an empty array fails mid-review with the same message. Test: `test_a_fixed_index_into_a_short_array_fails_closed`.
 - **The inner validation pass runs after the outer screens.** Inner bytes that are not canonical for the inner ABI (trailing words, non-minimal offsets) abort with "calldata does not match definition" instead of taking the blind path.
 
