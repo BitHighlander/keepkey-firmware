@@ -62,6 +62,45 @@ class PreflightChecks(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             whitespace(self.root, 'HEAD')
 
+    def test_explicit_base_rejects_descendant_divergent_missing_and_empty_refs(self):
+        p = self.root / 'file.txt'
+        p.write_text('base\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'base')
+        base = self.git('rev-parse', 'HEAD').decode().strip()
+        p.write_text('bad committed whitespace \n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'candidate')
+        candidate = self.git('rev-parse', 'HEAD').decode().strip()
+        p.write_text('descendant cleanup\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'descendant')
+        descendant = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('checkout', '--detach', base)
+        p.write_text('different branch\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'divergent')
+        divergent = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('checkout', '--detach', candidate)
+        for ref in (descendant, divergent, 'missing-ref', '', '--help'):
+            with self.subTest(ref=ref), self.assertRaisesRegex(RuntimeError, 'ancestor of HEAD'):
+                whitespace(self.root, ref)
+        # A valid base still examines the candidate and catches its whitespace.
+        with self.assertRaises(subprocess.CalledProcessError):
+            whitespace(self.root, base)
+
+    def test_explicit_ancestor_tag_and_current_head_are_valid(self):
+        p = self.root / 'file.txt'
+        p.write_text('base\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'base')
+        self.git('tag', '-a', 'review-base', '-m', 'review base')
+        p.write_text('clean candidate\n')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'candidate')
+        whitespace(self.root, 'review-base')
+        whitespace(self.root, 'HEAD')
+
     def test_missing_upstream_fails_without_explicit_base(self):
         with self.assertRaises(subprocess.CalledProcessError):
             whitespace(self.root)

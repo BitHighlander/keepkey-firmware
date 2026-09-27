@@ -18,9 +18,20 @@ def docker_ready(timeout=20):
 def whitespace(root, base=None):
     # Inspect both committed changes to be pushed and staged/unstaged changes.
     # A first push without an upstream must identify its review base explicitly.
-    ref = base or '@{upstream}'
-    ancestor = subprocess.check_output(
-        ['git', 'merge-base', 'HEAD', ref], cwd=root, text=True).strip()
+    if base is not None:
+        # Freeze a commit identity before checking it; a descendant or unrelated
+        # override must not silently collapse/broaden the requested push range.
+        try:
+            ancestor = subprocess.check_output(
+                ['git', 'rev-parse', '--verify', '--end-of-options', base + '^{commit}'],
+                cwd=root, text=True, stderr=subprocess.PIPE).strip()
+            subprocess.run(['git', 'merge-base', '--is-ancestor', ancestor, 'HEAD'],
+                           cwd=root, check=True, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError('PREFLIGHT_BASE must resolve to an ancestor of HEAD') from exc
+    else:
+        ancestor = subprocess.check_output(
+            ['git', 'merge-base', 'HEAD', '@{upstream}'], cwd=root, text=True).strip()
     subprocess.run(['git', 'diff', '--check', ancestor, 'HEAD'], cwd=root, check=True)
     subprocess.run(['git', 'diff', '--check', 'HEAD'], cwd=root, check=True)
 
