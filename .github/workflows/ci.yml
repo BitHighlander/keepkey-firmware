@@ -252,6 +252,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Validate release report evidence gates
+        run: python3 -m unittest scripts/test_generate_test_report.py
+
       - name: Verify submodules are declared
         run: |
           echo "Checking required submodule declarations..."
