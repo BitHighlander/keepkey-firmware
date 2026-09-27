@@ -25,7 +25,34 @@ are recorded in the PR body. The final table includes all paths and exact
 source line count; PDF counts are binary. Historical report paths remain on
 their old drafts and are mapped in the new resplit receipt.
 
-<!-- INVENTORY -->
+<!-- INVENTORY_BEGIN -->
+| Tracked path | Added | Deleted | Change and evidence |
+| --- | ---: | ---: | --- |
+| `.github/workflows/ci.yml` | 1 | 1 | Changed as part of this bounded audit unit. |
+| `deps/python-keepkey` | 1 | 1 | Pins the matching compiler mirror and its tests. |
+| `docs/release/audit-units/715-07b-resplit-checks-20260927.json` | 31 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b-resplit-receipt-20260927.md` | 74 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b3r-embedded-audit-20260927.md` | 131 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b3r-embedded-audit-20260927.pdf` | - | - | Rendered audit evidence from the adjacent source report. |
+| `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 10 | 9 | Records on-screen behavior and fail-closed limits. |
+| `docs/security/HANDOFF-ERC7730-PHASE-E.md` | 209 | 0 | Records on-screen behavior and fail-closed limits. |
+| `include/keepkey/firmware/erc7730_abi_stream.h` | 8 | 1 | Declares bounded state and the phase's runtime contract. |
+| `include/keepkey/firmware/erc7730_capabilities.h` | 17 | 7 | Declares bounded state and the phase's runtime contract. |
+| `include/keepkey/firmware/erc7730_catalog.h` | 9 | 5 | Declares bounded state and the phase's runtime contract. |
+| `include/keepkey/firmware/erc7730_field.h` | 9 | 0 | Declares bounded state and the phase's runtime contract. |
+| `include/keepkey/firmware/erc7730_workflow.h` | 49 | 1 | Declares bounded state and the phase's runtime contract. |
+| `lib/firmware/erc7730_abi_stream.c` | 13 | 2 | Captures only bounded ABI facts and records overflow. |
+| `lib/firmware/erc7730_capabilities.c` | 19 | 6 | Selects the exact formatter and display capabilities. |
+| `lib/firmware/erc7730_catalog.c` | 29 | 8 | Refuses unexecutable signed programs before review. |
+| `lib/firmware/erc7730_field.c` | 42 | 0 | Formats decoded values with signer provenance visible. |
+| `lib/firmware/erc7730_workflow.c` | 243 | 7 | Keeps replay, validation and UI state in sequence. |
+| `lib/firmware/fsm.c` | 2 | 1 | Implements the phase's bounded decoding or display rule. |
+| `lib/firmware/fsm_msg_ethereum.h` | 268 | 26 | Shows and confirms the device-decoded review screens. |
+| `scripts/emulator/test_stack07_regressions.py` | 6 | 503 | Exercises signed wire requests and review screens. |
+| `unittests/firmware/erc7730_catalog.cpp` | 277 | 174 | Covers accepted neighbors and fail-closed boundaries. |
+| `unittests/firmware/erc7730_field.cpp` | 24 | 0 | Covers accepted neighbors and fail-closed boundaries. |
+| `unittests/firmware/erc7730_workflow.cpp` | 9 | 5 | Covers accepted neighbors and fail-closed boundaries. |
+<!-- INVENTORY_END -->
 
 ABI capture identifies inner calldata and context. Catalog formatter flags
 validate amount/callee/value availability; field/workflow code binds inner
