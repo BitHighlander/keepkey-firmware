@@ -1,0 +1,31 @@
+{
+  "code_head": "25d14f433a46144cc6b554c0ae57b62455dbd487",
+  "python_head": "8a213ecb3ebf3db45b7a4934437a74e7cf067b1f",
+  "production_firmware_equals": "ed18a68e1f4be4e85eb3b48751120656c0fd62b4",
+  "production_python_equals": "fb94c5c2cd6cb5e3b0b3d896a7c58fc0a8ad0a42",
+  "wire_old_count": 39,
+  "wire_retained_count": 21,
+  "wire_relocated_count": 18,
+  "runtime_count": 39,
+  "relocations": {
+    "test_address_name_marks_only_the_signing_account": "test_address_name_marks_only_the_signing_account",
+    "test_containers_and_signed_constants": "test_containers_and_signed_constants",
+    "test_enum_labels_are_the_signers_claim_beside_the_value": "test_enum_labels_are_the_signers_claim_beside_the_value",
+    "test_grouped_tuple_iteration_and_optional_fields": "test_grouped_tuple_iteration_and_optional_fields",
+    "test_groups_and_optional_fields_are_always_visible": "test_groups_and_optional_fields_are_always_visible",
+    "test_interpolated_intent_parts_show_the_same_values_as_fields": "test_interpolated_intent_parts_show_the_same_values_as_fields",
+    "test_iteration_shows_every_element_numbered": "test_iteration_shows_every_element_numbered",
+    "test_malformed_calldata_is_refused_before_a_constant_field": "test_malformed_calldata_is_refused_before_a_constant_field",
+    "test_native_alias_shows_the_chains_native_asset": "test_native_alias_discloses_signer_mapping_and_token_address",
+    "test_nft_shows_the_collection_address": "test_nft_shows_the_collection_address",
+    "test_path_outside_abi_is_refused_at_preload": "test_path_outside_abi_is_refused_at_preload",
+    "test_phase_c_formatters_show_exact_text": "test_phase_c_formatters_show_exact_text",
+    "test_program_outside_capability_table_is_refused_at_preload": "test_program_outside_capability_table_is_refused_at_preload",
+    "test_raw_field_screens_show_exact_text": "test_raw_field_screens_show_exact_text",
+    "test_signer_label_cannot_name_an_unknown_token": "test_signer_label_cannot_name_an_unknown_token",
+    "test_threshold_message_is_shown_beside_the_exact_amount": "test_threshold_message_is_shown_beside_the_exact_amount",
+    "test_token_amount_uses_the_firmware_token_table": "test_token_amount_uses_the_firmware_token_table",
+    "test_token_named_by_calldata_wins_over_the_hosts_claim": "test_token_named_by_calldata_wins_over_the_hosts_claim"
+  },
+  "negative_control": "Removing group visibility runtime method fails relocation coverage"
+}
