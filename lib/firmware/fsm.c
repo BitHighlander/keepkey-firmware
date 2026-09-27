@@ -459,7 +459,8 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
       return true;
     case MessageType_MessageType_EthereumClearSignDefinitionChunk:
       if (erc7730_workflow_state()->phase != ERC7730_WORKFLOW_REPLAY &&
-          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_SELECT)
+          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_SELECT &&
+          erc7730_workflow_state()->phase != ERC7730_WORKFLOW_FETCH)
         return reject_stale_continuation("No ERC-7730 definition requested");
       return true;
     case MessageType_MessageType_CosmosMsgAck:

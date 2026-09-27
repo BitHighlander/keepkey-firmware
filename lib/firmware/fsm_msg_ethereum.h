@@ -134,6 +134,49 @@ static void send_erc7730_definition_request(void) {
   msg_write(MessageType_MessageType_EthereumClearSignDefinitionRequest, resp);
 }
 
+/* Phase E2: ask for the inner definition by what the signed calldata says
+ * (chain, callee, selector, depth 1), or for the outer definition again by
+ * its id. The host answers with chunks, or with an empty chunk for "none". */
+static void send_erc7730_fetch_request(void) {
+  Erc7730Workflow* workflow = erc7730_workflow_state();
+  if (workflow->phase != ERC7730_WORKFLOW_FETCH ||
+      (workflow->fetch_total != 0 &&
+       workflow->fetch_offset >= workflow->fetch_total)) {
+    erc7730_workflow_abort(workflow);
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid ERC-7730 replay state"));
+    layoutHome();
+    return;
+  }
+  RESP_INIT(EthereumClearSignDefinitionRequest);
+  resp->kind = EthereumClearSignDefinitionKind_ERC7730_CALLDATA;
+  resp->chain_id = workflow->identity.chain_id;
+  if (workflow->fetch_depth == 1) {
+    resp->has_contract_address = true;
+    resp->contract_address.size = 20;
+    memcpy(resp->contract_address.bytes, workflow->field.address, 20);
+    resp->has_selector_or_type_hash = true;
+    resp->selector_or_type_hash.size = 4;
+    memcpy(resp->selector_or_type_hash.bytes, workflow->field.inner_selector,
+           4);
+    resp->has_recursion_depth = true;
+    resp->recursion_depth = 1;
+  } else {
+    resp->has_definition_id = true;
+    resp->definition_id.size = 32;
+    memcpy(resp->definition_id.bytes, workflow->outer_definition_id, 32);
+  }
+  resp->offset = workflow->fetch_offset;
+  const uint32_t remaining =
+      workflow->fetch_total ? workflow->fetch_total - workflow->fetch_offset
+                            : ERC7730_TRANSPORT_CHUNK_MAX;
+  resp->length = remaining < ERC7730_TRANSPORT_CHUNK_MAX
+                     ? remaining
+                     : ERC7730_TRANSPORT_CHUNK_MAX;
+  note_workflow_progress();
+  msg_write(MessageType_MessageType_EthereumClearSignDefinitionRequest, resp);
+}
+
 static void send_erc7730_calldata_request(void) {
   size_t remaining = 0;
   if (!erc7730_workflow_calldata_waiting(erc7730_workflow_state(),
@@ -193,6 +236,8 @@ static size_t erc7730_part_end(const char* value, size_t offset,
     if (end + step - offset > budget) break;
     end += step;
   }
+  /* Split between lines when there is one: a number, an address or a token
+   * name is never cut across two screens unless its own line is too long. */
   if (value[end]) {
     for (size_t i = end; i > offset + 1u; i--)
       if (value[i - 1u] == '\n') return i;
@@ -249,13 +294,16 @@ static bool confirm_erc7730_escaped(const char* title, const char* label,
 
 static Erc7730UiResult confirm_erc7730_source_and_intent(
     Erc7730Workflow* workflow) {
-  if (!workflow || workflow->intent[0] == '\0' ||
+  if (!workflow ||
+      (!workflow->intent_confirmed && workflow->intent[0] == '\0') ||
       workflow->identity.delegate_alias[0] == '\0' ||
       workflow->identity.delegate_fingerprint[0] == '\0')
     return ERC7730_UI_INVALID;
+  const bool inner = workflow->depth != 0;
   if (!workflow->identity_confirmed) {
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Runtime signer", "%s (%s)", workflow->identity.delegate_alias,
+                 inner ? "Inner signer" : "Runtime signer", "%s (%s)",
+                 workflow->identity.delegate_alias,
                  workflow->identity.delegate_fingerprint) ||
         !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Unverified data", "NOT verified by KeepKey"))
@@ -263,7 +311,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
     workflow->identity_confirmed = true;
   }
   if (!workflow->intent_confirmed) {
-    if (!confirm_erc7730_escaped("Contract action", NULL, workflow->intent))
+    if (!confirm_erc7730_escaped(inner ? "Inner action" : "Contract action",
+                                 NULL, workflow->intent))
       return ERC7730_UI_CANCELLED;
     workflow->intent_confirmed = true;
   }
@@ -351,20 +400,26 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
     /* A part of the interpolated intent: a device-owned numbered title and
      * no label. */
     char title[TITLE_CHAR_MAX];
-    snprintf(title, sizeof(title), "Intent %s %u of %u",
-             workflow->intent_value ? "value" : "text",
+    /* "i of n", never the pager's "i/n"; the signer's text and the device's
+     * values are titled apart. Inner parts drop "intent" so the title still
+     * fits the OLED with the pager's page suffix. */
+    snprintf(title, sizeof(title), "%s%s %u of %u",
+             workflow->depth ? "Inner" : "Intent",
+             workflow->intent_value ? " value" : " text",
              (unsigned)workflow->intent_part, (unsigned)workflow->intent_parts);
     confirmed = confirm_erc7730_text(title, NULL, formatted);
   } else if (workflow->iterating) {
     /* One screen per element of the array, numbered by the device. */
     char title[TITLE_CHAR_MAX];
-    snprintf(title, sizeof(title), "Signer field %u of %u",
+    snprintf(title, sizeof(title),
+             workflow->depth ? "Inner field %u of %u" : "Signer field %u of %u",
              (unsigned)workflow->iteration_index + 1u,
              (unsigned)workflow->iteration_count);
     confirmed = confirm_erc7730_field(title, workflow->label, formatted);
   } else {
     confirmed =
-        confirm_erc7730_field("Signer field", workflow->label, formatted);
+        confirm_erc7730_field(workflow->depth ? "Inner field" : "Signer field",
+                              workflow->label, formatted);
   }
   if (!confirmed) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
@@ -495,18 +550,50 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* Record an argument's value and resolve the next argument. */
-static void deliver_erc7730_argument(Erc7730Workflow* workflow, uint8_t cls,
-                                     const uint8_t* value, size_t length) {
-  if (!erc7730_workflow_field_value(workflow, cls, value, length)) {
+/* An embedded call the device cannot clear-sign. 7.15 shows it under a
+ * blind-sign warning (AdvancedMode is already required for ERC-7730).
+ * 7.16: AdvancedMode is a hard gate; reject here instead (owner rule,
+ * docs/security/HANDOFF-ERC7730-PHASE-E.md section 9a). */
+static void show_erc7730_embedded(Erc7730Workflow* workflow) {
+  workflow->inner_refused = false; /* consumed: the next call may fetch */
+  const Erc7730Field* field = &workflow->field;
+  char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  if (!field->has_inner || !field->has_address ||
+      !erc7730_format_embedded(
+          field->address, field->inner_selector, field->inner_selector_length,
+          field->inner_length, field->has_value ? field->value : NULL,
+          workflow->identity.chain_id,
+          field->has_spender ? field->spender : NULL, formatted,
+          sizeof(formatted))) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                       _("Invalid ERC-7730 formatter argument"));
+                       _("Unable to format ERC-7730 field"));
     return;
   }
-  resolve_erc7730_argument(workflow);
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
+    memzero(formatted, sizeof(formatted));
+    fail_erc7730_field(
+        workflow,
+        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                 : FailureType_Failure_ActionCancelled,
+        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                 : _("Signing cancelled by user"));
+    return;
+  }
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
+               "The inner call is not clear-signed")) {
+    memzero(formatted, sizeof(formatted));
+    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                       _("Signing cancelled by user"));
+    return;
+  }
+  show_erc7730_field(workflow, formatted);
+  memzero(formatted, sizeof(formatted));
 }
 
-/* A value captured from calldata or typed data has arrived. */
+/* A raw bytes/string value longer than the device captures. 7.15 shows its
+ * length under a blind-sign warning. 7.16: AdvancedMode is a hard gate;
+ * reject here instead (owner rule, HANDOFF-ERC7730-PHASE-E.md section 9a). */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
   char formatted[48];
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
@@ -519,20 +606,33 @@ static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
                                  : _("Signing cancelled by user"));
     return;
   }
-  if (!workflow->typed_data &&
-      !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
-               "The value is too long to show")) {
+  /* Typed data: the walk that captured this value has just shown every leaf
+   * in full, this one among them, so nothing is blind. */
+  const bool typed = workflow->typed_data;
+  if (!typed && !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                         "Blind signature", "The value is too long to show")) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
                        _("Signing cancelled by user"));
     return;
   }
   snprintf(formatted, sizeof(formatted),
-           workflow->typed_data ? "Shown above in full: %lu bytes"
-                                : "Not shown: %lu bytes",
+           typed ? "Shown above in full: %lu bytes" : "Not shown: %lu bytes",
            (unsigned long)length);
   show_erc7730_field(workflow, formatted);
 }
 
+/* Record an argument's value and resolve the next argument. */
+static void deliver_erc7730_argument(Erc7730Workflow* workflow, uint8_t cls,
+                                     const uint8_t* value, size_t length) {
+  if (!erc7730_workflow_field_value(workflow, cls, value, length)) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 formatter argument"));
+    return;
+  }
+  resolve_erc7730_argument(workflow);
+}
+
+/* A value captured from calldata or typed data has arrived. */
 static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
   Erc7730AbiCapture capture;
   uint8_t cls = 0;
@@ -566,6 +666,15 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
       show_erc7730_field(workflow, formatted);
     }
     memzero(formatted, sizeof(formatted));
+  } else if (workflow->field.kind == 13 && workflow->field.pending_role == 1) {
+    /* The inner call: located, never copied. */
+    if (!erc7730_workflow_field_embedded(workflow) ||
+        !erc7730_workflow_resume_field(workflow)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 embedded call"));
+    } else {
+      resolve_erc7730_argument(workflow);
+    }
   } else if (!erc7730_workflow_resume_field(workflow)) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 display continuation"));
@@ -654,7 +763,38 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     send_erc7730_definition_request();
     return;
   }
-  if (field->kind == 8) {
+  if (field->kind == 13) {
+    /* Clear-sign the inner call when its definition exists: one level, not
+     * inside an iteration, and only for inner bytes that hold a selector and
+     * whole ABI words. Otherwise it is shown blind (7.15). */
+    const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
+                           !workflow->inner_refused && field->has_address &&
+                           field->inner_selector_length == 4 &&
+                           field->inner_length >= 4 &&
+                           (field->inner_length - 4u) % 32u == 0;
+    if (!fetchable) {
+      show_erc7730_embedded(workflow);
+      return;
+    }
+    /* The outer signer and intent come first: the fetch replaces the
+     * preloaded definition. */
+    const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+    if (ui != ERC7730_UI_OK) {
+      fail_erc7730_field(
+          workflow,
+          ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                                   : FailureType_Failure_ActionCancelled,
+          ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                                   : _("Signing cancelled by user"));
+      return;
+    }
+    if (!erc7730_workflow_begin_fetch(workflow, 1)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 embedded call"));
+      return;
+    }
+    send_erc7730_fetch_request();
+  } else if (field->kind == 8) {
     field->list_next = 0;
     next_erc7730_enum_key(workflow);
   } else if (field->has_text &&
@@ -727,7 +867,21 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
                          _("Invalid ERC-7730 value path"));
       return;
     }
-    if (path->source_index == 1) {
+    if (workflow->depth == 1) {
+      /* Inside an inner call its own context stands in for the transaction.
+       */
+      if (path->source_index == 3) {
+        memcpy(value, workflow->inner_value, 32);
+        length = 32;
+        cls = ERC7730_CLASS_UINT;
+      } else {
+        memcpy(
+            value,
+            path->source_index == 1 ? workflow->inner_from : workflow->inner_to,
+            20);
+        length = 20;
+      }
+    } else if (path->source_index == 1) {
       const Erc7730SignerResult result =
           erc7730_signer_address(workflow, value);
       if (result == ERC7730_SIGNER_REPORTED) {
@@ -934,6 +1088,17 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
  * against the digest every earlier pass matched. */
 static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui == ERC7730_UI_OK && workflow->depth == 1) {
+    /* The inner program ended: restore the outer definition by its id and
+     * continue after the instruction that held the inner call. */
+    if (!erc7730_workflow_begin_fetch(workflow, 0)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 embedded call"));
+      return;
+    }
+    send_erc7730_fetch_request();
+    return;
+  }
   if (ui != ERC7730_UI_OK) {
     fail_erc7730_field(
         workflow,
@@ -1017,10 +1182,12 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       layoutHome();
       return;
     }
-    const bool calldata_shape = msg->has_to && msg->to.size == 20 &&
-                                msg->has_data_length && msg->data_length >= 4 &&
-                                msg->has_data_initial_chunk &&
-                                msg->data_initial_chunk.size == 4;
+    /* A definition describes an Ethereum call; a Wanchain transaction
+     * (tx_type) names its value in WAN, which the review would call ETH. */
+    const bool calldata_shape =
+        msg->has_to && msg->to.size == 20 && msg->has_data_length &&
+        msg->data_length >= 4 && msg->has_data_initial_chunk &&
+        msg->data_initial_chunk.size == 4 && !msg->has_tx_type;
     const bool matches =
         calldata_shape && erc7730_catalog_matches_calldata(
                               &definition, msg->chain_id, msg->to.bytes,
@@ -1180,6 +1347,68 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     return;
   }
   bool complete = false;
+  if (workflow->phase == ERC7730_WORKFLOW_FETCH) {
+    bool none = false;
+    const uint8_t fetch_depth = workflow->fetch_depth;
+    const Erc7730CatalogResult fetched =
+        erc7730_workflow_fetch_feed(workflow, msg, &complete, &none);
+    if (fetched != ERC7730_CATALOG_MORE &&
+        fetched != ERC7730_CATALOG_COMPLETE) {
+      erc7730_workflow_abort(workflow);
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Invalid certified ERC-7730 definition"));
+      layoutHome();
+      return;
+    }
+    if (none) {
+      show_erc7730_embedded(workflow); /* no inner definition: blind */
+      return;
+    }
+    if (!complete) {
+      send_erc7730_fetch_request();
+      return;
+    }
+    if (fetch_depth == 1) {
+      /* Bound before any inner screen; then the call's context, which the
+       * inner program does not show. */
+      char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
+      const Erc7730Field* field = &workflow->field;
+      Erc7730CatalogIdentity inner;
+      const bool shown =
+          erc7730_catalog_preloaded(&inner) &&
+          erc7730_catalog_matches_calldata(&inner, workflow->identity.chain_id,
+                                           field->address,
+                                           field->inner_selector) &&
+          erc7730_format_embedded(field->address, field->inner_selector, 4,
+                                  field->inner_length,
+                                  field->has_value ? field->value : NULL,
+                                  workflow->identity.chain_id,
+                                  field->has_spender ? field->spender : NULL,
+                                  formatted, sizeof(formatted));
+      memzero(&inner, sizeof(inner));
+      if (!shown) {
+        memzero(formatted, sizeof(formatted));
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("ERC-7730 inner definition does not match"));
+        return;
+      }
+      const bool confirmed =
+          confirm_erc7730_field("Signer field", workflow->label, formatted);
+      memzero(formatted, sizeof(formatted));
+      if (!confirmed) {
+        fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                           _("Signing cancelled by user"));
+        return;
+      }
+    }
+    if (!erc7730_workflow_fetch_complete(workflow)) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("ERC-7730 inner definition does not match"));
+      return;
+    }
+    send_erc7730_definition_request();
+    return;
+  }
   const uint8_t selection_kind = workflow->selection_kind;
   const Erc7730CatalogResult result =
       workflow->phase == ERC7730_WORKFLOW_SELECT
@@ -1203,7 +1432,20 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       if (!continue_erc7730_domain_checks(workflow)) fail_erc7730_domain();
       return;
     }
-    /* Validate the whole calldata against the ABI before the first screen:
+    if (workflow->resuming) {
+      /* Back from an inner call: continue after the instruction that held
+       * it. The calldata was validated and its digest fixed long ago. */
+      workflow->resuming = false;
+      if (!erc7730_workflow_advance_display(workflow)) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 display continuation"));
+        return;
+      }
+      send_erc7730_definition_request();
+      return;
+    }
+    /* Validate the whole calldata against the ABI (at depth 1: the inner
+     * call's bytes against the inner ABI) before the program's first screen:
      * a field may show a constant before any value is captured. */
     start_erc7730_calldata(workflow, NULL);
     return;

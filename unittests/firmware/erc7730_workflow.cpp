@@ -80,7 +80,9 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 }
 
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
-  EXPECT_LE(sizeof(Erc7730Workflow), 4096u);
+  // Host (64-bit) layout. Phase E2 added the inner call's context (184 B on
+  // ARM, where tools/check_sram_budget.py is the real gate).
+  EXPECT_LE(sizeof(Erc7730Workflow), 4352u);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {
@@ -88,14 +90,16 @@ TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {
   size_t remaining = 99;
   EXPECT_FALSE(erc7730_workflow_calldata_waiting(&workflow, &remaining));
   workflow.phase = ERC7730_WORKFLOW_CALLDATA;
-  workflow.calldata.total_length = 96;
-  workflow.calldata.received = 32;
+  // Every pass replays the whole outer calldata, also while an inner call's
+  // bytes are the only ones decoded.
+  workflow.outer_total = 96;
+  workflow.outer_received = 32;
   ASSERT_TRUE(erc7730_workflow_calldata_waiting(&workflow, &remaining));
   EXPECT_EQ(remaining, 64u);
-  workflow.calldata.received = 96;
+  workflow.outer_received = 96;
   EXPECT_FALSE(erc7730_workflow_calldata_waiting(&workflow, &remaining));
   EXPECT_EQ(remaining, 0u);
-  workflow.calldata.received = 97;
+  workflow.outer_received = 97;
   EXPECT_FALSE(erc7730_workflow_calldata_waiting(&workflow, &remaining));
 }
 
