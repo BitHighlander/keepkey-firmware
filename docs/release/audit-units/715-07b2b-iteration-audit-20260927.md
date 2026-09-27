@@ -5,10 +5,10 @@
 Sole audit agent: Codex. Worktree `/private/tmp/kk715-di`, branch
 `release/715-stack-07b2b-erc7730-iteration`. Owner authorized the two-part D
 split on 2026-09-27. Base is D-G firmware PR #868 at
-`990e34c3250290ea4df16606d82fbd7c3201aded`.
+`93d8fb6c2827364172af6fd6719fe86606497839`.
 Code snapshot `4449ac0f6be022238c8087ce08c80feec6c01cea`.
-Python companion PR #118 pins `59eb3b7e7665e54a35f9e8e92e692c7a4e75acd5`.
-Other pins are identical to D-G and listed in its adjacent report.
+Python companion PR #118 pins `dd7649b3a8d1ab43c2dbba8af5a9db1e1190769f`.
+Other pins match D-G. Inherited CircleCI now clones the actual fork before testing.
 Canonical product `release/7.15` is not updated. Historical PR #866 remains.
 This adjacent review contains iteration code, not a receipt-only change.
 
