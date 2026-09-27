@@ -178,6 +178,7 @@ jobs:
         run: |
           mkdir -p .cppcheck-build
 
+          : > cppcheck_report.txt
           CPPCHECK_RC=0
           sh scripts/cppcheck.sh cppcheck_report.txt || CPPCHECK_RC=$?
 

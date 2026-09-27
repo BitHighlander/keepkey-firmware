@@ -49,12 +49,18 @@ else:
         args = json.loads((self.root / 'argv.json').read_text())
         self.assertEqual('-j', args[0])
         self.assertGreater(int(args[1]), 0)
-        self.assertEqual(['lib/', 'include/keepkey/', 'tools/'], args[-3:])
-        self.assertIn('--output-file=' + output, args)
-        self.assertIn('--enable=warning,style,performance,portability', args)
-        self.assertIn('--error-exitcode=1', args)
-        self.assertNotIn('cppcheck', args)
-        self.assertNotIn('\\', args)
+        self.assertEqual([
+            '--cppcheck-build-dir=.cppcheck-build',
+            '--enable=warning,style,performance,portability',
+            '--std=c11', '--platform=unspecified', '--inconclusive', '--force', '--inline-suppr',
+            '--suppressions-list=.cppcheck-suppressions',
+            '-I', 'include', '-I', 'deps/crypto/trezor-firmware/crypto', '-I', 'deps/device-protocol',
+            '-DSTM32F2=1', '-DUSE_ETHEREUM=1', '-DUSE_KECCAK=1', '-DUSE_NANO=1',
+            '-DPB_FIELD_16BIT=1', '-DEMULATOR=1',
+            '--template=::warning file={file},line={line},col={column}::{severity}: {message} [{id}]',
+            '--output-file=' + output, '--error-exitcode=1',
+            'lib/', 'include/keepkey/', 'tools/',
+        ], args[2:])
         self.assertFalse((self.root / 'SHOULD_NOT_EXIST').exists())
 
     def test_stale_package_is_rejected_before_analysis(self):

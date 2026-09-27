@@ -10,7 +10,8 @@ fail() { printf 'FAIL: %s\n' "$1"; failed=1; }
 step() { printf '== %s\n' "$1"; }
 
 step "whitespace (git diff --check)"
-git diff --check HEAD || fail "whitespace errors in the working tree"
+python3 -B scripts/preflight_checks.py whitespace ||
+  fail "whitespace in push range/worktree (set PREFLIGHT_BASE when no upstream exists)"
 
 step "submodules pinned and clean"
 # Local qualification must run the pinned dependencies CI runs. A dirty or
@@ -36,16 +37,7 @@ for f in $(git ls-files '*.options'); do
 done
 
 step "every unit test file is built"
-# A test file no CMakeLists names never runs: hive.cpp sat in 00b with ~20
-# tests that had never executed. Dormant suites for a capability a later
-# block owns are listed here with that owner; nothing else may be unbuilt.
-DORMANT_TESTS="unittests/firmware/hive.cpp"  # hive-release-review block
-cmake_text=$(git ls-files '*CMakeLists.txt' '*.cmake' | xargs cat)
-for f in $(git ls-files 'unittests/*.cpp' 'unittests/**/*.cpp'); do
-  case " $DORMANT_TESTS " in *" $f "*) continue ;; esac
-  printf '%s\n' "$cmake_text" | grep -q "$(basename "$f")" ||
-    fail "$f is not named by any CMakeLists.txt, so it never runs"
-done
+python3 -B scripts/preflight_checks.py sources || fail "unit-test CMake source graph"
 
 step "clang-format 20 (CI pins 20)"
 CF=""
@@ -65,10 +57,10 @@ else
 fi
 
 step "shared cppcheck invocation regressions"
-python3 -B -m unittest scripts/test_preflight_cppcheck.py || fail "cppcheck invocation tests"
+python3 -B -m unittest scripts/test_preflight_cppcheck.py scripts/test_preflight_checks.py || fail "cppcheck invocation tests"
 
 step "cppcheck with CI's pinned package and shared arguments"
-if ! timeout 20 docker info >/dev/null 2>&1; then
+if ! python3 -B scripts/preflight_checks.py docker; then
   fail "docker unresponsive: cppcheck not run"
 else
   version=$(cat scripts/cppcheck-version)
