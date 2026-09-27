@@ -138,5 +138,8 @@
     "deps/python-keepkey": "41af909341965c81b8afadd38f299d6f929089af",
     "deps/qrenc/QR-Code-generator": "6dfbfdad5d9303ed190d1c3cb7bec34b565b6ce8",
     "deps/sca-hardening/SecAESSTM32": "71d356a1141624994cf613bd2d2583892e8e6d5a"
-  }
+  },
+  "final_predecessor": "db7c711a6c824c42e7096d4867429bbe94cb6ffb",
+  "combined_source": "b7f25862f92f41a26dae0b56cc3834a66f079753",
+  "owner_progression": "User directed block09 completion after declaring block08 complete; preserve predecessor external-review limitations."
 }
