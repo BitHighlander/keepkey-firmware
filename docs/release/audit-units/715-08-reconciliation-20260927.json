@@ -1,6 +1,6 @@
 {
   "base": "2483977523d9b6beab52a69429ace9aeefd00f76",
-  "code_snapshot": "7addbe0253287bda3aff0caddce4bdb62fee7d5e",
+  "code_snapshot": "d8e193391089baef969e8ac7b8473dc2226746dc",
   "python_base": "5c2dd4dbce5096de393b2db8c925f24950e22d8b",
   "python_head": "d9a02d981ee43fe3e80b28ba02466670e6e8409d",
   "historical_commit": "dc8c80ec99a84b7f5381759ac03e041b2aadb92f",
@@ -128,5 +128,11 @@
     "changed_predecessor_test_bodies": [],
     "firmware_lib_headers_native_tests": "unchanged",
     "python_keepkeylib": "unchanged"
+  },
+  "runtime_evidence_snapshot": "aca549bb6d446e0a7f1bf66cf3c6f774d42d023f",
+  "report_gate_findings": {
+    "B08-002": "Bind capability waivers to the unique CI ledger",
+    "B08-003": "Match required names exactly or at a module boundary",
+    "tests": "10 pass; original boundary suite fails on the preceding head"
   }
 }
