@@ -21,7 +21,8 @@ def whitespace(root, base=None):
     ref = base or '@{upstream}'
     ancestor = subprocess.check_output(
         ['git', 'merge-base', 'HEAD', ref], cwd=root, text=True).strip()
-    subprocess.run(['git', 'diff', '--check', ancestor], cwd=root, check=True)
+    subprocess.run(['git', 'diff', '--check', ancestor, 'HEAD'], cwd=root, check=True)
+    subprocess.run(['git', 'diff', '--check', 'HEAD'], cwd=root, check=True)
 
 
 def unbuilt_tests(root):
