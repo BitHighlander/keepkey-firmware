@@ -6,9 +6,9 @@ this extraction. No force-push, closure, merge or product promotion.
 
 | Unit | Firmware base/head at report freeze | Python |
 | --- | --- | --- |
-| D-G groups/visibility | PR #868, 5c0090e03 → 990e34c32 | PR #117, b985836 |
-| D-I iteration | PR #869, 990e34c32 → 966c69b6f | PR #118, 59eb3b7 |
-| E-R embedded calls | 966c69b6f → code 25d14f433; final head in PR | 8a213ec |
+| D-G groups/visibility | PR #868, 5c0090e03 → 93d8fb6c2 | PR #117, 345cf97 |
+| D-I iteration | PR #869, 93d8fb6c2 → 0ed026c4b | PR #118, dd7649b |
+| E-R embedded calls | 0ed026c4b → report predecessor 886ce42c; final head in PR | 5c2dd4d |
 
 The D mapping receipt accounts for all 14 original D paths and later review
 findings. Additional original clusters D10 parallel arrays, D11 iteration
@@ -68,7 +68,7 @@ previously reviewed native-alias rename. Removing the group runtime method
 makes the relocation coverage check fail. Raw check output is adjacent JSON.
 EX39 now declares the retained group screenshots; EX16/EX33 corrections stay.
 
-Each replacement has zero review attempts at freeze and its own three-round
-budget. Exact-head CI, correct manifest provenance and current review status
+CircleCI fork checkout is repaired in D-G and inherited. Each unit gets three
+review attempts; zero used at freeze. Exact-head CI and current review status
 are recorded in each live PR. Successful local tests do not accept predecessor
 reviews, the whole 7b stack, physical hardware or the release product.

@@ -5,9 +5,9 @@
 Sole audit agent: Codex. Worktree `/private/tmp/kk715-er`, branch
 `release/715-stack-07b3r-erc7730-embedded`. Owner authorized carrying E onto
 D-G/D-I on 2026-09-27. Base: D-I firmware PR #869,
-`966c69b6fea4c223b51a5018ba6b9134374c0699`.
+`0ed026c4b94b9d22e0685777076fc1dde97479c9`.
 Code snapshot: `25d14f433a46144cc6b554c0ae57b62455dbd487`.
-Python companion PR #119 pins `8a213ecb3ebf3db45b7a4934437a74e7cf067b1f`.
+Python companion PR #119 pins `5c2dd4dbce5096de393b2db8c925f24950e22d8b`.
 All other dependency pins remain as listed in the D-G report. Canonical
 `release/7.15` is not updated. Historical firmware PR #867 and Python PR #116
 remain preserved. This is a code-bearing adjacent embedded-call unit.
@@ -92,7 +92,7 @@ method mapping. All native D-G/D-I regressions survive; E adds four native cases
 Pinned image digest `7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2`.
 Registry pin `9f37816afde954ff6617fb5baa346133e5af26c5`.
 Local runs use the code snapshot and Python pin above, with only report/workflow
-provenance edits after validation. Native and wire run sequentially.
+provenance and inherited CircleCI fork-checkout edits afterward; native/wire ran sequentially.
 
 | Check | Result | Evidence/limit |
 | --- | --- | --- |
