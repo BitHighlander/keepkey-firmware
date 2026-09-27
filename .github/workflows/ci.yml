@@ -238,7 +238,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate release report evidence gates
-        run: python3 -B -m unittest scripts/test_generate_test_report.py scripts/test_preflight_cppcheck.py
+        run: python3 -B -m unittest scripts/test_generate_test_report.py scripts/test_preflight_cppcheck.py scripts/test_preflight_checks.py
 
       - name: Verify submodules are declared
         run: |
