@@ -39,6 +39,9 @@ on:
         default: false
 
 env:
+  # Only administrators set this independently accepted non-PR authority.
+  # Empty fails closed on push/manual runs; PR runs use the event base SHA.
+  KK_ACCEPTED_WAIVER_SHA: ${{ vars.KK_ACCEPTED_WAIVER_SHA }}
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
   # One staged-capability inventory for the integration suite and report
