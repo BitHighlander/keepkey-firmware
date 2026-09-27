@@ -149,12 +149,12 @@ The plan's counts assumed values came only from calldata. Measured with containe
 - **Groups (5/6).** Executed as grouping only; each field shows its own label.
 - **Iteration (7/8).** Runs over one array at a time, calldata only.
   - The array must be reached through tuples only (no array index before the `[]` step), so its ABI node identifies it.
-  - Every field inside must read that array; a field that iterates must be inside an iteration; nesting is refused.
+  - Every field and every formatter argument inside must read that array; a field that iterates must be inside an iteration; nesting is refused.
   - The runtime captures the array's length in one pass, then shows each element's fields titled "Signer field i/N", binding `[]` to element i. An empty array shows no element.
   - The stream's 64-element limit is enforced by the up-front validation pass, before the first screen.
   - A path ending in `[]` is iterable. It is also a value when its element is a leaf (`address[] recipients`).
 - **Slices (path step 3).** Still refused. Their registry uses cut an address out of `bytes`, which would reinterpret bytes.
-- Registry: 1,294 signable (from 1,138). SRAM reserve 18,048 B (−96 B). ROM about +1.2 KB.
+- Registry: 1,273 signable (from 1,138) after the reviewed rule refused 21 mixed-array formatter bindings. SRAM reserve 18,048 B (−96 B). ROM about +1.2 KB.
 - Tests:
   - Native: `PreloadChecksIterationAgainstTheArrayItWalks` (another array, outside, nested, typed data) and `IterationPathsReachTheirArrayThroughTuplesOnly`.
   - Wire: `test_iteration_shows_every_element_numbered` (including an empty array) and `test_grouped_tuple_iteration_and_optional_fields`.
