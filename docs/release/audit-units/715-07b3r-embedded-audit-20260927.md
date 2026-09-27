@@ -67,6 +67,9 @@ Production Python keepkeylib exactly equals validated `fb94c5c`. New controls
 are the retained group frame regression, signer-constant intent contract, and
 nested optional-group wire test. E already destructures the tuple correctly,
 so carrying D-I's host repair introduces no new E production change.
+Copilot round 1 review 5328835367 on `ac16a23df` identified the stale
+companion label in the provenance JSON; the class audit and correction below
+retain the implementation and all test cases unchanged.
 
 | Finding/class | Disposition |
 | --- | --- |
@@ -79,13 +82,15 @@ so carrying D-I's host repair introduces no new E production change.
 | Screenshot EX33/EX16 | No screen declared for preload refusal; fixed/dynamic element screens retained |
 | New EX39 | Retained D-G nested optional fields, zero and nonzero values; report now declares its captured screens |
 | Historical evidence gap | Raw 42-row ledger and D13/D19 not retained; no invented dispositions |
+| Copilot round 1 provenance | The JSON had labeled the earlier Python source snapshot as current; `python_head` now matches the pinned #119 SHA, and snapshot keys are separately named. No firmware or Python source change. |
 
 Source audit revisited binding, outer restoration, capture offsets, absent value
 refusal, depth/iteration fallback, cancellation and formatter flags. No new E
 production defect was confirmed. All 18 relocated D-I wire methods are accounted
 for in Python, with one existing native-alias rename. Removing the group method
 fails the relocation check. The adjacent JSON records source identities and
-method mapping. All native D-G/D-I regressions survive; E adds four native cases.
+method mapping and distinguishes the early source snapshot from the pinned
+companion under review. All native D-G/D-I regressions survive; E adds four native cases.
 
 ## 4. Verification and artifacts
 

@@ -1,6 +1,5 @@
 {
-  "code_head": "25d14f433a46144cc6b554c0ae57b62455dbd487",
-  "python_head": "8a213ecb3ebf3db45b7a4934437a74e7cf067b1f",
+  "python_head": "5c2dd4dbce5096de393b2db8c925f24950e22d8b",
   "production_firmware_equals": "ed18a68e1f4be4e85eb3b48751120656c0fd62b4",
   "production_python_equals": "fb94c5c2cd6cb5e3b0b3d896a7c58fc0a8ad0a42",
   "wire_old_count": 39,
@@ -27,5 +26,10 @@
     "test_token_amount_uses_the_firmware_token_table": "test_token_amount_uses_the_firmware_token_table",
     "test_token_named_by_calldata_wins_over_the_hosts_claim": "test_token_named_by_calldata_wins_over_the_hosts_claim"
   },
-  "negative_control": "Removing group visibility runtime method fails relocation coverage"
+  "negative_control": "Removing group visibility runtime method fails relocation coverage",
+  "source_snapshot_head": "25d14f433a46144cc6b554c0ae57b62455dbd487",
+  "source_snapshot_python_head": "8a213ecb3ebf3db45b7a4934437a74e7cf067b1f",
+  "python_pr": "https://github.com/BitHighlander/python-keepkey/pull/119",
+  "firmware_base": "0ed026c4b94b9d22e0685777076fc1dde97479c9",
+  "provenance_note": "source_snapshot_* names identify the pre-report implementation snapshot; python_head is the actual pinned companion under review"
 }
