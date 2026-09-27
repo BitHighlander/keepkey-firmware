@@ -21,19 +21,23 @@ class PreflightChecks(unittest.TestCase):
         return subprocess.check_output(['git', *args], cwd=self.root, stderr=subprocess.PIPE)
 
     def test_cmake_rejects_comment_unused_list_and_same_basename(self):
+        names = ['same.c', 'same.cc', 'same.cpp', 'same.cxx', 'capital.C']
         for directory in ['one', 'two']:
             d = self.root / 'unittests' / directory
             d.mkdir(parents=True)
-            (d / 'same.cpp').write_text('int main() { return 0; }\n')
+            for name in names:
+                (d / name).write_text('int probe(void) { return 0; }\n')
         (self.root / 'lib').mkdir()
         (self.root / 'lib/helper.c').write_text('int helper(void) { return 0; }\n')
         (self.root / 'unittests/CMakeLists.txt').write_text('add_subdirectory(one)\nadd_subdirectory(two)\n')
-        (self.root / 'unittests/one/CMakeLists.txt').write_text('set(sources same.cpp)\nadd_executable(one ${sources} ${CMAKE_SOURCE_DIR}/lib/helper.c)\n')
+        source_list = ' '.join(names)
+        (self.root / 'unittests/one/CMakeLists.txt').write_text(
+            'set(sources ' + source_list + ')\nadd_executable(one ${sources} ${CMAKE_SOURCE_DIR}/lib/helper.c)\n')
         p = self.root / 'unittests/two/CMakeLists.txt'
-        p.write_text('# same.cpp\nset(unused same.cpp)\n')
+        p.write_text('# ' + source_list + '\nset(unused ' + source_list + ')\n')
         self.git('add', '.')
-        self.assertEqual(['unittests/two/same.cpp'], unbuilt_tests(self.root))
-        p.write_text('set(sources same.cpp)\nadd_executable(two ${sources})\n')
+        self.assertEqual(sorted('unittests/two/' + n for n in names), unbuilt_tests(self.root))
+        p.write_text('set(sources ' + source_list + ')\nadd_executable(two ${sources})\n')
         self.assertEqual([], unbuilt_tests(self.root))
 
     def test_whitespace_in_committed_push_range_and_worktree(self):

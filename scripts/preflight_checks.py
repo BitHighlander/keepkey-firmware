@@ -28,9 +28,10 @@ def whitespace(root, base=None):
 def unbuilt_tests(root):
     root = Path(root).resolve()
     tracked = subprocess.check_output(
-        ['git', 'ls-files', '-z', 'unittests/*.cpp', 'unittests/**/*.cpp'],
+        ['git', 'ls-files', '-z', 'unittests/'],
         cwd=root).decode().split('\0')
-    expected = {str((root / p).resolve()) for p in tracked if p}
+    expected = {str((root / p).resolve()) for p in tracked
+                if Path(p).suffix.lower() in {'.c', '.cc', '.cpp', '.cxx'}}
     # Owned by hive-release-review; all other tracked suites must be reachable.
     expected.discard(str(root / 'unittests/firmware/hive.cpp'))
     with tempfile.TemporaryDirectory(prefix='kk-preflight-cmake-') as tmp:
