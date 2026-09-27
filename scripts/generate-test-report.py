@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 REPORT_GENERATOR = (
     ROOT / "deps" / "python-keepkey" / "scripts" /
     "generate-test-report.py"
@@ -205,7 +206,22 @@ def firmware_version_tuple():
     return tuple(int(value) for value in match.groups())
 
 
-def release_missing_capabilities(cases):
+def approved_capabilities(workflow_text=None):
+    """Read the single staged-capability ledger bound to this checkout."""
+    if workflow_text is None:
+        workflow_text = CI_WORKFLOW.read_text()
+    ledgers = re.findall(
+        r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]+)[ \t]*$",
+        workflow_text, re.MULTILINE)
+    if len(ledgers) != 1:
+        fail("expected exactly one capability ledger in %s, found %d" %
+             (CI_WORKFLOW, len(ledgers)))
+    return {value for value in ledgers[0].split(",") if value}
+
+
+def release_missing_capabilities(cases, approved=None):
+    if approved is None:
+        approved = approved_capabilities()
     missing_capabilities = {
         value.strip() for value in
         os.environ.get("KK_RELEASE_MISSING_CAPABILITIES", "").split(",")
@@ -220,6 +236,12 @@ def release_missing_capabilities(cases):
         if case["status"] == "skip" and
         case["skip_reason"].startswith(CAPABILITY_SKIP_PREFIX)
     )
+    # Environment and JUnit skip reasons are evidence, not authority to
+    # waive additional controls. Only this checkout's CI ledger can do so.
+    unapproved = sorted(missing_capabilities - approved)
+    if unapproved:
+        fail("capability waivers not in the ci.yml ledger: %s" %
+             ", ".join(unapproved))
     return missing_capabilities
 
 
@@ -240,7 +262,9 @@ def validate_cases(cases):
         else:
             required_cases.update(OSMOSIS_LEGACY_REQUIRED_CASES)
     missing = sorted(required for required in required_cases
-                     if not any(name.endswith(required) for name in passed))
+                     if not any(name == required or
+                                name.endswith("." + required)
+                                for name in passed))
     if missing:
         fail("required release controls missing or not passing: %s" %
              ", ".join(missing))
