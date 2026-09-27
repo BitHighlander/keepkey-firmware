@@ -11,3 +11,6 @@ cppcheck_annotations.txt
 
 # CI-fetched pinned inputs (ERC-7730 registry)
 /build-inputs/
+
+# Shared analyzer cache, retained between local invocations
+/.cppcheck-build/

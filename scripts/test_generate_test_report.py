@@ -1,6 +1,8 @@
 """Exercise the release-evidence gate with complete and corrupted inputs."""
 
 import importlib.util
+import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,7 +32,7 @@ class ContractEvidence(unittest.TestCase):
                     case = ET.SubElement(suite, "testcase", {
                         "classname": classname, "name": method})
                     if status == "skip":
-                        ET.SubElement(case, "skipped")
+                        ET.SubElement(case, "skipped", {"message": report.CONTRACT_SKIP_REASONS[name]})
                 ET.ElementTree(suite).write(path)
                 self.paths.append(path)
 
@@ -72,6 +74,21 @@ class ContractEvidence(unittest.TestCase):
                         report.validate_contract_junit(self.root)
                     path.write_bytes(original)
 
+    def test_every_expected_skip_requires_its_product_reason(self):
+        for path in self.paths:
+            original = path.read_bytes()
+            for index, case in enumerate(ET.parse(path).getroot()):
+                if case.find("skipped") is None:
+                    continue
+                for reason in ("", "unrelated infrastructure failure"):
+                    with self.subTest(path=path, case=index, reason=reason):
+                        tree = ET.parse(path)
+                        tree.getroot()[index].find("skipped").set("message", reason)
+                        tree.write(path)
+                        with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
+                            report.validate_contract_junit(self.root)
+                        path.write_bytes(original)
+
 
 def skipped(capability):
     return {"status": "skip",
@@ -101,6 +118,8 @@ class CapabilityWaivers(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             report.parse_capability_ledger(line + line)
         self.assertEqual({"a", "b"}, report.parse_capability_ledger(line))
+        self.assertEqual(set(), report.parse_capability_ledger(
+            "    KK_RELEASE_MISSING_CAPABILITIES: \n"))
 
     def test_candidate_cannot_expand_immutable_ledger(self):
         candidate = report.CI_WORKFLOW.read_text().replace(
@@ -115,17 +134,69 @@ class CapabilityWaivers(unittest.TestCase):
 
     def test_missing_authority_fails_closed(self):
         import subprocess
-        with unittest.mock.patch.object(
-                report, "git", side_effect=subprocess.CalledProcessError(1, "git")):
-            with self.assertRaisesRegex(RuntimeError, "authority is unavailable"):
-                report.approved_capabilities()
+        with unittest.mock.patch.object(report, "waiver_authority_commit", return_value="a" * 40):
+            with unittest.mock.patch.object(
+                    report, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+                with self.assertRaisesRegex(RuntimeError, "authority is unavailable"):
+                    report.approved_capabilities()
 
-    def test_authority_uses_immutable_commit_not_candidate_or_environment(self):
-        trusted = "    KK_RELEASE_MISSING_CAPABILITIES: approved\n"
-        with unittest.mock.patch.object(report, "git", return_value=trusted) as git:
-            self.assertEqual({"approved"}, report.approved_capabilities(trusted))
-        git.assert_called_once_with(
-            "show", report.WAIVER_AUTHORITY_COMMIT + ":.github/workflows/ci.yml")
+    def test_platform_event_selects_authority_independently(self):
+        # The expected SHA is independent of candidate code/constants and
+        # differs from both the PR head and an attacker-provided environment pin.
+        base = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"pull_request": {
+                "base": {"sha": base}, "head": {"sha": "b" * 40}}}))
+            with unittest.mock.patch.dict(os.environ, {
+                    "GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
+                    "GITHUB_SHA": "b" * 40, "WAIVER_AUTHORITY_COMMIT": "HEAD"}):
+                with unittest.mock.patch.object(report, "git", return_value=
+                        "    KK_RELEASE_MISSING_CAPABILITIES: approved\n") as git:
+                    self.assertEqual({"approved"}, report.approved_capabilities(
+                        "    KK_RELEASE_MISSING_CAPABILITIES: approved\n"))
+                git.assert_called_once_with("show", base + ":.github/workflows/ci.yml")
+                for invalid in ({}, {"pull_request": {"base": {"sha": "HEAD"}}},
+                                {"pull_request": {"base": {"sha": "0" * 40}}}):
+                    event.write_text(json.dumps(invalid))
+                    with self.assertRaises(RuntimeError):
+                        report.waiver_authority_commit()
+
+    def test_non_pr_events_require_independent_authority(self):
+        accepted = "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"before": "a" * 40, "after": "b" * 40}))
+            for mode in ("push", "workflow_dispatch"):
+                with self.subTest(mode=mode):
+                    with unittest.mock.patch.dict(os.environ, {
+                            "GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
+                            "GITHUB_EVENT_NAME": mode, "GITHUB_SHA": "b" * 40,
+                            "KK_ACCEPTED_WAIVER_SHA": ""}):
+                        with self.assertRaisesRegex(RuntimeError, "independently accepted"):
+                            report.waiver_authority_commit()
+                        with unittest.mock.patch.dict(os.environ, {
+                                "KK_ACCEPTED_WAIVER_SHA": accepted}):
+                            self.assertEqual(accepted, report.waiver_authority_commit())
+                        for bad in ("HEAD", "0" * 40, "refs/heads/develop"):
+                            with unittest.mock.patch.dict(os.environ, {
+                                    "KK_ACCEPTED_WAIVER_SHA": bad}):
+                                with self.assertRaisesRegex(RuntimeError, "full nonzero commit"):
+                                    report.waiver_authority_commit()
+
+    def test_pr_authority_does_not_use_non_pr_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"pull_request": {"base": {"sha": "a" * 40}}}))
+            with unittest.mock.patch.dict(os.environ, {
+                    "GITHUB_EVENT_PATH": str(event), "GITHUB_ACTIONS": "true",
+                    "KK_ACCEPTED_WAIVER_SHA": "b" * 40}):
+                self.assertEqual("a" * 40, report.waiver_authority_commit())
+
+    def test_ci_without_platform_event_fails_closed(self):
+        with unittest.mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "platform event payload"):
+                report.waiver_authority_commit()
 
     def test_approved_declaration_waives(self):
         self.assertEqual(
