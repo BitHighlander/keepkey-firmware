@@ -239,10 +239,13 @@ def waiver_authority_commit():
             event = json.loads(Path(event_path).read_text())
             if "pull_request" in event:
                 commit = event["pull_request"]["base"]["sha"]
-            elif os.environ.get("GITHUB_EVENT_NAME") == "push":
-                commit = event["before"]
-            elif os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
-                commit = os.environ.get("GITHUB_SHA", "")
+            elif os.environ.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch"):
+                # CI binds this from the repository Actions variable, outside
+                # the candidate diff. No predecessor/selected-head fallback.
+                commit = os.environ.get("KK_ACCEPTED_WAIVER_SHA", "")
+                if not commit:
+                    fail("non-PR waiver authority requires the independently "
+                         "accepted repository variable KK_ACCEPTED_WAIVER_SHA")
             else:
                 fail("unsupported event for waiver authority")
         except (OSError, ValueError, KeyError, TypeError) as exc:
