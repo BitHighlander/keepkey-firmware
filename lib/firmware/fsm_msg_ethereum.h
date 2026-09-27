@@ -899,8 +899,8 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     uint8_t cls = 0;
     const bool counted = erc7730_workflow_captured(workflow, &capture, &cls) &&
                          cls == ERC7730_ABI_ARRAY && capture.length == 32;
-    const uint16_t count =
-        (uint16_t)((capture.data[30] << 8) | capture.data[31]);
+    uint16_t count = 0;
+    if (counted) count = (uint16_t)((capture.data[30] << 8) | capture.data[31]);
     memzero(&capture, sizeof(capture));
     if (!counted || count > ERC7730_ABI_MAX_ARRAY_ELEMENTS ||
         !erc7730_workflow_resume_field(workflow)) {

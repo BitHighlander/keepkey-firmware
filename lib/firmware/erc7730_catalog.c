@@ -686,12 +686,15 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
   /* The display section checks iteration against these; cert[] is idle from
    * the end of the path section until the bindings. */
   v->cert[v->entry_index] = v->formatter_value_array;
-  /* bit 0: an argument iterates; bit 2: the value is a signer constant. */
+  /* bit 0: an argument iterates; bit 1: an auxiliary path uses another
+   * array or a scalar; bit 2: the value is a signer constant. */
   v->cert[64u + v->entry_index] =
       (uint8_t)((v->formatter_any_array ? 1u : 0u) |
+                (v->formatter_mixed_arrays ? 2u : 0u) |
                 (v->formatter_value_literal ? 4u : 0u));
   v->formatter_value_array = 0xff;
   v->formatter_any_array = false;
+  v->formatter_mixed_arrays = false;
   v->formatter_value_literal = false;
   v->entry_index++;
   v->formatter_kind = 0;
@@ -760,9 +763,13 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     if (v->formatter_kind != 1) return false;
     v->formatter_value_literal = true;
   }
-  if (source == 1 && v->path_arrays[index] != 0xff) {
-    v->formatter_any_array = true;
-    if (role == 1) v->formatter_value_array = v->path_arrays[index];
+  if (source == 1) {
+    const uint8_t argument_array = v->path_arrays[index];
+    if (argument_array != 0xff) v->formatter_any_array = true;
+    if (role == 1)
+      v->formatter_value_array = argument_array;
+    else if (argument_array != v->formatter_value_array)
+      v->formatter_mixed_arrays = true;
   }
   v->formatter_last_role = role;
   v->formatter_roles |= FORMAT_ROLE_BIT(role);
@@ -805,7 +812,9 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
     if (formatter >= 64) return false;
     const uint8_t value_array = v->cert[formatter];
     if (((v->cert[64u + formatter] & 1u) != 0 && !v->display_in_iteration) ||
-        (v->display_in_iteration && value_array != v->display_iteration_array))
+        (v->display_in_iteration &&
+         (value_array != v->display_iteration_array ||
+          (v->cert[64u + formatter] & 2u) != 0)))
       return false;
   }
   /* Interpolated-intent parts form one run directly after the intent. */
@@ -1139,6 +1148,7 @@ static bool consume_program_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
       v->formatter_roles = 0;
       v->formatter_value_array = 0xff;
       v->formatter_any_array = false;
+      v->formatter_mixed_arrays = false;
       v->display_depth = 0;
       v->binding_kind = 0;
       v->binding_previous_kind = 0;
