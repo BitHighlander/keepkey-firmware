@@ -97,10 +97,35 @@ class CapabilityWaivers(unittest.TestCase):
     def test_ledger_must_be_unique(self):
         line = "    KK_RELEASE_MISSING_CAPABILITIES: a,b\n"
         with self.assertRaises(RuntimeError):
-            report.approved_capabilities("")
+            report.parse_capability_ledger("")
         with self.assertRaises(RuntimeError):
-            report.approved_capabilities(line + line)
-        self.assertEqual({"a", "b"}, report.approved_capabilities(line))
+            report.parse_capability_ledger(line + line)
+        self.assertEqual({"a", "b"}, report.parse_capability_ledger(line))
+
+    def test_candidate_cannot_expand_immutable_ledger(self):
+        candidate = report.CI_WORKFLOW.read_text().replace(
+            "KK_RELEASE_MISSING_CAPABILITIES: ",
+            "KK_RELEASE_MISSING_CAPABILITIES: unapproved,")
+        with self.assertRaisesRegex(RuntimeError, "immutable authority"):
+            report.approved_capabilities(candidate)
+
+    def test_candidate_can_narrow_immutable_ledger(self):
+        self.assertEqual({"osmosis-wire-guards"}, report.approved_capabilities(
+            "    KK_RELEASE_MISSING_CAPABILITIES: osmosis-wire-guards\n"))
+
+    def test_missing_authority_fails_closed(self):
+        import subprocess
+        with unittest.mock.patch.object(
+                report, "git", side_effect=subprocess.CalledProcessError(1, "git")):
+            with self.assertRaisesRegex(RuntimeError, "authority is unavailable"):
+                report.approved_capabilities()
+
+    def test_authority_uses_immutable_commit_not_candidate_or_environment(self):
+        trusted = "    KK_RELEASE_MISSING_CAPABILITIES: approved\n"
+        with unittest.mock.patch.object(report, "git", return_value=trusted) as git:
+            self.assertEqual({"approved"}, report.approved_capabilities(trusted))
+        git.assert_called_once_with(
+            "show", report.WAIVER_AUTHORITY_COMMIT + ":.github/workflows/ci.yml")
 
     def test_approved_declaration_waives(self):
         self.assertEqual(

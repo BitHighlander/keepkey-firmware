@@ -15,6 +15,9 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+# Owner-accepted Stack 7b checkpoint. Waiver additions require a separately
+# reviewed update to this immutable authority, not just a candidate CI edit.
+WAIVER_AUTHORITY_COMMIT = "2483977523d9b6beab52a69429ace9aeefd00f76"
 REPORT_GENERATOR = (
     ROOT / "deps" / "python-keepkey" / "scripts" /
     "generate-test-report.py"
@@ -206,10 +209,8 @@ def firmware_version_tuple():
     return tuple(int(value) for value in match.groups())
 
 
-def approved_capabilities(workflow_text=None):
-    """Read the single staged-capability ledger bound to this checkout."""
-    if workflow_text is None:
-        workflow_text = CI_WORKFLOW.read_text()
+def parse_capability_ledger(workflow_text):
+    """Parse one unambiguous staged-capability declaration."""
     ledgers = re.findall(
         r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]+)[ \t]*$",
         workflow_text, re.MULTILINE)
@@ -217,6 +218,25 @@ def approved_capabilities(workflow_text=None):
         fail("expected exactly one capability ledger in %s, found %d" %
              (CI_WORKFLOW, len(ledgers)))
     return {value for value in ledgers[0].split(",") if value}
+
+
+def approved_capabilities(workflow_text=None):
+    """Candidate waivers may only narrow the owner-accepted immutable ledger."""
+    if workflow_text is None:
+        workflow_text = CI_WORKFLOW.read_text()
+    candidate = parse_capability_ledger(workflow_text)
+    try:
+        trusted_text = git("show", WAIVER_AUTHORITY_COMMIT +
+                           ":.github/workflows/ci.yml")
+    except subprocess.CalledProcessError:
+        fail("immutable waiver authority is unavailable: " +
+             WAIVER_AUTHORITY_COMMIT)
+    trusted = parse_capability_ledger(trusted_text)
+    added = sorted(candidate - trusted)
+    if added:
+        fail("candidate adds waivers absent from immutable authority: " +
+             ", ".join(added))
+    return candidate
 
 
 def release_missing_capabilities(cases, approved=None):
@@ -237,7 +257,8 @@ def release_missing_capabilities(cases, approved=None):
         case["skip_reason"].startswith(CAPABILITY_SKIP_PREFIX)
     )
     # Environment and JUnit skip reasons are evidence, not authority to
-    # waive additional controls. Only this checkout's CI ledger can do so.
+    # waive additional controls. The candidate ledger must stay within the
+    # separately accepted immutable authority before it can grant a waiver.
     unapproved = sorted(missing_capabilities - approved)
     if unapproved:
         fail("capability waivers not in the ci.yml ledger: %s" %
