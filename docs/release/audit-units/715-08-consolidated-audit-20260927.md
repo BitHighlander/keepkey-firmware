@@ -2,18 +2,18 @@
 
 ## Identity and complete scope
 
-Reviewer: Codex, sole audit agent, 2026-09-27 UTC. Aggregate firmware PR #872, branch `audit/715-stack08-on-7b-20260927`, base consolidated 7b #871 at `2483977523d9b6beab52a69429ace9aeefd00f76`. Integrated code snapshot `f492d7d1728f64266cec16671d9d6e9200f0eaea`; the containing report commit and final CI/review identities are recorded in the live PR receipt. Python #120 stays `d9a02d981ee43fe3e80b28ba02466670e6e8409d`, clean review 5329239805, CircleCI 548. Other dependency pins are unchanged. This report covers the complete aggregate diff; the inherited A/B reports cover the two code-bearing adjacent review diffs.
+Reviewer: Codex, sole audit agent, 2026-09-27 UTC. Aggregate firmware PR #872, branch `audit/715-stack08-on-7b-20260927`, base consolidated 7b #871 at `2483977523d9b6beab52a69429ace9aeefd00f76`. Integrated code snapshot `f895686e4b9c577a687ff0f64ac09be35496e546`; the containing report commit and final CI/review identities are recorded in the live PR receipt. Python #120 stays `d9a02d981ee43fe3e80b28ba02466670e6e8409d`, clean review 5329239805, CircleCI 548. Other dependency pins are unchanged. This report covers the complete aggregate diff; the inherited A/B reports cover the two code-bearing adjacent review diffs.
 
 The aggregate's file contents exactly match the tip of replacement stack B before adding this aggregate-only source/PDF. No force-push or product merge is performed. Child reviews provide mapped code coverage; #872's earlier finding-bearing verdicts remain historical and are not called clean.
 
 ## One authorized breakdown and file/finding ownership
 
-The owner authorized three initial requests total, one breakdown, and three requests per resulting unit, followed by a night stop if the audit is not achieved. The conservative recorded limit is two resulting units and nine requests maximum. Initial requests: Python #120 clean; firmware #872 review 5329251034 found one authority issue; review 5329364719 found six further issues. The single breakdown is used; no recursive split remains. A completed its checkpoint in three requests; B has used all three. The total allowance is exhausted at 9/9. The final actionable B finding is repaired below, with fresh review pending. Actual counts and outcomes belong in `audit-claims/715-08/review-budget-20260927.json` in the main worktree and the final live receipt.
+The owner authorized three initial requests total, one breakdown, and three requests per resulting unit, followed by a night stop if the audit is not achieved. The conservative recorded limit is two resulting units and nine requests maximum. Initial requests: Python #120 clean; firmware #872 review 5329251034 found one authority issue; review 5329364719 found six further issues. The single breakdown is used; no recursive split remains. A completed its checkpoint in three requests; B used its original three plus one separately owner-approved review. Ten requests total are recorded (original 9/9 plus extension 1/1). New body concerns from the extension are repaired below; fresh acceptance remains pending. Actual counts and outcomes belong in `audit-claims/715-08/review-budget-20260927.json` in the main worktree and the final live receipt.
 
 | Unit | Exact head and base | Owned code and findings |
 | --- | --- | --- |
 | A #873 | `1172cd309a280845c8d14c372ee45ec7d343e207` on accepted 7b `2483977523d9b6beab52a69429ace9aeefd00f76` | Report generator/tests, CI report-test/history/companion metadata, Python pin and duplicate nanopb removal. Findings 4114517037, 4114517067, 4114517093: platform authority, empty ledger and exact product skip reasons. Source/PDF and all 23 historical paths are in the inherited A audit/reconciliation. |
-| B #874 | `ce196827223c88097890451f96fbccfa4938522d` on A `1172cd309a280845c8d14c372ee45ec7d343e207` | Preflight, shared cppcheck invocation/version/tests and CI static-analysis steps. Findings 4114517060, 4114517076, 4114517108: remove extraction, verify pinned analyzer and execute report tests once. |
+| B #874 | `5f4442d8f5566a780e7a9e9b4f05a679eae11b2d` on A `1172cd309a280845c8d14c372ee45ec7d343e207` | Preflight, shared cppcheck invocation/version/tests and CI static-analysis steps. Findings 4114517060, 4114517076, 4114517108: remove extraction, verify pinned analyzer and execute report tests once. |
 
 The workflow file is owned by both adjacent units in disjoint hunks: A adds report gate/history and companion binding; B replaces static-analysis installation/invocation and adds its focused tests. No production firmware, Python production library, native test or ABI behavior changes. The accepted 7b implementation already supplies the scoped 7.15 display and one-level inner-call behavior. Python adds EX40–EX44 and report requirements; all 39 predecessor runtime method ASTs are unchanged.
 
@@ -41,7 +41,7 @@ Review 5331887311 identified a missing C translation-unit inventory (inline 4116
 
 CI's existing Stage-1 validation command now invokes the five preflight boundary tests alongside the five analyzer and 18 report-gate tests. The exact command passes all 28 tests locally. The real CMake fixture configures native C/C++ targets without compiling firmware or linking external dependencies; missing tooling or generation failure fails the test. Workflow lint and the real source graph pass. Final preflight, hosted CI and report identities must pass at this frozen head before B's third and final request. A and Python are unchanged and remain accepted. Initial budget 3/3, one breakdown used, A 3/3 complete, B 2/3 used; no fourth B request or recursive split is authorized.
 
-## Final B finding repaired; ready for fresh review
+## Historical final-budget ancestry repair
 
 Review 5332001128 on 6dff9f55bd2c7dbfe762a5edfe0154b6a04289df contained a concrete body finding despite Findings: None and zero inline/unresolved threads. An explicit PREFLIGHT_BASE naming a descendant could hide committed whitespace errors because merge-base reduced the range to HEAD. A real Git fixture reproduced that bypass in the old helper. Explicit bases now resolve once to a commit and must pass git merge-base --is-ancestor against HEAD before range validation. Missing, blank, option-like, divergent and descendant values fail closed. Valid ancestors, annotated ancestor tags and HEAD are accepted. Implicit upstream selection retains merge-base behavior. Committed and working-tree whitespace remain independently checked.
 
@@ -49,21 +49,29 @@ Two added test methods exercise these rejected and accepted boundaries in real t
 
 Python changes are now merged upstream through keepkey/python-keepkey PR #229 into reconcile/upstream-sync at 76d876a86fe92e791f87c8db3dccec04bf05af7a. The firmware dependency remains the audited d9a02d981ee43fe3e80b28ba02466670e6e8409d, which is an ancestor of that canonical merge. A and its accepted checkpoint are unchanged. Final local preflight and exact-head hosted CI/report verification are recorded separately after this immutable source/PDF freeze. Local readiness does not assert fresh Copilot acceptance: initial 3/3 plus A 3/3 plus B 3/3 exhaust the nine-request allowance; no additional request or breakdown was made.
 
+## Owner-approved additional review and repairs
+
+The owner authorized one further Copilot request after the original nine-request budget. Review 5332289964 on ce196827223c88097890451f96fbccfa4938522d says Needs a closer look and Findings: None, with no inline comments and no unresolved threads, but specifically asks to address analyzer cache invalidation and Intel macOS preflight findings. Both are treated as actionable body concerns; the review is not classified clean.
+
+The CI cache previously restored any cppcheck cache from the same runner OS, without bounding the package version, invocation, suppressions or CPU architecture. Its new v2 namespace includes runner OS/architecture and hashFiles over cppcheck-version, cppcheck.sh and .cppcheck-suppressions. The only restore prefix includes that entire configuration identity; there is no broad legacy fallback. Existing source-level incremental reuse is retained inside that partition. This closes the provenance gap without claiming a demonstrated false-negative analyzer result.
+
+The formatter selector now includes /usr/local/opt/llvm@20/bin/clang-format alongside the ARM Homebrew path and PATH candidates. A hermetic shell probe executes the actual old/new selectors with relocated Homebrew roots and an isolated PATH: old misses an Intel-only clang-format 20 installation, new selects it. Version checking remains required. All 30 existing gate tests, shell syntax, workflow lint and diff checks pass. The cache key and its sole restore prefix were checked for identical configuration boundaries. Final preflight and hosted CI/report verification follow the immutable source/PDF freeze and are recorded in the live receipt. A, Python and firmware runtime remain unchanged. Budget is original 9/9 plus approved extension 1/1, ten total; no further request or split is assumed.
+
 ## Complete adjacent aggregate inventory
 
 <!-- INVENTORY_BEGIN -->
 | Added | Deleted | Path |
 | ---: | ---: | --- |
-| 16 | 26 | `.github/workflows/ci.yml` |
+| 20 | 30 | `.github/workflows/ci.yml` |
 | 3 | 0 | `.gitignore` |
 | 1 | 1 | `deps/python-keepkey` |
 | 110 | 0 | `docs/release/audit-units/715-08-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-08-audit-20260927.pdf` |
-| 78 | 0 | `docs/release/audit-units/715-08-consolidated-audit-20260927.md` |
+| 86 | 0 | `docs/release/audit-units/715-08-consolidated-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-08-consolidated-audit-20260927.pdf` |
 | - | - | `docs/release/audit-units/715-08-local-evidence-20260927.tgz` |
 | 175 | 0 | `docs/release/audit-units/715-08-reconciliation-20260927.json` |
-| 72 | 0 | `docs/release/audit-units/715-08B-audit-20260927.md` |
+| 80 | 0 | `docs/release/audit-units/715-08B-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-08B-audit-20260927.pdf` |
 | 0 | 1 | `include/keepkey/transport/messages-osmosis.options` |
 | 2 | 3 | `include/keepkey/transport/messages-solana.options` |
