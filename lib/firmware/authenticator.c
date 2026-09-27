@@ -94,6 +94,21 @@ static bool authDisplayFieldValid(const char* value, size_t max_len) {
   return true;
 }
 
+/* Decimal fields are host input. Reject signs, suffixes and overflow rather
+ * than allowing strtol saturation or an unbounded on-device countdown. */
+static bool authParseUint(const char* text, uint32_t maximum, uint32_t* out) {
+  if (*text == '\0') return false;
+  uint32_t value = 0;
+  for (; *text; text++) {
+    if (*text < '0' || *text > '9') return false;
+    uint32_t digit = (uint32_t)(*text - '0');
+    if (digit > maximum || value > (maximum - digit) / 10) return false;
+    value = value * 10 + digit;
+  }
+  *out = value;
+  return true;
+}
+
 #if DEBUG_LINK
 static unsigned _otpSlot = 0;
 void getAuthSlot(char* authSlotData) {
@@ -236,7 +251,8 @@ cleanup:
 }
 
 unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
-  char *domain, *account, *tIntervalStr;
+  const char* domain;
+  char *account, *tIntervalStr;
   const char* tRemainStr;
   uint8_t hmac[SHA1_DIGEST_LENGTH] = {0};
   uint8_t tIntervalBytes[8] = {0};
@@ -268,16 +284,14 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
     goto cleanup;
   }
 
-  // convert time interval string to long int
-  long tIntervalVal = strtol(tIntervalStr, NULL, 10);
-  // get big endian representation
+  uint32_t tIntervalVal, tRemainVal;
+  if (!authParseUint(tIntervalStr, UINT32_MAX, &tIntervalVal) ||
+      !authParseUint(tRemainStr, 30, &tRemainVal))
+    goto cleanup;
   tIntervalBytes[4] = (tIntervalVal >> 24) & 0xff;
   tIntervalBytes[5] = (tIntervalVal >> 16) & 0xff;
   tIntervalBytes[6] = (tIntervalVal >> 8) & 0xff;
   tIntervalBytes[7] = tIntervalVal & 0xff;
-
-  // convert time remaining to int
-  long tRemainVal = (strtol(tRemainStr, NULL, 10));
 
   if (!getAuthData()) {  // in theory an OTP could be requested on a dirty local
                          // copy
@@ -331,9 +345,8 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
   }
 
   // Check to see if user needs to regenerate OTP
-  tRemainVal -=
-      (getSysTime() - t0) / 1000;  // time since kk received time value
-  if (tRemainVal < 4) {
+  uint32_t elapsed = (getSysTime() - t0) / 1000;
+  if (elapsed >= tRemainVal || tRemainVal - elapsed < 4) {
     if (!review_immediate(ButtonRequestType_ButtonRequest_Other, "OTP Timeout",
                           "OTP time slice timed out, regenerate OTP")) {
       result = CANCELED;
@@ -343,7 +356,8 @@ unsigned generateOTP(char* accountWithMsg, char otpStr[]) {
     strncpy(account_display, authData[slot].domain, DOMAIN_SIZE);
     strcat(account_display, " ");
     strncat(account_display, authData[slot].account, ACCOUNT_SIZE);
-    unsigned remainingdmSec = tRemainVal * 10;  // how many 1/10 secs remaining
+    unsigned remainingdmSec =
+        (tRemainVal - elapsed) * 10;  // how many 1/10 secs remaining
     layoutProgressForAuth(otp_display, account_display,
                           (1000 * remainingdmSec) / 300);
     for (; remainingdmSec > 0; remainingdmSec--) {

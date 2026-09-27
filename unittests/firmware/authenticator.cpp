@@ -255,3 +255,30 @@ TEST(Authenticator, ExactOtpIdentityRetainsIndependentCounterVector) {
   // HOTP SHA1, ASCII key 12345678901234567890, counter 1, six digits.
   EXPECT_STREQ("287082", otp);
 }
+
+TEST(Authenticator, OtpTimeFieldsRejectJunkOverflowAndExcessiveCountdown) {
+  reset_auth_accounts();
+  EXPECT_EQ(NOERR, add_credential(std::string("example:alice:") + strong_secret,
+                                  2, 0));
+  for (const char* timing : {":30", "1:", "+1:30", "-1:30", "1x:30",
+                             "4294967296:30", "18446744073709551616:30", "1:31",
+                             "1:-1", "1:4294967295", "1:30x", "1:30:0"}) {
+    SCOPED_TRACE(timing);
+    std::string text = std::string("example:alice:") + timing;
+    char request[128] = {};
+    memcpy(request, text.c_str(), text.size());
+    char otp[9];
+    memset(otp, 0xa5, sizeof(otp));
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    EXPECT_EQ(TOKERR, generateOTP(request, otp));
+    EXPECT_EQ(0, kkconfirm_drain());
+    const char empty[9] = {};
+    EXPECT_EQ(0, memcmp(empty, otp, sizeof(otp)));
+  }
+  // Largest supported counter still reaches consent; refusal releases no OTP.
+  char boundary[] = "example:alice:4294967295:30";
+  char otp[9] = {};
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_EQ(CANCELED, generateOTP(boundary, otp));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
