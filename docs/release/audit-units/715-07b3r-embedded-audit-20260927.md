@@ -30,9 +30,9 @@ their old drafts and are mapped in the new resplit receipt.
 | --- | ---: | ---: | --- |
 | `.github/workflows/ci.yml` | 1 | 1 | Changed as part of this bounded audit unit. |
 | `deps/python-keepkey` | 1 | 1 | Pins the matching compiler mirror and its tests. |
-| `docs/release/audit-units/715-07b-resplit-checks-20260927.json` | 31 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b-resplit-checks-20260927.json` | 35 | 0 | Records exact scope, findings, inventory and validation. |
 | `docs/release/audit-units/715-07b-resplit-receipt-20260927.md` | 74 | 0 | Records exact scope, findings, inventory and validation. |
-| `docs/release/audit-units/715-07b3r-embedded-audit-20260927.md` | 131 | 0 | Records exact scope, findings, inventory and validation. |
+| `docs/release/audit-units/715-07b3r-embedded-audit-20260927.md` | 136 | 0 | Records exact scope, findings, inventory and validation. |
 | `docs/release/audit-units/715-07b3r-embedded-audit-20260927.pdf` | - | - | Rendered audit evidence from the adjacent source report. |
 | `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md` | 10 | 9 | Records on-screen behavior and fail-closed limits. |
 | `docs/security/HANDOFF-ERC7730-PHASE-E.md` | 209 | 0 | Records on-screen behavior and fail-closed limits. |
