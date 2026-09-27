@@ -883,6 +883,22 @@ class TestStack07Regressions(common.KeepKeyTest):
             self._titled_fields(descriptor, signature,
                                 self._word(32) + self._word(0)), [])
 
+        # A fixed ABI array has no length word. Capture must still bind the
+        # declared count before replaying both element screens.
+        fixed_signature = "payFixed(address[2] recipients)"
+        fixed_descriptor = {"display": {"formats": {fixed_signature: {
+            "intent": "Pay fixed", "fields": [{
+                "path": "recipients.[]", "label": "Recipient",
+                "format": "addressName"}]}}}}
+        self.assertEqual(
+            self._titled_fields(
+                fixed_descriptor, fixed_signature,
+                self._word(OTHER_ADDRESS) + self._word(ADDRESS)), [
+                ("Signer field 1 of 2", "Recipient:\n0x" +
+                 OTHER_ADDRESS.hex()),
+                ("Signer field 2 of 2", "Recipient:\n0x" + ADDRESS.hex()),
+            ])
+
     def test_grouped_tuple_iteration_and_optional_fields(self):
         signature = "batch((address to,uint256 amount)[] items,uint256 fee)"
         descriptor = {"display": {"formats": {signature: {
