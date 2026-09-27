@@ -13,3 +13,8 @@ ae5c38605cc548dcce0c9d83e796eabe834956f4:bootloader/local/baremetal/bootloader_m
 
 # Test wallet data from 2014
 e257a3ad1745bc2dffb38eae0f40dc52ba7de4a6:keepkey_app/test/keepkey_wallet.dat:generic-api-key:7
+
+# Block09 audit dependency gitlinks, verified with git ls-tree 2c37cce7f.
+# These exact historical lines contain public Git commit IDs, not credentials.
+ca3b2d8d684b3bf977974042441ce366d83efd69:docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:134
+ca3b2d8d684b3bf977974042441ce366d83efd69:docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:138
