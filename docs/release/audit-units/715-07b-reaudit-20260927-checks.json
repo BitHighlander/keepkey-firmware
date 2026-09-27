@@ -1,0 +1,895 @@
+{
+  "units": {
+    "AC": {
+      "head": "5c0090e038769ed36d627d4dca09cbfcb1df91d3",
+      "status": "?? scripts/emulator/__pycache__/",
+      "paths": 31,
+      "inventory_errors": {},
+      "python_pin": "f813519c7c1163783b0e89b5cbd70536831f5e49"
+    },
+    "D": {
+      "head": "26ae09fe30e38714d49ffa9aedb34010fed2b8ab",
+      "status": "",
+      "paths": 14,
+      "inventory_errors": {},
+      "python_pin": "9ded843afe66cd9d73c23934fd8560620d5b7732"
+    },
+    "E": {
+      "head": "19d7a30251bf62c931d7b058788a3939edad01da",
+      "status": "",
+      "paths": 25,
+      "inventory_errors": {},
+      "python_pin": "fb94c5c2cd6cb5e3b0b3d896a7c58fc0a8ad0a42"
+    }
+  },
+  "wire_test_relocation": {
+    "removed_from_local_script": [
+      "test_address_name_marks_only_the_signing_account",
+      "test_containers_and_signed_constants",
+      "test_enum_labels_are_the_signers_claim_beside_the_value",
+      "test_grouped_tuple_iteration_and_optional_fields",
+      "test_interpolated_intent_parts_show_the_same_values_as_fields",
+      "test_iteration_shows_every_element_numbered",
+      "test_malformed_calldata_is_refused_before_a_constant_field",
+      "test_native_alias_shows_the_chains_native_asset",
+      "test_nft_shows_the_collection_address",
+      "test_path_outside_abi_is_refused_at_preload",
+      "test_phase_c_formatters_show_exact_text",
+      "test_program_outside_capability_table_is_refused_at_preload",
+      "test_raw_field_screens_show_exact_text",
+      "test_signer_label_cannot_name_an_unknown_token",
+      "test_threshold_message_is_shown_beside_the_exact_amount",
+      "test_token_amount_uses_the_firmware_token_table",
+      "test_token_named_by_calldata_wins_over_the_hosts_claim"
+    ],
+    "missing_from_companion": [
+      "test_native_alias_shows_the_chains_native_asset"
+    ],
+    "reviewed_renames": {
+      "test_native_alias_shows_the_chains_native_asset": "test_native_alias_discloses_signer_mapping_and_token_address"
+    },
+    "unaccounted_after_rename": []
+  },
+  "native_declarations": {
+    "removed": [],
+    "added": [
+      [
+        "Erc7730Catalog",
+        "ASignerConstantIsNeverAnIntentValue"
+      ],
+      [
+        "Erc7730Catalog",
+        "AnEmbeddedCallIsNeverAnIntentPart"
+      ],
+      [
+        "Erc7730Catalog",
+        "EmbeddedCallsTakeTheirCalleeFromCalldata"
+      ],
+      [
+        "Erc7730Field",
+        "EmbeddedCallShowsCalleeSelectorLengthValueAndAuthority"
+      ]
+    ]
+  },
+  "junit": {
+    "/private/tmp/kk715-reaudit-20260927/python-test-results/junit-screenshots.xml": {
+      "cases": 215,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 26,
+      "erc7730_runtime": [
+        {
+          "name": "test_a_call_at_depth_two_is_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_long_typed_data_value_points_to_the_walk_not_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_raw_value_too_long_to_capture_is_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_refused_inner_call_does_not_blind_the_next_one",
+          "skipped": false
+        },
+        {
+          "name": "test_address_name_marks_only_the_signing_account",
+          "skipped": false
+        },
+        {
+          "name": "test_an_inner_definition_the_device_refuses_falls_back_to_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_an_inner_value_the_calldata_does_not_carry_is_never_shown",
+          "skipped": false
+        },
+        {
+          "name": "test_containers_and_signed_constants",
+          "skipped": false
+        },
+        {
+          "name": "test_control_characters_in_a_value_are_escaped",
+          "skipped": false
+        },
+        {
+          "name": "test_embedded_call_is_shown_under_a_blind_sign_warning",
+          "skipped": false
+        },
+        {
+          "name": "test_embedded_calls_inside_an_iteration_are_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_enum_labels_are_the_signers_claim_beside_the_value",
+          "skipped": false
+        },
+        {
+          "name": "test_grouped_tuple_iteration_and_optional_fields",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_call_is_clear_signed_with_its_own_definition",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_call_without_a_definition_is_blind_in_715",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_calls_read_their_own_containers",
+          "skipped": false
+        },
+        {
+          "name": "test_interpolated_intent_parts_show_the_same_values_as_fields",
+          "skipped": false
+        },
+        {
+          "name": "test_iteration_shows_every_element_numbered",
+          "skipped": false
+        },
+        {
+          "name": "test_multiline_values_split_between_lines",
+          "skipped": false
+        },
+        {
+          "name": "test_native_alias_discloses_signer_mapping_and_token_address",
+          "skipped": false
+        },
+        {
+          "name": "test_nft_shows_the_collection_address",
+          "skipped": false
+        },
+        {
+          "name": "test_only_a_raw_field_shows_a_signer_constant",
+          "skipped": false
+        },
+        {
+          "name": "test_phase_c_formatters_show_exact_text",
+          "skipped": false
+        },
+        {
+          "name": "test_raw_field_screens_show_exact_text",
+          "skipped": false
+        },
+        {
+          "name": "test_signer_label_cannot_name_an_unknown_token",
+          "skipped": false
+        },
+        {
+          "name": "test_threshold_message_is_shown_beside_the_exact_amount",
+          "skipped": false
+        },
+        {
+          "name": "test_token_amount_uses_the_firmware_token_table",
+          "skipped": false
+        },
+        {
+          "name": "test_token_named_by_calldata_wins_over_the_hosts_claim",
+          "skipped": false
+        }
+      ]
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results/junit-stack06-contracts.xml": {
+      "cases": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results/junit-stack07.xml": {
+      "cases": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results/junit.xml": {
+      "cases": 880,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 89,
+      "erc7730_runtime": [
+        {
+          "name": "test_a_call_at_depth_two_is_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_fixed_index_into_a_short_array_fails_closed",
+          "skipped": false
+        },
+        {
+          "name": "test_a_long_typed_data_value_points_to_the_walk_not_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_raw_value_too_long_to_capture_is_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_refused_inner_call_does_not_blind_the_next_one",
+          "skipped": false
+        },
+        {
+          "name": "test_a_wanchain_transaction_is_never_certified",
+          "skipped": false
+        },
+        {
+          "name": "test_address_name_marks_only_the_signing_account",
+          "skipped": false
+        },
+        {
+          "name": "test_an_inner_definition_the_device_refuses_falls_back_to_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_an_inner_value_the_calldata_does_not_carry_is_never_shown",
+          "skipped": false
+        },
+        {
+          "name": "test_containers_and_signed_constants",
+          "skipped": false
+        },
+        {
+          "name": "test_control_characters_in_a_value_are_escaped",
+          "skipped": false
+        },
+        {
+          "name": "test_declining_any_certified_screen_returns_no_signature",
+          "skipped": false
+        },
+        {
+          "name": "test_embedded_call_is_shown_under_a_blind_sign_warning",
+          "skipped": false
+        },
+        {
+          "name": "test_embedded_calls_inside_an_iteration_are_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_enum_labels_are_the_signers_claim_beside_the_value",
+          "skipped": false
+        },
+        {
+          "name": "test_grouped_tuple_iteration_and_optional_fields",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_bytes_changed_in_an_inner_pass_are_refused",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_call_is_clear_signed_with_its_own_definition",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_call_without_a_definition_is_blind_in_715",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_calls_read_their_own_containers",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_definition_for_another_call_is_refused",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_definition_for_another_callee_or_chain_is_refused",
+          "skipped": false
+        },
+        {
+          "name": "test_interpolated_intent_parts_show_the_same_values_as_fields",
+          "skipped": false
+        },
+        {
+          "name": "test_iteration_shows_every_element_numbered",
+          "skipped": false
+        },
+        {
+          "name": "test_malformed_calldata_is_refused_before_a_constant_field",
+          "skipped": false
+        },
+        {
+          "name": "test_multiline_values_split_between_lines",
+          "skipped": false
+        },
+        {
+          "name": "test_native_alias_discloses_signer_mapping_and_token_address",
+          "skipped": false
+        },
+        {
+          "name": "test_nft_shows_the_collection_address",
+          "skipped": false
+        },
+        {
+          "name": "test_only_a_raw_field_shows_a_signer_constant",
+          "skipped": false
+        },
+        {
+          "name": "test_parallel_arrays_are_refused_before_preload",
+          "skipped": false
+        },
+        {
+          "name": "test_path_outside_abi_is_refused_at_preload",
+          "skipped": false
+        },
+        {
+          "name": "test_phase_c_formatters_show_exact_text",
+          "skipped": false
+        },
+        {
+          "name": "test_program_outside_capability_table_is_refused_at_preload",
+          "skipped": false
+        },
+        {
+          "name": "test_raw_field_screens_show_exact_text",
+          "skipped": false
+        },
+        {
+          "name": "test_signer_label_cannot_name_an_unknown_token",
+          "skipped": false
+        },
+        {
+          "name": "test_threshold_message_is_shown_beside_the_exact_amount",
+          "skipped": false
+        },
+        {
+          "name": "test_token_amount_uses_the_firmware_token_table",
+          "skipped": false
+        },
+        {
+          "name": "test_token_named_by_calldata_wins_over_the_hosts_claim",
+          "skipped": false
+        }
+      ]
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results-bitcoin-only/junit-screenshots.xml": {
+      "cases": 215,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 175,
+      "erc7730_runtime": [
+        {
+          "name": "test_a_call_at_depth_two_is_shown_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_a_long_typed_data_value_points_to_the_walk_not_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_a_raw_value_too_long_to_capture_is_shown_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_a_refused_inner_call_does_not_blind_the_next_one",
+          "skipped": true
+        },
+        {
+          "name": "test_address_name_marks_only_the_signing_account",
+          "skipped": true
+        },
+        {
+          "name": "test_an_inner_definition_the_device_refuses_falls_back_to_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_an_inner_value_the_calldata_does_not_carry_is_never_shown",
+          "skipped": true
+        },
+        {
+          "name": "test_containers_and_signed_constants",
+          "skipped": true
+        },
+        {
+          "name": "test_control_characters_in_a_value_are_escaped",
+          "skipped": true
+        },
+        {
+          "name": "test_embedded_call_is_shown_under_a_blind_sign_warning",
+          "skipped": true
+        },
+        {
+          "name": "test_embedded_calls_inside_an_iteration_are_shown_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_enum_labels_are_the_signers_claim_beside_the_value",
+          "skipped": true
+        },
+        {
+          "name": "test_grouped_tuple_iteration_and_optional_fields",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_call_is_clear_signed_with_its_own_definition",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_call_without_a_definition_is_blind_in_715",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_calls_read_their_own_containers",
+          "skipped": true
+        },
+        {
+          "name": "test_interpolated_intent_parts_show_the_same_values_as_fields",
+          "skipped": true
+        },
+        {
+          "name": "test_iteration_shows_every_element_numbered",
+          "skipped": true
+        },
+        {
+          "name": "test_multiline_values_split_between_lines",
+          "skipped": true
+        },
+        {
+          "name": "test_native_alias_discloses_signer_mapping_and_token_address",
+          "skipped": true
+        },
+        {
+          "name": "test_nft_shows_the_collection_address",
+          "skipped": true
+        },
+        {
+          "name": "test_only_a_raw_field_shows_a_signer_constant",
+          "skipped": true
+        },
+        {
+          "name": "test_phase_c_formatters_show_exact_text",
+          "skipped": true
+        },
+        {
+          "name": "test_raw_field_screens_show_exact_text",
+          "skipped": true
+        },
+        {
+          "name": "test_signer_label_cannot_name_an_unknown_token",
+          "skipped": true
+        },
+        {
+          "name": "test_threshold_message_is_shown_beside_the_exact_amount",
+          "skipped": true
+        },
+        {
+          "name": "test_token_amount_uses_the_firmware_token_table",
+          "skipped": true
+        },
+        {
+          "name": "test_token_named_by_calldata_wins_over_the_hosts_claim",
+          "skipped": true
+        }
+      ]
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results-bitcoin-only/junit-stack06-contracts.xml": {
+      "cases": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 15,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results-bitcoin-only/junit-stack07.xml": {
+      "cases": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 20,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/python-test-results-bitcoin-only/junit.xml": {
+      "cases": 880,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 539,
+      "erc7730_runtime": [
+        {
+          "name": "test_a_call_at_depth_two_is_shown_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_a_fixed_index_into_a_short_array_fails_closed",
+          "skipped": true
+        },
+        {
+          "name": "test_a_long_typed_data_value_points_to_the_walk_not_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_a_raw_value_too_long_to_capture_is_shown_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_a_refused_inner_call_does_not_blind_the_next_one",
+          "skipped": true
+        },
+        {
+          "name": "test_a_wanchain_transaction_is_never_certified",
+          "skipped": true
+        },
+        {
+          "name": "test_address_name_marks_only_the_signing_account",
+          "skipped": true
+        },
+        {
+          "name": "test_an_inner_definition_the_device_refuses_falls_back_to_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_an_inner_value_the_calldata_does_not_carry_is_never_shown",
+          "skipped": true
+        },
+        {
+          "name": "test_containers_and_signed_constants",
+          "skipped": true
+        },
+        {
+          "name": "test_control_characters_in_a_value_are_escaped",
+          "skipped": true
+        },
+        {
+          "name": "test_declining_any_certified_screen_returns_no_signature",
+          "skipped": true
+        },
+        {
+          "name": "test_embedded_call_is_shown_under_a_blind_sign_warning",
+          "skipped": true
+        },
+        {
+          "name": "test_embedded_calls_inside_an_iteration_are_shown_blind",
+          "skipped": true
+        },
+        {
+          "name": "test_enum_labels_are_the_signers_claim_beside_the_value",
+          "skipped": true
+        },
+        {
+          "name": "test_grouped_tuple_iteration_and_optional_fields",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_bytes_changed_in_an_inner_pass_are_refused",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_call_is_clear_signed_with_its_own_definition",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_call_without_a_definition_is_blind_in_715",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_calls_read_their_own_containers",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_definition_for_another_call_is_refused",
+          "skipped": true
+        },
+        {
+          "name": "test_inner_definition_for_another_callee_or_chain_is_refused",
+          "skipped": true
+        },
+        {
+          "name": "test_interpolated_intent_parts_show_the_same_values_as_fields",
+          "skipped": true
+        },
+        {
+          "name": "test_iteration_shows_every_element_numbered",
+          "skipped": true
+        },
+        {
+          "name": "test_malformed_calldata_is_refused_before_a_constant_field",
+          "skipped": true
+        },
+        {
+          "name": "test_multiline_values_split_between_lines",
+          "skipped": true
+        },
+        {
+          "name": "test_native_alias_discloses_signer_mapping_and_token_address",
+          "skipped": true
+        },
+        {
+          "name": "test_nft_shows_the_collection_address",
+          "skipped": true
+        },
+        {
+          "name": "test_only_a_raw_field_shows_a_signer_constant",
+          "skipped": true
+        },
+        {
+          "name": "test_parallel_arrays_are_refused_before_preload",
+          "skipped": true
+        },
+        {
+          "name": "test_path_outside_abi_is_refused_at_preload",
+          "skipped": true
+        },
+        {
+          "name": "test_phase_c_formatters_show_exact_text",
+          "skipped": true
+        },
+        {
+          "name": "test_program_outside_capability_table_is_refused_at_preload",
+          "skipped": true
+        },
+        {
+          "name": "test_raw_field_screens_show_exact_text",
+          "skipped": true
+        },
+        {
+          "name": "test_signer_label_cannot_name_an_unknown_token",
+          "skipped": true
+        },
+        {
+          "name": "test_threshold_message_is_shown_beside_the_exact_amount",
+          "skipped": true
+        },
+        {
+          "name": "test_token_amount_uses_the_firmware_token_table",
+          "skipped": true
+        },
+        {
+          "name": "test_token_named_by_calldata_wins_over_the_hosts_claim",
+          "skipped": true
+        }
+      ]
+    },
+    "/private/tmp/kk715-reaudit-20260927/test-report/junit-merged.xml": {
+      "cases": 1577,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 89,
+      "erc7730_runtime": [
+        {
+          "name": "test_a_call_at_depth_two_is_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_fixed_index_into_a_short_array_fails_closed",
+          "skipped": false
+        },
+        {
+          "name": "test_a_long_typed_data_value_points_to_the_walk_not_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_raw_value_too_long_to_capture_is_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_a_refused_inner_call_does_not_blind_the_next_one",
+          "skipped": false
+        },
+        {
+          "name": "test_a_wanchain_transaction_is_never_certified",
+          "skipped": false
+        },
+        {
+          "name": "test_address_name_marks_only_the_signing_account",
+          "skipped": false
+        },
+        {
+          "name": "test_an_inner_definition_the_device_refuses_falls_back_to_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_an_inner_value_the_calldata_does_not_carry_is_never_shown",
+          "skipped": false
+        },
+        {
+          "name": "test_containers_and_signed_constants",
+          "skipped": false
+        },
+        {
+          "name": "test_control_characters_in_a_value_are_escaped",
+          "skipped": false
+        },
+        {
+          "name": "test_declining_any_certified_screen_returns_no_signature",
+          "skipped": false
+        },
+        {
+          "name": "test_embedded_call_is_shown_under_a_blind_sign_warning",
+          "skipped": false
+        },
+        {
+          "name": "test_embedded_calls_inside_an_iteration_are_shown_blind",
+          "skipped": false
+        },
+        {
+          "name": "test_enum_labels_are_the_signers_claim_beside_the_value",
+          "skipped": false
+        },
+        {
+          "name": "test_grouped_tuple_iteration_and_optional_fields",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_bytes_changed_in_an_inner_pass_are_refused",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_call_is_clear_signed_with_its_own_definition",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_call_without_a_definition_is_blind_in_715",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_calls_read_their_own_containers",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_definition_for_another_call_is_refused",
+          "skipped": false
+        },
+        {
+          "name": "test_inner_definition_for_another_callee_or_chain_is_refused",
+          "skipped": false
+        },
+        {
+          "name": "test_interpolated_intent_parts_show_the_same_values_as_fields",
+          "skipped": false
+        },
+        {
+          "name": "test_iteration_shows_every_element_numbered",
+          "skipped": false
+        },
+        {
+          "name": "test_malformed_calldata_is_refused_before_a_constant_field",
+          "skipped": false
+        },
+        {
+          "name": "test_multiline_values_split_between_lines",
+          "skipped": false
+        },
+        {
+          "name": "test_native_alias_discloses_signer_mapping_and_token_address",
+          "skipped": false
+        },
+        {
+          "name": "test_nft_shows_the_collection_address",
+          "skipped": false
+        },
+        {
+          "name": "test_only_a_raw_field_shows_a_signer_constant",
+          "skipped": false
+        },
+        {
+          "name": "test_parallel_arrays_are_refused_before_preload",
+          "skipped": false
+        },
+        {
+          "name": "test_path_outside_abi_is_refused_at_preload",
+          "skipped": false
+        },
+        {
+          "name": "test_phase_c_formatters_show_exact_text",
+          "skipped": false
+        },
+        {
+          "name": "test_program_outside_capability_table_is_refused_at_preload",
+          "skipped": false
+        },
+        {
+          "name": "test_raw_field_screens_show_exact_text",
+          "skipped": false
+        },
+        {
+          "name": "test_signer_label_cannot_name_an_unknown_token",
+          "skipped": false
+        },
+        {
+          "name": "test_threshold_message_is_shown_beside_the_exact_amount",
+          "skipped": false
+        },
+        {
+          "name": "test_token_amount_uses_the_firmware_token_table",
+          "skipped": false
+        },
+        {
+          "name": "test_token_named_by_calldata_wins_over_the_hosts_claim",
+          "skipped": false
+        }
+      ]
+    },
+    "/private/tmp/kk715-reaudit-20260927/unit-test-results-bitcoin-only/board.xml": {
+      "cases": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/unit-test-results-bitcoin-only/crypto.xml": {
+      "cases": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/unit-test-results-bitcoin-only/firmware.xml": {
+      "cases": 135,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/unit-test-results-full/board.xml": {
+      "cases": 19,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/unit-test-results-full/crypto.xml": {
+      "cases": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    },
+    "/private/tmp/kk715-reaudit-20260927/unit-test-results-full/firmware.xml": {
+      "cases": 656,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "erc7730_runtime": []
+    }
+  },
+  "report_provenance": {
+    "firmware_sha": "19d7a30251bf62c931d7b058788a3939edad01da",
+    "python_sha": "fb94c5c2cd6cb5e3b0b3d896a7c58fc0a8ad0a42",
+    "python_pr": "https://github.com/keepkey/python-keepkey/pull/197",
+    "run_url": "https://github.com/BitHighlander/keepkey-firmware/actions/runs/36286655387",
+    "pdf_hash_matches": true
+  },
+  "artifact_hashes": {
+    "python-test-results/junit-screenshots.xml": "e627e5f7b60d6cf56935a24b581755b622f63727293408fcc0742a0745eea01d",
+    "python-test-results/junit-stack06-contracts.xml": "59bd6d2c55edae2af62d56f417b43db622702dff045ee29e185f1fd499a5f4e1",
+    "python-test-results/junit-stack07.xml": "341851cc6dfb1e9e150a4fe93789e0f03bd371aa00a1ed4dae562ab3eed9de97",
+    "python-test-results/junit.xml": "2c4d510d9eb0b2e2c797ae28bb8e62018f76d467079b3af8a7922c9c9980e692",
+    "python-test-results/status": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "python-test-results-bitcoin-only/junit-screenshots.xml": "20f6fdfd483335fc70866ec4590dcb01dbae2ecebdee68754396fc6fe39f99fa",
+    "python-test-results-bitcoin-only/junit-stack06-contracts.xml": "32e028422c2954aa4f1c343a32bda39adb84088cd7699efb3a3feeb8417c26a2",
+    "python-test-results-bitcoin-only/junit-stack07.xml": "71272a328c89662262959905d47e241c64d08d9ed42804c3115227c01f1681aa",
+    "python-test-results-bitcoin-only/junit.xml": "336acbaf3d7f32754c62682d370f8517cf52eb663bfff7a1508faceed2c3c46a",
+    "python-test-results-bitcoin-only/status": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "test-report/junit-merged.xml": "fac450b37f7d287397209c1678ccdd741c1d258fa74ff28de983ce8b3bcf4a44",
+    "test-report/test-report-manifest.json": "50b1db91a8cac3daec632a83525b066c9c75070a05a55ea27ddff60830bf4c4b",
+    "test-report/test-report.pdf": "f64f5cba0ff2d831b086cc21b54b5ce0609b7ea076cb3aeb689420aac3eba005",
+    "test-report/test-report.pdf.sha256": "4920ff744465455cce7e37edaf079741450eb52e5799274bbddeb52980d729c7",
+    "unit-test-results-bitcoin-only/board.xml": "1fa5a671f74fbf1225ecbb7efe2aebb0aa17d2d99653c5c95b9444c1686e2466",
+    "unit-test-results-bitcoin-only/crypto.xml": "f8462ea7fc29b44532c55e0d49ee06d2f1b75a0918068120898fc2ff64634108",
+    "unit-test-results-bitcoin-only/firmware.xml": "f333e65596695e29d1cd410dd8d18f63939cc5781eb716aa3dbba15744aa4abb",
+    "unit-test-results-full/board.xml": "bb5e84e8401614fb8401d3c5ee626b6fd11c3bca00b02523ba4ab843eb10727e",
+    "unit-test-results-full/crypto.xml": "0a5a315a2f31806452f8b4ecaaf46fba3c419e4b5e3140adf8049a645d6251af",
+    "unit-test-results-full/firmware.xml": "a2f448aa8c1f0c59ef0ecc3b5b9ce648ff4f591d8aa08a00a7c706b19db82ea8"
+  }
+}
