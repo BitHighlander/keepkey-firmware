@@ -251,6 +251,8 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Includes the immutable, owner-accepted waiver authority commit.
+          fetch-depth: 0
 
       - name: Validate release report evidence gates
         run: python3 -m unittest scripts/test_generate_test_report.py
@@ -970,6 +972,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Includes the immutable, owner-accepted waiver authority commit.
+          fetch-depth: 0
 
       - name: Download unit test results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
