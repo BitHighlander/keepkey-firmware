@@ -48,6 +48,11 @@ class PreflightChecks(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             whitespace(self.root, base)
         p.write_text('fixed\n')
+        # An uncommitted cleanup cannot hide the bad committed push range.
+        with self.assertRaises(subprocess.CalledProcessError):
+            whitespace(self.root, base)
+        self.git('add', '.')
+        self.git('commit', '-qm', 'fix')
         whitespace(self.root, base)
         p.write_text('bad worktree \n')
         with self.assertRaises(subprocess.CalledProcessError):
