@@ -419,8 +419,14 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
     return false;
   int32_t components[ERC7730_ABI_MAX_DEPTH];
   for (uint8_t i = 0; i < path->step_count; i++) {
-    if (path->steps[i].opcode != 1) return false;
-    components[i] = path->steps[i].first;
+    if (path->steps[i].opcode == 2 && workflow->iterating) {
+      /* "every element": the iteration's current element */
+      components[i] = workflow->iteration_index;
+    } else if (path->steps[i].opcode == 1) {
+      components[i] = path->steps[i].first;
+    } else {
+      return false;
+    }
   }
   if (!erc7730_workflow_restore_and_start_calldata(workflow, tx)) {
     memzero(components, sizeof(components));
@@ -434,6 +440,20 @@ bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
     return false;
   }
   return true;
+}
+
+bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
+                                               EthereumSignTx* tx,
+                                               const Erc7730Path* path) {
+  if (!workflow || !tx || !path || workflow->iterating || path->source != 1 ||
+      path->step_count < 2 || !erc7730_cap_path(path) ||
+      path->steps[path->step_count - 1u].opcode != 2)
+    return false;
+  Erc7730Path array = *path;
+  array.step_count--;
+  for (uint8_t i = 0; i < array.step_count; i++)
+    if (array.steps[i].opcode != 1) return false;
+  return erc7730_workflow_restore_and_start_capture(workflow, tx, &array);
 }
 
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
