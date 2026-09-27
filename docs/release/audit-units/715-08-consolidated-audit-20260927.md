@@ -2,7 +2,7 @@
 
 ## Identity and complete scope
 
-Reviewer: Codex, sole audit agent, 2026-09-27 UTC. Aggregate firmware PR #872, branch `audit/715-stack08-on-7b-20260927`, base consolidated 7b #871 at `2483977523d9b6beab52a69429ace9aeefd00f76`. Integrated code snapshot `551002a2048b7263749fde4b50d01204c1e52bd5`; the containing report commit and final CI/review identities are recorded in the live PR receipt. Python #120 stays `d9a02d981ee43fe3e80b28ba02466670e6e8409d`, clean review 5329239805, CircleCI 548. Other dependency pins are unchanged. This report covers the complete aggregate diff; the inherited A/B reports cover the two code-bearing adjacent review diffs.
+Reviewer: Codex, sole audit agent, 2026-09-27 UTC. Aggregate firmware PR #872, branch `audit/715-stack08-on-7b-20260927`, base consolidated 7b #871 at `2483977523d9b6beab52a69429ace9aeefd00f76`. Integrated code snapshot `a7578954d973be98e6c2f601a011ba26537eae08`; the containing report commit and final CI/review identities are recorded in the live PR receipt. Python #120 stays `d9a02d981ee43fe3e80b28ba02466670e6e8409d`, clean review 5329239805, CircleCI 548. Other dependency pins are unchanged. This report covers the complete aggregate diff; the inherited A/B reports cover the two code-bearing adjacent review diffs.
 
 The aggregate's file contents exactly match the tip of replacement stack B before adding this aggregate-only source/PDF. No force-push or product merge is performed. Child reviews provide mapped code coverage; #872's earlier finding-bearing verdicts remain historical and are not called clean.
 
@@ -13,7 +13,7 @@ The owner authorized three initial requests total, one breakdown, and three requ
 | Unit | Exact head and base | Owned code and findings |
 | --- | --- | --- |
 | A #873 | `1172cd309a280845c8d14c372ee45ec7d343e207` on accepted 7b `2483977523d9b6beab52a69429ace9aeefd00f76` | Report generator/tests, CI report-test/history/companion metadata, Python pin and duplicate nanopb removal. Findings 4114517037, 4114517067, 4114517093: platform authority, empty ledger and exact product skip reasons. Source/PDF and all 23 historical paths are in the inherited A audit/reconciliation. |
-| B #874 | `0e1ccc59375a02a95a9c8d3ebd2cd66df7b06fe2` on A `1172cd309a280845c8d14c372ee45ec7d343e207` | Preflight, shared cppcheck invocation/version/tests and CI static-analysis steps. Findings 4114517060, 4114517076, 4114517108: remove extraction, verify pinned analyzer and execute report tests once. |
+| B #874 | `e563f23ff07c3db92894cbef50228b168fc4d59f` on A `1172cd309a280845c8d14c372ee45ec7d343e207` | Preflight, shared cppcheck invocation/version/tests and CI static-analysis steps. Findings 4114517060, 4114517076, 4114517108: remove extraction, verify pinned analyzer and execute report tests once. |
 
 The workflow file is owned by both adjacent units in disjoint hunks: A adds report gate/history and companion binding; B replaces static-analysis installation/invocation and adds its focused tests. No production firmware, Python production library, native test or ABI behavior changes. The accepted 7b implementation already supplies the scoped 7.15 display and one-level inner-call behavior. Python adds EX40–EX44 and report requirements; all 39 predecessor runtime method ASTs are unchanged.
 
@@ -31,9 +31,9 @@ Current 7.15 owner scope is preserved: optional fields remain visible; unsupport
 
 Review 5331723008 found two inline issues plus concrete body-only suggestions. The basename search could accept an unrelated file or a comment; preflight now configures the actual test CMake tree with full features and compares tracked test paths against compile_commands.json. Linking is omitted and firmware is not compiled by this source-membership check; real set/list/if/add_subdirectory semantics remain. Repository-root source paths are exposed through temporary directory aliases. Missing CMake or configuration errors fail closed. This checks membership in the configured full-feature test graph, not runtime test success; native CI remains required.
 
-GNU timeout is replaced by Python subprocess.run(timeout=20), which works on macOS and reports missing, failed or timed-out Docker probes. Whitespace checks use the merge base with the upstream plus the working tree, covering committed changes about to be pushed; PREFLIGHT_BASE explicitly selects the adjacent review base or is required for a first push without an upstream. CI creates the analyzer report before invocation so early package/executable failure still leaves an uploadable report. The analyzer cache is ignored locally. The argv regression asserts every flag, include, define, template, output path and source directory, allowing only the host CPU count to vary.
+GNU timeout is replaced by Python subprocess.run(timeout=20), which works on macOS and reports missing, failed or timed-out Docker probes. Whitespace checks independently validate the committed upstream-base-to-HEAD range and the HEAD-to-working-tree range, so an uncommitted cleanup cannot mask a bad committed push; PREFLIGHT_BASE explicitly selects the adjacent review base or is required for a first push without an upstream. CI creates the analyzer report before invocation so early package/executable failure still leaves an uploadable report. The analyzer cache is ignored locally. The argv regression asserts every flag, include, define, template, output path and source directory, allowing only the host CPU count to vary.
 
-Five new boundary tests exercise a same-basename collision, comment and unused-list rejection, a repository-root CMake source, committed/worktree whitespace, absent upstream, and Docker timeout/failure behavior. All 28 combined preflight/analyzer/report tests pass, and the structural check passes on the real repository. Initial harness validation caught a CMAKE_SOURCE_DIR relocation problem; temporary directory aliases fixed it and a real-CMake fixture now covers that case. No production firmware, runtime suite, Python pin or A code changed. Final preflight must run after this source/PDF freeze, followed by new exact-head CI/report verification and B request 2/3. Earlier successful runs describe earlier B/aggregate heads.
+Five new boundary tests exercise a same-basename collision, comment and unused-list rejection, a repository-root CMake source, committed/worktree whitespace (including an uncommitted fix masking committed errors), absent upstream, and Docker timeout/failure behavior. All 28 combined preflight/analyzer/report tests pass, and the structural check passes on the real repository. Initial harness validation caught a CMAKE_SOURCE_DIR relocation problem; temporary directory aliases fixed it and a real-CMake fixture now covers that case. No production firmware, runtime suite, Python pin or A code changed. Final preflight must run after this source/PDF freeze, followed by new exact-head CI/report verification and B request 2/3. Earlier successful runs describe earlier B/aggregate heads.
 
 ## Complete adjacent aggregate inventory
 
@@ -57,8 +57,8 @@ Five new boundary tests exercise a same-basename collision, comment and unused-l
 | 32 | 0 | `scripts/cppcheck.sh` |
 | 96 | 7 | `scripts/generate-test-report.py` |
 | 103 | 0 | `scripts/preflight.sh` |
-| 79 | 0 | `scripts/preflight_checks.py` |
+| 80 | 0 | `scripts/preflight_checks.py` |
 | 248 | 0 | `scripts/test_generate_test_report.py` |
-| 76 | 0 | `scripts/test_preflight_checks.py` |
+| 81 | 0 | `scripts/test_preflight_checks.py` |
 | 91 | 0 | `scripts/test_preflight_cppcheck.py` |
 <!-- INVENTORY_END -->
