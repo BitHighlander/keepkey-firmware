@@ -41,7 +41,7 @@ python3 -B scripts/preflight_checks.py sources || fail "unit-test CMake source g
 
 step "clang-format 20 (CI pins 20)"
 CF=""
-for c in clang-format-20 /opt/homebrew/opt/llvm@20/bin/clang-format clang-format; do
+for c in clang-format-20 /opt/homebrew/opt/llvm@20/bin/clang-format /usr/local/opt/llvm@20/bin/clang-format clang-format; do
   if command -v "$c" >/dev/null 2>&1 && "$c" --version | grep -q ' 20\.'; then
     CF=$c; break
   fi
