@@ -115,6 +115,7 @@ typedef struct {
   uint8_t formatter_value_array;
   uint8_t display_iteration_array;
   bool formatter_any_array;
+  bool formatter_mixed_arrays;
   bool display_in_iteration;
   bool path_array_indexed;
   bool path_last_full;
