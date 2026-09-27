@@ -162,6 +162,37 @@ class CapabilityWaivers(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         report.waiver_authority_commit()
 
+    def test_non_pr_events_require_independent_authority(self):
+        accepted = "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"before": "a" * 40, "after": "b" * 40}))
+            for mode in ("push", "workflow_dispatch"):
+                with self.subTest(mode=mode):
+                    with unittest.mock.patch.dict(os.environ, {
+                            "GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
+                            "GITHUB_EVENT_NAME": mode, "GITHUB_SHA": "b" * 40,
+                            "KK_ACCEPTED_WAIVER_SHA": ""}):
+                        with self.assertRaisesRegex(RuntimeError, "independently accepted"):
+                            report.waiver_authority_commit()
+                        with unittest.mock.patch.dict(os.environ, {
+                                "KK_ACCEPTED_WAIVER_SHA": accepted}):
+                            self.assertEqual(accepted, report.waiver_authority_commit())
+                        for bad in ("HEAD", "0" * 40, "refs/heads/develop"):
+                            with unittest.mock.patch.dict(os.environ, {
+                                    "KK_ACCEPTED_WAIVER_SHA": bad}):
+                                with self.assertRaisesRegex(RuntimeError, "full nonzero commit"):
+                                    report.waiver_authority_commit()
+
+    def test_pr_authority_does_not_use_non_pr_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event = Path(tmp) / "event.json"
+            event.write_text(json.dumps({"pull_request": {"base": {"sha": "a" * 40}}}))
+            with unittest.mock.patch.dict(os.environ, {
+                    "GITHUB_EVENT_PATH": str(event), "GITHUB_ACTIONS": "true",
+                    "KK_ACCEPTED_WAIVER_SHA": "b" * 40}):
+                self.assertEqual("a" * 40, report.waiver_authority_commit())
+
     def test_ci_without_platform_event_fails_closed(self):
         with unittest.mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "platform event payload"):
