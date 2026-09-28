@@ -117,8 +117,17 @@ bool ethereum_chainIdIsValid(const EthereumSignTx* msg) {
          msg->chain_id <= MAX_CHAIN_ID;
 }
 
+/* Classification can run before signing_init canonicalizes the RLP value. */
+static bool ethereum_valueIsZero(const EthereumSignTx* msg) {
+  if (!msg->has_value) return true;
+  for (size_t i = 0; i < msg->value.size; ++i) {
+    if (msg->value.bytes[i] != 0) return false;
+  }
+  return true;
+}
+
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
+  if (msg->has_to && msg->to.size == 20 && ethereum_valueIsZero(msg) &&
       msg->data_initial_chunk.size == 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\xa9\x05\x9c\xbb\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
@@ -139,7 +148,7 @@ static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
 }
 
 bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
-  return msg->value.size == 0 && msg->data_initial_chunk.size == 68 &&
+  return ethereum_valueIsZero(msg) && msg->data_initial_chunk.size == 68 &&
          ethereum_isERC20ApproveCall(msg);
 }
 

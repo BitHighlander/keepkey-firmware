@@ -116,6 +116,25 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
         self.assertIsInstance(result, proto.Failure)
         self.assertEqual(buttons, 0)
 
+    def test_transfer_account_padded_zero_keeps_contract_review(self):
+        self.client.apply_policy("ShapeShift", 1)
+        path = [0x8000002c, 0x8000003c, 0x80000001, 0, 0]
+        recipient = self.client.ethereum_get_address(path)
+        reference = self._tx(amount=0, recipient=recipient,
+                             address_type=types.TRANSFER)
+        reference.to_address_n.extend(path)
+        signed_reference = self._signed(reference)
+        expected_review = self._first_pages()[0]
+        self.assertIn("Unknown token contract", expected_review[1])
+        for value in (b"\0", b"\0" * 32):
+            tx = self._tx(amount=0, recipient=recipient, value=value,
+                          address_type=types.TRANSFER)
+            tx.to_address_n.extend(path)
+            signed = self._signed(tx)
+            self.assertEqual(self._first_pages()[0], expected_review)
+            self.assertEqual(signed.signature_r, signed_reference.signature_r)
+            self.assertEqual(signed.signature_s, signed_reference.signature_s)
+
     def test_cancel_every_disclosure_page_then_retry(self):
         tx = self._tx(approve=True, amount=(1 << 256) - 2)
         baseline = self._signed(tx)
