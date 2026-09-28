@@ -96,11 +96,11 @@ TEST(USBRX, ErrorHandling) {
   ASSERT_EQ(message, "Unknown message");
 }
 
+#include "test_board.h"
+
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
-
-void kk_test_board_init(void);
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
