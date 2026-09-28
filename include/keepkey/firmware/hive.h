@@ -64,6 +64,11 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
                         size_t active_len, char* memo_out, size_t memo_len,
                         char* posting_out, size_t posting_len);
 
+/** Validate the public fields before consent and again before serialization. */
+bool hive_validateTransfer(const HiveSignTx* msg);
+bool hive_validateAccountCreate(const HiveSignAccountCreate* msg);
+bool hive_validateAccountUpdate(const HiveSignAccountUpdate* msg);
+
 /** Resolve a transferable Hive asset to its signed and displayed spellings. */
 bool hive_transferAsset(const HiveSignTx* msg, const char** wire,
                         const char** display, uint8_t* precision);

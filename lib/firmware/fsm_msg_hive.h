@@ -126,26 +126,39 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
 
 static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count);
 
+// Keep custom-domain support, but make the exact signing domain part of
+// consent. Mainnet (explicit or omitted) keeps the ordinary flow.
+static bool hive_confirm_chain(bool present, const uint8_t* chain) {
+  const uint8_t mainnet[32] = HIVE_CHAIN_ID;
+  if (!present || memcmp(chain, mainnet, sizeof(mainnet)) == 0) return true;
+  char hex[65];
+  static const char digits[] = "0123456789abcdef";
+  for (size_t i = 0; i < 32; ++i) {
+    hex[2 * i] = digits[chain[i] >> 4];
+    hex[2 * i + 1] = digits[chain[i] & 15];
+  }
+  hex[64] = 0;
+  return confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                       "Custom Hive chain", (const uint8_t*)hex, 64);
+}
+
 void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   RESP_INIT(HiveSignedTx);
 
   CHECK_INITIALIZED
   CHECK_PIN
 
-  // Only an omitted chain ID selects mainnet. Never reinterpret malformed
-  // explicit bytes as a different signing domain, even before consent.
-  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+  if (msg->has_memo &&
+      strnlen(msg->memo, sizeof(msg->memo)) > HIVE_MAX_MEMO_LEN) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Hive chain ID must be 32 bytes"));
+                    _("Hive memo too long (max 440 bytes)"));
     layoutHome();
     return;
   }
 
-  if (!msg->has_from || !msg->has_to || !msg->has_amount ||
-      !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
-      !msg->has_expiration) {
+  if (!hive_validateTransfer(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing required Hive transaction fields"));
+                    _("Invalid Hive transaction fields"));
     layoutHome();
     return;
   }
@@ -158,9 +171,8 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
     return;
   }
 
-  if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Hive memo too long (max 440 bytes)"));
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }
@@ -257,20 +269,9 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  // Only an omitted chain ID selects mainnet. Never reinterpret malformed
-  // explicit bytes as a different signing domain, even before consent.
-  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+  if (!hive_validateAccountCreate(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Hive chain ID must be 32 bytes"));
-    layoutHome();
-    return;
-  }
-
-  if (!msg->has_new_account_name || !msg->has_creator ||
-      !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
-      !msg->has_expiration) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing required account_create fields"));
+                    _("Invalid Hive transaction fields"));
     layoutHome();
     return;
   }
@@ -282,12 +283,18 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     layoutHome();
     return;
   }
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
   uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
 
   // Derive all four role keys from the device root.
   // Do this BEFORE fetching the signing node so the root static buffer
   // is not clobbered by the second fsm_getDerivedNode call.
-  const HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
   uint8_t owner_raw[33], active_raw[33], posting_raw[33], memo_raw[33];
@@ -297,6 +304,7 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
       hive_deriveRawKey(root, HIVE_ROLE_ACTIVE, acc_hardened, active_raw) &&
       hive_deriveRawKey(root, HIVE_ROLE_POSTING, acc_hardened, posting_raw) &&
       hive_deriveRawKey(root, HIVE_ROLE_MEMO, acc_hardened, memo_raw);
+  memzero(root, sizeof(*root));
   // root static buffer is done with; signing node derivation may overwrite it.
 
   if (!keys_ok) {
@@ -412,19 +420,9 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  // Only an omitted chain ID selects mainnet. Never reinterpret malformed
-  // explicit bytes as a different signing domain, even before consent.
-  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+  if (!hive_validateAccountUpdate(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Hive chain ID must be 32 bytes"));
-    layoutHome();
-    return;
-  }
-
-  if (!msg->has_account || !msg->has_ref_block_num ||
-      !msg->has_ref_block_prefix || !msg->has_expiration) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing required account_update fields"));
+                    _("Invalid Hive transaction fields"));
     layoutHome();
     return;
   }
@@ -436,10 +434,16 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     layoutHome();
     return;
   }
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
   uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
 
   // Derive all four role keys before fetching the signing node.
-  const HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
   uint8_t owner_raw[33], active_raw[33], posting_raw[33], memo_raw[33];
@@ -449,6 +453,7 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
       hive_deriveRawKey(root, HIVE_ROLE_ACTIVE, acc_hardened, active_raw) &&
       hive_deriveRawKey(root, HIVE_ROLE_POSTING, acc_hardened, posting_raw) &&
       hive_deriveRawKey(root, HIVE_ROLE_MEMO, acc_hardened, memo_raw);
+  memzero(root, sizeof(*root));
 
   if (!keys_ok) {
     memzero(owner_raw, sizeof(owner_raw));

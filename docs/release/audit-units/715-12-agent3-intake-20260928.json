@@ -1,0 +1,56 @@
+{
+  "block": "715-12",
+  "owner": "Codex /root in agent-3; owner-directed continuation",
+  "prior_checkpoint": "499bb47d43ca61be797a7c693ac7887e470351ea",
+  "predecessor": "2c53776877d751311850228c59277ab4e6b26ac9",
+  "integration": "4e8356661ceca64b12f394d456354829535f9253",
+  "status": "local implementation and focused qualification complete; final predecessor integration pending",
+  "predecessor_status": "Fourth review found shared test-board bootstrap defect; agent1 is preparing consecutive split; 2c5377687 remains provisional for this work.",
+  "scope": [
+    "inherited session trust revocation",
+    "Hive supported transfer/create/update input validation and consent",
+    "Zcash progress and secret/public boundary carryforward",
+    "owned test execution and report gates"
+  ],
+  "findings": [
+    {
+      "id": "S12-02",
+      "status": "fixed; native and actual-wire positive/negative controls verified",
+      "detail": "uint64 transfer/fee accepted although signed Graphene amount is int64; zero transfer accepted."
+    },
+    {
+      "id": "S12-03",
+      "status": "fixed; native and actual-wire positive/negative controls verified",
+      "detail": "Account strings can contain invalid/control labels, injected into consent without validation."
+    },
+    {
+      "id": "S12-04",
+      "status": "fixed; native and actual-wire positive/negative controls verified",
+      "detail": "Exact-length custom signing domain is accepted without identifying non-mainnet domain in consent."
+    },
+    {
+      "id": "S12-05",
+      "status": "verification gap repaired",
+      "detail": "Remove hive-release-review waiver; enforce four native and five dedicated wire identities in report with exact full/BTC statuses."
+    }
+  ],
+  "remaining": [
+    "agent1 final Block11 split/integration head",
+    "rerun affected interactions and final exact-head hosted matrix",
+    "final PR base/head and source/PDF inventory freeze"
+  ],
+  "exclusions": [
+    "release publication",
+    "product merge",
+    "physical-device and power-cycle acceptance",
+    "unsupported Hive operation families"
+  ],
+  "canonical_documents": {
+    "docs/release/REHEARSAL-SOP.md": "cd2c546d41f0a723f6ce84199a3fb03661f79ab3f49fbafca08de96a7c309e89",
+    "docs/release/MASTER-AUDIT-TEMPLATE.md": "57a1e47a250dda9f9ed1817918429813bdabceabc9a708ac5ad28e8c611512a0"
+  },
+  "compatibility_sources": [
+    "https://github.com/openhive-network/hive/blob/master/libraries/protocol/authority.cpp",
+    "https://github.com/openhive-network/hive/blob/master/libraries/protocol/hive_operations.cpp"
+  ]
+}

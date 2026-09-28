@@ -241,6 +241,59 @@ bool hive_transferAsset(const HiveSignTx* msg, const char** wire,
   return true;
 }
 
+// Account labels are rendered verbatim. Accept Hive's bounded lowercase DNS
+// labels only: each dot-separated component starts with a letter, ends with a
+// letter/digit and has at least three characters.
+static bool hive_account_name_ok(const char* name) {
+  size_t length = strnlen(name, HIVE_MAX_ACCOUNT_LEN + 1);
+  if (length < 3 || length > HIVE_MAX_ACCOUNT_LEN) return false;
+  size_t component = 0;
+  for (size_t i = 0; i <= length; ++i) {
+    const char c = name[i];
+    if (c == '.' || c == '\0') {
+      if (component < 3 || name[i - 1] == '-') return false;
+      component = 0;
+      continue;
+    }
+    const bool letter = c >= 'a' && c <= 'z';
+    const bool digit = c >= '0' && c <= '9';
+    if ((!letter && !digit && c != '-') || (component == 0 && !letter))
+      return false;
+    ++component;
+  }
+  return true;
+}
+
+bool hive_validateTransfer(const HiveSignTx* msg) {
+  const char *wire, *display;
+  uint8_t precision;
+  return msg->has_from && msg->has_to && msg->has_amount &&
+         msg->has_ref_block_num && msg->has_ref_block_prefix &&
+         msg->has_expiration && hive_account_name_ok(msg->from) &&
+         hive_account_name_ok(msg->to) && msg->amount > 0 &&
+         msg->amount <= INT64_MAX &&
+         (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN) &&
+         (!msg->has_memo ||
+          strnlen(msg->memo, sizeof(msg->memo)) <= HIVE_MAX_MEMO_LEN) &&
+         hive_transferAsset(msg, &wire, &display, &precision);
+}
+
+bool hive_validateAccountCreate(const HiveSignAccountCreate* msg) {
+  return msg->has_creator && msg->has_new_account_name &&
+         msg->has_ref_block_num && msg->has_ref_block_prefix &&
+         msg->has_expiration && hive_account_name_ok(msg->creator) &&
+         hive_account_name_ok(msg->new_account_name) &&
+         (!msg->has_fee_amount || msg->fee_amount <= INT64_MAX) &&
+         (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
+}
+
+bool hive_validateAccountUpdate(const HiveSignAccountUpdate* msg) {
+  return msg->has_account && msg->has_ref_block_num &&
+         msg->has_ref_block_prefix && msg->has_expiration &&
+         hive_account_name_ok(msg->account) &&
+         (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
+}
+
 static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
                                       size_t buf_len) {
   const char* wire_symbol;
@@ -269,8 +322,7 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
 
 void hive_signTx(const HDNode* node, const HiveSignTx* msg,
                  HiveSignedTx* resp) {
-  // Omission defaults to mainnet; a present malformed domain fails closed.
-  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+  if (!hive_validateTransfer(msg)) return;
 
   // Reject memos that would overflow the fixed-size tx_buf.
   if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) return;
@@ -354,8 +406,7 @@ void hive_signAccountCreate(const HDNode* signing_node,
                             const uint8_t posting_raw[33],
                             const uint8_t memo_raw[33],
                             HiveSignedAccountCreate* resp) {
-  // Omission defaults to mainnet; a present malformed domain fails closed.
-  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+  if (!hive_validateAccountCreate(msg)) return;
 
   uint8_t tx_buf[512];
   size_t tx_len =
@@ -436,8 +487,7 @@ void hive_signAccountUpdate(const HDNode* signing_node,
                             const uint8_t posting_raw[33],
                             const uint8_t memo_raw[33],
                             HiveSignedAccountUpdate* resp) {
-  // Omission defaults to mainnet; a present malformed domain fails closed.
-  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+  if (!hive_validateAccountUpdate(msg)) return;
 
   uint8_t tx_buf[512];
   size_t tx_len =

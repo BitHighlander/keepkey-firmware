@@ -226,6 +226,8 @@ class RequiredCaseMatching(unittest.TestCase):
         cases += [{"classname": "c", "name": "n", "status": "pass",
                    "skip_reason": ""}]
         original = report.BASE_REQUIRED_CASES
+        original_hive = report.HIVE_REQUIRED_CASES
+        report.HIVE_REQUIRED_CASES = set()
         report.BASE_REQUIRED_CASES = {self.REQUIRED}
         try:
             with unittest.mock.patch.object(
@@ -235,6 +237,7 @@ class RequiredCaseMatching(unittest.TestCase):
                 report.validate_cases(cases)
         finally:
             report.BASE_REQUIRED_CASES = original
+            report.HIVE_REQUIRED_CASES = original_hive
 
     def test_exact_and_module_prefixed_names_satisfy(self):
         self.gate(self.REQUIRED)
@@ -243,6 +246,27 @@ class RequiredCaseMatching(unittest.TestCase):
     def test_suffix_coincidence_does_not_satisfy(self):
         with self.assertRaises(RuntimeError):
             self.gate("X" + self.REQUIRED)
+
+
+class HiveNativeEvidence(unittest.TestCase):
+    def test_every_owned_native_identity_is_required(self):
+        names = report.BASE_REQUIRED_CASES | report.HIVE_REQUIRED_CASES
+        cases = [{"classname": n.rsplit(".", 1)[0],
+                  "name": n.rsplit(".", 1)[1], "status": "pass", "skip_reason": ""}
+                 for n in sorted(names)]
+        with unittest.mock.patch.object(
+                report, "release_missing_capabilities",
+                return_value={"evm-max-amount-review", "osmosis-wire-guards"}):
+            report.validate_cases(cases)
+            for name in report.HIVE_REQUIRED_CASES:
+                for status in ("skip", "fail"):
+                    altered = [dict(case) for case in cases]
+                    for case in altered:
+                        if case["classname"] + "." + case["name"] == name:
+                            case["status"] = status
+                    with self.subTest(name=name, status=status):
+                        with self.assertRaises(RuntimeError):
+                            report.validate_cases(altered)
 
 
 if __name__ == "__main__":

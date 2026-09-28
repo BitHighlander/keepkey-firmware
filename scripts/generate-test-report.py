@@ -115,11 +115,30 @@ _STACK10_EVM = [
         "test_unlimited_approval_and_disabled_advanced_mode_still_refuse",
     )]
 
+_STACK12_HIVE = [
+    "test_stack12_regressions.TestStack12Hive." + name for name in (
+        "test_account_authorities_ignore_host_keys_and_cancel",
+        "test_all_operations_reject_malformed_domains_before_consent",
+        "test_complete_memo_and_each_consent_cancellation",
+        "test_custom_domain_is_disclosed_and_cancellable",
+        "test_invalid_amounts_and_labels_before_consent",
+    )]
+HIVE_REQUIRED_CASES = {
+    "Hive.TransferAssetShownIsAssetSigned",
+    "Hive.TransferRejectsUnsupportedAssetsAndUntruncatedPrecision",
+    "Hive.AllSigningOperationsRejectMalformedExplicitChainIds",
+    "Hive.TransferRejectsInvalidAmountAndAccountLabels",
+}
+
 # Dedicated contract suites run as separate pytest invocations. Each file and
 # each named case is REQUIRED with an exact status per product, so deleting a
 # CI step, a test, or a variant leg cannot go unnoticed. Bitcoin-only must
 # SKIP the EVM/XRP contracts: a pass there would mean the product exposes them.
 CONTRACT_JUNIT = {
+    "junit-stack12.xml": {
+        "full": dict((case, "pass") for case in _STACK12_HIVE),
+        "bitcoin-only": dict((case, "skip") for case in _STACK12_HIVE),
+    },
     "junit-stack09-integration.xml": {
         "full": {_STACK09_SLOT: "pass"},
         "bitcoin-only": {_STACK09_SLOT: "pass"},
@@ -149,6 +168,8 @@ CONTRACT_JUNIT_DIRS = {
 
 # These are the actual product guards, not arbitrary reasons for missing tests.
 CONTRACT_SKIP_REASONS = dict(
+    [(case, "Hive signing is unavailable in bitcoin-only firmware")
+     for case in _STACK12_HIVE] +
     [(case, "Stack 10 EVM signing is absent from bitcoin-only")
      for case in _STACK10_EVM] +
     [(case, "Stack 07 EVM contracts are intentionally absent from bitcoin-only")
@@ -341,6 +362,8 @@ def validate_cases(cases):
               if case["status"] == "pass"}
     missing_capabilities = release_missing_capabilities(cases)
     required_cases = set(BASE_REQUIRED_CASES)
+    if "hive-release-review" not in missing_capabilities:
+        required_cases.update(HIVE_REQUIRED_CASES)
     if "evm-max-amount-review" not in missing_capabilities:
         required_cases.update(EVM_REQUIRED_CASES)
     if "osmosis-wire-guards" not in missing_capabilities:

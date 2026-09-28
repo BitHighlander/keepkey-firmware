@@ -177,3 +177,46 @@ TEST(Hive, AllSigningOperationsRejectMalformedExplicitChainIds) {
                                node.public_key, node.public_key, &response);
       });
 }
+
+TEST(Hive, TransferRejectsInvalidAmountAndAccountLabels) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  for (uint64_t amount : {uint64_t(0), uint64_t(INT64_MAX) + 1, UINT64_MAX}) {
+    HiveSignTx msg = transfer_request();
+    msg.amount = amount;
+    HiveSignedTx response = {};
+    hive_signTx(&node, &msg, &response);
+    EXPECT_FALSE(response.has_signature) << amount;
+    EXPECT_FALSE(response.has_serialized_tx);
+  }
+  for (const char* name : {"", "ab", "Alice", "alice\nbob", "alice bob",
+                           "@alice", "-alice", "alice-", "ali_ce", ".alice",
+                           "alice.", "alice..bob", "a.bob", "alice.1bob"}) {
+    for (bool sender : {false, true}) {
+      HiveSignTx msg = transfer_request();
+      strcpy(sender ? msg.from : msg.to, name);
+      HiveSignedTx response = {};
+      hive_signTx(&node, &msg, &response);
+      EXPECT_FALSE(response.has_signature) << name;
+      EXPECT_FALSE(response.has_serialized_tx);
+    }
+  }
+  for (const char* name :
+       {"abc", "alice-bob", "alice.bob", "abcdefghijklmnop"}) {
+    HiveSignTx msg = transfer_request();
+    strcpy(msg.from, name);
+    strcpy(msg.to, name);
+    msg.amount = INT64_MAX;
+    msg.has_memo = true;
+    memset(msg.memo, 'm', HIVE_MAX_MEMO_LEN);
+    msg.memo[HIVE_MAX_MEMO_LEN] = 0;
+    HiveSignedTx response = {};
+    hive_signTx(&node, &msg, &response);
+    ASSERT_TRUE(response.has_signature) << name;
+    // Header12 + two length-prefixed accounts + asset16 + memo varint2 +
+    // memo440 + extensions1. Proves the maximum payload is not truncated.
+    EXPECT_EQ(473u + 2u * strlen(name), response.serialized_tx.size);
+    EXPECT_EQ(0, response.serialized_tx.bytes[response.serialized_tx.size - 1]);
+  }
+}
