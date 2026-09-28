@@ -1,11 +1,9 @@
 #include "gtest/gtest.h"
+#include "test_board.h"
 
 #include <cstring>
 
 extern "C" {
-#include "keepkey/board/keepkey_board.h"
-#include "keepkey/board/layout.h"
-#include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/transport/interface.h"
@@ -25,10 +23,7 @@ class PassphraseTransition : public ::testing::Test {
     static bool initialized = false;
     if (!initialized) {
       setup();
-      if (layout_get_canvas() == nullptr) {
-        timer_init();
-        layout_init(display_canvas_init());
-      }
+      kk_test_board_init();
       storage_init();
       initialized = true;
     }

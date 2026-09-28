@@ -37,7 +37,7 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
-void kk_test_board_init(void);
+#include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 

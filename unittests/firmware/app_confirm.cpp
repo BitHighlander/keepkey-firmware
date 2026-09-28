@@ -2,9 +2,8 @@ extern "C" {
 #include "keepkey/firmware/app_confirm.h"
 }
 #include "gtest/gtest.h"
+#include "test_board.h"
 #include <string>
-
-void kk_test_board_init(void);
 
 TEST(AppConfirm, AllByteValuesHaveAnUnambiguousVisibleRepresentation) {
   for (unsigned value = 0; value < 256; ++value) {

@@ -17,7 +17,7 @@ extern "C" {
 #include "trezor/crypto/ed25519-donna/ed25519.h"
 }
 
-void kk_test_board_init(void);
+#include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,

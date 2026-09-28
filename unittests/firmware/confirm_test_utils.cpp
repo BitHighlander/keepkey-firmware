@@ -15,7 +15,7 @@ extern "C" {
 // The board bootstrap lives in test_board.cpp and runs at most once per
 // binary: a second kk_board_init()/timer_init() relinks the already-linked
 // runnables[] and the queue walk in post_periodic() never returns.
-void kk_test_board_init(void);
+#include "test_board.h"
 
 /*
  * confirm() auto-accept driver for unit tests.

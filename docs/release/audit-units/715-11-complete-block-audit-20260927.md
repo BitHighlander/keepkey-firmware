@@ -4,13 +4,13 @@
 
 Reviewer: Codex /root in keepkey-vault-v11-agent-1, with parallel implementation and evidence review. Source checkout: /private/tmp/kk715-stack11-run3. Firmware PR: https://github.com/BitHighlander/keepkey-firmware/pull/877. Head branch: audit/715-stack11-agent1-20260927. Target: fork develop, fc1e93746132553ad98ed60f4847c8d770732bf9.
 
-This report records the Block 11 candidate synchronized with Block 10 on 2026-09-28. The owner requires the entire cumulative block against develop; predecessor code is deliberately visible in the review. Block 10 final head 3a6f1cc2452c268908871958fe75abc5b3a2d54f is integrated by merge 355711281d98313823acbfb99694fd470115cf45. Its three commits after bfe6cb207 change only the Block 10 audit source, PDF and handoff wording. The non-documentation diff against qualified Block 11 head 12f1047da347fec09a700de0154aa88d7352977f is empty, including all tests, build configuration and dependency pins. The containing head and its hosted status are bound in the PR receipt after report freeze.
+This report records the Block 11 candidate synchronized with Block 10 on 2026-09-28. The cumulative PR targets develop, so predecessor code is visible in that review. Block 10 final head 3a6f1cc2452c268908871958fe75abc5b3a2d54f is integrated by merge 355711281d98313823acbfb99694fd470115cf45. Its three commits after bfe6cb207 change only the Block 10 audit source, PDF and handoff wording. The synchronized head 2c53776877d751311850228c59277ab4e6b26ac9 passed exact-head CI; the fourth review then found an order-dependent unit-test bootstrap defect. The repair changes test fixtures only. Product firmware, protocol definitions, dependency pins and build policy retain their qualified content. The containing head and hosted status are bound in the PR receipt after report freeze.
 
 Scope includes runtime schema v1/v2, eight v2 argument slots, signer-bound token metadata, exact instruction coverage, bounded plain-text raw message signing, AdvancedMode/session trust, ordinary consent, and every finding raised by the complete-block reviews. Certified roots, delegate certificates, LUT proofs and production publication remain outside runtime 7.15 scope. No release or physical-device acceptance is claimed.
 
 The canonical main-worktree SOP and master template were read at intake. Their hashes, exact dependency identities and authorization are recorded in the adjacent review-control archive. Python remains aae89d378d889b3872696469fe363cf570e5ac4c (companion PR #122); it retains the Block 10 Python ancestry. Every direct and nested dependency was restored at its pin and checked clean before qualification.
 
-The owner authorized three review rounds per block and recursive consecutive splits after three rounds requiring code changes. All three requests have been used: the first two required repairs; the third required no code change and was technically declined with evidence. The split trigger is not met. The latest owner instruction is to synchronize Block 11 fully with Block 10 and prepare the audited candidate for a final review. This report records preparation, not delivery of another Copilot review.
+The owner authorized three review rounds per block and recursive consecutive splits after three rounds requiring code changes, then explicitly authorized one additional cumulative request. All four cumulative requests have been used. Rounds one, two and four required repairs; round three required no code change and was technically declined with evidence. The split trigger is met. The bounded consecutive units and exact path ownership are recorded in `715-11-split-map-20260928.md`. PR #877 remains the cumulative integration view; no fifth request on it is authorized or sent.
 
 ## 2. Source reconciliation and review coverage
 
@@ -50,7 +50,9 @@ Second review 5333740490 on 8cd5561a2 delivered eight inline comments, seven hig
 
 Security closure contracts and independent falsification results appear in the next section and adjacent evidence. Technical corrections to review wording do not erase the delivered Changes recommended verdict.
 
-Third review 5344049267 on 12f1047da347fec09a700de0154aa88d7352977f reported Changes recommended with one P1 (comment 4126567194): Bitcoin-only allegedly compiles ethereum_tokens.c with TOKENS_COUNT=0. The premise is false: lib/firmware/CMakeLists.txt includes that source only inside if(NOT ${KK_BITCOIN_ONLY}); both product variants passed hosted qualification. Technical reply 4126576636 documents the source and build evidence. All 14 review threads are resolved. No body-only finding remains undispositioned. The review verdict is preserved; a required external checkpoint would need explicit owner acceptance of this technical decline or a new qualifying review.
+Third review 5344049267 on 12f1047da347fec09a700de0154aa88d7352977f reported Changes recommended with one P1 (comment 4126567194): Bitcoin-only allegedly compiles ethereum_tokens.c with TOKENS_COUNT=0. The premise is false: lib/firmware/CMakeLists.txt includes that source only inside if(NOT ${KK_BITCOIN_ONLY}); both product variants passed hosted qualification. Technical reply 4126576636 documents the source and build evidence. The 14 threads through round three were resolved; the verdict remains preserved.
+
+Fourth review 5345445076 on 2c53776877d751311850228c59277ab4e6b26ac9 reported Changes recommended with three inline comments. Two comments (4127698063 and 4127698158) identify one confirmed root: a passphrase fixture called timer_init() directly, bypassing guarded board setup and allowing order-dependent double initialization. The repair uses kk_test_board_init() and a shared declaration. Comment 4127698115 is refuted by the probe's macro undef boundary before the wrapper bodies; technical reply 4127753705 is posted and its thread resolved. The two repair threads remain open until pushed qualification and replies. All three comments and the generic overview are dispositioned in `715-11-round4-20260928.md`. No additional concrete body-only finding was identified.
 
 ## 4. Security contracts and falsification
 
@@ -84,7 +86,7 @@ Local binaries were compiled from the material source content frozen as 36d9f32f
 Archive: `715-11-review2-controls-20260928.tgz`; SHA256 `43db28ac4e82946c80f89172e1268cfa971c833047866f7ad411ab5b572a3317`. Every archived member is hash-verified.
 
 
-Manual CI 36473918905 passed on 12f1047da347fec09a700de0154aa88d7352977f: full aggregate 1565 pass, 84 declared skips, zero failures/errors, with both native products, wire contracts and ARM/resource gates verified. Independent run metadata, source and Python pin, all eight contract inputs, JUnit/PDF, OLED and ARM receipts were checked; nine tampering controls rejected. That qualified head and the synchronized candidate have identical non-documentation content. These results are carried evidence, not a new execution on the containing report commit. The PR receipt records any later hosted run with its exact head. Earlier CI 36369783240 at 8cd5561a2 remains historical and is superseded for current material-source qualification.
+Manual CI 36473918905 passed on 12f1047da347fec09a700de0154aa88d7352977f: full aggregate 1565 pass, 84 declared skips, zero failures/errors, with both native products, wire contracts and ARM/resource gates verified. Independent run metadata, source and Python pin, all eight contract inputs, JUnit/PDF, OLED and ARM receipts were checked; nine tampering controls rejected. The synchronized head 2c53776877d751311850228c59277ab4e6b26ac9 passed exact-head manual CI 36490566360 with the same aggregate and all required jobs. After the fourth review's test-fixture repair, local full and Bitcoin-only firmware suites passed 706 and 174 tests respectively, with zero failures/errors/skips. Their raw XML/logs and hash manifest are in `715-11-round4-controls-20260928.tgz`. Hosted qualification of the containing repair commit is pending; its result belongs in the PR receipt. Earlier CI 36369783240 at 8cd5561a2 remains historical.
 
 The ordinary develop-based PR event has an incompatible absent capability ledger. The previously owner-approved manual authority remains accepted-7b authority commit 2483977523d9b6beab52a69429ace9aeefd00f76. Manual qualification uses that authority with publishing disabled and retains the negative control rejecting waiver expansion. No repository setting or candidate waiver was broadened in this round.
 
@@ -96,15 +98,15 @@ The source/PDF inventory is generated from an immutable explicit range. Every fi
 
 Final pre-push scripts/preflight.sh must pass after the last edit. Local native, host and report checks precede the hosted matrix. A report-only containing commit may carry code evidence forward only with a proven empty code/pin/configuration diff. Final source/CI status is reported independently from Copilot freshness.
 
-Review snapshot at this preparation: three requests delivered (5333270562, 5333740490, 5344049267), two code-change failures, zero unresolved threads. The latest review covered the qualified source before this documentation synchronization; it is not a clean verdict. The final reviewer should assess the complete block with the preserved build-graph disposition and the consolidated property evidence. Balanced effort is recommended for firmware review; historical reviews used Lite, and no setting change is claimed. Current CI and review outcomes belong in the PR receipt and main audit ledger with exact SHAs.
+Review snapshot: four cumulative requests delivered (5333270562, 5333740490, 5344049267, 5345445076), three code-change failures, two open repair threads pending pushed qualification and replies. No clean Copilot verdict is claimed. The owner-authorized split now assigns each changed path and finding to one bounded unit with a fresh three-round budget. Historical reviews used Lite; no setting change is claimed. Current CI and review outcomes belong in the PR receipt and main audit ledger with exact SHAs.
 
-Readiness audit signed off by Codex /root on 2026-09-28: Block 10 ancestry is complete; the merged document changes were read; source, test, build and pin preservation was proven by an empty non-documentation diff. The existing property audit and negative controls remain applicable. The storage, entropy, secret-cleanup, Solana malformed-input, platform and validator dispositions were rechecked against current source and assertions. No new actionable in-scope issue was identified. This sign-off carries forward the frozen code evidence and requires the final document render/inventory checks and pre-push preflight recorded in the receipt.
+The prior readiness sign-off applied to the pre-review head. The fourth review reopened one test-bootstrap issue, now repaired and locally tested. Block 10 ancestry, product source, build configuration and dependency pins remain qualified. The final document render, inventory, preflight and exact-head hosted qualification are required before signing off the repaired cumulative head. Each bounded split unit then requires its own review checkpoint.
 
 ## 7. Complete cumulative Git inventory
 
 Inventory base: fc1e93746132553ad98ed60f4847c8d770732bf9. Integration anchor: 355711281d98313823acbfb99694fd470115cf45. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
 
-This inventory describes the containing report tree, including its own final line count; the containing SHA is recorded in the PR receipt. Reproduce with `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..FINAL_HEAD`. The non-documentation tree remains identical to qualified head 12f1047da347fec09a700de0154aa88d7352977f.
+This inventory describes the containing report tree, including its own final line count; the containing SHA is recorded in the PR receipt. Reproduce with `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..FINAL_HEAD`. Product firmware, protocol definitions, dependency pins and build policy remain identical to qualified head 2c53776877d751311850228c59277ab4e6b26ac9; the test fixtures contain the fourth-review repair.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
@@ -189,7 +191,7 @@ This inventory describes the containing report tree, including its own final lin
 | - | - | `docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz` |
 | 73 | 0 | `docs/release/audit-units/715-10-intake-20260927.md` |
 | 48 | 0 | `docs/release/audit-units/715-10-reconciliation-20260927.json` |
-| 489 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
+| 495 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-11-complete-block-audit-20260927.pdf` |
 | 200 | 0 | `docs/release/audit-units/715-11-intake-20260927.json` |
 | 36 | 0 | `docs/release/audit-units/715-11-intake-20260927.md` |
@@ -198,6 +200,9 @@ This inventory describes the containing report tree, including its own final lin
 | - | - | `docs/release/audit-units/715-11-manual-ci-controls-20260927.tgz` |
 | - | - | `docs/release/audit-units/715-11-review1-controls-20260927.tgz` |
 | - | - | `docs/release/audit-units/715-11-review2-controls-20260928.tgz` |
+| 27 | 0 | `docs/release/audit-units/715-11-round4-20260928.md` |
+| - | - | `docs/release/audit-units/715-11-round4-controls-20260928.tgz` |
+| 115 | 0 | `docs/release/audit-units/715-11-split-map-20260928.md` |
 | 26 | 0 | `docs/release/audit-units/P01-002-artifact-routing.md` |
 | 27 | 0 | `docs/release/audit-units/P01-003-firmware-packaging.md` |
 | 12 | 0 | `docs/release/audit-units/P01-004-report-inputs.md` |
@@ -439,7 +444,7 @@ This inventory describes the containing report tree, including its own final lin
 | 6 | 2 | `unittests/crypto/CMakeLists.txt` |
 | 500 | 0 | `unittests/crypto/bip340.cpp` |
 | 56 | 7 | `unittests/firmware/CMakeLists.txt` |
-| 48 | 0 | `unittests/firmware/app_confirm.cpp` |
+| 47 | 0 | `unittests/firmware/app_confirm.cpp` |
 | 302 | 0 | `unittests/firmware/authenticator.cpp` |
 | 151 | 0 | `unittests/firmware/binance.cpp` |
 | 28 | 2 | `unittests/firmware/coins.cpp` |
@@ -480,8 +485,9 @@ This inventory describes the containing report tree, including its own final lin
 | 316 | 29 | `unittests/firmware/storage.cpp` |
 | 129 | 0 | `unittests/firmware/storage_cipher_probe.c` |
 | 24 | 0 | `unittests/firmware/storage_cipher_probe.h` |
-| 140 | 0 | `unittests/firmware/storage_passphrase.cpp` |
-| 28 | 0 | `unittests/firmware/test_board.cpp` |
+| 135 | 0 | `unittests/firmware/storage_passphrase.cpp` |
+| 29 | 0 | `unittests/firmware/test_board.cpp` |
+| 4 | 0 | `unittests/firmware/test_board.h` |
 | 350 | 21 | `unittests/firmware/thorchain.cpp` |
 | 173 | 0 | `unittests/firmware/transaction.cpp` |
 | 604 | 0 | `unittests/firmware/tron.cpp` |
