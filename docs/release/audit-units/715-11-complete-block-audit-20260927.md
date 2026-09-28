@@ -118,6 +118,20 @@ No waiver, gate or repository setting was changed to hide this incompatibility.
 This is a target/qualification blocker, not a newly found signing defect. It
 must be resolved before calling hosted qualification green or requesting review.
 
+CI-MANUAL-02 FIXED: first manual run36363232771 on164a397ac failed before
+builds. A PR-authority test inherited workflow_dispatch and the newly approved
+repository variable. Its fixture now explicitly declares pull_request. Original
+negative control fails; patched fixture and all18 report-gate tests pass under
+the manual environment. No runtime authority-selection logic changed.
+
+CI-MANUAL-03 FIXED: the manual no-git secret scan flagged two public dependency
+SHA lines in an inherited block09 receipt. git ls-tree verifies both values as
+historical gitlinks. Two exact path/rule/line fingerprints supplement existing
+commit-scoped fingerprints. CI-pinned Gitleaks8.30.1 finds zero in the full tree;
+a synthetic credential elsewhere in the same file is still detected. No broad
+rule/path allowlist was added. Controls are archived in the adjacent manual-CI
+controls bundle. Fresh hosted qualification of the repaired head remains pending.
+
 ## 4. Verification and artifact identity
 
 - Full integrated firmware-unit: 669 tests pass on e631449c18f0f26755dc79f59ffea1d6863e8219.
