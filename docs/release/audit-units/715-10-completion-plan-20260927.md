@@ -25,7 +25,7 @@ Historical PR #840 is not this integrated candidate. No force-push or product me
 
 The existing user authorization permits three initial Copilot requests, one
 binary split if needed, then three per unit; stop on unsuccessful exhaustion.
-Agent 3 requests used: zero. Splits used: zero. Canonical budget ledger:
+At this 2026-09-27 handoff, Agent 3 requests used: zero; splits used: zero. Canonical budget ledger:
 docs/release/audit-claims/715-10/review-budget-20260927.json in the main repo.
 Do not spend a request before final consolidated audit, preflight and hosted CI.
 Physical-device checks, release promotion and product merges remain separate.
