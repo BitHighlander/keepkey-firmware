@@ -1,0 +1,75 @@
+{
+  "block": "715-12",
+  "owner": "agent2",
+  "status": "reconciliation in progress",
+  "base": "476afea2ce9906caaac67bfffa900b6a961fa6c4",
+  "historical_base": "568ee5cb1b937ed866652803c5c678a76aeff6ea",
+  "historical_head": "19b2283515647e21178de315ae6e09d00c66bf84",
+  "dependency_pins": [
+    "a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec code-signing-keys (heads/master)",
+    " 8a392f70a5d5575ece3dfb35f115d4a4b27f497c deps/crypto/trezor-firmware (remotes/origin/fix/aes-small-tables-25-g8a392f70a)",
+    "+901b6084a07613d6b840275eadeba08daa3b4cd9 deps/device-protocol (dice-entropy-v1-80-g901b608)",
+    "+4267679b6887f349f17b01ccd70c9e3483689b25 deps/googletest (release-1.8.0-3739-g4267679b)",
+    "+09c52212eacb6b1c2fe6b6322839843e5bae3874 deps/python-keepkey (v6.0.3-938-g09c5221)",
+    " 6dfbfdad5d9303ed190d1c3cb7bec34b565b6ce8 deps/qrenc/QR-Code-generator (v1.4.0-11-g6dfbfda)",
+    " 71d356a1141624994cf613bd2d2583892e8e6d5a deps/sca-hardening/SecAESSTM32 (heads/keepkey)"
+  ],
+  "historical_inventory": [
+    "1\t1\t.github/workflows/ci.yml",
+    "39\t0\tdocs/release/7.15-alpha-delta-audit.md",
+    "242\t0\tdocs/release/7.15-audit-handoff.md",
+    "8\t1\tinclude/keepkey/firmware/hive.h",
+    "1\t0\tinclude/keepkey/firmware/home_sm.h",
+    "5\t7\tlib/firmware/ethereum.c",
+    "1\t1\tlib/firmware/fsm.c",
+    "14\t0\tlib/firmware/fsm_msg_common.h",
+    "30\t12\tlib/firmware/fsm_msg_hive.h",
+    "31\t5\tlib/firmware/hive.c",
+    "22\t2\tlib/firmware/storage.c",
+    "244\t0\ttools/check_pallas_api_boundary.py"
+  ],
+  "behaviors": [
+    "session-only AdvancedMode-only provider trust and revocation",
+    "Hive signed asset/display equivalence, role/path checks, complete memo consent",
+    "Zcash secret/public API separation and interactive derivation progress"
+  ],
+  "acceptance": [
+    "all historical paths dispositioned against current predecessor",
+    "preserve prior trust/session and authenticator regressions",
+    "execute owned native and wire tests; independent signed transaction vectors and before-code negative controls",
+    "map actual host defaults and every owned skip",
+    "full/BTC native, host, ARM/SRAM and report/preflight gates on final integration",
+    "source/PDF/evidence with exact immutable inventory"
+  ],
+  "exclusions": [
+    "new built-in trust roots or certified metadata",
+    "new Hive operation families absent from product",
+    "storage-format redesign",
+    "product merge, physical-device qualification and release promotion",
+    "Copilot requests"
+  ],
+  "dependencies": [
+    "agent3 final block10 handoff and INT-09-002 retained",
+    "agent1 final block11 repair/handoff pending; initial work uses immutable block10 provisionally"
+  ],
+  "initial_findings": [
+    {
+      "id": "B12-001",
+      "state": "source-confirmed missing historical behavior; runtime reproduction pending",
+      "detail": "Hive transfer accepts arbitrary path and byte-truncated precision; typed asset aliases not mapped to canonical signed wire spellings; long memo uses single confirm screen."
+    },
+    {
+      "id": "B12-002",
+      "state": "verification gap",
+      "detail": "Dormant hive.cpp covers later operation APIs absent from current header; no Hive suite is registered. Add focused executable current-product tests without falsely enabling absent phase3 operations."
+    }
+  ],
+  "inherited": [
+    "session_clear and policy setter already revoke runtime signers; preserve stronger implementation",
+    "Ethereum digest mismatch enforcement already present; inspect cleanup delta"
+  ],
+  "pending": [
+    "Zcash progress wrapper and source-boundary gate compatibility",
+    "all runtime validations and final block11 integration"
+  ]
+}
