@@ -483,4 +483,3 @@ Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..a01e275
 | 604 | 0 | `unittests/firmware/tron.cpp` |
 | 169 | 0 | `unittests/firmware/usb_rx.cpp` |
 | 2204 | 0 | `unittests/firmware/zcash.cpp` |
-
