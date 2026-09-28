@@ -150,6 +150,7 @@ class CapabilityWaivers(unittest.TestCase):
                 "base": {"sha": base}, "head": {"sha": "b" * 40}}}))
             with unittest.mock.patch.dict(os.environ, {
                     "GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
+                    "GITHUB_EVENT_NAME": "pull_request",
                     "GITHUB_SHA": "b" * 40, "WAIVER_AUTHORITY_COMMIT": "HEAD"}):
                 with unittest.mock.patch.object(report, "git", return_value=
                         "    KK_RELEASE_MISSING_CAPABILITIES: approved\n") as git:
