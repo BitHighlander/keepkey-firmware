@@ -4,7 +4,7 @@
 
 Owner: Codex /root, agent-1. Worktree: /private/tmp/kk715-stack11-agent1.
 Branch: audit/715-stack11-agent1-20260927. Target: BitHighlander/keepkey-firmware develop.
-Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: efa7a00f02167c3ca2c4ad3504175dd05ca046d5.
+Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: 67a5397c3ee25bd66ac481a428c416e4021d0528.
 Code/test qualification head: e631449c18f0f26755dc79f59ffea1d6863e8219. Completed block10 predecessor: 476afea2ce9906caaac67bfffa900b6a961fa6c4.
 Python pin: aae89d378d889b3872696469fe363cf570e5ac4c. Final containing head and PR URL are recorded in the PR body.
 Main master-template SHA256: 4df8723670dbd7266ed8d8756b790725fb4f0f5886d36fe2f9b7c3aece2d64e0.
@@ -32,7 +32,7 @@ historical; it is not reopened and its retirement is not evidence of an empty di
 
 ## 2. Git inventory and behavior coverage
 
-Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 efa7a00f02167c3ca2c4ad3504175dd05ca046d5.
+Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 67a5397c3ee25bd66ac481a428c416e4021d0528.
 Every target path is listed in section 7. Counts include code, tests, dependencies,
 workflows, old receipts and this report. Historical counts overlap; do not sum them.
 
@@ -263,7 +263,7 @@ All predecessor decisions and review caveats retain their original status.
 | - | - | docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz |
 | 73 | 0 | docs/release/audit-units/715-10-intake-20260927.md |
 | 48 | 0 | docs/release/audit-units/715-10-reconciliation-20260927.json |
-| 553 | 0 | docs/release/audit-units/715-11-complete-block-audit-20260927.md |
+| 554 | 0 | docs/release/audit-units/715-11-complete-block-audit-20260927.md |
 | - | - | docs/release/audit-units/715-11-complete-block-audit-20260927.pdf |
 | 200 | 0 | docs/release/audit-units/715-11-intake-20260927.json |
 | 36 | 0 | docs/release/audit-units/715-11-intake-20260927.md |
