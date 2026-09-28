@@ -1,5 +1,10 @@
 # Block 11: reject malformed transactions before schema evaluation
 
+Historical local-repair receipt: the uncommitted-state and integration-pending
+statements below describe the initial block08-based checkpoint. Changes are now
+committed and blocks09/10 integrated; see
+`715-11-complete-block-audit-20260927.md` for current scope and qualification.
+
 Base: db7c711a6c824c42e7096d4867429bbe94cb6ffb (provisional accepted block 08).
 Finding S11-01: fsm_msgSolanaSignTx can evaluate a runtime schema against a
 partially populated parser result after SOL_TX_REVIEW_MALFORMED. A matching
