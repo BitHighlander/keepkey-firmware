@@ -4,7 +4,7 @@
 
 Owner: Codex /root, agent-1. Worktree: /private/tmp/kk715-stack11-agent1.
 Branch: audit/715-stack11-agent1-20260927. Target: BitHighlander/keepkey-firmware develop.
-Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: 9c1c02e991572955e34b2ee6da407b11c8bb48d1.
+Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: 34ecff1a4935872b2c288b6c3a7dc82199f73bf3.
 Code/test qualification head: e631449c18f0f26755dc79f59ffea1d6863e8219. Completed block10 predecessor: 476afea2ce9906caaac67bfffa900b6a961fa6c4.
 Python pin: aae89d378d889b3872696469fe363cf570e5ac4c. Final containing head and PR URL are recorded in the PR body.
 Main master-template SHA256: 4df8723670dbd7266ed8d8756b790725fb4f0f5886d36fe2f9b7c3aece2d64e0.
@@ -32,7 +32,7 @@ historical; it is not reopened and its retirement is not evidence of an empty di
 
 ## 2. Git inventory and behavior coverage
 
-Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 9c1c02e991572955e34b2ee6da407b11c8bb48d1.
+Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 34ecff1a4935872b2c288b6c3a7dc82199f73bf3.
 Every target path is listed in section 7. Counts include code, tests, dependencies,
 workflows, old receipts and this report. Historical counts overlap; do not sum them.
 
@@ -136,6 +136,22 @@ Exact skip reasons:
 - test_advanced_mode_is_off_after_power_cycle: power cycle needs an emulator process this harness owns; none is bound to udp/12144 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
 - test_signer_dropped_by_power_cycle: power cycle needs an emulator process this harness owns; none is bound to udp/12144 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
 
+Resume checkpoint: original temporary worktree/logs were unavailable. The exact
+committed candidate was restored at /private/tmp/kk715-stack11-resume. All 11
+archived artifact hashes verified; independent source review found no new code
+defect. The old provisional receipt is explicitly historical. Workflow report
+metadata now names Python PR122 instead of PR121. Runtime code/tests/pins remain
+identical to e631449c18f0f26755dc79f59ffea1d6863e8219. A fresh pre-push run is
+recorded in the PR body after the final report is frozen.
+
+The smallest hosted qualification path needs separately authorized repository
+variable KK_ACCEPTED_WAIVER_SHA=2483977523d9b6beab52a69429ace9aeefd00f76,
+the accepted block7b authority. Its seven-capability ledger contains all five
+candidate waivers. The existing manual workflow can then qualify this exact head
+with publishing disabled; no validator edit is needed. A successful manual run
+would be distinct from the incompatible develop-based PR event. Until approved,
+the setting remains absent and fresh hosted qualification remains pending.
+
 ## 5. Report render and local preflight
 
 The PDF is generated from this Markdown source. Frozen final Git inventory and
@@ -238,7 +254,7 @@ All predecessor decisions and review caveats retain their original status.
 | 200 | 0 | docs/release/audit-units/715-11-intake-20260927.json |
 | 36 | 0 | docs/release/audit-units/715-11-intake-20260927.md |
 | - | - | docs/release/audit-units/715-11-local-evidence-20260927.tgz |
-| 77 | 0 | docs/release/audit-units/715-11-malformed-schema.md |
+| 82 | 0 | docs/release/audit-units/715-11-malformed-schema.md |
 | 26 | 0 | docs/release/audit-units/P01-002-artifact-routing.md |
 | 27 | 0 | docs/release/audit-units/P01-003-firmware-packaging.md |
 | 12 | 0 | docs/release/audit-units/P01-004-report-inputs.md |
