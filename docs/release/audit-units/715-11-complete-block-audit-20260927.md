@@ -98,9 +98,9 @@ Review budget at preparation: two delivered failures used; round three is author
 
 ## 7. Complete cumulative Git inventory
 
-Generation predecessor: 36d9f32f0daac85d3baa68996e0c59112dffbf74. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
+Generation predecessor: 401a5737f. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
 
-Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..36d9f32f0daac85d3baa68996e0c59112dffbf74`. This range contains 378 paths. The containing report head is recorded in the PR receipt.
+Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..401a5737f`. This range contains 379 paths. The containing report head is recorded in the PR receipt.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
@@ -185,7 +185,7 @@ Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..36d9f32
 | - | - | `docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz` |
 | 73 | 0 | `docs/release/audit-units/715-10-intake-20260927.md` |
 | 48 | 0 | `docs/release/audit-units/715-10-reconciliation-20260927.json` |
-| 639 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
+| 485 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-11-complete-block-audit-20260927.pdf` |
 | 200 | 0 | `docs/release/audit-units/715-11-intake-20260927.json` |
 | 36 | 0 | `docs/release/audit-units/715-11-intake-20260927.md` |
@@ -193,6 +193,7 @@ Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..36d9f32
 | 82 | 0 | `docs/release/audit-units/715-11-malformed-schema.md` |
 | - | - | `docs/release/audit-units/715-11-manual-ci-controls-20260927.tgz` |
 | - | - | `docs/release/audit-units/715-11-review1-controls-20260927.tgz` |
+| - | - | `docs/release/audit-units/715-11-review2-controls-20260928.tgz` |
 | 26 | 0 | `docs/release/audit-units/P01-002-artifact-routing.md` |
 | 27 | 0 | `docs/release/audit-units/P01-003-firmware-packaging.md` |
 | 12 | 0 | `docs/release/audit-units/P01-004-report-inputs.md` |
