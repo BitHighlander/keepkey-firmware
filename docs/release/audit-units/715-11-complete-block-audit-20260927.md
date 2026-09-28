@@ -44,7 +44,7 @@ Second review 5333740490 on 8cd5561a2 delivered eight inline comments, seven hig
 | 4118361277 | Confirmed failed first RNG draw could flow into erased OTP consumption. Boot now scrubs and halts before continuation. The adjacent class also verifies programming by readback before permanent locking, verifies the actual lock, and refuses read failures. OTP wrapper success alone is not trusted as proof of successful programming. |
 | 4118361337 | Local handler cleanup was missing. Normal USB dispatch already cleared shared scratch afterward, so retention until an unrelated later request was overstated. SignIdentity now clears before success/failure output; CipherKeyValue in the same handler family clears on cancellation and after key use, including derived HMAC/AES material. Established signatures and ciphertext remain unchanged. Independent generic-Ed25519 verification exposed an uninitialized recovery-prefix byte in cryptoMessageSign; it now initializes to zero because Ed25519 does not supply an ECDSA recovery identifier. |
 | 4118361301 | The baseline MinGW object compiled because unistd.h was still present; the precise undeclared-usleep claim did not reproduce. The Windows branch now uses explicit Sleep with overflow-safe rounding; POSIX declarations stay on POSIX. The complete DLL build exposed an undeclared BCryptGenRandom/PUCHAR/ULONG path; random32 now delegates to the existing Windows/POSIX host CSPRNG provider, preserving fail-closed behavior. |
-| 4118361360 | Baseline native object compilation succeeded through the tracked include/trezor/crypto symlink. Explicit crypto include ownership makes the validator target self-contained at configuration level. Actual CLI compilation and execution verify the resulting target. |
+| 4118361360 | Baseline native object compilation succeeded through the tracked include/trezor/crypto symlink. The target now also names its crypto include directory explicitly; the tracked symlink remains available. Actual CLI compilation and execution verify the resulting target. |
 | 4118361390 | The validator linked the POSIX socket emulator on Windows. It is now excluded there, matching the supported socket-free Windows DLL build; native full firmware still builds and executes the validator. |
 | 4118361413 | Confirmed fread/feof boundary error. One-byte lookahead distinguishes exact capacity from oversized input, and ferror is handled separately. Exact-capacity bytes now reach the firmware parser; this does not expand the parser's own program limit. |
 
@@ -60,7 +60,7 @@ Security closure contracts and independent falsification results appear in the n
 | Host program bytes/file errors; CLI consumer; native full | Correct file-boundary classification, explicit I/O error, actual firmware parser refusal for invalid programs. | Valid independent fixture, truncation, trailing bytes, bad magic, empty/missing files, directory read error, capacity minus/at/plus one and far oversized. Baseline exact-capacity test fails. |
 | Windows delay input and host entropy; emulator process | No arithmetic overflow or unsupported POSIX RNG/socket dependency in the supported DLL. | Zero/submillisecond/millisecond/UINT32_MAX delays with intercepted Sleep; delay callbacks and actual cross compilation. This does not claim Windows scheduler timing or physical-device entropy equivalence. |
 
-The separate remediation review checks failure ordering, equivalent encodings, caller defaults, release variants and preservation of previous guards. Closure depends on asserted properties and baseline controls; totals and hashes alone do not prove them.
+Crypto runtime assertions inspect shared HDNode scratch at handler return and verify emitted values. Cleanup before response and HMAC/AES stack wiping are established by source-path review; those transient stack bytes and the instant before msg_write are not instrumented. The separate remediation review checks failure ordering, equivalent encodings, caller defaults, release variants and preservation of previous guards. Closure depends on asserted properties and baseline controls; totals and hashes alone do not prove them.
 
 ## 5. Verification and remaining gates
 
@@ -98,9 +98,9 @@ Review budget at preparation: two delivered failures used; round three is author
 
 ## 7. Complete cumulative Git inventory
 
-Generation predecessor: 401a5737f. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
+Generation predecessor: a01e27558257086d156dc1b2d1feecf4d0842c80. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
 
-Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..401a5737f`. This range contains 379 paths. The containing report head is recorded in the PR receipt.
+Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..a01e27558257086d156dc1b2d1feecf4d0842c80`. This range contains 379 paths. The containing report head is recorded in the PR receipt.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
@@ -185,7 +185,7 @@ Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..401a573
 | - | - | `docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz` |
 | 73 | 0 | `docs/release/audit-units/715-10-intake-20260927.md` |
 | 48 | 0 | `docs/release/audit-units/715-10-reconciliation-20260927.json` |
-| 485 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
+| 486 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-11-complete-block-audit-20260927.pdf` |
 | 200 | 0 | `docs/release/audit-units/715-11-intake-20260927.json` |
 | 36 | 0 | `docs/release/audit-units/715-11-intake-20260927.md` |
