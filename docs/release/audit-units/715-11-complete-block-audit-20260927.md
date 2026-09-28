@@ -4,13 +4,13 @@
 
 Reviewer: Codex /root in keepkey-vault-v11-agent-1, with parallel implementation and evidence review. Source checkout: /private/tmp/kk715-stack11-run3. Firmware PR: https://github.com/BitHighlander/keepkey-firmware/pull/877. Head branch: audit/715-stack11-agent1-20260927. Target: fork develop, fc1e93746132553ad98ed60f4847c8d770732bf9.
 
-This report supersedes the earlier Block 11 preparation report for current source and qualification. The owner requires the entire cumulative block against develop; predecessor code is deliberately visible in the review. Block 10 bfe6cb20774d8b2429738fe0d1280cf8ff527e1a is integrated by f0977b81d. Its final account-calldata validation and exact report contracts are preserved. Historical Block 11 reviewed head: 8cd5561a241b7f5f5cb7068eb8bc3e2d30de166b. Final code and report generation identities are recorded below; the containing head and hosted outcome are bound in the PR receipt after report freeze.
+This report records the Block 11 candidate synchronized with Block 10 on 2026-09-28. The owner requires the entire cumulative block against develop; predecessor code is deliberately visible in the review. Block 10 final head 3a6f1cc2452c268908871958fe75abc5b3a2d54f is integrated by merge 355711281d98313823acbfb99694fd470115cf45. Its three commits after bfe6cb207 change only the Block 10 audit source, PDF and handoff wording. The non-documentation diff against qualified Block 11 head 12f1047da347fec09a700de0154aa88d7352977f is empty, including all tests, build configuration and dependency pins. The containing head and its hosted status are bound in the PR receipt after report freeze.
 
 Scope includes runtime schema v1/v2, eight v2 argument slots, signer-bound token metadata, exact instruction coverage, bounded plain-text raw message signing, AdvancedMode/session trust, ordinary consent, and every finding raised by the complete-block reviews. Certified roots, delegate certificates, LUT proofs and production publication remain outside runtime 7.15 scope. No release or physical-device acceptance is claimed.
 
 The canonical main-worktree SOP and master template were read at intake. Their hashes, exact dependency identities and authorization are recorded in the adjacent review-control archive. Python remains aae89d378d889b3872696469fe363cf570e5ac4c (companion PR #122); it retains the Block 10 Python ancestry. Every direct and nested dependency was restored at its pin and checked clean before qualification.
 
-The owner now authorizes three review rounds per block and, after three delivered finding-bearing failures, consecutive bounded splits with a fresh three-round budget per piece, repeated until completion. The first two delivered failed reviews count toward that budget. No new review is requested before remediation, local audit, report verification, final preflight and hosted qualification pass.
+The owner authorized three review rounds per block and recursive consecutive splits after three rounds requiring code changes. All three requests have been used: the first two required repairs; the third required no code change and was technically declined with evidence. The split trigger is not met. The latest owner instruction is to synchronize Block 11 fully with Block 10 and prepare the audited candidate for a final review. This report records preparation, not delivery of another Copilot review.
 
 ## 2. Source reconciliation and review coverage
 
@@ -50,6 +50,8 @@ Second review 5333740490 on 8cd5561a2 delivered eight inline comments, seven hig
 
 Security closure contracts and independent falsification results appear in the next section and adjacent evidence. Technical corrections to review wording do not erase the delivered Changes recommended verdict.
 
+Third review 5344049267 on 12f1047da347fec09a700de0154aa88d7352977f reported Changes recommended with one P1 (comment 4126567194): Bitcoin-only allegedly compiles ethereum_tokens.c with TOKENS_COUNT=0. The premise is false: lib/firmware/CMakeLists.txt includes that source only inside if(NOT ${KK_BITCOIN_ONLY}); both product variants passed hosted qualification. Technical reply 4126576636 documents the source and build evidence. All 14 review threads are resolved. No body-only finding remains undispositioned. The review verdict is preserved; a required external checkpoint would need explicit owner acceptance of this technical decline or a new qualifying review.
+
 ## 4. Security contracts and falsification
 
 | Sensitive state/origin and observer | Allowed / forbidden behavior | Executed paths and counterexamples |
@@ -82,9 +84,9 @@ Local binaries were compiled from the material source content frozen as 36d9f32f
 Archive: `715-11-review2-controls-20260928.tgz`; SHA256 `43db28ac4e82946c80f89172e1268cfa971c833047866f7ad411ab5b572a3317`. Every archived member is hash-verified.
 
 
-The earlier exact-head CI 36369783240 at 8cd5561a2 remains historical evidence (full aggregate 1521 pass/84 documented skips; full native 706, BTC native 180, full/BTC wire and both ARM/resource gates). It does not qualify the new material repair. The final hosted result, artifacts, source/pin identity and reviewed head are recorded in the PR receipt after report freeze.
+Manual CI 36473918905 passed on 12f1047da347fec09a700de0154aa88d7352977f: full aggregate 1565 pass, 84 declared skips, zero failures/errors, with both native products, wire contracts and ARM/resource gates verified. Independent run metadata, source and Python pin, all eight contract inputs, JUnit/PDF, OLED and ARM receipts were checked; nine tampering controls rejected. That qualified head and the synchronized candidate have identical non-documentation content. These results are carried evidence, not a new execution on the containing report commit. The PR receipt records any later hosted run with its exact head. Earlier CI 36369783240 at 8cd5561a2 remains historical and is superseded for current material-source qualification.
 
-The ordinary develop-based PR event has an incompatible absent capability ledger. The previously owner-approved manual authority remains accepted 7b 2483977523d9b6beab52a69429ace9aeefd00f76. Manual qualification uses that authority with publishing disabled and retains the negative control rejecting waiver expansion. No repository setting or candidate waiver was broadened in this round.
+The ordinary develop-based PR event has an incompatible absent capability ledger. The previously owner-approved manual authority remains accepted-7b authority commit 2483977523d9b6beab52a69429ace9aeefd00f76. Manual qualification uses that authority with publishing disabled and retains the negative control rejecting waiver expansion. No repository setting or candidate waiver was broadened in this round.
 
 Physical buttons/OLED, actual power interruption, signed-device upgrade, assembled-release integration, merge and publication remain separate gates. Unit and emulator evidence is explicitly labeled. Later 7.16 certified Solana tests retain their named exclusions; runtime 7.15 owned behavior is executed rather than hidden by a later-capability skip.
 
@@ -94,13 +96,15 @@ The source/PDF inventory is generated from an immutable explicit range. Every fi
 
 Final pre-push scripts/preflight.sh must pass after the last edit. Local native, host and report checks precede the hosted matrix. A report-only containing commit may carry code evidence forward only with a proven empty code/pin/configuration diff. Final source/CI status is reported independently from Copilot freshness.
 
-Review budget at preparation: two delivered failures used; round three is authorized after all eight threads have pushed, tested dispositions and zero unresolved threads is verified. A delivered clean review on the current code head ends the loop. A third code-change finding triggers the authorized split; an undelivered/quota-limited review is not counted as a failure.
+Review snapshot at this preparation: three requests delivered (5333270562, 5333740490, 5344049267), two code-change failures, zero unresolved threads. The latest review covered the qualified source before this documentation synchronization; it is not a clean verdict. The final reviewer should assess the complete block with the preserved build-graph disposition and the consolidated property evidence. Balanced effort is recommended for firmware review; historical reviews used Lite, and no setting change is claimed. Current CI and review outcomes belong in the PR receipt and main audit ledger with exact SHAs.
+
+Readiness audit signed off by Codex /root on 2026-09-28: Block 10 ancestry is complete; the merged document changes were read; source, test, build and pin preservation was proven by an empty non-documentation diff. The existing property audit and negative controls remain applicable. The storage, entropy, secret-cleanup, Solana malformed-input, platform and validator dispositions were rechecked against current source and assertions. No new actionable in-scope issue was identified. This sign-off carries forward the frozen code evidence and requires the final document render/inventory checks and pre-push preflight recorded in the receipt.
 
 ## 7. Complete cumulative Git inventory
 
-Generation predecessor: 8ff371cdfea0e33296c23f7556c7d05dd06a3cfa. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
+Inventory base: fc1e93746132553ad98ed60f4847c8d770732bf9. Integration anchor: 355711281d98313823acbfb99694fd470115cf45. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
 
-Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..8ff371cdfea0e33296c23f7556c7d05dd06a3cfa`. This range contains 379 paths. The containing report head is recorded in the PR receipt.
+This inventory describes the containing report tree, including its own final line count; the containing SHA is recorded in the PR receipt. Reproduce with `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..FINAL_HEAD`. The non-documentation tree remains identical to qualified head 12f1047da347fec09a700de0154aa88d7352977f.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
@@ -185,7 +189,7 @@ Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..8ff371c
 | - | - | `docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz` |
 | 73 | 0 | `docs/release/audit-units/715-10-intake-20260927.md` |
 | 48 | 0 | `docs/release/audit-units/715-10-reconciliation-20260927.json` |
-| 485 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
+| 489 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-11-complete-block-audit-20260927.pdf` |
 | 200 | 0 | `docs/release/audit-units/715-11-intake-20260927.json` |
 | 36 | 0 | `docs/release/audit-units/715-11-intake-20260927.md` |
