@@ -399,7 +399,8 @@ void next_character(void) {
 void recovery_cipher_redraw(void) {
   if (!awaiting_character || !setup_isArmedAs(SETUP_RECOVERY)) return;
   if (cipher_layout_visible &&
-      cipher_layout_generation == layout_get_generation()) return;
+      cipher_layout_generation == layout_get_generation())
+    return;
 
   render_current_cipher(false);
 }
