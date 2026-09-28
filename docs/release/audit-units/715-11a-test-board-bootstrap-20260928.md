@@ -31,7 +31,15 @@ Local implementation and targeted/integration verification pass for the bounded 
 
 ## 4. Complete adjacent Git inventory
 
-Inventory base: `3a6f1cc2452c268908871958fe75abc5b3a2d54f`. Reproduce against the immutable containing predecessor recorded in the PR body with `git diff --numstat 3a6f1cc2452c268908871958fe75abc5b3a2d54f..REPORT_PREDECESSOR_SHA`. The report and PDF rows are included below; binary counts use Git's dash. The final PR head and equality check belong in the PR body.
+Inventory base: `3a6f1cc2452c268908871958fe75abc5b3a2d54f`. First containing report predecessor: `38a42ea4946dbc81cd902e813c3cb7645bd09bf3`. The final inventory below includes this corrected report and PDF; reproduce from the immutable base to the final head recorded in the PR body with `git diff --numstat 3a6f1cc2452c268908871958fe75abc5b3a2d54f..FINAL_PR_HEAD`. The first report commit's `base..38a42ea4946dbc81cd902e813c3cb7645bd09bf3` inventory was regenerated because the report source grew to include this table. Binary counts use Git's dash.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
+| - | - | `docs/release/audit-units/715-11a-controls-20260928.tgz` |
+| 45 | 0 | `docs/release/audit-units/715-11a-test-board-bootstrap-20260928.md` |
+| - | - | `docs/release/audit-units/715-11a-test-board-bootstrap-20260928.pdf` |
+| 1 | 2 | `unittests/firmware/app_confirm.cpp` |
+| 2 | 7 | `unittests/firmware/storage_passphrase.cpp` |
+| 4 | 3 | `unittests/firmware/test_board.cpp` |
+| 4 | 0 | `unittests/firmware/test_board.h` |
+| 2 | 2 | `unittests/firmware/usb_rx.cpp` |
