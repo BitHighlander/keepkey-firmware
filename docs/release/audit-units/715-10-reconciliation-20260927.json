@@ -1,0 +1,48 @@
+{
+  "base": "5037e7f24cd68f11a1815be7a77a2aeae06022d7",
+  "head": "7e9fd56c6a0256e48fc0b1166d520c87cd1eb0cb",
+  "test_name_preservation": {
+    "unittests/firmware/ethereum.cpp": {
+      "removed": [],
+      "added": [
+        [
+          "Ethereum",
+          "UnknownErc20CannotBePresentedAsAReviewedTransfer"
+        ],
+        [
+          "Ethereum",
+          "UnknownTokenReviewIsExactAndFailsClosedAtCapacity"
+        ]
+      ],
+      "preserved_names": 30
+    },
+    "unittests/firmware/eip712_stream.cpp": {
+      "removed": [],
+      "added": [
+        [
+          "Eip712Stream",
+          "FixedDimensionsAreCheckedOutermostFirst"
+        ],
+        [
+          "Eip712Stream",
+          "InnerDimensionsAreCheckedToo"
+        ]
+      ],
+      "preserved_names": 44
+    }
+  },
+  "changed_predecessor_assertions": [
+    "Ethereum.TransferDisplayDoesNotAliasHighChainTokenMetadata",
+    "Ethereum.NativePseudoAddressTransferFormatterIsUnknownOffMainnet"
+  ],
+  "reason": "Unknown placeholder no longer qualifies as account-only amount review; keep chain non-alias assertions and require exact raw fallback.",
+  "historical_paths": {
+    ".github/workflows/ci.yml": "Remove two missing-capability declarations after their actual wire tests pass.",
+    "include/keepkey/firmware/ethereum.h": "Retain renderer capacity and unknown-token review API.",
+    "lib/firmware/ethereum.c": "Retain raw contract/counterparty/uint256 disclosure; preserve AdvancedMode/raw-data and approval refusal.",
+    "lib/firmware/fsm_msg_ethereum.h": "Retain mandatory fallback review only for unknown token; fail closed on other format errors.",
+    "lib/firmware/eip712_stream.c": "Superseded by predecessor outermost-first array_levels with unchanged bounds and schema guards.",
+    "unittests/firmware/ethereum.cpp": "Four historical tests inherited; missing unknown-token test retained and strengthened with independent max-value/capacity assertions.",
+    "unittests/firmware/eip712_stream.cpp": "Historical fixed/dynamic dimension tests retained with current confirmation harness; predecessor tests preserved."
+  }
+}

@@ -103,5 +103,19 @@ KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v /kkemu/scripts/emulator/test_stack07_regressions.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-stack07.xml || RC=1
 
+echo "=== Combined authenticator slot boundary ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack09_integration.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack09-integration.xml || RC=1
+
+echo "=== Stack 10 EVM disclosure regressions ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack10_regressions.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack10.xml || RC=1
+
 echo "$RC" > /kkemu/test-reports/python-keepkey/status
 exit "$RC"
