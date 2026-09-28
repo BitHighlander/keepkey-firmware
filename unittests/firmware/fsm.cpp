@@ -838,6 +838,27 @@ TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
+TEST_F(AutoLockProgress, EmptyRecoveryCharacterAbortsWithoutRenewingDeadline) {
+  signing_abort();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  recovery_cipher_init(12, false, false, "english", "empty character", false,
+                       STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  ASSERT_EQ(0, kkconfirm_drain());
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  fsm_test_clearLastFailure();
+  CharacterAck character = {};
+  character.has_character = true;
+  receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                 &character);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_FALSE(storage_isInitialized());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
 TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));

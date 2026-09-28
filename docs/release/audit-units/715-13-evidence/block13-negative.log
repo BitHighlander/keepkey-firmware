@@ -1,0 +1,34 @@
+Running main() from gmock_main.cc
+Note: Google Test filter = AutoLockProgress.EmptyRecoveryCharacterAbortsWithoutRenewingDeadline
+[==========] Running 1 test from 1 test case.
+[----------] Global test environment set-up.
+[----------] 1 test from AutoLockProgress
+[ RUN      ] AutoLockProgress.EmptyRecoveryCharacterAbortsWithoutRenewingDeadline
+Emulator listening on UDP ports 11044 (main) and 11045 (debug)
+Failed to write socket: Invalid argument
+/src/unittests/firmware/fsm.cpp:521: Failure
+Expected equality of these values:
+  FailureType_Failure_SyntaxError
+    Which is: 3
+  fsm_test_lastFailureCode()
+    Which is: 0
+/src/unittests/firmware/fsm.cpp:522: Failure
+Value of: setup_isArmed()
+  Actual: true
+Expected: false
+/src/unittests/firmware/fsm.cpp:526: Failure
+Expected equality of these values:
+  SCREENSAVER
+    Which is: 2
+  home_get_state()
+    Which is: 1
+[  FAILED  ] AutoLockProgress.EmptyRecoveryCharacterAbortsWithoutRenewingDeadline (245 ms)
+[----------] 1 test from AutoLockProgress (245 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test case ran. (248 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] AutoLockProgress.EmptyRecoveryCharacterAbortsWithoutRenewingDeadline
+
+ 1 FAILED TEST

@@ -447,7 +447,7 @@ void recovery_character(const char* character) {
   const char* pos = strchr(cipher, character[0]);
 
   // If not a space and not a legitmate cipher character, send failure.
-  if (character[0] != ' ' && pos == NULL) {
+  if (character[0] == '\0' || (character[0] != ' ' && pos == NULL)) {
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Character must be from a to z");
