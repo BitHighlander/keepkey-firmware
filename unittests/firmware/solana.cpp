@@ -1203,6 +1203,9 @@ TEST(Solana, SchemaParsesCanonicalPayload) {
   EXPECT_STREQ(s.program_name, "Relay");
   EXPECT_STREQ(s.instruction_name, "deposit");
   EXPECT_STREQ(s.args[0].label, "Amount");
+  for (size_t cut = 0; cut < len; cut++) {
+    EXPECT_FALSE(solana_parseInstrSchema(blob, cut, &s)) << cut;
+  }
 }
 
 TEST(Solana, SchemaV2ParsesTokenDurationAndEightArgs) {
@@ -1236,6 +1239,10 @@ TEST(Solana, SchemaV2ParsesTokenDurationAndEightArgs) {
   EXPECT_EQ(schema.args[0].type, SOL_SCHEMA_ARG_TOKEN_AMOUNT);
   EXPECT_EQ(schema.args[0].mint_account, 1);
   EXPECT_EQ(schema.args[1].type, SOL_SCHEMA_ARG_DURATION);
+
+  for (size_t cut = 0; cut < p; cut++) {
+    EXPECT_FALSE(solana_parseInstrSchema(blob, cut, &schema)) << cut;
+  }
 
   blob[8] = 1;
   EXPECT_FALSE(solana_parseInstrSchema(blob, p, &schema));

@@ -963,6 +963,16 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   SolanaTxReview tx_review =
       solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed);
 
+  /* A failed parse may leave instructions populated. A matching schema must
+   * never turn that partial result into an eligible signing request. */
+  if (tx_review == SOL_TX_REVIEW_MALFORMED) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Malformed Solana transaction"));
+    layoutHome();
+    return;
+  }
+
   /* Signer verification: derived key must be a required signer.
    * For verified txs this is mandatory. For opaque txs we still check
    * when we were able to parse the header (num_accounts > 0). */
