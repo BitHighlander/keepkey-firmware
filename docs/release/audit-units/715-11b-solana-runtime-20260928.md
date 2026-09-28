@@ -24,7 +24,14 @@ Implementation, source-level negative control and targeted native assertions pas
 
 ## 4. Complete adjacent Git inventory
 
-Inventory base: `fa02818bc4b722d81ba9c977ff06bfc12b2083cf`. Code predecessor: `7eceaffffa0d305091c46f13e432d9282615370c`; prerequisite merge: `85627b3d38335fc72090b9bc06af3d9dc8be9b54`. The first containing report predecessor and final head are recorded in the PR body. Reproduce from the immutable immediate base to that final head with `git diff --numstat fa02818bc4b722d81ba9c977ff06bfc12b2083cf..FINAL_PR_HEAD`. Binary counts use Git's dash.
+Inventory base: `fa02818bc4b722d81ba9c977ff06bfc12b2083cf`. Code predecessor: `7eceaffffa0d305091c46f13e432d9282615370c`; prerequisite merge: `85627b3d38335fc72090b9bc06af3d9dc8be9b54`; first containing report predecessor: `1598ff14581c8e210974ba0401828e547315a6c8`. The table was regenerated after that first report commit grew to include its own final rows. Reproduce from the immutable immediate base to the final head recorded in the PR body with `git diff --numstat fa02818bc4b722d81ba9c977ff06bfc12b2083cf..FINAL_PR_HEAD`. Binary counts use Git's dash.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
+| 1 | 1 | `.github/workflows/ci.yml` |
+| 1 | 1 | `deps/python-keepkey` |
+| - | - | `docs/release/audit-units/715-11b-controls-20260928.tgz` |
+| 37 | 0 | `docs/release/audit-units/715-11b-solana-runtime-20260928.md` |
+| - | - | `docs/release/audit-units/715-11b-solana-runtime-20260928.pdf` |
+| 10 | 0 | `lib/firmware/fsm_msg_solana.h` |
+| 7 | 0 | `unittests/firmware/solana.cpp` |
