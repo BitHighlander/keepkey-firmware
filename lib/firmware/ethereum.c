@@ -452,6 +452,7 @@ static void send_signature(void) {
     fsm_sendFailure(FailureType_Failure_Other,
                     "Metadata does not match signed transaction");
     ethereum_signing_abort();
+    memzero(hash, sizeof(hash));
     return;
   }
 

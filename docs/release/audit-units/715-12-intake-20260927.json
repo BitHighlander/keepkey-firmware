@@ -71,5 +71,30 @@
   "pending": [
     "Zcash progress wrapper and source-boundary gate compatibility",
     "all runtime validations and final block11 integration"
+  ],
+  "historical_path_dispositions": {
+    ".github/workflows/ci.yml": "Pending validation: remove only hive-release-review from existing stronger shared ledger after owned cases execute.",
+    "docs/release/7.15-alpha-delta-audit.md": "Historical policy context; replace stale predecessor/pin claims with current audit receipt.",
+    "docs/release/7.15-audit-handoff.md": "Historical handoff retained as source evidence; not current validation or authorization.",
+    "include/keepkey/firmware/hive.h": "Missing constants and asset helper declaration restored exactly.",
+    "include/keepkey/firmware/home_sm.h": "Comment only; verify current workflow progress semantics before deciding whether explanatory comment needed.",
+    "lib/firmware/ethereum.c": "Digest enforcement already present; missing hash scratch wipe restored.",
+    "lib/firmware/fsm.c": "Include order only; no behavior to replay.",
+    "lib/firmware/fsm_msg_common.h": "Provider revocation superseded by storage_setPolicy clearing signers immediately on AdvancedMode disable; do not regress to end-of-loop revocation. Solana LUT absence is inherited policy; agent1 owns associated schema audit.",
+    "lib/firmware/fsm_msg_hive.h": "Missing transfer role/path, memo bound/paging, asset mapping, account owner-role guards restored exactly.",
+    "lib/firmware/hive.c": "Missing shared asset normalization and account creation wire spelling restored exactly.",
+    "lib/firmware/storage.c": "Session/lock trust revocation inherited stronger; only missing Orchard derivation progress wrapper restored.",
+    "tools/check_pallas_api_boundary.py": "Restored historical gate; passes pinned source, negative control rejects missing storage progress wrapper. Token matching is supplementary source evidence, not proof of constant-time behavior."
+  },
+  "consumer_checks": {
+    "vault": "projects/keepkey-vault/src/bun/index.ts account creation uses owner role, fee3000 and default mainnet chain; compatible with restored guard. Transfer RPC delegates caller parameters to hdwallet.",
+    "hdwallet": "modules/hdwallet/packages/hdwallet-keepkey/src/hive.ts passes identity/amount/symbol, optional chain/decimals/memo; firmware must validate hostile or absent fields.",
+    "python": "keepkeylib/hive.py passes explicit fields; test_msg_hive.py already contains independent serialization and role/memo regression cases hidden by hive-release-review. Run these without that owned waiver."
+  },
+  "first_checks": [
+    "Restored Pallas gate passes exact pinned source.",
+    "Negative control replacing storage progress derivation with old call fails the gate.",
+    "git diff --check passes.",
+    "New full-only native suite registered: Hive.TransferAssetShownIsAssetSigned and Hive.TransferRejectsUnsupportedAssetsAndUntruncatedPrecision; execution pending."
   ]
 }

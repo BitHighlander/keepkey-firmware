@@ -33,7 +33,10 @@
 
 // ── Protocol limits ───────────────────────────────────────────────────────
 #define HIVE_MAX_ACCOUNT_LEN 16  // max Hive username length
-#define HIVE_DECIMALS 3          // HIVE and HBD both use 3 decimal places
+#define HIVE_MAX_MEMO_LEN 440
+#define HIVE_DECIMALS 3  // HIVE and HBD both use 3 decimal places
+#define HIVE_WIRE_SYMBOL_HIVE "STEEM"
+#define HIVE_WIRE_SYMBOL_HBD "SBD"
 
 // ── Public API ────────────────────────────────────────────────────────────
 /**
@@ -60,6 +63,10 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
                         char* owner_out, size_t owner_len, char* active_out,
                         size_t active_len, char* memo_out, size_t memo_len,
                         char* posting_out, size_t posting_len);
+
+/** Resolve a transferable Hive asset to its signed and displayed spellings. */
+bool hive_transferAsset(const HiveSignTx* msg, const char** wire,
+                        const char** display, uint8_t* precision);
 
 /**
  * Sign a Hive transfer transaction (op type 2).
