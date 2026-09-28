@@ -1,0 +1,63 @@
+{
+  "status": "S12-01 targeted repair verified; full block audit open",
+  "utc": "2026-09-28T02:30:37.984460+00:00",
+  "restored_checkpoint": "29aea4bc51dafc270716522ab7bc203099316d30",
+  "predecessor": "476afea2ce9906caaac67bfffa900b6a961fa6c4",
+  "pins": {
+    "code-signing-keys": "a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec",
+    "deps/crypto/trezor-firmware": "8a392f70a5d5575ece3dfb35f115d4a4b27f497c",
+    "deps/device-protocol": "5fec9e6906a340be5eb3d795ec746769065b2db8",
+    "deps/googletest": "7888184f28509dba839e3683409443e0b5bb8948",
+    "deps/python-keepkey": "41af909341965c81b8afadd38f299d6f929089af",
+    "deps/qrenc/QR-Code-generator": "6dfbfdad5d9303ed190d1c3cb7bec34b565b6ce8",
+    "deps/sca-hardening/SecAESSTM32": "71d356a1141624994cf613bd2d2583892e8e6d5a"
+  },
+  "canonical_sha256": {
+    "MASTER-AUDIT-TEMPLATE.md": "0f618e2278ec3598ca5e5cd411b4821ff5a9b403394906a50cadb13d51fc4819",
+    "REHEARSAL-SOP.md": "cd2c546d41f0a723f6ce84199a3fb03661f79ab3f49fbafca08de96a7c309e89"
+  },
+  "negative_controls": {
+    "native": "2 existing pass; new all-operation malformed-domain regression fails",
+    "wire": "3 fail because old handlers return ButtonRequest for explicit empty chain ID"
+  },
+  "targeted_fixed": {
+    "native": "3 pass including all 96 malformed operation/length pairs",
+    "wire": "3 pass; 96 immediate SyntaxError responses and 9 successful valid-domain retries"
+  },
+  "limits": [
+    "No BTC/ARM/resource qualification in this batch",
+    "No final Block11 predecessor integration",
+    "No release or whole-block acceptance",
+    "No Copilot request",
+    "Earlier checkpoint temporary raw artifacts are absent"
+  ],
+  "full_native_fixed": {
+    "tests": 672,
+    "failures": 0,
+    "variant": "full Debug emulator firmware-unit"
+  },
+  "source_sha256": {
+    "lib/firmware/hive.c": "27647f81b23075aa0a8af5844d5076def59e2f7d4b8b8cc6a58b43ce61c2f7a8",
+    "lib/firmware/fsm_msg_hive.h": "f0bb84402d3bfb9dab6640ceb244888a483edf41d089eedad7fe4b41c4c7d9e5",
+    "unittests/firmware/hive_transfer.cpp": "6ba6e3d63f7dc7fa3109f211493bdb54eb7907556835c50d9322b3bed0321bd7",
+    "scripts/tests/test_hive_chain_id.py": "21fa2652922e753130d49592ad595e8d2b3659cf14069784ff254a16877c0dac"
+  },
+  "artifact_sha256": {
+    "build-baseline-retry.log": "90ded6e31355f34fc909349e52d0f889f64302483aaed0f9ad290b07fc01b957",
+    "build-baseline.log": "f2afb12ad0de5dc4b3fc4d6d530790c08b8431abaedc2f029e7b127e8c21bcbc",
+    "build-fixed.log": "85c92b64b189d4aac7cbc0ce045275160a49ad9bd5c78c181c39dda1e2b8ab53",
+    "emulator-before.log": "35048bb20c144f6bd72c3c0b25b051cb0614cf56c5ac12b64aaca157d746772d",
+    "emulator-fixed.log": "35048bb20c144f6bd72c3c0b25b051cb0614cf56c5ac12b64aaca157d746772d",
+    "native-before.log": "6d6c598393fd53ad7887a3aeb44749fb1b85c74f6c3cb5705bbd784c9b7e8391",
+    "native-before.xml": "847946f96dc78ddd59245b96f871329a2ac8e515a2c4390fa38792f2c029600b",
+    "native-fixed.log": "99671a9f3ecded69d22f1ef069ee3df37de40f442459188558504709d2dc1925",
+    "native-fixed.xml": "5131f7146f91e76f14d34495944b16a26e782340b307333afab254e01432a8b5",
+    "native-full-fixed.log": "f0e33c7c4a9ecd76fd01f49d2e9e38dfbfc2429c1d4a343445ae20d58bfcdd05",
+    "native-full-fixed.xml": "eab020c50bd89a9d95dd937b0ee7287072bb488e2a619ec78f016fec7393cb0a",
+    "wire-before.log": "f14d546bc21ce7e0c2554a06ca20ac61d8c16b38e9acb666a3ae8b99085e8950",
+    "wire-before.xml": "2d58e5cb0b44e0255ed3d969a518312e2773e57ac31173af7d3660a9737d4ac3",
+    "wire-fixed.log": "69ccde303b46431c5fdce60ad9e5f470fb43db4a121a8a9f401d8eb5bf4fd2aa",
+    "wire-fixed.xml": "4f7f8edf3c8d3ada056be57679734852bcb615cfcfdd35e4a102c60d879cd58c"
+  },
+  "raw_archive_sha256": "9a173b0dfda2d64410b58f16d53ee27f88a00092af8956997cbcd2738d657d0d"
+}

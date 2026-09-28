@@ -269,6 +269,9 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
 
 void hive_signTx(const HDNode* node, const HiveSignTx* msg,
                  HiveSignedTx* resp) {
+  // Omission defaults to mainnet; a present malformed domain fails closed.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+
   // Reject memos that would overflow the fixed-size tx_buf.
   if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) return;
 
@@ -278,9 +281,7 @@ void hive_signTx(const HDNode* node, const HiveSignTx* msg,
 
   const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
   const uint8_t* chain_id =
-      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
-          ? msg->chain_id.bytes
-          : default_chain_id;
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
 
   uint8_t sig[65];
   if (!hive_sign_digest(node, chain_id, tx_buf, tx_len, sig)) {
@@ -353,6 +354,9 @@ void hive_signAccountCreate(const HDNode* signing_node,
                             const uint8_t posting_raw[33],
                             const uint8_t memo_raw[33],
                             HiveSignedAccountCreate* resp) {
+  // Omission defaults to mainnet; a present malformed domain fails closed.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+
   uint8_t tx_buf[512];
   size_t tx_len =
       hive_serialize_account_create(msg, owner_raw, active_raw, posting_raw,
@@ -360,9 +364,7 @@ void hive_signAccountCreate(const HDNode* signing_node,
 
   const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
   const uint8_t* chain_id =
-      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
-          ? msg->chain_id.bytes
-          : default_chain_id;
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
 
   uint8_t sig[65];
   if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
@@ -434,6 +436,9 @@ void hive_signAccountUpdate(const HDNode* signing_node,
                             const uint8_t posting_raw[33],
                             const uint8_t memo_raw[33],
                             HiveSignedAccountUpdate* resp) {
+  // Omission defaults to mainnet; a present malformed domain fails closed.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+
   uint8_t tx_buf[512];
   size_t tx_len =
       hive_serialize_account_update(msg, owner_raw, active_raw, posting_raw,
@@ -441,9 +446,7 @@ void hive_signAccountUpdate(const HDNode* signing_node,
 
   const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
   const uint8_t* chain_id =
-      (msg->has_chain_id && msg->chain_id.size == HIVE_CHAIN_ID_LEN)
-          ? msg->chain_id.bytes
-          : default_chain_id;
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
 
   uint8_t sig[65];
   if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {

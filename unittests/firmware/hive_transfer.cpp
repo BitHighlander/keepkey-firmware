@@ -92,3 +92,88 @@ TEST(Hive, TransferRejectsUnsupportedAssetsAndUntruncatedPrecision) {
     EXPECT_FALSE(response.has_serialized_tx);
   }
 }
+
+template <typename Request, typename Response, typename Sign>
+static void check_chain_id_contract(Request request, Sign sign) {
+  // Omission is the documented mainnet default. Explicit malformed bytes
+  // must never silently select that default, including an empty bytes field.
+  Response baseline = {};
+  sign(request, baseline);
+  ASSERT_TRUE(baseline.has_signature);
+  ASSERT_TRUE(baseline.has_serialized_tx);
+  request.has_chain_id = true;
+  memset(request.chain_id.bytes, 0xa5, sizeof(request.chain_id.bytes));
+  for (size_t size = 0; size < HIVE_CHAIN_ID_LEN; ++size) {
+    SCOPED_TRACE(size);
+    request.chain_id.size = size;
+    Response response = {};
+    sign(request, response);
+    EXPECT_FALSE(response.has_signature);
+    EXPECT_FALSE(response.has_serialized_tx);
+  }
+
+  request.chain_id.size = HIVE_CHAIN_ID_LEN;
+  const uint8_t mainnet[32] = {0xbe, 0xea, 0xb0, 0xde};
+  memcpy(request.chain_id.bytes, mainnet, sizeof(mainnet));
+  Response explicit_mainnet = {};
+  sign(request, explicit_mainnet);
+  ASSERT_TRUE(explicit_mainnet.has_signature);
+  EXPECT_EQ(baseline.signature.size, explicit_mainnet.signature.size);
+  EXPECT_EQ(0,
+            memcmp(baseline.signature.bytes, explicit_mainnet.signature.bytes,
+                   baseline.signature.size));
+
+  // Preserve support for exact-length custom domains; their signatures must
+  // differ even though the serialized transaction remains identical.
+  request.chain_id.bytes[0] ^= 1;
+  Response custom = {};
+  sign(request, custom);
+  ASSERT_TRUE(custom.has_signature);
+  ASSERT_EQ(baseline.serialized_tx.size, custom.serialized_tx.size);
+  EXPECT_EQ(0, memcmp(baseline.serialized_tx.bytes, custom.serialized_tx.bytes,
+                      baseline.serialized_tx.size));
+  EXPECT_NE(0, memcmp(baseline.signature.bytes, custom.signature.bytes,
+                      baseline.signature.size));
+}
+
+TEST(Hive, AllSigningOperationsRejectMalformedExplicitChainIds) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  hdnode_fill_public_key(&node);
+  check_chain_id_contract<HiveSignTx, HiveSignedTx>(
+      transfer_request(), [&](const HiveSignTx& msg, HiveSignedTx& response) {
+        hive_signTx(&node, &msg, &response);
+      });
+
+  HiveSignAccountCreate create = {};
+  create.has_creator = create.has_new_account_name = true;
+  strcpy(create.creator, "alice");
+  strcpy(create.new_account_name, "bob");
+  create.has_ref_block_num = create.has_ref_block_prefix =
+      create.has_expiration = true;
+  create.ref_block_num = 1;
+  create.ref_block_prefix = 2;
+  create.expiration = 3;
+  check_chain_id_contract<HiveSignAccountCreate, HiveSignedAccountCreate>(
+      create,
+      [&](const HiveSignAccountCreate& msg, HiveSignedAccountCreate& response) {
+        hive_signAccountCreate(&node, &msg, node.public_key, node.public_key,
+                               node.public_key, node.public_key, &response);
+      });
+
+  HiveSignAccountUpdate update = {};
+  update.has_account = true;
+  strcpy(update.account, "alice");
+  update.has_ref_block_num = update.has_ref_block_prefix =
+      update.has_expiration = true;
+  update.ref_block_num = 1;
+  update.ref_block_prefix = 2;
+  update.expiration = 3;
+  check_chain_id_contract<HiveSignAccountUpdate, HiveSignedAccountUpdate>(
+      update,
+      [&](const HiveSignAccountUpdate& msg, HiveSignedAccountUpdate& response) {
+        hive_signAccountUpdate(&node, &msg, node.public_key, node.public_key,
+                               node.public_key, node.public_key, &response);
+      });
+}

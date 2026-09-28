@@ -132,6 +132,15 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
+  // Only an omitted chain ID selects mainnet. Never reinterpret malformed
+  // explicit bytes as a different signing domain, even before consent.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Hive chain ID must be 32 bytes"));
+    layoutHome();
+    return;
+  }
+
   if (!msg->has_from || !msg->has_to || !msg->has_amount ||
       !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
       !msg->has_expiration) {
@@ -247,6 +256,15 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
 
   CHECK_INITIALIZED
   CHECK_PIN
+
+  // Only an omitted chain ID selects mainnet. Never reinterpret malformed
+  // explicit bytes as a different signing domain, even before consent.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Hive chain ID must be 32 bytes"));
+    layoutHome();
+    return;
+  }
 
   if (!msg->has_new_account_name || !msg->has_creator ||
       !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
@@ -393,6 +411,15 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
 
   CHECK_INITIALIZED
   CHECK_PIN
+
+  // Only an omitted chain ID selects mainnet. Never reinterpret malformed
+  // explicit bytes as a different signing domain, even before consent.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Hive chain ID must be 32 bytes"));
+    layoutHome();
+    return;
+  }
 
   if (!msg->has_account || !msg->has_ref_block_num ||
       !msg->has_ref_block_prefix || !msg->has_expiration) {
