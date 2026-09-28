@@ -98,9 +98,9 @@ Review budget at preparation: two delivered failures used; round three is author
 
 ## 7. Complete cumulative Git inventory
 
-Generation predecessor: a01e27558257086d156dc1b2d1feecf4d0842c80. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
+Generation predecessor: 8ff371cdfea0e33296c23f7556c7d05dd06a3cfa. Final material source: 36d9f32f0daac85d3baa68996e0c59112dffbf74.
 
-Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..a01e27558257086d156dc1b2d1feecf4d0842c80`. This range contains 379 paths. The containing report head is recorded in the PR receipt.
+Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..8ff371cdfea0e33296c23f7556c7d05dd06a3cfa`. This range contains 379 paths. The containing report head is recorded in the PR receipt.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
@@ -185,7 +185,7 @@ Reproduce: `git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9..a01e275
 | - | - | `docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz` |
 | 73 | 0 | `docs/release/audit-units/715-10-intake-20260927.md` |
 | 48 | 0 | `docs/release/audit-units/715-10-reconciliation-20260927.json` |
-| 486 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
+| 485 | 0 | `docs/release/audit-units/715-11-complete-block-audit-20260927.md` |
 | - | - | `docs/release/audit-units/715-11-complete-block-audit-20260927.pdf` |
 | 200 | 0 | `docs/release/audit-units/715-11-intake-20260927.json` |
 | 36 | 0 | `docs/release/audit-units/715-11-intake-20260927.md` |
