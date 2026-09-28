@@ -113,7 +113,8 @@ and retains message-byte consent. Other message formats retain AdvancedMode.
 CI-TARGET-01 PENDING: develop has no KK_RELEASE_MISSING_CAPABILITIES declaration.
 The inherited report validator uses the PR base as independent waiver authority,
 so the develop-target report gate cannot validate this staged release's ledger.
-The repository has no KK_ACCEPTED_WAIVER_SHA variable for manual CI either.
+At the initial checkpoint the repository also lacked the manual-CI authority
+variable; the owner has since approved it as recorded below.
 No waiver, gate or repository setting was changed to hide this incompatibility.
 This is a target/qualification blocker, not a newly found signing defect. It
 must be resolved before calling hosted qualification green or requesting review.
@@ -158,13 +159,13 @@ metadata now names Python PR122 instead of PR121. Runtime code/tests/pins remain
 identical to e631449c18f0f26755dc79f59ffea1d6863e8219. A fresh pre-push run is
 recorded in the PR body after the final report is frozen.
 
-The smallest hosted qualification path needs separately authorized repository
-variable KK_ACCEPTED_WAIVER_SHA=2483977523d9b6beab52a69429ace9aeefd00f76,
+The owner approved and the agent verified repository variable
+KK_ACCEPTED_WAIVER_SHA=2483977523d9b6beab52a69429ace9aeefd00f76,
 the accepted block7b authority. Its seven-capability ledger contains all five
 candidate waivers. The existing manual workflow can then qualify this exact head
 with publishing disabled; no validator edit is needed. A successful manual run
-would be distinct from the incompatible develop-based PR event. Until approved,
-the setting remains absent and fresh hosted qualification remains pending.
+is distinct from the incompatible develop-based PR event. The setting is active;
+fresh hosted qualification of the repaired head remains pending.
 
 ## 5. Report render and local preflight
 
@@ -178,7 +179,8 @@ regression is published as a companion branch and pinned in this candidate.
 
 Owner authorization: exactly one run. Requests used: 0. External review pending.
 No block11 completion or release acceptance claimed. Do not spend the run on a
-repair-only or receipt-only PR. CI-TARGET-01 must be reconciled before the request.
+repair-only or receipt-only PR. Manual hosted qualification must pass before the request; the incompatible
+PR-triggered authority check remains separately disclosed.
 All predecessor decisions and review caveats retain their original status.
 
 ## 7. Complete target diff inventory
