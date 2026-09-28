@@ -22,7 +22,12 @@ The two old-source negative controls fail for their expected reasons and the fix
 
 ## 4. Complete adjacent Git inventory
 
-Inventory base: `3a6f1cc2452c268908871958fe75abc5b3a2d54f`. The code predecessor is `047a52c3dd6cc6ee0eed5e62a7004a350a1f8fef`; the report generation predecessor and final containing head are recorded in the PR body. Reproduce from the immutable base to that final head with `git diff --numstat 3a6f1cc2452c268908871958fe75abc5b3a2d54f..FINAL_PR_HEAD`. The report and PDF rows are included; binary counts use Git's dash.
+Inventory base: `3a6f1cc2452c268908871958fe75abc5b3a2d54f`. Code predecessor: `047a52c3dd6cc6ee0eed5e62a7004a350a1f8fef`; first containing report predecessor: `cd6f192bfaa593e4a6ac5fbe3f135798ec76ee16`. The table was regenerated after that first report commit grew to include its own final rows. Reproduce from the immutable base to the final head recorded in the PR body with `git diff --numstat 3a6f1cc2452c268908871958fe75abc5b3a2d54f..FINAL_PR_HEAD`. Binary counts use Git's dash.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
+| 4 | 0 | `.gitleaksignore` |
+| 33 | 0 | `docs/release/audit-units/715-11p-ci-prerequisites-20260928.md` |
+| - | - | `docs/release/audit-units/715-11p-ci-prerequisites-20260928.pdf` |
+| - | - | `docs/release/audit-units/715-11p-controls-20260928.tgz` |
+| 1 | 0 | `scripts/test_generate_test_report.py` |
