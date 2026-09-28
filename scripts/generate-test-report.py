@@ -111,6 +111,7 @@ _STACK10_EVM = [
         "test_padded_zero_value_keeps_exact_token_review",
         "test_transfer_account_keeps_raw_review_and_recipient_binding",
         "test_transfer_account_padded_zero_keeps_contract_review",
+        "test_transfer_account_rejects_noncanonical_total_length",
         "test_unlimited_approval_and_disabled_advanced_mode_still_refuse",
     )]
 

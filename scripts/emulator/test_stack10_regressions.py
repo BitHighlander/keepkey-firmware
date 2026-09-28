@@ -66,7 +66,8 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
     def test_noncanonical_transfers_keep_advanced_raw_fallback(self):
         canonical = self._tx()
         data = canonical.data_initial_chunk
-        for representation in ("split", "trailing", "dirty_address"):
+        for representation in ("split", "trailing", "streamed_trailing",
+                               "dirty_address"):
             tx = self._tx()
             arguments = None
             if representation == "split":
@@ -75,6 +76,9 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
             elif representation == "trailing":
                 tx.data_initial_chunk = data + b"\0"
                 tx.data_length += 1
+            elif representation == "streamed_trailing":
+                tx.data_length += 1
+                arguments = b"\0"
             else:
                 tx.data_initial_chunk = data[:4] + b"\1" + data[5:]
             self.client.apply_policy("AdvancedMode", 1)
@@ -134,6 +138,43 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
             self.assertEqual(self._first_pages()[0], expected_review)
             self.assertEqual(signed.signature_r, signed_reference.signature_r)
             self.assertEqual(signed.signature_s, signed_reference.signature_s)
+
+    def test_transfer_account_rejects_noncanonical_total_length(self):
+        self.client.apply_policy("ShapeShift", 1)
+        path = [0x8000002c, 0x8000003c, 0x80000001, 0, 0]
+        recipient = self.client.ethereum_get_address(path)
+        dai = bytes.fromhex("6b175474e89094c44da98b954eedeac495271d0f")
+        for contract in (b"\x42" * 20, dai):
+            canonical = self._tx(contract=contract, recipient=recipient,
+                                 address_type=types.TRANSFER)
+            canonical.to_address_n.extend(path)
+            reference = self._signed(canonical)
+            self.assertIn("DAI" if contract == dai else "Unknown token contract",
+                          self._first_pages()[0][1])
+            for representation in ("trailing", "streamed_trailing", "short",
+                                   "zero", "absent"):
+                tx = eth.EthereumSignTx()
+                tx.CopyFrom(canonical)
+                arguments = None
+                if representation == "trailing":
+                    tx.data_initial_chunk += b"\0"
+                    tx.data_length = 69
+                elif representation == "streamed_trailing":
+                    tx.data_length = 69
+                    arguments = b"\0"
+                elif representation == "short":
+                    tx.data_length = 67
+                elif representation == "zero":
+                    tx.data_length = 0
+                else:
+                    tx.ClearField("data_length")
+                with self.subTest(contract=contract.hex(), shape=representation):
+                    result, buttons, _, _ = self._walk(tx, arguments=arguments)
+                    self.assertIsInstance(result, proto.Failure)
+                    self.assertEqual(buttons, 0)
+                    retried = self._signed(canonical)
+                    self.assertEqual(retried.signature_r, reference.signature_r)
+                    self.assertEqual(retried.signature_s, reference.signature_s)
 
     def test_cancel_every_disclosure_page_then_retry(self):
         tx = self._tx(approve=True, amount=(1 << 256) - 2)

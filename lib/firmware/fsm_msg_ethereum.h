@@ -25,7 +25,11 @@
 
 static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg,
                                  bool* needs_confirm) {
-  if (!ethereum_isStandardERC20Transfer(msg) && msg->data_length != 0)
+  /* Account routing accepts only a complete canonical ERC20 transfer. Check
+   * the declared total too, so streaming a suffix cannot change the signing
+   * classifier after the account confirmation has replaced output review. */
+  if ((msg->data_length != 0 || msg->data_initial_chunk.size != 0) &&
+      (msg->data_length != 68 || !ethereum_isStandardERC20Transfer(msg)))
     return TXOUT_COMPILE_ERROR;
 
   char node_str[NODE_STRING_LENGTH];
