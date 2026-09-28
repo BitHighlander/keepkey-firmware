@@ -124,5 +124,12 @@ KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v /kkemu/scripts/emulator/test_stack12_regressions.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-stack12.xml || RC=1
 
+echo "=== Stack 13 entropy contract regressions ==="
+KK_FORCE_UDP=1 \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/tests/test_block13_entropy.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack13.xml || RC=1
+
 echo "$RC" > /kkemu/test-reports/python-keepkey/status
 exit "$RC"

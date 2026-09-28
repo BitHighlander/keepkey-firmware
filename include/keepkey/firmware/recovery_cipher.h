@@ -38,6 +38,10 @@ void recovery_character(const char* character);
 void recovery_delete_character(void);
 void recovery_cipher_finalize(void);
 
+/// Restore the active input screen without rotating the cipher, requesting
+/// another character, or renewing the workflow deadline. Inactive after abort.
+void recovery_cipher_redraw(void);
+
 /// Zero the recovery-side buffers and flags. Touches no storage. Called only
 /// by setup_abort(), which owns the ceremony as a whole.
 void recovery_cipher_reset(void);

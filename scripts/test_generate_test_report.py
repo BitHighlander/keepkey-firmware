@@ -90,6 +90,101 @@ class ContractEvidence(unittest.TestCase):
                         path.write_bytes(original)
 
 
+class NativeContractEvidence(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.paths = {}
+        for variant, relative in report.NATIVE_CONTRACT_JUNIT.items():
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            suite = ET.Element("testsuite")
+            for name in sorted(report.BLOCK13_NATIVE_CASES[variant]):
+                classname, method = name.rsplit(".", 1)
+                ET.SubElement(suite, "testcase", {
+                    "classname": classname, "name": method, "status": "run"})
+            # These survive every corruption: nonempty XML or unrelated green
+            # native checks cannot substitute for an owned security contract.
+            ET.SubElement(suite, "testcase", {
+                "classname": "Unrelated", "name": "StillPasses", "status": "run"})
+            ET.ElementTree(suite).write(path)
+            self.paths[variant] = path
+
+    def test_complete_product_contracts_pass_and_bind_both_files(self):
+        self.assertEqual(53, len(report.BLOCK13_NATIVE_CASES["full"]))
+        self.assertEqual(18, len(report.BLOCK13_NATIVE_CASES["bitcoin-only"]))
+        evidence = report.validate_native_contract_junit(self.root)
+        self.assertEqual({"full", "bitcoin-only"},
+                         {item["variant"] for item in evidence})
+        for item in evidence:
+            path = self.paths[item["variant"]]
+            self.assertEqual(str(path.relative_to(self.root)), item["path"])
+            self.assertEqual(report.sha256_file(path), item["sha256"])
+
+    def test_each_missing_native_product_file_is_refused(self):
+        for variant, path in self.paths.items():
+            original = path.read_bytes()
+            with self.subTest(variant=variant):
+                path.unlink()
+                with self.assertRaisesRegex(RuntimeError, "JUnit missing"):
+                    report.validate_native_contract_junit(self.root)
+                path.write_bytes(original)
+
+    def test_each_owned_case_must_run_once_and_pass(self):
+        for variant, path in self.paths.items():
+            original = path.read_bytes()
+            owned_count = len(report.BLOCK13_NATIVE_CASES[variant])
+            for index in range(owned_count):
+                for mutation in ("remove", "skip", "failure", "error",
+                                 "duplicate", "notrun", "missing-status"):
+                    with self.subTest(variant=variant, case=index,
+                                      mutation=mutation):
+                        tree = ET.parse(path)
+                        suite = tree.getroot()
+                        case = suite[index]
+                        if mutation == "remove":
+                            suite.remove(case)
+                        elif mutation == "skip":
+                            ET.SubElement(case, "skipped")
+                        elif mutation in ("failure", "error"):
+                            ET.SubElement(case, mutation)
+                        elif mutation == "duplicate":
+                            suite.append(ET.fromstring(ET.tostring(case)))
+                        elif mutation == "notrun":
+                            case.set("status", "notrun")
+                        else:
+                            case.attrib.pop("status")
+                        tree.write(path)
+                        self.assertTrue(any(
+                            c.get("classname") == "Unrelated"
+                            for c in suite))
+                        with self.assertRaises(RuntimeError):
+                            report.validate_native_contract_junit(self.root)
+                        path.write_bytes(original)
+
+    def test_wrong_product_evidence_is_refused(self):
+        full = self.paths["full"]
+        btc = self.paths["bitcoin-only"]
+        full_bytes, btc_bytes = full.read_bytes(), btc.read_bytes()
+        full.write_bytes(btc_bytes)
+        with self.assertRaisesRegex(RuntimeError, "native contract cases"):
+            report.validate_native_contract_junit(self.root)
+        full.write_bytes(full_bytes)
+        btc.write_bytes(full_bytes)
+        with self.assertRaisesRegex(RuntimeError, "full-only cases"):
+            report.validate_native_contract_junit(self.root)
+
+    def test_coincident_suffix_cannot_replace_native_identity(self):
+        path = self.paths["full"]
+        tree = ET.parse(path)
+        case = tree.getroot()[0]
+        case.set("classname", "Lookalike." + case.get("classname"))
+        tree.write(path)
+        with self.assertRaisesRegex(RuntimeError, "native contract cases"):
+            report.validate_native_contract_junit(self.root)
+
+
 def skipped(capability):
     return {"status": "skip",
             "skip_reason": report.CAPABILITY_SKIP_PREFIX + capability}
@@ -109,7 +204,10 @@ class CapabilityWaivers(unittest.TestCase):
                 report.release_missing_capabilities([], approved=set())
 
     def test_ledger_is_read_from_the_real_workflow(self):
-        self.assertIn("osmosis-wire-guards", report.approved_capabilities())
+        approved = report.approved_capabilities()
+        self.assertIn("storage-v19-kdf", approved)
+        self.assertNotIn("osmosis-wire-guards", approved)
+        self.assertNotIn("entropy-audit-budget", approved)
 
     def test_ledger_must_be_unique(self):
         line = "    KK_RELEASE_MISSING_CAPABILITIES: a,b\n"

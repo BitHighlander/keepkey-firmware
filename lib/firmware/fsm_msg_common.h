@@ -511,6 +511,11 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
 #endif
 }
 
+/* Budget returned bytes, not requests. A confirmed factory wipe starts a new
+ * uninitialized audit; Initialize and session changes must not replenish it. */
+#define ENTROPY_AUDIT_BUDGET (64u * 1024u)
+static uint32_t entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+
 void fsm_msgWipeDevice(WipeDevice* msg) {
   (void)msg;
 
@@ -546,6 +551,8 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   signed_metadata_clear_signers();
 #endif
 
+  entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+
   fsm_sendSuccess("Device wiped");
   layoutHome();
 }
@@ -564,7 +571,21 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
 
 // cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
+  /* Uninitialized storage does not mean there is no secret: reset/recovery
+   * may already hold one in RAM. Preserve that ceremony and its screen. */
+  if (setup_isArmed()) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    "Entropy unavailable during setup");
+    return;
+  }
+
+  uint32_t len = msg->size;
+  if (len > ENTROPY_BUF) len = ENTROPY_BUF;
+  const bool press_free =
+      !storage_isInitialized() && !storage_isBitcoinOnlyLocked() &&
+      !storage_isFirmwareTooOld() && len <= entropy_audit_remaining;
+  if (!press_free &&
+      !confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
                "Do you want to generate and return entropy using the hardware "
                "RNG?")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
@@ -572,13 +593,8 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
     return;
   }
 
+  if (press_free) entropy_audit_remaining -= len;
   RESP_INIT(Entropy);
-  uint32_t len = msg->size;
-
-  if (len > ENTROPY_BUF) {
-    len = ENTROPY_BUF;
-  }
-
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
   msg_write(MessageType_MessageType_Entropy, resp);

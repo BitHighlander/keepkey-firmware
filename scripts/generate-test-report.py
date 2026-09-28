@@ -136,6 +136,15 @@ HIVE_REQUIRED_CASES = {
 # each named case is REQUIRED with an exact status per product, so deleting a
 # CI step, a test, or a variant leg cannot go unnoticed. Bitcoin-only must
 # SKIP the EVM/XRP contracts: a pass there would mean the product exposes them.
+_STACK13_ENTROPY = [
+    "test_block13_entropy.TestBlock13Entropy." + name for name in (
+        "test_byte_budget_clamps_sizes_and_survives_session_changes",
+        "test_initialized_locked_device_keeps_confirmation_and_budget",
+        "test_missing_required_size_fails_decode_without_spending_budget",
+        "test_recovery_refuses_entropy_preserves_cipher_and_budget",
+        "test_reset_refuses_entropy_without_consuming_pending_ack",
+    )]
+
 CONTRACT_JUNIT = {
     "junit-stack12.xml": {
         "full": dict((case, "pass") for case in _STACK12_HIVE),
@@ -148,6 +157,10 @@ CONTRACT_JUNIT = {
     "junit-stack10.xml": {
         "full": dict((case, "pass") for case in _STACK10_EVM),
         "bitcoin-only": dict((case, "skip") for case in _STACK10_EVM),
+    },
+    "junit-stack13.xml": {
+        variant: dict((case, "pass") for case in _STACK13_ENTROPY)
+        for variant in ("full", "bitcoin-only")
     },
     "junit-stack07.xml": {
         "full": dict([(_STACK07_COINTABLE, "pass")] +
@@ -166,6 +179,71 @@ CONTRACT_JUNIT = {
 CONTRACT_JUNIT_DIRS = {
     "full": Path("test-reports") / "python-keepkey",
     "bitcoin-only": Path("test-reports") / "bitcoin-only" / "python-keepkey",
+}
+
+# Native identities are fixed independently of discovery and test counts. A
+# nonempty firmware.xml must not certify a build that dropped an owned source
+# file, one parameterized chain, or the original empty-character regression.
+_BLOCK13_NATIVE_BOTH = {
+    "AutoLockProgress.EmptyRecoveryCharacterAbortsWithoutRenewingDeadline",
+} | {
+    "Block13Confirmation." + name for name in (
+        "UnknownAndMalformedTinyPacketsUnwindSigningOnce",
+        "DeclineCancelAndInitializeDoNotSignAndAllowRetry",
+        "RecoveryRejectionRestoresCipherAndPreservesProgress",
+        "RecoveryRedrawDoesNotRenewDeadlineOrResurrectAfterLock",
+        "AcceptedRecoveryStartRenewsThenEventuallyExpires",
+        "DeclinedRecoveryStartDoesNotRenewDeadline",
+        "PollingPreservesVisibleCipherAndAnimationProgress",
+    )
+} | {
+    "Block13Entropy." + name for name in (
+        "NewerNormalBandWalletRequiresConsent",
+        "NewerBitcoinBandWalletRequiresConsent",
+        "PendingResetRejectsWithoutRenewingDeadline",
+        "NewerNormalBandRefusesAllWalletCreationUntilWipe",
+        "NewerBitcoinBandRefusesAllWalletCreationUntilWipe",
+        "ActiveRecoveryRejectsAndPreservesCipherUntilDeadline",
+        "MissingSizeFailsDecodeAndZeroDoesNotRenewDeadline",
+    )
+} | {
+    "Block13ResetProgress." + name for name in (
+        "InitialRequestRenewsThenPollingExpires",
+        "EntropyReplyAdvancesOnceIncludingAbsentAndEmpty",
+        "InvalidInitialRequestDoesNotRenew",
+    )
+}
+_BLOCK13_NATIVE_FULL_ONLY = {
+    "Block13ResetProgress.GenericTendermintWireSurfaceRemainsUnmapped",
+} | {
+    "Block13OsmosisWire." + name for name in (
+        "SendAcceptsCanonicalUint64BoundaryAndZero",
+        "SendRejectsOverflowAndNoncanonicalBeforeReview",
+        "MissingAmountAndInvalidDenomFailBeforeReview",
+        "SwapAndPoolAmountsRemainWiderThanUint64",
+    )
+} | {
+    "Chains/Block13CoinProgress.%s/%s" % (case, chain)
+    for case in (
+        "AcceptedInitialRequestRenewsDeadline",
+        "InvalidInitialRequestCannotRenewDeadline",
+        "AcceptedContinuationsRenewThenPollingExpires",
+        "EmptyAndInvalidContinuationsAbortWithoutRenewal",
+        "DeclinedContinuationCannotRenewAndFreshRetryWorks",
+    )
+    for chain in (
+        "Binance", "Cosmos", "Osmosis", "Thorchain", "Mayachain",
+        "TendermintDirectHandler",
+    )
+}
+BLOCK13_NATIVE_CASES = {
+    "full": _BLOCK13_NATIVE_BOTH | _BLOCK13_NATIVE_FULL_ONLY,
+    "bitcoin-only": _BLOCK13_NATIVE_BOTH,
+}
+NATIVE_CONTRACT_JUNIT = {
+    "full": Path("test-reports") / "firmware-unit" / "firmware.xml",
+    "bitcoin-only": (Path("test-reports") / "bitcoin-only" /
+                     "firmware-unit" / "firmware.xml"),
 }
 
 # These are the actual product guards, not arbitrary reasons for missing tests.
@@ -446,6 +524,46 @@ def validate_contract_junit(root):
     return inputs
 
 
+def validate_native_contract_junit(root):
+    """Bind owned native controls to each product's actual GoogleTest run."""
+    inputs = []
+    for variant, relative in sorted(NATIVE_CONTRACT_JUNIT.items()):
+        path = Path(root) / relative
+        if not path.is_file() or path.stat().st_size == 0:
+            fail("required %s native contract JUnit missing: %s" %
+                 (variant, path))
+        # Retain duplicate detection and reject errors before inspecting the
+        # GoogleTest status attribute (disabled cases lack a failure node).
+        cases = read_junit_cases(path)
+        broken = sorted(name for name, (status, _) in cases.items()
+                        if status in ("fail", "error"))
+        if broken:
+            fail("%s native contract JUnit has failing case(s): %s" %
+                 (variant, ", ".join(broken)))
+        statuses = {
+            "%s.%s" % (case.get("classname", ""), case.get("name", "")):
+            case.get("status", "")
+            for case in ET.parse(path).getroot().iter("testcase")
+        }
+        wrong = sorted(
+            name for name in BLOCK13_NATIVE_CASES[variant]
+            if cases.get(name) != ("pass", "") or statuses.get(name) != "run")
+        if wrong:
+            fail("%s native contract cases missing or not passing/run: %s" %
+                 (variant, ", ".join(wrong)))
+        if variant == "bitcoin-only":
+            unexpected = sorted(_BLOCK13_NATIVE_FULL_ONLY.intersection(cases))
+            if unexpected:
+                fail("bitcoin-only native evidence contains full-only cases: " +
+                     ", ".join(unexpected))
+        inputs.append({
+            "variant": variant,
+            "path": str(relative),
+            "sha256": sha256_file(path),
+        })
+    return inputs
+
+
 def validate_screenshots(screenshot_root):
     pngs = sorted(screenshot_root.rglob("*.png"))
     if not pngs:
@@ -561,6 +679,7 @@ def main():
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
     contract_inputs = validate_contract_junit(ROOT)
+    contract_inputs += validate_native_contract_junit(ROOT)
     # Normalize the shared staged-capability inventory plus the declarations
     # in immutable JUnit before invoking python-keepkey's report validator.
     missing_capabilities = release_missing_capabilities(cases)

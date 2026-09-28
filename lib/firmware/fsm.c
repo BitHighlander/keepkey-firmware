@@ -419,7 +419,8 @@ static HDNode* fsm_getDerivedNode(const char* curve, const uint32_t* address_n,
 static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_abort_signing_workflows();
   if (setup_isArmedAs(SETUP_RECOVERY)) {
-    /* Preserve the active recovery screen and ceremony. */
+    /* A prior request or signer abort may have obscured the input screen. */
+    recovery_cipher_redraw();
   } else {
     setup_abort();
     layoutHome();
@@ -591,7 +592,12 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
   }
 }
 
-void keepkey_after_message_dispatch(void) { fsm_clearDerivedNode(); }
+void keepkey_after_message_dispatch(void) {
+  fsm_clearDerivedNode();
+  /* Administrative handlers can change the layout without ending setup.
+   * Restore active recovery input after they unwind, without new progress. */
+  recovery_cipher_redraw();
+}
 
 void fsm_sendSuccess(const char* text) {
   if (msg_handler_rejected()) return;

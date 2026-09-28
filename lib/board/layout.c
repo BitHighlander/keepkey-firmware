@@ -39,6 +39,7 @@ static AnimationQueue active_queue = {NULL, 0};
 static AnimationQueue free_queue = {NULL, 0};
 static Animation animations[MAX_ANIMATIONS];
 static Canvas* canvas = NULL;
+static uint32_t layout_generation;
 static volatile bool animate_flag = false;
 static leaving_handler_t leaving_handler;
 static bool iconLayout = false;
@@ -224,6 +225,8 @@ void layout_init(Canvas* new_canvas) {
  *     pointer to canvas
  */
 Canvas* layout_get_canvas(void) { return canvas; }
+
+uint32_t layout_get_generation(void) { return layout_generation; }
 
 /*
  * call_leaving_handler() - Call leaving handler
@@ -696,6 +699,8 @@ void layout_clear(void) {
  */
 void layout_clear_static(void) {
   if (!canvas) return;
+
+  layout_generation++;
 
   display_constant_power(false);
 

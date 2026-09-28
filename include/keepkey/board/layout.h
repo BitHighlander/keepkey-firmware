@@ -114,6 +114,8 @@ typedef struct {
 void layout_has_icon(bool tf);
 void layout_init(Canvas* new_canvas);
 Canvas* layout_get_canvas(void);
+/// Changes whenever the framebuffer is cleared, including progress layouts.
+uint32_t layout_get_generation(void);
 void call_leaving_handler(void);
 void layout_firmware_update_confirmation(void);
 void layout_standard_notification(const char* str1, const char* str2,

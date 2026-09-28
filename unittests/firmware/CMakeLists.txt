@@ -1,5 +1,8 @@
 set(sources
     app_confirm.cpp
+    block13_confirmation.cpp
+    block13_entropy.cpp
+    block13_progress.cpp
     nanopb_bounds.cpp
     authenticator.cpp
     confirm_test_utils.cpp

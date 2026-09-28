@@ -49,6 +49,8 @@ static uint32_t words_entered = 0;
 static bool enforce_wordlist = true;
 static bool dry_run = true;
 static bool awaiting_character;
+static bool cipher_layout_visible;
+static uint32_t cipher_layout_generation;
 static CONFIDENTIAL char mnemonic[MNEMONIC_BUF];
 static char english_alphabet[ENGLISH_ALPHABET_BUF] =
     "abcdefghijklmnopqrstuvwxyz";
@@ -72,9 +74,12 @@ static char auto_completed_word[CURRENT_WORD_BUF];
 
 static uint32_t get_current_word_pos(void);
 static void get_current_word(char* current_word);
+static void render_current_cipher(bool animate_cipher);
 
 void recovery_cipher_reset(void) {
   awaiting_character = false;
+  cipher_layout_visible = false;
+  cipher_layout_generation = 0;
   enforce_wordlist = true;
   dry_run = true;
   words_entered = 0;
@@ -334,6 +339,7 @@ void recovery_cipher_init(uint32_t _word_count, bool passphrase_protection,
   words_entered = 1;
   setup_arm(SETUP_RECOVERY);
   next_character();
+  if (setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -387,6 +393,24 @@ void next_character(void) {
 
   msg_write(MessageType_MessageType_CharacterRequest, &resp);
 
+  render_current_cipher(true);
+}
+
+void recovery_cipher_redraw(void) {
+  if (!awaiting_character || !setup_isArmedAs(SETUP_RECOVERY)) return;
+  if (cipher_layout_visible &&
+      cipher_layout_generation == layout_get_generation()) return;
+
+  render_current_cipher(false);
+}
+
+static void render_current_cipher(bool animate_cipher) {
+  /* An unrelated request may have replaced the screen while preserving the
+   * ceremony. Render the SAME input and mapping: next_character() would
+   * silently invalidate the cipher that the user is still reading. */
+  get_current_word(current_word_scratch);
+  const uint32_t word_pos = get_current_word_pos();
+
   /* Attempt to auto complete if we have at least 3 characters */
   bool auto_completed = false;
   if (strlen(current_word_scratch) >= 3) {
@@ -407,7 +431,7 @@ void next_character(void) {
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
-  static char prev_info[32];
+  char prev_info[32];
   prev_info[0] = '\0';
   if (word_pos > 0 && last_completed_word[0]) {
     snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
@@ -415,7 +439,10 @@ void next_character(void) {
   }
 
   /* Show cipher and partial word */
-  layout_cipher(formatted_word_scratch, cipher, prev_info);
+  layout_cipher(formatted_word_scratch, cipher, prev_info, animate_cipher);
+  cipher_layout_generation = layout_get_generation();
+  cipher_layout_visible = true;
+  memzero(prev_info, sizeof(prev_info));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
 
@@ -630,6 +657,10 @@ void recovery_cipher_finalize(void) {
     }
   }
 
+  /* The input ceremony is over. Finalization mutates mnemonic in place and
+   * may display a dry-run review; a rejected tiny packet there must not
+   * redraw that intermediate buffer as an input screen. */
+  awaiting_character = false;
   volatile bool auto_completed = true;
 
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));

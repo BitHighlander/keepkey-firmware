@@ -460,6 +460,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   /* Arm last, and only here: from this statement on an EntropyAck is in
    * sequence, and nothing else is. */
   setup_arm(SETUP_RESET);
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EntropyRequest, &resp);
 }
 
@@ -579,6 +580,11 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   if (!setup_require(SETUP_RESET, _("Not in Reset mode"))) {
     return;
   }
+
+  /* Even absent host entropy is an accepted, one-shot phase transition. In
+   * dice mode the bytes are intentionally ignored, but the ACK still advances
+   * the ceremony. Stale replies never pass setup_require(). */
+  note_workflow_progress();
 
   SHA256_CTX ctx;
   memzero(&ctx, sizeof(ctx));

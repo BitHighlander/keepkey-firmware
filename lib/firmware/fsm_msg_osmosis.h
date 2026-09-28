@@ -44,6 +44,17 @@ static void osmosis_format_amount(char* out, size_t out_len,
   snprintf(out, out_len, "%s OSMO", decimal_buf);
 }
 
+/* The audited MsgSend policy bounds amounts to uint64 despite the decimal-
+ * string wire field. Pool shares and swap amounts use wider decimal strings,
+ * so this bound must not change their validator. */
+static bool osmosis_validate_send_amount(bool has_value, const char* value) {
+  static const char maximum[] = "18446744073709551615";
+  if (!osmosis_validate_amount(has_value, value)) return false;
+  const size_t length = strlen(value);
+  return length < sizeof(maximum) - 1 ||
+         (length == sizeof(maximum) - 1 && strcmp(value, maximum) <= 0);
+}
+
 void fsm_msgOsmosisGetAddress(const OsmosisGetAddress* msg) {
   RESP_INIT(OsmosisAddress);
 
@@ -160,6 +171,7 @@ void fsm_msgOsmosisSignTx(const OsmosisSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_OsmosisMsgRequest, resp);
   layoutHome();
 }
@@ -188,10 +200,16 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
   /** Confirm required transaction parameters exist */
   if (msg->has_send) {
-    if (!osmosis_validate_account_address(msg->send.has_to_address,
-                                          msg->send.to_address) ||
-        !osmosis_validate_amount(msg->send.has_amount, msg->send.amount) ||
+    if (!osmosis_validate_send_amount(msg->send.has_amount, msg->send.amount) ||
         !osmosis_validate_required_text(msg->send.has_denom, msg->send.denom)) {
+      osmosis_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid Osmosis amount or denomination");
+      layoutHome();
+      return;
+    }
+    if (!osmosis_validate_account_address(msg->send.has_to_address,
+                                          msg->send.to_address)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Message is missing required parameters"));
@@ -794,6 +812,7 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
   if (!osmosis_signingIsFinished()) {
     RESP_INIT(OsmosisMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_OsmosisMsgRequest, resp);
     return;
   }
