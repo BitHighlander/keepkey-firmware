@@ -2,20 +2,27 @@
 
 ## 1. Identity and frozen scope
 
-Owner: Codex /root, agent-1. Worktree: /private/tmp/kk715-stack11-agent1.
+Owner: Codex /root, agent-1. Restored worktree: /private/tmp/kk715-stack11-resume.
 Branch: audit/715-stack11-agent1-20260927. Target: BitHighlander/keepkey-firmware develop.
-Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: 54b340d016aaded21f3a97b1c45b79216b0df108.
-Code/test qualification head: e631449c18f0f26755dc79f59ffea1d6863e8219. Completed block10 predecessor: 476afea2ce9906caaac67bfffa900b6a961fa6c4.
-Python pin: aae89d378d889b3872696469fe363cf570e5ac4c. Final containing head and PR URL are recorded in the PR body.
-Main master-template SHA256: 4df8723670dbd7266ed8d8756b790725fb4f0f5886d36fe2f9b7c3aece2d64e0.
-Main SOP SHA256: cd2c546d41f0a723f6ce84199a3fb03661f79ab3f49fbafca08de96a7c309e89.
+Firmware PR: https://github.com/BitHighlander/keepkey-firmware/pull/877.
+Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: 71e5ea8defa967fc78888c7777749f54906992e4.
+Reviewed and last hosted-qualified head: f388155ce0b8e8fba1a91e37fe18afaa8f5e2be0.
+Earlier local behavior-qualification head: e631449c18f0f26755dc79f59ffea1d6863e8219. Completed block10 predecessor: 476afea2ce9906caaac67bfffa900b6a961fa6c4.
+Python pin: aae89d378d889b3872696469fe363cf570e5ac4c; companion PR: https://github.com/BitHighlander/python-keepkey/pull/122.
+Main master-template SHA256 recorded at intake: 4df8723670dbd7266ed8d8756b790725fb4f0f5886d36fe2f9b7c3aece2d64e0.
+Main SOP SHA256 recorded at intake: cd2c546d41f0a723f6ce84199a3fb03661f79ab3f49fbafca08de96a7c309e89.
 
-The owner's latest instruction requires the ENTIRE BLOCK PR against fork develop.
-This supersedes the older stacked-target instruction for this PR. Develop is an
-ancestor; the target diff necessarily includes accepted predecessor blocks as well
-as all block11 source. This is a cumulative integration PR, not a ten-line repair
-or a claim that earlier audits re-ran over the entire release. Predecessor evidence
-and outstanding release gates retain their original status. No merge is requested.
+This revision records remediation of review 5333270562 in commit 71e5ea8defa967fc78888c7777749f54906992e4.
+Local native and forced-fallback dylib qualification passed after these repairs.
+The inventory/PDF are refreshed for this revision; final containing head, final
+preflight and new hosted results are recorded in the PR receipt after this freeze.
+
+The owner requires the ENTIRE BLOCK PR against fork develop, superseding the
+older stacked-target instruction for this PR. Develop is an ancestor, so this
+cumulative integration diff contains accepted predecessor blocks and all block11
+source. Their prior audits retain their original scope and limitations. This
+review also covers the inherited build and scanner defects exposed by that diff.
+No merge, assembled-release acceptance or publication is requested.
 
 Block11 includes schema versions 1/2, eight v2 argument slots, token-amount and
 duration display, same-runtime-signer token metadata, exact instruction coverage,
@@ -28,24 +35,30 @@ Historical PR841 head e97ecd49d03e49536a0fe690bea1319879db022b and base
 comment saying tree-empty. Four core functions are retained from that head in the
 accepted predecessor; the intake JSON records exact comparisons. The full block's
 code is visible against develop, including its retained native tests. PR841 is
-historical; it is not reopened and its retirement is not evidence of an empty diff.
+historical; its retirement is not evidence of an empty diff.
 
 ## 2. Git inventory and behavior coverage
 
-Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 54b340d016aaded21f3a97b1c45b79216b0df108.
-Every target path is listed in section 7. Counts include code, tests, dependencies,
-workflows, old receipts and this report. Historical counts overlap; do not sum them.
+Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 71e5ea8defa967fc78888c7777749f54906992e4.
+Section 7 lists the complete target inventory from that immutable predecessor.
+Counts include code, tests, dependency pointers, workflows, receipts and this
+report. Historical counts overlap; do not sum them. The remediation removes an
+unused helper that had been added relative to develop; it is therefore absent
+from the net target diff. Its test-preservation proof is recorded below.
 
 | Behavior | Code-bearing paths in the develop-target PR | Evidence |
 | --- | --- | --- |
-| Schema v1/v2 bounded parser and widths | include/keepkey/firmware/solana.h; lib/firmware/solana.c; unittests/firmware/solana.cpp | Native canonical/v2, unsafe-label, trailing-byte and all-prefix truncation assertions |
+| Schema v1/v2 bounded parser and widths | include/keepkey/firmware/solana.h; lib/firmware/solana.c; unittests/firmware/solana.cpp | Canonical/v2, unsafe-label, trailing-byte and all-prefix truncation assertions; named native cases pass in f388 CI |
 | Exact program/discriminator/data/account binding | lib/firmware/solana.c; unittests/firmware/solana.cpp | Coverage/mismatch/index tests and transfer-companion wire refusal with valid control |
-| Runtime-only trust, token mint and same signer | lib/firmware/fsm_msg_solana.h; lib/firmware/signed_metadata.c; deps/python-keepkey | Runtime token display control and eight invalid-attestation cases |
-| Session reset and policy | lib/firmware/fsm_msg_common.h; lib/firmware/storage.c; deps/python-keepkey | Initialize/ClearSession/policy tests; newly added Solana Initialize refusal |
+| Runtime-only trust, token mint and same signer | lib/firmware/fsm_msg_solana.h; lib/firmware/signed_metadata.c; deps/python-keepkey | Runtime token display control and eight invalid-attestation cases; named runtime-attestation test passes in f388 CI |
+| Session reset and policy | lib/firmware/fsm_msg_common.h; lib/firmware/storage.c; deps/python-keepkey | Initialize/ClearSession/policy tests; Solana Initialize refusal |
 | Plain-text predicate and exact message consent | lib/firmware/solana.c; lib/firmware/fsm_msg_solana.h; unittests/firmware/solana.cpp; deps/python-keepkey | Printable/control-byte/key-scan native tests and message-policy wire tests |
-| Malformed input cannot reach schema consent | lib/firmware/fsm_msg_solana.h; deps/python-keepkey | Three malformed forms, with/without schema; before/after wire evidence |
+| Malformed input cannot reach schema consent | lib/firmware/fsm_msg_solana.h; deps/python-keepkey | Three malformed forms with/without schema; baseline rejection-order evidence and named runtime-schema regression pass in f388 CI |
 | Transport bounds and host consumer | include/keepkey/transport/messages-solana.options; deps/python-keepkey | raw_tx 2048, schema 256, signature 64, raw message 1024; client/protobuf consumer inspected |
-| Accepted predecessor stack | Remaining cumulative paths in section 7 | Existing accepted reports included; not attributed to S11-01 |
+| Secret detection for tracked dependency paths | .gitleaks.toml | Old configuration misses a tracked-file credential canary; fixed configuration detects it; pinned scanner snapshot/history checks pass |
+| Full/BTC crypto source and test boundaries | deps/crypto/CMakeLists.txt; unittests/crypto/CMakeLists.txt; standalone helper removed from review-head delta | Actual CMake source/command inventories; retained firmware-unit/xunit path; 72 historical passing Zcash cases |
+| Dylib libc fallbacks | lib/emulator/CMakeLists.txt | Forced-missing-libc configure fails before repair and passes after repair; full Linux shared library build/load and string-boundary checks pass |
+| Accepted predecessor stack | Remaining cumulative paths in section 7 | Existing accepted reports retained; not attributed to S11-01 |
 
 Original unit inventories:
 
@@ -84,104 +97,174 @@ a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec code-signing-keys (heads/master)
 S11-01 FIXED: SolanaSignTx formerly evaluated a valid runtime schema after
 solana_inspectTx returned MALFORMED with partially populated instructions. That
 branch preceded the final malformed rejection and skipped signer validation.
-The new early error zeroes the derived node and returns SyntaxError before any
-schema evaluation. Baseline emulator tests reached confirmation on all three
+The early error now zeroes the derived node and returns SyntaxError before schema
+evaluation. Baseline emulator tests reached confirmation on all three
 schema-bearing cases; rejecting the prompt produced ActionCancelled. The fixed
-handler returns the malformed error with no confirmation for all six cases.
+handler returns the malformed error without confirmation for all six cases.
 The baseline test did not approve a signature; signing reachability is source
-tracing, not a claim of a captured baseline signature or network acceptance.
+tracing, not a captured baseline signature or a claim of network acceptance.
 
 Security closure: the sensitive operation is Ed25519 signing with the device's
 derived private key; host input is raw_tx plus a runtime-signed schema. The host
-observes protocol response and confirmation requests. Full firmware is affected;
-BTC does not dispatch Solana. During parsing/schema selection malformed payloads
-must yield no signing consent or signature. Positive controls are existing valid
-runtime-schema signing and token metadata reviews. Negative controls are legacy
-trailing bytes, missing v0 lookup count, and truncated lookup entry with/without
-schema. Baseline failures falsify the old guard order; fixed results prove early
-rejection. Artifacts are in the adjacent evidence archive and local receipt.
+observes protocol responses and confirmation requests. Full firmware is affected;
+BTC does not dispatch Solana. Malformed input must yield no signing consent or
+signature during parsing/schema selection. Positive controls are valid runtime
+schema signing and token metadata review. Negative controls are legacy trailing
+bytes, missing v0 lookup count and a truncated lookup entry, with/without schema.
+Baseline failures falsify the old guard order; fixed results prove early rejection.
+The adjacent evidence archive and malformed-schema receipt retain those controls.
 
-Parser exhaustion, safe labels, typed argument bounds and exact byte coverage
-were reviewed in current source. Runtime signer ID checks precede narrowing;
-signature verification requires exactly 64 bytes and AdvancedMode. Token display
-requires a matching mint, bounded decimals, valid symbol/signature and the same
-signer slot as the schema; otherwise it displays base units and mint. Companions
-cannot silently transfer value; priority fee disclosure remains in the schema
-review. Raw printable text rejects the actual signer key at every byte offset
-and retains message-byte consent. Other message formats retain AdvancedMode.
+Current-source review covers parser exhaustion, safe labels, typed argument
+bounds and exact byte coverage. Runtime signer ID checks precede narrowing;
+signatures require exactly 64 bytes and AdvancedMode. Token display requires a
+matching mint, bounded decimals, valid symbol/signature and the same signer slot
+as the schema; otherwise it displays base units and mint. Companions cannot
+silently transfer value; priority fees remain disclosed. Raw printable text
+rejects the actual signer key at every byte offset and retains message-byte
+consent. Other message formats retain AdvancedMode.
 
-CI-TARGET-01 PENDING: develop has no KK_RELEASE_MISSING_CAPABILITIES declaration.
-The inherited report validator uses the PR base as independent waiver authority,
-so the develop-target report gate cannot validate this staged release's ledger.
-At the initial checkpoint the repository also lacked the manual-CI authority
-variable; the owner has since approved it as recorded below.
-No waiver, gate or repository setting was changed to hide this incompatibility.
-This is a target/qualification blocker, not a newly found signing defect. It
-must be resolved before calling hosted qualification green or requesting review.
+Review 5333270562, delivered 2026-09-28T02:07:05Z on f388155ce0b8e8fba1a91e37fe18afaa8f5e2be0,
+reported five findings. Both its overview and all five inline comments were read.
+The following dispositions describe committed, locally validated changes. Final
+preflight/hosted CI and published thread dispositions are recorded after freeze.
 
-CI-MANUAL-02 FIXED: first manual run36363232771 on164a397ac failed before
-builds. A PR-authority test inherited workflow_dispatch and the newly approved
-repository variable. Its fixture now explicitly declares pull_request. Original
-negative control fails; patched fixture and all18 report-gate tests pass under
-the manual environment. No runtime authority-selection logic changed.
+| Finding/comment | Confirmed behavior and local repair | Evidence and qualification |
+| --- | --- | --- |
+| CR11-01 / 4117950392 | The inherited ^deps/ scanner exemption hid first-party tracked files as well as dependencies. Removed that exemption and corrected its description; specific public U2F exceptions remain. | Pinned Gitleaks 8.30.1 missed a synthetic credential appended to tracked deps/sca-hardening/aes128_cbc.c with the old configuration and detected it with the fix. A CI-equivalent tracked snapshot and the 219-commit develop..f388 PR range scan clean with the fixed configuration. No new ignore entry was added for this finding. |
+| CR11-02 / 4117950427 | Six Pallas/Zcash files were unconditional and five appeared again under KK_ZCASH_PRIVACY. All six, including pallas_ct.c, now belong only to that conditional. | Real CMake evaluation now gives exactly six full-product source entries/compile commands and zero in BTC. The review's duplicate-object consequence was not reproduced: the baseline generator deduplicated 11 entries into six commands. The confirmed defect is the product/source boundary. |
+| CR11-03 / 4117950439 | The dylib fallback named strlcpy.c and strlcat.c relative to lib/emulator although they live in lib/board. Both now use explicit board-source paths, with direct CMake boolean checks. | Forcing both KK_HAVE_STRLCPY and KK_HAVE_STRLCAT false made the baseline configure fail with a missing source; repaired host and Linux configurations succeed. Complete GCC Linux dylib build/load and bounded copy/append checks pass with both fallback flags forced false. |
+| CR11-04 / 4117950452 | The separate zcash-crypto-unit target existed in BTC builds and relied on the unconditional crypto sources. Removed that redundant target and its now-unreferenced deterministic RNG helper. | CMake inventories confirm no standalone target in either product, retained conditional firmware-unit Zcash coverage in full, and no Zcash implementation source in BTC (shared generated protocol metadata remains). No unique test implementation was removed. |
+| CR11-05 / 4117950469 | The standalone target was absent from xunit, but the assertion that these tests never ran is refuted. The same firmware/zcash.cpp suite already belongs to firmware-unit and runs through xunit/CTest. Removed the redundant target and documented the existing registration. | Exact reviewed-head CI contains 72 passing Zcash cases in full firmware.xml and zero in BTC. The repaired source registration retains that suite. The repaired full xunit run again passes all 72 Zcash cases; BTC passes 180 native tests with none of these cases. |
 
-CI-MANUAL-03 FIXED: the manual no-git secret scan flagged two public dependency
-SHA lines in an inherited block09 receipt. git ls-tree verifies both values as
-historical gitlinks. Two exact path/rule/line fingerprints supplement existing
-commit-scoped fingerprints. CI-pinned Gitleaks8.30.1 finds zero in the full tree;
-a synthetic credential elsewhere in the same file is still detected. No broad
-rule/path allowlist was added. Controls are archived in the adjacent manual-CI
-controls bundle. Fresh hosted qualification of the repaired head remains pending.
+The underlying classes are broad path-based scanner exemptions, product flags
+applied inconsistently across library/test targets, and optional host branches
+whose relative source paths were never exercised. Controls inspect a real tracked
+path, generated source/compile inventories and forced capability-false configure
+branches. Test preservation is established from actual JUnit and the existing
+required execution target, rather than executable names alone.
+
+These controls and the complete review are preserved in the adjacent
+715-11-review1-controls-20260927.tgz archive with a verified SHA256 manifest.
+Local disposition records are /private/tmp/kk715-stack11-review-crypto/disposition.json
+(with before.json and after.json), /private/tmp/kk715-stack11-review-fixes/secret-scan/result.json,
+and the baseline-host.log, fixed-host.log and fixed-linux-configure.log files in
+/private/tmp/kk715-stack11-review-fixes/dylib. Review body/comments are retained in
+/private/tmp/kk715-stack11-evidence-resume/reviews-final.json and review-inline-final.json.
+The extra initialized-submodule scanner diagnostic reports 72 fixture/public-
+material matches across 23 third-party files. They were classified separately;
+that diagnostic is not a passing qualification scan and no exemption was added.
+CI's scanner checkout does not initialize those gitlinks.
+
+CI-TARGET-01: the develop-based PR event still fails closed because develop has
+no KK_RELEASE_MISSING_CAPABILITIES ledger. The owner approved the independent
+manual authority KK_ACCEPTED_WAIVER_SHA=2483977523d9b6beab52a69429ace9aeefd00f76;
+its seven-capability ledger contains the candidate's five waivers. That repository
+setting remains active. Manual run 36363905103 qualified f388 with publishing
+disabled, without changing runtime authority selection or waiving the PR check.
+A new manual run is required for the current build/scanner remediation.
+
+CI-MANUAL-02 FIXED: run 36363232771 failed because a PR-authority test inherited
+workflow_dispatch and the approved variable. The fixture explicitly sets
+pull_request; the old control fails and the fixed report-gate suite passes in
+that environment. CI-MANUAL-03 FIXED: two public dependency SHA lines in a block09
+receipt needed exact no-git path/rule/line fingerprints in addition to existing
+commit-scoped fingerprints. git ls-tree proves their gitlink identities; a
+same-file credential canary still triggers the pinned scanner. Both repairs were
+included in successful f388 CI. They are distinct from CR11-01's inherited broad
+exemption, which is now removed locally.
 
 ## 4. Verification and artifact identity
 
-- Full integrated firmware-unit: 669 tests pass on e631449c18f0f26755dc79f59ffea1d6863e8219.
-- Full emulator and firmware-unit builds pass with image 7438e53933d4.
-- Solana/runtime/session wire suites: 39 pass, 14 subtests pass, three skip.
-- Earlier S11-01 baseline: three schema-bearing negative cases fail; schema-free controls pass.
-- Earlier fixed baseline: 44 native Solana tests and 34 wire tests pass.
-- Block09/10 changes are merged, preserving Python and firmware predecessor content.
-- Preflight status at report generation: Pending final frozen-head preflight; do not request review yet..
-- Hosted CI: pending publication on the exact report-containing head; CI-TARGET-01 remains open.
-- ARM/BTC: predecessor evidence exists; fresh integrated candidate qualification pending.
-- Physical-device/OLED and power-cycle verification remain release gates.
+The following hosted results are exact for the reviewed head f388155ce0b8e8fba1a91e37fe18afaa8f5e2be0,
+not the current post-review remediation. Run https://github.com/BitHighlander/keepkey-firmware/actions/runs/36363905103
+completed successfully, including the release-evidence gate; publishing was skipped.
 
-Exact skip reasons:
-- test_relay_certified_v0_no_lookup_proof_reaches_signer_check: Firmware version 7.16.0 or higher is required to run this test
-- test_advanced_mode_is_off_after_power_cycle: power cycle needs an emulator process this harness owns; none is bound to udp/12144 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
-- test_signer_dropped_by_power_cycle: power cycle needs an emulator process this harness owns; none is bound to udp/12144 (CI runs it as a separate container). Run locally, or record the unplug/replug as manual evidence.
+| Evidence | Verified result on f388 |
+| --- | --- |
+| Combined authoritative report | 1,521 pass, 84 skip, zero fail/error; 1,605 total |
+| Full native | firmware 669, board 19, crypto 18 pass; includes 72 Zcash cases |
+| Full Python integration | 811 pass, 84 skip; both new runtime-schema regression methods pass |
+| Dylib integration | 4 pass |
+| BTC native | firmware 143, board 19, crypto 18 pass; Solana/Zcash suites excluded |
+| BTC Python integration | 347 pass, 548 skip; new Solana methods explicitly skip because full firmware is required |
+| Dedicated contracts, full | Stack06 13 pass/3 skip; Stack07 21 pass; Stack09 1 pass; Stack10 7 pass |
+| OLED evidence | 1,347 frame hashes and 194 sequence manifests verified; screenshot selection 194 pass/24 skip |
+| ARM variants | Full and BTC manifests, firmware/Python identities and all 23 listed binary/ELF hashes per variant verified |
+| SRAM gates | Full reserve 17,800 B; BTC 39,136 B; largest frame 7,664 B in each; both pass |
 
-Resume checkpoint: original temporary worktree/logs were unavailable. The exact
-committed candidate was restored at /private/tmp/kk715-stack11-resume. All 11
-archived artifact hashes verified; independent source review found no new code
-defect. The old provisional receipt is explicitly historical. Workflow report
-metadata now names Python PR122 instead of PR121. Runtime code/tests/pins remain
-identical to e631449c18f0f26755dc79f59ffea1d6863e8219. A fresh pre-push run is
-recorded in the PR body after the final report is frozen.
+The combined count excludes BTC and repeated contract/capture runs. Named passing
+cases are Solana.SchemaParsesCanonicalPayload,
+Solana.SchemaV2ParsesTokenDurationAndEightArgs,
+tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_schema_cannot_rescue_malformed_transaction,
+and tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_schema_requires_complete_valid_runtime_attestation.
+Their JUnit identities and statuses were checked directly.
 
-The owner approved and the agent verified repository variable
-KK_ACCEPTED_WAIVER_SHA=2483977523d9b6beab52a69429ace9aeefd00f76,
-the accepted block7b authority. Its seven-capability ledger contains all five
-candidate waivers. The existing manual workflow can then qualify this exact head
-with publishing disabled; no validator edit is needed. A successful manual run
-is distinct from the incompatible develop-based PR event. The setting is active;
-fresh hosted qualification of the repaired head remains pending.
+Report artifact 10946638964; full ARM artifact 10946334201; BTC ARM artifact 10947200608.
+Report PDF SHA256: 3166384b3568ef0b3716c825a531a35b853c3708c0f23d2110b1c16effdd2165.
+Report manifest SHA256: 5bbdb05076248c6586d5a008d56a1696209167b886c3a8f5080616c89fd56827.
+Merged JUnit SHA256: 7cd8e675ba9777d6042ab68f0f738e9b2e13fc029e148b84869e31d0ec8d85c7.
+All nine JUnit input hashes, generator hashes, ARM hashes and OLED hashes agree.
+The manual event intentionally has an empty firmware_pr metadata field; the
+receipt binds PR877 to the exact head/run. Python metadata names PR122 and pin
+aae89d378d889b3872696469fe363cf570e5ac4c. Independent verification files are retained
+under /private/tmp/kk715-stack11-ci-verification, including final-verified.json,
+run-final.json, jobs-final.json and test-report/test-report-manifest.json.
+
+Earlier local evidence on e631449c remains historical: 669 firmware-unit passes;
+39 Solana/runtime/session wire passes plus 14 passing subtests and three skips.
+The S11-01 baseline and fixed controls remain in the adjacent evidence archive.
+Restoration of the unavailable original temporary worktree verified all 11
+archived artifact hashes before publishing the reviewed candidate.
+
+Material skips remain explicit: certified/attestor tests require firmware 7.16;
+LUT proofs are outside runtime 7.15 scope. The two session power-cycle tests skip
+because the harness does not own the UDP emulator process (hosted run port 11044;
+earlier local run port 12144). Actual power cycles, physical-device/OLED behavior
+and release promotion remain separate gates. The complete 84-skip ledger is in
+the verified report manifest; none is represented as a passing test.
+
+Current remediation qualification on 71e5ea8defa967fc78888c7777749f54906992e4:
+full native xunit passes 706 tests (669 firmware, 19 board, 18 crypto), including
+all 72 Zcash cases; BTC xunit passes 180 tests with no Zcash implementation units
+or symbols in the tested archives/binaries. Both have zero failures/skips.
+Forced-libc Linux dylib configure/build/load and truncation/zero-capacity copy
+and append checks pass using pinned CMake 3.31.6 and GCC 6.4.0 in image7438e53933d4.
+The old bundled Clang lacks stdatomic.h; that unsuccessful optional-dylib attempt
+is preserved alongside the successful GCC build. Missing nested token data was
+initialized at its pinned commit before both successful native builds.
+Final preflight, new exact-head hosted CI and artifact verification are recorded
+in the PR receipt after this report freeze; f388 results remain historical.
 
 ## 5. Report render and local preflight
 
-The PDF is generated from this Markdown source. Frozen final Git inventory and
-PDF legibility are checked before publication; the final receipt records those
-checks and the containing head. The entire target diff is code-bearing; all
-block11 behaviors map to visible implementation/test paths above. The Python
-regression is published as a companion branch and pinned in this candidate.
+This source and its PDF reconcile the delivered review and repair validation.
+Section 7 uses the explicit immutable base-to-predecessor inventory. Final Git
+path/count equality, PDF legibility and post-edit preflight are verified before
+push; their receipt identifies the resulting containing head. The earlier
+report/PDF and preflight remain evidence of the reviewed checkpoint only.
+
+The entire develop-target diff is code-bearing, with block11 behavior mapped
+above and a pinned Python companion. The pre-push gate must account for removal
+of the unused standalone RNG helper while proving retained Zcash registration.
+Record the final containing head, complete validation results and all published
+finding dispositions in the PR receipt without rewriting historical evidence.
 
 ## 6. Copilot checkpoint and completion
 
-Owner authorization: exactly one run. Requests used: 0. External review pending.
-No block11 completion or release acceptance claimed. Do not spend the run on a
-repair-only or receipt-only PR. Manual hosted qualification must pass before the request; the incompatible
-PR-triggered authority check remains separately disclosed.
-All predecessor decisions and review caveats retain their original status.
+Owner authorization: exactly one request. Requests used: 1/1. Timeline event
+31957245566 registered that request at 2026-09-28T01:58:42Z. Review 5333270562
+was delivered at 2026-09-28T02:07:05Z against f388155ce0b8e8fba1a91e37fe18afaa8f5e2be0,
+with Lite effort and five findings (overview: four high, one medium). Its verdict
+is Changes recommended, not approval. It has been fully inspected; the five
+local dispositions are recorded in section 3.
+
+After the remediation commit, that review remains historical and does not cover
+the new head. Local fixes, verification, publication and addressed-thread closure
+can proceed within the authorized work; no second Copilot request is authorized.
+Published replies and thread resolution are pending this final validation/push.
+Do not report Copilot-clean status or block11 completion from a stale review or
+from test totals. Predecessor decisions, outstanding release gates and the
+separate develop-event authority incompatibility retain their stated status.
 
 ## 7. Complete target diff inventory
 
@@ -192,13 +275,13 @@ All predecessor decisions and review caveats retain their original status.
 | 8 | 8 | .github/workflows/mirror-base-image.yml |
 | 275 | 69 | .github/workflows/release.yml |
 | 6 | 0 | .gitignore |
-| 21 | 0 | .gitleaks.toml |
+| 20 | 0 | .gitleaks.toml |
 | 9 | 0 | .gitleaksignore |
 | 3 | 3 | .gitmodules |
 | 58 | 4 | CMakeLists.txt |
 | 1 | 0 | cmake/caches/device.cmake |
 | 40 | 0 | cmake/toolchains/mingw-w64-x86_64.cmake |
-| 19 | 1 | deps/crypto/CMakeLists.txt |
+| 13 | 0 | deps/crypto/CMakeLists.txt |
 | 1 | 1 | deps/crypto/trezor-firmware |
 | 1 | 1 | deps/device-protocol |
 | 1 | 1 | deps/python-keepkey |
@@ -380,7 +463,7 @@ All predecessor decisions and review caveats retain their original status.
 | 3 | 0 | lib/board/udp.c |
 | 50 | 23 | lib/board/usb.c |
 | 48 | 16 | lib/board/util.c |
-| 7 | 0 | lib/emulator/CMakeLists.txt |
+| 11 | 4 | lib/emulator/CMakeLists.txt |
 | 302 | 35 | lib/emulator/libkkemu.c |
 | 45 | 5 | lib/emulator/setup.c |
 | 8 | 2 | lib/emulator/udp.c |
@@ -503,9 +586,8 @@ All predecessor decisions and review caveats retain their original status.
 | 251 | 0 | tools/verify_dice_seed.py |
 | 1 | 1 | unittests/board/CMakeLists.txt |
 | 490 | 2 | unittests/board/board.cpp |
-| 17 | 2 | unittests/crypto/CMakeLists.txt |
+| 6 | 2 | unittests/crypto/CMakeLists.txt |
 | 500 | 0 | unittests/crypto/bip340.cpp |
-| 21 | 0 | unittests/crypto/emulator_random.c |
 | 55 | 7 | unittests/firmware/CMakeLists.txt |
 | 48 | 0 | unittests/firmware/app_confirm.cpp |
 | 302 | 0 | unittests/firmware/authenticator.cpp |
