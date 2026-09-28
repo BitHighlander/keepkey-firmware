@@ -99,12 +99,35 @@ _RIPPLE = [
         "test_sign",
         "test_sign_with_thorchain_memo",
     )]
+_STACK09_SLOT = (
+    "test_stack09_integration.TestAuthenticatorSlotIntegration."
+    "test_account_slot_text_cannot_wrap_or_ignore_suffixes")
+_STACK10_EVM = [
+    "test_stack10_regressions.TestStack10Disclosure." + name for name in (
+        "test_cancel_every_disclosure_page_then_retry",
+        "test_contract_substitution_changes_review_and_signature",
+        "test_exact_raw_values_contract_and_counterparty",
+        "test_noncanonical_transfers_keep_advanced_raw_fallback",
+        "test_padded_zero_value_keeps_exact_token_review",
+        "test_transfer_account_keeps_raw_review_and_recipient_binding",
+        "test_transfer_account_padded_zero_keeps_contract_review",
+        "test_transfer_account_rejects_noncanonical_total_length",
+        "test_unlimited_approval_and_disabled_advanced_mode_still_refuse",
+    )]
 
 # Dedicated contract suites run as separate pytest invocations. Each file and
 # each named case is REQUIRED with an exact status per product, so deleting a
 # CI step, a test, or a variant leg cannot go unnoticed. Bitcoin-only must
 # SKIP the EVM/XRP contracts: a pass there would mean the product exposes them.
 CONTRACT_JUNIT = {
+    "junit-stack09-integration.xml": {
+        "full": {_STACK09_SLOT: "pass"},
+        "bitcoin-only": {_STACK09_SLOT: "pass"},
+    },
+    "junit-stack10.xml": {
+        "full": dict((case, "pass") for case in _STACK10_EVM),
+        "bitcoin-only": dict((case, "skip") for case in _STACK10_EVM),
+    },
     "junit-stack07.xml": {
         "full": dict([(_STACK07_COINTABLE, "pass")] +
                      [(case, "pass") for case in _STACK07_EVM]),
@@ -126,6 +149,8 @@ CONTRACT_JUNIT_DIRS = {
 
 # These are the actual product guards, not arbitrary reasons for missing tests.
 CONTRACT_SKIP_REASONS = dict(
+    [(case, "Stack 10 EVM signing is absent from bitcoin-only")
+     for case in _STACK10_EVM] +
     [(case, "Stack 07 EVM contracts are intentionally absent from bitcoin-only")
      for case in _STACK07_EVM] +
     [(case, "EthereumTxMetadata not supported by this firmware build")
