@@ -41,6 +41,94 @@ bool thorchain_isValidAsset(const char* asset) {
   return tendermint_isValidAsset(asset);
 }
 
+/* THORChain swap memo limits use 1e8 output-asset units. Its scientific
+ * notation appends decimal zeros (e.g. 1e8 means 100000000). Render only
+ * bounded, exact decimal forms; streaming suffixes are parsed separately. */
+static bool thorchain_format_swap_limit(const char* raw, const char* asset,
+                                        char* out, size_t out_size) {
+  const size_t len = strlen(raw);
+  if (len == 0 || len > 20) return false;
+  char expanded[24] = {0};
+  size_t mantissa_len = 0;
+  while (mantissa_len < len && raw[mantissa_len] >= '0' &&
+         raw[mantissa_len] <= '9') {
+    mantissa_len++;
+  }
+  if (mantissa_len == 0) return false;
+  unsigned exponent = 0;
+  if (mantissa_len < len) {
+    if (raw[mantissa_len] != 'e' && raw[mantissa_len] != 'E') return false;
+    if (mantissa_len + 1 == len || len - mantissa_len - 1 > 2) return false;
+    for (size_t i = mantissa_len + 1; i < len; i++) {
+      if (raw[i] < '0' || raw[i] > '9') return false;
+      exponent = exponent * 10 + (unsigned)(raw[i] - '0');
+    }
+  }
+  if (mantissa_len + exponent > 20) return false;
+  memcpy(expanded, raw, mantissa_len);
+  memset(expanded + mantissa_len, '0', exponent);
+  const size_t expanded_len = mantissa_len + exponent;
+  char padded[32] = {0};
+  const size_t digits = expanded_len < 9 ? 9 : expanded_len;
+  memset(padded, '0', digits - expanded_len);
+  memcpy(padded + digits - expanded_len, expanded, expanded_len);
+  const size_t whole_len = digits - 8;
+  char whole[24] = {0};
+  memcpy(whole, padded, whole_len);
+  char fraction[9] = {0};
+  memcpy(fraction, padded + whole_len, 8);
+  for (size_t i = 8; i > 0 && fraction[i - 1] == '0'; i--) {
+    fraction[i - 1] = '\0';
+  }
+  char symbol[13] = {0};
+  size_t symbol_len = 0;
+  while (asset[symbol_len] != '\0' && asset[symbol_len] != '-' &&
+         symbol_len < sizeof(symbol) - 1) {
+    const char c = asset[symbol_len];
+    if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) return false;
+    symbol[symbol_len++] = c;
+  }
+  if (symbol_len == 0 ||
+      (asset[symbol_len] != '\0' && asset[symbol_len] != '-'))
+    return false;
+  const int written = snprintf(out, out_size, "%s%s%s %s", whole,
+                               fraction[0] ? "." : "", fraction, symbol);
+  return written > 0 && (size_t)written < out_size;
+}
+
+/* LIM/INTERVAL/QUANTITY is a streaming swap. Never infer the schedule from a
+ * partial or extra-delimited suffix; the fallback displays every byte raw. */
+static bool thorchain_parse_streaming_limit(const char* raw, char* base,
+                                            size_t base_size,
+                                            unsigned* interval,
+                                            unsigned* quantity) {
+  const char* first = strchr(raw, '/');
+  if (first == NULL) return false;
+  const char* second = strchr(first + 1, '/');
+  if (second == NULL || strchr(second + 1, '/') != NULL) return false;
+  const size_t base_len = (size_t)(first - raw);
+  const size_t interval_len = (size_t)(second - first - 1);
+  const size_t quantity_len = strlen(second + 1);
+  if (base_len == 0 || base_len >= base_size || interval_len == 0 ||
+      interval_len > 5 || quantity_len == 0 || quantity_len > 5)
+    return false;
+  unsigned values[2] = {0, 0};
+  const char* parts[2] = {first + 1, second + 1};
+  const size_t lengths[2] = {interval_len, quantity_len};
+  for (size_t part = 0; part < 2; part++) {
+    for (size_t i = 0; i < lengths[part]; i++) {
+      const char c = parts[part][i];
+      if (c < '0' || c > '9') return false;
+      values[part] = values[part] * 10 + (unsigned)(c - '0');
+    }
+  }
+  memcpy(base, raw, base_len);
+  base[base_len] = '\0';
+  *interval = values[0];
+  *quantity = values[1];
+  return true;
+}
+
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
@@ -532,9 +620,35 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                  "Thorchain swap", "Confirm to %s", dest)) {
       return THORCHAIN_MEMO_CANCELLED;
     }
+    char readable_limit[64] = {0};
+    char limit_base[24] = {0};
+    unsigned stream_interval = 0;
+    unsigned stream_quantity = 0;
+    const bool is_streaming =
+        thorchain_parse_streaming_limit(limit, limit_base, sizeof(limit_base),
+                                        &stream_interval, &stream_quantity);
+    const bool limit_is_readable =
+        thorchain_format_swap_limit(is_streaming ? limit_base : limit, asset,
+                                    readable_limit, sizeof(readable_limit));
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Thorchain swap", "Confirm limit %s", limit)) {
+                 "Thorchain swap",
+                 limit_is_readable ? "Minimum output %s" : "Confirm limit %s",
+                 limit_is_readable ? readable_limit : limit)) {
       return THORCHAIN_MEMO_CANCELLED;
+    }
+    if (is_streaming && limit_is_readable) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Thorchain swap", "Streaming interval %u blocks",
+                   stream_interval)) {
+        return THORCHAIN_MEMO_CANCELLED;
+      }
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Thorchain swap",
+                   stream_quantity == 0 ? "Streaming swaps: network chooses"
+                                        : "Streaming swaps: %u",
+                   stream_quantity)) {
+        return THORCHAIN_MEMO_CANCELLED;
+      }
     }
     /* Never hide the affiliate fee skim. Gated on EITHER field being present,
      * not on the affiliate alone: a memo may carry a fee with an empty

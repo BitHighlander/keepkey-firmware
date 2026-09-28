@@ -264,6 +264,9 @@ jobs:
       - name: Init crypto submodule
         run: git submodule update --init deps/crypto/trezor-firmware
 
+      - name: Verify THORChain minimum display
+        run: python3 -B unittests/thor_memo_display_test.py
+
       - name: Verify submodules are declared
         run: |
           echo "Checking required submodule declarations..."
