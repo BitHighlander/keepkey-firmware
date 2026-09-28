@@ -23,7 +23,7 @@ The source negative control at Block 10 base confirms the direct `timer_init()` 
 | Base source negative control | Direct timer call present | Same source | Manifest and predecessor source |
 | Fixed source control | Guarded helper used; no direct timer call | Same source | Code predecessor and manifest |
 
-The seven-member archive `715-11a-controls-20260928.tgz` has SHA256 `6549cef4b975cf75f9040faa03b892fde543ca27c8b5268bc20939bb79b0e6da`. Its manifest binds six raw files, the exact base, code commit, outcomes and source control. Full and Bitcoin-only binaries were built independently from the five-file unit checkout using the pinned Linux emulator toolchain. Hosted CI remains a separate exact-head gate; physical device execution is not claimed.
+The seven-member archive `715-11a-controls-20260928.tgz` has SHA256 `db5cc31aea6d8d444ab0b075d9ab7116aae4e2577df534ee1c01f2a98f8df0e5`. Its manifest binds six raw files, the exact base, code commit, outcomes and source control; a modified XML member fails the hash check. Full and Bitcoin-only binaries were built independently from the five-file unit checkout using the pinned Linux emulator toolchain. Hosted CI remains a separate exact-head gate; physical device execution is not claimed.
 
 ## 3. Local and external checkpoint
 
