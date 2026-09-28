@@ -5,7 +5,7 @@
 Owner: Codex /root, agent-1. Restored worktree: /private/tmp/kk715-stack11-resume.
 Branch: audit/715-stack11-agent1-20260927. Target: BitHighlander/keepkey-firmware develop.
 Firmware PR: https://github.com/BitHighlander/keepkey-firmware/pull/877.
-Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: c4681742be2e61b16ac98843dc53cfa3b04faa40.
+Develop base: fc1e93746132553ad98ed60f4847c8d770732bf9. Report generation predecessor: 3b1d75f0b21623892670be966671be5550669dea.
 Reviewed and last hosted-qualified head: f388155ce0b8e8fba1a91e37fe18afaa8f5e2be0.
 Earlier local behavior-qualification head: e631449c18f0f26755dc79f59ffea1d6863e8219. Completed block10 predecessor: 476afea2ce9906caaac67bfffa900b6a961fa6c4.
 Python pin: aae89d378d889b3872696469fe363cf570e5ac4c; companion PR: https://github.com/BitHighlander/python-keepkey/pull/122.
@@ -39,7 +39,7 @@ historical; its retirement is not evidence of an empty diff.
 
 ## 2. Git inventory and behavior coverage
 
-Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 c4681742be2e61b16ac98843dc53cfa3b04faa40.
+Net target inventory command: git diff --numstat fc1e93746132553ad98ed60f4847c8d770732bf9 3b1d75f0b21623892670be966671be5550669dea.
 Section 7 lists the complete target inventory from that immutable predecessor.
 Counts include code, tests, dependency pointers, workflows, receipts and this
 report. Historical counts overlap; do not sum them. The remediation removes an
@@ -348,7 +348,7 @@ separate develop-event authority incompatibility retain their stated status.
 | - | - | docs/release/audit-units/715-10-final-readiness-evidence-20260927.tgz |
 | 73 | 0 | docs/release/audit-units/715-10-intake-20260927.md |
 | 48 | 0 | docs/release/audit-units/715-10-reconciliation-20260927.json |
-| 638 | 0 | docs/release/audit-units/715-11-complete-block-audit-20260927.md |
+| 639 | 0 | docs/release/audit-units/715-11-complete-block-audit-20260927.md |
 | - | - | docs/release/audit-units/715-11-complete-block-audit-20260927.pdf |
 | 200 | 0 | docs/release/audit-units/715-11-intake-20260927.json |
 | 36 | 0 | docs/release/audit-units/715-11-intake-20260927.md |
