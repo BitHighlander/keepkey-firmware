@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/transport/interface.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/board/keepkey_flash.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
 #include "keepkey/firmware/authenticator.h"
@@ -282,6 +283,265 @@ struct ScopedFlash {
     emulator_flash_base = previous;
   }
 };
+
+// Boot from a future-format sector, using the real loader rather than a test
+// setter for either lock flag. Every refusal below traverses the USB decoder.
+class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
+ protected:
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  std::vector<uint8_t> original;
+  uint8_t* previous = nullptr;
+
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+    previous = emulator_flash_base;
+    emulator_flash_base = bytes.data();
+    storage_wipe();  // Clear state left by another test, in this scratch image.
+    auto* sector =
+        reinterpret_cast<uint8_t*>(flash_write_helper(FLASH_STORAGE1));
+    std::memset(sector, 0xa7, FLASH_STORAGE_LEN);
+    std::memcpy(sector, "stor", 4);
+    for (size_t i = 0; i < 4; ++i) sector[44 + i] = GetParam() >> (8 * i);
+    original = bytes;
+    storage_init();
+    ASSERT_EQ(GetParam() < STORAGE_VERSION_BTC_ONLY_BASE,
+              storage_isFirmwareTooOld());
+    ASSERT_EQ(GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
+              storage_isBitcoinOnlyLocked());
+    ASSERT_FALSE(storage_isInitialized());
+    ExpectUntouched();
+  }
+
+  void TearDown() override {
+    setup_abort();
+    storage_wipe();
+    storage_reset();
+    session_clear(true);
+    emulator_flash_base = previous;
+  }
+
+  void ExpectUntouched() {
+    EXPECT_EQ(0, std::memcmp(original.data(), bytes.data(), bytes.size()));
+    EXPECT_FALSE(storage_isInitialized());
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_FALSE(storage_hasPin());
+    EXPECT_FALSE(storage_hasWipeCode());
+    EXPECT_EQ(nullptr, storage_getLabel());
+    EXPECT_FALSE(storage_getPassphraseProtected());
+    EXPECT_FALSE(storage_isPolicyEnabled("Experimental"));
+  }
+
+  void ExpectRejected(MessageType type, const pb_field_t* fields,
+                      const void* msg) {
+    // A deliberately unused Yes proves refusal happened before user work.
+    // The trailing No also makes the old vulnerable handler terminate safely.
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    fsm_test_clearLastFailure();
+    receiveMessage(type, fields, msg);
+    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+              fsm_test_lastFailureCode());
+    EXPECT_EQ(2, kkconfirm_drain());
+    ExpectUntouched();
+    // Isolate the next entry path even in a negative-control build where this
+    // request changed the RAM shadow or armed a ceremony before failing.
+    setup_abort();
+    storage_init();
+  }
+
+  void ConfirmWipe() {
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    fsm_test_clearLastFailure();
+    WipeDevice wipe = {};
+    receiveMessage(MessageType_MessageType_WipeDevice, WipeDevice_fields,
+                   &wipe);
+    ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+    ASSERT_EQ(0, kkconfirm_drain());
+    ASSERT_FALSE(storage_isFirmwareTooOld());
+    ASSERT_FALSE(storage_isBitcoinOnlyLocked());
+    ASSERT_FALSE(storage_isInitialized());
+    EXPECT_NE(0, std::memcmp(original.data(), bytes.data(), bytes.size()));
+  }
+};
+
+TEST_P(IncompatibleStorage, CreationRefusesBeforeStagingOrConfirmation) {
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  // Load/Reset preserve the established Failure_Other for bitcoin-only locks.
+  if (storage_isBitcoinOnlyLocked()) {
+    for (MessageType type : {MessageType_MessageType_LoadDevice,
+                             MessageType_MessageType_ResetDevice}) {
+      ASSERT_TRUE(kkconfirm_preload(1, 0));
+      fsm_test_clearLastFailure();
+      if (type == MessageType_MessageType_LoadDevice) {
+        receiveMessage(type, LoadDevice_fields, &load);
+      } else {
+        ResetDevice reset = {};
+        receiveMessage(type, ResetDevice_fields, &reset);
+      }
+      EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      EXPECT_EQ(2, kkconfirm_drain());
+      ExpectUntouched();
+    }
+  } else {
+    ExpectRejected(MessageType_MessageType_LoadDevice, LoadDevice_fields,
+                   &load);
+    ResetDevice reset = {};
+    ExpectRejected(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                   &reset);
+  }
+  RecoveryDevice recovery = {};
+  recovery.has_word_count = true;
+  recovery.word_count = 12;
+  ExpectRejected(MessageType_MessageType_RecoveryDevice, RecoveryDevice_fields,
+                 &recovery);
+
+  EntropyAck entropy = {};
+  entropy.has_entropy = true;
+  entropy.entropy.size = 32;
+  ExpectRejected(MessageType_MessageType_EntropyAck, EntropyAck_fields,
+                 &entropy);
+  CharacterAck character = {};
+  character.has_done = character.done = true;
+  ExpectRejected(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                 &character);
+}
+
+TEST_P(IncompatibleStorage, SettingsRefuseBeforeMutationOrConfirmation) {
+  ChangePin pin = {};
+  pin.has_remove = pin.remove = true;
+  ExpectRejected(MessageType_MessageType_ChangePin, ChangePin_fields, &pin);
+  ChangeWipeCode wipe_code = {};
+  wipe_code.has_remove = wipe_code.remove = true;
+  ExpectRejected(MessageType_MessageType_ChangeWipeCode, ChangeWipeCode_fields,
+                 &wipe_code);
+
+  ApplySettings settings = {};
+  settings.has_label = true;
+  std::strcpy(settings.label, "must not be staged");
+  ExpectRejected(MessageType_MessageType_ApplySettings, ApplySettings_fields,
+                 &settings);
+  ApplyPolicies policies = {};
+  policies.policy_count = 1;
+  policies.policy[0].has_policy_name = policies.policy[0].has_enabled = true;
+  policies.policy[0].enabled = true;
+  std::strcpy(policies.policy[0].policy_name, "Experimental");
+  ExpectRejected(MessageType_MessageType_ApplyPolicies, ApplyPolicies_fields,
+                 &policies);
+}
+
+TEST_P(IncompatibleStorage, AuthenticatorCommandsCannotBypassWriteRefusal) {
+  for (const char* command : {"\x15"
+                              "initializeAuth:site:user:AAAAAAAA",
+                              "\x16"
+                              "generateOTPFrom:site:user:0:30",
+                              "\x17"
+                              "getAccount:0",
+                              "\x18"
+                              "removeAccount:site:user",
+                              "\x19"
+                              "wipeAuthdata:"}) {
+    SCOPED_TRACE(command);
+    Ping ping = {};
+    ping.has_message = true;
+    std::strcpy(ping.message, command);
+    ExpectRejected(MessageType_MessageType_Ping, Ping_fields, &ping);
+  }
+}
+
+TEST_P(IncompatibleStorage, ReadOnlyRequestsAndCancelledWipePreserveLock) {
+  Ping ping = {};
+  ping.has_message = true;
+  std::strcpy(ping.message, "ordinary ping");
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  Initialize initialize = {};
+  receiveMessage(MessageType_MessageType_Initialize, Initialize_fields,
+                 &initialize);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  ExpectUntouched();
+
+  RecoveryDevice recovery = {};
+  recovery.has_dry_run = recovery.dry_run = true;
+  receiveMessage(MessageType_MessageType_RecoveryDevice, RecoveryDevice_fields,
+                 &recovery);
+  EXPECT_EQ(FailureType_Failure_NotInitialized, fsm_test_lastFailureCode());
+  ExpectUntouched();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  WipeDevice wipe = {};
+  receiveMessage(MessageType_MessageType_WipeDevice, WipeDevice_fields, &wipe);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+  storage_init();
+  EXPECT_EQ(GetParam() < STORAGE_VERSION_BTC_ONLY_BASE,
+            storage_isFirmwareTooOld());
+  EXPECT_EQ(GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
+            storage_isBitcoinOnlyLocked());
+  ExpectUntouched();
+}
+
+TEST_P(IncompatibleStorage, ConfirmedWipeAllowsPersistentLoadAndSettings) {
+  ConfirmWipe();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  receiveMessage(MessageType_MessageType_LoadDevice, LoadDevice_fields, &load);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  ASSERT_EQ(0, kkconfirm_drain());
+  ASSERT_TRUE(storage_isInitialized());
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ApplySettings settings = {};
+  settings.has_label = true;
+  std::strcpy(settings.label, "persist after wipe");
+  receiveMessage(MessageType_MessageType_ApplySettings, ApplySettings_fields,
+                 &settings);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_init();
+  EXPECT_TRUE(storage_isInitialized());
+  EXPECT_STREQ("persist after wipe", storage_getLabel());
+  EXPECT_FALSE(storage_isFirmwareTooOld());
+  EXPECT_FALSE(storage_isBitcoinOnlyLocked());
+}
+
+TEST_P(IncompatibleStorage, ConfirmedWipeAllowsResetAndRecoveryStarts) {
+  ConfirmWipe();
+  ResetDevice reset = {};
+  receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                 &reset);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  ASSERT_FALSE(setup_isArmed());
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  fsm_test_clearLastFailure();
+  RecoveryDevice recovery = {};
+  recovery.has_word_count = true;
+  recovery.word_count = 12;
+  receiveMessage(MessageType_MessageType_RecoveryDevice, RecoveryDevice_fields,
+                 &recovery);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  EXPECT_EQ(0, kkconfirm_drain());
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_FALSE(storage_isInitialized());
+}
+
+INSTANTIATE_TEST_CASE_P(
+    FutureFormats, IncompatibleStorage,
+    ::testing::Values(uint32_t(STORAGE_VERSION + 1),
+                      uint32_t(STORAGE_VERSION_BTC_ONLY_BASE - 1),
+#if !BITCOIN_ONLY
+                      uint32_t(STORAGE_VERSION_BTC_ONLY),
+#endif
+                      uint32_t(STORAGE_VERSION_BTC_ONLY + 1), UINT32_MAX));
 
 class AutoLockProgress : public ::testing::Test {
  protected:

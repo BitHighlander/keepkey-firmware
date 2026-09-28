@@ -32,11 +32,17 @@ int main(int argc, char** argv) {
   }
   static uint8_t envelope[1u << 20];
   const size_t head = 10;
-  const size_t program_len =
-      fread(envelope + head, 1, sizeof(envelope) - head - 512, f);
-  const int truncated = !feof(f);
+  const size_t program_limit = sizeof(envelope) - head - 512;
+  /* A read ending exactly at the limit does not set EOF. Keep one byte of
+   * lookahead in the reserved envelope suffix to distinguish that case. */
+  const size_t program_len = fread(envelope + head, 1, program_limit + 1, f);
+  const int read_error = ferror(f);
   fclose(f);
-  if (program_len == 0 || truncated) {
+  if (read_error) {
+    fprintf(stderr, "%s: could not read program\n", argv[1]);
+    return 2;
+  }
+  if (program_len == 0 || program_len > program_limit) {
     fprintf(stderr, "%s: empty or too large\n", argv[1]);
     return 2;
   }
