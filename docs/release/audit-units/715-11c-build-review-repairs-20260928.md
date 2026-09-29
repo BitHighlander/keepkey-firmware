@@ -32,7 +32,15 @@ The build-variant, Zcash coverage and scanner-configuration properties have curr
 
 ## 4. Complete adjacent Git inventory
 
-Inventory base: `51f99694f0cdde2151726a7fa252956a60ac1169`. Code predecessor: `b37a400ddfe7543910da8e50e49006e41455b3ed`. The first containing report predecessor and final head are recorded in the PR body. Reproduce with `git diff --numstat 51f99694f0cdde2151726a7fa252956a60ac1169..FINAL_PR_HEAD`. Binary counts use Git's dash.
+Inventory base: `51f99694f0cdde2151726a7fa252956a60ac1169`. Code predecessor: `b37a400ddfe7543910da8e50e49006e41455b3ed`; first containing report predecessor: `6b3e7643aa5ddef41b737adb161ec7017d9d534c`. The table was regenerated after that first report commit grew to include its own final rows. Reproduce from the immutable base to the final head recorded in the PR body with `git diff --numstat 51f99694f0cdde2151726a7fa252956a60ac1169..FINAL_PR_HEAD`. Binary counts use Git's dash.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
+| 2 | 3 | `.gitleaks.toml` |
+| 3 | 8 | `deps/crypto/CMakeLists.txt` |
+| 46 | 0 | `docs/release/audit-units/715-11c-build-review-repairs-20260928.md` |
+| - | - | `docs/release/audit-units/715-11c-build-review-repairs-20260928.pdf` |
+| - | - | `docs/release/audit-units/715-11c-controls-20260928.tgz` |
+| 4 | 4 | `lib/emulator/CMakeLists.txt` |
+| 2 | 13 | `unittests/crypto/CMakeLists.txt` |
+| 0 | 21 | `unittests/crypto/emulator_random.c` |
