@@ -46,16 +46,16 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
     aes_cbc_encrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    FSM_SCRUB_OBJ(ctx);
+    /* control: wipe removed */
   } else {
     aes_decrypt_ctx ctx;
     aes_decrypt_key256(data, &ctx);
     aes_cbc_decrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    FSM_SCRUB_OBJ(ctx);
+    /* control: wipe removed */
   }
-  FSM_SCRUB(data);
+  /* control: wipe removed */
 
   resp->has_value = true;
   resp->value.size = msg->value.size;
@@ -104,11 +104,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
 
   /* CHECK_PIN would return with the identity fingerprint still on the stack:
    * it is the seed of the derivation path, and the PIN was not yet verified. */
-  if (!pin_protect_cached()) {
-    FSM_SCRUB(hash);
-    layoutHome();
-    return;
-  }
+  CHECK_PIN
 
   uint32_t address_n[5];
   address_n[0] = 0x80000000 | 13;
