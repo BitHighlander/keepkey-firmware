@@ -245,9 +245,6 @@ if(${KK_EMULATOR} AND NOT WIN32)
   add_test(test-firmware ${CMAKE_BINARY_DIR}/bin/firmware-unit)
   add_test(test-board ${CMAKE_BINARY_DIR}/bin/board-unit)
   add_test(test-crypto ${CMAKE_BINARY_DIR}/bin/crypto-unit)
-  if(KK_ZCASH_PRIVACY)
-    add_test(test-zcash-crypto ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit)
-  endif()
 
   add_custom_target(
     xunit
@@ -258,12 +255,6 @@ if(${KK_EMULATOR} AND NOT WIN32)
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
   add_dependencies(xunit firmware-unit board-unit crypto-unit)
-  if(KK_ZCASH_PRIVACY)
-    add_custom_command(TARGET xunit POST_BUILD
-      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-crypto-unit
-              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-crypto.xml)
-    add_dependencies(xunit zcash-crypto-unit)
-  endif()
 
   if(TARGET erc7730-validator-test)
     add_test(NAME test-erc7730-validator
