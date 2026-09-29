@@ -201,7 +201,6 @@ const char* fsm_test_lastFailureMessage(void) {
   }
 
 #define CHECK_NOT_INITIALIZED                                          \
-  CHECK_STORAGE_WRITABLE                                               \
   if (storage_isInitialized()) {                                       \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,             \
                     "Device is already initialized. Use Wipe first."); \
