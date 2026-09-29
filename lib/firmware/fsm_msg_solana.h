@@ -943,6 +943,21 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
+  /* Classify before any consent screen so malformed bytes cannot trigger a
+   * derivation-path warning before the request is rejected. */
+  SolanaParsedTx parsed;
+  SolanaTxReview tx_review =
+      solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed);
+
+  /* A failed parse may leave instructions populated. A matching schema must
+   * never turn that partial result into an eligible signing request. */
+  if (tx_review == SOL_TX_REVIEW_MALFORMED) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Malformed Solana transaction"));
+    layoutHome();
+    return;
+  }
+
   /* Path validation: warn on non-standard derivation */
   if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
@@ -957,21 +972,6 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
                                     msg->address_n_count, NULL);
   if (!node) return;
   hdnode_fill_public_key(node);
-
-  /* Classify transaction for verified vs opaque signing UX */
-  SolanaParsedTx parsed;
-  SolanaTxReview tx_review =
-      solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed);
-
-  /* A failed parse may leave instructions populated. A matching schema must
-   * never turn that partial result into an eligible signing request. */
-  if (tx_review == SOL_TX_REVIEW_MALFORMED) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Malformed Solana transaction"));
-    layoutHome();
-    return;
-  }
 
   /* Signer verification: derived key must be a required signer.
    * For verified txs this is mandatory. For opaque txs we still check
