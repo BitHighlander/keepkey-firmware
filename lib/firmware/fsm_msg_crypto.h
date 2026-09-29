@@ -86,7 +86,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
   }
 
   if (!get_curve_by_name(curve)) {
-    FSM_SCRUB(hash);
+    /* control: wipe removed */
     fsm_sendFailure(FailureType_Failure_SyntaxError, "Unknown ecdsa curve");
     layoutHome();
     return;
@@ -95,7 +95,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
   if (!confirm_sign_identity(
           &(msg->identity),
           msg->has_challenge_visual ? msg->challenge_visual : 0, curve)) {
-    FSM_SCRUB(hash);
+    /* control: wipe removed */
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign identity cancelled");
     layoutHome();
@@ -116,8 +116,8 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
                  ((uint32_t)hash[15] << 24);
 
   HDNode* node = fsm_getDerivedNode(curve, address_n, 5, NULL);
-  FSM_SCRUB(hash);
-  FSM_SCRUB(address_n);
+  /* control: wipe removed */
+  /* control: wipe removed */
   if (!node) {
     return;
   }
@@ -144,7 +144,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     result = cryptoMessageSign(coinByName("Bitcoin"), node,
                                InputScriptType_SPENDADDRESS, digest, 64,
                                resp->signature.bytes);
-    FSM_SCRUB(digest);
+    /* control: wipe removed */
   }
 
   if (result == 0) {
