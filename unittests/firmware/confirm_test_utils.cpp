@@ -114,6 +114,12 @@ int kkconfirm_drain(void) {
   return n - KKCONFIRM_MSGS_PER_SCREEN;
 }
 
+// Queue a host Cancel behind the confirmations already preloaded, so a later
+// PIN prompt is cancelled as a host would.
+bool kkconfirm_sendCancel(void) {
+  return kkconfirm_sendTiny(MessageType_MessageType_Cancel, NULL, 0);
+}
+
 // Read real encoded USB response frames from the confirmation client's UDP
 // socket. This remains outside firmware code and survives the shared frame
 // arena's mandatory wipe on completion of an inbound request.
