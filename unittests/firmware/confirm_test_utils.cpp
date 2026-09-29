@@ -126,7 +126,10 @@ bool kkconfirm_sendCancel(void) {
 bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
                             void* result) {
   uint8_t payload[2048] = {};
-  size_t size = 0, received = 0;
+  // Every message, wanted or not, is tracked by its announced length. A frame
+  // starts a message only when the previous one is complete: continuation
+  // payload is arbitrary protobuf and may legitimately begin with "##".
+  size_t announced = 0, consumed = 0;
   bool matching = false;
   for (int idle_us = 0; idle_us < KKCONFIRM_DRAIN_GRACE_US;) {
     uint8_t frame[64] = {};
@@ -139,22 +142,22 @@ bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
     }
     if (count != sizeof(frame) || frame[0] != '?') return false;
     size_t offset = 1;
-    if (frame[1] == '#' && frame[2] == '#') {
+    if (consumed == announced) {
+      if (frame[1] != '#' || frame[2] != '#') return false;
       matching = ((uint16_t(frame[3]) << 8) | frame[4]) == expected;
-      size = (uint32_t(frame[5]) << 24) | (uint32_t(frame[6]) << 16) |
-             (uint32_t(frame[7]) << 8) | frame[8];
-      received = 0;
+      announced = (uint32_t(frame[5]) << 24) | (uint32_t(frame[6]) << 16) |
+                  (uint32_t(frame[7]) << 8) | frame[8];
+      consumed = 0;
       offset = 9;
-      if (matching && size > sizeof(payload)) return false;
+      if (matching && announced > sizeof(payload)) return false;
     }
-    if (!matching) continue;
     const size_t available = sizeof(frame) - offset;
     const size_t take =
-        size - received < available ? size - received : available;
-    memcpy(payload + received, frame + offset, take);
-    received += take;
-    if (received == size) {
-      pb_istream_t stream = pb_istream_from_buffer(payload, size);
+        announced - consumed < available ? announced - consumed : available;
+    if (matching) memcpy(payload + consumed, frame + offset, take);
+    consumed += take;
+    if (matching && consumed == announced) {
+      pb_istream_t stream = pb_istream_from_buffer(payload, announced);
       return pb_decode(&stream, fields, result);
     }
   }
