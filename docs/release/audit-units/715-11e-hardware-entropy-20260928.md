@@ -14,10 +14,10 @@ OTP programming only clears bits. The carried code halted when verification or t
 
 The unit tests missed this because the probe modelled an OTP write as `memcpy` and every test booted exactly once.
 
-Repair (`6fb90ed71`): on an unlocked block, read it first, keep bytes already programmed, and program only erased (`0xFF`) bytes, one byte at a time. Then verify the whole block, lock, and verify the lock as before. Kept bytes came from an earlier checked draw. Security is unchanged: code able to program OTP before the lock already runs privileged. The probe now ANDs bits per byte like the device, a reboot helper carries OTP and lock state across boots, and two tests cover recovery:
+Repair (`6fb90ed71`): on an unlocked block, read it first, keep bytes already programmed, and program only erased (`0xFF`) bytes, one byte at a time. Then verify the whole block, lock, and verify the lock as before. In the guarded interruption scenario, kept bytes came from this firmware's earlier checked draw. The code cannot prove that for arbitrary unlocked OTP: bytes written by older firmware, or by another privileged path, are kept unchecked. That adds no new trust: code able to program OTP before the lock already runs privileged, and could equally program and lock chosen bytes. The probe now ANDs bits per byte like the device, a reboot helper carries OTP and lock state across boots, and two tests cover recovery:
 
 - `ProgrammedButUnlockedBlockIsKeptAndLocked`: a fully programmed, unlocked block is locked as is, with zero writes.
-- `InterruptedFirstBootCompletesOnNextHealthyBoot`: after a partial write, a rejected lock, or a dropped lock halts the first boot, the next healthy boot completes and locks (16, 0 and 0 writes).
+- `InterruptedFirstBootCompletesOnNextHealthyBoot`: after a partial write, a rejected lock, or a dropped lock halts the first boot, the next healthy boot completes and locks (16, 0 and 0 writes). The reboot draws different bytes, and the test asserts that programmed bytes keep the first draw while erased bytes take the second.
 
 ## 3. Verification
 
@@ -26,8 +26,22 @@ Local Docker is unresponsive on this host, so the full emulator unit suites and 
 | Local check | Result |
 | --- | --- |
 | `HardwareEntropy` suite at `6fb90ed71` | 9 of 9 pass |
-| Negative control: same tests, unfixed `keepkey_flash.c` from `5334f77c3` | 4 fail: both recovery tests and the two updated write/read counts |
+| Negative control: same tests, unfixed `keepkey_flash.c` from `5334f77c3` | 4 fail: both recovery tests halt on the reboot (`returned` false, `halted` true), and the two updated write/read counts differ |
 | clang-format 20 on changed files | Clean |
 | Preflight (`PREFLIGHT_BASE=0c08ce9ef`) | All checks pass except cppcheck, which was not run (Docker unresponsive) |
 
 Evidence archive `715-11e-controls-20260928.tgz` binds the fixed and control JUnit XML/logs and the preflight log. Physical-device behavior is not claimed. The recovery path is exercised only in the host probe; hardware OTP programming faults were not injected.
+
+## 4. Hosted CI and Copilot round 1
+
+Manual run [36514449899](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36514449899) passed every required job at `226f3d0ee`. Artifacts were verified: `HardwareEntropy` 9/9 in both variants and both harnesses, and both ARM variants with 23 files. Aggregate: 1,560 passed, 84 declared skips, 0 failures.
+
+Copilot review 5347263366 on `226f3d0ee` required a test change, so round one fails. (1) Every boot drew identical bytes. The unfixed code then rewrote identical values on reboot, verified, and the recovery test failed only on its write count. The first control claim in this report was therefore overstated. Only the `0x19` case reproduced the halt. Reboots now draw different bytes, and the control halts. (2) The provenance claim above is narrowed to the guarded interruption scenario. (3) The adjacent inventory below was added. The firmware change is unchanged.
+
+## 5. Adjacent inventory
+
+Inventory base: `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea`. Reproduce with `git diff --numstat BASE..FINAL_PR_HEAD`.
+
+| Added | Deleted | Path |
+| ---: | ---: | --- |
+
