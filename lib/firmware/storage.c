@@ -46,6 +46,9 @@
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
+#if !BITCOIN_ONLY
+#include "keepkey/firmware/signed_metadata.h"
+#endif
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/u2f.h"
@@ -1624,7 +1627,9 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
    * themselves. */
   if (clear_pin) {
     fsm_abort_signing_workflows();
+#if !BITCOIN_ONLY
     signed_metadata_clear_signers();
+#endif
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
   }
 
