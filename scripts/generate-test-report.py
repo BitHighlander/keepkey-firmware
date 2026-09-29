@@ -221,6 +221,8 @@ _BLOCK13_NATIVE_FULL_ONLY = {
         "SendRejectsOverflowAndNoncanonicalBeforeReview",
         "MissingAmountAndInvalidDenomFailBeforeReview",
         "SwapAndPoolAmountsRemainWiderThanUint64",
+        "NonNativeDenominationsAreNotCappedAtUint64",
+        "NativeDenominationStaysCappedForWideAmounts",
     )
 } | {
     "Chains/Block13CoinProgress.%s/%s" % (case, chain)

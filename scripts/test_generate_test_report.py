@@ -112,7 +112,7 @@ class NativeContractEvidence(unittest.TestCase):
             self.paths[variant] = path
 
     def test_complete_product_contracts_pass_and_bind_both_files(self):
-        self.assertEqual(53, len(report.BLOCK13_NATIVE_CASES["full"]))
+        self.assertEqual(55, len(report.BLOCK13_NATIVE_CASES["full"]))
         self.assertEqual(18, len(report.BLOCK13_NATIVE_CASES["bitcoin-only"]))
         evidence = report.validate_native_contract_junit(self.root)
         self.assertEqual({"full", "bitcoin-only"},
