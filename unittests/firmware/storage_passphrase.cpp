@@ -16,6 +16,8 @@ extern "C" {
 #include "trezor/crypto/memzero.h"
 }
 
+void kk_test_board_init(void);
+
 namespace {
 const char kMnemonic[] = "all all all all all all all all all all all all";
 const char kHidden[] = "hidden wallet";

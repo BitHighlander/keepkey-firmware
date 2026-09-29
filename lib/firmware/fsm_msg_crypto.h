@@ -80,6 +80,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
   uint8_t hash[32];
   if (!msg->has_identity ||
       cryptoIdentityFingerprint(&(msg->identity), hash) == 0) {
+    memzero(hash, sizeof(hash));
     fsm_sendFailure(FailureType_Failure_Other, "Invalid identity");
     layoutHome();
     return;

@@ -38,6 +38,14 @@ on:
         type: boolean
         default: false
 
+# A lower release-stack update can synchronize several dependent PRs in quick
+# succession. Keep only the newest run for each PR; an older head cannot become
+# acceptance evidence after GitHub has observed its replacement. Long-lived
+# branch pushes retain their full runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Only administrators set this independently accepted non-PR authority.
   # Empty fails closed on push/manual runs; PR runs use the event base SHA.
@@ -426,20 +434,23 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/root/keepkey-firmware:z \
-            ${{ env.BASE_IMAGE }} /bin/sh -c "\
-              mkdir /root/build && cd /root/build && \
+            ${{ env.BASE_IMAGE }} /bin/sh -ec "\
+              mkdir /root/build; cd /root/build; \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
                 ${{ matrix.cmake_flags }} \
                 -DCMAKE_BUILD_TYPE=MinSizeRel \
-                -DCMAKE_COLOR_MAKEFILE=ON \
-                ${{ matrix.cmake_flags }} && \
-              make && \
-              mkdir -p /root/keepkey-firmware/bin && \
-              cp bin/*.bin /root/keepkey-firmware/bin/ && \
-              cp bin/*.elf /root/keepkey-firmware/bin/ && \
-              cp bin/*.map /root/keepkey-firmware/bin/ 2>/dev/null || true && \
-              arm-none-eabi-size -A bin/firmware.keepkey.elf > /root/keepkey-firmware/bin/firmware.keepkey.size.txt 2>/dev/null || true && \
-              find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T - && \
+                -DCMAKE_COLOR_MAKEFILE=ON; \
+              make; \
+              mkdir -p /root/keepkey-firmware/bin; \
+              cp bin/*.bin /root/keepkey-firmware/bin/; \
+              cp bin/*.elf /root/keepkey-firmware/bin/; \
+              if ls bin/*.map >/dev/null 2>&1; then \
+                cp bin/*.map /root/keepkey-firmware/bin/; \
+              fi; \
+              if command -v arm-none-eabi-size >/dev/null 2>&1; then \
+                arm-none-eabi-size -A bin/firmware.keepkey.elf > /root/keepkey-firmware/bin/firmware.keepkey.size.txt; \
+              fi; \
+              find . -name '*.su' -print0 | tar czf /root/keepkey-firmware/bin/stack-usage.tgz --null -T -; \
               chmod -R a+rw /root/keepkey-firmware/bin"
 
       # SRAM budget gate — RC7's zcash-privacy variant hard-faulted on boot

@@ -9,6 +9,19 @@ extern "C" {
 #include <cstring>
 #include <string>
 
+TEST(Ripple, Base58RejectsOversizedAndNegativeLengths) {
+  uint8_t data[257] = {0};
+  char encoded[512] = {0};
+  size_t encoded_len = sizeof(encoded);
+  size_t decoded_len = sizeof(data);
+
+  EXPECT_FALSE(ripple_b58enc(encoded, &encoded_len, data, sizeof(data)));
+  EXPECT_FALSE(ripple_b58tobin(data, &decoded_len, "r"));
+  EXPECT_EQ(0, ripple_encode_check(data, -1, HASHER_SHA2D, encoded,
+                                   sizeof(encoded)));
+  EXPECT_EQ(0, ripple_decode_check("r", HASHER_SHA2D, data, -1));
+}
+
 TEST(Ripple, AddressEncodeDecode) {
   // https://xrpl.org/accounts.html#address-encoding
   uint8_t public_key[33 + 1] =

@@ -183,8 +183,8 @@ jobs:
           # 'suffix' names the published files; 'variant' is the internal build
           # selector. The default build takes an EMPTY suffix so its assets keep
           # the names every previous release used (v7.14.x shipped
-          # firmware.keepkey.bin). Only bitcoin-only is qualified, because it is
-          # the unusual one.
+          # firmware.keepkey.bin). Both declared products are independently
+          # qualified and bound to their presign manifests.
           - variant: full
             arm_output: arm_full_artifact
             suffix: ""
@@ -394,7 +394,7 @@ jobs:
           - [ ] Signed on air-gapped machine (3/5 signers)
           - [ ] Storage upgrade tested on production device
           - [ ] Signed .bin uploaded, replacing unsigned
-          - [ ] All three signatures verified on each final firmware image
+          - [ ] All required signatures verified on each final firmware image
           - [ ] HASHES manifests regenerated from the final signed binaries,
                 using the attached versioned filenames, and re-uploaded.
                 Signing changes the full-image hash; the attached presign

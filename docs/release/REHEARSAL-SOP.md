@@ -1,16 +1,11 @@
 # Firmware rehearsal and acceptance SOP
 
-Owner decision: 2026-09-07. This is the canonical procedure for the new
-7.14.2 hardening foundation and subsequent extraction of alpha features.
-It supersedes the alpha audit requirement for two whole-tree zero-finding
-passes as a prerequisite to staging. Historical rehearsal handoffs are
-evidence, not executable instructions or current branch identities.
+Owner decision: 2026-09-07; tiered acceptance revision: 2026-09-21. This is the canonical firmware rehearsal procedure, covering 7.14.x hardening and later alpha extraction.
+It replaces the two whole-tree zero-finding prerequisite for staging. Historical handoffs are evidence, not executable instructions or current branch identities.
 
 ## Two fork PR types: products and audit units
 
-Owner clarification: 2026-09-08. The main products are the fork release branches
-for 7.14.2, 7.14.3 and 7.15. Small rehearsal branches are the workspace for
-hardening and feature extraction before accepted changes update those products.
+Owner clarification: 2026-09-08. The main products are fork release branches for 7.14.2, 7.14.3 and 7.15. Small rehearsal branches harden and extract features before accepted changes update those products.
 All internal PRs live in the fork. Neither PR type is merged into fork develop.
 
 | PR type | Head and target | Purpose and acceptance |
@@ -18,10 +13,125 @@ All internal PRs live in the fork. Neither PR type is merged into fork develop.
 | Release product | Main fork release branch → fork `develop` | Cumulative, buildable product candidate with a release manifest, exact pins, accepted-unit receipts and complete product checks. Its large diff is an integration view, not a request to rediscover every issue on every iteration. |
 | Audit unit | Isolated rehearsal branch → fork `develop` when independent; otherwise → its immediate predecessor | One bounded behavior or defect, reviewed and tested locally against its recorded base. Dependent units stay stacked and unmerged into develop. |
 
-Both types belong to the fork-develop staging program; a dependent audit PR
-must target its predecessor so its review diff stays small. Do not retarget all
-stack members directly to develop and recreate the cumulative review surface.
+Both types belong to fork-develop staging. A dependent audit PR targets its predecessor to keep the review diff small; do not retarget every stack member to develop.
 The existing F00–F05 stack is rehearsal evidence, not the complete 7.15 product.
+
+## Tiered, sequential acceptance
+
+Release work advances one adjacent-PR review block at a time, with one written contract, predecessor and receipt. Block N+1 may be inventoried but not implemented, restacked, published or sent to hosted CI until N is accepted.
+A passing cumulative tree cannot waive a failing or unverified lower block.
+
+Every block moves through exactly these states:
+
+`DEFINED -> MUTABLE -> LOCAL-QUALIFIED -> FROZEN -> PUBLISHED -> HOSTED-QUALIFIED -> ACCEPTED`
+
+- `DEFINED`: owner, predecessor, scope, exclusions, invariants, capability
+  profiles and checks are recorded. No implementation claim exists.
+- `MUTABLE`: implementation and focused review are in progress. Evidence from
+  an earlier head is historical only.
+- `LOCAL-QUALIFIED`: the exact head passes its required local Docker contract.
+- `FROZEN`: head, tree, predecessor, submodule pins and receipt are immutable.
+- `PUBLISHED`: the frozen identities, branch and PR agree with the receipt.
+- `HOSTED-QUALIFIED`: the required GitHub checks passed once on that exact head.
+- `ACCEPTED`: there are zero unresolved block-owned findings and all evidence is
+  attached. Only this state permits work to advance to the next block.
+
+There is no partial acceptance and no informal state such as "looks green",
+"mostly done" or "converged". If a frozen block changes, move it back according
+to the invalidation table below. If an accepted lower block changes, invalidate
+it and every dependent block before proceeding.
+
+### Measured definition of done for one block
+
+A block is `ACCEPTED` only when every item below is true:
+
+1. **Scope:** exactly one independently explainable behavior or foundation slice;
+   all observed changes are either owned by the block or explicitly inherited.
+2. **Size:** fewer than 20,000 changed lines in the GitHub adjacent PR diff.
+   Aim for at most 5,000 manually authored changed lines. Generated or imported
+   material above that target needs its own provenance record and review method.
+3. **Identity:** exact base SHA, head SHA, tree SHA, submodule SHAs and capability
+   profile are recorded; the head is a direct descendant of its declared base.
+4. **Review:** zero unresolved critical, high, release-blocking or block-owned
+   findings. Every finding has a stable ID, affected head, owner, severity,
+   disposition and verification evidence. A reviewer reply or green check does
+   not close a substantive finding without a technical reproduction or rationale.
+5. **Local checks:** formatting, static analysis and focused regression tests pass;
+   every distinct capability profile introduced or inherited by the block passes
+   in the pinned Docker environment. Actual passes, failures and skips are recorded.
+6. **Isolation:** tests that modify environment variables, global state, transport,
+   emulator state or storage restore them with fixtures. A changed test harness
+   passes its isolation regression in both normal and altered suite order.
+7. **Repeatability:** the focused failing-before/passing-after regression is
+   demonstrated, and local qualification succeeds from a clean checkout with
+   direct pins and every nested submodule consumed by active build/test paths
+   initialized. Identify excluded nested vendor/test trees in the receipt;
+   their parent gitlink remains pinned, but an unbounded deep clone is not a gate.
+   A flaky or unreproduced pass is not a pass.
+8. **Publication:** the PR base/head, adjacent diff and description match the frozen
+   receipt. Required hosted checks pass once on that exact head with no unexplained
+   skipped, cancelled or neutralized gate.
+9. **Failure paths:** for each owned security invariant, record the success path,
+   failure/abort branches and their distinguishing negative tests. Fault-inject
+   irreversible writes, entropy failures and signing/display failures where a
+   normal green suite cannot reach them. An untested branch is an evidence gap,
+   not an assumed pass; record why a test is infeasible and the alternate review.
+
+Use this scorecard in every block receipt. A block with any exceeded limit is not
+done, regardless of its review history or the state of later blocks.
+
+| Measure | Acceptance limit |
+| --- | ---: |
+| Unresolved critical/high/release-blocking findings | 0 |
+| Unresolved block-owned findings | 0 |
+| Unexplained test failures | 0 |
+| Unreviewed or unexplained required-test skips | 0 |
+| Flaky retries counted as passing evidence | 0 |
+| Stale, moving or unreachable dependency pins | 0 |
+| Adjacent changed lines | < 20,000 |
+| Manually authored changed lines without an explicit exception | <= 5,000 target |
+| Distinct declared capability profiles lacking local Docker evidence | 0 |
+| Active hosted runs for the PR/head | <= 1 |
+
+Record counts, not only a `pass` label. Required skips may exist only when each
+has a stable identifier, technical rationale and owning future release or human
+gate; an expected skip is reviewed evidence, while an unexplained skip exceeds
+the limit above.
+
+Keep a subsystem coverage ledger for foundation or cross-cutting blocks. Name
+each changed runtime, test-harness, build, workflow and dependency surface;
+assign an owner/reviewer and link its focused tests and failure-path review.
+The line-count limit is a publication constraint, not a measure of review
+completeness. If the ledger is too broad to review coherently, split the block
+before freezing it.
+
+The iteration limit is evidence-based rather than calendar-based. Each review
+cycle must close a named finding or add named missing evidence. After three
+consecutive cycles expose the same root cause, stop iterating on that shape:
+split the block, reduce its contract or fix the shared harness before continuing.
+After two consecutive failures caused only by CI infrastructure, stop rerunning
+GitHub and reproduce or repair the problem locally. These limits prevent churn;
+they never convert a failure into acceptance.
+
+### Release-level tiers
+
+The complete release progresses through these tiers only after every constituent
+block is `ACCEPTED`:
+
+1. **Block acceptance:** accept PR 1, then PR 2, in dependency order.
+2. **Product integration:** reconstruct the accepted sequence and verify the exact
+   final tree, companion pins, exclusions and capability-profile inventory.
+3. **Local product qualification:** run regular and bitcoin-only Docker builds,
+   native tests, canonical integration, strict OLED evidence, storage/power-cycle
+   coverage and ARM/resource checks required by the manifest.
+4. **Publication qualification:** publish the immutable sequence once and run the
+   protected hosted checks once per exact head.
+5. **Human-audit ready:** generate the audit handoff from the frozen manifest.
+   Hardware testing, merging and release publication still require authorization.
+
+Do not reopen accepted blocks for optional cleanup. New evidence that affects an
+accepted invariant reopens the owning block; unrelated improvements go to a later
+release backlog.
 
 For each release, record its canonical branch, frozen source SHA, intended
 variant and required features in `RELEASE-PROGRAM.md`. Branch naming alone does
@@ -104,10 +214,11 @@ disposition and batch assignment; they do not silently expand this batch.
 
 ## Local rehearsal to convergence
 
-Owner revision: 2026-09-08. Continue using Codex for implementation and local
-review. Copilot is deferred to late upstream/release phases and is not an
-internal staging acceptance gate. This revision supersedes earlier mandatory
-per-PR clean-Copilot requirements and review-round ceiling blockers.
+Owner revision: 2026-09-08; authorization clarification: 2026-09-21. Continue
+using Codex for implementation and local review. Copilot is not an internal
+staging acceptance gate and remains off unless the owner explicitly authorizes
+it. This supersedes earlier mandatory per-PR clean-Copilot requirements and
+review-round ceiling blockers.
 
 “Perfect” means the frozen unit meets its written acceptance contract with no
 known unresolved in-scope defects. It is not a claim of zero possible bugs or an
@@ -130,8 +241,7 @@ instruction to keep inventing improvements. Define the finish line before work.
    finding dispositions, exclusions and remaining release-only requirements.
    A passing candidate ends the internal loop. Advance to the next unit.
 
-A review pass is not evidence of correctness by itself. Do not weaken tests,
-remove required coverage or redefine behavior merely to obtain a clean result.
+A review pass is not evidence of correctness. Do not weaken tests, remove required coverage or redefine behavior merely to obtain a clean result.
 Confirmed release-critical defects still block release. Optional style preferences
 and unrelated improvements go to a separate backlog rather than reopening a
 passing candidate. A recurring finding requires root-cause analysis or a smaller
@@ -183,11 +293,11 @@ or routine fork PR staging. Do not create a PR or push solely to trigger Copilot
 Quota exhaustion, missing delivery or a historical round ceiling does not block
 internal work or acceptance under the local contract above.
 
-The final upstream SOP includes Copilot audits on the frozen, upstream-shaped
-fork PRs before creating upstream PRs. This is the owner's selected late checkpoint;
-it does not authorize requests during the current internal rehearsal phase.
-Enter it only after the release and its proposed upstream units pass internal
-acceptance and the upstream submission phase begins. Audit the small final units
+Copilot is not an implicit release or upstream gate. Request it only when the
+owner explicitly authorizes it for identified frozen, upstream-shaped PRs. An
+instruction to complete, audit, publish or prepare the release is not Copilot
+authorization. If authorized, enter the checkpoint only after the release and
+its proposed upstream units pass internal acceptance. Audit the small final units
 and their affected interactions; do not substitute a broad product diff for them.
 Never automatically start a repeat-until-silent Copilot loop. If findings arrive,
 triage and fix them locally in a batch; a re-request needs a concrete reason tied
@@ -206,15 +316,17 @@ Copilot does not waive known defects or any upstream-required review gate.
    record what is deferred from this upstream batch.
 2. Reconcile upstream-base differences locally and rerun affected checks plus the
    required assembled-candidate checks. Freeze the exact proposed heads and bases.
-3. Perform final Copilot audits on these fork PRs before creating upstream PRs.
-   Batch actionable findings into local fixes and revalidate. Record review IDs,
-   head SHAs and technical dispositions. A quota failure is pending, not clean;
-   continue independent local work but do not claim this checkpoint passed.
-4. Record the final audit outcome honestly. The target is a delivered review with
-   no actionable findings on the final candidate; any declined finding retains its
-   rationale and must not be reported as a literal “no findings found” response.
-   Material changes after review require an impact assessment and refreshed audit
-   coverage before the checkpoint is considered complete.
+3. If explicitly authorized, perform the requested Copilot audits on the frozen
+   fork PRs. Batch actionable findings into local fixes and revalidate. Record
+   review IDs, head SHAs and technical dispositions. A quota failure is pending,
+   not clean; never represent it as a delivered review. Without authorization,
+   record `not requested` and proceed through the declared human-review gates.
+4. Record the final audit outcome honestly. For an authorized external review,
+   the target is a delivered review with no actionable findings on the final
+   candidate; any declined finding retains its rationale and must not be reported
+   as a literal “no findings found” response. Material changes after review require
+   an impact assessment and refreshed audit coverage before that checkpoint is
+   considered complete.
 5. Create upstream PRs from the validated sequence with concise behavior, provenance
    and test evidence. Upstream merging and release publication remain separate
    operations. Never merge the fork product PR into develop as a prerequisite.
@@ -230,6 +342,48 @@ an explicit impact assessment and current candidate/check identity. Recheck the
 changed behavior and affected interactions; preserve evidence for unchanged
 surfaces. This does not require another Copilot request. Earlier evidence remains
 supporting evidence rather than proof of the new candidate.
+
+Use this minimum invalidation matrix instead of an ad hoc judgment:
+
+| Change after evidence | Evidence that must be refreshed |
+| --- | --- |
+| Documentation only | Document consistency and manifest-reference validation |
+| Workflow only | Workflow syntax, trigger/concurrency behavior and hosted gate |
+| Test or harness | Affected tests, isolation/order regression and capability profiles |
+| Firmware runtime | Affected focused tests, all affected Docker profiles and downstream block identities |
+| Companion runtime/test | Companion tests and every consuming firmware capability profile |
+| Submodule/gitlink | Pin/provenance checks and affected clean dependency-graph builds/integration |
+| Restack, reorder or new base | Ancestry, adjacent diffs, line counts, receipts and every dependent head |
+| Security policy/invariant | Owning security review, mutation regressions and affected product qualification |
+
+A handoff document never validates itself or claims its own future SHA. Attach
+the frozen head/tree and hosted run in a post-push PR comment or external
+machine-readable manifest; verify checked-in receipts against that attachment.
+An acceptance comment is head-specific: it must name the exact head and hosted
+run. A changed head or new substantive finding immediately reopens the block
+and dependent blocks, even if old comments still say `ACCEPTED`. Post a new
+status on the PR rather than silently relying on an earlier acceptance record.
+
+## Docker-first and hosted-CI budget
+
+GitHub is the immutable-head confirmation environment, not the debugging loop.
+Before pushing a block, run focused checks and capability profiles in pinned Docker, using CI's exact entrypoint and pre-suite phases; direct test commands are diagnostic only. Before publishing the assembled product, complete product qualification locally.
+
+- Run lightweight format, static, secret, topology and pin checks on every slice.
+- Run expensive full-product integration on the final product and only on earlier
+  blocks whose capability profile or owned behavior requires it.
+- Allow at most one active hosted run per PR and exact head. Cancel superseded runs.
+- Configure workflow concurrency by workflow and PR, with older runs cancelled.
+- Do not manually rerun an unchanged failure. First identify a concrete flaky or
+  infrastructure cause, or make and locally validate a relevant change. For a
+  red hosted test, retain its exact assertion/response and head, rerun focused
+  and full-suite locally, assert each request/response boundary (including
+  intermediate acks), inspect suite order, and keep the finding open until a
+  cause and distinguishing regression are named.
+  A passing local replay or subsequent hosted retry never erases the red run.
+- Two infrastructure-only failures end hosted retries until the failure is locally
+  reproduced, the workflow is repaired, or the provider recovers.
+- Skipped, cancelled, timed-out and missing jobs are not successful evidence.
 
 Build and test each unit green in its turn. Run required complete integration,
 ARM/emulator, device/OLED, storage compatibility, and SRAM checks on the assembled
