@@ -344,12 +344,25 @@ void flash_collectHWEntropy(bool privileged) {
         memzero(HW_ENTROPY_DATA, sizeof(HW_ENTROPY_DATA));
         shutdown();
       }
-      /* The OTP wrappers validate bounds but cannot establish that every
-       * programming pulse succeeded. Verify the bytes before making the
-       * block permanent, then verify that the lock itself took effect. */
-      bool written =
-          flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, 0, entropy,
-                          FLASH_OTP_BLOCK_SIZE) &&
+      /* An earlier boot may have programmed some or all bytes and then lost
+       * power or failed to lock. OTP bits only clear, so programming a new
+       * draw over those bytes could never verify and every later boot would
+       * halt here. Keep bytes already programmed and program only erased
+       * ones. The OTP wrappers validate bounds but cannot establish that
+       * every programming pulse succeeded, so verify the bytes before making
+       * the block permanent, then verify that the lock itself took effect. */
+      bool written = flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0,
+                                    HW_ENTROPY_DATA + 12, FLASH_OTP_BLOCK_SIZE);
+      for (uint8_t i = 0; written && i < FLASH_OTP_BLOCK_SIZE; i++) {
+        if (HW_ENTROPY_DATA[12 + i] != 0xFF) {
+          entropy[i] = HW_ENTROPY_DATA[12 + i];
+        } else {
+          written =
+              flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, i, &entropy[i], 1);
+        }
+      }
+      written =
+          written &&
           flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0, HW_ENTROPY_DATA + 12,
                          FLASH_OTP_BLOCK_SIZE) &&
           memcmp(entropy, HW_ENTROPY_DATA + 12, FLASH_OTP_BLOCK_SIZE) == 0;

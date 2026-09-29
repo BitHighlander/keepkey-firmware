@@ -22,4 +22,7 @@ typedef enum {
 HwEntropyProbe test_collect_hw_entropy(bool privileged, bool locked,
                                        bool healthy, uint8_t stored_byte,
                                        HwEntropyFault fault);
+/* Boot again on the OTP contents and lock state a previous boot left. */
+HwEntropyProbe test_reboot_hw_entropy(const HwEntropyProbe* previous,
+                                      bool healthy, HwEntropyFault fault);
 #endif
