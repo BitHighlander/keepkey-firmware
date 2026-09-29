@@ -30,6 +30,7 @@ void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
 void fsm_test_clearLastFailure(void);
 FailureType fsm_test_lastFailureCode(void);
+const char* fsm_test_lastFailureMessage(void);
 #endif
 
 #define RESP_INIT(TYPE)                                                    \
