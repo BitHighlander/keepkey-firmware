@@ -22,3 +22,15 @@ ca3b2d8d684b3bf977974042441ce366d83efd69:docs/release/audit-units/715-09-reconci
 # Manual/no-git counterparts of the two reviewed public dependency gitlinks.
 docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:134
 docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:138
+
+# Block12 audit evidence. Exact lines only, verified with sed -n on the file:
+# a SHA-256 of tools/check_pallas_api_boundary.py and two public dependency
+# gitlink commit IDs (code-signing-keys, deps/python-keepkey). Not credentials.
+9b7779df49be44f5e9ac1593671c028a446da613:docs/release/audit-units/715-12-first-checks-20260927.json:generic-api-key:37
+904f4c3e1a0122561def46095ed023bc7146131c:docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:7
+904f4c3e1a0122561def46095ed023bc7146131c:docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:11
+
+# Manual/no-git counterparts of the three Block12 lines above.
+docs/release/audit-units/715-12-first-checks-20260927.json:generic-api-key:37
+docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:7
+docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:11
