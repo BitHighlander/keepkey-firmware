@@ -528,6 +528,41 @@ TEST_F(Block13OsmosisWire, SendRejectsOverflowAndNoncanonicalBeforeReview) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+// The uint64 bound is the native-denomination policy. An 18-decimal IBC or
+// factory asset legitimately exceeds it, and the wire already limits the
+// amount to 32 digits and the denomination to 68 characters.
+TEST_F(Block13OsmosisWire, NonNativeDenominationsAreNotCappedAtUint64) {
+  const std::string ibc = "ibc/" + std::string(64, 'A');
+  const std::string factory = "factory/" + std::string(32, 'b') + "/token";
+  for (const std::string& denom : {ibc, factory}) {
+    for (const char* amount : {"18446744073709551616", "99999999999999999999",
+                               "12345678901234567890123456789012"}) {
+      SCOPED_TRACE(denom + " " + amount);
+      Start();
+      ASSERT_TRUE(kkconfirm_preload(1, 0));
+      auto ack = Send(amount, denom.c_str());
+      Receive(ack);
+      EXPECT_EQ(0, kkconfirm_drain());
+      EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+      EXPECT_TRUE(osmosis_signingIsInited());
+    }
+  }
+}
+
+TEST_F(Block13OsmosisWire, NativeDenominationStaysCappedForWideAmounts) {
+  for (const char* amount :
+       {"18446744073709551616", "12345678901234567890123456789012"}) {
+    SCOPED_TRACE(amount);
+    Start();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    auto ack = Send(amount, "uosmo");
+    Receive(ack);
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_FALSE(osmosis_signingIsInited());
+    EXPECT_EQ(2, kkconfirm_drain());
+  }
+}
+
 TEST_F(Block13OsmosisWire, MissingAmountAndInvalidDenomFailBeforeReview) {
   for (int mode : {0, 1, 2}) {
     Start();

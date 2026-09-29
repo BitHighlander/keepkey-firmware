@@ -44,12 +44,18 @@ static void osmosis_format_amount(char* out, size_t out_len,
   snprintf(out, out_len, "%s OSMO", decimal_buf);
 }
 
-/* The audited MsgSend policy bounds amounts to uint64 despite the decimal-
- * string wire field. Pool shares and swap amounts use wider decimal strings,
- * so this bound must not change their validator. */
-static bool osmosis_validate_send_amount(bool has_value, const char* value) {
+/* The audited MsgSend policy bounds the NATIVE amount to uint64 despite the
+ * decimal-string wire field. Other denominations (IBC hashes, factory denoms)
+ * have an exponent the firmware cannot know: an 18-decimal asset would be
+ * capped at about 18.4 tokens by the same bound. They keep the wire limit of
+ * 32 digits, and the exact integer is displayed and signed, so the bound is not
+ * applied to them. Pool shares and swap amounts use wider decimal strings, so
+ * this bound must not change their validator. */
+static bool osmosis_validate_send_amount(bool has_value, const char* value,
+                                         const char* denom) {
   static const char maximum[] = "18446744073709551615";
   if (!osmosis_validate_amount(has_value, value)) return false;
+  if (denom == NULL || strcmp(denom, "uosmo") != 0) return true;
   const size_t length = strlen(value);
   return length < sizeof(maximum) - 1 ||
          (length == sizeof(maximum) - 1 && strcmp(value, maximum) <= 0);
@@ -200,7 +206,9 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
   /** Confirm required transaction parameters exist */
   if (msg->has_send) {
-    if (!osmosis_validate_send_amount(msg->send.has_amount, msg->send.amount) ||
+    if (!osmosis_validate_send_amount(
+            msg->send.has_amount, msg->send.amount,
+            msg->send.has_denom ? msg->send.denom : NULL) ||
         !osmosis_validate_required_text(msg->send.has_denom, msg->send.denom)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
