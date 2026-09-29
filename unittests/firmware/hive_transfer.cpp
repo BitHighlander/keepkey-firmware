@@ -220,3 +220,148 @@ TEST(Hive, TransferRejectsInvalidAmountAndAccountLabels) {
     EXPECT_EQ(0, response.serialized_tx.bytes[response.serialized_tx.size - 1]);
   }
 }
+
+// Independent Graphene/Hive layout for the two authority-bearing operations.
+// Expected bytes are assembled here from the protocol's field order, not from
+// the firmware serializer, with four DISTINCT keys so a swapped or repeated
+// role cannot pass.
+namespace {
+using Bytes = std::vector<uint8_t>;
+
+void put(Bytes& out, std::initializer_list<uint8_t> bytes) {
+  out.insert(out.end(), bytes);
+}
+void put_string(Bytes& out, const char* text) {  // varint length < 128
+  out.push_back((uint8_t)strlen(text));
+  out.insert(out.end(), text, text + strlen(text));
+}
+void put_key(Bytes& out, const uint8_t key[33]) {
+  out.insert(out.end(), key, key + 33);
+}
+// weight_threshold=1, no account_auths, one key_auth, weight=1
+void put_authority(Bytes& out, const uint8_t key[33]) {
+  put(out, {1, 0, 0, 0, 0, 1});
+  put_key(out, key);
+  put(out, {1, 0});
+}
+void put_header(Bytes& out, uint8_t operation) {
+  put(out, {1, 0, 2, 0, 0, 0, 3, 0, 0, 0, 1, operation});
+}
+
+struct DistinctKeys {
+  uint8_t owner[33], active[33], posting[33], memo[33];
+  DistinctKeys() {
+    owner[0] = active[0] = posting[0] = memo[0] = 2;
+    memset(owner + 1, 0x11, 32);
+    active[0] = 3;
+    memset(active + 1, 0x22, 32);
+    memset(posting + 1, 0x33, 32);
+    memo[0] = 3;
+    memset(memo + 1, 0x44, 32);
+  }
+};
+
+void expect_signed_over(const HDNode& node, const Bytes& expected,
+                        const uint8_t* serialized, size_t size,
+                        const uint8_t* signature) {
+  ASSERT_EQ(expected.size(), size);
+  EXPECT_EQ(0, memcmp(expected.data(), serialized, size));
+  Bytes preimage = {0xbe, 0xea, 0xb0, 0xde};
+  preimage.resize(32, 0);
+  preimage.insert(preimage.end(), expected.begin(), expected.end());
+  uint8_t digest[32];
+  sha256_Raw(preimage.data(), preimage.size(), digest);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, node.public_key, signature + 1,
+                                   digest));
+}
+}  // namespace
+
+TEST(Hive, AccountCreateBytesMatchIndependentGrapheneLayout) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  hdnode_fill_public_key(&node);
+  const DistinctKeys keys;
+  struct Case {
+    const char *creator, *created;
+    bool has_fee;
+    uint64_t fee;  // amount signed: default 3000 when the field is omitted
+  };
+  const Case cases[] = {
+      {"alice", "bob", false, 3000},
+      {"alice", "bob", true, 0},
+      {"abcdefghijklmnop", "qrstuvwxyzabcdef", true, INT64_MAX},
+      {"abc.def", "ghi-jkl.mno", true, 1},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(std::string(c.creator) + "/" + c.created);
+    HiveSignAccountCreate msg = {};
+    msg.has_creator = msg.has_new_account_name = true;
+    strcpy(msg.creator, c.creator);
+    strcpy(msg.new_account_name, c.created);
+    msg.has_fee_amount = c.has_fee;
+    msg.fee_amount = c.fee;
+    msg.has_ref_block_num = msg.has_ref_block_prefix = msg.has_expiration =
+        true;
+    msg.ref_block_num = 1;
+    msg.ref_block_prefix = 2;
+    msg.expiration = 3;
+
+    Bytes expected;
+    put_header(expected, 9);
+    for (int i = 0; i < 8; i++) expected.push_back((uint8_t)(c.fee >> (8 * i)));
+    put(expected, {3, 'S', 'T', 'E', 'E', 'M', 0, 0});
+    put_string(expected, c.creator);
+    put_string(expected, c.created);
+    put_authority(expected, keys.owner);
+    put_authority(expected, keys.active);
+    put_authority(expected, keys.posting);
+    put_key(expected, keys.memo);
+    put(expected, {0, 0});  // empty json_metadata, empty extensions
+
+    HiveSignedAccountCreate response = {};
+    hive_signAccountCreate(&node, &msg, keys.owner, keys.active, keys.posting,
+                           keys.memo, &response);
+    ASSERT_TRUE(response.has_signature);
+    ASSERT_TRUE(response.has_serialized_tx);
+    expect_signed_over(node, expected, response.serialized_tx.bytes,
+                       response.serialized_tx.size, response.signature.bytes);
+  }
+}
+
+TEST(Hive, AccountUpdateBytesMatchIndependentGrapheneLayout) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  hdnode_fill_public_key(&node);
+  const DistinctKeys keys;
+  for (const char* account : {"alice", "abcdefghijklmnop", "abc.def-ghi"}) {
+    SCOPED_TRACE(account);
+    HiveSignAccountUpdate msg = {};
+    msg.has_account = true;
+    strcpy(msg.account, account);
+    msg.has_ref_block_num = msg.has_ref_block_prefix = msg.has_expiration =
+        true;
+    msg.ref_block_num = 1;
+    msg.ref_block_prefix = 2;
+    msg.expiration = 3;
+
+    Bytes expected;
+    put_header(expected, 10);
+    put_string(expected, account);
+    for (const uint8_t* key : {keys.owner, keys.active, keys.posting}) {
+      expected.push_back(1);  // optional authority present
+      put_authority(expected, key);
+    }
+    put_key(expected, keys.memo);
+    put(expected, {0, 0});  // empty json_metadata, empty extensions
+
+    HiveSignedAccountUpdate response = {};
+    hive_signAccountUpdate(&node, &msg, keys.owner, keys.active, keys.posting,
+                           keys.memo, &response);
+    ASSERT_TRUE(response.has_signature);
+    ASSERT_TRUE(response.has_serialized_tx);
+    expect_signed_over(node, expected, response.serialized_tx.bytes,
+                       response.serialized_tx.size, response.signature.bytes);
+  }
+}

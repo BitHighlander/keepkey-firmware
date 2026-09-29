@@ -128,6 +128,8 @@ HIVE_REQUIRED_CASES = {
     "Hive.TransferRejectsUnsupportedAssetsAndUntruncatedPrecision",
     "Hive.AllSigningOperationsRejectMalformedExplicitChainIds",
     "Hive.TransferRejectsInvalidAmountAndAccountLabels",
+    "Hive.AccountCreateBytesMatchIndependentGrapheneLayout",
+    "Hive.AccountUpdateBytesMatchIndependentGrapheneLayout",
 }
 
 # Dedicated contract suites run as separate pytest invocations. Each file and
