@@ -22,7 +22,7 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
 
   if ((encrypt && ask_on_encrypt) || (!encrypt && ask_on_decrypt)) {
     if (!confirm_cipher(encrypt, msg->key)) {
-      memzero(node, sizeof(*node));
+      FSM_SCRUB_OBJ(*node);
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "CipherKeyValue cancelled");
       layoutHome();
@@ -36,7 +36,7 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
   strlcat((char*)data, ask_on_decrypt ? "D1" : "D0", sizeof(data));
 
   hmac_sha512(node->private_key, 32, data, strlen((char*)data), data);
-  memzero(node, sizeof(*node));
+  FSM_SCRUB_OBJ(*node);
 
   RESP_INIT(CipheredKeyValue);
 
@@ -46,16 +46,16 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
     aes_cbc_encrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    memzero(&ctx, sizeof(ctx));
+    FSM_SCRUB_OBJ(ctx);
   } else {
     aes_decrypt_ctx ctx;
     aes_decrypt_key256(data, &ctx);
     aes_cbc_decrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    memzero(&ctx, sizeof(ctx));
+    FSM_SCRUB_OBJ(ctx);
   }
-  memzero(data, sizeof(data));
+  FSM_SCRUB(data);
 
   resp->has_value = true;
   resp->value.size = msg->value.size;
@@ -102,7 +102,13 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     return;
   }
 
-  CHECK_PIN
+  /* CHECK_PIN would return with the identity fingerprint still on the stack:
+   * it is the seed of the derivation path, and the PIN was not yet verified. */
+  if (!pin_protect_cached()) {
+    FSM_SCRUB(hash);
+    layoutHome();
+    return;
+  }
 
   uint32_t address_n[5];
   address_n[0] = 0x80000000 | 13;
@@ -167,10 +173,10 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     }
     resp->has_signature = true;
     resp->signature.size = 65;
-    memzero(node, sizeof(*node));
+    FSM_SCRUB_OBJ(*node);
     msg_write(MessageType_MessageType_SignedIdentity, resp);
   } else {
-    memzero(node, sizeof(*node));
+    FSM_SCRUB_OBJ(*node);
     fsm_sendFailure(FailureType_Failure_Other, "Error signing identity");
   }
 

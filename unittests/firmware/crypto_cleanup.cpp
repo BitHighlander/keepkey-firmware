@@ -14,11 +14,14 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "pb_decode.h"
 #include "pb_encode.h"
+#include "trezor/crypto/aes/aes.h"
+#include "trezor/crypto/bip32.h"
 #include "trezor/crypto/ed25519-donna/ed25519.h"
 }
 
 #include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
+bool kkconfirm_sendCancel(void);
 int kkconfirm_drain(void);
 bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
                             void* result);
@@ -119,10 +122,22 @@ class CryptoCleanup : public ::testing::Test {
   // separately through fsm_test_derivedNodeIsZero(). Counts are exact, so a
   // removed or duplicated wipe on any path is caught.
   static void ExpectWorkspaceWipes(size_t fingerprint, size_t path,
-                                   size_t digest) {
+                                   size_t digest, size_t node) {
     EXPECT_EQ(fingerprint, fsm_test_scrubCount(32));
     EXPECT_EQ(path, fsm_test_scrubCount(20));
     EXPECT_EQ(digest, fsm_test_scrubCount(64));
+    EXPECT_EQ(node, fsm_test_scrubCount(sizeof(HDNode)));
+  }
+
+  // CipherKeyValue: the HMAC-derived key material (256 + 4 bytes), the AES
+  // context of the direction used (one per call), and the derived node.
+  static void ExpectCipherWipes(size_t key_material, size_t ctx, size_t node) {
+    size_t observed = fsm_test_scrubCount(sizeof(aes_encrypt_ctx));
+    if (sizeof(aes_decrypt_ctx) != sizeof(aes_encrypt_ctx))
+      observed += fsm_test_scrubCount(sizeof(aes_decrypt_ctx));
+    EXPECT_EQ(key_material, fsm_test_scrubCount(256 + 4));
+    EXPECT_EQ(ctx, observed);
+    EXPECT_EQ(node, fsm_test_scrubCount(sizeof(HDNode)));
   }
 
   void sign(SignIdentity* request, bool wire) {
@@ -161,6 +176,7 @@ class CryptoCleanup : public ::testing::Test {
 
   void cipher(CipherKeyValue* request, bool wire) {
     fsm_test_clearLastFailure();
+    fsm_test_clearScrubs();
     if (wire) {
       receive(MessageType_MessageType_CipherKeyValue, CipherKeyValue_fields,
               request);
@@ -222,7 +238,7 @@ TEST_F(CryptoCleanup,
       EXPECT_EQ(0, kkconfirm_drain());
       const bool generic = std::strcmp(v.protocol, "ssh") != 0 &&
                            std::strcmp(v.protocol, "gpg") != 0;
-      ExpectWorkspaceWipes(1, 1, generic ? 1 : 0);
+      ExpectWorkspaceWipes(1, 1, generic ? 1 : 0, 1);
       SignedIdentity result = {};
       response(MessageType_MessageType_SignedIdentity, SignedIdentity_fields,
                &result);
@@ -263,7 +279,7 @@ TEST_F(CryptoCleanup, GpgExactDigestWithoutVisualChallengeSignsAndScrubs) {
     ASSERT_TRUE(kkconfirm_preload(2, 0));
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
-    ExpectWorkspaceWipes(1, 1, 0);
+    ExpectWorkspaceWipes(1, 1, 0, 1);
     SignedIdentity result = {};
     response(MessageType_MessageType_SignedIdentity, SignedIdentity_fields,
              &result);
@@ -282,7 +298,7 @@ TEST_F(CryptoCleanup, IdentitySigningFailureScrubsBeforeReturningFailure) {
       ASSERT_TRUE(kkconfirm_preload(3, 0));
       sign(&request, wire);
       EXPECT_EQ(0, kkconfirm_drain());
-      ExpectWorkspaceWipes(1, 1, 0);
+      ExpectWorkspaceWipes(1, 1, 0, 1);
       Failure result = {};
       response(MessageType_MessageType_Failure, Failure_fields, &result);
       EXPECT_EQ(FailureType_Failure_Other, result.code);
@@ -305,7 +321,7 @@ TEST_F(CryptoCleanup, IdentityDerivationFailureClearsPriorScratch) {
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
     // Derivation failed, but the fingerprint and path were already built.
-    ExpectWorkspaceWipes(1, 1, 0);
+    ExpectWorkspaceWipes(1, 1, 0, 0);
     EXPECT_EQ(FailureType_Failure_NotInitialized, fsm_test_lastFailureCode());
   }
 }
@@ -317,7 +333,7 @@ TEST_F(CryptoCleanup, IdentityCancellationProducesNoSignatureOrRetainedKey) {
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
     // Cancelled before any path or digest existed; only the fingerprint.
-    ExpectWorkspaceWipes(1, 0, 0);
+    ExpectWorkspaceWipes(1, 0, 0, 0);
     EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
     Failure result = {};
     response(MessageType_MessageType_Failure, Failure_fields, &result);
@@ -332,6 +348,7 @@ TEST_F(CryptoCleanup, CipherSuccessScrubsAndPreservesEncryptDecryptVectors) {
       ASSERT_TRUE(kkconfirm_preload(1, 0));
       cipher(&request, wire);
       EXPECT_EQ(0, kkconfirm_drain());
+      ExpectCipherWipes(1, 1, 1);
       CipheredKeyValue result = {};
       response(MessageType_MessageType_CipheredKeyValue,
                CipheredKeyValue_fields, &result);
@@ -354,8 +371,27 @@ TEST_F(CryptoCleanup, CipherCancellationScrubsAlreadyDerivedKey) {
       ASSERT_TRUE(kkconfirm_preload(0, 1));
       cipher(&request, wire);
       EXPECT_EQ(0, kkconfirm_drain());
+      // Cancelled after derivation: only the node existed.
+      ExpectCipherWipes(0, 0, 1);
       EXPECT_EQ(FailureType_Failure_ActionCancelled,
                 fsm_test_lastFailureCode());
     }
+  }
+}
+
+// A confirmed request whose PIN prompt is then cancelled has already built the
+// identity fingerprint, the seed of the derivation path. It must be wiped
+// although no key was ever derived.
+TEST_F(CryptoCleanup, IdentityPinCancellationWipesFingerprintBeforeReturning) {
+  storage_setPin("1234");
+  session_clear(/*clear_pin=*/true);
+  for (bool wire : {false, true}) {
+    auto request = identity("ssh", "ed25519", 47);
+    ASSERT_TRUE(kkconfirm_preload(3, 0));
+    ASSERT_TRUE(kkconfirm_sendCancel());
+    sign(&request, wire);
+    ExpectWorkspaceWipes(1, 0, 0, 0);
+    EXPECT_EQ(FailureType_Failure_PinCancelled, fsm_test_lastFailureCode());
+    session_clear(/*clear_pin=*/true);
   }
 }
