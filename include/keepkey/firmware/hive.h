@@ -33,6 +33,10 @@
 
 // ── Protocol limits ───────────────────────────────────────────────────────
 #define HIVE_MAX_ACCOUNT_LEN 16  // max Hive username length
+// Maximum memo length that fits in the 512-byte transaction buffer with every
+// other field at its maximum: non-memo overhead is 63 bytes (header 12, from
+// 17, to 17, asset 16, footer 1), and the memo length varint takes 2 more. The
+// worst-case transfer is 505 bytes; 440 is the conservative limit.
 #define HIVE_MAX_MEMO_LEN 440
 #define HIVE_DECIMALS 3  // HIVE and HBD both use 3 decimal places
 #define HIVE_WIRE_SYMBOL_HIVE "STEEM"

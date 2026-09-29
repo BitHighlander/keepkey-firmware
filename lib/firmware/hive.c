@@ -217,9 +217,9 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
 
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
 
-// Maximum memo length that fits safely in tx_buf[512] with all other fields.
-// Non-memo overhead: header(12) + from(17) + to(17) + asset(16) + footer(1) =
-// ~63 bytes. 512 - 63 - 3 (varint) = 446; use 440 as the conservative limit.
+// Resolve the requested asset symbol to the symbol signed on the wire, the
+// symbol shown at consent and its precision. Returns false for any symbol the
+// device does not sign.
 bool hive_transferAsset(const HiveSignTx* msg, const char** wire,
                         const char** display, uint8_t* precision) {
   const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
