@@ -1444,11 +1444,6 @@ static bool storage_getRootSeedCache(const SessionState* ss,
 }
 
 void storage_init(void) {
-  // Locks describe the image loaded below, not one an earlier init saw.
-  btc_only_locked = false;
-  btc_only_too_new = false;
-  firmware_too_old = false;
-
   // Find storage sector with valid data and set storage_location variable.
   if (!find_active_storage(&storage_location)) {
     // Otherwise initialize it to the default sector.
