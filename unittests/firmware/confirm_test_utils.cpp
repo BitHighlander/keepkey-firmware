@@ -58,7 +58,7 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
 /* One ButtonAck + one DebugLinkDecision, i.e. what a single screen eats. */
 #define KKCONFIRM_MSGS_PER_SCREEN 2
 
-bool kkconfirm_preload(int nYes, int nNo) {
+static bool kkconfirm_preload_impl(int nYes, int nNo, bool sentinel) {
   static bool initialized = false;
   if (!initialized) {
     kk_test_board_init();  // canvas + runnable queues for confirm's draw path
@@ -83,7 +83,7 @@ bool kkconfirm_preload(int nYes, int nNo) {
 
   static const uint8_t yes[] = {0x08, 0x01};  // DebugLinkDecision.yes_no
   static const uint8_t no[] = {0x08, 0x00};
-  for (int i = 0; i < nYes + nNo + 1; i++) {
+  for (int i = 0; i < nYes + nNo + (sentinel ? 1 : 0); i++) {
     if (!kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0))
       return false;
     const uint8_t* decision = (i < nYes) ? yes : no;
@@ -92,6 +92,19 @@ bool kkconfirm_preload(int nYes, int nNo) {
       return false;
   }
   return true;
+}
+
+bool kkconfirm_preload(int nYes, int nNo) {
+  return kkconfirm_preload_impl(nYes, nNo, true);
+}
+
+/* For a flow whose confirmations are followed by a wait that rejects any
+ * foreign acknowledgement (the PIN prompt): the trailing sentinel pair would
+ * reach that wait and cancel it as an unexpected message. The caller must end
+ * the flow itself (for example with kkconfirm_sendCancel()), because an
+ * under-budgeted test now blocks instead of failing fast. */
+bool kkconfirm_preload_no_sentinel(int nYes, int nNo) {
+  return kkconfirm_preload_impl(nYes, nNo, false);
 }
 
 // Wait after the last packet because loopback delivery is asynchronous. The

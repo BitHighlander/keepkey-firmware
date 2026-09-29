@@ -127,9 +127,12 @@ static bool type_is_integer(const char* type, const char* prefix) {
   if (strncmp(type, prefix, prefix_len) != 0) return false;
   const char* p = type + prefix_len;
   size_t bits = 0;
-  const bool has_bits = *p >= '0' && *p <= '9';
-  if (has_bits && !parse_bounded_decimal(&p, 256, &bits)) return false;
-  if (has_bits && (bits < 8 || bits > 256 || (bits % 8) != 0)) return false;
+  /* EIP-712 only defines uint8..uint256 / int8..int256. A bare "int"/"uint"
+   * or a width with a leading zero ("int08") is not a canonical type name and
+   * would hash to a different typehash than the canonical spelling. */
+  if (*p < '1' || *p > '9') return false;
+  if (!parse_bounded_decimal(&p, 256, &bits)) return false;
+  if (bits < 8 || bits > 256 || (bits % 8) != 0) return false;
   return type_array_suffix_is_valid(p);
 }
 
@@ -152,6 +155,7 @@ static bool type_is_bytes(const char* type, unsigned* byte_size,
     return true;
   }
   size_t size = 0;
+  if (*p < '1' || *p > '9') return false; /* no bytes0, no bytes01 */
   if (!parse_bounded_decimal(&p, 32, &size) || size == 0 ||
       !type_array_suffix_is_valid(p))
     return false;
@@ -227,6 +231,23 @@ static bool encode_canonical_integer(const char* type, const char* text,
   return true;
 }
 
+/* A name that has the shape of an elementary integer/bytes type (int, uintN,
+ * bytesN with digits directly after the prefix, or a bare int/uint) but was
+ * not accepted as one (bytes0, bytes33, int7, int08, bare int, ...) must not
+ * silently become a user-defined struct name. Callers test the valid forms
+ * first. Names such as "intent" or "bytesLike" are ordinary struct names. */
+static bool type_has_reserved_shape(const char* type) {
+  static const char* const prefixes[] = {"uint", "int", "bytes"};
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    const size_t len = strlen(prefixes[i]);
+    if (strncmp(type, prefixes[i], len) != 0) continue;
+    const char next = type[len];
+    if (next >= '0' && next <= '9') return true;
+    if (i < 2 && (next == '\0' || next == '[')) return true;
+  }
+  return false;
+}
+
 int encodableType(const char* typeStr) {
   int ctr;
 
@@ -251,6 +272,9 @@ int encodableType(const char* typeStr) {
   }
   if (type_matches(typeStr, "bool")) {
     return BOOL;
+  }
+  if (type_has_reserved_shape(typeStr)) {
+    return NOT_ENCODABLE;
   }
 
   // See if type already defined. If so, skip, otherwise add it to list
@@ -577,6 +601,62 @@ int dsConfirm(void) {
   return confirmed ? SUCCESS : USER_CANCELLED;
 }
 
+/* Refuse a value whose JSON shape or address/bytes encoding is already known
+ * to be invalid, before any screen is shown: the user must never be asked to
+ * approve a value the encoder is going to reject, and a queued refusal must not
+ * be spent on it. Integer range/canonical-form errors are still reported after
+ * the field and value screens (see the EIP712 integer tests). */
+static int precheck_value(const char* typeType, const json_t* value,
+                          jsonType_t value_type, const char* valStr) {
+  const bool array = typeType[strlen(typeType) - 1] == ']';
+  unsigned byte_size = 0;
+  bool dynamic = false;
+
+  if (type_matches(typeType, "address") || type_matches(typeType, "string")) {
+    const bool is_address = type_matches(typeType, "address");
+    if (array) {
+      if (value_type != JSON_ARRAY) return GENERAL_ERROR;
+      for (const json_t* item = json_getChild(value); item;
+           item = json_getSibling(item)) {
+        if (json_getType(item) != JSON_TEXT) return GENERAL_ERROR;
+        if (is_address && !hex_string_is_valid(json_getValue(item), 20, true))
+          return ADDR_STRING_VFLOW;
+      }
+    } else {
+      if (value_type != JSON_TEXT) return GENERAL_ERROR;
+      if (is_address && !hex_string_is_valid(valStr, 20, true))
+        return ADDR_STRING_VFLOW;
+    }
+  } else if (type_is_integer(typeType, "uint") ||
+             type_is_integer(typeType, "int")) {
+    if (!array && value_type != JSON_TEXT && value_type != JSON_INTEGER)
+      return GENERAL_ERROR;
+  } else if (type_is_bytes(typeType, &byte_size, &dynamic)) {
+    if (!array) {
+      if (value_type != JSON_TEXT) return GENERAL_ERROR;
+      if (dynamic && !hex_string_is_valid(valStr, 0, false))
+        return GENERAL_ERROR;
+      if (!dynamic && !hex_string_is_valid(valStr, byte_size, true))
+        return BYTESN_STRING_ERROR;
+    }
+  } else if (type_matches(typeType, "bool")) {
+    if (!array) {
+      if (value_type != JSON_BOOLEAN && value_type != JSON_TEXT)
+        return GENERAL_ERROR;
+      if (!valStr ||
+          (strcmp(valStr, "true") != 0 && strcmp(valStr, "false") != 0))
+        return GENERAL_ERROR;
+    }
+  } else if (type_has_reserved_shape(typeType)) {
+    return GENERAL_ERROR;
+  } else if (array) {
+    if (value_type != JSON_ARRAY) return GENERAL_ERROR;
+  } else if (value_type != JSON_OBJ) {
+    return GENERAL_ERROR;
+  }
+  return SUCCESS;
+}
+
 /*
     Entry:
             eip712Types points to the eip712 types structure
@@ -651,6 +731,10 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                             value_type == JSON_INTEGER ||
                             value_type == JSON_BOOLEAN;
       valStr = hasValue ? json_getValue(walkVals) : NULL;
+      if (SUCCESS !=
+          (errRet = precheck_value(typeType, walkVals, value_type, valStr))) {
+        return errRet;
+      }
       if (SUCCESS != (errRet = confirmName(typeName, hasValue))) {
         return errRet;
       }

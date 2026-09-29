@@ -1806,7 +1806,11 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  CHECK_PARAM(!msg->has_key_id || msg->key_id <= 0xff,
+  /* Range-check the uint32 wire value against the slot count BEFORE it is
+   * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
+   * A slot that cannot exist is a malformed request, not an "Invalid"
+   * classification. */
+  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
               _("clearsign metadata key_id out of range"));
 
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),

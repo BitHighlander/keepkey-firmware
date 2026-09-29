@@ -31,9 +31,17 @@ TEST(Eip712, MissingFieldRefusedWithoutDereferenceOrHashMutation) {
   EXPECT_EQ(2, kkconfirm_drain());
 }
 
+// The encoder now handles the full declared width (int256 is a 256-bit word),
+// so "overflow" means beyond the declared type, not beyond int64. The field and
+// value screens are shown before the integer is encoded (the same order
+// EIP712.IntegerValuesRejectNoncanonicalDecimal pins in eip712.cpp), so two
+// accepted screens are queued and none may be left over.
 TEST(Eip712, DecimalOverflowRefusedWithoutHashMutation) {
-  for (const char* value : {"9223372036854775808", "-9223372036854775809",
-                            "99999999999999999999999999999999999"}) {
+  for (const char* value :
+       {"57896044618658097711785492504343953926634992332820282019728792003956564819968",
+        "-57896044618658097711785492504343953926634992332820282019728792003956564819969",
+        "9999999999999999999999999999999999999999999999999999999999999999999999999999999"
+        "9999999999999999999999999999999999"}) {
     char types[] = "{\"Review\":[{\"name\":\"value\",\"type\":\"int256\"}]}";
     std::string values = std::string("{\"value\":\"") + value + "\"}";
     json_t tp[16], vp[8];
@@ -44,11 +52,11 @@ TEST(Eip712, DecimalOverflowRefusedWithoutHashMutation) {
     SHA3_CTX ctx;
     sha3_256_Init(&ctx);
     const SHA3_CTX original = ctx;
-    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
     EXPECT_EQ(GENERAL_ERROR, parseVals(t, json_getProperty(t, "Review"),
                                        json_getChild(v), &ctx));
     EXPECT_EQ(0, memcmp(&ctx, &original, sizeof(ctx)));
-    EXPECT_EQ(2, kkconfirm_drain());
+    EXPECT_EQ(0, kkconfirm_drain());
   }
 }
 
@@ -67,7 +75,7 @@ TEST(Eip712, DecimalInt64BoundaryMatchesIndependentEncoding) {
     bytes[24] = value[0] == '-' ? 0x80 : 0x7f;
     memset(bytes + 25, value[0] == '-' ? 0 : 0xff, 7);
     sha3_Update(&expected, bytes, sizeof(bytes));
-    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
     ASSERT_EQ(SUCCESS, parseVals(t, json_getProperty(t, "Review"),
                                  json_getChild(v), &actual));
     EXPECT_EQ(0, kkconfirm_drain());
@@ -78,8 +86,11 @@ TEST(Eip712, DecimalInt64BoundaryMatchesIndependentEncoding) {
   }
 }
 
+// Sign padding comes from the canonical decimal text. Forms strtoll used to
+// accept (signed zero, explicit plus, leading whitespace) are refused, so the
+// padding can never disagree with the displayed value.
 TEST(Eip712, DecimalSignPaddingMatchesParsedValue) {
-  for (const char* value : {"-0", " -1", "\t-1", "+0"}) {
+  for (const char* value : {"-0", " -1", "\t-1", "+0", "+1"}) {
     char types[] = "{\"Review\":[{\"name\":\"value\",\"type\":\"int256\"}]}";
     // JSON escapes the tab; the parser decodes it before integer conversion.
     std::string text = value[0] == '\t' ? "\\t-1" : value;
@@ -89,33 +100,55 @@ TEST(Eip712, DecimalSignPaddingMatchesParsedValue) {
     const json_t* v = json_create(&values[0], vp, 8);
     ASSERT_NE(nullptr, t);
     ASSERT_NE(nullptr, v);
+    SHA3_CTX ctx;
+    sha3_256_Init(&ctx);
+    const SHA3_CTX original = ctx;
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    EXPECT_EQ(GENERAL_ERROR, parseVals(t, json_getProperty(t, "Review"),
+                                       json_getChild(v), &ctx))
+        << text;
+    EXPECT_EQ(0, memcmp(&ctx, &original, sizeof(ctx)));
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+  for (const char* value : {"-1", "0"}) {
+    char types[] = "{\"Review\":[{\"name\":\"value\",\"type\":\"int256\"}]}";
+    std::string values = std::string("{\"value\":\"") + value + "\"}";
+    json_t tp[16], vp[8];
+    const json_t* t = json_create(types, tp, 16);
+    const json_t* v = json_create(&values[0], vp, 8);
+    ASSERT_NE(nullptr, t);
+    ASSERT_NE(nullptr, v);
     SHA3_CTX actual, expected;
     sha3_256_Init(&actual);
     sha3_256_Init(&expected);
     uint8_t bytes[32];
-    memset(bytes, strchr(value, '1') ? 0xff : 0, sizeof(bytes));
+    memset(bytes, value[0] == '-' ? 0xff : 0, sizeof(bytes));
     sha3_Update(&expected, bytes, sizeof(bytes));
-    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
     ASSERT_EQ(SUCCESS, parseVals(t, json_getProperty(t, "Review"),
                                  json_getChild(v), &actual));
     EXPECT_EQ(0, kkconfirm_drain());
     uint8_t a[32], e[32];
     keccak_Final(&actual, a);
     keccak_Final(&expected, e);
-    EXPECT_EQ(0, memcmp(a, e, sizeof(a))) << text;
+    EXPECT_EQ(0, memcmp(a, e, sizeof(a))) << value;
   }
 }
 
 
+// Out-of-range values are refused after the field and value screens (tip
+// order, see eip712.cpp). A type name that is not a canonical intN/uintN is
+// refused before any screen.
 TEST(Eip712, IntegerWidthAndValueMustMatchBeforeHashing) {
-  struct Case { const char* type; const char* value; };
+  struct Case { const char* type; const char* value; int screens; };
   const Case cases[] = {
-      {"int8", "128"}, {"int8", "-129"}, {"uint8", "256"},
-      {"uint8", "-1"}, {"int16", "32768"}, {"int16", "-32769"},
-      {"uint16", "65536"}, {"int56", "36028797018963968"},
-      {"uint56", "72057594037927936"}, {"int", "1"}, {"uint", "1"},
-      {"int0", "1"}, {"int7", "1"}, {"int264", "1"}, {"int08", "1"},
-      {"int256junk", "1"}, {"uint99999999999999999999", "1"},
+      {"int8", "128", 2}, {"int8", "-129", 2}, {"uint8", "256", 2},
+      {"uint8", "-1", 2}, {"int16", "32768", 2}, {"int16", "-32769", 2},
+      {"uint16", "65536", 2}, {"int56", "36028797018963968", 2},
+      {"uint56", "72057594037927936", 2}, {"int", "1", 0}, {"uint", "1", 0},
+      {"int0", "1", 0}, {"int7", "1", 0}, {"int264", "1", 0},
+      {"int08", "1", 0}, {"int256junk", "1", 0},
+      {"uint99999999999999999999", "1", 0},
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(std::string(c.type) + ":" + c.value);
@@ -130,11 +163,12 @@ TEST(Eip712, IntegerWidthAndValueMustMatchBeforeHashing) {
     SHA3_CTX ctx;
     sha3_256_Init(&ctx);
     const SHA3_CTX original = ctx;
-    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    ASSERT_TRUE(c.screens ? kkconfirm_preload(c.screens, 0)
+                          : kkconfirm_preload(0, 1));
     EXPECT_EQ(GENERAL_ERROR, parseVals(t, json_getProperty(t, "Review"),
                                        json_getChild(v), &ctx));
     EXPECT_EQ(0, memcmp(&ctx, &original, sizeof(ctx)));
-    EXPECT_EQ(2, kkconfirm_drain());
+    EXPECT_EQ(c.screens ? 0 : 2, kkconfirm_drain());
   }
 }
 
@@ -165,7 +199,7 @@ TEST(Eip712, NarrowIntegerBoundaryMatchesIndependentEncoding) {
         if (!is_unsigned) bytes[first] = 0x7f;
       }
       sha3_Update(&expected, bytes, sizeof(bytes));
-      ASSERT_TRUE(kkconfirm_preload(1, 0));
+      ASSERT_TRUE(kkconfirm_preload(2, 0));
       ASSERT_EQ(SUCCESS, parseVals(t, json_getProperty(t, "Review"),
                                    json_getChild(v), &actual));
       EXPECT_EQ(0, kkconfirm_drain());

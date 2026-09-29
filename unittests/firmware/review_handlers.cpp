@@ -59,6 +59,10 @@ TEST_F(ReviewHandlers, NewerWalletRefusesEveryMutationBeforeConsent) {
   memcpy(flash.data() + 0x4000, record, sizeof(record));
   storage_init();
   ASSERT_TRUE(storage_isFirmwareTooOld());
+  // A normal-band wallet newer than this build is refused with
+  // UnexpectedMessage (CHECK_STORAGE_WRITABLE, pinned by
+  // Fsm IncompatibleStorage.*); Failure_Other is reserved for bitcoin-only
+  // locks (CHECK_NOT_BTC_ONLY_LOCKED).
   const auto unchanged = flash;
   ChangePin pin = {};
   ChangeWipeCode wipe_code = {};
@@ -70,7 +74,8 @@ TEST_F(ReviewHandlers, NewerWalletRefusesEveryMutationBeforeConsent) {
 #define REFUSED(call)                                               \
   fsm_test_clearLastFailure();                                      \
   call;                                                             \
-  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode()); \
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage,                  \
+            fsm_test_lastFailureCode());                            \
   EXPECT_EQ(unchanged, flash);                                      \
   EXPECT_FALSE(setup_isArmed())
   ASSERT_TRUE(kkconfirm_preload(0, 1));
@@ -241,6 +246,9 @@ TEST_F(ReviewHandlers, ReopeningFlashClearsRuntimeSigner) {
 }
 
 TEST_F(ReviewHandlers, MetadataKeyIdRefusesNarrowingBeforeAck) {
+  // The handler's AdvancedMode gate (added after 00b's version of this test)
+  // answers ActionCancelled first; enable it so the key_id check is reached.
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
   for (uint32_t key_id :
        {static_cast<uint32_t>(METADATA_MAX_KEYS), 256u, 0xffffffffu}) {
     EthereumTxMetadata msg = {};

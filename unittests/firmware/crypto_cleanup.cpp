@@ -21,6 +21,7 @@ extern "C" {
 
 #include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
+bool kkconfirm_preload_no_sentinel(int nYes, int nNo);
 bool kkconfirm_sendCancel(void);
 int kkconfirm_drain(void);
 bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
@@ -387,7 +388,9 @@ TEST_F(CryptoCleanup, IdentityPinCancellationWipesFingerprintBeforeReturning) {
   session_clear(/*clear_pin=*/true);
   for (bool wire : {false, true}) {
     auto request = identity("ssh", "ed25519", 47);
-    ASSERT_TRUE(kkconfirm_preload(3, 0));
+    // The PIN wait rejects a foreign acknowledgement (Block 02), so the usual
+    // trailing ButtonAck sentinel must not reach it; the Cancel ends the flow.
+    ASSERT_TRUE(kkconfirm_preload_no_sentinel(3, 0));
     ASSERT_TRUE(kkconfirm_sendCancel());
     sign(&request, wire);
     ExpectWorkspaceWipes(1, 0, 0, 0);
