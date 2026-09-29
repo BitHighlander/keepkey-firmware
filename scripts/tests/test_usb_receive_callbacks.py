@@ -23,7 +23,7 @@ def callback(source, name):
 
 class ReceiveCallbacks(unittest.TestCase):
     def test_main_and_debug_clear_complete_short_empty_and_error_reads(self):
-        source = (ROOT / 'lib/board/usb.c').read_text()
+        source = (ROOT / 'lib/board/usb_rx_callbacks.h').read_text()
         bodies = '\n'.join(callback(source, n) for n in
                            ('main_rx_callback', 'debug_rx_callback'))
         harness = r'''
@@ -37,6 +37,8 @@ typedef int usbd_device;
 #define ENDPOINT_ADDRESS_DEBUG_OUT 2
 #define debugLog(a,b,c)
 static int read_result, calls, expected_endpoint;
+static int rejects;
+static void msg_reject_short_tiny_packet(void) { rejects++; }
 static uint8_t *storage;
 static void memzero(void *p, size_t n) { memset(p, 0, n); }
 static int usbd_ep_read_packet(usbd_device *d, int ep, void *p, int n) {
@@ -61,10 +63,11 @@ int main(void) {
   for (int endpoint = 1; endpoint <= 2; endpoint++) {
     expected_endpoint = endpoint;
     for (size_t i = 0; i < sizeof(results)/sizeof(results[0]); i++) {
-      read_result = results[i]; calls = 0; storage = NULL;
+      read_result = results[i]; calls = 0; rejects = 0; storage = NULL;
       if (endpoint == 1) main_rx_callback(NULL, endpoint);
       else debug_rx_callback(NULL, endpoint);
       assert(calls == (read_result == 64));
+      assert(rejects == (read_result > 0 && read_result != 64));
       assert(storage);
       for (int j = 0; j < 64; j++) assert(storage[j] == 0);
     }
