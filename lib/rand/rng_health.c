@@ -336,6 +336,11 @@ bool rng_health_observe(const uint8_t* buf, size_t len) {
 }
 
 #ifdef EMULATOR
+void rng_health_reset_for_test(void) {
+  rng_verdict = RNG_UNTESTED;
+  memzero(&rng_continuous, sizeof(rng_continuous));
+}
+
 void rng_health_force_verdict(bool passed) {
   if (passed) {
     rng_verdict = RNG_PASSED;

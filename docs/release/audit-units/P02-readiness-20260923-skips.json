@@ -1,0 +1,3033 @@
+{
+  "full": {
+    "total": 837,
+    "passed": 580,
+    "skipped": [
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_confirm_flow.TestDylibConfirmFlow.test_features_round_trip",
+        "reason": "dylib confirm-flow regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_confirm_flow.TestDylibConfirmFlow.test_load_device_with_auto_confirm",
+        "reason": "dylib confirm-flow regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_features_dont_corrupt_capture",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_repeated_reads_no_truncation",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_round_trip_fits_through_ring",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_stable_across_idle_reads",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_erc7730_compiler.test_compiles_official_uniswap_tuple_fixture_through_firmware",
+        "reason": "official ERC-7730 registry not configured"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_erc7730_compiler.test_official_registry_all_calldata_formats_reach_firmware",
+        "reason": "official registry and firmware validator are required"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_erc7730_compiler.test_compiles_official_uniswap_eip712_fixture_through_firmware",
+        "reason": "official ERC-7730 registry not configured"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx.test_retired_handlers_stay_unregistered",
+        "reason": "Firmware version 7.16.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_12word_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_18word_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_24word_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_deterministic_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_different_indices_different_flows",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_invalid_word_count",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_altcoin_coin_names_are_refused",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_altcoin_message_handlers_are_absent",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_bitcoin_signing_survives_the_strip",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_coin_table_is_bitcoin_and_testnet_only",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_firmware_variant_names_the_bitcoin_only_product",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_omni_op_return_is_still_decoded",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_op_return_does_not_poison_the_duplicate_detector",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_op_return_refusal_cancels_the_signature",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_op_return_thorchain_memo_is_confirmed_raw",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_repeated_transaction_is_allowed_without_op_return",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bitcoin_only_variant.TestBitcoinOnlyVariant.test_zcash_privacy_is_compiled_out",
+        "reason": "Bitcoin-only firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_advanced_mode_is_not_required_for_structured_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_array_of_structs_walks",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_fixed_array_length_must_match_the_declared_size",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_multidimensional_arrays_walk_outermost_first_on_device",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_permit2_batch_walks_realistic_nested_array",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_spec_example_matches_the_published_hashes",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_advanced_mode_gate",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_binding_happy_path_signs_and_recovers",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_cancel_clears_metadata_not_reused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_aave_v3_pool_borrow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_aave_v3_pool_repay",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_aave_v3_pool_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_across_spokepool_depositv3",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_batch_all_payloads",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_governor_bravo_castvote",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_iii_comet_usdc_supply",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_v3_comet_supply",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_v3_comet_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_curve_3pool_exchange",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_dai_permit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eigenlayer_strategymanager_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eigenlayer_strategymanager_deposit_steth",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eip2612_usdc_permit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eip7702_setcode_authorization",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_ens_public_resolver_setaddr",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc1155_opensea_storefront_set_approval_for_all",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc1155_safe_batch_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc1155_safe_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_approve",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_approve_unlimited",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_transfer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_transferfrom",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_usdc_decrease_allowance",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_usdc_increase_allowance",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc4337_entrypoint_v0_7_handleops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc721_bayc_set_approval_for_all",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc721_safe_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_etherfi_liquiditypool_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_hop_protocol_l1_bridge_sendtol2",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_lido_steth_submit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_metamorpho_steakhouse_usdc_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_metamorpho_steakhouse_usdc_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_permit2_approve",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_permit2_permit_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_rocketpool_deposit_pool_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_safe_addownerwiththreshold",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_safe_exectransaction",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_spark_protocol_supply",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v2_eth_to_token",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v2_token_to_eth",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v3_exact_input",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v3_exact_output_single",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v3_multicall",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v4_universal_router_swap",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_usdt_approve",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_weth_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_weth_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_wormhole_token_bridge_transfertokens",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_yearn_v2_yusdc_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_yearn_v3_aave_usdc_lender_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_empty_key_slot_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_empty_payload_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_extra_trailing_bytes_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_required_before_verify",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_bad_alias_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_cancel_refuses",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_invalid_pubkey_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_key_id_out_of_range_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_no_metadata_then_sign_unchanged",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_persistent_signer_rejected_without_session_mutation",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_replay_rejected_when_digest_differs",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_tampered_contract_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_tampered_method_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_truncated_payload_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_valid_metadata_returns_verified",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_wrong_key_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_wrong_version_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_zero_signature_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestClearSignV2Device.test_v2_calldata_length_mismatch_falls_back_to_raw_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestClearSignV2Device.test_v2_transfer_decodes_signs_and_recovers",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestClearSignV2Device.test_v2_unsupported_arg_format_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_failed_signature_falls_back_to_the_unverified_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_no_runtime_slot_can_reach_the_suppression_branch",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_no_slot_verifies_without_a_runtime_load",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_successful_decode_still_runs_the_raw_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_v2_schema_decode_still_runs_the_raw_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20.test_sign_uni_add_liquidity_ETH",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20.test_sign_uni_approve_liquidity_ETH",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20.test_sign_uni_remove_liquidity_ETH",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_contract_handler_streamed_calldata_signs_full_data",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_eip1559_no_priority_fee_signs",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_eip1559_requires_chain_id",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_legacy_with_max_fee_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_streamed_calldata_tail_changes_user_commitment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_streamed_handler_calldata_is_not_clear_signed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_type2_without_max_fee_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_blind_sign_allowed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_eip_1559_multibyte_chain_id",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_native_pseudo_address_is_unknown_off_mainnet",
+        "reason": "Staged release tree does not yet provide capability: evm-unknown-token-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_omitted_chain_id_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_unrenderable_amounts_are_rejected",
+        "reason": "Staged release tree does not yet provide capability: evm-max-amount-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_native_pseudo_address_transfer_is_unknown_off_mainnet",
+        "reason": "Staged release tree does not yet provide capability: evm-unknown-token-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_unpinned_chain_blind_sign_blocked",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_with_expiry_avalanche_router",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getentropy.TestMsgGetentropy.test_entropy",
+        "reason": "Staged release tree does not yet provide capability: entropy-audit-budget"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_get_public_key_active",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_get_public_keys_all_roles",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_account_create",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_account_ops_reject_non_owner_roles",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_account_update",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_all_roles",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_long_printable_ok",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_max_length_ok",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_nonprintable_bytes",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_posting",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_rejects_bad_paths",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_rejects_chain_id_prefix",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_rejects_oversize",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_account_update2_is_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_active_tier_value_ops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_asset_symbol_and_precision_pinned",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_comment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_comment_options_beneficiary_rules",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_comment_options_binds_to_its_comment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_custom_json_active",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_custom_json_posting",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_downvote_and_default_chain_id",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_limit_order_cancel",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_limit_order_create",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_posting_tier_ops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_rejects_excluded_and_unknown_ops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_rejects_malformed_structure",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_rejects_oversize",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_role_fences",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_truncated_bodies_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_vote",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_zero_amount_semantics",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_max_memo_ok",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_foreign_path",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_long_memo",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_non_active_roles",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_wrong_network",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_ack_rejects_send_and_deposit_together",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_amount_is_committed_to_the_signature",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_amount_beyond_float_precision",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_denom_is_committed_to_the_signature",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_rejects_noncanonical_wire_amounts",
+        "reason": "Staged release tree does not yet provide capability: osmosis-wire-guards"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_subunit_amount",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_sign_tx",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_signing_is_deterministic",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_swap_max_fields_are_fully_paged",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_validation.TestOsmosisValidation.test_present_but_empty_amount_is_rejected_as_invalid",
+        "reason": "Staged release tree does not yet provide capability: osmosis-wire-guards"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_recoverydevice_cipher.TestDeviceRecovery.test_invalid_bip39_word_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx.test_sign_with_thorchain_memo",
+        "reason": "Staged release tree does not yet provide capability: ripple-memo-policy"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx.test_unsupported_memo_is_rejected",
+        "reason": "Staged release tree does not yet provide capability: ripple-memo-policy"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_advanced_mode_is_off_after_power_cycle",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_advanced_mode_survives_initialize_but_not_clear_session",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_disabling_advanced_mode_revokes_the_signer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_signer_dropped_by_clear_session",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_signer_dropped_by_initialize",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_signer_dropped_by_power_cycle",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_attestation_does_not_replay_onto_another_transaction",
+        "reason": "Staged release tree does not yet provide capability: solana-lut-attestation"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_attested_accounts_are_shown_and_blind_sign_still_follows",
+        "reason": "Staged release tree does not yet provide capability: solana-lut-attestation"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_bad_signature_degrades_to_todays_flow",
+        "reason": "Staged release tree does not yet provide capability: solana-lut-attestation"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_no_signer_loaded_means_no_extra_screens",
+        "reason": "Staged release tree does not yet provide capability: solana-lut-attestation"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_duplicate_compute_budget_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_edited_schema_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_proof_without_schema_signature_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_review_shows_priority_fee",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_schema_signature_one_byte_changed_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_short_schema_signature_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_ignores_blind_sign_policy",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_priority_fee_names_fee_payer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_reviews_every_screen",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_untrusted_definition_shows_base_units",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_v1_schema_reviews_static_transfer_companion",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_wrong_scope_certificate_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_schema_refuses_transfer_companion",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_token_amount_trust_comes_from_the_schema_signer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestClearsignAttestorTokenAmount.test_token_amount_mint_account_is_attested_before_signing",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_relay_certified_v0_no_lookup_proof_reaches_signer_check",
+        "reason": "Firmware version 7.16.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_create_account_requires_advanced_mode",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_plain_text_message_without_advanced_mode",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_set_authority_requires_advanced_mode",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer_checked",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer_checked_attested_symbol",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer_with_metadata",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_versioned_v0_opaque",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_versioned_v0_static_verified",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_x402_zero_lut_usdc_payment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_ack_rejects_send_and_deposit_together",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_transfer_structured",
+        "reason": "Structured TRON signing deferred to 7.15+; firmware only supports raw_data blind-sign"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_trc20_transfer",
+        "reason": "Structured TRON TRC-20 signing deferred to 7.15+; firmware only supports raw_data blind-sign"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_display_address.TestMsgZcashDisplayAddress.test_zcash_display_address_bad_path_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_display_address.TestMsgZcashDisplayAddress.test_zcash_display_address_basic",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_explicit_account_cannot_alias_across_hardened_bit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_export_requires_consent_even_when_display_is_false",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_device_fingerprint_matches_python_helper",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_display_address_helper_accepts_matching_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_display_address_helper_backward_compat",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_display_address_helper_rejects_wrong_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_fingerprint_stable_across_accounts",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_get_orchard_fvk_returns_seed_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_sign_pczt_helper_rejects_wrong_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_ironwood_note_is_accepted",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_ironwood_rejects_a_non_empty_orchard_bundle",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_note_commitment_binds_the_recipient",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_pool_selection_is_honoured",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_shielded_output_review_is_two_screens",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_hybrid_multi_input_signatures_verify",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_hybrid_signature_verifies",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_orchard_before_transparent_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_bad_change",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_hardened_index",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_out_of_order_transparent_index",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_short_path",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_too_many_transparent_inputs",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_unhardened_account",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_wrong_account",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_wrong_coin_type",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_wrong_purpose",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_wrong_key_does_not_verify",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_multisig.TestMultisig.test_oversized_signature_is_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_protect_call.TestProtectCall.test_exponential_backoff_with_reboot",
+        "reason": "Due to a known defect in the emulator, pin timeouts don't work."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_sign_typed_data.TestMsgEthereumSignTypedDataHash.test_ethereum_sign_typed_data_hash",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_sign_typed_data.TestMsgEthereumSignTypedDataHash.test_ethereum_sign_x402_eip3009",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_storage_version_gate.TestStorageVersionGateSource.test_burned_versions_are_dispatched_to_the_wipe_path",
+        "reason": "no version is declared BURNED in storage_versions.inc on this line -- STORAGE_VERSION is 17 and the whole ladder has readers. Nothing to measure here; the upgrade path is carried by test_every_shipped_version_has_a_reader."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_verify_typed_data.TestMsgE712Verify.test_structured_eip712_is_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_verify_typed_data.TestMsgE712Verify.test_verify",
+        "reason": "structured EIP-712 is disabled in 7.14.2; see test_structured_eip712_is_refused. Re-enable together with a canonical display implementation."
+      }
+    ],
+    "reasons": {
+      "dylib confirm-flow regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=...": 2,
+      "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=...": 4,
+      "official ERC-7730 registry not configured": 2,
+      "official registry and firmware validator are required": 1,
+      "Firmware version 7.16.0 or higher is required to run this test": 2,
+      "Firmware version 7.15.0 or higher is required to run this test": 210,
+      "Bitcoin-only firmware required to run this test": 11,
+      "Staged release tree does not yet provide capability: evm-unknown-token-review": 2,
+      "Staged release tree does not yet provide capability: evm-max-amount-review": 1,
+      "Staged release tree does not yet provide capability: entropy-audit-budget": 1,
+      "Staged release tree does not yet provide capability: hive-release-review": 8,
+      "Staged release tree does not yet provide capability: osmosis-wire-guards": 2,
+      "Staged release tree does not yet provide capability: ripple-memo-policy": 2,
+      "Staged release tree does not yet provide capability: solana-lut-attestation": 4,
+      "Structured TRON signing deferred to 7.15+; firmware only supports raw_data blind-sign": 1,
+      "Structured TRON TRC-20 signing deferred to 7.15+; firmware only supports raw_data blind-sign": 1,
+      "Due to a known defect in the emulator, pin timeouts don't work.": 1,
+      "no version is declared BURNED in storage_versions.inc on this line -- STORAGE_VERSION is 17 and the whole ladder has readers. Nothing to measure here; the upgrade path is carried by test_every_shipped_version_has_a_reader.": 1,
+      "structured EIP-712 is disabled in 7.14.2; see test_structured_eip712_is_refused. Re-enable together with a canonical display implementation.": 1
+    }
+  },
+  "btc": {
+    "total": 837,
+    "passed": 351,
+    "skipped": [
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_confirm_flow.TestDylibConfirmFlow.test_features_round_trip",
+        "reason": "dylib confirm-flow regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_confirm_flow.TestDylibConfirmFlow.test_load_device_with_auto_confirm",
+        "reason": "dylib confirm-flow regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_features_dont_corrupt_capture",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_repeated_reads_no_truncation",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_round_trip_fits_through_ring",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_dylib_screenshot.TestDylibScreenshot.test_layout_stable_across_idle_reads",
+        "reason": "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=..."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_erc7730_compiler.test_compiles_official_uniswap_tuple_fixture_through_firmware",
+        "reason": "official ERC-7730 registry not configured"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_erc7730_compiler.test_official_registry_all_calldata_formats_reach_firmware",
+        "reason": "official registry and firmware validator are required"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_erc7730_compiler.test_compiles_official_uniswap_eip712_fixture_through_firmware",
+        "reason": "official ERC-7730 registry not configured"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_2thorchain_signtx.TestMsg2ThorChainSignTx.test_thorchain_sign_tx_deposit",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx.test_retired_handlers_stay_unregistered",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx.test_transfer",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_binance_sign_tx.TestMsgBinanceSignTx.test_transfer_bep2",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_12word_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_18word_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_24word_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_deterministic_flow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_different_indices_different_flows",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_bip85.TestMsgBip85.test_bip85_invalid_word_count",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure.test_binary_op_return_tail_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure.test_non_ascii_eos_memo_tail_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure.test_unknown_omni_property_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_confirm_data_disclosure.TestConfirmDataDisclosure.test_unknown_omni_type_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress.test_cosmos_get_address_sep",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress.test_nonstandard",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress.test_onchain",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_getaddress.TestMsgCosmosGetAddress.test_standard",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx.test_cosmos_sign_tx",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx.test_cosmos_sign_tx_memo",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx.test_onchain1",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_cosmos_signtx.TestMsgCosmosSignTx.test_onchain2",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_advanced_mode_is_not_required_for_structured_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_array_of_structs_walks",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_fixed_array_length_must_match_the_declared_size",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_multidimensional_arrays_walk_outermost_first_on_device",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_permit2_batch_walks_realistic_nested_array",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eip712_streaming.TestMsgEip712Streaming.test_spec_example_matches_the_published_hashes",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_getpublickey.TestMsgEosGetPublicKey.test",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_getpublickey.TestMsgEosGetPublicKey.test_trezor",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_action_deficit",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_action_surplus",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_buyram",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_buyrambytes",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_delegatebw",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_deleteauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_buyram",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_buyrambytes",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_delegate",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_deleteauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_linkauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_newaccount",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_refund",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_sellram",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_setcontract",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_transfer_token",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_undelegate",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_unknown",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_unlinkauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_updateauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_vote",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_eos_signtx_vote_proxy",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_linkauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_name_to_number",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_newaccount",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_refund",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_sellram",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_transfer",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_undelegatebw",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_unknown_advanced",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_unlinkauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_updateauth",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_voteproducer",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_eos_signtx.TestMsgEosSignTx.test_wrong_account",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_cfunc.TestMsgEthereumCfunc.test_sign_execTx",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_advanced_mode_gate",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_binding_happy_path_signs_and_recovers",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_cancel_clears_metadata_not_reused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_aave_v3_pool_borrow",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_aave_v3_pool_repay",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_aave_v3_pool_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_across_spokepool_depositv3",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_batch_all_payloads",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_governor_bravo_castvote",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_iii_comet_usdc_supply",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_v3_comet_supply",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_compound_v3_comet_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_curve_3pool_exchange",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_dai_permit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eigenlayer_strategymanager_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eigenlayer_strategymanager_deposit_steth",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eip2612_usdc_permit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_eip7702_setcode_authorization",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_ens_public_resolver_setaddr",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc1155_opensea_storefront_set_approval_for_all",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc1155_safe_batch_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc1155_safe_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_approve",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_approve_unlimited",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_transfer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_transferfrom",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_usdc_decrease_allowance",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc20_usdc_increase_allowance",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc4337_entrypoint_v0_7_handleops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc721_bayc_set_approval_for_all",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_erc721_safe_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_etherfi_liquiditypool_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_hop_protocol_l1_bridge_sendtol2",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_lido_steth_submit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_metamorpho_steakhouse_usdc_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_metamorpho_steakhouse_usdc_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_permit2_approve",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_permit2_permit_transfer_from",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_rocketpool_deposit_pool_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_safe_addownerwiththreshold",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_safe_exectransaction",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_spark_protocol_supply",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v2_eth_to_token",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v2_token_to_eth",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v3_exact_input",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v3_exact_output_single",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v3_multicall",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_uniswap_v4_universal_router_swap",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_usdt_approve",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_weth_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_weth_withdraw",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_wormhole_token_bridge_transfertokens",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_yearn_v2_yusdc_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_clearsign_yearn_v3_aave_usdc_lender_deposit",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_empty_key_slot_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_empty_payload_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_extra_trailing_bytes_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_required_before_verify",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_bad_alias_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_cancel_refuses",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_invalid_pubkey_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_load_signer_key_id_out_of_range_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_no_metadata_then_sign_unchanged",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_persistent_signer_rejected_without_session_mutation",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_replay_rejected_when_digest_differs",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_tampered_contract_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_tampered_method_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_truncated_payload_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_valid_metadata_returns_verified",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_wrong_key_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_wrong_version_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestEthereumClearSigning.test_zero_signature_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestClearSignV2Device.test_v2_calldata_length_mismatch_falls_back_to_raw_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestClearSignV2Device.test_v2_transfer_decodes_signs_and_recovers",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clear_signing.TestClearSignV2Device.test_v2_unsupported_arg_format_returns_malformed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_failed_signature_falls_back_to_the_unverified_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_no_runtime_slot_can_reach_the_suppression_branch",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_no_slot_verifies_without_a_runtime_load",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_successful_decode_still_runs_the_raw_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_clearsign_additive.TestClearSignAdditiveInvariant.test_v2_schema_decode_still_runs_the_raw_review",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_data_disclosure.TestEthereumDataDisclosure.test_initial_chunk_tail_changes_data_hash_screen",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_data_disclosure.TestEthereumDataDisclosure.test_streamed_tail_changes_data_hash_screen",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20.test__sign_transformERC20",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20.test_sign_0x_swap_ERC20_to_ETH",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20.test_sign_0x_swap_ETH_to_ERC20",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_0x_signtx.TestMsgEthereum0xtxERC20.test_sign_longdata_swap",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_approve.TestMsgEthereumtxERC20_approve.test_approve_cvc_0",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_approve.TestMsgEthereumtxERC20_approve.test_approve_cvc_100",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_approve.TestMsgEthereumtxERC20_approve.test_approve_cvc_all",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20.test_sign_uni_add_liquidity_ETH",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20.test_sign_uni_approve_liquidity_ETH",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_erc20_uniswap_liquidity.TestMsgEthereumUniswaptxERC20.test_sign_uni_remove_liquidity_ETH",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_getaddress.TestMsgEthereumGetaddress.test_ethereum_getaddress",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_getaddress.TestMsgEthereumGetaddress.test_ethereum_show_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO.test_close",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO.test_deposit",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO.test_free",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_makerdao.TestMsgEthereumtxMakerDAO.test_generate",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_message.TestMsgEthereumMessage.test_ethereum_sign_bytes",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_message.TestMsgEthereumMessage.test_ethereum_sign_message",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_message.TestMsgEthereumMessage.test_ethereum_sign_message_from_metamask",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_message.TestMsgEthereumMessage.test_ethereum_sign_message_from_nativedata",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_message.TestMsgEthereumMessage.test_ethereum_verify_bytes",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_message.TestMsgEthereumMessage.test_ethereum_verify_message",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_sablier.TestMsgEthereumSablier.test_sign_salarywithdrawal",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_contract_handler_streamed_calldata_signs_full_data",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_eip1559_no_priority_fee_signs",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_eip1559_requires_chain_id",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_legacy_with_max_fee_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_streamed_calldata_tail_changes_user_commitment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_streamed_handler_calldata_is_not_clear_signed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signing_guards.TestMsgEthereumSigningGuards.test_type2_without_max_fee_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_blind_sign_allowed",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_blind_sign_blocked",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_eip_1559",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_eip_1559_multibyte_chain_id",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_erc20_high_chain_id_does_not_alias_mainnet",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_native_pseudo_address_is_unknown_off_mainnet",
+        "reason": "Staged release tree does not yet provide capability: evm-unknown-token-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_sanity_checks",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_data",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_data1_eip_1559",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_data_eip155",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_explicit_zero_chain_id_rejected",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_knownerc20_eip_1559",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_message",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_newcontract",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_nodata",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_nodata_eip155",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_nodata_eip_1559",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_signtx_omitted_chain_id_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx.TestMsgEthereumSigntx.test_ethereum_unrenderable_amounts_are_rejected",
+        "reason": "Staged release tree does not yet provide capability: evm-max-amount-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_chunked_data_eip1559.TestMsgEthereumSigntxChunkedDataEip1559.test_eip1559_chunked_data_signature_recovers_to_device_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_erc20_transfer_high_chain_id_does_not_alias_mainnet",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_ethereum_tx_xfer_acc1",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_ethereum_tx_xfer_acc2",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_ethereum_xfer_account_path_error_0",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_ethereum_xfer_account_path_error_1",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_ethereum_xfer_account_path_error_2",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_ethereum_xfer_account_path_error_3",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_native_pseudo_address_transfer_is_unknown_off_mainnet",
+        "reason": "Staged release tree does not yet provide capability: evm-unknown-token-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_signtx_xfer.TestMsgEthereumSigntx.test_transfer_review_uses_signing_chain_asset",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_legacy_selector",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_unpinned_chain_blind_sign_blocked",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_with_expiry_avalanche_router",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_with_expiry_non_thor_address_blind_sign_blocked",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ethereum_thorchain_deposit.TestMsgEthereumThorchainDeposit.test_deposit_with_expiry_selector",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress.TestMsgGetaddress.test_grs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress.TestMsgGetaddress.test_ltc",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress.TestMsgGetaddress.test_ltc_m_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress.TestMsgGetaddress.test_tgrs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress_segwit.TestMsgGetaddressSegwit.test_grs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress_segwit.TestMsgGetaddressSegwit.test_tgrs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getaddress_segwit_native.TestMsgGetaddressSegwitNative.test_show_segwit",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_getentropy.TestMsgGetentropy.test_entropy",
+        "reason": "Staged release tree does not yet provide capability: entropy-audit-budget"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_get_public_key_active",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_get_public_keys_all_roles",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_account_create",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_account_ops_reject_non_owner_roles",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_account_update",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_all_roles",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_long_printable_ok",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_max_length_ok",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_nonprintable_bytes",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_posting",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_rejects_bad_paths",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_rejects_chain_id_prefix",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_message_rejects_oversize",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_account_update2_is_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_active_tier_value_ops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_asset_symbol_and_precision_pinned",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_comment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_comment_options_beneficiary_rules",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_comment_options_binds_to_its_comment",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_custom_json_active",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_custom_json_posting",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_downvote_and_default_chain_id",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_limit_order_cancel",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_limit_order_create",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_posting_tier_ops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_rejects_excluded_and_unknown_ops",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_rejects_malformed_structure",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_rejects_oversize",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_role_fences",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_truncated_bodies_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_vote",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_ops_zero_amount_semantics",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_max_memo_ok",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_foreign_path",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_long_memo",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_non_active_roles",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_hive.TestMsgHive.test_hive_sign_transfer_rejects_wrong_network",
+        "reason": "Staged release tree does not yet provide capability: hive-release-review"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_getaddress.TestMsgMayaChainGetAddress.test_mayachain_get_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_ack_rejects_send_and_deposit_together",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_mayachain_remove_liquidity",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_mayachain_sign_tx",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_mayachain_sign_tx_memos",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_sign_eth_add_liquidity",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_mayachain_signtx.TestMsgMayaChainSignTx.test_sign_eth_btc_swap",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_getaddress.TestMsgNanoGetAddress.test",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_encode_balance",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_1",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_10",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_11",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_12",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_13",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_14",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_2",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_3",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_4",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_5",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_6",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_7",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_8",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_nano_signtx.TestMsgNanoSignTx.test_invalid_block_9",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_amount_is_committed_to_the_signature",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_amount_beyond_float_precision",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_denom_is_committed_to_the_signature",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_rejects_noncanonical_wire_amounts",
+        "reason": "Staged release tree does not yet provide capability: osmosis-wire-guards"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_send_subunit_amount",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_sign_tx",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_signing_is_deterministic",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_signtx.TestMsgOsmosisSignTx.test_osmosis_swap_max_fields_are_fully_paged",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_validation.TestOsmosisValidation.test_ibc_omitted_amount_and_receiver_are_rejected_before_review",
+        "reason": "OsmosisSignTx not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_validation.TestOsmosisValidation.test_present_but_empty_amount_is_rejected_as_invalid",
+        "reason": "OsmosisSignTx not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_osmosis_validation.TestOsmosisValidation.test_present_but_empty_amount_is_rejected_before_review",
+        "reason": "OsmosisSignTx not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_recoverydevice_cipher.TestDeviceRecovery.test_invalid_bip39_word_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_get_address.TestMsgRippleGetAddress.test_ripple_get_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_get_address.TestMsgRippleGetAddress.test_ripple_get_address_other",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_get_address.TestMsgRippleGetAddress.test_ripple_show_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx.test_ripple_sign_invalid_fee",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx.test_sign",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx.test_sign_with_thorchain_memo",
+        "reason": "Staged release tree does not yet provide capability: ripple-memo-policy"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ripple_sign_tx.TestMsgRippleSignTx.test_unsupported_memo_is_rejected",
+        "reason": "Staged release tree does not yet provide capability: ripple-memo-policy"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_advanced_mode_is_off_after_power_cycle",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_advanced_mode_survives_initialize_but_not_clear_session",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_disabling_advanced_mode_revokes_the_signer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_signer_dropped_by_clear_session",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_signer_dropped_by_initialize",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_session_trust_lifetime.TestSessionTrustLifetime.test_signer_dropped_by_power_cycle",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signmessage.TestMsgSignmessage.test_sign_grs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signmessage_segwit.TestMsgSignmessageSegwit.test_sign_grs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signmessage_segwit_native.TestMsgSignmessageSegwitNative.test_sign_grs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_bgold.TestMsgSigntxBitcoinGold.test_send_bitcoin_gold_nochange",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_dash.TestMsgSigntxDash.test_send_dash",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_dash.TestMsgSigntxDash.test_send_dash_dip2_input",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_ethereum_erc20.TestMsgEthereumSigntxERC20.test_approve_all",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_ethereum_erc20.TestMsgEthereumSigntxERC20.test_approve_none",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_ethereum_erc20.TestMsgEthereumSigntxERC20.test_approve_some",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_grs.TestMsgSigntxGRS.test_one_one_fee",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_segwit_grs.TestMsgSigntxSegwitGRS.test_send_p2sh",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_segwit_grs.TestMsgSigntxSegwitGRS.test_send_p2sh_change",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_segwit_native_grs.TestMsgSigntxNativeSegwitGRS.test_send_native",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_segwit_native_grs.TestMsgSigntxNativeSegwitGRS.test_send_native_change",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_zcash.TestMsgSigntx.test_shieldedIn_one_one_fee_1",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_zcash.TestMsgSigntx.test_shieldedIn_one_one_fee_2",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_zcash.TestMsgSigntx.test_transparent_one_one",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_signtx_zcash.TestMsgSigntx.test_transparent_one_one_fee_too_high",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure.test_memo_tail_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure.test_offchain_format_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure.test_offchain_message_tail_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_display_disclosure.TestSolanaDisplayDisclosure.test_raw_message_tail_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress.test_solana_deterministic",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress.test_solana_different_accounts",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress.test_solana_get_address",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_getaddress.TestMsgSolanaGetAddress.test_solana_show_address",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_all_verified_instruction_fields_change_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_close_account_destination_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_invalid_priority_fee_is_rejected_before_confirmation",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_mint_and_burn_require_opaque_mode",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_priority_fee_payer_changes_oled_review",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_set_authority_roles_require_opaque_mode",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_token_2022_associated_account_is_opaque",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_token_2022_transfer_checked_with_hook_accounts_is_opaque",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_instruction_disclosure.TestSolanaInstructionDisclosure.test_vote_validator_uses_account_not_trailing_data",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_attestation_does_not_replay_onto_another_transaction",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_attested_accounts_are_shown_and_blind_sign_still_follows",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_bad_signature_degrades_to_todays_flow",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_lut_attestation.TestSolanaLutAttestation.test_no_signer_loaded_means_no_extra_screens",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_duplicate_compute_budget_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_edited_schema_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_proof_without_schema_signature_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_review_shows_priority_fee",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_schema_signature_one_byte_changed_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_short_schema_signature_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_ignores_blind_sign_policy",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_priority_fee_names_fee_payer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_reviews_every_screen",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_untrusted_definition_shows_base_units",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_v1_schema_reviews_static_transfer_companion",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_wrong_scope_certificate_refused",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_schema_refuses_transfer_companion",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_token_amount_trust_comes_from_the_schema_signer",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_schema_v2.TestClearsignAttestorTokenAmount.test_token_amount_mint_account_is_attested_before_signing",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_relay_certified_v0_no_lookup_proof_reaches_signer_check",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_get_address",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_path_3_elements",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_path_wrong_coin_type",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_compute_budget_unit_price",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_create_account_requires_advanced_mode",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_deterministic",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_empty_rejected",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_malformed_bad_account_count",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_malformed_trailing_bytes",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_malformed_truncated",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_memo",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_message",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_message_blocked_without_advanced_mode",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_multi_instruction_2x_transfer",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_multi_instruction_transfer_and_memo",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_oversized_raw_tx",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_plain_text_message_without_advanced_mode",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_set_authority_requires_advanced_mode",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_stake_authorize_clearsigns",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_stake_deactivate",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_stake_delegate",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_stake_withdraw",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_system_transfer",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_approve",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer_checked",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer_checked_attested_symbol",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_token_transfer_with_metadata",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_versioned_v0_opaque",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_versioned_v0_static_verified",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_x402_zero_lut_usdc_payment",
+        "reason": "SolanaGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_getaddress.TestMsgThorChainGetAddress.test_thorchain_get_address",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_ack_rejects_send_and_deposit_together",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_sign_btc_add_liquidity",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_sign_btc_eth_swap",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_sign_eth_add_liquidity",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_sign_eth_btc_swap",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_thorchain_remove_liquidity",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_thorchain_signtx.TestMsgThorChainSignTx.test_thorchain_sign_tx",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_display_disclosure.TestTonDisplayDisclosure.test_raw_message_tail_changes_oled_review",
+        "reason": "TonSignMessage not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_address_format",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_deterministic",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_different_accounts",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_get_address",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_path_too_short",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_path_wrong_coin",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_getaddress.TestMsgTonGetAddress.test_ton_show_address",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_get_address",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_deterministic",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_different_accounts",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_empty_raw_tx",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_legacy_raw_tx",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_missing_fields_rejected",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_oversized_raw_tx",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_structured",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_with_empty_memo",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_with_long_memo",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_with_memo",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_workchain_default",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_ton_signtx.TestMsgTonSignTx.test_ton_sign_workchain_zero",
+        "reason": "TonGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_getaddress.TestMsgTronGetAddress.test_tron_deterministic",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_getaddress.TestMsgTronGetAddress.test_tron_different_accounts",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_getaddress.TestMsgTronGetAddress.test_tron_get_address",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_getaddress.TestMsgTronGetAddress.test_tron_path_too_short",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_getaddress.TestMsgTronGetAddress.test_tron_path_wrong_coin",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_getaddress.TestMsgTronGetAddress.test_tron_show_address",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_get_address",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_deterministic",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_different_accounts",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_empty_raw_data",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_missing_fields_rejected",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_oversized_raw_data",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_transfer_legacy_raw_data",
+        "reason": "TronGetAddress not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_transfer_structured",
+        "reason": "Structured TRON signing deferred to 7.15+; firmware only supports raw_data blind-sign"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_tron_signtx.TestMsgTronSignTx.test_tron_sign_trc20_transfer",
+        "reason": "Structured TRON TRC-20 signing deferred to 7.15+; firmware only supports raw_data blind-sign"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_verifymessage.TestMsgVerifymessage.test_message_grs",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_display_address.TestMsgZcashDisplayAddress.test_zcash_display_address_bad_path_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_display_address.TestMsgZcashDisplayAddress.test_zcash_display_address_basic",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_explicit_account_cannot_alias_across_hardened_bit",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_abandon_mnemonic",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_consistency_across_calls",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_different_accounts",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_export_requires_consent_even_when_display_is_false",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_field_ranges",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_orchard.TestZcashOrchardFVK.test_fvk_reference_vectors",
+        "reason": "ZcashGetOrchardFVK not supported by this firmware build"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_device_fingerprint_matches_python_helper",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_display_address_helper_accepts_matching_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_display_address_helper_backward_compat",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_display_address_helper_rejects_wrong_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_fingerprint_stable_across_accounts",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_get_orchard_fvk_returns_seed_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_seed_fingerprint.TestMsgZcashSeedFingerprint.test_sign_pczt_helper_rejects_wrong_fingerprint",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_ironwood_note_is_accepted",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_ironwood_rejects_a_non_empty_orchard_bundle",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_note_commitment_binds_the_recipient",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_pool_selection_is_honoured",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_sign_pczt_device.TestZcashShieldedSigningDevice.test_shielded_output_review_is_two_screens",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_hybrid_multi_input_signatures_verify",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_hybrid_signature_verifies",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_orchard_before_transparent_rejected",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_bad_change",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_hardened_index",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_out_of_order_transparent_index",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_short_path",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_too_many_transparent_inputs",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_unhardened_account",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_wrong_account",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_wrong_coin_type",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_rejects_wrong_purpose",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_msg_zcash_transparent_shielding.TestZcashTransparentShielding.test_wrong_key_does_not_verify",
+        "reason": "Zcash is not in the bitcoin-only firmware"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_multisig.TestMultisig.test_oversized_signature_is_rejected",
+        "reason": "Firmware version 7.15.0 or higher is required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_protect_call.TestProtectCall.test_exponential_backoff_with_reboot",
+        "reason": "Due to a known defect in the emulator, pin timeouts don't work."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_sign_typed_data.TestMsgEthereumSignTypedDataHash.test_ethereum_sign_typed_data_hash",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_sign_typed_data.TestMsgEthereumSignTypedDataHash.test_ethereum_sign_x402_eip3009",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_storage_version_gate.TestStorageVersionGateSource.test_burned_versions_are_dispatched_to_the_wipe_path",
+        "reason": "no version is declared BURNED in storage_versions.inc on this line -- STORAGE_VERSION is 17 and the whole ladder has readers. Nothing to measure here; the upgrade path is carried by test_every_shipped_version_has_a_reader."
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_verify_typed_data.TestMsgE712Verify.test_structured_eip712_is_refused",
+        "reason": "Full feature firmware required to run this test"
+      },
+      {
+        "test": "deps.python-keepkey.tests.test_verify_typed_data.TestMsgE712Verify.test_verify",
+        "reason": "structured EIP-712 is disabled in 7.14.2; see test_structured_eip712_is_refused. Re-enable together with a canonical display implementation."
+      }
+    ],
+    "reasons": {
+      "dylib confirm-flow regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=...": 2,
+      "dylib screenshot regression \u2014 set KK_TRANSPORT=dylib KK_DYLIB=...": 4,
+      "official ERC-7730 registry not configured": 2,
+      "official registry and firmware validator are required": 1,
+      "Full feature firmware required to run this test": 192,
+      "Firmware version 7.15.0 or higher is required to run this test": 172,
+      "Staged release tree does not yet provide capability: evm-unknown-token-review": 2,
+      "Staged release tree does not yet provide capability: evm-max-amount-review": 1,
+      "Staged release tree does not yet provide capability: entropy-audit-budget": 1,
+      "Staged release tree does not yet provide capability: hive-release-review": 8,
+      "Staged release tree does not yet provide capability: osmosis-wire-guards": 1,
+      "OsmosisSignTx not supported by this firmware build": 3,
+      "Staged release tree does not yet provide capability: ripple-memo-policy": 2,
+      "SolanaGetAddress not supported by this firmware build": 36,
+      "TonSignMessage not supported by this firmware build": 1,
+      "TonGetAddress not supported by this firmware build": 20,
+      "TronGetAddress not supported by this firmware build": 13,
+      "Structured TRON signing deferred to 7.15+; firmware only supports raw_data blind-sign": 1,
+      "Structured TRON TRC-20 signing deferred to 7.15+; firmware only supports raw_data blind-sign": 1,
+      "ZcashGetOrchardFVK not supported by this firmware build": 7,
+      "Zcash is not in the bitcoin-only firmware": 13,
+      "Due to a known defect in the emulator, pin timeouts don't work.": 1,
+      "no version is declared BURNED in storage_versions.inc on this line -- STORAGE_VERSION is 17 and the whole ladder has readers. Nothing to measure here; the upgrade path is carried by test_every_shipped_version_has_a_reader.": 1,
+      "structured EIP-712 is disabled in 7.14.2; see test_structured_eip712_is_refused. Re-enable together with a canonical display implementation.": 1
+    }
+  }
+}

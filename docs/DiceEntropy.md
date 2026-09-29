@@ -22,7 +22,8 @@ skips unknown fields silently rather than refusing them.
    for 24 (`dice_rolls_for_strength`). Rolls are stored as ASCII `'1'`-`'6'`,
    one byte each.
 4. Rolls on which any face lands more than 30% of the time are refused with a
-   `SyntaxError` before anything else is shown (`dice_rolls_look_biased`).
+   `SyntaxError` before the digest or backup flow is shown
+   (`dice_rolls_look_biased`).
 5. `dice_digest = SHA256(rolls)`. All 32 bytes are shown on the OLED as 64 hex
    characters, with the roll count, on a paged confirm screen.
 6. The seed is derived per mode (`dice_derive_only` / `dice_derive_mixed`, in
@@ -190,3 +191,13 @@ Dice cannot make the seed worse: the mix is a hash over both sources, so the
 result is at least as unpredictable as the RNG alone. They are worth the effort
 only if the RNG is what you distrust — and you are trusting the same firmware
 either way.
+
+### Debug diagnostics during dice setup
+
+The device draw, roll digest and mnemonic pages are device-only during the
+ceremony. DebugLinkState returns no fields and debug memory reads are refused
+until commit or abort; cleanup also clears the previous private canvas. After
+completion the debug build resumes privileged stored-wallet diagnostics. This
+is not a security boundary for a committed wallet on a debug build. Native
+known-draw fixtures verify the derivation and device-side logical pages; strict
+host tests verify wire privacy and completion without reading the device draw.
