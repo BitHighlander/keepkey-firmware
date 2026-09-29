@@ -1,6 +1,6 @@
 # Block 11e: verified first-boot hardware entropy
 
-Date: 2026-09-28. Auditor: Claude (Opus 5.5). Isolated checkout: `/private/tmp/kk715-11e`. Immediate target: fork `audit/715-11d-future-storage-guards-20260928` at `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea` (PR #883). Carried unit content: commit `63789e539`, the seven 11e paths unchanged from cumulative PR #877 head `5334f77c351373a900d67d908a467e5f3e08b551`. Audit repair: commit `6fb90ed71`. Final containing head and hosted CI belong in the PR body.
+Date: 2026-09-28. Auditor: Claude (Opus 5.5). Isolated checkout: `/private/tmp/kk715-11e`. Original target: fork `audit/715-11d-future-storage-guards-20260928` at `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea` (PR #883). The unit is stacked by merge on 11d, so the immediate predecessor changes as 11d is repaired; the current one is recorded in PR #884. Carried unit content: commit `63789e539`, the seven 11e paths unchanged from cumulative PR #877 head `5334f77c351373a900d67d908a467e5f3e08b551`. Audit repair: commit `6fb90ed71`. Final containing head and hosted CI belong in the PR body.
 
 ## 1. Scope and source reconciliation
 
@@ -21,7 +21,7 @@ Repair (`6fb90ed71`): on an unlocked block, read it first, keep bytes already pr
 
 ## 3. Verification
 
-Local Docker is unresponsive on this host, so the full emulator unit suites and cppcheck could not run locally. They run in the hosted CI recorded in the PR (`make xunit` emits `board.xml`). The entropy tests were compiled natively from this checkout's pinned sources with `-Wall -Werror` and linked against pinned googletest.
+Local Docker is unresponsive on this host, so the full emulator unit suites and cppcheck could not run locally. They ran in the hosted CI runs recorded in section 4 (`make xunit` emits `board.xml`). The entropy tests were compiled natively from this checkout's pinned sources with `-Wall -Werror` and linked against pinned googletest.
 
 | Local check | Result |
 | --- | --- |
@@ -32,15 +32,25 @@ Local Docker is unresponsive on this host, so the full emulator unit suites and 
 
 Evidence archive `715-11e-controls-20260928.tgz` binds the fixed and control JUnit XML/logs and the preflight log. Physical-device behavior is not claimed. The recovery path is exercised only in the host probe; hardware OTP programming faults were not injected.
 
-## 4. Hosted CI and Copilot round 1
+## 4. Hosted CI and Copilot rounds
 
-Manual run [36514449899](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36514449899) passed every required job at `226f3d0ee`. Artifacts were verified: `HardwareEntropy` 9/9 in both variants and both harnesses, and both ARM variants with 23 files. Aggregate: 1,560 passed, 84 declared skips, 0 failures.
+Each run below is a manual dispatch that passed every required job at its exact head.
+
+| Head | Run | What it qualifies | Artifact verification |
+| --- | --- | --- | --- |
+| `226f3d0ee` | [36514449899](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36514449899) | Fix plus first probe. Predates the round-1 test change | Verified: `HardwareEntropy` 9/9, both ARM variants 23 files, 1,560 pass / 84 skip / 0 fail |
+| `f8e545545` | [36516395679](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36516395679) | Round-1 test change (distinct reboot draws) on the pre-restack base | Verified: same identities, 1,560 pass / 84 skip / 0 fail |
+| `cdfca68ce` | [36517801644](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36517801644) | Same 11e content restacked on the repaired 11b/11d | Concluded success; artifacts not yet independently verified |
+
+A later merge of the round-3 11d head changes no 11e path. Its exact head and run are recorded in PR #884, because a report committed at a head cannot name that head.
 
 Copilot review 5347263366 on `226f3d0ee` required a test change, so round one fails. (1) Every boot drew identical bytes. The unfixed code then rewrote identical values on reboot, verified, and the recovery test failed only on its write count. The first control claim in this report was therefore overstated. Only the `0x19` case reproduced the halt. Reboots now draw different bytes, and the control halts. (2) The provenance claim above is narrowed to the guarded interruption scenario. (3) The adjacent inventory below was added. The firmware change is unchanged.
 
+Copilot round 2 (review 5347565582 on `cdfca68ce`) raised two evidence findings and no code finding, so it is not a failing round: the report cited an older head and an inventory base that the restack had moved. The head/run table above and the inventory base below answer them. No 11e source changed.
+
 ## 5. Adjacent inventory
 
-Inventory base: `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea`. Reproduce with `git diff --numstat BASE..FINAL_PR_HEAD`.
+Inventory base: `7a875efa6` (the 11d head this unit was last merged with). Reproduce with `git diff --numstat BASE..FINAL_PR_HEAD`.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
@@ -52,5 +62,5 @@ Inventory base: `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea`. Reproduce with `git 
 | 178 | 0 | `unittests/board/hw_entropy_probe.c` |
 | 31 | 0 | `unittests/board/hw_entropy_probe.h` |
 | - | - | `docs/release/audit-units/715-11e-controls-20260928.tgz` |
-| 56 | 0 | `docs/release/audit-units/715-11e-hardware-entropy-20260928.md` |
+| 66 | 0 | `docs/release/audit-units/715-11e-hardware-entropy-20260928.md` |
 | - | - | `docs/release/audit-units/715-11e-hardware-entropy-20260928.pdf` |
