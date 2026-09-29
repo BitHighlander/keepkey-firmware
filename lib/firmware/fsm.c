@@ -143,6 +143,24 @@ void fsm_test_clearLastFailure(void) {
 
 FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
 
+#define FSM_TEST_MAX_SCRUBS 32
+static size_t fsm_test_scrub_sizes[FSM_TEST_MAX_SCRUBS];
+static size_t fsm_test_scrub_total;
+
+void fsm_test_recordScrub(size_t size) {
+  if (fsm_test_scrub_total < FSM_TEST_MAX_SCRUBS)
+    fsm_test_scrub_sizes[fsm_test_scrub_total++] = size;
+}
+
+void fsm_test_clearScrubs(void) { fsm_test_scrub_total = 0; }
+
+size_t fsm_test_scrubCount(size_t size) {
+  size_t count = 0;
+  for (size_t i = 0; i < fsm_test_scrub_total; i++)
+    if (fsm_test_scrub_sizes[i] == size) count++;
+  return count;
+}
+
 const char* fsm_test_lastFailureMessage(void) {
   return fsm_test_failure_message;
 }
