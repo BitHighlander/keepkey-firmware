@@ -1,6 +1,6 @@
 # Block 11d: refuse writes to incompatible future storage
 
-Date: 2026-09-28. Auditor: Codex /root. Isolated checkout: `/private/tmp/kk715-11a`. Immediate target: fork `audit/715-11c-build-review-repairs-20260928` at `659580c7cf91483c066f6ad4561290cb17b7e257` (PR #882). Code commit: `08eaa257c6730dfe0310c6a5ca89d83bf436410f`. Final containing head and hosted CI belong in the PR body. Master template SHA256 at intake: `985cd8f5708e20ac34bf7442454b7ddb2271f5e9a2de048006dd75fb6f4c5556`.
+Date: 2026-09-28. Auditor: Codex /root. Isolated checkout: `/private/tmp/kk715-11a`. Original target: fork `audit/715-11c-build-review-repairs-20260928` at `659580c7cf91483c066f6ad4561290cb17b7e257` (PR #882). Current immediate predecessor after the 11b/11c restack: `d31437639966707468c43b074f54220288842dba`. Code commit: `08eaa257c6730dfe0310c6a5ca89d83bf436410f`. Final containing head and hosted CI belong in the PR body. Master template SHA256 at intake: `985cd8f5708e20ac34bf7442454b7ddb2271f5e9a2de048006dd75fb6f4c5556`.
 
 ## 1. Scope and source reconciliation
 
@@ -21,9 +21,9 @@ Local full and Bitcoin-only emulator suites passed. The full firmware suite ran 
 
 Archive SHA256: `07c455d675dc8115367bd4241893aa4a166a65737b32da0d60dba57de274f292`. Its manifest binds eight raw test XML/log members and hashes. These local results qualify the initial guard implementation. Review-driven changes to Bitcoin-only status and recovery messaging were validated on the final hosted candidate below. Physical-device behavior is not claimed.
 
-### Final hosted candidate qualification
+### Hosted qualification history
 
-Final source: `b5d9e8b4b112e6b62b3c62d83a41a22cc12baf6d`; immediate predecessor: `659580c7cf91483c066f6ad4561290cb17b7e257`. Manual workflow-dispatch run [36509637059](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36509637059) completed successfully at this exact source. Required format, secret scan, submodule and release evidence gates; static analysis; full and Bitcoin-only emulator builds, native tests, Python integrations, dylib tests, ARM builds and report generation all passed. Emulator publishing was intentionally skipped.
+Round-1 source: `b5d9e8b4b112e6b62b3c62d83a41a22cc12baf6d`; immediate predecessor: `659580c7cf91483c066f6ad4561290cb17b7e257`. Manual workflow-dispatch run [36509637059](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36509637059) completed successfully at this exact source. Required format, secret scan, submodule and release evidence gates; static analysis; full and Bitcoin-only emulator builds, native tests, Python integrations, dylib tests, ARM builds and report generation all passed. Emulator publishing was intentionally skipped.
 
 The hosted report binds Python source `aae89d378d889b3872696469fe363cf570e5ac4c`, run metadata, PDF SHA256 `ffe6f5ad7d53fcdd0d16a4d67fab61d96526718f4bb82ec317c57c04d63daa73`, and merged JUnit SHA256 `be2168899e1965871f328e4cceb74bfa0e75739d6a0092cc6c55f8863952343d`. Aggregate: 1,551 passed, 84 declared skips, zero failures or errors. Full and Bitcoin-only native firmware suites passed 699 and 167 tests, including all 30 and 24 incompatible-storage cases. Each ARM variant has 23 files; artifact manifests, firmware hashes and Python pin match the candidate.
 
@@ -31,19 +31,24 @@ Copilot round 1 found (1) misleading destructive recovery guidance for a newer B
 
 Copilot round 2 (review 5347145662 on `0c08ce9ef`) required code changes. (1) Its overview found the three compatibility locks cleared only by `storage_wipe()`, so a reinitialized emulator loading a valid image after an incompatible one kept refusing writes; `storage_init()` now clears them before classifying. Devices were unaffected because the statics reset at boot. (2) Refusal tests asserted only the failure type; they now assert the exact guidance per image and build, and that a too-new Bitcoin-only wallet is never told to wipe. (3) The lock documentation names both classification paths. Repair commit `1503b35d5`, with new test `ReinitializingOnFreshFlashClearsIncompatibleLocks`. Its first hosted run, [36514935877](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36514935877), showed the new message assertions were wrong for the two continuations. They are refused as out-of-sequence ("Not in Reset mode" / "Not in Recovery mode"), not by the storage guard; the test now asserts that. The firmware was unchanged and every other message assertion passed. Hosted CI at the repair head, a negative control, and Copilot round 3 are recorded in the PR.
 
+Repair-head qualification: the round-2 repair head `11d174d37023c5e25b67dca21ac3df546dc39f33` passed manual run [36516266068](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36516266068). Artifacts were verified: `IncompatibleStorage` 35 full / 28 Bitcoin-only pass in both harnesses, firmware 704/171, both ARM variants 23 files, aggregate 1,556 pass, 84 declared skips, 0 failures. Negative control [36516267936](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36516267936) fails exactly `ReinitializingOnFreshFlashClearsIncompatibleLocks`. The unit was then restacked onto the repaired 11b (merge `e83a4e58e`, CI run 36517799763 green).
+
+Copilot round 3 (review 5347565079 on `e83a4e58e`) found only documentation and declaration hygiene, fixed in `d1c0e2a4d` with no behaviour change: the lock contract and backstop comment now say `storage_init()` recomputes the locks, the too-new predicate has its own brief, and the failure-message hook is declared in `fsm.h`. Its staleness finding on this section is answered by this paragraph. A report committed at a head cannot name that head, so the exact final head and its hosted run are recorded in PR #883, not here.
+
 ## 3. Adjacent inventory
 
-Inventory base: `659580c7cf91483c066f6ad4561290cb17b7e257`. Reproduce with `git diff --numstat BASE..FINAL_PR_HEAD` after the report, PDF and controls archive are committed.
+Inventory base: `d31437639966707468c43b074f54220288842dba`. Reproduce with `git diff --numstat BASE..FINAL_PR_HEAD` after the report, PDF and controls archive are committed.
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
-| 4 | 2 | `include/keepkey/firmware/storage.h` |
+| 1 | 0 | `include/keepkey/firmware/fsm.h` |
+| 12 | 3 | `include/keepkey/firmware/storage.h` |
 | 44 | 28 | `lib/firmware/fsm.c` |
 | 6 | 4 | `lib/firmware/fsm_msg_common.h` |
-| 22 | 4 | `lib/firmware/storage.c` |
+| 23 | 4 | `lib/firmware/storage.c` |
 | 2 | 0 | `lib/firmware/storage.h` |
-| 335 | 1 | `unittests/firmware/fsm.cpp` |
+| 334 | 1 | `unittests/firmware/fsm.cpp` |
 | 2 | 2 | `unittests/firmware/storage.cpp` |
-| 49 | 0 | `docs/release/audit-units/715-11d-future-storage-guards-20260928.md` |
-| - | - | `docs/release/audit-units/715-11d-future-storage-guards-20260928.pdf` |
 | - | - | `docs/release/audit-units/715-11d-controls-20260928.tgz` |
+| 54 | 0 | `docs/release/audit-units/715-11d-future-storage-guards-20260928.md` |
+| - | - | `docs/release/audit-units/715-11d-future-storage-guards-20260928.pdf` |
