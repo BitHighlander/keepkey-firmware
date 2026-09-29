@@ -378,6 +378,17 @@ def validate_cases(cases):
     if missing:
         fail("required release controls missing or not passing: %s" %
              ", ".join(missing))
+    # The Hive identities are owned by one native suite. A second copy with
+    # another status (a pass beside a skip, say) must not be able to satisfy
+    # the gate through the set above, so each must appear exactly once.
+    if "hive-release-review" not in missing_capabilities:
+        for required in sorted(HIVE_REQUIRED_CASES):
+            found = [case["status"] for case in cases
+                     if canonical_case_name(case) == required or
+                     canonical_case_name(case).endswith("." + required)]
+            if found != ["pass"]:
+                fail("Hive control %s must appear exactly once and pass, "
+                     "found %s" % (required, found or "nothing"))
 
 
 def read_junit_cases(path):

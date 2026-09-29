@@ -268,6 +268,25 @@ class HiveNativeEvidence(unittest.TestCase):
                         with self.assertRaises(RuntimeError):
                             report.validate_cases(altered)
 
+    def test_a_duplicated_native_identity_cannot_hide_behind_a_pass(self):
+        names = report.BASE_REQUIRED_CASES | report.HIVE_REQUIRED_CASES
+        cases = [{"classname": n.rsplit(".", 1)[0],
+                  "name": n.rsplit(".", 1)[1], "status": "pass", "skip_reason": ""}
+                 for n in sorted(names)]
+        with unittest.mock.patch.object(
+                report, "release_missing_capabilities",
+                return_value={"evm-max-amount-review", "osmosis-wire-guards"}):
+            report.validate_cases(cases)
+            for name in sorted(report.HIVE_REQUIRED_CASES):
+                for extra_status in ("pass", "skip"):
+                    duplicate = dict(next(
+                        case for case in cases
+                        if case["classname"] + "." + case["name"] == name))
+                    duplicate["status"] = extra_status
+                    with self.subTest(name=name, extra=extra_status):
+                        with self.assertRaises(RuntimeError):
+                            report.validate_cases(cases + [duplicate])
+
 
 if __name__ == "__main__":
     unittest.main()
