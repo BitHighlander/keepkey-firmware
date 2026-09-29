@@ -22,7 +22,6 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
 
   if ((encrypt && ask_on_encrypt) || (!encrypt && ask_on_decrypt)) {
     if (!confirm_cipher(encrypt, msg->key)) {
-      memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "CipherKeyValue cancelled");
       layoutHome();
@@ -36,7 +35,6 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
   strlcat((char*)data, ask_on_decrypt ? "D1" : "D0", sizeof(data));
 
   hmac_sha512(node->private_key, 32, data, strlen((char*)data), data);
-  memzero(node, sizeof(*node));
 
   RESP_INIT(CipheredKeyValue);
 
@@ -46,16 +44,13 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
     aes_cbc_encrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    memzero(&ctx, sizeof(ctx));
   } else {
     aes_decrypt_ctx ctx;
     aes_decrypt_key256(data, &ctx);
     aes_cbc_decrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    memzero(&ctx, sizeof(ctx));
   }
-  memzero(data, sizeof(data));
 
   resp->has_value = true;
   resp->value.size = msg->value.size;
@@ -116,8 +111,6 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
                  ((uint32_t)hash[15] << 24);
 
   HDNode* node = fsm_getDerivedNode(curve, address_n, 5, NULL);
-  memzero(hash, sizeof(hash));
-  memzero(address_n, sizeof(address_n));
   if (!node) {
     return;
   }
@@ -144,7 +137,6 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     result = cryptoMessageSign(coinByName("Bitcoin"), node,
                                InputScriptType_SPENDADDRESS, digest, 64,
                                resp->signature.bytes);
-    memzero(digest, sizeof(digest));
   }
 
   if (result == 0) {
@@ -167,10 +159,8 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     }
     resp->has_signature = true;
     resp->signature.size = 65;
-    memzero(node, sizeof(*node));
     msg_write(MessageType_MessageType_SignedIdentity, resp);
   } else {
-    memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_Other, "Error signing identity");
   }
 
