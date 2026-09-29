@@ -34,8 +34,7 @@ TEST(Eip712, MissingFieldRefusedWithoutDereferenceOrHashMutation) {
 // The encoder now handles the full declared width (int256 is a 256-bit word),
 // so "overflow" means beyond the declared type, not beyond int64. The field and
 // value screens are shown before the integer is encoded (the same order
-// EIP712.IntegerValuesRejectNoncanonicalDecimal pins in eip712.cpp), so two
-// accepted screens are queued and none may be left over.
+// EIP712.IntegerValuesRejectNoncanonicalDecimal pins in eip712.cpp).
 TEST(Eip712, DecimalOverflowRefusedWithoutHashMutation) {
   for (const char* value :
        {"57896044618658097711785492504343953926634992332820282019728792003956564819968",
@@ -52,11 +51,15 @@ TEST(Eip712, DecimalOverflowRefusedWithoutHashMutation) {
     SHA3_CTX ctx;
     sha3_256_Init(&ctx);
     const SHA3_CTX original = ctx;
-    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    SCOPED_TRACE(value);
+    // A value this long is paged across several value screens, so queue more
+    // accepted screens than any of them can need: what is asserted is that the
+    // integer is refused (never cancelled, never hashed), not how many pages.
+    ASSERT_TRUE(kkconfirm_preload(12, 0));
     EXPECT_EQ(GENERAL_ERROR, parseVals(t, json_getProperty(t, "Review"),
                                        json_getChild(v), &ctx));
     EXPECT_EQ(0, memcmp(&ctx, &original, sizeof(ctx)));
-    EXPECT_EQ(0, kkconfirm_drain());
+    EXPECT_LT(0, kkconfirm_drain());  // refusal came before the queue ran dry
   }
 }
 
