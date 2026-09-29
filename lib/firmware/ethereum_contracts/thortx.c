@@ -153,6 +153,14 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
                    */
   }
 
+  /* The equality above bounds the calldata but not what is IN the ABI tail
+   * padding: only memo_len bytes are parsed and drawn while all memo_padded
+   * bytes are signed, so a host could carry up to 31 arbitrary bytes per
+   * transaction in a region no screen shows. Canonical ABI pads with zeroes. */
+  for (size_t i = memo_off + memo_len; i < memo_off + memo_padded; i++) {
+    if (msg->data_initial_chunk.bytes[i] != 0) return false;
+  }
+
   char confStr[41];
   const char* conf;
   uint8_t* thorchainData;
@@ -168,6 +176,52 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
   /* deposit(): memo at 4 + 5*32; depositWithExpiry(): memo at 4 + 6*32 */
   thorchainData =
       (uint8_t*)(msg->data_initial_chunk.bytes + 4 + (is_expiry ? 6 : 5) * 32);
+
+  /* Resolve and render the amount BEFORE any confirmation, so an unrenderable
+   * call is refused up front instead of after the owner approved screens.
+   * bn_format() returns 0 on failure (and zeroes the whole buffer); a valid
+   * rendering always returns > 0. Both pinned routers treat ONLY address(0) as
+   * native (and require msg.value == 0 for any other asset), so the 0xEeee..Ee
+   * sentinel is NOT native here — accepting it would clear-sign a tx that
+   * reverts on-chain and burns gas. Match address(0) exactly (20 bytes, not
+   * sizeof, whose literal NUL would over-read into the amount word). */
+  const bool is_native = memcmp(contractAssetAddress, ETH_ADDRESS, 20) == 0;
+  bignum256 Value;
+  bn_from_bytes(msg->value.bytes, msg->value.size, &Value);
+  char amountStr[41];
+  const TokenType* assetToken = NULL;
+  bool is_unknown = false;
+  if (is_native) {
+    /* Display msg.value — the amount the router actually forwards — not the ABI
+     * amount word it ignores. That alone closes the "display 0.01 while sending
+     * 100" gap; we do NOT additionally require amount == value, since the ABI
+     * amount is a router-ignored hint that legitimately differs. Format with a
+     * NULL token so the ticker is the CHAIN's native asset (ETH on mainnet,
+     * AVAX on Avalanche); the 0xEE pseudo-token entry is pinned to " ETH" and
+     * would mislabel every other chain's native deposit. */
+    if (!ethereumFormatAmount(&Value, NULL, msg->chain_id, amountStr,
+                              sizeof(amountStr)))
+      return false;
+  } else {
+    /* A token deposit must not also carry native value (the router pulls tokens
+     * via transferFrom); nonzero msg.value would be swept and never shown. */
+    if (!bn_is_zero(&Value)) {
+      return false;
+    }
+    assetToken = tokenByChainAddress(msg->chain_id, contractAssetAddress);
+    is_unknown = strncmp(assetToken->ticker, " UNKN", 5) == 0;
+    if (is_unknown) {
+      // We don't know what the exponent should be so just confirm raw
+      // unformatted number
+      if (bn_format(&Amount, NULL, " unformatted", 0, 0, false, amountStr,
+                    sizeof(amountStr)) == 0)
+        return false;
+    } else {
+      if (!ethereumFormatAmount(&Amount, assetToken, msg->chain_id, amountStr,
+                                sizeof(amountStr)))
+        return false;
+    }
+  }
 
   // Start confirmations
   thor_format_to_addr(msg, confStr);
@@ -193,69 +247,22 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
     return false;
   }
 
-  /* Both pinned routers treat ONLY address(0) as native (and require
-   * msg.value == 0 for any other asset), so the 0xEeee..Ee sentinel is NOT
-   * native here — accepting it would clear-sign a tx that reverts on-chain and
-   * burns gas. Match address(0) exactly (20 bytes, not sizeof, whose literal
-   * NUL would over-read into the amount word). */
-  const bool is_native = memcmp(contractAssetAddress, ETH_ADDRESS, 20) == 0;
-  bignum256 Value;
-  bn_from_bytes(msg->value.bytes, msg->value.size, &Value);
-  if (is_native) {
-    /* Display msg.value — the amount the router actually forwards — not the ABI
-     * amount word it ignores. That alone closes the "display 0.01 while sending
-     * 100" gap; we do NOT additionally require amount == value, since the ABI
-     * amount is a router-ignored hint that legitimately differs. Format with a
-     * NULL token so the ticker is the CHAIN's native asset (ETH on mainnet,
-     * AVAX on Avalanche); the 0xEE pseudo-token entry is pinned to " ETH" and
-     * would mislabel every other chain's native deposit. */
-    if (!ethereumFormatAmount(&Value, NULL, msg->chain_id, confStr,
-                              sizeof(confStr)))
-      return false;
-
+  if (is_unknown) {
+    for (ctr = 0; ctr < 20; ctr++) {
+      snprintf(&confStr[ctr * 2], 3, "%02x", contractAssetAddress[ctr]);
+    }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
-                 "Confirm sending %s", confStr)) {
+                 "from asset %s", confStr)) {
+      return false;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
+                 "amount %s", amountStr)) {
       return false;
     }
   } else {
-    /* A token deposit must not also carry native value (the router pulls tokens
-     * via transferFrom); nonzero msg.value would be swept and never shown. */
-    if (!bn_is_zero(&Value)) {
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, protocol_label,
+                 "Confirm sending %s", amountStr)) {
       return false;
-    }
-    const uint8_t* assetAddress = contractAssetAddress;
-
-    const TokenType* assetToken =
-        tokenByChainAddress(msg->chain_id, assetAddress);
-
-    if (strncmp(assetToken->ticker, " UNKN", 5) == 0) {
-      // just display token address and amount as string
-      for (ctr = 0; ctr < 20; ctr++) {
-        snprintf(&confStr[ctr * 2], 3, "%02x", assetAddress[ctr]);
-      }
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   protocol_label, "from asset %s", confStr)) {
-        return false;
-      }
-      // We don't know what the exponent should be so just confirm raw
-      // unformatted number
-      bn_format(&Amount, NULL, " unformatted", 0, 0, false, confStr,
-                sizeof(confStr));
-
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   protocol_label, "amount %s", confStr)) {
-        return false;
-      }
-
-    } else {
-      if (!ethereumFormatAmount(&Amount, assetToken, msg->chain_id, confStr,
-                                sizeof(confStr)))
-        return false;
-
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   protocol_label, "Confirm sending %s", confStr)) {
-        return false;
-      }
     }
   }
 

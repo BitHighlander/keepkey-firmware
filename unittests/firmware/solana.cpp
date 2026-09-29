@@ -1133,6 +1133,217 @@ TEST(Solana, StakeAuthorizeCanonicalIsVerified) {
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
 }
 
+/* Never render a nonzero amount as zero. The assembly's formatter also trims
+ * trailing zeros, so exact-decimal cases read "1 tokens", not "1.000000000". */
+TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
+  char buf[64];
+
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 0);
+  EXPECT_STREQ(buf, "1 tokens");
+
+  /* amount=1 decimals=18 used to render "0 tokens" while the signed
+     instruction moved one base unit. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 18);
+  EXPECT_STREQ(buf, "1 base units (18 decimals) tokens");
+
+  /* One digit past the display limit, and that digit is nonzero. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 10);
+  EXPECT_STREQ(buf, "1 base units (10 decimals) tokens");
+
+  /* Dropped digit is zero: the decimal form is exact and still used. */
+  solana_formatTokenAmount(buf, sizeof(buf), 10, "tokens", 10);
+  EXPECT_STREQ(buf, "0.000000001 tokens");
+
+  /* Nine decimals: nothing is dropped. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 9);
+  EXPECT_STREQ(buf, "0.000000001 tokens");
+
+  solana_formatTokenAmount(buf, sizeof(buf), 1000000000000000000ULL, "tokens",
+                           18);
+  EXPECT_STREQ(buf, "1 tokens");
+
+  /* Zero is zero at any scale in range. */
+  solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 18);
+  EXPECT_STREQ(buf, "0 tokens");
+
+  /* decimals is an unrestricted uint8_t: beyond 18 keep the signed scale. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 19);
+  EXPECT_STREQ(buf, "1 base units (19 decimals) tokens");
+
+  solana_formatTokenAmount(buf, sizeof(buf), UINT64_MAX, "tokens", 255);
+  EXPECT_STREQ(buf, "18446744073709551615 base units (255 decimals) tokens");
+}
+
+/* A recognised instruction whose data is LONGER than its on-chain layout must
+ * not decode: the tail would be signed but never displayed, and has_unknown
+ * would stay unset so the tx would classify VERIFIED. */
+TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
+  SolanaParsedTx tx;
+  uint8_t raw[512];
+  size_t len;
+
+  static const uint8_t kExact[10] = {12, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kExact,
+                              sizeof(kExact));
+  ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+
+  static const uint8_t kOverlong[11] = {12, 0x40, 0x42, 0x0F, 0,   0,
+                                        0,  0,    0,    6,    0xAB};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kOverlong,
+                              sizeof(kOverlong));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* Unchecked Transfer is exactly 9 bytes; 10 is UNKNOWN. */
+  static const uint8_t kTransfer10[10] = {3, 0x40, 0x42, 0x0F, 0,
+                                          0, 0,    0,    0,    0x99};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kTransfer10,
+                              sizeof(kTransfer10));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* Revoke is a tag and nothing else. */
+  static const uint8_t kRevoke[1] = {5};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kRevoke,
+                              sizeof(kRevoke));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_REVOKE);
+
+  static const uint8_t kRevokePadded[2] = {5, 0x00};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kRevokePadded,
+                              sizeof(kRevokePadded));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* SetAuthority: COption discriminant and length must agree. Well-formed
+     shapes decode (and are forced opaque); mismatches are UNKNOWN. */
+  static const uint8_t kSetAuthNone[3] = {6, 2, 0};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kSetAuthNone,
+                              sizeof(kSetAuthNone));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_SET_AUTHORITY);
+
+  uint8_t set_auth_some[35] = {6, 2, 1};
+  memset(set_auth_some + 3, 0x77, 32);
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, set_auth_some,
+                              sizeof(set_auth_some));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_SET_AUTHORITY);
+
+  static const uint8_t kSetAuthSomeNoKey[3] = {6, 2, 1};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kSetAuthSomeNoKey,
+                              sizeof(kSetAuthSomeNoKey));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  uint8_t set_auth_none_with_key[35] = {6, 2, 0};
+  memset(set_auth_none_with_key + 3, 0x77, 32);
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, set_auth_none_with_key,
+                              sizeof(set_auth_none_with_key));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* System Transfer is exactly 12 bytes. */
+  uint8_t sys_ok[12] = {SOL_SYS_TRANSFER, 0, 0, 0, 1};
+  len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, sys_ok,
+                              sizeof(sys_ok));
+  ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
+
+  uint8_t sys_long[13] = {SOL_SYS_TRANSFER, 0, 0, 0, 1};
+  len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, sys_long,
+                              sizeof(sys_long));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* Stake Authorize is exactly 40 bytes. */
+  uint8_t stake_long[41] = {SOL_STAKE_AUTHORIZE_IX, 0, 0, 0};
+  len = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 3, stake_long,
+                              sizeof(stake_long));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* Compute-budget SetComputeUnitLimit is exactly 5 bytes. */
+  static const uint8_t kCbLong[6] = {SOL_CB_SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0,
+                                     0xEE};
+  len = build_single_instr_tx(raw, SOL_COMPUTE_BUDGET_PROGRAM, 1, kCbLong,
+                              sizeof(kCbLong));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+}
+
+/* A recognised instruction with fewer accounts than its layout needs would
+ * display a zeroed address: it must be UNKNOWN and force opaque. */
+TEST(Solana, RecognizedInstructionMissingAccountsIsOpaque) {
+  SolanaParsedTx tx;
+  uint8_t raw[512];
+  size_t len;
+
+  /* System Transfer with only the source account. */
+  uint8_t sys[12] = {SOL_SYS_TRANSFER, 0, 0, 0, 1};
+  len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 1, sys, sizeof(sys));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  /* Stake Delegate needs 6 accounts. */
+  static const uint8_t kDelegate[4] = {SOL_STAKE_DELEGATE_IX, 0, 0, 0};
+  len = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 5, kDelegate,
+                              sizeof(kDelegate));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+  len = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 6, kDelegate,
+                              sizeof(kDelegate));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_STAKE_DELEGATE);
+
+  /* Token Close needs 3 accounts, Revoke 2. */
+  static const uint8_t kClose[1] = {SOL_TOKEN_CLOSE_ACCOUNT_IX};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kClose, sizeof(kClose));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+
+  static const uint8_t kRevoke[1] = {SOL_TOKEN_REVOKE_IX};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 1, kRevoke,
+                              sizeof(kRevoke));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+}
+
+/* Authorize reads the current authority from account 2 (stake/vote, clock
+ * sysvar, authority) -- not the clock sysvar at account 1 -- and an
+ * authorize-type outside {0,1} is not decoded. */
+TEST(Solana, AuthorizeUsesAuthorityNotClockSysvar) {
+  SolanaParsedTx tx;
+  uint8_t raw[512];
+  uint8_t expected[32];
+  memset(expected, 0x13, sizeof(expected)); /* account 2 in the helper */
+
+  uint8_t d[40] = {SOL_STAKE_AUTHORIZE_IX, 0, 0, 0};
+  memset(d + 4, 0x77, 32);
+  size_t len = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 3, d, sizeof(d));
+  ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(0,
+            memcmp(tx.instructions[0].authority, expected, sizeof(expected)));
+
+  uint8_t v[40] = {SOL_VOTE_AUTHORIZE_IX, 0, 0, 0};
+  memset(v + 4, 0x77, 32);
+  len = build_single_instr_tx(raw, SOL_VOTE_PROGRAM, 3, v, sizeof(v));
+  ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(0,
+            memcmp(tx.instructions[0].authority, expected, sizeof(expected)));
+
+  /* Unknown authorize type. */
+  d[36] = 2;
+  len = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 3, d, sizeof(d));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+  v[36] = 2;
+  len = build_single_instr_tx(raw, SOL_VOTE_PROGRAM, 3, v, sizeof(v));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+}
+
 /* ── KKSOLSC1 reusable instruction schemas ────────────────────────────
  *
  * Vector is the real Relay bridge deposit captured from api.relay.link on

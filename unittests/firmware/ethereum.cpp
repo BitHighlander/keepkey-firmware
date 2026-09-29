@@ -746,3 +746,173 @@ TEST(Ethereum, LiquidityDerivationWipesRootAndPartialKeysOnEveryFailure) {
   EXPECT_TRUE(test_liquidity_failed_derivation_wipes(2));
   EXPECT_TRUE(test_liquidity_failed_derivation_wipes(3));
 }
+
+TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
+  EthereumSignTx msg = approve_liquidity_tx();
+  ASSERT_EQ(68u, msg.data_initial_chunk.size);
+  ASSERT_TRUE(zx_isZxApproveLiquid(&msg));
+  EXPECT_TRUE(ethereum_contractHandled(68, &msg, nullptr));
+  /* Calldata that continues past the initial chunk streams in unreviewed. */
+  EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
+  EXPECT_FALSE(ethereum_contractHandled(1024, &msg, nullptr));
+  msg.data_initial_chunk.size = 69;
+  EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
+  EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
+}
+
+// failMessage() sizes failMsgReturn[] to GENERAL_ERROR..JSON_TYPE_WNOVAL and
+// indexes it err - GENERAL_ERROR. USER_CANCELLED (== LAST_ERROR) is the one
+// code above the table; it is answered before any lookup, so it must never
+// index it, and no slot the other codes reach may be NULL.
+extern "C" const char* failMsgReturn[];
+
+TEST(Ethereum, Eip712UserCancelledIsOutsideTheFailMessageTable) {
+  EXPECT_EQ(JSON_TYPE_WNOVAL + 1, USER_CANCELLED);
+  EXPECT_EQ(USER_CANCELLED, LAST_ERROR);
+  EXPECT_NE(USER_CANCELLED, SUCCESS);
+  EXPECT_NE(USER_CANCELLED, NULL_MSG_HASH);
+  for (int err = GENERAL_ERROR; err <= JSON_TYPE_WNOVAL; err++) {
+    ASSERT_NE(nullptr, failMsgReturn[err - GENERAL_ERROR]) << "code " << err;
+    EXPECT_GT(strlen(failMsgReturn[err - GENERAL_ERROR]), 0u) << "code " << err;
+  }
+}
+
+// ---- THORChain deposit(address,address,uint256,string) fixtures ----------
+
+static void thor_hex20(const char* hex, uint8_t out[20]) {
+  for (size_t i = 0; i < 20; i++) {
+    out[i] = (bin_from_ascii(hex[2 * i]) << 4) | bin_from_ascii(hex[2 * i + 1]);
+  }
+}
+
+// Canonical mainnet deposit() with a 11-byte memo ("ADD:ETH.ETH") padded to
+// one 32-byte word: 4 + 5 * 32 + 32 = 196 bytes, memo at offset 164.
+static const size_t kThorMemoOff = 4 + 5 * 32;
+static const size_t kThorMemoLen = 11;
+
+static EthereumSignTx thor_deposit_tx(const uint8_t asset[20],
+                                      const uint8_t amount_word[32]) {
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  thor_hex20(THOR_ROUTER, msg.to.bytes);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = kThorMemoOff + 32;
+  msg.has_data_length = true;
+  msg.data_length = msg.data_initial_chunk.size;
+  uint8_t* d = msg.data_initial_chunk.bytes;
+  memcpy(d, THOR_SELECTOR_DEPOSIT, 4);
+  memset(d + 4 + 12, 0x11, 20);  // vault
+  memcpy(d + 4 + 32 + 12, asset, 20);
+  memcpy(d + 4 + 2 * 32, amount_word, 32);
+  d[4 + 3 * 32 + 31] = 0x80;  // memo offset
+  d[4 + 4 * 32 + 31] = kThorMemoLen;
+  memcpy(d + kThorMemoOff, "ADD:ETH.ETH", kThorMemoLen);
+  return msg;
+}
+
+static const uint8_t kThorZeroAsset[20] = {};
+static const uint8_t kThorOneAmount[32] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                           0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+
+TEST(Ethereum, ThorchainDepositRejectsNonzeroAbiTailPadding) {
+  /* A zero-padded deposit is accepted. Screen count is not asserted; enough
+     accepts are queued and any surplus is drained. */
+  EthereumSignTx ok = thor_deposit_tx(kThorZeroAsset, kThorOneAmount);
+  ASSERT_TRUE(thor_isThorchainTx(&ok));
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  EXPECT_TRUE(thor_confirmThorTx(ok.data_initial_chunk.size, &ok));
+  kkconfirm_drain();
+
+  /* One nonzero byte anywhere in the 21 padding bytes is refused before any
+     screen: first, middle and last padding byte. */
+  const size_t offsets[] = {kThorMemoOff + kThorMemoLen,
+                            kThorMemoOff + kThorMemoLen + 10,
+                            kThorMemoOff + 31};
+  for (size_t off : offsets) {
+    EthereumSignTx bad = thor_deposit_tx(kThorZeroAsset, kThorOneAmount);
+    bad.data_initial_chunk.bytes[off] = 1;
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    EXPECT_FALSE(thor_confirmThorTx(bad.data_initial_chunk.size, &bad))
+        << "padding byte at " << off;
+    EXPECT_EQ(0, kkconfirm_drain()) << "a screen ran at " << off;
+  }
+}
+
+TEST(Ethereum, ThorchainUnknownAssetAmountThatCannotFormatIsRefusedBeforeAnyScreen) {
+  uint8_t unknown[20];
+  memset(unknown, 0x42, sizeof(unknown));
+  ASSERT_EQ(UnknownToken, tokenByChainAddress(1, unknown));
+
+  /* 2^256 - 1 is 78 digits: it cannot fit the 41-byte amount buffer with its
+     " unformatted" suffix, so bn_format() fails and zeroes the buffer. */
+  uint8_t max_word[32];
+  memset(max_word, 0xff, sizeof(max_word));
+  EthereumSignTx big = thor_deposit_tx(unknown, max_word);
+  ASSERT_TRUE(thor_isThorchainTx(&big));
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(thor_confirmThorTx(big.data_initial_chunk.size, &big));
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "an unformattable amount must not reach the router/vault/asset screens";
+
+  /* A small amount for the same unknown asset still clear-signs. */
+  EthereumSignTx modest = thor_deposit_tx(unknown, kThorOneAmount);
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  EXPECT_TRUE(thor_confirmThorTx(modest.data_initial_chunk.size, &modest));
+  kkconfirm_drain();
+}
+
+TEST(Ethereum, ContractAmountCallsitesFailClosedAtDisplayBoundary) {
+  uint8_t max_word[32];
+  std::memset(max_word, 0xff, sizeof(max_word));
+  char rendered[41];
+
+  EXPECT_FALSE(sa_formatUint256(max_word, "", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      sa_formatUint256(max_word, " Token Units", rendered, sizeof(rendered)));
+
+  uint8_t one[32] = {};
+  one[31] = 1;
+  ASSERT_TRUE(
+      sa_formatUint256(one, " Token Units", rendered, sizeof(rendered)));
+  EXPECT_STREQ("1 Token Units", rendered);
+
+  /* THORChain: the native amount is msg.value; a value that cannot be
+     rendered is refused before any screen rather than shown blank. */
+  EthereumSignTx msg = thor_deposit_tx(kThorZeroAsset, kThorOneAmount);
+  msg.has_value = true;
+  msg.value.size = 32;
+  memset(msg.value.bytes, 0xff, 32);
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST(Ethereum, ThorchainNativeAssetUsesOnlyItsZeroAddressSentinel) {
+  /* Zero address = native: msg.value is displayed and accepted. */
+  EthereumSignTx native = thor_deposit_tx(kThorZeroAsset, kThorOneAmount);
+  native.has_value = true;
+  native.value.size = 1;
+  native.value.bytes[0] = 1;
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  EXPECT_TRUE(thor_confirmThorTx(native.data_initial_chunk.size, &native));
+  kkconfirm_drain();
+
+  /* Any other asset word, including the 0xEeee..Ee pseudo-address, is a token
+     deposit and must not also carry native value: refused before any screen. */
+  uint8_t token[20] = {};
+  token[19] = 1;
+  const uint8_t* others[] = {kNativePseudoAddress, token};
+  for (const uint8_t* asset : others) {
+    EthereumSignTx msg = thor_deposit_tx(asset, kThorOneAmount);
+    msg.has_value = true;
+    msg.value.size = 1;
+    msg.value.bytes[0] = 1;
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+}

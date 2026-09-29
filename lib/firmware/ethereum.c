@@ -1601,7 +1601,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
 void failMessage(int err);
 
-const char* failMsgReturn[LAST_ERROR - 2] = {
+const char* failMsgReturn[JSON_TYPE_WNOVAL - GENERAL_ERROR + 1] = {
     "EIP-712 general error",  //  3
     "EIP-712 user defined type name too long",
     "EIP-712 too many user defined types",
@@ -1632,8 +1632,18 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 pair name is NULL",
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
-    "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
+    "EIP-712 no value for type during walkVals",  // 33 (JSON_TYPE_WNOVAL)
 };
+/* One message per code GENERAL_ERROR..JSON_TYPE_WNOVAL, indexed err - 3, with
+ * no NULL slot. USER_CANCELLED (== LAST_ERROR) is the one code above the table
+ * and is handled before any lookup; a missing or extra entry would shift every
+ * message after it. */
+_Static_assert(sizeof(failMsgReturn) / sizeof(failMsgReturn[0]) ==
+                   JSON_TYPE_WNOVAL - GENERAL_ERROR + 1,
+               "failMsgReturn must cover GENERAL_ERROR..JSON_TYPE_WNOVAL");
+_Static_assert(USER_CANCELLED == JSON_TYPE_WNOVAL + 1 &&
+                   LAST_ERROR == USER_CANCELLED,
+               "USER_CANCELLED must be the only code above the table");
 
 void failMessage(int err) {
   if (USER_CANCELLED == err) {
@@ -1642,20 +1652,21 @@ void failMessage(int err) {
        host sends Cancel or Initialize. Report it as a cancellation so the host
        does not read a refusal as a malformed message.
 
-       USER_CANCELLED sits deliberately ABOVE LAST_ERROR and has no
-       failMsgReturn[] slot: the table is sized LAST_ERROR - 2 and indexed
-       err - 3, so giving a cancellation a row would shift every message
-       already in it. This branch is therefore the only thing that names the
-       code, and it also picks the FailureType. It must stay first. */
+       USER_CANCELLED is LAST_ERROR, one ABOVE JSON_TYPE_WNOVAL, and has
+       no failMsgReturn[] slot: the table is sized to JSON_TYPE_WNOVAL and
+       indexed err - GENERAL_ERROR, so it has no NULL entry to dereference. This
+       branch is therefore the only thing that names the code, and it also
+       picks the FailureType. It must stay first. */
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("EIP-712 cancelled"));
     return;
   }
-  if (err < GENERAL_ERROR || err > LAST_ERROR) {
+  if (err < GENERAL_ERROR || err > JSON_TYPE_WNOVAL) {
     // unknown error number
     fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 unknown failure"));
   } else {
-    fsm_sendFailure(FailureType_Failure_Other, _(failMsgReturn[err - 3]));
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _(failMsgReturn[err - GENERAL_ERROR]));
   }
   return;
 }

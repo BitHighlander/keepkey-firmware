@@ -34,6 +34,7 @@ void setup(void);
 #include "kkconfirm_driver.h"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -1056,6 +1057,22 @@ TEST(SignedMetadataFingerprint, Is64BitSha256Prefix) {
   EXPECT_STREQ(fp, "0C2CB8B9F467F147");
   EXPECT_EQ(strlen(fp), 16u);
   EXPECT_EQ(sizeof(fp), 17u);
+}
+
+TEST(SignedMetadataFingerprint, IsSha256Prefix) {
+  char fp[METADATA_FINGERPRINT_LEN];
+  signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
+
+  /* The expected text is computed here from sha256, not by the code under
+     test: uppercase hex of the first (LEN - 1) / 2 digest bytes. */
+  uint8_t digest[32];
+  sha256_Raw(EXPECTED_SLOT3_PUB, 33, digest);
+  char expected[METADATA_FINGERPRINT_LEN];
+  for (size_t i = 0; i < (METADATA_FINGERPRINT_LEN - 1) / 2; i++) {
+    snprintf(expected + 2 * i, 3, "%02X", digest[i]);
+  }
+  EXPECT_STREQ(expected, fp);
+  EXPECT_EQ(strlen(fp), METADATA_FINGERPRINT_LEN - 1u);
 }
 
 /* ===================================================================== *
