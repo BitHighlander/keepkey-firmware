@@ -25,7 +25,7 @@ Local Docker is unresponsive on this host, so the full emulator unit suites and 
 
 | Local check | Result |
 | --- | --- |
-| `HardwareEntropy` suite at `6fb90ed71` | 9 of 9 pass |
+| `HardwareEntropy` suite at `380c75bc3` (fix `6fb90ed71`) | 9 of 9 pass |
 | Negative control: same tests, unfixed `keepkey_flash.c` from `5334f77c3` | 4 fail: both recovery tests halt on the reboot (`returned` false, `halted` true), and the two updated write/read counts differ |
 | clang-format 20 on changed files | Clean |
 | Preflight (`PREFLIGHT_BASE=0c08ce9ef`) | All checks pass except cppcheck, which was not run (Docker unresponsive) |
@@ -44,4 +44,13 @@ Inventory base: `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea`. Reproduce with `git 
 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
-
+| 40 | 10 | `lib/board/keepkey_flash.c` |
+| 6 | 0 | `unittests/board/CMakeLists.txt` |
+| 5 | 0 | `unittests/board/hardware_stubs/libopencm3/stm32/desig.h` |
+| 9 | 0 | `unittests/board/hardware_stubs/libopencm3/stm32/flash.h` |
+| 143 | 0 | `unittests/board/hw_entropy.cpp` |
+| 178 | 0 | `unittests/board/hw_entropy_probe.c` |
+| 31 | 0 | `unittests/board/hw_entropy_probe.h` |
+| - | - | `docs/release/audit-units/715-11e-controls-20260928.tgz` |
+| 56 | 0 | `docs/release/audit-units/715-11e-hardware-entropy-20260928.md` |
+| - | - | `docs/release/audit-units/715-11e-hardware-entropy-20260928.pdf` |
