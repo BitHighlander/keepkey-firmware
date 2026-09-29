@@ -46,6 +46,9 @@ static jmp_buf halt_target;
 static bool healthy_draw;
 static HwEntropyFault fault;
 static uint8_t* live_draw;
+/* Each boot draws different bytes, so rewriting a programmed block with a
+ * fresh draw cannot verify by coincidence. First boots use salt 0. */
+static uint8_t draw_salt;
 
 static bool all_zero(const uint8_t* bytes, size_t size) {
   for (size_t i = 0; i < size; ++i) {
@@ -70,7 +73,8 @@ bool probe_random_buffer_checked(uint8_t* bytes, size_t size) {
   live_draw = bytes;
   // Deliberately leave nonzero rejected bytes so the caller's own cleanup is
   // checked independently of random_buffer_checked()'s existing zeroing.
-  for (size_t i = 0; i < size; ++i) bytes[i] = (uint8_t)(0x40 + i);
+  for (size_t i = 0; i < size; ++i)
+    bytes[i] = (uint8_t)((0x40 + i) ^ draw_salt);
   return healthy_draw;
 }
 
@@ -162,11 +166,13 @@ HwEntropyProbe test_collect_hw_entropy(bool privileged, bool locked,
                                        HwEntropyFault injected_fault) {
   uint8_t otp[sizeof(observed.otp)];
   memset(otp, stored_byte, sizeof(otp));
+  draw_salt = 0;
   return boot(privileged, locked, healthy, otp, injected_fault);
 }
 
 HwEntropyProbe test_reboot_hw_entropy(const HwEntropyProbe* previous,
                                       bool healthy,
                                       HwEntropyFault injected_fault) {
+  draw_salt = TEST_REBOOT_DRAW_SALT;
   return boot(true, previous->locked, healthy, previous->otp, injected_fault);
 }

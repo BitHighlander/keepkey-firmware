@@ -129,9 +129,15 @@ TEST(HardwareEntropy, InterruptedFirstBootCompletesOnNextHealthyBoot) {
     EXPECT_FALSE(next.halted);
     EXPECT_TRUE(next.locked);
     EXPECT_EQ(fault == OTP_WRITE_PARTIAL ? 16u : 0u, next.writes);
+    // Bytes the first boot programmed survive; only erased bytes take the
+    // second, different draw.
     for (size_t i = 0; i < 32; ++i) {
-      EXPECT_NE(0xff, next.otp[i]);
-      EXPECT_EQ(next.otp[i], next.collected[12 + i]);
+      const bool first = fault != OTP_WRITE_PARTIAL || i < 16;
+      const uint8_t expected =
+          first ? uint8_t(0x40 + i)
+                : uint8_t((0x40 + i) ^ TEST_REBOOT_DRAW_SALT);
+      EXPECT_EQ(expected, next.otp[i]);
+      EXPECT_EQ(expected, next.collected[12 + i]);
     }
   }
 }
