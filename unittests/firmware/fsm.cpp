@@ -40,7 +40,6 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 #include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
-extern "C" const char* fsm_test_lastFailureMessage(void);
 
 TEST(Fsm, CoinTableRetainsPredecessorPageCapacity) {
   const CoinTable response = {};
