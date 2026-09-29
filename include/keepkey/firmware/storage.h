@@ -85,6 +85,7 @@ void storage_wipe(void);
 ///
 /// Cleared only by storage_wipe().
 bool storage_isBitcoinOnlyLocked(void);
+bool storage_isBitcoinOnlyTooNew(void);
 
 /// \brief True iff flash contains a newer storage format than this firmware.
 ///        The bytes remain untouched until an explicit wipe.

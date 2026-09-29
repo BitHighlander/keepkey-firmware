@@ -633,7 +633,7 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
   uint32_t newer = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION + 1);
   memcpy(flash + 44, &newer, 4);
   memset(&session, 0, sizeof(session));
-  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyTooNew);
 }
 #endif
 
@@ -1187,7 +1187,7 @@ TEST(Storage, FutureBitcoinBandValuesNeverFallThroughToWipe) {
       flash[44 + i] = static_cast<char>(version >> (8 * i));
     SessionState session = {};
     ConfigFlash shadow = {};
-    EXPECT_EQ(SUS_BitcoinOnlyLocked,
+    EXPECT_EQ(BITCOIN_ONLY ? SUS_BitcoinOnlyTooNew : SUS_BitcoinOnlyLocked,
               storage_fromFlash(&session, &shadow, flash));
   }
 }

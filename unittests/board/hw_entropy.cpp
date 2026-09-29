@@ -10,10 +10,10 @@ TEST(HardwareEntropy, FirstHealthyBootProgramsAndLocksBeforeConsumption) {
   EXPECT_FALSE(result.halted);
   EXPECT_TRUE(result.locked);
   EXPECT_EQ(1u, result.draws);
-  EXPECT_EQ(1u, result.writes);
+  EXPECT_EQ(32u, result.writes);
   EXPECT_EQ(1u, result.locks);
-  EXPECT_EQ(1u, result.reads);
-  EXPECT_EQ(1u, result.reads_before_lock);
+  EXPECT_EQ(2u, result.reads);
+  EXPECT_EQ(2u, result.reads_before_lock);
   for (size_t i = 0; i < 12; ++i) EXPECT_EQ(i, result.collected[i]);
   for (size_t i = 0; i < 32; ++i) {
     EXPECT_EQ(0x40 + i, result.otp[i]);
@@ -84,8 +84,8 @@ TEST(HardwareEntropy, FailedLockCannotReleaseVerifiedButMutableEntropy) {
     EXPECT_TRUE(result.local_cleared);
     EXPECT_TRUE(result.global_cleared);
     EXPECT_FALSE(result.locked);
-    EXPECT_EQ(1u, result.writes);
-    EXPECT_EQ(1u, result.reads_before_lock);
+    EXPECT_EQ(32u, result.writes);
+    EXPECT_EQ(2u, result.reads_before_lock);
     EXPECT_EQ(1u, result.locks);
     for (uint8_t byte : result.collected) EXPECT_EQ(0, byte);
   }
@@ -101,4 +101,43 @@ TEST(HardwareEntropy, FailedReadOfLockedBlockCannotReleasePartialEntropy) {
   EXPECT_EQ(0u, result.draws + result.writes + result.locks);
   EXPECT_EQ(1u, result.reads);
   for (uint8_t byte : result.collected) EXPECT_EQ(0, byte);
+}
+
+// OTP bits only clear. A boot that halted after programming must not leave a
+// block that no later boot can complete.
+TEST(HardwareEntropy, ProgrammedButUnlockedBlockIsKeptAndLocked) {
+  const auto result =
+      test_collect_hw_entropy(true, false, true, 0x19, OTP_HEALTHY);
+  EXPECT_TRUE(result.returned);
+  EXPECT_FALSE(result.halted);
+  EXPECT_TRUE(result.locked);
+  EXPECT_EQ(0u, result.writes);
+  EXPECT_EQ(1u, result.locks);
+  for (size_t i = 0; i < 32; ++i) {
+    EXPECT_EQ(0x19, result.otp[i]);
+    EXPECT_EQ(0x19, result.collected[12 + i]);
+  }
+}
+
+TEST(HardwareEntropy, InterruptedFirstBootCompletesOnNextHealthyBoot) {
+  for (auto fault : {OTP_WRITE_PARTIAL, OTP_LOCK_REJECTED, OTP_LOCK_DROPPED}) {
+    auto first = test_collect_hw_entropy(true, false, true, 0xff, fault);
+    ASSERT_TRUE(first.halted);
+    ASSERT_FALSE(first.locked);
+    const auto next = test_reboot_hw_entropy(&first, true, OTP_HEALTHY);
+    EXPECT_TRUE(next.returned);
+    EXPECT_FALSE(next.halted);
+    EXPECT_TRUE(next.locked);
+    EXPECT_EQ(fault == OTP_WRITE_PARTIAL ? 16u : 0u, next.writes);
+    // Bytes the first boot programmed survive; only erased bytes take the
+    // second, different draw.
+    for (size_t i = 0; i < 32; ++i) {
+      const bool first = fault != OTP_WRITE_PARTIAL || i < 16;
+      const uint8_t expected =
+          first ? uint8_t(0x40 + i)
+                : uint8_t((0x40 + i) ^ TEST_REBOOT_DRAW_SALT);
+      EXPECT_EQ(expected, next.otp[i]);
+      EXPECT_EQ(expected, next.collected[12 + i]);
+    }
+  }
 }

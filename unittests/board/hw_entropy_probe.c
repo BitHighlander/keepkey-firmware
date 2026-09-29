@@ -46,6 +46,9 @@ static jmp_buf halt_target;
 static bool healthy_draw;
 static HwEntropyFault fault;
 static uint8_t* live_draw;
+/* Each boot draws different bytes, so rewriting a programmed block with a
+ * fresh draw cannot verify by coincidence. First boots use salt 0. */
+static uint8_t draw_salt;
 
 static bool all_zero(const uint8_t* bytes, size_t size) {
   for (size_t i = 0; i < size; ++i) {
@@ -70,20 +73,26 @@ bool probe_random_buffer_checked(uint8_t* bytes, size_t size) {
   live_draw = bytes;
   // Deliberately leave nonzero rejected bytes so the caller's own cleanup is
   // checked independently of random_buffer_checked()'s existing zeroing.
-  for (size_t i = 0; i < size; ++i) bytes[i] = (uint8_t)(0x40 + i);
+  for (size_t i = 0; i < size; ++i)
+    bytes[i] = (uint8_t)((0x40 + i) ^ draw_salt);
   return healthy_draw;
 }
 
+/* Programming OTP can only clear bits, as on the device. The partial fault
+ * loses power after half the block, so later pulses have no effect. */
 bool probe_otp_write(uint8_t block, uint8_t offset, const uint8_t* bytes,
                      uint8_t size) {
-  if (block != FLASH_OTP_BLOCK_RANDOMNESS || offset ||
-      size != FLASH_OTP_BLOCK_SIZE || observed.locked)
+  if (block != FLASH_OTP_BLOCK_RANDOMNESS ||
+      offset + size > FLASH_OTP_BLOCK_SIZE || observed.locked)
     abort();
   ++observed.writes;
   if (fault == OTP_WRITE_REJECTED) return false;
   if (fault == OTP_WRITE_DROPPED) return true;
-  if (fault == OTP_WRITE_PARTIAL) size /= 2;
-  memcpy(observed.otp, bytes, size);
+  for (uint8_t i = 0; i < size; ++i) {
+    if (fault == OTP_WRITE_PARTIAL && offset + i >= FLASH_OTP_BLOCK_SIZE / 2)
+      break;
+    observed.otp[offset + i] &= bytes[i];
+  }
   return true;
 }
 
@@ -135,11 +144,10 @@ bool probe_svc_flash_pgm_word(uint32_t start, uint32_t data) {
   abort();
 }
 
-HwEntropyProbe test_collect_hw_entropy(bool privileged, bool locked,
-                                       bool healthy, uint8_t stored_byte,
-                                       HwEntropyFault injected_fault) {
+static HwEntropyProbe boot(bool privileged, bool locked, bool healthy,
+                           const uint8_t* otp, HwEntropyFault injected_fault) {
   memset(&observed, 0, sizeof(observed));
-  memset(observed.otp, stored_byte, sizeof(observed.otp));
+  memcpy(observed.otp, otp, sizeof(observed.otp));
   memset(probe_hw_entropy, 0xa5, sizeof(probe_hw_entropy));
   observed.locked = locked;
   healthy_draw = healthy;
@@ -151,4 +159,20 @@ HwEntropyProbe test_collect_hw_entropy(bool privileged, bool locked,
   }
   probe_read_hw_entropy(observed.collected, sizeof(observed.collected));
   return observed;
+}
+
+HwEntropyProbe test_collect_hw_entropy(bool privileged, bool locked,
+                                       bool healthy, uint8_t stored_byte,
+                                       HwEntropyFault injected_fault) {
+  uint8_t otp[sizeof(observed.otp)];
+  memset(otp, stored_byte, sizeof(otp));
+  draw_salt = 0;
+  return boot(privileged, locked, healthy, otp, injected_fault);
+}
+
+HwEntropyProbe test_reboot_hw_entropy(const HwEntropyProbe* previous,
+                                      bool healthy,
+                                      HwEntropyFault injected_fault) {
+  draw_salt = TEST_REBOOT_DRAW_SALT;
+  return boot(true, previous->locked, healthy, previous->otp, injected_fault);
 }

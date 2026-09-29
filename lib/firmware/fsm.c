@@ -123,6 +123,7 @@ void fsm_clearDerivedNode(void) {
 
 #if DEBUG_LINK
 static FailureType fsm_test_failure_code;
+static char fsm_test_failure_message[sizeof(((Failure*)0)->message)];
 
 void fsm_test_seedDerivedNode(void) {
   memset(&fsm_derived_node, 0xA5, sizeof(fsm_derived_node));
@@ -135,9 +136,16 @@ bool fsm_test_derivedNodeIsZero(void) {
   return aggregate == 0;
 }
 
-void fsm_test_clearLastFailure(void) { fsm_test_failure_code = (FailureType)0; }
+void fsm_test_clearLastFailure(void) {
+  fsm_test_failure_code = (FailureType)0;
+  fsm_test_failure_message[0] = '\0';
+}
 
 FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
+
+const char* fsm_test_lastFailureMessage(void) {
+  return fsm_test_failure_message;
+}
 #endif
 
 #define CHECK_INITIALIZED                               \
@@ -157,6 +165,13 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
                     "Storage needs newer firmware. Upgrade "         \
                     "firmware or use Wipe first.");                  \
+    layoutHome();                                                    \
+    return;                                                          \
+  }                                                                  \
+  if (storage_isBitcoinOnlyTooNew()) {                               \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
+                    "Storage needs newer firmware. Upgrade "         \
+                    "firmware to recover this wallet.");             \
     layoutHome();                                                    \
     return;                                                          \
   }                                                                  \
@@ -189,6 +204,13 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
   }
 
 #define CHECK_NOT_BTC_ONLY_LOCKED                                   \
+  if (storage_isBitcoinOnlyTooNew()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Storage needs newer firmware. Upgrade "        \
+                    "firmware to recover this wallet.");            \
+    layoutHome();                                                   \
+    return;                                                         \
+  }                                                                 \
   if (storage_isBitcoinOnlyLocked()) {                              \
     fsm_sendFailure(FailureType_Failure_Other,                      \
                     "Device holds a bitcoin-only wallet. Wipe the " \
@@ -584,6 +606,8 @@ void fsm_sendFailure(FailureType code, const char* text) {
   resp->code = code;
 #if DEBUG_LINK
   fsm_test_failure_code = code;
+  strlcpy(fsm_test_failure_message, text ? text : "",
+          sizeof(fsm_test_failure_message));
 #endif
 
   if (text) {

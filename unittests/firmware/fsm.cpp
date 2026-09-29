@@ -40,6 +40,7 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 #include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+extern "C" const char* fsm_test_lastFailureMessage(void);
 
 TEST(Fsm, CoinTableRetainsPredecessorPageCapacity) {
   const CoinTable response = {};
@@ -309,6 +310,8 @@ class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
               storage_isFirmwareTooOld());
     ASSERT_EQ(GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
               storage_isBitcoinOnlyLocked());
+    ASSERT_EQ(BITCOIN_ONLY && GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
+              storage_isBitcoinOnlyTooNew());
     ASSERT_FALSE(storage_isInitialized());
     ExpectUntouched();
   }
@@ -332,8 +335,41 @@ class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
     EXPECT_FALSE(storage_isPolicyEnabled("Experimental"));
   }
 
+  // Expected guidance follows from the image and build, not from the flags
+  // under test. Only a foreign bitcoin-only wallet may be recoverable by
+  // nothing but a wipe; a too-new bitcoin-only wallet needs an upgrade.
+  bool NormalBandTooNew() const {
+    return GetParam() < STORAGE_VERSION_BTC_ONLY_BASE;
+  }
+  bool BitcoinOnlyTooNew() const {
+    return BITCOIN_ONLY && GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE;
+  }
+
+  void ExpectRecoverByUpgrade() {
+    EXPECT_STREQ(
+        "Storage needs newer firmware. Upgrade firmware to recover this "
+        "wallet.",
+        fsm_test_lastFailureMessage());
+    EXPECT_EQ(nullptr, std::strstr(fsm_test_lastFailureMessage(), "Wipe"));
+  }
+
+  void ExpectWriteRefusalMessage() {
+    if (NormalBandTooNew()) {
+      EXPECT_STREQ(
+          "Storage needs newer firmware. Upgrade firmware or use Wipe first.",
+          fsm_test_lastFailureMessage());
+    } else if (BitcoinOnlyTooNew()) {
+      ExpectRecoverByUpgrade();
+    } else {
+      EXPECT_STREQ("Bitcoin-only wallet present. Use Wipe first.",
+                   fsm_test_lastFailureMessage());
+    }
+  }
+
+  // Continuations have no storage guard of their own: with every ceremony
+  // start refused, nothing is armed and they fail as out-of-sequence.
   void ExpectRejected(MessageType type, const pb_field_t* fields,
-                      const void* msg) {
+                      const void* msg, const char* unarmed = nullptr) {
     // A deliberately unused Yes proves refusal happened before user work.
     // The trailing No also makes the old vulnerable handler terminate safely.
     ASSERT_TRUE(kkconfirm_preload(1, 0));
@@ -341,6 +377,11 @@ class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
     receiveMessage(type, fields, msg);
     EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
               fsm_test_lastFailureCode());
+    if (unarmed) {
+      EXPECT_STREQ(unarmed, fsm_test_lastFailureMessage());
+    } else {
+      ExpectWriteRefusalMessage();
+    }
     EXPECT_EQ(2, kkconfirm_drain());
     ExpectUntouched();
     // Isolate the next entry path even in a negative-control build where this
@@ -359,6 +400,7 @@ class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
     ASSERT_EQ(0, kkconfirm_drain());
     ASSERT_FALSE(storage_isFirmwareTooOld());
     ASSERT_FALSE(storage_isBitcoinOnlyLocked());
+    ASSERT_FALSE(storage_isBitcoinOnlyTooNew());
     ASSERT_FALSE(storage_isInitialized());
     EXPECT_NE(0, std::memcmp(original.data(), bytes.data(), bytes.size()));
   }
@@ -381,6 +423,14 @@ TEST_P(IncompatibleStorage, CreationRefusesBeforeStagingOrConfirmation) {
         receiveMessage(type, ResetDevice_fields, &reset);
       }
       EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      if (BitcoinOnlyTooNew()) {
+        ExpectRecoverByUpgrade();
+      } else {
+        EXPECT_STREQ(
+            "Device holds a bitcoin-only wallet. Wipe the device to use "
+            "multi-chain firmware.",
+            fsm_test_lastFailureMessage());
+      }
       EXPECT_EQ(2, kkconfirm_drain());
       ExpectUntouched();
     }
@@ -401,11 +451,11 @@ TEST_P(IncompatibleStorage, CreationRefusesBeforeStagingOrConfirmation) {
   entropy.has_entropy = true;
   entropy.entropy.size = 32;
   ExpectRejected(MessageType_MessageType_EntropyAck, EntropyAck_fields,
-                 &entropy);
+                 &entropy, "Not in Reset mode");
   CharacterAck character = {};
   character.has_done = character.done = true;
   ExpectRejected(MessageType_MessageType_CharacterAck, CharacterAck_fields,
-                 &character);
+                 &character, "Not in Recovery mode");
 }
 
 TEST_P(IncompatibleStorage, SettingsRefuseBeforeMutationOrConfirmation) {
@@ -479,7 +529,30 @@ TEST_P(IncompatibleStorage, ReadOnlyRequestsAndCancelledWipePreserveLock) {
             storage_isFirmwareTooOld());
   EXPECT_EQ(GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
             storage_isBitcoinOnlyLocked());
+  EXPECT_EQ(BITCOIN_ONLY && GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
+            storage_isBitcoinOnlyTooNew());
   ExpectUntouched();
+}
+
+// A reinitialized emulator (libkkemu, test fixtures) can load a different
+// flash image without a wipe. The previous image's locks must not follow it.
+TEST_P(IncompatibleStorage, ReinitializingOnFreshFlashClearsIncompatibleLocks) {
+  std::fill(bytes.begin(), bytes.end(), 0xff);
+  storage_init();
+  EXPECT_FALSE(storage_isFirmwareTooOld());
+  EXPECT_FALSE(storage_isBitcoinOnlyLocked());
+  EXPECT_FALSE(storage_isBitcoinOnlyTooNew());
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  fsm_test_clearLastFailure();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  receiveMessage(MessageType_MessageType_LoadDevice, LoadDevice_fields, &load);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_init();
+  EXPECT_TRUE(storage_isInitialized());
 }
 
 TEST_P(IncompatibleStorage, ConfirmedWipeAllowsPersistentLoadAndSettings) {
@@ -506,6 +579,7 @@ TEST_P(IncompatibleStorage, ConfirmedWipeAllowsPersistentLoadAndSettings) {
   EXPECT_STREQ("persist after wipe", storage_getLabel());
   EXPECT_FALSE(storage_isFirmwareTooOld());
   EXPECT_FALSE(storage_isBitcoinOnlyLocked());
+  EXPECT_FALSE(storage_isBitcoinOnlyTooNew());
 }
 
 TEST_P(IncompatibleStorage, ConfirmedWipeAllowsResetAndRecoveryStarts) {
