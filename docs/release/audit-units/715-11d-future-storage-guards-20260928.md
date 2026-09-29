@@ -42,7 +42,7 @@ Inventory base: `659580c7cf91483c066f6ad4561290cb17b7e257`. Reproduce with `git 
 | 6 | 4 | `lib/firmware/fsm_msg_common.h` |
 | 22 | 4 | `lib/firmware/storage.c` |
 | 2 | 0 | `lib/firmware/storage.h` |
-| 329 | 1 | `unittests/firmware/fsm.cpp` |
+| 335 | 1 | `unittests/firmware/fsm.cpp` |
 | 2 | 2 | `unittests/firmware/storage.cpp` |
 | 49 | 0 | `docs/release/audit-units/715-11d-future-storage-guards-20260928.md` |
 | - | - | `docs/release/audit-units/715-11d-future-storage-guards-20260928.pdf` |
