@@ -1187,7 +1187,7 @@ TEST(Storage, FutureBitcoinBandValuesNeverFallThroughToWipe) {
       flash[44 + i] = static_cast<char>(version >> (8 * i));
     SessionState session = {};
     ConfigFlash shadow = {};
-    EXPECT_EQ(SUS_BitcoinOnlyTooNew,
+    EXPECT_EQ(BITCOIN_ONLY ? SUS_BitcoinOnlyTooNew : SUS_BitcoinOnlyLocked,
               storage_fromFlash(&session, &shadow, flash));
   }
 }
