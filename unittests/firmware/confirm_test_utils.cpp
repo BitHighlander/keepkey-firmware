@@ -3,6 +3,7 @@ extern "C" {
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
 #include "messages.pb.h"
+#include "pb_decode.h"
 }
 
 #include <arpa/inet.h>
@@ -14,7 +15,7 @@ extern "C" {
 // The board bootstrap lives in test_board.cpp and runs at most once per
 // binary: a second kk_board_init()/timer_init() relinks the already-linked
 // runnables[] and the queue walk in post_periodic() never returns.
-void kk_test_board_init(void);
+#include "test_board.h"
 
 /*
  * confirm() auto-accept driver for unit tests.
@@ -29,11 +30,12 @@ void kk_test_board_init(void);
  * exercise security disclosures through confirm_bytes().
  */
 
+static int kkconfirm_fd = -1;
+
 static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
                                uint8_t len) {
-  static int fd = -1;
-  if (fd < 0) fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (fd < 0) return false;
+  if (kkconfirm_fd < 0) kkconfirm_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (kkconfirm_fd < 0) return false;
 
   uint8_t frame[64] = {0};
   frame[0] = '?';
@@ -49,7 +51,7 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
   addr.sin_family = AF_INET;
   addr.sin_port = htons(11044);  // emulator main "usb" port
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  return sendto(fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
+  return sendto(kkconfirm_fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
                 sizeof(addr)) == (ssize_t)sizeof(frame);
 }
 
@@ -71,6 +73,11 @@ bool kkconfirm_preload(int nYes, int nNo) {
     uint8_t stale[MSG_TINY_BFR_SZ];
     volatile uint16_t id;
     while ((id = (uint16_t)check_for_tiny_msg(stale)) != MSG_TINY_TYPE_ERROR) {
+    }
+    // The same client socket receives ButtonRequests and terminal responses.
+    // Discard earlier output so response assertions cannot pass on stale data.
+    while (kkconfirm_fd >= 0 &&
+           recv(kkconfirm_fd, stale, sizeof(stale), MSG_DONTWAIT) > 0) {
     }
   }
 
@@ -105,6 +112,47 @@ int kkconfirm_drain(void) {
     idle_us += 1000;
   }
   return n - KKCONFIRM_MSGS_PER_SCREEN;
+}
+
+// Read real encoded USB response frames from the confirmation client's UDP
+// socket. This remains outside firmware code and survives the shared frame
+// arena's mandatory wipe on completion of an inbound request.
+bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
+                            void* result) {
+  uint8_t payload[2048] = {};
+  size_t size = 0, received = 0;
+  bool matching = false;
+  for (int idle_us = 0; idle_us < KKCONFIRM_DRAIN_GRACE_US;) {
+    uint8_t frame[64] = {};
+    const ssize_t count =
+        recv(kkconfirm_fd, frame, sizeof(frame), MSG_DONTWAIT);
+    if (count <= 0) {
+      usleep(1000);
+      idle_us += 1000;
+      continue;
+    }
+    if (count != sizeof(frame) || frame[0] != '?') return false;
+    size_t offset = 1;
+    if (frame[1] == '#' && frame[2] == '#') {
+      matching = ((uint16_t(frame[3]) << 8) | frame[4]) == expected;
+      size = (uint32_t(frame[5]) << 24) | (uint32_t(frame[6]) << 16) |
+             (uint32_t(frame[7]) << 8) | frame[8];
+      received = 0;
+      offset = 9;
+      if (matching && size > sizeof(payload)) return false;
+    }
+    if (!matching) continue;
+    const size_t available = sizeof(frame) - offset;
+    const size_t take =
+        size - received < available ? size - received : available;
+    memcpy(payload + received, frame + offset, take);
+    received += take;
+    if (received == size) {
+      pb_istream_t stream = pb_istream_from_buffer(payload, size);
+      return pb_decode(&stream, fields, result);
+    }
+  }
+  return false;
 }
 
 #include "gtest/gtest.h"
