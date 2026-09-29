@@ -23,12 +23,13 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/cm3/cortex.h>
 #else
-#include <signal.h>
-#include <unistd.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
                                shutdown(SOCKET,int) */
 #include <windows.h>        /* Sleep() */
+#else
+#include <signal.h>
+#include <unistd.h>
 #endif
 #endif
 
@@ -278,6 +279,9 @@ void delay_us(uint32_t us) {
   while (cnt--) {
     __asm__("nop");
   }
+#elif defined(_WIN32)
+  /* Sleep has millisecond resolution. Round up without overflowing us. */
+  Sleep(us / 1000u + (us % 1000u != 0u));
 #else
   usleep(us);
 #endif
