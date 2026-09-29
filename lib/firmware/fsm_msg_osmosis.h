@@ -55,7 +55,6 @@ static bool osmosis_validate_send_amount(bool has_value, const char* value,
                                          const char* denom) {
   static const char maximum[] = "18446744073709551615";
   if (!osmosis_validate_amount(has_value, value)) return false;
-  if (denom == NULL || strcmp(denom, "uosmo") != 0) return true;
   const size_t length = strlen(value);
   return length < sizeof(maximum) - 1 ||
          (length == sizeof(maximum) - 1 && strcmp(value, maximum) <= 0);
