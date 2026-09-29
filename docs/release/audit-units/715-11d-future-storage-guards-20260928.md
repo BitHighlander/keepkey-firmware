@@ -4,7 +4,7 @@ Date: 2026-09-28. Auditor: Codex /root. Isolated checkout: `/private/tmp/kk715-1
 
 ## 1. Scope and source reconciliation
 
-This unit guards persistent operations when firmware encounters an on-flash storage format newer than it understands. The detected state intentionally looks uninitialized after boot while writes are suppressed, so seed creation or settings commands could otherwise claim success without surviving restart. The common `CHECK_STORAGE_WRITABLE` guard rejects both newer-format and Bitcoin-only incompatible storage before setup, confirmation or mutation. It covers creation starts and continuation messages, PIN and wipe-code changes, settings and policies, plus authenticator commands carried by Ping because authenticator reads may re-encrypt and persist data. Read-only Ping and Initialize remain available. The explicit WipeDevice path remains usable so the owner can erase the incompatible wallet. `storage_commit()` preserves the lock until explicit wipe.
+This unit guards persistent operations when firmware encounters an on-flash storage format newer than it understands. The detected state intentionally looks uninitialized after boot while writes are suppressed, so seed creation or settings commands could otherwise claim success without surviving restart. The common `CHECK_STORAGE_WRITABLE` guard rejects both newer-format and Bitcoin-only incompatible storage before setup, confirmation or mutation. It covers creation starts (continuations such as EntropyAck and CharacterAck are then refused as out-of-sequence, since no ceremony can be armed), PIN and wipe-code changes, settings and policies, plus authenticator commands carried by Ping because authenticator reads may re-encrypt and persist data. Read-only Ping and Initialize remain available. The explicit WipeDevice path remains usable so the owner can erase the incompatible wallet. `storage_commit()` preserves the lock until explicit wipe.
 
 No protocol definitions or dependency pins change. The tests use a real scratch flash image and exercise both the newer normal-band version and Bitcoin-only format. They check flash and RAM state remains untouched on refused commands, that no confirmation is requested, that ordinary read-only requests work, cancellation preserves the lock, and confirmed wipe permits later load/settings and reset/recovery flows.
 
@@ -27,7 +27,9 @@ Final source: `b5d9e8b4b112e6b62b3c62d83a41a22cc12baf6d`; immediate predecessor:
 
 The hosted report binds Python source `aae89d378d889b3872696469fe363cf570e5ac4c`, run metadata, PDF SHA256 `ffe6f5ad7d53fcdd0d16a4d67fab61d96526718f4bb82ec317c57c04d63daa73`, and merged JUnit SHA256 `be2168899e1965871f328e4cceb74bfa0e75739d6a0092cc6c55f8863952343d`. Aggregate: 1,551 passed, 84 declared skips, zero failures or errors. Full and Bitcoin-only native firmware suites passed 699 and 167 tests, including all 30 and 24 incompatible-storage cases. Each ARM variant has 23 files; artifact manifests, firmware hashes and Python pin match the candidate.
 
-Copilot round 1 found (1) misleading destructive recovery guidance for a newer Bitcoin-only format and (2) missing `-` markers for binary inventory files. The status is now distinct from a foreign Bitcoin-only wallet, and upgrade guidance is shown on write and load/reset paths. The binary markers are present in the inventory. Two follow-up CI runs exposed stale variant-specific assertions, corrected in commits `e81254ae99f4dbe66d5885484a2bc45d2d972917` and `b5d9e8b4b112e6b62b3c62d83a41a22cc12baf6d`; the final run above is green. Copilot round 2 and exact final-head CI after evidence refresh are pending.
+Copilot round 1 found (1) misleading destructive recovery guidance for a newer Bitcoin-only format and (2) missing `-` markers for binary inventory files. The status is now distinct from a foreign Bitcoin-only wallet, and upgrade guidance is shown on write and load/reset paths. The binary markers are present in the inventory. Two follow-up CI runs exposed stale variant-specific assertions, corrected in commits `e81254ae99f4dbe66d5885484a2bc45d2d972917` and `b5d9e8b4b112e6b62b3c62d83a41a22cc12baf6d`; the final run above is green. The evidence-refresh head `0c08ce9ef4869269922c4c0b62f7ac069d7c81ea` then passed manual run [36511361026](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36511361026) with identical native case identities, 1,551 passed, 84 declared skips and zero failures; PDF SHA256 `09e4e4c6dd51b19dee346d1ca5340a90f1146a6deb93d04e4a09ff1af34f2527`.
+
+Copilot round 2 (review 5347145662 on `0c08ce9ef`) required code changes. (1) Its overview found the three compatibility locks cleared only by `storage_wipe()`, so a reinitialized emulator loading a valid image after an incompatible one kept refusing writes; `storage_init()` now clears them before classifying. Devices were unaffected because the statics reset at boot. (2) Refusal tests asserted only the failure type; they now assert the exact guidance per image and build, and that a too-new Bitcoin-only wallet is never told to wipe. (3) The lock documentation names both classification paths. Repair commit `1503b35d5`, with new test `ReinitializingOnFreshFlashClearsIncompatibleLocks`. Its first hosted run, [36514935877](https://github.com/BitHighlander/keepkey-firmware/actions/runs/36514935877), showed the new message assertions were wrong for the two continuations. They are refused as out-of-sequence ("Not in Reset mode" / "Not in Recovery mode"), not by the storage guard; the test now asserts that. The firmware was unchanged and every other message assertion passed. Hosted CI at the repair head, a negative control, and Copilot round 3 are recorded in the PR.
 
 ## 3. Adjacent inventory
 
@@ -36,12 +38,12 @@ Inventory base: `659580c7cf91483c066f6ad4561290cb17b7e257`. Reproduce with `git 
 | Added | Deleted | Path |
 | ---: | ---: | --- |
 | 4 | 2 | `include/keepkey/firmware/storage.h` |
-| 33 | 27 | `lib/firmware/fsm.c` |
+| 44 | 28 | `lib/firmware/fsm.c` |
 | 6 | 4 | `lib/firmware/fsm_msg_common.h` |
-| 14 | 3 | `lib/firmware/storage.c` |
+| 22 | 4 | `lib/firmware/storage.c` |
 | 2 | 0 | `lib/firmware/storage.h` |
-| 267 | 1 | `unittests/firmware/fsm.cpp` |
+| 335 | 1 | `unittests/firmware/fsm.cpp` |
 | 2 | 2 | `unittests/firmware/storage.cpp` |
-| 47 | 0 | `docs/release/audit-units/715-11d-future-storage-guards-20260928.md` |
+| 49 | 0 | `docs/release/audit-units/715-11d-future-storage-guards-20260928.md` |
 | - | - | `docs/release/audit-units/715-11d-future-storage-guards-20260928.pdf` |
 | - | - | `docs/release/audit-units/715-11d-controls-20260928.tgz` |
