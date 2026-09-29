@@ -160,6 +160,13 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
     layoutHome();                                                    \
     return;                                                          \
   }                                                                  \
+  if (storage_isBitcoinOnlyTooNew()) {                               \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
+                    "Storage needs newer firmware. Upgrade "         \
+                    "firmware to recover this wallet.");             \
+    layoutHome();                                                    \
+    return;                                                          \
+  }                                                                  \
   if (storage_isBitcoinOnlyLocked()) {                               \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
                     "Bitcoin-only wallet present. Use Wipe first."); \
@@ -189,6 +196,13 @@ FailureType fsm_test_lastFailureCode(void) { return fsm_test_failure_code; }
   }
 
 #define CHECK_NOT_BTC_ONLY_LOCKED                                   \
+  if (storage_isBitcoinOnlyTooNew()) {                              \
+    fsm_sendFailure(FailureType_Failure_Other,                      \
+                    "Storage needs newer firmware. Upgrade "        \
+                    "firmware to recover this wallet.");            \
+    layoutHome();                                                   \
+    return;                                                         \
+  }                                                                 \
   if (storage_isBitcoinOnlyLocked()) {                              \
     fsm_sendFailure(FailureType_Failure_Other,                      \
                     "Device holds a bitcoin-only wallet. Wipe the " \

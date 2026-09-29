@@ -108,8 +108,10 @@ static ConfigFlash CONFIDENTIAL shadow_config;
  * build understands. Set from the SUS_BitcoinOnlyLocked path in either build.
  */
 static bool btc_only_locked = false;
+static bool btc_only_too_new = false;
 
 bool storage_isBitcoinOnlyLocked(void) { return btc_only_locked; }
+bool storage_isBitcoinOnlyTooNew(void) { return btc_only_too_new; }
 
 /* A downgrade found a normal-band format newer than this build. Keep flash
  * byte-for-byte intact so reinstalling the newer firmware recovers the
@@ -1317,7 +1319,7 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       if (underlying > (uint32_t)STORAGE_VERSION) {
         // A newer bitcoin-only wallet than this firmware understands: refuse
         // rather than wipe, so a firmware downgrade never destroys it.
-        return SUS_BitcoinOnlyLocked;
+        return SUS_BitcoinOnlyTooNew;
       }
       // Read via the reader matching the underlying version (same mapping as
       // the multi-chain path above), then keep the band stamp so multi-chain
@@ -1492,6 +1494,14 @@ void storage_init(void) {
       // devices in any host keyed on it. The sector is known active here.
       storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
       break;
+    case SUS_BitcoinOnlyTooNew:
+      // A downgraded Bitcoin-only image must be upgraded to recover this
+      // wallet; wiping it would unnecessarily destroy recoverable data.
+      btc_only_locked = true;
+      btc_only_too_new = true;
+      storage_reset();
+      storage_readMeta(&shadow_config.meta, flash, STORAGE_SECTOR_LEN);
+      break;
     case SUS_TooNew:
       // Newer normal-band storage follows the same non-destructive contract:
       // behave uninitialized in RAM, but never write over the flash sector.
@@ -1549,6 +1559,7 @@ void storage_wipe(void) {
 
   // The bitcoin-only wallet (if any) is gone; the device may be used freely.
   btc_only_locked = false;
+  btc_only_too_new = false;
   firmware_too_old = false;
 }
 

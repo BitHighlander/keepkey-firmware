@@ -309,6 +309,8 @@ class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
               storage_isFirmwareTooOld());
     ASSERT_EQ(GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
               storage_isBitcoinOnlyLocked());
+    ASSERT_EQ(BITCOIN_ONLY && GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
+              storage_isBitcoinOnlyTooNew());
     ASSERT_FALSE(storage_isInitialized());
     ExpectUntouched();
   }
@@ -359,6 +361,7 @@ class IncompatibleStorage : public ::testing::TestWithParam<uint32_t> {
     ASSERT_EQ(0, kkconfirm_drain());
     ASSERT_FALSE(storage_isFirmwareTooOld());
     ASSERT_FALSE(storage_isBitcoinOnlyLocked());
+    ASSERT_FALSE(storage_isBitcoinOnlyTooNew());
     ASSERT_FALSE(storage_isInitialized());
     EXPECT_NE(0, std::memcmp(original.data(), bytes.data(), bytes.size()));
   }
@@ -479,6 +482,8 @@ TEST_P(IncompatibleStorage, ReadOnlyRequestsAndCancelledWipePreserveLock) {
             storage_isFirmwareTooOld());
   EXPECT_EQ(GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
             storage_isBitcoinOnlyLocked());
+  EXPECT_EQ(BITCOIN_ONLY && GetParam() >= STORAGE_VERSION_BTC_ONLY_BASE,
+            storage_isBitcoinOnlyTooNew());
   ExpectUntouched();
 }
 
@@ -506,6 +511,7 @@ TEST_P(IncompatibleStorage, ConfirmedWipeAllowsPersistentLoadAndSettings) {
   EXPECT_STREQ("persist after wipe", storage_getLabel());
   EXPECT_FALSE(storage_isFirmwareTooOld());
   EXPECT_FALSE(storage_isBitcoinOnlyLocked());
+  EXPECT_FALSE(storage_isBitcoinOnlyTooNew());
 }
 
 TEST_P(IncompatibleStorage, ConfirmedWipeAllowsResetAndRecoveryStarts) {

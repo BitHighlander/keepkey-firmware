@@ -191,6 +191,8 @@ typedef enum {
   /// Storage was written by bitcoin-only firmware and this build must not load
   /// it. The wallet stays INTACT in flash -- this is a refusal, never a wipe.
   SUS_BitcoinOnlyLocked,
+  /// A Bitcoin-only wallet was written by a newer format than this firmware.
+  SUS_BitcoinOnlyTooNew,
   /// Storage was written by newer firmware. Refuse it without touching flash.
   SUS_TooNew,
 } StorageUpdateStatus;
