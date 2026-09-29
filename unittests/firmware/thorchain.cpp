@@ -401,3 +401,11 @@ TEST(Thorchain, DepositAssetAndSignerFailClosed) {
   EXPECT_TRUE(thorchain_signingIsFinished());
   thorchain_signAbort();
 }
+
+TEST(Thorchain, DeclaredDepositAssetValidatorEnforcesGrammar) {
+  EXPECT_TRUE(thorchain_isValidAsset("THOR.RUNE"));
+  EXPECT_TRUE(thorchain_isValidAsset("BTC/BTC"));
+  EXPECT_FALSE(thorchain_isValidAsset("THOR:RUNE"));
+  EXPECT_FALSE(thorchain_isValidAsset("THOR_RUNE"));
+  EXPECT_FALSE(thorchain_isValidAsset(nullptr));
+}

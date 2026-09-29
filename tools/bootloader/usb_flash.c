@@ -195,6 +195,10 @@ bool usb_flash_firmware(void) {
                                    ? "FIRMWARE UPDATE REQUIRED"
                                    : "FIRMWARE UPDATE MODE",
                                body, NOTIFICATION_LOGO);
+#if DEBUG_LINK
+  layout_debuglink_watermark();
+#endif
+
   usbInit("keepkey.com");
   bootloader_fsm_init();
 

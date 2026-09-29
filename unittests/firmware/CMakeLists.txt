@@ -10,6 +10,8 @@ set(sources
     fsm.cpp
     dice.cpp
     recovery.cpp
+    recovery_review_probe.c
+    review_handlers.cpp
     rng_health.cpp
     setup_ceremony.cpp
     reset_policy_probe.c
@@ -42,6 +44,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       hive_transfer.cpp
       eip712_stream.cpp
       liquidity_key_probe.c
+      review_integer.cpp
       mayachain.cpp
       nano.cpp
       osmosis.cpp
@@ -87,3 +90,13 @@ target_link_libraries(firmware-unit
     kkrand
     kkemulator
     kktransport)
+
+# Compile and exercise the dormant Zcash address display without enabling
+# Zcash signing handlers in the foundation firmware.
+if(NOT KK_BITCOIN_ONLY)
+  add_executable(zcash-display-unit
+      zcash_display.cpp zcash_display_confirm_probe.c zcash_display_layout_probe.c
+      confirm_test_utils.cpp test_board.cpp)
+  get_target_property(FIRMWARE_TEST_LIBS firmware-unit LINK_LIBRARIES)
+  target_link_libraries(zcash-display-unit ${FIRMWARE_TEST_LIBS})
+endif()

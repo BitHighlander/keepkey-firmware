@@ -107,6 +107,10 @@ void setup_abort(void) {
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
   memzero(current_words, sizeof(current_words));
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   /* reset_entropy() receives its generated sentence from bip39.c's static
    * `mnemo` buffer.  A cancelled/error ceremony has no owner for that secret,
    * so the common abort path must clear it along with the setup scratch. */
@@ -477,6 +481,13 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   msg_write(MessageType_MessageType_EntropyRequest, &resp);
 }
 
+/* Shared paginated-mnemonic display scratch — see reset.h for the contract
+ * (also used by the BIP-85 flow; each user zeroes at entry and exit). */
+char CONFIDENTIAL mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
+char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
+char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
+char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
+
 /* Page \a mnemonic under one ButtonRequest per screen, retaining each screen's
  * words for ordinary reset diagnostics. Dice pages remain device-only. Used for
  * the backup words and, in the dice MIXED mode, for the device-entropy words
@@ -490,17 +501,12 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
   uint32_t word_count = 0, page_count = 0;
   static char CONFIDENTIAL
       mnemonic_by_screen[MAX_PAGES][MNEMONIC_BY_SCREEN_BUF];
-  static char CONFIDENTIAL tokened_mnemonic[TOKENED_MNEMONIC_BUF];
-  static char CONFIDENTIAL
-      formatted_mnemonic[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
-  static char CONFIDENTIAL mnemonic_display[FORMATTED_MNEMONIC_BUF];
-  static char CONFIDENTIAL formatted_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
   bool ok = false;
 
-  memzero(tokened_mnemonic, sizeof(tokened_mnemonic));
-  memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
-  memzero(mnemonic_display, sizeof(mnemonic_display));
-  memzero(formatted_word, sizeof(formatted_word));
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
 
   if (mnemonic == NULL) {
@@ -508,20 +514,21 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
     goto done;
   }
 
-  strlcpy(tokened_mnemonic, mnemonic, TOKENED_MNEMONIC_BUF);
+  strlcpy(mnemonic_scratch_tokened, mnemonic, TOKENED_MNEMONIC_BUF);
 
-  char* tok = strtok(tokened_mnemonic, " ");
+  char* tok = strtok(mnemonic_scratch_tokened, " ");
 
   while (tok) {
-    snprintf(formatted_word, MAX_WORD_LEN + ADDITIONAL_WORD_PAD,
+    snprintf(mnemonic_scratch_word, MAX_WORD_LEN + ADDITIONAL_WORD_PAD,
              (word_count & 1) ? "%lu.%s\n" : "%lu.%s",
              (unsigned long)(word_count + 1), tok);
 
     /* Check that we have enough room on display to show word */
-    snprintf(mnemonic_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
-             formatted_mnemonic[page_count], formatted_word);
+    snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
+             mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
 
-    if (calc_str_line(get_body_font(), mnemonic_display, BODY_WIDTH) > 3) {
+    if (calc_str_line(get_body_font(), mnemonic_scratch_display, BODY_WIDTH) >
+        3) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {
@@ -530,11 +537,11 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
         goto done;
       }
 
-      snprintf(mnemonic_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
-               formatted_mnemonic[page_count], formatted_word);
+      snprintf(mnemonic_scratch_display, FORMATTED_MNEMONIC_BUF, "%s   %s",
+               mnemonic_scratch_formatted[page_count], mnemonic_scratch_word);
     }
 
-    strlcpy(formatted_mnemonic[page_count], mnemonic_display,
+    strlcpy(mnemonic_scratch_formatted[page_count], mnemonic_scratch_display,
             FORMATTED_MNEMONIC_BUF);
 
     /* Save mnemonic for each screen */
@@ -570,8 +577,8 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
 
     /* Keep the legacy one-request-per-group host protocol while paging the
      * narrower physical OLED layout locally inside that request. */
-    if (!confirm_constant_power_paged(type, title,
-                                      formatted_mnemonic[current_page])) {
+    if (!confirm_constant_power_paged(
+            type, title, mnemonic_scratch_formatted[current_page])) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
       goto done;
@@ -581,11 +588,11 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
   ok = true;
 
 done:
-  memzero(tokened_mnemonic, sizeof(tokened_mnemonic));
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
-  memzero(formatted_mnemonic, sizeof(formatted_mnemonic));
-  memzero(mnemonic_display, sizeof(mnemonic_display));
-  memzero(formatted_word, sizeof(formatted_word));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   return ok;
 }
 

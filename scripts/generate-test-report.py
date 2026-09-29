@@ -33,6 +33,27 @@ BASE_REQUIRED_CASES = {
     "test_msg_resetdevice.TestDeviceReset.test_reset_device_dice_mixed_is_verifiable",
     "test_msg_resetdevice.TestDeviceReset.test_reset_device_dice_only_is_verifiable",
     "test_p02_transport.TestP02Transport.test_mixed_entropy_pages_remain_private_and_cancel_clears_state",
+    "Eip712.MalformedHexNeverPublishesEncodedOutput",
+    "Eip712.ByteEncodingMatchesIndependentHashAndRightPadding",
+    "Eip712.MismatchedJsonShapesAndFixedArraysAreRejectedBeforeHashing",
+    "Eip712.MalformedBytesAndAddressesRejectedBeforeAnyValueScreen",
+    "Eip712.BytesNTypeWidthIsStrictInTypeHashAndEncoder",
+    "Eip712.MissingFieldRefusedWithoutDereferenceOrHashMutation",
+    "Eip712.DecimalSignPaddingMatchesParsedValue",
+    "Eip712.IntegerWidthAndValueMustMatchBeforeHashing",
+    "Eip712.NarrowIntegerBoundaryMatchesIndependentEncoding",
+    "Recovery.DeleteKeepsTypedCipherCharactersNotTheCurrentMapping",
+    "Ripple.TruncatedBufferFailsWithoutWritingPastEnd",
+    "Storage.LegacyLanguageIsBoundedAndTerminated",
+    "Storage.TruncatedLegacyCacheDoesNotMutateDestination",
+    "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
+    "EmulatorLifecycle.ConcurrentCaptureNeverTearsOrReordersUnreadSlots",
+    "EmulatorLifecycle.ShutdownStopsPollThreadAndAllowsRestart",
+    "EmulatorLifecycle.ShutdownWakesConfirmationWaitingForHostDecision",
+    "ReviewHandlers.ResetCancellationClearsScratchBeforeAndAfterFormatting",
+    "ReviewHandlers.ResetWithoutBackupCommitsAndClearsScratch",
+    "ReviewHandlers.ResetBackupCommitsAllStrengthsAndClearsScratch",
+    "SetupCeremony.AbortScrubsEveryByteOfSharedMnemonicDisplayScratch",
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
 }
@@ -683,6 +704,7 @@ def main():
     junit_paths = [ROOT / "test-reports" / "python-keepkey" / "junit.xml"]
     junit_paths += require_native_junit(ROOT)
     junit_paths.append(ROOT / "test-reports" / "dylib-junit.xml")
+    junit_paths.append(ROOT / "test-reports" / "emulator" / "lifecycle.xml")
     missing_junit = [str(path) for path in junit_paths if not path.is_file()]
     if missing_junit:
         fail("required JUnit inputs missing: %s" % ", ".join(missing_junit))

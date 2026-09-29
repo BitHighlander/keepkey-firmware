@@ -19,6 +19,8 @@ set(BOOTLOADER_PATCH_VERSION 5)
 option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
+option(KK_BUILD_BOOTLOADER_TOOLS
+       "Build bootloader, bootloader updater, and bootstrap artifacts" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)"
        OFF)
@@ -186,7 +188,7 @@ elseif(
   OR "${CMAKE_BUILD_TYPE}" STREQUAL "")
   add_definitions(-DNDEBUG)
   add_definitions(-DMEMORY_PROTECT=1)
-  if(NOT ${KK_EMULATOR})
+  if(NOT ${KK_EMULATOR} AND KK_BUILD_BOOTLOADER_TOOLS)
     message(
       WARNING
         "*********************************************************************\n"
@@ -232,7 +234,7 @@ add_subdirectory(deps/crypto)
 add_subdirectory(deps/qrenc)
 add_subdirectory(deps/sca-hardening)
 
-if(${KK_EMULATOR})
+if(${KK_EMULATOR} AND NOT WIN32)
   add_subdirectory(deps/googletest)
   add_subdirectory(unittests)
   if(${KK_BUILD_FUZZERS})
@@ -268,6 +270,18 @@ if(${KK_EMULATOR})
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/erc7730-validate/test_cli.py
                 $<TARGET_FILE:erc7730-validate>)
     add_dependencies(xunit erc7730-validator-test)
+  endif()
+
+  if(KK_BUILD_DYLIB AND NOT WIN32)
+    find_package(Threads REQUIRED)
+    add_executable(emulator-unit unittests/emulator/lifecycle.cpp)
+    target_include_directories(emulator-unit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(emulator-unit gtest_main kkemulator_dylib Threads::Threads)
+    add_test(test-emulator ${CMAKE_BINARY_DIR}/bin/emulator-unit)
+    add_dependencies(xunit emulator-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/emulator-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/emulator.xml)
   endif()
 
 endif()

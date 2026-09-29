@@ -255,7 +255,8 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
       /* BYTES covers an opaque fixed word — an order/request id, say — which
        * a router genuinely cannot render as an address or an amount. It still
        * consumes exactly one 32-byte ABI word, so structural completeness is
-       * unaffected; only the rendering differs (hex, first 16 bytes). */
+       * unaffected; only the rendering differs (hex, every byte on numbered
+       * pages). */
       case ARG_FORMAT_BYTES:
         arg->value_len = 0; /* filled from the tx calldata at decode time */
         break;
@@ -917,10 +918,13 @@ static bool signed_metadata_confirm_screens(void) {
         if (is_max && arg->value_len == 32) {
           snprintf(body, sizeof(body), "%s:\nUNLIMITED", arg->name);
         } else {
-          char formatted[48];
-          bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
-                    sizeof(formatted));
-          snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
+          char formatted[96];
+          if (bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
+                        sizeof(formatted)) == 0 ||
+              snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted) >=
+                  (int)sizeof(body)) {
+            return false;
+          }
         }
         break;
       }
@@ -956,22 +960,37 @@ static bool signed_metadata_confirm_screens(void) {
         } else {
           bignum256 amount;
           bn_from_metadata_bytes(amt, amt_len, &amount);
-          char formatted[48];
-          bn_format(&amount, NULL, suffix, decimals, 0, false, formatted,
-                    sizeof(formatted));
-          snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted);
+          char formatted[96];
+          if (bn_format(&amount, NULL, suffix, decimals, 0, false, formatted,
+                        sizeof(formatted)) == 0 ||
+              snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted) >=
+                  (int)sizeof(body)) {
+            return false;
+          }
         }
         break;
       }
       case ARG_FORMAT_BYTES:
       case ARG_FORMAT_RAW:
       default: {
-        char hex[(METADATA_MAX_ARG_VALUE_LEN * 2) + 1];
-        size_t display_len = arg->value_len > 16 ? 16 : (size_t)arg->value_len;
-        data2hex(arg->value, display_len, hex);
-        snprintf(body, sizeof(body), "%s:\n%s%s", arg->name, hex,
-                 arg->value_len > 16 ? "..." : "");
-        break;
+        /* Every byte affects the signed call. A prefix-only screen would
+         * hide changes in the second half of an opaque ABI word. */
+        const size_t pages = (arg->value_len + 15) / 16;
+        for (size_t page = 0; page < (pages ? pages : 1); page++) {
+          size_t offset = page * 16;
+          size_t chunk_len = arg->value_len - offset;
+          if (chunk_len > 16) chunk_len = 16;
+          char hex[33];
+          data2hex(arg->value + offset, chunk_len, hex);
+          snprintf(body, sizeof(body), "%s (%u/%u):\n%s", arg->name,
+                   (unsigned)(page + 1), (unsigned)(pages ? pages : 1), hex);
+          if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                                 screen_icon, stored_metadata.method_name, "%s",
+                                 body)) {
+            return false;
+          }
+        }
+        continue;
       }
     }
 

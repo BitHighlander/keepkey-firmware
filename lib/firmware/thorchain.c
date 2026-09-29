@@ -51,6 +51,10 @@ bool thorchain_isValidDenom(const char* denom) {
   return true;
 }
 
+bool thorchain_isValidAsset(const char* asset) {
+  return tendermint_isValidAsset(asset);
+}
+
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
@@ -208,8 +212,8 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   if (!initialized || msgs_remaining == 0) return false;
 
   const char* const signer_prefix = testnet ? "tthor" : "thor";
-  if (!depmsg || !depmsg->has_asset ||
-      !tendermint_validateSafeText(depmsg->asset) || !depmsg->has_signer ||
+  if (!depmsg || !depmsg->has_asset || !thorchain_isValidAsset(depmsg->asset) ||
+      !depmsg->has_signer ||
       !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
     return false;
   }

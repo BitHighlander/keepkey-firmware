@@ -590,6 +590,9 @@ int dsConfirm(void) {
 */
 int parseVals(const json_t* eip712Types, const json_t* jType,
               const json_t* nextVal, struct SHA3_CTX* msgCtx) {
+  if (!eip712Types || !jType || json_getType(jType) != JSON_ARRAY ||
+      !json_getName(jType) || !msgCtx)
+    return GENERAL_ERROR;
   json_t const *tarray, *pairs, *walkVals, *obTest;
   int ctr;
   const char* typeType = NULL;
@@ -621,12 +624,15 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
       if (NULL == (obTest = json_getSibling(pairs))) {
         return JSON_NO_PAIRS_SIB;
       }
-      if (NULL == (typeType = json_getValue(obTest))) {
+      if (json_getType(obTest) != JSON_TEXT ||
+          NULL == (typeType = json_getValue(obTest)) || !*typeType) {
         return JSON_TYPE_T_NOVAL;
       }
       walkVals = nextVal;
       while (0 != walkVals) {
-        if (0 == strcmp(json_getName(walkVals), typeName)) {
+        const char* value_name = json_getName(walkVals);
+        if (!value_name) return GENERAL_ERROR;
+        if (0 == strcmp(value_name, typeName)) {
           break;
         } else {
           // keep looking for val

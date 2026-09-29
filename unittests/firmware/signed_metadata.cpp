@@ -31,6 +31,7 @@ void setup(void);
 }
 
 #include "gtest/gtest.h"
+#include "kkconfirm_driver.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -1560,6 +1561,29 @@ TEST_F(SignedMetadataTest, V2AcceptsBytesArg) {
   std::vector<uint8_t> blob = sign_body(build_v2_body(s));
   EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
             METADATA_VERIFIED);
+}
+
+/* Every byte of an opaque BYTES word is shown, on numbered pages: a
+ * prefix-only screen would hide a change in the second half of the word. */
+TEST_F(SignedMetadataTest, FixedBytesSchemaDecodesEntireWord) {
+  V2Spec spec = v2_base_spec();
+  spec.args[1] = V2Arg{"data", ARG_FORMAT_BYTES, 0, ""};
+  std::vector<uint8_t> blob = sign_body(build_v2_body(spec));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  for (size_t i = 36; i < data.size(); ++i) data[i] = (uint8_t)i;
+  EthereumSignTx msg;
+  make_v2_msg(&msg, CONTRACT_A, data, true, (uint32_t)data.size());
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  const SignedMetadata* decoded = signed_metadata_get();
+  ASSERT_NE(nullptr, decoded);
+  ASSERT_EQ(32u, decoded->args[1].value_len);
+  EXPECT_EQ(0, memcmp(decoded->args[1].value, data.data() + 36, 32));
+  // identity, method, contract, address, byte page 1 accepted; page 2 refused.
+  ASSERT_TRUE(kkconfirm_preload(5, 1));
+  EXPECT_FALSE(signed_metadata_confirm());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 /* Tampered v2 body must fail the signature check. */
