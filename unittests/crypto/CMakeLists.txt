@@ -24,16 +24,5 @@ target_link_libraries(crypto-unit
     trezorcrypto
     kktransport)
 
-add_executable(zcash-crypto-unit
-    ../firmware/zcash.cpp
-    ${CMAKE_SOURCE_DIR}/lib/firmware/zcash.c
-    emulator_random.c)
-target_include_directories(zcash-crypto-unit PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/lib/firmware
-    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto
-    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/ed25519-donna)
-target_link_libraries(zcash-crypto-unit
-    gtest_main
-    trezorcrypto
-    kkrand)
+# Zcash coverage belongs to firmware-unit when KK_ZCASH_PRIVACY is enabled.
+# Its normal xunit/CTest registration runs the shared firmware/zcash.cpp suite.

@@ -22,11 +22,11 @@ if(${KK_EMULATOR})
         ringbuf.c
         libkkemu.c)
 
-    if(NOT ${KK_HAVE_STRLCPY})
-        set(dylib_sources ${dylib_sources} strlcpy.c)
+    if(NOT KK_HAVE_STRLCPY)
+        list(APPEND dylib_sources ${CMAKE_CURRENT_SOURCE_DIR}/../board/strlcpy.c)
     endif()
-    if(NOT ${KK_HAVE_STRLCAT})
-        set(dylib_sources ${dylib_sources} strlcat.c)
+    if(NOT KK_HAVE_STRLCAT)
+        list(APPEND dylib_sources ${CMAKE_CURRENT_SOURCE_DIR}/../board/strlcat.c)
     endif()
 
     add_library(kkemulator_dylib SHARED ${dylib_sources})
