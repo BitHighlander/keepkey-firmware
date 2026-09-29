@@ -288,6 +288,8 @@ void fsm_msgPing(Ping* msg) {
   }
 
   if (authMsg < NUM_AUTHMESSAGES) {
+    /* Even reads can re-encrypt and persist authenticator storage. */
+    CHECK_STORAGE_WRITABLE
     // this is an authenticator message
     unsigned errcode;
     char otp[9] = {0};  // allow room for an 8 digit otp
@@ -384,7 +386,7 @@ void fsm_msgPing(Ping* msg) {
 
 // cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangePin(ChangePin* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
@@ -437,7 +439,7 @@ void fsm_msgChangePin(ChangePin* msg) {
 
 // cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
@@ -653,7 +655,7 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
@@ -787,7 +789,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 

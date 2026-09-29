@@ -74,9 +74,10 @@ void storage_wipe(void);
 
 /// \brief True when flash holds storage this build must refuse to load or
 /// overwrite -- a bitcoin-only wallet seen by multi-chain firmware, or a newer
-/// in-band wallet than this build understands.
+/// bitcoin-only format than this build understands.
 ///
-/// Handlers that CREATE a seed must check this and refuse. The device looks
+/// Handlers that create a seed or persist settings must check both this and
+/// storage_isFirmwareTooOld() and refuse. The device looks
 /// uninitialized while locked (the RAM shadow was reset, so
 /// storage_isInitialized() is false), and storage_commit() silently declines to
 /// write, so a ceremony allowed to run would report success while persisting

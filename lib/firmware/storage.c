@@ -1655,8 +1655,8 @@ void storage_commit(void) {
    * storage, so this cannot recurse. */
   if (setup_isArmed()) setup_abort();
 
-  // Never overwrite a bitcoin-only wallet from multi-chain firmware; the
-  // only way out is storage_wipe() (which clears the lock).
+  // Preserve incompatible bitcoin-only wallets and newer normal-band formats.
+  // Only an explicit storage_wipe() clears these locks.
   if (btc_only_locked || firmware_too_old) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
