@@ -31,6 +31,19 @@ bool fsm_test_derivedNodeIsZero(void);
 void fsm_test_clearLastFailure(void);
 FailureType fsm_test_lastFailureCode(void);
 const char* fsm_test_lastFailureMessage(void);
+/* Wipes routed through FSM_SCRUB() since the last clear, by buffer size, so a
+ * test can tell that a function-local secret buffer was wiped. */
+void fsm_test_recordScrub(size_t size);
+void fsm_test_clearScrubs(void);
+size_t fsm_test_scrubCount(size_t size);
+/* memzero() of a whole array, observable by tests in DEBUG_LINK builds. */
+#define FSM_SCRUB(array)                 \
+  do {                                   \
+    memzero((array), sizeof(array));     \
+    fsm_test_recordScrub(sizeof(array)); \
+  } while (0)
+#else
+#define FSM_SCRUB(array) memzero((array), sizeof(array))
 #endif
 
 #define RESP_INIT(TYPE)                                                    \

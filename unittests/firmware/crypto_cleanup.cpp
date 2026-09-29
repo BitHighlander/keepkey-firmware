@@ -113,8 +113,21 @@ class CryptoCleanup : public ::testing::Test {
     return request;
   }
 
+  // Each secret workspace in SignIdentity is wiped by FSM_SCRUB on the paths
+  // that use it: the 32-byte identity fingerprint, the 20-byte derivation
+  // path and the 64-byte generic-protocol digest. The derived node is checked
+  // separately through fsm_test_derivedNodeIsZero(). Counts are exact, so a
+  // removed or duplicated wipe on any path is caught.
+  static void ExpectWorkspaceWipes(size_t fingerprint, size_t path,
+                                   size_t digest) {
+    EXPECT_EQ(fingerprint, fsm_test_scrubCount(32));
+    EXPECT_EQ(path, fsm_test_scrubCount(20));
+    EXPECT_EQ(digest, fsm_test_scrubCount(64));
+  }
+
   void sign(SignIdentity* request, bool wire) {
     fsm_test_clearLastFailure();
+    fsm_test_clearScrubs();
     if (wire) {
       receive(MessageType_MessageType_SignIdentity, SignIdentity_fields,
               request);
@@ -207,6 +220,9 @@ TEST_F(CryptoCleanup,
       ASSERT_TRUE(kkconfirm_preload(https ? 4 : 3, 0));
       sign(&request, wire);
       EXPECT_EQ(0, kkconfirm_drain());
+      const bool generic = std::strcmp(v.protocol, "ssh") != 0 &&
+                           std::strcmp(v.protocol, "gpg") != 0;
+      ExpectWorkspaceWipes(1, 1, generic ? 1 : 0);
       SignedIdentity result = {};
       response(MessageType_MessageType_SignedIdentity, SignedIdentity_fields,
                &result);
@@ -247,6 +263,7 @@ TEST_F(CryptoCleanup, GpgExactDigestWithoutVisualChallengeSignsAndScrubs) {
     ASSERT_TRUE(kkconfirm_preload(2, 0));
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
+    ExpectWorkspaceWipes(1, 1, 0);
     SignedIdentity result = {};
     response(MessageType_MessageType_SignedIdentity, SignedIdentity_fields,
              &result);
@@ -265,6 +282,7 @@ TEST_F(CryptoCleanup, IdentitySigningFailureScrubsBeforeReturningFailure) {
       ASSERT_TRUE(kkconfirm_preload(3, 0));
       sign(&request, wire);
       EXPECT_EQ(0, kkconfirm_drain());
+      ExpectWorkspaceWipes(1, 1, 0);
       Failure result = {};
       response(MessageType_MessageType_Failure, Failure_fields, &result);
       EXPECT_EQ(FailureType_Failure_Other, result.code);
@@ -286,6 +304,8 @@ TEST_F(CryptoCleanup, IdentityDerivationFailureClearsPriorScratch) {
     ASSERT_TRUE(kkconfirm_preload(3, 0));
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
+    // Derivation failed, but the fingerprint and path were already built.
+    ExpectWorkspaceWipes(1, 1, 0);
     EXPECT_EQ(FailureType_Failure_NotInitialized, fsm_test_lastFailureCode());
   }
 }
@@ -296,6 +316,8 @@ TEST_F(CryptoCleanup, IdentityCancellationProducesNoSignatureOrRetainedKey) {
     ASSERT_TRUE(kkconfirm_preload(0, 1));
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
+    // Cancelled before any path or digest existed; only the fingerprint.
+    ExpectWorkspaceWipes(1, 0, 0);
     EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
     Failure result = {};
     response(MessageType_MessageType_Failure, Failure_fields, &result);
