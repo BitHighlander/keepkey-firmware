@@ -83,8 +83,15 @@ void storage_wipe(void);
 /// write, so a ceremony allowed to run would report success while persisting
 /// nothing -- and a seed the user funded would vanish on the next boot.
 ///
-/// Cleared only by storage_wipe().
+/// Cleared by storage_wipe(), and recomputed from the image found by every
+/// storage_init(), so a re-initialized emulator loading a valid image is not
+/// left locked by an earlier one.
 bool storage_isBitcoinOnlyLocked(void);
+
+/// \brief True when the lock reported by storage_isBitcoinOnlyLocked() is a
+/// bitcoin-only format NEWER than this build understands. Unlike a foreign
+/// (older) bitcoin-only wallet, that wallet is recovered by upgrading firmware,
+/// so callers must not advise wiping. Implies storage_isBitcoinOnlyLocked().
 bool storage_isBitcoinOnlyTooNew(void);
 
 /// \brief True iff flash contains a newer storage format than this firmware.

@@ -1674,7 +1674,8 @@ void storage_commit(void) {
   if (setup_isArmed()) setup_abort();
 
   // Preserve incompatible bitcoin-only wallets and newer normal-band formats.
-  // Only an explicit storage_wipe() clears these locks.
+  // The locks are cleared by an explicit storage_wipe() and recomputed from
+  // the image by each storage_init(); nothing else clears them.
   if (btc_only_locked || firmware_too_old) return;
 
   // Temporary storage for marshalling secrets in & out of flash.
