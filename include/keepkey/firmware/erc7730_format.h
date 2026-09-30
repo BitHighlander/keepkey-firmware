@@ -5,6 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "keepkey/firmware/erc7730_abi_stream.h"
+
+/* Widest rendering of one capture: a string whose every byte is escaped to
+ * four characters. This also covers "0x" plus the hex of a full capture. */
+#define ERC7730_FORMATTED_VALUE_MAX (4u * ERC7730_ABI_CAPTURE_MAX)
+
 /* Render untrusted text so that, inside the same surrounding text, distinct
  * byte strings never draw the same screens. Raw bytes would: the font draws
  * every byte >= 0x80 as the same glyph and control bytes as nothing, the body
@@ -25,5 +31,13 @@
  * output_size is nonzero, if the rendering does not fit. */
 bool erc7730_format_text(const uint8_t* bytes, size_t length, char* output,
                          size_t output_size);
+
+bool erc7730_format_raw(const Erc7730AbiProgram* program,
+                        const Erc7730AbiCapture* capture, char* output,
+                        size_t output_size);
+bool erc7730_format_amount(const Erc7730AbiProgram* program,
+                           const Erc7730AbiCapture* capture, uint8_t decimals,
+                           const char* ticker, char* output,
+                           size_t output_size);
 
 #endif
