@@ -716,6 +716,18 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     layoutHome();
     return;
   }
+  /* The reciprocal: an Orchard v6 request binds the empty Ironwood digest
+   * below, so a supplied non-empty one must be refused, not replaced. */
+  if (!is_ironwood && msg->tx_version == 6 &&
+      !zcash_v6_orchard_ironwood_digest_valid(msg->has_ironwood_digest,
+                                              msg->ironwood_digest.size,
+                                              msg->ironwood_digest.bytes)) {
+    fsm_sendFailure(
+        FailureType_Failure_SyntaxError,
+        _("Orchard transaction must have an empty Ironwood bundle"));
+    layoutHome();
+    return;
+  }
 
   ZcashPCZTSigningRequestMeta signing_meta = {0};
   signing_meta.has_header_digest = msg->has_header_digest;

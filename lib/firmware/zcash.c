@@ -624,8 +624,11 @@ bool zcash_derive_orchard_keys_with_progress(
     ZcashOrchardKeys* keys, ZcashOrchardProgressCallback progress,
     void* progress_context) {
   /* ZIP-32 accounts are hardened indices below 2^31: a caller-supplied
-   * hardened bit would alias account & 0x7fffffff. Refuse before writing. */
+   * hardened bit would alias account & 0x7fffffff. Refuse before writing.
+   * ZIP-32 seeds are 32..252 bytes, as zcash_calculate_seed_fingerprint()
+   * also enforces. */
   if (!seed || !keys || (account & ZIP32_HARDENED)) return false;
+  if (seed_len < 32 || seed_len > 252) return false;
 
   uint8_t I[64];
   uint8_t sk[32], chain_code[32];
@@ -860,6 +863,15 @@ static void zcash_blake2b_personal_256(const char personal[16],
 bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id) {
   return (version == 5 && version_group_id == 0x26A7270A) ||
          (version == 6 && version_group_id == 0xD884B698);
+}
+
+bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
+                                            const uint8_t* digest) {
+  if (!present) return true;
+  if (size != 32 || !digest) return false;
+  uint8_t empty[32];
+  zcash_blake2b_personal_256("ZTxIdIronwd_H_v6", NULL, 0, empty);
+  return memcmp(digest, empty, 32) == 0;
 }
 
 bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,

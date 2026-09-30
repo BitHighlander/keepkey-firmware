@@ -175,6 +175,15 @@ bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
 bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id);
 
 /**
+ * An Orchard v6 request does not stream an Ironwood bundle, so the signer binds
+ * the empty Ironwood digest. A host-supplied ironwood_digest is accepted only
+ * when it is that empty digest; anything else would be silently replaced and
+ * the device would sign a sighash other than the one the host requested.
+ */
+bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
+                                            const uint8_t* digest);
+
+/**
  * True when script is a P2PKH scriptPubKey paying HASH160(public_key).
  */
 bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,

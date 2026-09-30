@@ -1177,8 +1177,15 @@ TEST(Zcash, DeriveOrchardKeys_RejectsInvalidInputsBeforeWriting) {
   EXPECT_FALSE(zcash_derive_orchard_keys(SEED_ALL, 64, 0x80000000u, &keys));
   EXPECT_FALSE(zcash_derive_orchard_keys(SEED_ALL, 64, 0xffffffffu, &keys));
   EXPECT_FALSE(zcash_derive_orchard_keys(NULL, 64, 0, &keys));
+  /* ZIP-32 seed length is 32..252 bytes. */
+  uint8_t long_seed[253];
+  memset(long_seed, 0x5a, sizeof(long_seed));
+  EXPECT_FALSE(zcash_derive_orchard_keys(long_seed, 31, 0, &keys));
+  EXPECT_FALSE(zcash_derive_orchard_keys(long_seed, 253, 0, &keys));
   EXPECT_EQ(0, memcmp(&keys, &sentinel, sizeof(keys)));
   EXPECT_FALSE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, NULL));
+  EXPECT_TRUE(zcash_derive_orchard_keys(long_seed, 32, 0, &keys));
+  EXPECT_TRUE(zcash_derive_orchard_keys(long_seed, 252, 0, &keys));
 
   /* The highest valid account derives, and differs from account 0. */
   ZcashOrchardKeys keys0;
@@ -1277,6 +1284,23 @@ TEST(Zcash, PCZTSigningPolicy_RequiresIronwoodDigestForV6Pool) {
   meta.ironwood_digest_size = 31;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_TX_DIGESTS);
+}
+
+TEST(Zcash, V6OrchardIronwoodDigest_OnlyAbsentOrEmptyAccepted) {
+  /* ZIP-229 empty Ironwood digest (BLAKE2b-256 "ZTxIdIronwd_H_v6", no data). */
+  static const uint8_t empty[32] = {
+      0xb9, 0xcf, 0xe6, 0x43, 0xce, 0x45, 0xb2, 0x8c, 0x33, 0x19, 0x0f,
+      0x0d, 0x52, 0x23, 0xe4, 0x75, 0x97, 0x2f, 0x2a, 0x14, 0x9d, 0xc5,
+      0x44, 0x04, 0xfd, 0x83, 0x65, 0x52, 0x1f, 0x84, 0x16, 0xc5};
+  uint8_t other[32];
+  memcpy(other, empty, sizeof(other));
+  other[31] ^= 0x01;
+
+  EXPECT_TRUE(zcash_v6_orchard_ironwood_digest_valid(false, 0, NULL));
+  EXPECT_TRUE(zcash_v6_orchard_ironwood_digest_valid(true, 32, empty));
+  EXPECT_FALSE(zcash_v6_orchard_ironwood_digest_valid(true, 32, other));
+  EXPECT_FALSE(zcash_v6_orchard_ironwood_digest_valid(true, 31, empty));
+  EXPECT_FALSE(zcash_v6_orchard_ironwood_digest_valid(true, 0, empty));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsMissingPlaintextHeaderFields) {
