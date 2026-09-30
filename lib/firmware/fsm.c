@@ -50,6 +50,7 @@
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/nano.h"
 #include "keepkey/firmware/osmosis.h"
@@ -63,6 +64,7 @@
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
+#include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
@@ -98,6 +100,7 @@
 #include "messages-tron.pb.h"
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
+#include "messages-hive.pb.h"
 
 #include <stdio.h>
 /* strnlen: the THORChain memo paths measure fixed arrays rather than
@@ -707,6 +710,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
+#include "fsm_msg_hive.h"
 #else
 // Bitcoin-only: the coin engines above are compiled out, but the always-on
 // Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
