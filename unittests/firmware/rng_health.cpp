@@ -1,9 +1,11 @@
 extern "C" {
 #include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
+#include "keepkey/firmware/pin_sm.h"
 #include "trezor/crypto/rand.h"
 }
 
+#include "kkconfirm_driver.h"
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -252,6 +254,25 @@ TEST(RngHealth, PersistentHardwareFaultLatchesBeforeReset) {
   rng_health_force_verdict(true);
 }
 
+TEST(RngHealth, CheckedPermutationPreservesEverySymbol) {
+  rng_health_force_verdict(true);
+  char value[] = "123456789";
+  ASSERT_TRUE(random_permute_char_checked(value, sizeof(value) - 1));
+
+  std::sort(value, value + sizeof(value) - 1);
+  EXPECT_EQ(0, memcmp(value, "123456789", sizeof(value) - 1));
+}
+
+TEST(RngHealth, CheckedPermutationFailsClosedAndWipes) {
+  rng_health_force_verdict(false);
+  char value[] = "123456789";
+  EXPECT_FALSE(random_permute_char_checked(value, sizeof(value) - 1));
+
+  const char zeros[sizeof(value) - 1] = {0};
+  EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
+  rng_health_force_verdict(true);
+}
+
 // After the boot gate passes, a degenerate run seen by rng_health_observe()
 // (called from random_buffer_checked()) must latch the verdict to failed.
 TEST(RngHealth, DegenerateOutputAfterTheGateLatchesFailure) {
@@ -355,4 +376,15 @@ TEST_F(RngBootGate, FaultDuringCheckedDrawWipesOutput) {
   const uint8_t zeros[64] = {};
   EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
   EXPECT_EQ(sizeof(buf), observed_draw_bytes);
+}
+
+// The PIN matrix call site, not just the helper: a failed verdict must halt
+// before the matrix is shown or any PinMatrixRequest reaches the host, rather
+// than return a false that callers would report as a second Failure.
+TEST(RngHealth, PinMatrixHaltsOnFailedVerdict) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));  // board bootstrap for the warning
+  rng_health_force_verdict(false);
+  EXPECT_EXIT(change_pin(), ::testing::ExitedWithCode(1), "");
+  rng_health_force_verdict(true);
+  (void)kkconfirm_drain();
 }
