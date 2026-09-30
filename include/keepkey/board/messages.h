@@ -32,32 +32,54 @@
 
 /* True while unwinding a handler already answered by a tiny receive Failure. */
 bool msg_handler_rejected(void);
-void keepkey_before_message_dispatch(MessageType msg_id);
+/* Reject a decoded tiny reply that does not belong to the waiting handler. */
+void msg_reject_unexpected_tiny(void);
+/* Short main/debug USB packets terminate a tiny wait; normal mode is inert. */
+void msg_reject_short_tiny_packet(void);
 
-#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)                        \
-  [ID].msg_id = (ID), [ID].type = (NORMAL_MSG), [ID].dir = (IN_MSG), \
-  [ID].fields = (STRUCT_NAME##_fields), [ID].dispatch = (PARSABLE),  \
-  [ID].process_func = (void (*)(void*))(PROCESS_FUNC),
+/* Dense table entries, looked up by linear scan (message_map_entry). The
+ * previous [ID]-designated form sized the table by the highest message ID:
+ * 1,713 x 16 B slots for 162 messages, 24.8 KB of zero flash. Field order
+ * must match MessagesMap_t. fsm.c keeps a compile-time duplicate-ID guard. */
+#define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC) \
+  {(STRUCT_NAME##_fields),                    \
+   (void (*)(void*))(PROCESS_FUNC),           \
+   PARSABLE,                                  \
+   NORMAL_MSG,                                \
+   IN_MSG,                                    \
+   (ID)},
 
-#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)                        \
-  [ID].msg_id = (ID), [ID].type = (NORMAL_MSG), [ID].dir = (OUT_MSG), \
-  [ID].fields = (STRUCT_NAME##_fields), [ID].dispatch = (PARSABLE),   \
-  [ID].process_func = (void (*)(void*))(PROCESS_FUNC),
+#define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) \
+  {(STRUCT_NAME##_fields),                     \
+   (void (*)(void*))(PROCESS_FUNC),            \
+   PARSABLE,                                   \
+   NORMAL_MSG,                                 \
+   OUT_MSG,                                    \
+   (ID)},
 
-#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC)                        \
-  [ID].msg_id = (ID), [ID].type = (NORMAL_MSG), [ID].dir = (IN_MSG), \
-  [ID].fields = (STRUCT_NAME##_fields), [ID].dispatch = (RAW),       \
-  [ID].process_func = (void (*)(void*))(void*)(PROCESS_FUNC),
+#define RAW_IN(ID, STRUCT_NAME, PROCESS_FUNC) \
+  {(STRUCT_NAME##_fields),                    \
+   (void (*)(void*))(void*)(PROCESS_FUNC),    \
+   RAW,                                       \
+   NORMAL_MSG,                                \
+   IN_MSG,                                    \
+   (ID)},
 
-#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC)                     \
-  [ID].msg_id = (ID), [ID].type = (DEBUG_MSG), [ID].dir = (IN_MSG), \
-  [ID].fields = (STRUCT_NAME##_fields), [ID].dispatch = (PARSABLE), \
-  [ID].process_func = (void (*)(void*))(PROCESS_FUNC),
+#define DEBUG_IN(ID, STRUCT_NAME, PROCESS_FUNC) \
+  {(STRUCT_NAME##_fields),                      \
+   (void (*)(void*))(PROCESS_FUNC),             \
+   PARSABLE,                                    \
+   DEBUG_MSG,                                   \
+   IN_MSG,                                      \
+   (ID)},
 
-#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)                     \
-  [ID].msg_id = (ID), [ID].type = (DEBUG_MSG), [ID].dir = (OUT_MSG), \
-  [ID].fields = (STRUCT_NAME##_fields), [ID].dispatch = (PARSABLE),  \
-  [ID].process_func = (void (*)(void*))(PROCESS_FUNC),
+#define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) \
+  {(STRUCT_NAME##_fields),                       \
+   (void (*)(void*))(PROCESS_FUNC),              \
+   PARSABLE,                                     \
+   DEBUG_MSG,                                    \
+   OUT_MSG,                                      \
+   (ID)},
 
 #define NO_PROCESS_FUNC 0
 
@@ -105,6 +127,17 @@ typedef void (*raw_msg_handler_t)(RawMessage* msg, uint32_t frame_length);
 
 const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
                                  MessageMapDirection dir);
+
+/* Shared frame arena (defined in messages.c). Acquiring the arena for TX or
+ * scratch drops any partially reassembled inbound frame — see the FrameArena
+ * contract in messages.c. Single-threaded transport only. */
+TrezorFrameBuffer* frame_arena_tx(void);
+uint16_t* frame_arena_scratch2049(void);
+
+/* A handler may reuse its decoded request storage for a large response after
+ * copying every request field it still needs. The transport does not dispatch
+ * another normal message until the handler returns. */
+void* msg_decoded_request_response_scratch(void);
 
 bool msg_write(MessageType msg_id, const void* msg);
 
