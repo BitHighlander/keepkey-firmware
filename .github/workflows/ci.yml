@@ -63,8 +63,9 @@ env:
   # such line and fails on zero or several). It lists only what this tree
   # genuinely does not provide. STORAGE_PIN_KDF_V19 is compiled out (0) and
   # storage version 19 is burned, so the KDF v19 controls are an explicit
-  # staged omission. The Solana LUT attestation (KKSOLSW1) IS implemented on
-  # this tree, so it is deliberately NOT waived here: its tests must run.
+  # staged omission. The Solana LUT attestation (KKSOLSW1) is compiled in, but
+  # the device protocol has no field to advertise it, so its tests cannot run
+  # yet: it stays listed until the firmware reports the capability (7.16).
   KK_RELEASE_MISSING_CAPABILITIES: storage-v19-kdf,solana-lut-attestation
 
 # Least-privilege default: every job gets a read-only GITHUB_TOKEN unless it
