@@ -21,6 +21,13 @@
 typedef struct _MayachainSignTx MayachainSignTx;
 typedef struct _MayachainMsgDeposit MayachainMsgDeposit;
 
+// Returns true iff `denom` is a plausible MAYAChain denom: non-empty,
+// and contains only lowercase alpha, digits, '.', '/', or '-'.
+bool mayachain_isValidDenom(const char* denom);
+
+// Deposit asset grammar: as above but uppercase alpha also allowed.
+bool mayachain_isValidAsset(const char* asset);
+
 bool mayachain_signTxInit(const HDNode* _node, const MayachainSignTx* _msg);
 bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
                                    const char* to_address, const char* denom);
