@@ -28,6 +28,29 @@ void fsm_clearDerivedNode(void);
 #if DEBUG_LINK
 void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
+void fsm_test_clearLastFailure(void);
+FailureType fsm_test_lastFailureCode(void);
+const char* fsm_test_lastFailureMessage(void);
+/* Wipes routed through FSM_SCRUB() since the last clear, by buffer size, so a
+ * test can tell that a function-local secret buffer was wiped. */
+void fsm_test_recordScrub(size_t size);
+void fsm_test_clearScrubs(void);
+size_t fsm_test_scrubCount(size_t size);
+/* memzero() of a whole array or object, observable by tests in DEBUG_LINK
+ * builds. FSM_SCRUB takes an array; FSM_SCRUB_OBJ takes any lvalue. */
+#define FSM_SCRUB(array)                 \
+  do {                                   \
+    memzero((array), sizeof(array));     \
+    fsm_test_recordScrub(sizeof(array)); \
+  } while (0)
+#define FSM_SCRUB_OBJ(obj)             \
+  do {                                 \
+    memzero(&(obj), sizeof(obj));      \
+    fsm_test_recordScrub(sizeof(obj)); \
+  } while (0)
+#else
+#define FSM_SCRUB(array) memzero((array), sizeof(array))
+#define FSM_SCRUB_OBJ(obj) memzero(&(obj), sizeof(obj))
 #endif
 
 #define RESP_INIT(TYPE)                                                    \
@@ -121,6 +144,10 @@ void fsm_msgRippleGetAddress(const RippleGetAddress* msg);
 void fsm_msgEosGetPublicKey(const EosGetPublicKey* msg);
 void fsm_msgEosSignTx(const EosSignTx* msg);
 void fsm_msgEosTxActionAck(const EosTxActionAck* msg);
+
+void fsm_msgBinanceGetAddress(const BinanceGetAddress* msg);
+void fsm_msgBinanceSignTx(const BinanceSignTx* msg);
+void fsm_msgBinanceTransferMsg(const BinanceTransferMsg* msg);
 
 void fsm_msgCosmosGetAddress(const CosmosGetAddress* msg);
 void fsm_msgCosmosSignTx(const CosmosSignTx* msg);

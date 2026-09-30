@@ -331,14 +331,13 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
     return false;
   }
 
-  /* Pass the memo's true ABI length, not a fixed 64. There is no raw-memo
-   * fallback screen on this path -- ethereum.c turns a false return into
-   * ActionCancelled -- so anything short of a confirmed parse must refuse
-   * rather than sign bytes that were never displayed. */
-  if (thorchain_parseConfirmMemo((const char*)thorchainData, memo_len) !=
-      THORCHAIN_MEMO_CONFIRMED) {
-    return false;
-  }
+  /* Pass the memo's true ABI length, not a fixed 64. The structured pass is a
+   * convenience; only a CANCELLED verdict is a refusal here, because the
+   * complete raw memo is paged below as the authoritative disclosure -- an
+   * UNPARSED memo is therefore shown byte for byte, never signed unseen. */
+  const ThorchainMemoResult memo_result =
+      thorchain_parseConfirmMemo((const char*)thorchainData, memo_len);
+  if (memo_result == THORCHAIN_MEMO_CANCELLED) return false;
 
   /* Page the complete raw memo as the authoritative disclosure: a long
    * structured field (dest/affiliate/aggregator) would otherwise truncate in

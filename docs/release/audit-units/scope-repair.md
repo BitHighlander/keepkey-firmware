@@ -1,10 +1,10 @@
-# Firmware scope repair — 7.15
+# Firmware scope repair — 7.14.3
 
 Owner correction: bootloader changes are excluded. The durability batch crossed
 that boundary through the shared find_active_storage implementation and storage
 protection contract. Its integration acceptance is withdrawn.
 
-Restore the pre-durability implementation from 77f50c016 for board memory/metadata,
+Restore the pre-durability implementation from 8ef50c146 for board memory/metadata,
 flash snapshot hooks, firmware commit/recovery and their durability-only tests.
 The earlier emulator sector-erase correction remains. Preserve independent
 signing, credential cleanup, setup and transport fixes. On 7.14.3/7.15 preserve

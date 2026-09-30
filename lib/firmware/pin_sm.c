@@ -80,7 +80,10 @@ static void check_for_pin_ack(PINInfo* pin_info) {
 #endif
 
     case MSG_TINY_TYPE_ERROR:
+      break;
     default:
+      msg_reject_unexpected_tiny();
+      pin_info->pin_ack_msg = PIN_ACK_CANCEL;
       break;
   }
   memzero(msg_tiny_buf, sizeof(msg_tiny_buf));
@@ -245,13 +248,13 @@ bool pin_protect(const char* prompt) {
 
   // Set request type
   PINInfo pin_info;
+  bool ret = false;
   pin_info.type = PinMatrixRequestType_PinMatrixRequestType_Current;
 
   // Get PIN
   if (!pin_request(prompt, &pin_info)) {
     // PIN entry has been canceled by the user
-    memzero(&pin_info, sizeof(pin_info));
-    return false;
+    goto done;
   }
 
   // Preincrement the failed counter before authentication
@@ -264,20 +267,21 @@ bool pin_protect(const char* prompt) {
     session_clear(false);
     storage_clearKeys();
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
-    memzero(&pin_info, sizeof(pin_info));
-    return false;
+    goto done;
   }
 
   // Authenticate user PIN
   if (!storage_isPinCorrect(pin_info.pin) || pre_increment_cnt_flg) {
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
-    memzero(&pin_info, sizeof(pin_info));
-    return false;
+    goto done;
   }
 
   storage_resetPinFails();
+  ret = true;
+
+done:
   memzero(&pin_info, sizeof(pin_info));
-  return true;
+  return ret;
 }
 
 bool pin_protect_cached(void) {
@@ -338,12 +342,17 @@ bool change_wipe_code(void) {
   wipe_code_info_second.type =
       PinMatrixRequestType_PinMatrixRequestType_NewSecond;
 
-  if (!pin_request("Enter New Wipe Code", &wipe_code_info_first)) goto done;
-
-  if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second)) goto done;
-
-  if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0)
+  if (!pin_request("Enter New Wipe Code", &wipe_code_info_first)) {
     goto done;
+  }
+
+  if (!pin_request("Re-Enter New Wipe Code", &wipe_code_info_second)) {
+    goto done;
+  }
+
+  if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0) {
+    goto done;
+  }
 
   storage_setWipeCode(wipe_code_info_first.pin);
   ret = true;

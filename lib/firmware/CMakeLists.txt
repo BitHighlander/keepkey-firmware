@@ -25,6 +25,7 @@ set(sources
 # Non-Bitcoin coin families -- excluded from the bitcoin-only image.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
+      binance.c
       eip712.c
       eip712_stream.c
       eos.c
@@ -36,6 +37,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_abi_stream.c
       erc7730_catalog.c
       erc7730_condition.c
+      erc7730_capabilities.c
+      erc7730_field.c
       erc7730_format.c
       erc7730_program.c
       erc7730_tx.c

@@ -60,11 +60,13 @@ bool hive_slip48_path_valid_for_role(const uint32_t* address_n, size_t count,
 #define HIVE_OP_ACCOUNT_UPDATE2 43
 
 // ── Protocol limits ───────────────────────────────────────────────────────
-#define HIVE_DECIMALS 3  // HIVE and HBD both use 3 decimal places
-// Maximum memo length that fits safely in the signer's tx_buf[512] with all
-// other fields. Non-memo overhead: header(12) + from(17) + to(17) + asset(16)
-// + footer(1) = ~63 bytes. 512 - 63 - 3 (varint) = 446; 440 is conservative.
+#define HIVE_MAX_ACCOUNT_LEN 16  // max Hive username length
+// Maximum memo length that fits in the 512-byte transaction buffer with every
+// other field at its maximum: non-memo overhead is 63 bytes (header 12, from
+// 17, to 17, asset 16, footer 1), and the memo length varint takes 2 more. The
+// worst-case transfer is 505 bytes; 440 is the conservative limit.
 #define HIVE_MAX_MEMO_LEN 440
+#define HIVE_DECIMALS 3  // HIVE and HBD both use 3 decimal places
 // Maximum signable message length. MUST match HiveSignMessage.message
 // max_size in messages-hive.options (proto cap and code cap kept in sync).
 #define HIVE_MAX_MESSAGE_LEN 1024
@@ -129,6 +131,11 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
                         char* owner_out, size_t owner_len, char* active_out,
                         size_t active_len, char* memo_out, size_t memo_len,
                         char* posting_out, size_t posting_len);
+
+/** Validate the public fields before consent and again before serialization. */
+bool hive_validateTransfer(const HiveSignTx* msg);
+bool hive_validateAccountCreate(const HiveSignAccountCreate* msg);
+bool hive_validateAccountUpdate(const HiveSignAccountUpdate* msg);
 
 /**
  * Resolve the asset a HiveSignTx moves into the triple the device needs:

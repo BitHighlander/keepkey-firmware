@@ -117,8 +117,17 @@ bool ethereum_chainIdIsValid(const EthereumSignTx* msg) {
          msg->chain_id <= MAX_CHAIN_ID;
 }
 
+/* Classification can run before signing_init canonicalizes the RLP value. */
+static bool ethereum_valueIsZero(const EthereumSignTx* msg) {
+  if (!msg->has_value) return true;
+  for (size_t i = 0; i < msg->value.size; ++i) {
+    if (msg->value.bytes[i] != 0) return false;
+  }
+  return true;
+}
+
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
+  if (msg->has_to && msg->to.size == 20 && ethereum_valueIsZero(msg) &&
       msg->data_initial_chunk.size == 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\xa9\x05\x9c\xbb\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
@@ -128,15 +137,19 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
-bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
-  if (msg->has_to && msg->to.size == 20 && msg->value.size == 0 &&
-      msg->data_initial_chunk.size == 68 &&
+static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
+  if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size >= 68 &&
       memcmp(msg->data_initial_chunk.bytes,
              "\x09\x5e\xa7\xb3\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
              16) == 0) {
     return true;
   }
   return false;
+}
+
+bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
+  return ethereum_valueIsZero(msg) && msg->data_initial_chunk.size == 68 &&
+         ethereum_isERC20ApproveCall(msg);
 }
 
 bool ethereum_getStandardERC20Recipient(const EthereumSignTx* msg,
@@ -391,6 +404,8 @@ static int rlp_calculate_number_length(uint32_t number) {
 }
 
 static void send_request_chunk(void) {
+  // The previous chunk was validated and accepted before requesting more.
+  note_workflow_progress();
   layoutProgress(_("Signing"), (data_total - data_left) * 1000 / data_total);
   msg_tx_request.has_data_length = true;
   msg_tx_request.data_length = data_left <= 1024 ? data_left : 1024;
@@ -402,21 +417,12 @@ static int ethereum_is_canonic(uint8_t v, uint8_t signature[64]) {
   return (v & 2) == 0;
 }
 
-/* #821: the calldata signed must be the calldata the ERC-7730 review decoded.
- * Only meaningful for a reviewed (COMPLETE) calldata flow; otherwise true. */
-static bool erc7730_signed_calldata_ok(void) {
-  Erc7730Workflow* erc7730 = erc7730_workflow_state();
-  if (erc7730->phase != ERC7730_WORKFLOW_COMPLETE || erc7730->typed_data)
-    return true;
-  return erc7730_workflow_signing_calldata_verify(erc7730);
-}
-
 static void send_signature(void) {
   uint8_t hash[32], sig[64];
   uint8_t v;
   layoutProgress(_("Signing"), 1000);
 
-  const Erc7730Workflow* erc7730 = erc7730_workflow_state();
+  const Erc7730Workflow* const erc7730 = erc7730_workflow_state();
   if (erc7730->phase != ERC7730_WORKFLOW_IDLE &&
       !erc7730_workflow_complete(erc7730)) {
     fsm_sendFailure(FailureType_Failure_Other,
@@ -446,6 +452,7 @@ static void send_signature(void) {
     fsm_sendFailure(FailureType_Failure_Other,
                     "Metadata does not match signed transaction");
     ethereum_signing_abort();
+    memzero(hash, sizeof(hash));
     return;
   }
 
@@ -622,6 +629,18 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
     return false;
   }
   return true;
+}
+
+bool ethereumFormatNativeAmount(const bignum256* amnt, uint32_t cid, char* buf,
+                                int buflen) {
+  /* ERC-7730 values name the chain's own asset. ethereumFormatAmount() keys
+   * " WAN" off the module's wanchain_tx_type, which may still hold a previous
+   * Wanchain transaction's type; never let that name this amount. */
+  const uint32_t saved = wanchain_tx_type;
+  wanchain_tx_type = 0;
+  const bool ok = ethereumFormatAmount(amnt, NULL, cid, buf, buflen);
+  wanchain_tx_type = saved;
+  return ok;
 }
 
 static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
@@ -867,6 +886,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (!msg->has_to) msg->to.size = 0;
   if (!msg->has_nonce) msg->nonce.size = 0;
 
+  // RLP treats an all-zero integer as zero regardless of its wire length.
+  // Canonicalize before contract and generic classifiers inspect this value.
+  if (msg->value.size > 0) {
+    bool all_zero = true;
+    for (size_t i = 0; i < msg->value.size; ++i) {
+      all_zero &= msg->value.bytes[i] == 0;
+    }
+    if (all_zero) msg->value.size = 0;
+  }
+
   /* eip-155 chain id
    *
    * An absent chain_id is not "some other chain", it is no chain. The bounds
@@ -892,7 +921,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
    * id >= 1; a host omitting the field is malformed, not legacy.
    */
   chain_id = msg->has_chain_id ? msg->chain_id : 0;
-  if (chain_id < 1) {
+  if (!ethereum_chainIdIsValid(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Chain Id out of bounds"));
     ethereum_signing_abort();
@@ -996,6 +1025,44 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     fsm_sendFailure(FailureType_Failure_SyntaxError, _("Safety check failed"));
     ethereum_signing_abort();
     return;
+  }
+
+  // Keep the selector and both ABI words available to the allowance policy.
+  // Otherwise a host could split an approval prefix across streamed chunks.
+  const size_t selector_bytes =
+      msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      msg->data_initial_chunk.size < 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3",
+             selector_bytes) == 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Approval requires at least 68 initial bytes"));
+    ethereum_signing_abort();
+    return;
+  }
+
+  // Match the selector alone. Pre-0.8 Solidity masks the spender word's high
+  // bytes, so a dirty spender word still grants the allowance on chain.
+  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+    if (!ethereum_isERC20ApproveCall(msg)) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Malformed ERC20 approval"));
+      ethereum_signing_abort();
+      return;
+    }
+    // Native value cannot exempt a payable token from this allowance policy.
+    // Unlimited approval grants open-ended authority and is refused before
+    // any generic transaction confirmation can mask this policy decision.
+    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
+    bool unlimited = true;
+    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
+    if (unlimited) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Unlimited ERC20 approval is disabled"));
+      ethereum_signing_abort();
+      return;
+    }
   }
 
   bool data_needs_confirm = true;
@@ -1163,9 +1230,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   // A contract that is not in the token table yields the UnknownToken
   // sentinel, which is NOT NULL, so the original `token == NULL` guard let
   // ERC-20-shaped calldata to an unrecognized contract skip this block
-  // entirely. The device cannot render that transfer (ethereumFormatAmount
-  // prints "Unknown token value"), so it must fall back to the same raw-data
-  // disclosure and confirm gate as any other unrecognized contract call.
+  // entirely. Exact raw units do not establish the contract semantics, so
+  // unknown tokens still require the raw-data disclosure and confirmation
+  // gate used by other unrecognized contract calls.
   if ((token == NULL || token == UnknownToken) && data_total > 0 &&
       data_needs_confirm) {
     // KeepKey custom: gate arbitrary ETH contract-data signing on AdvancedMode.
@@ -1320,15 +1387,6 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_signing_abort();
     return;
   }
-  if (erc7730->phase == ERC7730_WORKFLOW_COMPLETE && !erc7730->typed_data)
-    erc7730_workflow_signing_calldata_begin(erc7730);
-
-  if (data_left == 0 && !erc7730_signed_calldata_ok()) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Signed calldata differs from reviewed calldata"));
-    ethereum_signing_abort();
-    return;
-  }
 
   if (data_left == 0 && data_hash_pending && !confirm_ethereum_data_hash()) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1378,19 +1436,9 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
     ethereum_signing_abort();
     return;
   }
-  if (erc7730->phase == ERC7730_WORKFLOW_COMPLETE && !erc7730->typed_data)
-    erc7730_workflow_signing_calldata_chunk(erc7730, tx->data_chunk.bytes,
-                                            tx->data_chunk.size);
   hash_data(tx->data_chunk.bytes, tx->data_chunk.size);
 
   data_left -= tx->data_chunk.size;
-
-  if (data_left == 0 && !erc7730_signed_calldata_ok()) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Signed calldata differs from reviewed calldata"));
-    ethereum_signing_abort();
-    return;
-  }
 
   if (erc7730->phase == ERC7730_WORKFLOW_CALLDATA && data_left == 0 &&
       erc7730_workflow_calldata_finish(erc7730) != ERC7730_ABI_OK) {
@@ -1602,7 +1650,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
 void failMessage(int err);
 
-const char* failMsgReturn[LAST_ERROR - 2] = {
+const char* failMsgReturn[JSON_TYPE_WNOVAL - GENERAL_ERROR + 1] = {
     "EIP-712 general error",  //  3
     "EIP-712 user defined type name too long",
     "EIP-712 too many user defined types",
@@ -1633,8 +1681,18 @@ const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 pair name is NULL",
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
-    "EIP-712 no value for type during walkVals",  // 33 (LAST_ERROR)
+    "EIP-712 no value for type during walkVals",  // 33 (JSON_TYPE_WNOVAL)
 };
+/* One message per code GENERAL_ERROR..JSON_TYPE_WNOVAL, indexed err - 3, with
+ * no NULL slot. USER_CANCELLED (== LAST_ERROR) is the one code above the table
+ * and is handled before any lookup; a missing or extra entry would shift every
+ * message after it. */
+_Static_assert(sizeof(failMsgReturn) / sizeof(failMsgReturn[0]) ==
+                   JSON_TYPE_WNOVAL - GENERAL_ERROR + 1,
+               "failMsgReturn must cover GENERAL_ERROR..JSON_TYPE_WNOVAL");
+_Static_assert(USER_CANCELLED == JSON_TYPE_WNOVAL + 1 &&
+                   LAST_ERROR == USER_CANCELLED,
+               "USER_CANCELLED must be the only code above the table");
 
 void failMessage(int err) {
   if (USER_CANCELLED == err) {
@@ -1643,20 +1701,21 @@ void failMessage(int err) {
        host sends Cancel or Initialize. Report it as a cancellation so the host
        does not read a refusal as a malformed message.
 
-       USER_CANCELLED sits deliberately ABOVE LAST_ERROR and has no
-       failMsgReturn[] slot: the table is sized LAST_ERROR - 2 and indexed
-       err - 3, so giving a cancellation a row would shift every message
-       already in it. This branch is therefore the only thing that names the
-       code, and it also picks the FailureType. It must stay first. */
+       USER_CANCELLED is LAST_ERROR, one ABOVE JSON_TYPE_WNOVAL, and has
+       no failMsgReturn[] slot: the table is sized to JSON_TYPE_WNOVAL and
+       indexed err - GENERAL_ERROR, so it has no NULL entry to dereference. This
+       branch is therefore the only thing that names the code, and it also
+       picks the FailureType. It must stay first. */
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("EIP-712 cancelled"));
     return;
   }
-  if (err < GENERAL_ERROR || err > LAST_ERROR) {
+  if (err < GENERAL_ERROR || err > JSON_TYPE_WNOVAL) {
     // unknown error number
     fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 unknown failure"));
   } else {
-    fsm_sendFailure(FailureType_Failure_Other, _(failMsgReturn[err - 3]));
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _(failMsgReturn[err - GENERAL_ERROR]));
   }
   return;
 }

@@ -114,6 +114,7 @@ void fsm_msgMayachainSignTx(const MayachainSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_MayachainMsgRequest, resp);
   layoutHome();
 }
@@ -129,8 +130,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     layoutHome();
     return;
   }
-  if (msg->has_send && msg->send.has_to_address && msg->send.has_amount &&
-      msg->send.has_denom) {
+  if (msg->has_send && msg->send.has_to_address && msg->send.has_amount) {
     // pass
   } else if (msg->has_deposit && msg->deposit.has_asset &&
              msg->deposit.has_amount && msg->deposit.has_memo &&
@@ -170,27 +170,24 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
     switch (msg->send.address_type) {
       case OutputAddressType_TRANSFER:
       default: {
-        // Amount (no denom suffix) must fit amount_str[32]; a long denom
-        // appended here would overflow bn_format and blank the amount while
-        // the real value is still signed. Confirm the denom on its own
-        // screen instead (matches the THORChain send path).
-        //
-        // This also retires the denom_str[71] scratch buffer that GH #437
-        // bounded with snprintf(): the denom is no longer copied into a
-        // fixed-size suffix at all, so a future bump of
-        // MayachainMsgSend.denom's max_size (69 today) cannot overflow
-        // anything here. #437's class is closed by construction, not by a
-        // size that has to be kept in step with the .options file.
-        //
-        // The exponent is the denom's, not a constant: MayachainMsgSend.denom
-        // is host-chosen, and scaling "maya" (1e4) or a synth (1e8) by CACAO's
-        // 1e10 shows an amount the signed document does not contain. The rule
-        // lives in mayachain_decimalsForDenom(), which the deposit screen and
-        // the formatter share.
-        char amount_str[32];
-        if (!bn_format_uint64(msg->send.amount, NULL, NULL,
-                              mayachain_decimalsForDenom(coin_denom), 0, false,
-                              amount_str, sizeof(amount_str))) {
+        /* The denomination buffer being big enough does not make the DISPLAYED
+         * amount safe: bn_format() writes into amount_str, and on overflow it
+         * zeroes the whole buffer and returns 0. Ignoring that return put an
+         * EMPTY amount on the confirmation screen and signed anyway -- an
+         * amount of 1 with a 19-character denomination already needs 33 bytes,
+         * and the signer's 65-byte segment accepts far longer ones.
+         *
+         * Size for the protocol maximum instead of hoping: a uint64 rendered
+         * at 10 decimals is at most 20 digits plus a point (21), the suffix is
+         * ' ' + 68 visible chars of denom (69), plus NUL. Then CHECK the
+         * result and fail closed, as fsm_msg_binance.h does. See GH #437. */
+        char amount_str[21 + MAYACHAIN_DENOM_SUFFIX_LEN + 1];
+        /* MayachainMsgSend.denom max_size:69 (messages-mayachain.options) ->
+         * 68 visible chars + NUL. ' ' + 68 + NUL = 70 bytes; 71 keeps a 1-byte
+         * margin. The prior code used unbounded sprintf(); switch to a bounded
+         * snprintf so a future max_size bump can't silently overflow. */
+        if (!mayachain_formatAmount(msg->send.amount, coin_denom, amount_str,
+                                    sizeof(amount_str))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_FirmwareError,
                           _("Failed to format amount"));
@@ -221,8 +218,11 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Asset",
-                     "%s", coin_denom)) {
+        /* The amount/recipient layout can clip a long denomination. Show the
+         * complete asset separately before signing its serialized value. */
+        if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                           "Asset", (const uint8_t*)coin_denom,
+                           strlen(coin_denom))) {
           mayachain_signAbort();
           fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
           layoutHome();
@@ -244,13 +244,13 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
   } else if (msg->has_deposit) {
     const char* const signer_prefix =
         sign_tx->has_testnet && sign_tx->testnet ? "smaya" : "maya";
-    /* The signer must be this session's account, not merely a well-formed
-     * address on the right network. */
-    // Validate before any display so untrusted strings never reach the UI
-    // or the sign bytes.
+    /* The signer must be THIS session's account, not merely a well-formed
+       address on the right network. MsgDeposit serializes `signer` verbatim as
+       the message authority, so a valid-but-foreign address produced a signed
+       document the device's key cannot authorize -- and the confirmation below
+       labels that address as though it were a destination, so the screen would
+       not have given it away. */
     if (!mayachain_isValidAsset(msg->deposit.asset) ||
-        !mayachain_isValidSigner(msg->deposit.signer) ||
-        !tendermint_validateSafeText(msg->deposit.asset) ||
         !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
         !mayachain_addressIsSigner(msg->deposit.signer)) {
       mayachain_signAbort();
@@ -314,6 +314,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   if (!mayachain_signingIsFinished()) {
     RESP_INIT(MayachainMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_MayachainMsgRequest, resp);
     return;
   }

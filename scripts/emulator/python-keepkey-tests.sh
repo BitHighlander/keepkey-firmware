@@ -16,21 +16,47 @@ set -e
 # THORChain file: "1 failed, 5 passed in 20.29s" instead of hanging forever.
 #
 # 60s is roughly 30x the slowest healthy file in this suite (multisig, ~2s).
-# See #466.
+# See #466. Applied to the broad suites; the dedicated contract suites below
+# keep the invocation the audit proved.
 PYTEST_TIMEOUT_ARGS="--timeout=60 --timeout-method=signal"
 
-REPORT_BUILD_VARIANT=${KK_TEST_BUILD_VARIANT:-full}
-case "$REPORT_BUILD_VARIANT" in
-    full|bitcoin-only) ;;
-    *)
-        echo "FATAL: unsupported KK_TEST_BUILD_VARIANT=$REPORT_BUILD_VARIANT"
-        exit 1
-        ;;
+# The product under test is declared by the workflow matrix, never inferred
+# from the device, so a regressed full build cannot select the smaller
+# bitcoin-only contract. This one variable feeds the contract suites, the
+# report catalog (python-keepkey's generate-test-report.py reads it) and the
+# ERC-7730 evidence policy below.
+case "$KK_FIRMWARE_VARIANT" in
+  full|bitcoin-only) ;;
+  *) echo "FATAL: KK_FIRMWARE_VARIANT must be full or bitcoin-only (got '$KK_FIRMWARE_VARIANT')"
+     exit 1 ;;
 esac
-REPORT_VARIANT_ARG="--build-variant=$REPORT_BUILD_VARIANT"
-echo "Expected CI build variant: $REPORT_BUILD_VARIANT"
+export KK_FIRMWARE_VARIANT
+echo "Expected CI build variant: $KK_FIRMWARE_VARIANT"
+
+# ERC-7730 conformance evidence: the official registry is fetched by CI at a
+# pinned commit into the build context, and firmware-unit publishes the
+# firmware-backed program validator. On the full product
+# KK_REQUIRE_ERC7730_EVIDENCE=1 makes a missing registry or validator a test
+# FAILURE instead of a skip. Bitcoin-only firmware has no ERC-7730 engine.
+if [ "$KK_FIRMWARE_VARIANT" = full ]; then
+  export KK_REQUIRE_ERC7730_EVIDENCE=1
+  export ERC7730_FIRMWARE_VALIDATOR=/kkemu-emulator-bin/erc7730-validate
+  export ERC7730_REGISTRY=/kkemu/build-inputs/erc7730-registry
+  if [ ! -d "$ERC7730_REGISTRY/registry" ]; then
+    echo "FATAL: pinned ERC-7730 registry missing at $ERC7730_REGISTRY"
+    exit 1
+  fi
+else
+  export KK_REQUIRE_ERC7730_EVIDENCE=0
+fi
+
+# Dice setup keeps every DebugLinkState field private through commit/abort.
+export KK_DICE_DEBUG_PRIVATE=1
 
 mkdir -p /kkemu/test-reports/python-keepkey
+# This volume can survive retries. Stale frames would make the new report look
+# more complete than the exact run really was, so every capture starts empty.
+rm -rf /kkemu/test-reports/screenshots
 mkdir -p /kkemu/test-reports/screenshots
 
 # Wait for emulator
@@ -45,6 +71,9 @@ for i in $(seq 1 20); do
 done
 
 cd deps/python-keepkey/tests
+# Every suite below runs even if an earlier one fails, so each JUnit file is
+# still produced; the script's exit status reports any failure.
+RC=0
 
 # The tests run from this directory, while keepkeylib lives one level up.
 # Make that package root explicit so direct imports work consistently in the
@@ -91,7 +120,7 @@ if [ -z "$FW_VERSION" ]; then
 fi
 export FW_VERSION
 SCREENSHOT_TESTS=$(python3 ../scripts/generate-test-report.py \
-    --screenshot-test-list --fw-version="$FW_VERSION" "$REPORT_VARIANT_ARG")
+    --screenshot-test-list --fw-version="$FW_VERSION")
 if [ -z "$SCREENSHOT_TESTS" ]; then
     echo "FATAL: screenshot test list is empty"
     echo "1" > /kkemu/test-reports/python-keepkey/status
@@ -106,10 +135,10 @@ KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
   $PYTEST_TIMEOUT_ARGS \
   --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  -s 2>&1 || true
-# pytest exit code is NOT the gate — screenshot count below is.
-# Tests for features not yet merged (gated by requires_firmware/requires_message)
-# may fail or skip here; the real check is: did screenshots get captured?
+  -s 2>&1 || RC=1
+# A failing selected test is a FAILURE (RC=1), not a shrug: the audit relies on
+# this JUnit and the screenshot count below is the gate for the PNG pipeline
+# itself. The frames are still inspected below so the evidence is complete.
 
 # Gate: fail fast if screenshots broken
 echo "=== Screenshot results ==="
@@ -132,8 +161,7 @@ echo "=== Screenshot audit (per-test) ==="
 python3 ../scripts/generate-test-report.py \
     --screenshot-audit /kkemu/test-reports/screenshots \
     --audit-junit /kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-    "$REPORT_VARIANT_ARG" \
-    --fw-version=$FW_VERSION || {
+    --fw-version="$FW_VERSION" || {
     echo "FATAL: tests declared screens they did not capture (see list above)."
     echo "1" > /kkemu/test-reports/python-keepkey/status
     exit 1
@@ -150,8 +178,57 @@ KK_EXPECT_PERSIST_REJECTED=1 \
 KK_EXPECT_ENTROPY_BUDGET=1 \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v $PYTEST_TIMEOUT_ARGS --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
+pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py \
+  /kkemu/unittests/host/test_p03_recovery.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
+
+# Stack 06 owns legacy runtime metadata and session trust. The later ERC-7730
+# capability must not hide these already implemented contracts.
+KK_RELEASE_MISSING_CAPABILITIES= \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v --tb=short \
+  test_msg_ethereum_clearsign_additive.py \
+  test_msg_session_trust_lifetime.py \
+  test_msg_ripple_sign_tx.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack06-contracts.xml || RC=1
+
+echo "=== Stack 07 signing contract regressions ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_STACK07_FIRMWARE_VARIANT="$KK_FIRMWARE_VARIANT" \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack07_regressions.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack07.xml || RC=1
+
+echo "=== Combined authenticator slot boundary ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack09_integration.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack09-integration.xml || RC=1
+
+echo "=== Stack 10 EVM disclosure regressions ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack10_regressions.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack10.xml || RC=1
+
+echo "=== Stack 12 Hive validation and consent regressions ==="
+PYTHONPATH=/kkemu/deps/python-keepkey:/kkemu/deps/python-keepkey/tests \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/emulator/test_stack12_regressions.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack12.xml || RC=1
+
+echo "=== Stack 13 entropy contract regressions ==="
+KK_FORCE_UDP=1 \
+KK_TRANSPORT_MAIN=kkemu:11044 \
+KK_TRANSPORT_DEBUG=kkemu:11045 \
+pytest -v /kkemu/scripts/tests/test_block13_entropy.py \
+  --junitxml=/kkemu/test-reports/python-keepkey/junit-stack13.xml || RC=1
 
 # Merge in the native firmware unit results before validating or rendering.
 # The test-reports volume is shared rw with the firmware-unit container, which
@@ -160,6 +237,12 @@ PYTEST_RC=$?
 # which is why no native test could ever be catalogued and all 432 of them were
 # invisible to the report.
 #
+# The dedicated contract suites (junit-stack*.xml) are NOT merged here: the
+# report catalog is validated against the broad suite, and the contract files
+# are validated per product, by name and exact status, by scripts/
+# generate-test-report.py. Merging them would duplicate cases the broad suite
+# already reports (stack 06 is re-run with an empty capability ledger).
+#
 # If the native XMLs are absent this falls back to Python-only, and any native
 # catalog entry then fails as "missing" -- i.e. it still fails closed, it does
 # not quietly pass.
@@ -167,7 +250,8 @@ echo "=== Phase 2: Merge JUnit evidence ==="
 MERGED=/kkemu/test-reports/junit-merged.xml
 python3 - <<'PY'
 import glob, os, xml.etree.ElementTree as ET
-files = sorted(glob.glob('/kkemu/test-reports/python-keepkey/junit*.xml'))
+files = [f for f in sorted(glob.glob('/kkemu/test-reports/python-keepkey/junit*.xml'))
+         if not os.path.basename(f).startswith('junit-stack')]
 native = sorted(glob.glob('/kkemu/test-reports/firmware-unit/*.xml'))
 root = ET.Element('testsuites')
 for f in files + native:
@@ -186,37 +270,32 @@ PY
 [ -s "$MERGED" ] || MERGED=/kkemu/test-reports/python-keepkey/junit.xml
 
 echo "=== Phase 2: Validate report catalog ==="
+CATALOG_RC=0
 python3 ../scripts/generate-test-report.py \
   --junit="$MERGED" \
-  "$REPORT_VARIANT_ARG" \
   ${FW_VERSION:+--fw-version=$FW_VERSION} \
-  --validate-junit
-CATALOG_RC=$?
+  --validate-junit || CATALOG_RC=$?
 
 echo "=== Phase 2: Generate test report ==="
+REPORT_RC=0
 python3 ../scripts/generate-test-report.py \
   --junit="$MERGED" \
-  "$REPORT_VARIANT_ARG" \
   ${FW_VERSION:+--fw-version=$FW_VERSION} \
   --screenshots=/kkemu/test-reports/screenshots \
-  --output=/kkemu/test-reports/test-report.pdf
-REPORT_RC=$?
-set -e
+  --output=/kkemu/test-reports/test-report.pdf || REPORT_RC=$?
 
-if [ "$PYTEST_RC" -eq 0 ] && [ "$CATALOG_RC" -eq 0 ] && [ "$REPORT_RC" -eq 0 ]; then
-    echo "0" > /kkemu/test-reports/python-keepkey/status
-else
-    echo "1" > /kkemu/test-reports/python-keepkey/status
-fi
 if [ "$PYTEST_RC" -ne 0 ]; then
     echo "pytest failed with exit code $PYTEST_RC"
-    exit "$PYTEST_RC"
+    RC=1
 fi
 if [ "$CATALOG_RC" -ne 0 ]; then
     echo "report catalog validation failed with exit code $CATALOG_RC"
-    exit "$CATALOG_RC"
+    RC=1
 fi
 if [ "$REPORT_RC" -ne 0 ]; then
     echo "test report generation failed with exit code $REPORT_RC"
-    exit "$REPORT_RC"
+    RC=1
 fi
+
+echo "$RC" > /kkemu/test-reports/python-keepkey/status
+exit "$RC"

@@ -114,6 +114,7 @@ void fsm_msgThorchainSignTx(const ThorchainSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_ThorchainMsgRequest, resp);
   layoutHome();
 }
@@ -230,7 +231,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
        document the device's key cannot authorize -- and the confirmation below
        labels that address as though it were a destination, so the screen would
        not have given it away. */
-    if (!tendermint_validateSafeText(msg->deposit.asset) ||
+    if (!thorchain_isValidAsset(msg->deposit.asset) ||
         !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
         !thorchain_addressIsSigner(msg->deposit.signer)) {
       thorchain_signAbort();
@@ -310,6 +311,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   if (!thorchain_signingIsFinished()) {
     RESP_INIT(ThorchainMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_ThorchainMsgRequest, resp);
     return;
   }

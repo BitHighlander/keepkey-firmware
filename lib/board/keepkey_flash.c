@@ -27,6 +27,7 @@
 
 #include "keepkey/board/check_bootloader.h"
 #include "keepkey/board/common.h"
+#include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/otp.h"
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/supervise.h"
@@ -334,19 +335,48 @@ void flash_collectHWEntropy(bool privileged) {
       uint8_t entropy[FLASH_OTP_BLOCK_SIZE] = {0};
       /* Written once and then locked forever, and it feeds the PIN KDF salt
        * via flash_readHWEntropy(). A block filled from a dead generator can
-       * never be corrected, so on a failed draw write nothing: the block stays
-       * unlocked and a later healthy boot claims it. Halting is wrong here --
-       * this runs before kk_board_init(), so there is no display to warn on. */
-      if (random_buffer_checked(entropy, FLASH_OTP_BLOCK_SIZE)) {
-        flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, 0, entropy,
-                        FLASH_OTP_BLOCK_SIZE);
-        flash_otp_lock(FLASH_OTP_BLOCK_RANDOMNESS);
+       * never be corrected. Leave it unlocked on a failed draw and stop this
+       * boot before DRBG/storage initialization can consume erased OTP bytes.
+       * The raw shutdown routine is safe before kk_board_init(): it clears
+       * SRAM and halts without using the display or timer. */
+      if (!random_buffer_checked(entropy, FLASH_OTP_BLOCK_SIZE)) {
+        memzero(entropy, sizeof(entropy));
+        memzero(HW_ENTROPY_DATA, sizeof(HW_ENTROPY_DATA));
+        shutdown();
       }
+      /* An earlier boot may have programmed some or all bytes and then lost
+       * power or failed to lock. OTP bits only clear, so programming a new
+       * draw over those bytes could never verify and every later boot would
+       * halt here. Keep bytes already programmed and program only erased
+       * ones. The OTP wrappers validate bounds but cannot establish that
+       * every programming pulse succeeded, so verify the bytes before making
+       * the block permanent, then verify that the lock itself took effect. */
+      bool written = flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0,
+                                    HW_ENTROPY_DATA + 12, FLASH_OTP_BLOCK_SIZE);
+      for (uint8_t i = 0; written && i < FLASH_OTP_BLOCK_SIZE; i++) {
+        if (HW_ENTROPY_DATA[12 + i] != 0xFF) {
+          entropy[i] = HW_ENTROPY_DATA[12 + i];
+        } else {
+          written =
+              flash_otp_write(FLASH_OTP_BLOCK_RANDOMNESS, i, &entropy[i], 1);
+        }
+      }
+      written =
+          written &&
+          flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0, HW_ENTROPY_DATA + 12,
+                         FLASH_OTP_BLOCK_SIZE) &&
+          memcmp(entropy, HW_ENTROPY_DATA + 12, FLASH_OTP_BLOCK_SIZE) == 0;
       memzero(entropy, sizeof(entropy));
+      if (!written || !flash_otp_lock(FLASH_OTP_BLOCK_RANDOMNESS) ||
+          !flash_otp_is_locked(FLASH_OTP_BLOCK_RANDOMNESS)) {
+        memzero(HW_ENTROPY_DATA, sizeof(HW_ENTROPY_DATA));
+        shutdown();
+      }
+    } else if (!flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0,
+                               HW_ENTROPY_DATA + 12, FLASH_OTP_BLOCK_SIZE)) {
+      memzero(HW_ENTROPY_DATA, sizeof(HW_ENTROPY_DATA));
+      shutdown();
     }
-    // collect entropy from OTP randomness block
-    flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0, HW_ENTROPY_DATA + 12,
-                   FLASH_OTP_BLOCK_SIZE);
   } else {
     // unprivileged mode => use fixed HW_ENTROPY
     memset(HW_ENTROPY_DATA, 0x3C, HW_ENTROPY_LEN);

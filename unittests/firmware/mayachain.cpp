@@ -1,5 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/ecdsa.h"
@@ -57,6 +58,40 @@ TEST(Mayachain, FormatsOnlyCacaoWithTenDecimals) {
       mayachain_formatAmount(1, "ETH.ETH\n", rendered, sizeof(rendered)));
   EXPECT_FALSE(
       mayachain_formatAmount(1, "ETH.\\ETH", rendered, sizeof(rendered)));
+}
+
+TEST(Mayachain, RejectingAssetScreenAbortsSendHandler) {
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  hdnode_fill_public_key(&node);
+
+  MayachainSignTx sign_tx = {};
+  sign_tx.has_msg_count = true;
+  sign_tx.msg_count = 1;
+  sign_tx.has_chain_id = true;
+  std::strcpy(sign_tx.chain_id, "mayachain-mainnet-v1");
+  ASSERT_TRUE(mayachain_signTxInit(&node, &sign_tx));
+
+  MayachainMsgAck ack = {};
+  ack.has_send = true;
+  ack.send.has_to_address = true;
+  std::strcpy(ack.send.to_address,
+              "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  ack.send.has_amount = true;
+  ack.send.amount = 1;
+  ack.send.has_denom = true;
+  std::memset(ack.send.denom, 'a', 68);
+  ack.send.denom[68] = '\0';
+
+  // The amount/recipient screen is accepted; the independent Asset screen is
+  // refused. The handler must abort before serializing this send.
+  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  fsm_test_clearLastFailure();
+  fsm_msgMayachainMsgAck(&ack);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(mayachain_signingIsInited());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Mayachain, MemoWithMisdeclaredLengthIsRefused) {
@@ -235,7 +270,7 @@ TEST(Mayachain, MayachainDenomValidation) {
 
 // The signer function itself must reject an invalid denom — not merely
 // rely on the FSM caller to pre-validate — so it stays safe if reused or
-// called directly. Empty denom must still default to "cacao" and succeed.
+// called directly. An empty denom is refused too (see the note in the body).
 TEST(Mayachain, MayachainSignTxUpdateMsgSendRejectsInvalidDenom) {
   HDNode node = {
       0,
@@ -266,9 +301,18 @@ TEST(Mayachain, MayachainSignTxUpdateMsgSendRejectsInvalidDenom) {
   EXPECT_FALSE(mayachain_signTxUpdateMsgSend(
       100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao\""));
 
+  /* The audited serializer never defaults: an empty (or absent) denom is
+     refused without consuming the message, and the FSM handler applies the
+     "cacao" default before anything is displayed so the screen and the signed
+     bytes cannot disagree. This used to assert that "" succeeded; that was the
+     pre-audit behaviour (see SendSerializerRefusesInvalidDenomWithoutConsuming
+     Message). */
   ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
-  EXPECT_TRUE(mayachain_signTxUpdateMsgSend(
+  EXPECT_FALSE(mayachain_signTxUpdateMsgSend(
       100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", ""));
+  EXPECT_TRUE(mayachain_signTxUpdateMsgSend(
+      100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
+  mayachain_signAbort();
 }
 
 /* ===================================================================== *
@@ -571,4 +615,236 @@ TEST(Mayachain, MayachainSignTxTwoMessages) {
                        "\x4c\xd8\x6f\x72\xb3\xf6\x87\xd1\xec\xa8\x61\xa5\x2e"
                        "\xbf\x9e\xcb\x8a\xc1\x27\x43\x8b\x8e\xbb\x50\x8f",
              64) == 0);
+}
+
+/* MemoWithEmptyPositionalFieldIsNotStructured (audited assembly, inherited
+   from the 7.14.x strtok parser) asserted that "::" makes a memo UNPARSED
+   because strtok() collapsed empty positions. alpha's parser splits on ':' and
+   KEEPS empty fields, so such a memo is structured and correctly labelled;
+   that property is asserted for the current parser by
+   MemoSwapEmptyLimitDoesNotShift. The UNPARSED expectation is stale by
+   design and is deliberately not carried over. Likewise the assembly's
+   kExtraDot assertion in MemoWithMisdeclaredLengthIsRefused is not carried
+   over: dots after the chain/asset field are data in the current grammar. */
+
+TEST(Mayachain, LongestValidDenomSerializes) {
+  /* The amount/denom segment is the longest thing
+     mayachain_signTxUpdateMsgSend() formats, and its scratch buffer used to be
+     65 bytes against a documented 124-byte maximum. tendermint_snprintf() fails
+     closed, so nothing was mis-signed -- but the refusal came after the
+     confirmation screen had already been approved. A denomination at the
+     protocol maximum must serialize, not fail late. */
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  const MayachainSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 6359,
+      true, "mayachain-mainnet-v1",
+      true, 3000,
+      true, 200000,
+      true, "",
+      true, 19,
+      true, 1};
+  ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+
+  /* 68 visible characters: MayachainMsgSend.denom's max_size of 69 less NUL. */
+  char denom[69];
+  std::memset(denom, 'a', 68);
+  denom[68] = '\0';
+  ASSERT_EQ(68u, std::strlen(denom));
+
+  /* A uint64 at its widest, so the segment is at its documented maximum. */
+  EXPECT_TRUE(mayachain_signTxUpdateMsgSend(
+      18446744073709551615ULL, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k",
+      denom));
+}
+
+TEST(Mayachain, MultiMessageSignTxSeparatesMsgsWithComma) {
+  /* Regression for the missing comma between "msgs":[...] entries: before the
+     has_message guard, two MsgSends serialized back-to-back ("}}{") and the
+     user approved a signature over invalid JSON. The expected document below
+     is constructed BY HAND in this test -- independent of the serializer under
+     test -- and signed with the same key, so the comparison fails if the
+     serializer's bytes drift from the amino StdSignDoc in any way, comma
+     included. */
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  const MayachainSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 6359,                    // account_number
+      true, "mayachain-mainnet-v1",  // chain_id
+      true, 3000,                    // fee_amount
+      true, 200000,                  // gas
+      true, "",                      // memo
+      true, 19,                      // sequence
+      true, 2                        // msg_count
+  };
+  ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+  EXPECT_FALSE(mayachain_signingIsFinished());
+
+  const char* const to = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(100, to, "cacao"));
+  EXPECT_FALSE(mayachain_signingIsFinished());
+  ASSERT_TRUE(mayachain_signTxUpdateMsgSend(42, to, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(mayachain_signTxFinalize(public_key, signature));
+
+  char from[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "maya", from));
+
+  char doc[1024];
+  int n = snprintf(
+      doc, sizeof(doc),
+      "{\"account_number\":\"6359\",\"chain_id\":\"mayachain-mainnet-v1\","
+      "\"fee\":{\"amount\":[{\"amount\":\"3000\",\"denom\":\"cacao\"}],"
+      "\"gas\":\"200000\"},\"memo\":\"\",\"msgs\":["
+      "{\"type\":\"mayachain/MsgSend\",\"value\":{\"amount\":[{\"amount\":"
+      "\"100\",\"denom\":\"cacao\"}],\"from_address\":\"%s\",\"to_address\":"
+      "\"%s\"}},"
+      "{\"type\":\"mayachain/MsgSend\",\"value\":{\"amount\":[{\"amount\":"
+      "\"42\",\"denom\":\"cacao\"}],\"from_address\":\"%s\",\"to_address\":"
+      "\"%s\"}}"
+      "],\"sequence\":\"19\"}",
+      from, to, from, to);
+  ASSERT_GT(n, 0);
+  ASSERT_LT((size_t)n, sizeof(doc));
+
+  uint8_t hash[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc, (size_t)n, hash);
+  uint8_t expected[64];
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, node.private_key, hash, expected,
+                                 NULL, NULL));
+  EXPECT_EQ(0, memcmp(signature, expected, 64));
+
+  mayachain_signAbort();
+}
+
+TEST(Mayachain, ZeroOrOmittedMessagesFailInitialization) {
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0xb9, 0x9a, 0x39, 0x3a, 0x5a, 0x53, 0x0d, 0x90, 0xef, 0x6e, 0x46,
+       0x4e, 0x8e, 0x2f, 0x2b, 0x8b, 0x5c, 0x64, 0xa7, 0x97, 0x29, 0xcd,
+       0x60, 0x3b, 0x1f, 0xba, 0x33, 0x81, 0x7d, 0x1a, 0x75, 0xa1},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  MayachainSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 6359,
+      true, "mayachain-mainnet-v1",
+      true, 3000,
+      true, 200000,
+      true, "",
+      true, 19,
+      true, 0  // msg_count
+  };
+  EXPECT_FALSE(mayachain_signTxInit(&node, &msg));
+  EXPECT_FALSE(mayachain_signingIsInited());
+  EXPECT_FALSE(mayachain_signingIsFinished());
+  EXPECT_FALSE(mayachain_signTxUpdateMsgSend(1, "ignored", "cacao"));
+
+  msg.has_msg_count = false;
+  msg.msg_count = 1;
+  EXPECT_FALSE(mayachain_signTxInit(&node, &msg));
+  EXPECT_FALSE(mayachain_signingIsInited());
+
+  msg.has_msg_count = true;
+  strcpy(msg.chain_id, "");
+  EXPECT_FALSE(mayachain_signTxInit(&node, &msg));
+  strcpy(msg.chain_id, "maya\nchain");
+  EXPECT_FALSE(mayachain_signTxInit(&node, &msg));
+}
+
+TEST(Mayachain, DepositAssetAndSignerFailClosed) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  MayachainSignTx msg = {};
+  msg.has_chain_id = true;
+  strcpy(msg.chain_id, "mayachain");
+  msg.has_msg_count = true;
+  msg.msg_count = 1;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
+
+  MayachainMsgDeposit deposit = {};
+  deposit.has_asset = true;
+  strcpy(deposit.asset, "ETH.ETH\n");
+  deposit.has_signer = true;
+  strcpy(deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.asset, "ETH:ETH");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  strcpy(deposit.asset, "ETH.ETH");
+  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
+  EXPECT_FALSE(mayachain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  EXPECT_TRUE(mayachain_signTxUpdateMsgDeposit(&deposit));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
+}
+
+TEST(Mayachain, AssetGrammarRejectsSafeTextOutsideContract) {
+  for (const char* value : {"MAYA.CACAO", "ETH.USDT-0x123", "BTC/BTC"})
+    EXPECT_TRUE(mayachain_isValidAsset(value));
+  for (const char* value : {"MAYA:CACAO", "MAYA_CACAO", "MAYA+CACAO", ""})
+    EXPECT_FALSE(mayachain_isValidAsset(value));
+  EXPECT_FALSE(mayachain_isValidAsset(nullptr));
+}
+
+TEST(Mayachain, SendSerializerRefusesInvalidDenomWithoutConsumingMessage) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  node.private_key[31] = 1;
+  hdnode_fill_public_key(&node);
+  MayachainSignTx tx = {};
+  tx.has_chain_id = tx.has_msg_count = true;
+  strcpy(tx.chain_id, "mayachain");
+  tx.msg_count = 1;
+  ASSERT_TRUE(mayachain_signTxInit(&node, &tx));
+  const char* recipient = "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k";
+  for (const char* denom : {static_cast<const char*>(nullptr), "", "ca:cao",
+                            "ca_cao", "ca\"cao", "ca\ncao"}) {
+    EXPECT_FALSE(mayachain_signTxUpdateMsgSend(1, recipient, denom));
+    EXPECT_FALSE(mayachain_signingIsFinished());
+  }
+  EXPECT_TRUE(mayachain_signTxUpdateMsgSend(1, recipient, "cacao"));
+  EXPECT_TRUE(mayachain_signingIsFinished());
+  mayachain_signAbort();
 }

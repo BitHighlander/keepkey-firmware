@@ -61,15 +61,23 @@ bool erc7730_condition_evaluate_basic(const Erc7730Condition* condition,
   return false;
 }
 
+/* Canonical unsigned integer: big-endian with every leading zero byte
+ * removed, so zero is the empty string. The compiled literal table encodes
+ * zero as the single byte 0x00 and a captured uint256 is a 32-byte word; both
+ * normalize to this form, so every encoding of the same value compares equal
+ * (including an empty literal and [0x00] for zero). */
 static void canonical_unsigned(const uint8_t* value, size_t length,
                                const uint8_t** canonical,
                                size_t* canonical_length) {
   size_t offset = 0;
-  while (offset + 1u < length && value[offset] == 0) offset++;
+  while (offset < length && value[offset] == 0) offset++;
   *canonical = value + offset;
   *canonical_length = length - offset;
 }
 
+/* Canonical signed integer: big-endian two's complement with every redundant
+ * sign-extension byte removed (0x00 before a clear high bit, 0xff before a set
+ * one), so the value has exactly one encoding. */
 static void canonical_signed(const uint8_t* value, size_t length,
                              const uint8_t** canonical,
                              size_t* canonical_length) {
@@ -90,11 +98,15 @@ bool erc7730_capture_equals_literal(const Erc7730AbiProgram* program,
   const Erc7730AbiNode* node = &program->nodes[capture->node];
   const uint8_t* value = capture->data;
   size_t length = capture->length;
+  const uint8_t* expected = literal->value;
+  size_t expected_length = literal->length;
   if (literal->kind == 1 && node->kind == ERC7730_ABI_UINT && length == 32) {
     canonical_unsigned(value, length, &value, &length);
+    canonical_unsigned(expected, expected_length, &expected, &expected_length);
   } else if (literal->kind == 2 && node->kind == ERC7730_ABI_INT &&
              length == 32) {
     canonical_signed(value, length, &value, &length);
+    canonical_signed(expected, expected_length, &expected, &expected_length);
   } else if (literal->kind == 3 && node->kind == ERC7730_ABI_FIXED_BYTES &&
              length == 32) {
     length = node->size;
@@ -111,66 +123,6 @@ bool erc7730_capture_equals_literal(const Erc7730AbiProgram* program,
   } else {
     return false;
   }
-  return length == literal->length &&
-         (length == 0 || memcmp(value, literal->value, length) == 0);
-}
-
-bool erc7730_literal_set_count(const Erc7730Literal* set, uint16_t* count) {
-  if (!set || !count || set->kind != 9 || set->length < 2) return false;
-  const uint16_t declared =
-      (uint16_t)(((uint16_t)set->value[0] << 8) | set->value[1]);
-  if (declared > 64 || set->length != 2u + 2u * declared) return false;
-  *count = declared;
-  return true;
-}
-
-bool erc7730_literal_set_index(const Erc7730Literal* set, uint16_t position,
-                               uint16_t* literal_index) {
-  uint16_t count = 0;
-  if (!literal_index || !erc7730_literal_set_count(set, &count) ||
-      position >= count)
-    return false;
-  const size_t offset = 2u + 2u * position;
-  const uint16_t index =
-      (uint16_t)(((uint16_t)set->value[offset] << 8) | set->value[offset + 1u]);
-  if (position != 0) {
-    const size_t previous_offset = offset - 2u;
-    const uint16_t previous =
-        (uint16_t)(((uint16_t)set->value[previous_offset] << 8) |
-                   set->value[previous_offset + 1u]);
-    if (index <= previous) return false;
-  }
-  *literal_index = index;
-  return true;
-}
-
-bool erc7730_enum_map_count(const Erc7730Literal* map, uint16_t* count) {
-  if (!map || !count || map->kind != 8 || map->length < 2) return false;
-  const uint16_t declared =
-      (uint16_t)(((uint16_t)map->value[0] << 8) | map->value[1]);
-  if (declared > 64 || map->length != 2u + 4u * declared) return false;
-  *count = declared;
-  return true;
-}
-
-bool erc7730_enum_map_index(const Erc7730Literal* map, uint16_t position,
-                            uint16_t* key_literal, uint16_t* value_string) {
-  uint16_t count = 0;
-  if (!key_literal || !value_string || !erc7730_enum_map_count(map, &count) ||
-      position >= count)
-    return false;
-  const size_t offset = 2u + 4u * position;
-  const uint16_t key =
-      (uint16_t)(((uint16_t)map->value[offset] << 8) | map->value[offset + 1u]);
-  if (position != 0) {
-    const size_t previous_offset = offset - 4u;
-    const uint16_t previous =
-        (uint16_t)(((uint16_t)map->value[previous_offset] << 8) |
-                   map->value[previous_offset + 1u]);
-    if (key <= previous) return false;
-  }
-  *key_literal = key;
-  *value_string = (uint16_t)(((uint16_t)map->value[offset + 2u] << 8) |
-                             map->value[offset + 3u]);
-  return true;
+  return length == expected_length &&
+         (length == 0 || memcmp(value, expected, length) == 0);
 }

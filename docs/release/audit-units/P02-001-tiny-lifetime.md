@@ -1,4 +1,4 @@
-# P02-001: Tiny-message credential lifetime (7.15)
+# P02-001: Tiny-message credential lifetime (7.14.3)
 
 Status: native regression reproduced, fixed and rechecked; assembly integration
 and ARM/host validation pending. This is an existing defect, not introduced by
@@ -16,7 +16,7 @@ PIN/passphrase readers and confirmation exit also wipe their caller-owned copies
 The dice caller (where present) already wipes its copy at exit. No cache policy,
 wire format or successful acknowledgement sequence changes.
 
-Validation: 499 full-firmware and 93 Bitcoin-only firmware tests pass. The USBRX regression is
+Validation: 89 Bitcoin-only firmware tests pass. The USBRX regression is
 `USBRX.TinyAcknowledgementDoesNotReusePreviousSecret`; the existing overflow,
 error-handling and nanopb capacity tests also pass. Native builds use Apple Clang
 with PB_NO_PACKED_STRUCTS=1 and the documented local nanopb generator workaround;

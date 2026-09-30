@@ -349,20 +349,6 @@ bool confirm_zcash_address(const char* desc, const char* address) {
 #endif
 
 /*
- * confirm_zcash_address() - Show zcash address confirmation
- *
- * INPUT
- *      - desc: description (title) shown on both screens
- *      - address: zcash unified address — full text on the first screen,
- *        QR on the second
- * OUTPUT
- *     true/false of confirmation
- *
- */
-#if ZCASH_PRIVACY
-#endif
-
-/*
  * confirm_address() - Show address confirmation
  *
  * INPUT
@@ -640,11 +626,10 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
   uint32_t tx_type_be = 0;
   uint32_t tx_type = UINT32_MAX;
   if (data && size == 20) {
-    /* The protobuf bytes array is size-delimited, not a typed/aligned word. */
+    /* Protobuf byte arrays are size-delimited, not necessarily aligned. */
     memcpy(&tx_type_be, data + 4, sizeof(tx_type_be));
     REVERSE32(tx_type_be, tx_type);
   }
-
   if (tx_type == 0x00000000) {  // OMNI simple send
     char str_out[32];
     uint32_t currency_be;
@@ -682,19 +667,15 @@ bool confirm_omni(ButtonRequestType button_request, const char* title,
                    str_out);
   }
 
-  /* Unsupported Omni messages still carry asset-layer semantics. A generic
-   * "Unknown Transaction" screen hid the complete payload while allowing the
-   * host to obtain a Bitcoin signature. Fall back to the exact-length pager so
-   * the trusted display binds approval to every signed OP_RETURN byte. */
+  /* Unknown/malformed Omni messages must still bind approval to every signed
+   * OP_RETURN byte. */
   return confirm_bytes(button_request, title, data, size);
 }
 
 bool confirm_data(ButtonRequestType button_request, const char* title,
                   const uint8_t* data, uint32_t size) {
-  /* OP_RETURN is signed byte-for-byte, so disclose it byte-for-byte. The old
-   * non-ASCII path silently clamped at 50 bytes and then tested the already
-   * clamped length, making its ".." marker unreachable. The ASCII path also
-   * handed a size-delimited protobuf field to "%s", which assumes a trailing
-   * NUL that the wire format does not promise. */
+  /* OP_RETURN bytes and EOS memo bytes are committed to in full. Route both
+   * through the length-delimited pager so embedded NULs, non-ASCII data, and
+   * tails beyond the first screen cannot disappear from the approval flow. */
   return confirm_bytes(button_request, title, data, size);
 }

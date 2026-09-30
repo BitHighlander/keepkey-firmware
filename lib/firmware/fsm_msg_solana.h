@@ -584,6 +584,50 @@ static bool solana_confirmSchemaTransaction(
   return true;
 }
 
+static bool solana_offchain_payload_is_ascii(const uint8_t* data, size_t size) {
+  for (size_t i = 0; i < size; i++) {
+    if (data[i] < 0x20 || data[i] > 0x7e) return false;
+  }
+  return true;
+}
+
+static bool solana_offchain_payload_is_utf8(const uint8_t* data, size_t size) {
+  size_t i = 0;
+  while (i < size) {
+    const uint8_t c = data[i];
+    size_t extra;
+    uint32_t cp;
+    if (c < 0x80) {
+      i++;
+      continue;
+    } else if ((c & 0xe0) == 0xc0) {
+      extra = 1;
+      cp = c & 0x1fu;
+    } else if ((c & 0xf0) == 0xe0) {
+      extra = 2;
+      cp = c & 0x0fu;
+    } else if ((c & 0xf8) == 0xf0) {
+      extra = 3;
+      cp = c & 0x07u;
+    } else {
+      return false;
+    }
+    if (i + extra >= size) return false;
+    for (size_t k = 1; k <= extra; k++) {
+      const uint8_t cc = data[i + k];
+      if ((cc & 0xc0) != 0x80) return false;
+      cp = (cp << 6) | (cc & 0x3fu);
+    }
+    if ((extra == 1 && cp < 0x80u) || (extra == 2 && cp < 0x800u) ||
+        (extra == 3 && cp < 0x10000u) || cp > 0x10ffffu ||
+        (cp >= 0xd800u && cp <= 0xdfffu)) {
+      return false;
+    }
+    i += extra + 1;
+  }
+  return true;
+}
+
 /* Validate Solana derivation path: m/44'/501'/account'[/change'] */
 static bool solana_pathIsStandard(const uint32_t* path, size_t count) {
   if (count < 3 || count > 4) return false;
@@ -806,6 +850,20 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
+  /* Classify before any consent screen so malformed bytes cannot trigger a
+   * derivation-path warning before the request is rejected. Structural
+   * malformation does not depend on lookup-table material (the certified
+   * re-parse below only adds constraints), so this early result is safe to act
+   * on; `parsed` is fully rewritten by every later parse. */
+  SolanaParsedTx parsed;
+  if (solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size, &parsed) ==
+      SOL_TX_REVIEW_MALFORMED) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Malformed Solana transaction"));
+    layoutHome();
+    return;
+  }
+
   /* Path validation: warn on non-standard derivation */
   if (!solana_pathIsStandard(msg->address_n, msg->address_n_count)) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "WARNING",
@@ -821,7 +879,6 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  SolanaParsedTx parsed;
   SolanaInstrSchema schema;
   memset(&schema, 0, sizeof(schema));
   uint8_t schema_ix = 0;
@@ -1309,6 +1366,18 @@ void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg) {
   if (msg->message.size > 1212) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Off-chain message exceeds 1212-byte limit"));
+    layoutHome();
+    return;
+  }
+
+  const bool payload_matches_format =
+      format == 0 ? solana_offchain_payload_is_ascii(msg->message.bytes,
+                                                     msg->message.size)
+                  : solana_offchain_payload_is_utf8(msg->message.bytes,
+                                                    msg->message.size);
+  if (!payload_matches_format) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Message does not match declared off-chain format"));
     layoutHome();
     return;
   }

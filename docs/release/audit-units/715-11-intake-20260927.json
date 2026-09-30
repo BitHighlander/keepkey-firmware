@@ -1,0 +1,200 @@
+{
+  "historical_pr": 841,
+  "historical_head": "e97ecd49d03e49536a0fe690bea1319879db022b",
+  "live_base": "58526221f47a06d44ef49c9a0642136423f6556f",
+  "current_audit_anchor": "db7c711a6c824c42e7096d4867429bbe94cb6ffb",
+  "historical_adjacent_numstat": "19\t7\tinclude/keepkey/firmware/solana.h\n125\t37\tlib/firmware/fsm_msg_solana.h\n45\t7\tlib/firmware/solana.c\n94\t0\tunittests/firmware/solana.cpp",
+  "retirement_claim_currently_tree_empty": false,
+  "head_tree": "398cdfb1f9cf7e74863513cdf2a99e6db2988f2b",
+  "base_tree": "0d7cd838d2d71fb2698e9a7242e43a73fae2bd3e",
+  "current_differences": "97\t12\tlib/firmware/fsm_msg_solana.h\n25\t44\tlib/firmware/solana.c\n25\t21\tunittests/firmware/solana.cpp",
+  "parser_function_mapping": {
+    "solana_schemaArgWidth": {
+      "identical_ignoring_whitespace": true,
+      "hashes": {
+        "e97ecd49d03e49536a0fe690bea1319879db022b": "2bf42939b56ab8d62b4630553c6c6a8528e301a34d41d2c0ea7d88abd21b7742",
+        "db7c711a6c824c42e7096d4867429bbe94cb6ffb": "2bf42939b56ab8d62b4630553c6c6a8528e301a34d41d2c0ea7d88abd21b7742"
+      }
+    },
+    "solana_parseInstrSchema": {
+      "identical_ignoring_whitespace": true,
+      "hashes": {
+        "e97ecd49d03e49536a0fe690bea1319879db022b": "3f51a3e574f029bd6ffd6cb609439ada55918de2ff8c514d6f05e782353e875f",
+        "db7c711a6c824c42e7096d4867429bbe94cb6ffb": "3f51a3e574f029bd6ffd6cb609439ada55918de2ff8c514d6f05e782353e875f"
+      }
+    },
+    "solana_schemaApplies": {
+      "identical_ignoring_whitespace": true,
+      "hashes": {
+        "e97ecd49d03e49536a0fe690bea1319879db022b": "8fe4ee4a8f891d5195db9e3a31fe9dfaae0606c27c733916702f4e82e1730c7e",
+        "db7c711a6c824c42e7096d4867429bbe94cb6ffb": "8fe4ee4a8f891d5195db9e3a31fe9dfaae0606c27c733916702f4e82e1730c7e"
+      }
+    },
+    "solana_rawMessageIsPlainText": {
+      "identical_ignoring_whitespace": true,
+      "hashes": {
+        "e97ecd49d03e49536a0fe690bea1319879db022b": "2ff79cf01ff14a87e44733d6486f0a412622c3ac0e15872492b8e010ecc0308f",
+        "db7c711a6c824c42e7096d4867429bbe94cb6ffb": "2ff79cf01ff14a87e44733d6486f0a412622c3ac0e15872492b8e010ecc0308f"
+      }
+    }
+  },
+  "historical_solana_test_count": 44,
+  "current_solana_test_count": 44,
+  "removed_test_names": [],
+  "added_test_names": [],
+  "inherited_ci_run": 36354155692,
+  "inherited_junit_sha256": "eda233ffc8290d86a02e9f489678db1092af4ca2e7208e552e56d2bd9f7a0b2a",
+  "inherited_test_results": [
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_duplicate_compute_budget_refused",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_edited_schema_refused",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_proof_without_schema_signature_refused",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_review_shows_priority_fee",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_schema_signature_one_byte_changed_refused",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_short_schema_signature_refused",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_ignores_blind_sign_policy",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_priority_fee_names_fee_payer",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_reviews_every_screen",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_soltoshi_join_untrusted_definition_shows_base_units",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_v1_schema_reviews_static_transfer_companion",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaCertified.test_certified_wrong_scope_certificate_refused",
+      "status": "skipped",
+      "skip_reason": "Firmware version 7.16.0 or higher is required to run this test"
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_schema_refuses_transfer_companion",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestSolanaSchemaRuntime.test_runtime_token_amount_trust_comes_from_the_schema_signer",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "tests.test_msg_solana_schema_v2.TestClearsignAttestorTokenAmount.test_token_amount_mint_account_is_attested_before_signing",
+      "status": "skipped",
+      "skip_reason": "ClearsignAttestorSign not supported by this firmware build"
+    },
+    {
+      "name": "tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_message",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_message_blocked_without_advanced_mode",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "tests.test_msg_solana_signtx.TestMsgSolanaSignTx.test_solana_sign_plain_text_message_without_advanced_mode",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaParsesCanonicalPayload",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaV2ParsesTokenDurationAndEightArgs",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaRejectsTrailingBytes",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaRejectsUnsafeLabel",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaRejectsIncompleteCoverage",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaAppliesWithFullCoverage",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaRejectsProgramMismatch",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaRejectsOutOfRangeAccount",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.SchemaParsesSdkSerializedPayloadNative",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.RawMessagePlainTextNeedsNoAdvancedMode",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.RawMessageNotPlainTextKeepsAdvancedMode",
+      "status": "passed",
+      "skip_reason": null
+    },
+    {
+      "name": "Solana.RawMessageContainingSignerKeyKeepsAdvancedMode",
+      "status": "passed",
+      "skip_reason": null
+    }
+  ],
+  "status": "intake only; final block 09/10 predecessor reconciliation and boundary audit pending"
+}

@@ -158,10 +158,24 @@ static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count,
   return hive_slip48_path_valid_for_role(address_n, count, required_role);
 }
 
-static bool hive_confirm_slice(ButtonRequestType type, const char* title,
-                               const uint8_t* s, uint16_t len);
 
 // ── HiveSignTx (transfer) ─────────────────────────────────────────────────
+
+// Keep custom-domain support, but make the exact signing domain part of
+// consent. Mainnet (explicit or omitted) keeps the ordinary flow.
+static bool hive_confirm_chain(bool present, const uint8_t* chain) {
+  const uint8_t mainnet[32] = HIVE_CHAIN_ID;
+  if (!present || memcmp(chain, mainnet, sizeof(mainnet)) == 0) return true;
+  char hex[65];
+  static const char digits[] = "0123456789abcdef";
+  for (size_t i = 0; i < 32; ++i) {
+    hex[2 * i] = digits[chain[i] >> 4];
+    hex[2 * i + 1] = digits[chain[i] & 15];
+  }
+  hex[64] = 0;
+  return confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
+                       "Custom Hive chain", (const uint8_t*)hex, 64);
+}
 
 void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   RESP_INIT(HiveSignedTx);
@@ -169,11 +183,17 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  if (!msg->has_from || !msg->has_to || !msg->has_amount ||
-      !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
-      !msg->has_expiration) {
+  if (msg->has_memo &&
+      strnlen(msg->memo, sizeof(msg->memo)) > HIVE_MAX_MEMO_LEN) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing required Hive transaction fields"));
+                    _("Hive memo too long (max 440 bytes)"));
+    layoutHome();
+    return;
+  }
+
+  if (!hive_validateTransfer(msg)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive transaction fields"));
     layoutHome();
     return;
   }
@@ -181,16 +201,13 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count,
                            HIVE_ROLE_ACTIVE)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive SLIP-0048 path (transfer needs active')"));
+                    _("Invalid Hive SLIP-0048 path"));
     layoutHome();
     return;
   }
 
-  // Reject over-long memos up front with a specific error; the serializer's
-  // own bounds check would otherwise surface as a generic signing failure.
-  if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Hive memo too long (max 440 bytes)"));
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }
@@ -200,13 +217,6 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // One resolver for the screen and for the signed bytes: hive_transferAsset()
-  // pins the precision and returns both spellings, so the serializer writes
-  // the wire symbol ("STEEM"/"SBD") while the user approves the rebranded one
-  // ("HIVE"/"HBD"). Computing the display suffix from msg->asset_symbol here
-  // and letting append_asset() copy the same string is what let the device
-  // sign a symbol hived cannot validate, and it is also the only thing that
-  // kept the two in agreement — so they now share one source of truth.
   const char* wire_symbol;
   const char* display_symbol;
   uint8_t prec;
@@ -217,6 +227,7 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
     layoutHome();
     return;
   }
+  (void)wire_symbol;
   char suffix[sizeof(msg->asset_symbol) + 2];  // leading space + symbol + NUL
   snprintf(suffix, sizeof(suffix), " %s", display_symbol);
   char amount_str[32];
@@ -232,9 +243,8 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   }
 
   if (msg->has_memo && strlen(msg->memo) > 0) {
-    if (!hive_confirm_slice(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
-                            (const uint8_t*)msg->memo,
-                            (uint16_t)strlen(msg->memo))) {
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, "Memo",
+                       (const uint8_t*)msg->memo, strlen(msg->memo))) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
       layoutHome();
@@ -264,74 +274,6 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   layoutHome();
 }
 
-typedef struct {
-  uint8_t owner[33];
-  uint8_t active[33];
-  uint8_t posting[33];
-  uint8_t memo[33];
-} HiveRoleKeys;
-
-static bool hive_prepare_account_sign(const uint32_t* address_n,
-                                      uint32_t address_n_count,
-                                      HiveRoleKeys* keys, HDNode** node_out,
-                                      char* owner_stm, size_t owner_stm_len) {
-  if (!hive_slip48_path_ok(address_n, address_n_count, HIVE_ROLE_OWNER)) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid Hive SLIP-0048 path (needs owner')"));
-    layoutHome();
-    return false;
-  }
-  uint32_t account_index = address_n[3] & 0x7FFFFFFFu;
-
-  // Derive all four role keys from the device root.
-  // Do this BEFORE fetching the signing node so the root static buffer
-  // is not clobbered by the second fsm_getDerivedNode call.
-  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
-  if (!root) return false;
-
-  uint32_t acc_hardened = account_index | 0x80000000u;
-  bool keys_ok =
-      hive_deriveRawKey(root, HIVE_ROLE_OWNER, acc_hardened, keys->owner) &&
-      hive_deriveRawKey(root, HIVE_ROLE_ACTIVE, acc_hardened, keys->active) &&
-      hive_deriveRawKey(root, HIVE_ROLE_POSTING, acc_hardened, keys->posting) &&
-      hive_deriveRawKey(root, HIVE_ROLE_MEMO, acc_hardened, keys->memo);
-  // root static buffer is done with; signing node derivation may overwrite it.
-
-  if (!keys_ok) {
-    memzero(keys, sizeof(*keys));
-    /* root is the wallet's undived master node -- scrub it here too, same as
-       fsm_msgHiveGetPublicKeys does on every exit, instead of leaving it
-       resident until some unrelated later call happens to overwrite it. */
-    memzero(root, sizeof(*root));
-    fsm_sendFailure(FailureType_Failure_FirmwareError,
-                    _("Failed to derive Hive keys"));
-    layoutHome();
-    return false;
-  }
-
-  // Now get the signing node (owner key, overwrites root static buffer).
-  HDNode* node =
-      fsm_getDerivedNode(SECP256K1_NAME, address_n, address_n_count, NULL);
-  if (!node) {
-    memzero(keys, sizeof(*keys));
-    return false;
-  }
-  hdnode_fill_public_key(node);
-
-  // Encode the device-derived owner key for display confirmation.
-  if (!hive_getPublicKey(keys->owner, owner_stm, owner_stm_len)) {
-    memzero(node, sizeof(*node));
-    memzero(keys, sizeof(*keys));
-    fsm_sendFailure(FailureType_Failure_FirmwareError,
-                    _("Failed to encode Hive owner key"));
-    layoutHome();
-    return false;
-  }
-
-  *node_out = node;
-  return true;
-}
-
 // ── HiveSignAccountCreate ─────────────────────────────────────────────────
 // Signs a Graphene account_create operation.
 // Device derives all four role keys internally; host-supplied key strings
@@ -344,20 +286,78 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  if (!msg->has_new_account_name || !msg->has_creator ||
-      !msg->has_ref_block_num || !msg->has_ref_block_prefix ||
-      !msg->has_expiration) {
+  if (!hive_validateAccountCreate(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing required account_create fields"));
+                    _("Invalid Hive transaction fields"));
     layoutHome();
     return;
   }
 
-  HiveRoleKeys keys;
-  HDNode* node = NULL;
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count,
+                           HIVE_ROLE_OWNER)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive SLIP-0048 path"));
+    layoutHome();
+    return;
+  }
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
+
+  // Derive all four role keys from the device root.
+  // Do this BEFORE fetching the signing node so the root static buffer
+  // is not clobbered by the second fsm_getDerivedNode call.
+  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  if (!root) return;
+
+  uint8_t owner_raw[33], active_raw[33], posting_raw[33], memo_raw[33];
+  uint32_t acc_hardened = account_index | 0x80000000u;
+  bool keys_ok =
+      hive_deriveRawKey(root, HIVE_ROLE_OWNER, acc_hardened, owner_raw) &&
+      hive_deriveRawKey(root, HIVE_ROLE_ACTIVE, acc_hardened, active_raw) &&
+      hive_deriveRawKey(root, HIVE_ROLE_POSTING, acc_hardened, posting_raw) &&
+      hive_deriveRawKey(root, HIVE_ROLE_MEMO, acc_hardened, memo_raw);
+  memzero(root, sizeof(*root));
+  // root static buffer is done with; signing node derivation may overwrite it.
+
+  if (!keys_ok) {
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to derive Hive keys"));
+    layoutHome();
+    return;
+  }
+
+  // Now get the signing node (owner key, overwrites root static buffer).
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) {
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
+    return;
+  }
+  hdnode_fill_public_key(node);
+
+  // Encode the device-derived owner key for display confirmation.
   char owner_stm[64];
-  if (!hive_prepare_account_sign(msg->address_n, msg->address_n_count, &keys,
-                                 &node, owner_stm, sizeof(owner_stm))) {
+  if (!hive_getPublicKey(owner_raw, owner_stm, sizeof(owner_stm))) {
+    memzero(node, sizeof(*node));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to encode Hive owner key"));
+    layoutHome();
     return;
   }
 
@@ -367,7 +367,10 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
                "Create @%s secured by KeepKey?\n\nAll keys from your device.",
                msg->new_account_name)) {
     memzero(node, sizeof(*node));
-    memzero(&keys, sizeof(keys));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
@@ -377,7 +380,10 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Owner Key", "%s",
                owner_stm)) {
     memzero(node, sizeof(*node));
-    memzero(&keys, sizeof(keys));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
@@ -391,16 +397,22 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Creation Fee",
                "Fee: %s paid by @%s", fee_str, msg->creator)) {
     memzero(node, sizeof(*node));
-    memzero(&keys, sizeof(keys));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }
 
-  hive_signAccountCreate(node, msg, keys.owner, keys.active, keys.posting,
-                         keys.memo, resp);
+  hive_signAccountCreate(node, msg, owner_raw, active_raw, posting_raw,
+                         memo_raw, resp);
   memzero(node, sizeof(*node));
-  memzero(&keys, sizeof(keys));
+  memzero(owner_raw, sizeof(owner_raw));
+  memzero(active_raw, sizeof(active_raw));
+  memzero(posting_raw, sizeof(posting_raw));
+  memzero(memo_raw, sizeof(memo_raw));
 
   if (!resp->has_signature) {
     fsm_sendFailure(FailureType_Failure_FirmwareError,
@@ -425,19 +437,75 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  if (!msg->has_account || !msg->has_ref_block_num ||
-      !msg->has_ref_block_prefix || !msg->has_expiration) {
+  if (!hive_validateAccountUpdate(msg)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing required account_update fields"));
+                    _("Invalid Hive transaction fields"));
     layoutHome();
     return;
   }
 
-  HiveRoleKeys keys;
-  HDNode* node = NULL;
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count,
+                           HIVE_ROLE_OWNER)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive SLIP-0048 path"));
+    layoutHome();
+    return;
+  }
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
+
+  // Derive all four role keys before fetching the signing node.
+  HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
+  if (!root) return;
+
+  uint8_t owner_raw[33], active_raw[33], posting_raw[33], memo_raw[33];
+  uint32_t acc_hardened = account_index | 0x80000000u;
+  bool keys_ok =
+      hive_deriveRawKey(root, HIVE_ROLE_OWNER, acc_hardened, owner_raw) &&
+      hive_deriveRawKey(root, HIVE_ROLE_ACTIVE, acc_hardened, active_raw) &&
+      hive_deriveRawKey(root, HIVE_ROLE_POSTING, acc_hardened, posting_raw) &&
+      hive_deriveRawKey(root, HIVE_ROLE_MEMO, acc_hardened, memo_raw);
+  memzero(root, sizeof(*root));
+
+  if (!keys_ok) {
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to derive Hive keys"));
+    layoutHome();
+    return;
+  }
+
+  // Signing node (overwrites root static buffer).
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) {
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
+    return;
+  }
+  hdnode_fill_public_key(node);
+
+  // Encode device-derived owner key for display.
   char owner_stm[64];
-  if (!hive_prepare_account_sign(msg->address_n, msg->address_n_count, &keys,
-                                 &node, owner_stm, sizeof(owner_stm))) {
+  if (!hive_getPublicKey(owner_raw, owner_stm, sizeof(owner_stm))) {
+    memzero(node, sizeof(*node));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
+    fsm_sendFailure(FailureType_Failure_FirmwareError,
+                    _("Failed to encode Hive owner key"));
+    layoutHome();
     return;
   }
 
@@ -448,7 +516,10 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
                "be retired.",
                msg->account)) {
     memzero(node, sizeof(*node));
-    memzero(&keys, sizeof(keys));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
@@ -458,16 +529,22 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "New Owner Key", "%s",
                owner_stm)) {
     memzero(node, sizeof(*node));
-    memzero(&keys, sizeof(keys));
+    memzero(owner_raw, sizeof(owner_raw));
+    memzero(active_raw, sizeof(active_raw));
+    memzero(posting_raw, sizeof(posting_raw));
+    memzero(memo_raw, sizeof(memo_raw));
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }
 
-  hive_signAccountUpdate(node, msg, keys.owner, keys.active, keys.posting,
-                         keys.memo, resp);
+  hive_signAccountUpdate(node, msg, owner_raw, active_raw, posting_raw,
+                         memo_raw, resp);
   memzero(node, sizeof(*node));
-  memzero(&keys, sizeof(keys));
+  memzero(owner_raw, sizeof(owner_raw));
+  memzero(active_raw, sizeof(active_raw));
+  memzero(posting_raw, sizeof(posting_raw));
+  memzero(memo_raw, sizeof(memo_raw));
 
   if (!resp->has_signature) {
     fsm_sendFailure(FailureType_Failure_FirmwareError,
@@ -761,6 +838,21 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
     return;
   }
 
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive transaction fields"));
+    layoutHome();
+    return;
+  }
+
+  // Same consent as every other Hive signing flow: a custom signing domain is
+  // shown before anything is derived or approved.
+  if (!hive_confirm_chain(msg->has_chain_id, msg->chain_id.bytes)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
@@ -1042,3 +1134,4 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
   msg_write(MessageType_MessageType_HiveSignedOperations, resp);
   layoutHome();
 }
+

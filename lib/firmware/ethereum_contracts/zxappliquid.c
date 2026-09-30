@@ -13,6 +13,8 @@
 #include "keepkey/firmware/ethereum_contracts/zxliquidtx.h"
 
 #include "keepkey/board/confirm_sm.h"
+#include "keepkey/board/font.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"

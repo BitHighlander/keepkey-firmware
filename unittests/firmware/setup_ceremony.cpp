@@ -15,20 +15,16 @@
  * None of these call confirm(), so the suite runs in the fast filtered mode:
  *   ./firmware-unit --gtest_filter=SetupCeremony.*
  *
- * COVERAGE GAP, STATED DELIBERATELY. These cover the ceremony STATE MACHINE
- * only. The two invariants the fix actually rests on —
- *   I1  no staged setting is observable through storage before commit
- *   I2  a foreign storage_commit() disarms an armed ceremony
- * — cannot be asserted here: firmware-unit has no flash emulation, and no test
- * in this tree calls storage_init(), storage_commit() or storage_setLabel().
- * Attempting it segfaults. So the parts of #429 that touch storage are NOT
- * covered by automated tests and must be proven on hardware or in an emulator
- * run with real flash. Do not read a green run here as #429 being verified.
+ * These cases cover the ceremony state machine. The storage-backed fixture in
+ * storage_passphrase.cpp additionally checks that staging leaves active
+ * settings unchanged and a foreign storage_commit() aborts the ceremony.
+ * Neither suite proves every wire interleaving or physical power-loss behavior.
  */
 
 #include "gtest/gtest.h"
 
 #include <string>
+#include <cstring>
 
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
@@ -87,6 +83,34 @@ TEST_F(SetupCeremony, AbortIsIdempotent) {
   setup_abort();
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(setup_isArmedAs(SETUP_RECOVERY));
+}
+
+// BIP39 owns a static output buffer.  Once setup is abandoned, retaining the
+// generated sentence there is retaining an otherwise unowned device seed.
+TEST_F(SetupCeremony, AbortScrubsGeneratedMnemonic) {
+  const uint8_t entropy[16] = {};
+  const char* generated = mnemonic_from_data(entropy, sizeof(entropy));
+  ASSERT_NE(nullptr, generated);
+  ASSERT_NE('\0', generated[0]);
+
+  setup_abort();
+
+  for (size_t i = 0; i < 24u * 10u; ++i) {
+    EXPECT_EQ('\0', generated[i]);
+  }
+}
+
+TEST_F(SetupCeremony, AbortScrubsEveryByteOfSharedMnemonicDisplayScratch) {
+  memset(mnemonic_scratch_tokened, 's', sizeof(mnemonic_scratch_tokened));
+  memset(mnemonic_scratch_formatted, 's', sizeof(mnemonic_scratch_formatted));
+  memset(mnemonic_scratch_display, 's', sizeof(mnemonic_scratch_display));
+  memset(mnemonic_scratch_word, 's', sizeof(mnemonic_scratch_word));
+  setup_abort();
+  for (char c : mnemonic_scratch_tokened) EXPECT_EQ(0, c);
+  for (const auto& page : mnemonic_scratch_formatted)
+    for (char c : page) EXPECT_EQ(0, c);
+  for (char c : mnemonic_scratch_display) EXPECT_EQ(0, c);
+  for (char c : mnemonic_scratch_word) EXPECT_EQ(0, c);
 }
 
 // setup_require() is the gate every continuation message uses. A mismatch must
@@ -186,19 +210,6 @@ TEST_F(SetupCeremony, InvalidRecoveryWordCountDisarmsCeremony) {
 
 // BIP39 owns a static output buffer.  Once setup is abandoned, retaining the
 // generated sentence there is retaining an otherwise unowned device seed.
-TEST_F(SetupCeremony, AbortScrubsGeneratedMnemonic) {
-  const uint8_t entropy[16] = {};
-  const char* generated = mnemonic_from_data(entropy, sizeof(entropy));
-  ASSERT_NE(nullptr, generated);
-  ASSERT_NE('\0', generated[0]);
-
-  setup_abort();
-
-  for (size_t i = 0; i < 24u * 10u; ++i) {
-    EXPECT_EQ('\0', generated[i]);
-  }
-}
-
 TEST_F(SetupCeremony, CommitRefusesAbortedOrDifferentCeremony) {
   ASSERT_TRUE(setup_stage(false, "english", "aborted", 0, 0, false));
   setup_arm(SETUP_RESET);
@@ -210,3 +221,4 @@ TEST_F(SetupCeremony, CommitRefusesAbortedOrDifferentCeremony) {
   EXPECT_FALSE(setup_isArmed());
 }
 }  // namespace
+

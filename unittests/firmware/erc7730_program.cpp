@@ -243,6 +243,27 @@ TEST(Erc7730ProgramString, RejectsMissingOversizedAndTruncatedValues) {
       erc7730_program_string_feed(&loader, 0, section.data(), section.size()));
 }
 
+TEST(Erc7730ProgramString, RejectsEmbeddedNulBeforeDisplay) {
+  const std::vector<uint8_t> section = {0, 2, 0, 1, 'A', 0, 3, 'x', 0, 'y'};
+  for (uint16_t selected : {0u, 1u}) {
+    for (size_t chunk : std::vector<size_t>{1u, section.size()}) {
+      Erc7730ProgramString loader;
+      erc7730_program_string_begin(&loader, section.size(), selected);
+      bool rejected = false;
+      for (size_t offset = 0; offset < section.size();) {
+        const size_t length = std::min(chunk, section.size() - offset);
+        if (!erc7730_program_string_feed(&loader, offset,
+                                         section.data() + offset, length)) {
+          rejected = true;
+          break;
+        }
+        offset += length;
+      }
+      EXPECT_TRUE(rejected) << "selected=" << selected << " chunk=" << chunk;
+    }
+  }
+}
+
 TEST(Erc7730ProgramDisplay, SelectsInstructionAcrossChunks) {
   const std::vector<uint8_t> section = {
       0, 3, 1, 0, 0, 2,  0xff, 0xff, 0xff, 0xff, 4,    0,    0,
@@ -338,72 +359,6 @@ TEST(Erc7730ProgramCondition, SelectsFixedConditionAcrossChunks) {
     EXPECT_EQ(condition.literal_set, 7u);
     EXPECT_EQ(condition.flags, 1u);
   }
-}
-
-TEST(Erc7730ProgramTokenMetadata, SelectsExactSignedChainAndAddress) {
-  std::vector<uint8_t> section = {0, 2};
-  section.insert(section.end(), {1, 0, 28});
-  section.insert(section.end(), 28, 0);  // unrelated deployment
-  section.insert(section.end(), {3, 0, 31});
-  const uint64_t chain_id = 1;
-  for (int shift = 56; shift >= 0; shift -= 8)
-    section.push_back((uint8_t)(chain_id >> shift));
-  uint8_t address[20];
-  memset(address, 0x42, sizeof(address));
-  section.insert(section.end(), address, address + sizeof(address));
-  section.insert(section.end(), {0, 7, 6});  // ticker string 7, 6 decimals
-
-  for (size_t chunk : {1u, 7u, 128u}) {
-    Erc7730ProgramTokenMetadata loader;
-    erc7730_program_token_metadata_begin(&loader, section.size(), chain_id,
-                                         address);
-    for (size_t offset = 0; offset < section.size();) {
-      const size_t length = std::min(chunk, section.size() - offset);
-      ASSERT_TRUE(erc7730_program_token_metadata_feed(
-          &loader, offset, section.data() + offset, length));
-      offset += length;
-    }
-    Erc7730TokenMetadata metadata;
-    ASSERT_TRUE(erc7730_program_token_metadata_complete(&loader, &metadata));
-    EXPECT_EQ(metadata.ticker_string, 7u);
-    EXPECT_EQ(metadata.decimals, 6u);
-  }
-
-  Erc7730ProgramTokenMetadata missing;
-  erc7730_program_token_metadata_begin(&missing, section.size(), 137, address);
-  EXPECT_FALSE(erc7730_program_token_metadata_feed(
-      &missing, 0, section.data(), section.size()));
-}
-
-TEST(Erc7730ProgramTokenMetadata, SelectsExactSignedNetwork) {
-  std::vector<uint8_t> section = {0, 2};
-  section.insert(section.end(), {3, 0, 31});
-  section.insert(section.end(), 31, 0);  // unrelated token
-  section.insert(section.end(), {4, 0, 13});
-  const uint64_t chain_id = 42161;
-  for (int shift = 56; shift >= 0; shift -= 8)
-    section.push_back((uint8_t)(chain_id >> shift));
-  section.insert(section.end(), {0, 9, 0, 11, 18});
-
-  for (size_t chunk : {1u, 5u, 64u}) {
-    Erc7730ProgramTokenMetadata loader;
-    erc7730_program_network_metadata_begin(&loader, section.size(), chain_id);
-    for (size_t offset = 0; offset < section.size();) {
-      const size_t length = std::min(chunk, section.size() - offset);
-      ASSERT_TRUE(erc7730_program_token_metadata_feed(
-          &loader, offset, section.data() + offset, length));
-      offset += length;
-    }
-    Erc7730TokenMetadata metadata;
-    ASSERT_TRUE(erc7730_program_token_metadata_complete(&loader, &metadata));
-    EXPECT_EQ(metadata.ticker_string, 11u);
-    EXPECT_EQ(metadata.decimals, 18u);
-  }
-
-  Erc7730ProgramTokenMetadata missing;
-  erc7730_program_network_metadata_begin(&missing, section.size(), 1);
-  EXPECT_FALSE(erc7730_program_token_metadata_feed(
-      &missing, 0, section.data(), section.size()));
 }
 
 TEST(Erc7730ProgramCondition, RejectsMissingTargetAndBadLength) {

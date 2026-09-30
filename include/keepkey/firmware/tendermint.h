@@ -42,7 +42,12 @@ bool tendermint_pathMismatched(const CoinType* coin, const uint32_t* address_n,
 bool tendermint_getAddress(const HDNode* node, const char* prefix,
                            char* address);
 
-/** Reject empty or display-ambiguous host-provided JSON text. */
+/**
+ * Validate non-empty host text before it is reused in both Amino JSON and a
+ * printf-based confirmation. This deliberately accepts visible ASCII except
+ * JSON string delimiters; spaces and controls are refused so the display has
+ * no hidden layout semantics.
+ */
 bool tendermint_validateSafeText(const char* value);
 
 /** Validate a Bech32 address and bind it to the expected human-readable part.

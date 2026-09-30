@@ -1,5 +1,10 @@
 # Fork release product program
 
+> Historical snapshot (2026-09-08), retained only as provenance. Its branches,
+> SHAs, active unit and execution order are not current instructions. The active
+> 7.15 program advances sequentially under `REHEARSAL-SOP.md`; Block 00A is
+> recorded in `audit-units/715-00a-release-foundation.md`.
+
 Owner direction: 2026-09-08. Harden and assemble 7.14.2, 7.14.3 and 7.15 through
 small local audit units. The canonical procedure is [REHEARSAL-SOP.md](REHEARSAL-SOP.md).
 Copilot belongs to final upstream preparation, after internal product acceptance.
@@ -60,11 +65,18 @@ passed 695 host tests, with 56 skips. These are predecessor evidence, not final
 combined candidate receipts. Three skipped Zcash checks apply to the canonical
 7.15 sources and are being enabled in the companion host audit.
 
-The older 7.15.0 unsupported-storage lockout conflicts with the current explicit
-storage downgrade policy. It is superseded rather than blindly replayed. The
-experimental uncommitted change was withdrawn. Native test concurrency also
-exposed shared emulator port use; run those full suites serially to avoid binding
-collisions. Neither issue is grounds for weakening the release checks.
+The current 7.15 source writes V17 and preserves newer normal-band records with
+`SUS_TooNew`: it refuses to parse them, resets only the RAM storage shadow, and
+blocks commits while the newer-format lock is active. Bitcoin-only band refusal
+retains its separate product boundary; invalid records outside those refusal
+paths still follow the reset path. The earlier assertion that this candidate
+deliberately wipes newer normal-band records was stale. The
+[source-policy reconciliation](audit-units/source-storage-policy.md) maps the
+implementation to existing checks and records the remaining handler and physical
+verification limits. This source correction is not a new test or acceptance
+receipt. Native test concurrency also exposed shared emulator port use; run
+those full suites serially to avoid binding collisions. Neither issue is
+grounds for weakening the release checks.
 
 ## Existing rehearsal evidence
 

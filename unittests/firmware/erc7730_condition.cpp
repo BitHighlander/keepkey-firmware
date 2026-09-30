@@ -65,14 +65,33 @@ TEST(Erc7730Condition, ComparesCapturedValuesToTypedLiterals) {
   EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
 }
 
-TEST(Erc7730Condition, RejectsMembershipWithoutAuthenticatedSet) {
-  Erc7730Condition condition{6, 0, 0, 0};
+TEST(Erc7730Condition, EveryEncodingOfUnsignedZeroCompareEqual) {
   Erc7730AbiCapture capture{};
   capture.node = 1;
-  capture.length = 32;
-  bool visible = true;
-  EXPECT_FALSE(erc7730_condition_evaluate_basic(&condition, &kProgram, &capture,
-                                                &visible));
+  capture.length = 32;  // uint256 zero word
+  Erc7730Literal literal{};
+  literal.kind = 1;
+  literal.length = 1;  // compiler form of zero: [0x00]
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.length = 0;  // empty literal
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+
+  capture.data[31] = 1;
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.length = 1;
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.value[0] = 1;
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+
+  // Multi-byte values still compare exactly after normalization.
+  capture.data[30] = 1;  // 0x0101
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.length = 2;
+  literal.value[0] = 1;
+  literal.value[1] = 1;
+  EXPECT_TRUE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
+  literal.value[1] = 0;
+  EXPECT_FALSE(erc7730_capture_equals_literal(&kProgram, &capture, &literal));
 }
 
 TEST(Erc7730Condition, ComparesCanonicalSignedIntegers) {
@@ -94,39 +113,12 @@ TEST(Erc7730Condition, ComparesCanonicalSignedIntegers) {
   EXPECT_FALSE(erc7730_capture_equals_literal(&program, &capture, &literal));
 }
 
-TEST(Erc7730Condition, TraversesCanonicalAuthenticatedLiteralSets) {
-  Erc7730Literal set{};
-  set.kind = 9;
-  set.length = 8;
-  const uint8_t encoded[] = {0, 3, 0, 1, 0, 7, 1, 0};
-  memcpy(set.value, encoded, sizeof(encoded));
-  uint16_t count = 0;
-  ASSERT_TRUE(erc7730_literal_set_count(&set, &count));
-  EXPECT_EQ(count, 3u);
-  uint16_t index = 0;
-  ASSERT_TRUE(erc7730_literal_set_index(&set, 1, &index));
-  EXPECT_EQ(index, 7u);
-  EXPECT_FALSE(erc7730_literal_set_index(&set, 3, &index));
-  set.value[6] = 0;
-  set.value[7] = 7;
-  EXPECT_FALSE(erc7730_literal_set_index(&set, 2, &index));
-}
-
-TEST(Erc7730Condition, TraversesCanonicalAuthenticatedEnumMaps) {
-  Erc7730Literal map{};
-  map.kind = 8;
-  map.length = 10;
-  const uint8_t encoded[] = {0, 2, 0, 1, 0, 3, 0, 4, 0, 7};
-  memcpy(map.value, encoded, sizeof(encoded));
-  uint16_t count = 0;
-  ASSERT_TRUE(erc7730_enum_map_count(&map, &count));
-  EXPECT_EQ(count, 2u);
-  uint16_t key = 0;
-  uint16_t value = 0;
-  ASSERT_TRUE(erc7730_enum_map_index(&map, 1, &key, &value));
-  EXPECT_EQ(key, 4u);
-  EXPECT_EQ(value, 7u);
-  map.value[6] = 0;
-  map.value[7] = 1;
-  EXPECT_FALSE(erc7730_enum_map_index(&map, 1, &key, &value));
+TEST(Erc7730Condition, RejectsMembershipWithoutAuthenticatedSet) {
+  Erc7730Condition condition{6, 0, 0, 0};
+  Erc7730AbiCapture capture{};
+  capture.node = 1;
+  capture.length = 32;
+  bool visible = true;
+  EXPECT_FALSE(erc7730_condition_evaluate_basic(&condition, &kProgram, &capture,
+                                                &visible));
 }

@@ -451,7 +451,8 @@ bool zcash_orchard_derive_unified_address(const ZcashOrchardKeys* keys,
   uint8_t receiver[43];
 
   bn_read_le(keys->ask, &ask_scalar);
-  redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
+  redpallas_scalar_mult_spendauth_G_progress(&ask_scalar, &ak_point, NULL,
+                                             NULL);
   bn_copy(&ak_point.x, &ak_x);
   bn_write_le(&ak_x, ak);
 

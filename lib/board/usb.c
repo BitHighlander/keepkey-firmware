@@ -316,53 +316,7 @@ static enum usbd_request_return_codes hid_control_request(
 
 static volatile char tiny = 0;
 
-static void main_rx_callback(usbd_device* dev, uint8_t ep) {
-  (void)ep;
-  static CONFIDENTIAL uint8_t buf[64] __attribute__((aligned(4)));
-  if (usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_MAIN_OUT, buf, 64) != 64) {
-    memzero(buf, sizeof(buf));
-    return;
-  }
-  debugLog(0, "", "main_rx_callback");
-
-  if (user_rx_callback) {
-    user_rx_callback(buf, 64);
-  }
-  memzero(buf, sizeof(buf));
-}
-
-static void u2f_rx_callback(usbd_device* dev, uint8_t ep) {
-  (void)ep;
-  static CONFIDENTIAL uint8_t buf[64] __attribute__((aligned(4)));
-
-  debugLog(0, "", "u2f_rx_callback");
-  if (usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_U2F_OUT, buf, 64) != 64) {
-    memzero(buf, sizeof(buf));
-    return;
-  }
-
-  if (user_u2f_rx_callback) {
-    user_u2f_rx_callback(tiny, (const U2FHID_FRAME*)(void*)buf);
-  }
-  memzero(buf, sizeof(buf));
-}
-
-#if DEBUG_LINK
-static void debug_rx_callback(usbd_device* dev, uint8_t ep) {
-  (void)ep;
-  static uint8_t buf[64] __attribute__((aligned(4)));
-  if (usbd_ep_read_packet(dev, ENDPOINT_ADDRESS_DEBUG_OUT, buf, 64) != 64) {
-    memzero(buf, sizeof(buf));
-    return;
-  }
-  debugLog(0, "", "debug_rx_callback");
-
-  if (user_debug_rx_callback) {
-    user_debug_rx_callback(buf, 64);
-  }
-  memzero(buf, sizeof(buf));
-}
-#endif
+#include "usb_rx_callbacks.h"
 
 static void set_config(usbd_device* dev, uint16_t wValue) {
   (void)wValue;
@@ -446,6 +400,12 @@ char usbTiny(char set) {
 
 #endif  // EMULATOR
 
+static msg_sent_callback_t msg_sent_callback;
+
+void msg_set_sent_callback(msg_sent_callback_t callback) {
+  msg_sent_callback = callback;
+}
+
 bool msg_write(MessageType msg_id, const void* msg) {
   if (msg_handler_rejected()) return false;
   const pb_field_t* fields = message_fields(NORMAL_MSG, msg_id, OUT_MSG);
@@ -487,6 +447,7 @@ bool msg_write(MessageType msg_id, const void* msg) {
 #endif
   }
 
+  if (msg_sent_callback) msg_sent_callback(msg_id);
   return true;
 }
 
@@ -542,6 +503,12 @@ void queue_u2f_pkt(const U2FHID_FRAME* u2f_pkt) {
   assert(false && "Emulator does not support FIDO u2f");
 #endif
 }
+
+#ifdef EMULATOR
+void usb_test_receive(const void* buf, size_t len) {
+  if (user_rx_callback) user_rx_callback(buf, len);
+}
+#endif
 
 void usb_set_rx_callback(usb_rx_callback_t callback) {
   user_rx_callback = callback;

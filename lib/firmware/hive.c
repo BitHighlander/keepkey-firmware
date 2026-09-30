@@ -199,12 +199,9 @@ static void append_tx_footer(uint8_t** buf, const uint8_t* end) {
 }
 
 /*
- * Graphene legacy canonical-signature rule (identical to EOS/Steem): high bit
- * of both r and s must be clear — same predicate as eos_is_canonic. Modern
- * hived (post-HF28) actually enforces only BIP-0062 low-S (fc is_canonical ->
- * is_bip_0062_canonical), which trezor-crypto's low-S normalization already
- * guarantees; keeping the stricter legacy rule costs an occasional extra
- * RFC6979 iteration and stays compatible with every historical verifier.
+ * Graphene canonical-signature rule (identical to EOS/Steem): high bit of
+ * both r and s must be clear. hived rejects non-canonical compact sigs, so
+ * signing must retry until canonical — same predicate as eos_is_canonic.
  */
 static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
   (void)v;
@@ -248,30 +245,6 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
   bool ok = hive_sign_raw_digest(node, digest, sig);
   memzero(digest, sizeof(digest));
   return ok;
-}
-
-/*
- * Chain-id select (host-supplied 32-byte chain_id or mainnet default) +
- * hive_sign_digest, writing the 65-byte compact signature into sig[].
- */
-static bool hive_sign_tx_sig(const HDNode* node, bool has_chain_id,
-                             const uint8_t* chain_id_bytes,
-                             size_t chain_id_size, const uint8_t* tx_buf,
-                             size_t tx_len, uint8_t sig[65]) {
-  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
-  /* Pin to Hive mainnet. A host-supplied chain_id is accepted only if it equals
-   * mainnet; any other value is refused rather than signed under an undisclosed
-   * network domain (the confirmations just say "Hive"). This also keeps the tx
-   * digest domain singular — SHA256(mainnet_chain_id || tx) — so the
-   * message-signing guard that rejects messages beginning with the mainnet
-   * chain id fully closes the tx/message signature collision. */
-  if (has_chain_id) {
-    if (chain_id_size != HIVE_CHAIN_ID_LEN ||
-        memcmp(chain_id_bytes, default_chain_id, HIVE_CHAIN_ID_LEN) != 0) {
-      return false;
-    }
-  }
-  return hive_sign_digest(node, default_chain_id, tx_buf, tx_len, sig);
 }
 
 // ── Parsed operation signing (HiveSignOperations) ─────────────────────────
@@ -848,9 +821,17 @@ void hive_signOperations(const HDNode* node, const HiveSignOperations* msg,
       msg->serialized_tx.size > HIVE_MAX_OPS_TX_LEN)
     return;
 
+  // Same contract as every other signing operation: omission is the mainnet
+  // default, an explicit chain id must be exactly HIVE_CHAIN_ID_LEN bytes (a
+  // malformed one never silently selects the default), and an exact-length
+  // custom domain is signed -- the FSM handler discloses it before consent.
+  if (msg->has_chain_id && msg->chain_id.size != HIVE_CHAIN_ID_LEN) return;
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
+
   // Hash straight from the decoded message — no stack copy of the 2KB tx.
-  if (!hive_sign_tx_sig(node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, msg->serialized_tx.bytes,
+  if (!hive_sign_digest(node, chain_id, msg->serialized_tx.bytes,
                         msg->serialized_tx.size, resp->signature.bytes)) {
     return;
   }
@@ -901,50 +882,95 @@ void hive_signMessage(const HDNode* node, const HiveSignMessage* msg,
   memzero(sig, sizeof(sig));
 }
 
+
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
 
-/*
- * HiveSignTx carries its asset symbol as a host string, so it needs the same
- * pinned table cur_asset() applies to the parsed-operations path — one side
- * validating while the other trusted the host is exactly how the display
- * spelling reached the signed bytes. The host may send either spelling (the
- * proto documents "HIVE"/"HBD"); the device signs the wire one and shows the
- * rebranded one, so neither the chain nor the user sees a name it does not
- * recognise. VESTS is absent deliberately: hived's transfer op only moves
- * HIVE and HBD.
- */
+// Resolve the requested asset symbol to the symbol signed on the wire, the
+// symbol shown at consent and its precision. Returns false for any symbol the
+// device does not sign.
 bool hive_transferAsset(const HiveSignTx* msg, const char** wire,
                         const char** display, uint8_t* precision) {
-  const char* sym = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
-  if (strcmp(sym, "HIVE") == 0 || strcmp(sym, HIVE_WIRE_SYMBOL_HIVE) == 0) {
+  const char* symbol = msg->has_asset_symbol ? msg->asset_symbol : "HIVE";
+
+  if (strcmp(symbol, "HIVE") == 0 ||
+      strcmp(symbol, HIVE_WIRE_SYMBOL_HIVE) == 0) {
     *wire = HIVE_WIRE_SYMBOL_HIVE;
     *display = "HIVE";
-  } else if (strcmp(sym, "HBD") == 0 ||
-             strcmp(sym, HIVE_WIRE_SYMBOL_HBD) == 0) {
+  } else if (strcmp(symbol, "HBD") == 0 ||
+             strcmp(symbol, HIVE_WIRE_SYMBOL_HBD) == 0) {
     *wire = HIVE_WIRE_SYMBOL_HBD;
     *display = "HBD";
   } else {
     return false;
   }
-  // Both transferable tokens are pinned at 3 decimals on-chain, so the
-  // precision is never taken from the host: a differing msg->decimals moves
-  // the decimal point on the confirmation screen relative to the one hived
-  // applies. Reject the mismatch rather than normalize it, exactly as
-  // cur_asset() treats a wrong precision on the parsed path. This also means
-  // msg->decimals is never narrowed to uint8_t, so 256 can no longer alias 0.
+
   if (msg->has_decimals && msg->decimals != HIVE_DECIMALS) return false;
   *precision = HIVE_DECIMALS;
   return true;
 }
 
+// Account labels are rendered verbatim. Accept Hive's bounded lowercase DNS
+// labels only: each dot-separated component starts with a letter, ends with a
+// letter/digit and has at least three characters.
+static bool hive_account_name_ok(const char* name) {
+  size_t length = strnlen(name, HIVE_MAX_ACCOUNT_LEN + 1);
+  if (length < 3 || length > HIVE_MAX_ACCOUNT_LEN) return false;
+  size_t component = 0;
+  for (size_t i = 0; i <= length; ++i) {
+    const char c = name[i];
+    if (c == '.' || c == '\0') {
+      if (component < 3 || name[i - 1] == '-') return false;
+      component = 0;
+      continue;
+    }
+    const bool letter = c >= 'a' && c <= 'z';
+    const bool digit = c >= '0' && c <= '9';
+    if ((!letter && !digit && c != '-') || (component == 0 && !letter))
+      return false;
+    ++component;
+  }
+  return true;
+}
+
+bool hive_validateTransfer(const HiveSignTx* msg) {
+  const char *wire, *display;
+  uint8_t precision;
+  return msg->has_from && msg->has_to && msg->has_amount &&
+         msg->has_ref_block_num && msg->has_ref_block_prefix &&
+         msg->has_expiration && hive_account_name_ok(msg->from) &&
+         hive_account_name_ok(msg->to) && msg->amount > 0 &&
+         msg->amount <= INT64_MAX &&
+         (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN) &&
+         (!msg->has_memo ||
+          strnlen(msg->memo, sizeof(msg->memo)) <= HIVE_MAX_MEMO_LEN) &&
+         hive_transferAsset(msg, &wire, &display, &precision);
+}
+
+bool hive_validateAccountCreate(const HiveSignAccountCreate* msg) {
+  return msg->has_creator && msg->has_new_account_name &&
+         msg->has_ref_block_num && msg->has_ref_block_prefix &&
+         msg->has_expiration && hive_account_name_ok(msg->creator) &&
+         hive_account_name_ok(msg->new_account_name) &&
+         (!msg->has_fee_amount || msg->fee_amount <= INT64_MAX) &&
+         (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
+}
+
+bool hive_validateAccountUpdate(const HiveSignAccountUpdate* msg) {
+  return msg->has_account && msg->has_ref_block_num &&
+         msg->has_ref_block_prefix && msg->has_expiration &&
+         hive_account_name_ok(msg->account) &&
+         (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
+}
+
 static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
                                       size_t buf_len) {
-  const char* wire;
-  const char* display;
-  uint8_t prec;
-  // Same resolver the confirmation screen ran: what is signed here carries
-  // the wire symbol, never the display spelling the host may have sent.
-  if (!hive_transferAsset(msg, &wire, &display, &prec)) return 0;
+  const char* wire_symbol;
+  const char* display_symbol;
+  uint8_t precision;
+  if (!hive_transferAsset(msg, &wire_symbol, &display_symbol, &precision)) {
+    return 0;
+  }
+  (void)display_symbol;
 
   uint8_t* p = buf;
   const uint8_t* end = buf + buf_len;
@@ -955,7 +981,7 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
   append_string(&p, end, msg->has_from ? msg->from : "");
   append_string(&p, end, msg->has_to ? msg->to : "");
 
-  append_asset(&p, end, msg->amount, prec, wire);
+  append_asset(&p, end, msg->amount, precision, wire_symbol);
 
   append_string(&p, end, msg->has_memo ? msg->memo : "");
   append_tx_footer(&p, end);
@@ -964,27 +990,34 @@ static size_t hive_serialize_transfer(const HiveSignTx* msg, uint8_t* buf,
 
 void hive_signTx(const HDNode* node, const HiveSignTx* msg,
                  HiveSignedTx* resp) {
+  if (!hive_validateTransfer(msg)) return;
+
   // Reject memos that would overflow the fixed-size tx_buf.
   if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) return;
 
   uint8_t tx_buf[512];
   size_t tx_len = hive_serialize_transfer(msg, tx_buf, sizeof(tx_buf));
-  // 0 means the asset was refused; nothing was written, so sign nothing.
   if (tx_len == 0) return;
 
-  if (!hive_sign_tx_sig(node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, tx_buf, tx_len,
-                        resp->signature.bytes)) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
+
+  uint8_t sig[65];
+  if (!hive_sign_digest(node, chain_id, tx_buf, tx_len, sig)) {
+    memzero(sig, sizeof(sig));
     return;
   }
 
   resp->has_signature = true;
   resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = tx_len;
   memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
 
+  memzero(sig, sizeof(sig));
   memzero(tx_buf, tx_len);
 }
 
@@ -1007,9 +1040,7 @@ static size_t hive_serialize_account_create(const HiveSignAccountCreate* msg,
                    msg->ref_block_prefix, msg->expiration,
                    HIVE_OP_ACCOUNT_CREATE);
 
-  // fee (asset). Account creation fees are always paid in HIVE, which hived
-  // serializes as "STEEM" — see HIVE_WIRE_SYMBOL_HIVE. The fee screen in
-  // fsm_msgHiveSignAccountCreate still reads "HIVE".
+  // fee (asset)
   uint64_t fee = msg->has_fee_amount ? msg->fee_amount : 3000;
   append_asset(&p, end, fee, HIVE_DECIMALS, HIVE_WIRE_SYMBOL_HIVE);
 
@@ -1043,25 +1074,33 @@ void hive_signAccountCreate(const HDNode* signing_node,
                             const uint8_t posting_raw[33],
                             const uint8_t memo_raw[33],
                             HiveSignedAccountCreate* resp) {
+  if (!hive_validateAccountCreate(msg)) return;
+
   uint8_t tx_buf[512];
   size_t tx_len =
       hive_serialize_account_create(msg, owner_raw, active_raw, posting_raw,
                                     memo_raw, tx_buf, sizeof(tx_buf));
 
-  if (!hive_sign_tx_sig(signing_node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, tx_buf, tx_len,
-                        resp->signature.bytes)) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
+
+  uint8_t sig[65];
+  if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
+    memzero(sig, sizeof(sig));
     memzero(tx_buf, sizeof(tx_buf));
     return;
   }
 
   resp->has_signature = true;
   resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = tx_len;
   memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
 
+  memzero(sig, sizeof(sig));
   memzero(tx_buf, tx_len);
 }
 
@@ -1116,24 +1155,32 @@ void hive_signAccountUpdate(const HDNode* signing_node,
                             const uint8_t posting_raw[33],
                             const uint8_t memo_raw[33],
                             HiveSignedAccountUpdate* resp) {
+  if (!hive_validateAccountUpdate(msg)) return;
+
   uint8_t tx_buf[512];
   size_t tx_len =
       hive_serialize_account_update(msg, owner_raw, active_raw, posting_raw,
                                     memo_raw, tx_buf, sizeof(tx_buf));
 
-  if (!hive_sign_tx_sig(signing_node, msg->has_chain_id, msg->chain_id.bytes,
-                        msg->chain_id.size, tx_buf, tx_len,
-                        resp->signature.bytes)) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id =
+      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
+
+  uint8_t sig[65];
+  if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
+    memzero(sig, sizeof(sig));
     memzero(tx_buf, sizeof(tx_buf));
     return;
   }
 
   resp->has_signature = true;
   resp->signature.size = 65;
+  memcpy(resp->signature.bytes, sig, 65);
 
   resp->has_serialized_tx = true;
   resp->serialized_tx.size = tx_len;
   memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
 
+  memzero(sig, sizeof(sig));
   memzero(tx_buf, tx_len);
 }

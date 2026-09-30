@@ -1,0 +1,78 @@
+{
+  "status": "first targeted checkpoint; block13 audit incomplete",
+  "base": "29aea4bc51dafc270716522ab7bc203099316d30",
+  "image": "kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2",
+  "configuration": "Linux amd64 emulator, Debug, clang/clang++, debug-link enabled; BTC uses KK_BITCOIN_ONLY=ON",
+  "results": {
+    "block13-recovery.xml": {
+      "tests": "17",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "timestamp": "2026-09-28T02:31:33",
+      "time": "1.039",
+      "name": "AllTests"
+    },
+    "block13-focused.xml": {
+      "tests": "1",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "timestamp": "2026-09-28T02:31:58",
+      "time": "0.248",
+      "name": "AllTests"
+    },
+    "block13-negative.xml": {
+      "tests": "1",
+      "failures": "1",
+      "disabled": "0",
+      "errors": "0",
+      "timestamp": "2026-09-28T02:32:29",
+      "time": "0.248",
+      "name": "AllTests"
+    },
+    "block13-restored.xml": {
+      "tests": "17",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "timestamp": "2026-09-28T02:32:59",
+      "time": "1.021",
+      "name": "AllTests"
+    },
+    "block13-btc.xml": {
+      "tests": "14",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "timestamp": "2026-09-28T02:33:39",
+      "time": "0.764",
+      "name": "AllTests"
+    }
+  },
+  "negative_control": "Only explicit NUL check reverted: new USB-path test fails syntax error, disarmed state and original lock deadline assertions. Guard restored and 17-test full workflow suite passes.",
+  "static_checks": "clang-format20 dry-run Werror on both edited files and git diff --check passed",
+  "artifacts_sha256": {
+    "block13-recovery.xml": "52e4f8d18be78d1f0e4a94ed465c540608b74e342d61311697419b0edd158144",
+    "block13-focused.xml": "98cfb8fff5e33e51bdb50bd9e547f1c7e3be1f8b73705765ad0b2a53b979cd0f",
+    "block13-negative.xml": "76b2dbb01dbef38f9337f839485ff2dacdd89461d9d4e185c29a0ce8652b4fc4",
+    "block13-negative.log": "6f5cf95275411bc654bd515ae2b2b3b2d6fd96f9791642a0c4490ec5bffff7a0",
+    "block13-restored.xml": "5beeee03f5f4b4d14b596b186417679a26a039e4cf2a8ee263c5d4ebb5763195",
+    "block13-btc.xml": "cf788175a7fa57b3431fbc57ea0d3d2def749c46dfb9d3ba3f5722dfe7d6a747"
+  },
+  "source_hashes": {
+    "lib/firmware/recovery_cipher.c": "6ba870000a209b152cb4822f8a8fe4b71a63af5fc10beb38f4582f638fd90615",
+    "unittests/firmware/fsm.cpp": "fc516f556cb035af649287020a4b56004130b40471cbeb128a3103632e525916"
+  },
+  "limits": [
+    "No full native/host integration, ARM/SRAM, OLED or physical-device qualification",
+    "Final Stack11/12 predecessor integration remains open",
+    "Other block13 findings remain open; no Copilot request, push, merge or release promotion"
+  ],
+  "setup_notes": [
+    "Initial CMake invocation used unsupported -S/-B syntax in old pinned image; corrected to out-of-source working directory.",
+    "Early builds failed until pinned nested token sources were populated; final build succeeds.",
+    "BusyBox timeout requires -t; successful focused/negative/restored/BTC runs use that syntax.",
+    "Harmless UDP write diagnostic appears in both passing and negative test runs; no assertion is skipped."
+  ]
+}

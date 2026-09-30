@@ -1,23 +1,18 @@
-# P06-002: displayed Ripple address response survives debug requests
+# P06-002: Ripple displayed-address response (7.14.3 full variant)
 
-Base: 7a8a873c3 (host memo coverage pin).
+Base: 47eae604e183ab1c6c69be7dae43eee60b58326c.
 
-On full 7.15, RippleGetAddress(show_display=true) returns the expected address
-without screenshot capture, but an empty address with capture enabled. The
-DebugLinkGetState handler reuses the shared response arena while confirmation
-is pending. The old host display test explicitly ignored this empty response.
-This is a debug/emulator interaction; production DEBUG_LINK-off behavior was
-not shown to fail.
+The full variant reproduces the empty RippleGetAddress response when debug
+screenshot capture overwrites the response arena during confirmation. Keep the
+address in a local MAX_ADDR_SIZE buffer and populate the response afterward.
+Bitcoin-only does not expose Ripple; its compiled behavior is unchanged.
 
-Keep the derived public address in its existing local buffer for confirmation.
-Populate RippleAddress only after confirmation returns. Cancellation still
-clears the derived node and sends failure. No added static allocation.
+Full screenshot regression fails before and passes after. All 190 full and
+90 Bitcoin-only native firmware tests pass. Full native build is in
+build-native-full, using the same local compiler/nanopb settings as the
+Bitcoin-only build except KK_BITCOIN_ONLY=OFF. The P00
+ripple_display_response.py rehearsal was run with its executable path adjusted
+to build-native-full/bin/kkemu, using the release's own pinned host suite.
 
-Reproduction: docs/release/rehearsals/ripple_display_response.py on the P00
-audit branch starts an isolated emulator with forced UDP and screenshot capture,
-then asserts the displayed-address response equals the known public test vector.
-It fails before and passes after the change. Full native validation is recorded
-in the central P02/P06 findings receipt after execution.
-
-Other releases, persistent host-suite response assertion, full display review,
-and ARM/host integration remain pending. Full audit is not complete.
+ARM/host integration and the permanent older-host assertion remain pending.
+Production DEBUG_LINK-off failure was not established. Full audit remains open.

@@ -44,9 +44,28 @@ on:
         type: boolean
         default: false
 
+# A lower release-stack update can synchronize several dependent PRs in quick
+# succession. Keep only the newest run for each PR; an older head cannot become
+# acceptance evidence after GitHub has observed its replacement. Long-lived
+# branch pushes retain their full runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
+  # Only administrators set this independently accepted non-PR authority.
+  # Empty fails closed on push/manual runs; PR runs use the event base SHA.
+  KK_ACCEPTED_WAIVER_SHA: ${{ vars.KK_ACCEPTED_WAIVER_SHA }}
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
+  # The ONE staged-capability inventory, shared by the integration suite and
+  # the report validator (scripts/generate-test-report.py parses exactly one
+  # such line and fails on zero or several). It lists only what this tree
+  # genuinely does not provide. STORAGE_PIN_KDF_V19 is compiled out (0) and
+  # storage version 19 is burned, so the KDF v19 controls are an explicit
+  # staged omission. The Solana LUT attestation (KKSOLSW1) IS implemented on
+  # this tree, so it is deliberately NOT waived here: its tests must run.
+  KK_RELEASE_MISSING_CAPABILITIES: storage-v19-kdf
 
 # Least-privilege default: every job gets a read-only GITHUB_TOKEN unless it
 # declares its own `permissions:` override (publish-emulator-libs does, for
@@ -72,9 +91,14 @@ jobs:
 
       - name: Install clang-format-20 (pinned stable)
         run: |
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20
+          # apt.llvm.org flakes; this job now gates the whole graph, so retry.
+          for attempt in 1 2 3; do
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add - &&
+            echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list &&
+            sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20 && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 20
+          done
           sudo ln -sf /usr/bin/clang-format-20 /usr/bin/clang-format
 
       - name: Check code formatting
@@ -165,7 +189,9 @@ jobs:
           gitleaks detect --source . --log-opts="${LOG_OPTS}" --verbose --redact
 
   static-analysis:
-    runs-on: ubuntu-latest
+    # Pinned to the image whose repositories carry the cppcheck package that
+    # scripts/cppcheck-version names (2.13.0-2ubuntu3, Ubuntu 24.04).
+    runs-on: ubuntu-24.04
     # Was 15. cppcheck alone has been observed running right up to (and past)
     # that ceiling under normal runner load with an unchanged, clean diff --
     # two consecutive PR #591 runs hit 15m10s and 14m59s, one of them killed
@@ -182,31 +208,25 @@ jobs:
         run: git submodule update --init deps/crypto/trezor-firmware
 
       - name: Install cppcheck
-        run: sudo apt-get update && sudo apt-get install -y cppcheck
+        run: sudo apt-get update && sudo apt-get install -y "cppcheck=$(cat scripts/cppcheck-version)"
+
+      - name: Cache cppcheck analysis
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .cppcheck-build
+          # Reuse source analysis only within the same architecture, analyzer
+          # package, invocation and suppression policy. No legacy fallback.
+          key: cppcheck-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/cppcheck-version', 'scripts/cppcheck.sh', '.cppcheck-suppressions') }}-${{ github.sha }}
+          restore-keys: |
+            cppcheck-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/cppcheck-version', 'scripts/cppcheck.sh', '.cppcheck-suppressions') }}-
 
       - name: Run cppcheck
         run: |
-          cppcheck \
-            --enable=warning,style,performance,portability \
-            --std=c11 \
-            --platform=unspecified \
-            --inconclusive \
-            --force \
-            --inline-suppr \
-            --suppressions-list=.cppcheck-suppressions \
-            -I include \
-            -I deps/crypto/trezor-firmware/crypto \
-            -I deps/device-protocol \
-            -DSTM32F2=1 \
-            -DUSE_ETHEREUM=1 \
-            -DUSE_KECCAK=1 \
-            -DUSE_NANO=1 \
-            -DPB_FIELD_16BIT=1 \
-            -DEMULATOR=1 \
-            --template='::warning file={file},line={line},col={column}::{severity}: {message} [{id}]' \
-            --output-file=cppcheck_report.txt \
-            --error-exitcode=1 \
-            lib/ include/keepkey/ tools/ 2>&1; CPPCHECK_RC=$?
+          mkdir -p .cppcheck-build
+
+          : > cppcheck_report.txt
+          CPPCHECK_RC=0
+          sh scripts/cppcheck.sh cppcheck_report.txt || CPPCHECK_RC=$?
 
           # Count issues by severity
           ERRORS=$(grep -c '\berror:' cppcheck_report.txt 2>/dev/null || true)
@@ -254,12 +274,18 @@ jobs:
 
   check-submodules:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    # Was 2: now a full-history checkout plus the report-gate unit tests.
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Includes the immutable, owner-accepted waiver authority commit.
+          fetch-depth: 0
+
+      - name: Validate release report evidence gates
+        run: python3 -B -m unittest scripts/test_generate_test_report.py scripts/test_preflight_cppcheck.py scripts/test_preflight_checks.py
 
       - name: Init crypto submodule
         run: git submodule update --init deps/crypto/trezor-firmware
@@ -317,6 +343,9 @@ jobs:
           fi
           grep -q 'set(KK_ZCASH_PRIVACY ON)' CMakeLists.txt
           grep -q 'set(KK_ZCASH_PRIVACY OFF)' CMakeLists.txt
+
+      - name: Exercise main and debug receive callback cleanup
+        run: python3 scripts/tests/test_usb_receive_callbacks.py
 
   crypto-tests:
     runs-on: ubuntu-latest
@@ -427,7 +456,10 @@ jobs:
       - name: Pull and cache base image
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
-          docker pull ${{ env.BASE_IMAGE }}
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
           docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
 
       - name: Load base image from cache
@@ -487,6 +519,11 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
+      - name: Pallas public/secret API boundary
+        # Source-boundary gate for the Zcash Orchard split (not a timing or
+        # constant-time proof). Needs deps/crypto initialised above.
+        run: python3 tools/check_pallas_api_boundary.py
+
       - name: Cache base image
         id: cache-base
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
@@ -497,7 +534,10 @@ jobs:
       - name: Pull and cache base image
         if: steps.cache-base.outputs.cache-hit != 'true'
         run: |
-          docker pull ${{ env.BASE_IMAGE }}
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
           docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
 
       - name: Load base image from cache
@@ -584,6 +624,9 @@ jobs:
       - name: SRAM budget gate (${{ matrix.variant }})
         run: |
           pip install --quiet pyelftools
+          # The gate's own regression checks (an unbounded dynamic stack frame
+          # must fail it, not be measured at its fixed portion).
+          (cd tools && python3 -m unittest test_check_sram_budget)
           # Mirror the report into the run summary. The gate has always
           # enforced correctly, but its numbers only ever existed in a job
           # log nobody opens, so the frame-arena fix had no reviewable
@@ -728,7 +771,11 @@ jobs:
     name: python-integration-tests${{ matrix.label }}
     needs: [lint-format, static-analysis, check-submodules, secret-scan, crypto-tests]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    env:
+      KK_DICE_DEBUG_PRIVATE: "1"
+    # 60, not 30: the job now also runs the dedicated Stack 06-13 contract
+    # suites and the ERC-7730 official-registry conformance evidence.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -760,11 +807,54 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
+      - name: Cache base image
+        id: cache-base
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: /tmp/base-image.tar
+          key: base-image-${{ env.BASE_IMAGE }}
+
+      - name: Pull and cache base image
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        run: |
+          for attempt in 1 2 3; do
+            docker pull ${{ env.BASE_IMAGE }} && break
+            echo "pull attempt $attempt failed"; sleep 15
+          done
+          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+
+      - name: Load base image from cache
+        if: steps.cache-base.outputs.cache-hit == 'true'
+        run: docker load -i /tmp/base-image.tar
+
+      # Official ERC-7730 registry, pinned to an exact commit (never a moving
+      # branch). 9f37816a is the registry revision whose bounded-include
+      # expansion yields the 1,450 calldata formats asserted by
+      # test_official_registry_all_calldata_formats_reach_firmware. It lands in
+      # the build context, so the python-keepkey image carries it. Bitcoin-only
+      # has no ERC-7730 engine and neither fetches nor needs it.
+      - name: Fetch pinned ERC-7730 registry
+        if: matrix.variant == 'full'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ethereum/clear-signing-erc7730-registry
+          ref: 9f37816afde954ff6617fb5baa346133e5af26c5
+          path: build-inputs/erc7730-registry
+          persist-credentials: false
+
+      - name: Verify ERC-7730 registry pin
+        if: matrix.variant == 'full'
+        run: |
+          test "$(git -C build-inputs/erc7730-registry rev-parse HEAD)" = \
+            9f37816afde954ff6617fb5baa346133e5af26c5
+
       - name: Build and run tests (docker compose)
         working-directory: scripts/emulator
         env:
           COINSUPPORT: ${{ matrix.cmake_flags }}
-          KK_TEST_BUILD_VARIANT: ${{ matrix.variant }}
+          # Declared by the matrix, never inferred from the device: read by
+          # python-keepkey-tests.sh, the contract suites and the report gate.
+          KK_FIRMWARE_VARIANT: ${{ matrix.variant }}
         run: |
           # Run each test container — capture exit codes, always extract reports
           #
@@ -777,14 +867,19 @@ jobs:
           # because nothing had been copied out of the container yet.
           FW_RC=0
           PY_RC=0
+          BUILD_RC=0
           COMPOSE_ARGS=(-f docker-compose.yml)
           if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
             COMPOSE_ARGS+=(-f docker-compose.bitcoin-only.yml)
           fi
+          # Build once, up twice. The base image was loaded from the cache above,
+          # so this never reaches Docker Hub, and `up` without --build no longer
+          # forces a second rebuild of kkemu (the expensive one).
+          docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} build || BUILD_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from firmware-unit firmware-unit || FW_RC=$?
+            up --exit-code-from firmware-unit firmware-unit || FW_RC=$?
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-            up --build --exit-code-from python-keepkey python-keepkey || PY_RC=$?
+            up --exit-code-from python-keepkey python-keepkey || PY_RC=$?
 
           REPORT_ROOT=${{ github.workspace }}/test-reports/${{ matrix.variant }}
           mkdir -p "$REPORT_ROOT"
@@ -804,14 +899,18 @@ jobs:
 
           echo "firmware-unit exit code: $FW_RC"
           echo "python-keepkey exit code: $PY_RC"
+          echo "compose build exit code: $BUILD_RC"
 
+          if [ "$BUILD_RC" -ne 0 ]; then
+            echo "::error::compose build failed (exit code $BUILD_RC)"
+          fi
           if [ "$FW_RC" -ne 0 ]; then
             echo "::error::firmware-unit tests failed (exit code $FW_RC)"
           fi
           if [ "$PY_RC" -ne 0 ]; then
             echo "::error::python-keepkey tests failed (exit code $PY_RC)"
           fi
-          [ "$FW_RC" -eq 0 ] && [ "$PY_RC" -eq 0 ] || exit 1
+          [ "$BUILD_RC" -eq 0 ] && [ "$FW_RC" -eq 0 ] && [ "$PY_RC" -eq 0 ] || exit 1
 
       - name: Upload Python test results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -1013,6 +1112,12 @@ jobs:
           test -f "$DYLIB" || (echo "::error::libkkemu artifact not found" && exit 1)
           echo "DYLIB_PATH=$(pwd)/$DYLIB" >> "$GITHUB_ENV"
 
+      - name: Run emulator lifecycle and concurrency regressions
+        run: |
+          cmake --build build-emu --target emulator-unit -j "$(sysctl -n hw.ncpu)"
+          mkdir -p test-reports/emulator
+          build-emu/bin/emulator-unit --gtest_output=xml:test-reports/emulator/lifecycle.xml
+
       # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
       # Uses cmake/toolchains/mingw-w64-x86_64.cmake, so no Windows runner
       # is needed. BLOCKING on purpose: the DLL and the dylib are the same
@@ -1143,7 +1248,9 @@ jobs:
         if: always()
         with:
           name: python-dylib-test-results
-          path: test-reports/dylib-junit.xml
+          path: |
+            test-reports/dylib-junit.xml
+            test-reports/emulator/lifecycle.xml
           retention-days: 30
           if-no-files-found: warn
 
@@ -1161,20 +1268,38 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Includes the immutable, owner-accepted waiver authority commit.
+          fetch-depth: 0
 
       - name: Download unit test results
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          # Report covers the regular/full build. Bitcoin-only is built and
-          # unit-tested in its own matrix leg but does not get a PDF.
+          # Full results supply the main report and required native contracts.
+          # Only the full build gets a PDF.
           name: unit-test-results-full
           path: test-reports/firmware-unit/
+
+      - name: Download bitcoin-only unit test results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          # Required native contracts must execute on both products.
+          name: unit-test-results-bitcoin-only
+          path: test-reports/bitcoin-only/firmware-unit/
 
       - name: Download python test results
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-test-results
           path: test-reports/python-keepkey/
+
+      - name: Download bitcoin-only python test results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          # Only the dedicated contract JUnit files are consumed from this leg;
+          # they prove bitcoin-only still runs Stack 06/07 with the expected
+          # intentional skips.
+          name: python-test-results-bitcoin-only
+          path: test-reports/bitcoin-only/python-keepkey/
 
       - name: Download OLED screenshots
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -1207,15 +1332,19 @@ jobs:
           git submodule update --init deps/python-keepkey
           echo "sha=$(git rev-parse HEAD:deps/python-keepkey)" >> "$GITHUB_OUTPUT"
 
+      - name: Check report gate regressions
+        run: python3 -m unittest scripts/test_generate_test_report.py -v
+
       - name: Generate test report PDF
         env:
+          KK_DICE_DEBUG_PRIVATE: "1"
           FW_VERSION: ${{ steps.version.outputs.fw_version }}
           KK_FIRMWARE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           KK_PYTHON_SHA: ${{ steps.python.outputs.sha }}
           KK_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
           KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
-          KK_PYTHON_PR: https://github.com/BitHighlander/python-keepkey/tree/merge/alpha-715
+          KK_PYTHON_PR: https://github.com/BitHighlander/python-keepkey/pull/122
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report
@@ -1226,6 +1355,23 @@ jobs:
           path: test-report/
           retention-days: 90
           if-no-files-found: error
+
+  release-evidence-gate:
+    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware, generate-test-report]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release job
+        env:
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          PYTHON_RESULT: ${{ needs.python-integration-tests.result }}
+          DYLIB_RESULT: ${{ needs.python-dylib-tests.result }}
+          ARM_RESULT: ${{ needs.build-arm-firmware.result }}
+          REPORT_RESULT: ${{ needs.generate-test-report.result }}
+        run: |
+          for result in "$UNIT_RESULT" "$PYTHON_RESULT" "$DYLIB_RESULT" "$ARM_RESULT" "$REPORT_RESULT"; do
+            test "$result" = success || exit 1
+          done
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 4: PUBLISH — manual trigger only, all tests must pass
@@ -1264,6 +1410,7 @@ jobs:
       - secret-scan
       - static-analysis
       - check-submodules
+      - crypto-tests
       - build-emulator
       - build-arm-firmware
       - unit-tests
@@ -1293,7 +1440,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   publish-emulator:
-    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware]
+    needs: [release-evidence-gate, build-emulator, build-arm-firmware]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.publish_emulator == 'true'

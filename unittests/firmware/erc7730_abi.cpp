@@ -59,6 +59,17 @@ TEST(Erc7730Abi, RecursivelyDecodesTupleDynamicArrayAndString) {
   EXPECT_EQ(memcmp(value.data, "beta", 4), 0);
 }
 
+TEST(Erc7730Abi, AcceptsOnlyCanonicalEmptyRootTuple) {
+  const Erc7730AbiNode empty[] = {{ERC7730_ABI_TUPLE, 0, 0, 0, 0}};
+  Erc7730AbiProgram program{empty, 1, 0};
+  EXPECT_EQ(erc7730_abi_validate_program(&program), ERC7730_ABI_OK);
+  EXPECT_EQ(erc7730_abi_validate(&program, nullptr, 0), ERC7730_ABI_OK);
+
+  const Erc7730AbiNode noncanonical[] = {{ERC7730_ABI_TUPLE, 0, 1, 0, 0}};
+  program = {noncanonical, 1, 0};
+  EXPECT_EQ(erc7730_abi_validate_program(&program), ERC7730_ABI_BAD_PROGRAM);
+}
+
 TEST(Erc7730Abi, RejectsNonCanonicalOffsetOverlapGapAndTrailingData) {
   const Erc7730AbiNode nodes[] = {
       {ERC7730_ABI_TUPLE, 0, 1, 2, 0},

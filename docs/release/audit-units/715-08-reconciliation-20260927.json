@@ -1,0 +1,175 @@
+{
+  "base": "2483977523d9b6beab52a69429ace9aeefd00f76",
+  "code_snapshot": "de3d810ed20f0e635b566fcc300d26e1ff77adc1",
+  "python_base": "5c2dd4dbce5096de393b2db8c925f24950e22d8b",
+  "python_head": "d9a02d981ee43fe3e80b28ba02466670e6e8409d",
+  "historical_commit": "dc8c80ec99a84b7f5381759ac03e041b2aadb92f",
+  "historical_paths": [
+    {
+      "historical_path": "include/keepkey/firmware/eip712_stream.h",
+      "disposition": "retained",
+      "evidence": "Current Eip712Stream.CertifiedFieldReplayPreservesDomainAndSigningPath and Erc7730Workflow.TypedDataReplayBindsBothDomainAndMessageHashes; ordinary leaf review and final consent retained."
+    },
+    {
+      "historical_path": "include/keepkey/firmware/erc7730_abi.h",
+      "disposition": "bounded replacement",
+      "evidence": "Current ABI class/capture definitions; one active full array only, nesting/slices refused by capability table and compiler."
+    },
+    {
+      "historical_path": "include/keepkey/firmware/erc7730_abi_stream.h",
+      "disposition": "retained with bounded iteration",
+      "evidence": "Current ABI stream validates canonical bytes and captures inner offsets; nested dynamic validation is distinct from nested display iteration. EX16/EX33 and compiler refusal checks retain the 7.15 bound."
+    },
+    {
+      "historical_path": "include/keepkey/firmware/erc7730_condition.h",
+      "disposition": "deferred runtime conditions",
+      "evidence": "Optional opcode3 always visible. All hiding/veto conditions refused at preload. Old membership/mustMatch helpers are not enabled; enum handled by current field/program path."
+    },
+    {
+      "historical_path": "include/keepkey/firmware/erc7730_format.h",
+      "disposition": "replacement in 7b",
+      "evidence": "Field formatters implement date/duration/unit/enum with raw values and signer provenance. B08-001 NUL truncation is covered by EscapesStringCapturesAndRejectsSmallOutput. Raw formatter callers pass bounded captures or fixed32-byte words."
+    },
+    {
+      "historical_path": "include/keepkey/firmware/erc7730_program.h",
+      "disposition": "bounded replacement",
+      "evidence": "Current table/string/literal parsers and capability checks replace old metadata fetches. Token/chain facts come from firmware tables; signer metadata never upgrades asset trust."
+    },
+    {
+      "historical_path": "include/keepkey/firmware/erc7730_workflow.h",
+      "disposition": "replacement plus Stack08 regression coverage",
+      "evidence": "Current replay digest binds complete outer bytes during inner validation, restores saved parent ID and clears inner state. EX40-44 add transport/restoration/cancel coverage; unsupported nested loops remain refused."
+    },
+    {
+      "historical_path": "lib/firmware/eip712_stream.c",
+      "disposition": "retained",
+      "evidence": "Current Eip712Stream.CertifiedFieldReplayPreservesDomainAndSigningPath and Erc7730Workflow.TypedDataReplayBindsBothDomainAndMessageHashes; ordinary leaf review and final consent retained."
+    },
+    {
+      "historical_path": "lib/firmware/erc7730_abi_stream.c",
+      "disposition": "retained with bounded iteration",
+      "evidence": "Current ABI stream validates canonical bytes and captures inner offsets; nested dynamic validation is distinct from nested display iteration. EX16/EX33 and compiler refusal checks retain the 7.15 bound."
+    },
+    {
+      "historical_path": "lib/firmware/erc7730_catalog.c",
+      "disposition": "replacement in 7b",
+      "evidence": "Current verifier and capability mirror reject unsupported conditions/kinds and preserve nested groups. Erc7730Catalog.GroupFramesPreservePathClasses and D iteration cases cover replacement."
+    },
+    {
+      "historical_path": "lib/firmware/erc7730_condition.c",
+      "disposition": "deferred runtime conditions",
+      "evidence": "Optional opcode3 always visible. All hiding/veto conditions refused at preload. Old membership/mustMatch helpers are not enabled; enum handled by current field/program path."
+    },
+    {
+      "historical_path": "lib/firmware/erc7730_format.c",
+      "disposition": "replacement in 7b",
+      "evidence": "Field formatters implement date/duration/unit/enum with raw values and signer provenance. B08-001 NUL truncation is covered by EscapesStringCapturesAndRejectsSmallOutput. Raw formatter callers pass bounded captures or fixed32-byte words."
+    },
+    {
+      "historical_path": "lib/firmware/erc7730_program.c",
+      "disposition": "bounded replacement",
+      "evidence": "Current table/string/literal parsers and capability checks replace old metadata fetches. Token/chain facts come from firmware tables; signer metadata never upgrades asset trust."
+    },
+    {
+      "historical_path": "lib/firmware/erc7730_workflow.c",
+      "disposition": "replacement plus Stack08 regression coverage",
+      "evidence": "Current replay digest binds complete outer bytes during inner validation, restores saved parent ID and clears inner state. EX40-44 add transport/restoration/cancel coverage; unsupported nested loops remain refused."
+    },
+    {
+      "historical_path": "lib/firmware/ethereum.c",
+      "disposition": "retained signing binding",
+      "evidence": "Current signing continuation checks validated calldata digest and preserves baseline transaction/data-hash review; runtime signature equivalence is asserted."
+    },
+    {
+      "historical_path": "lib/firmware/fsm_msg_ethereum.h",
+      "disposition": "replacement plus Stack08 regression coverage",
+      "evidence": "Current FETCH dispatch enforces ID/chunk sequence and chain/callee/selector before inner screens, restores outer state, uses explicit blind fallback and abort cleanup; EX40-44 exercise handlers."
+    },
+    {
+      "historical_path": "unittests/firmware/eip712_stream.cpp",
+      "disposition": "retained",
+      "evidence": "Current Eip712Stream.CertifiedFieldReplayPreservesDomainAndSigningPath and Erc7730Workflow.TypedDataReplayBindsBothDomainAndMessageHashes; ordinary leaf review and final consent retained."
+    },
+    {
+      "historical_path": "unittests/firmware/erc7730_abi_stream.cpp",
+      "disposition": "retained with bounded iteration",
+      "evidence": "Current ABI stream validates canonical bytes and captures inner offsets; nested dynamic validation is distinct from nested display iteration. EX16/EX33 and compiler refusal checks retain the 7.15 bound."
+    },
+    {
+      "historical_path": "unittests/firmware/erc7730_catalog.cpp",
+      "disposition": "replacement in 7b",
+      "evidence": "Current verifier and capability mirror reject unsupported conditions/kinds and preserve nested groups. Erc7730Catalog.GroupFramesPreservePathClasses and D iteration cases cover replacement."
+    },
+    {
+      "historical_path": "unittests/firmware/erc7730_condition.cpp",
+      "disposition": "deferred runtime conditions",
+      "evidence": "Optional opcode3 always visible. All hiding/veto conditions refused at preload. Old membership/mustMatch helpers are not enabled; enum handled by current field/program path."
+    },
+    {
+      "historical_path": "unittests/firmware/erc7730_format.cpp",
+      "disposition": "replacement in 7b",
+      "evidence": "Field formatters implement date/duration/unit/enum with raw values and signer provenance. B08-001 NUL truncation is covered by EscapesStringCapturesAndRejectsSmallOutput. Raw formatter callers pass bounded captures or fixed32-byte words."
+    },
+    {
+      "historical_path": "unittests/firmware/erc7730_program.cpp",
+      "disposition": "bounded replacement",
+      "evidence": "Current table/string/literal parsers and capability checks replace old metadata fetches. Token/chain facts come from firmware tables; signer metadata never upgrades asset trust."
+    },
+    {
+      "historical_path": "unittests/firmware/erc7730_workflow.cpp",
+      "disposition": "replacement plus Stack08 regression coverage",
+      "evidence": "Current replay digest binds complete outer bytes during inner validation, restores saved parent ID and clears inner state. EX40-44 add transport/restoration/cancel coverage; unsupported nested loops remain refused."
+    }
+  ],
+  "preservation": {
+    "runtime_before": 39,
+    "runtime_after": 44,
+    "removed": [],
+    "changed_predecessor_test_bodies": [],
+    "firmware_lib_headers_native_tests": "unchanged",
+    "python_keepkeylib": "unchanged"
+  },
+  "runtime_evidence_snapshot": "aca549bb6d446e0a7f1bf66cf3c6f774d42d023f",
+  "report_gate_findings": {
+    "B08-002": "Candidate waiver declarations are limited by an independently selected authority ledger",
+    "B08-003": "Match required names exactly or at a module boundary",
+    "tests": "18 pass; count synchronized with the final test module and source report",
+    "B08-004": "PR authority is the GitHub event base; non-PR authority requires the separately administered KK_ACCEPTED_WAIVER_SHA repository variable or fails closed",
+    "contract_skips": "Require each variant status and exact product skip reason",
+    "test_count": 18
+  },
+  "nanopb_preservation": {
+    "messages-solana.options": {
+      "effective_options_equal": true,
+      "effective_option_count": 29,
+      "duplicates_removed": {
+        "SolanaSignTx.lut_account max_count": {
+          "value": "8",
+          "before": 2,
+          "after": 1
+        },
+        "SolanaSignTx.lut_account max_size": {
+          "value": "32",
+          "before": 2,
+          "after": 1
+        },
+        "SolanaSignTx.lut_signature max_size": {
+          "value": "64",
+          "before": 2,
+          "after": 1
+        }
+      }
+    },
+    "messages-osmosis.options": {
+      "effective_options_equal": true,
+      "effective_option_count": 56,
+      "duplicates_removed": {
+        "OsmosisMsgRedelegate.amount max_size": {
+          "value": "33",
+          "before": 2,
+          "after": 1
+        }
+      }
+    }
+  }
+}

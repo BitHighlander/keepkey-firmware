@@ -32,6 +32,10 @@
 
 /* True while unwinding a handler already answered by a tiny receive Failure. */
 bool msg_handler_rejected(void);
+/* Reject a decoded tiny reply that does not belong to the waiting handler. */
+void msg_reject_unexpected_tiny(void);
+/* Short main/debug USB packets terminate a tiny wait; normal mode is inert. */
+void msg_reject_short_tiny_packet(void);
 
 /* Dense table entries, looked up by linear scan (message_map_entry). The
  * previous [ID]-designated form sized the table by the highest message ID:
@@ -130,7 +134,16 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
+/* A handler may reuse its decoded request storage for a large response after
+ * copying every request field it still needs. The transport does not dispatch
+ * another normal message until the handler returns. */
+void* msg_decoded_request_response_scratch(void);
+
 bool msg_write(MessageType msg_id, const void* msg);
+/* Called only after a normal response has been encoded and sent. Firmware may
+ * use the response type to recognize progress in an active workflow. */
+typedef void (*msg_sent_callback_t)(MessageType msg_id);
+void msg_set_sent_callback(msg_sent_callback_t callback);
 
 #if DEBUG_LINK
 bool msg_debug_write(MessageType msg_id, const void* msg);

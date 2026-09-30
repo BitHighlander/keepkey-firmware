@@ -183,3 +183,12 @@ TEST(Signing, MultisigQuorumMustBeBoundedBeforeFeeAccounting) {
 
   EXPECT_FALSE(transaction_multisig_quorum_is_valid(nullptr));
 }
+
+extern "C" {
+#include "keepkey/firmware/coins.h"
+void extract_input_bip32_path(const TxInputType* input);
+bool check_change_bip32_path(const TxOutputType* output);
+}
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+

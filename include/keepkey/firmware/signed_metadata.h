@@ -16,11 +16,14 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
-/* Session identity icon cap (1bpp mono RLE). Must equal the device-protocol
- * LoadClearsignSigner.icon max_size. Identities are never persisted. */
+/* Identity icon cap (1bpp mono RLE). Must equal the device-protocol
+ * LoadClearsignSigner.icon max_size (and storage.h CLEARSIGN_ICON_MAX where
+ * that header defines it). Identities are never persisted. */
 #define METADATA_ICON_MAX 384
-/* hex(first 4 bytes of sha256(pubkey)) + NUL */
-#define METADATA_FINGERPRINT_LEN 9
+/* hex(first 8 bytes of sha256(pubkey)) + NUL. 64 bits: a 32-bit prefix
+ * collision can be ground in hours, which would let a different key pass for
+ * the one the user approved. */
+#define METADATA_FINGERPRINT_LEN 17
 
 typedef enum {
   METADATA_OPAQUE = 0,
@@ -107,10 +110,10 @@ bool signed_metadata_delegate_fingerprint(char out[METADATA_FINGERPRINT_LEN]);
  * the fallback, not the product.
  */
 typedef enum {
-  ARG_FORMAT_RAW = 0,     /* hex dump (first 16 bytes) */
+  ARG_FORMAT_RAW = 0,     /* hex dump (all bytes, paginated) */
   ARG_FORMAT_ADDRESS = 1, /* 20 bytes -> full EIP-55 address, never truncated */
   ARG_FORMAT_AMOUNT = 2,  /* big-endian uint256 -> raw integer, "wei" */
-  ARG_FORMAT_BYTES = 3,   /* hex dump (first 16 bytes) */
+  ARG_FORMAT_BYTES = 3,   /* hex dump (all bytes, paginated) */
   /* Attested printable label, e.g. protocol: "Uniswap V2". Same character
    * rules as the signer alias minus length (printable subset, no '%'). */
   ARG_FORMAT_STRING = 4,
@@ -175,13 +178,14 @@ void signed_metadata_clear(void);
  * key slot at the host's request, gated by a mandatory on-device confirm
  * (see fsm_msgLoadClearsignSigner). Loaded signers live in RAM only and are
  * gone on reboot. Metadata verified by a loaded signer always shows a
- * warning screen naming the alias before any clearsign page. The production
- * path instead carries a root-certified delegate in each v3 envelope.
+ * identity screen naming the alias before any clearsign page. A runtime signer
+ * is never a warning-free path: the production path instead carries a
+ * root-certified delegate in each v3 envelope.
  */
 
-/* Pure validation: slot in range and not occupied by a built-in key, pubkey a
- * valid compressed secp256k1 point, alias non-empty printable ASCII within
- * METADATA_ALIAS_MAX_LEN. No state, no I/O. */
+/* Pure validation: slot in range, pubkey a valid compressed secp256k1 point,
+ * alias non-empty printable ASCII within METADATA_ALIAS_MAX_LEN. No state, no
+ * I/O. */
 bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t* pubkey,
                                   size_t pubkey_len, const char* alias);
 
@@ -216,7 +220,7 @@ bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
 /* Drop all runtime-loaded signers (and any metadata they verified). */
 void signed_metadata_clear_signers(void);
 
-/* out = hex of the first 4 bytes of sha256(pubkey[33]), NUL-terminated.
+/* out = hex of the first 8 bytes of sha256(pubkey[33]), NUL-terminated.
  * Shown at load-confirm and on the per-tx warning screen so the user can
  * correlate the two. */
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
@@ -234,7 +238,7 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                uint8_t key_id);
 
 /* Generic attestation check reusing the (chain-agnostic) clear-sign signer
- * keyring: returns true iff a signer is loaded/pinned for `key_id` AND the
+ * keyring: returns true iff a runtime signer is loaded for `key_id` AND the
  * 64-byte compact ECDSA signature `sig` verifies over sha256(data). Used by
  * non-EVM paths (e.g. Solana signed token definitions) that want to trust
  * host-supplied data only when a loaded signer attests to it. */
@@ -242,7 +246,16 @@ bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
                                         size_t data_len, const uint8_t* sig,
                                         size_t sig_len);
 
-/* Fingerprint (hex of sha256(pubkey)[0:4]) of the signer loaded/pinned in
+/* Verify an attestation only when `pubkey` exactly matches a runtime-loaded
+ * signer. This is for protocols whose signed envelope carries the delegate
+ * key rather than a keyring slot (ERC-7730). AdvancedMode is enforced here,
+ * and the user-approved runtime alias is returned on success. */
+bool signed_metadata_verify_runtime_attestation_for_pubkey(
+    const uint8_t pubkey[33], const uint8_t* data, size_t data_len,
+    const uint8_t* sig, size_t sig_len,
+    char out_alias[METADATA_ALIAS_MAX_LEN + 1]);
+
+/* Fingerprint (hex of sha256(pubkey)[0:8]) of the runtime signer loaded in
  * `key_id`, written NUL-terminated to `out`. Returns false if no signer is
  * present. Lets non-EVM callers disambiguate signers (aliases are not unique)
  * the same way the EVM per-tx warning does. */

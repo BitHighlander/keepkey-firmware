@@ -44,8 +44,26 @@ typedef struct {
 #define ERC7730_PROGRAM_SECTION_ABI 2u
 
 typedef struct {
+  uint16_t literals[5];
+  uint8_t operations[5];
+  uint8_t scratch[7];
+  /* Required kind-1 payload (chain_id:u64 || verifyingContract) for typed
+   * data; see erc7730_program_loader_require_deployment(). */
+  uint8_t deployment[28];
+  uint32_t received;
+  uint16_t count;
+  uint16_t index;
+  uint16_t remaining;
+  uint8_t staged;
+  bool deployment_required;
+  bool deployment_mismatch;
+  bool deployment_listed;
+} Erc7730DomainBindings;
+
+typedef struct {
   Erc7730ProgramIndex index;
   Erc7730ProgramAbi abi;
+  Erc7730DomainBindings domain;
   bool abi_started;
   bool failed;
 } Erc7730ProgramLoader;
@@ -119,8 +137,12 @@ typedef struct {
   uint16_t instruction_count;
   uint16_t target_index;
   uint16_t instruction_index;
+  /* Interpolated-intent instructions (opcodes 2 and 3) in the run that
+   * directly follows the intent at index 0. */
+  uint16_t intent_parts;
   uint8_t entry[8];
   uint8_t entry_received;
+  bool intent_run_closed;
   bool complete;
   bool failed;
 } Erc7730ProgramDisplay;
@@ -177,32 +199,6 @@ typedef struct {
 } Erc7730ProgramCondition;
 
 typedef struct {
-  uint16_t ticker_string;
-  uint8_t decimals;
-} Erc7730TokenMetadata;
-
-typedef struct {
-  Erc7730TokenMetadata selected;
-  uint64_t target_chain_id;
-  uint8_t target_address[20];
-  uint32_t section_length;
-  uint32_t received;
-  uint16_t record_count;
-  uint16_t record_index;
-  uint16_t current_length;
-  uint16_t current_received;
-  uint8_t header[3];
-  uint8_t payload[31];
-  uint8_t header_received;
-  uint8_t target_kind;
-  bool selected_found;
-  bool complete;
-  bool failed;
-} Erc7730ProgramTokenMetadata;
-
-#define ERC7730_LITERAL_MAX_LENGTH 258u
-
-typedef struct {
   uint8_t kind;
   uint16_t length;
   uint8_t value[ERC7730_LITERAL_MAX_LENGTH];
@@ -247,6 +243,13 @@ void erc7730_program_loader_begin(Erc7730ProgramLoader* loader,
 bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
                                  uint32_t program_offset, const uint8_t* data,
                                  size_t data_len);
+/* Typed data may only use a definition at one of its signed kind-1
+ * deployments. Call after erc7730_program_loader_begin() and before the first
+ * feed; loader_complete() then fails unless a deployment record equals
+ * (chain_id, contract) exactly. */
+bool erc7730_program_loader_require_deployment(Erc7730ProgramLoader* loader,
+                                               uint64_t chain_id,
+                                               const uint8_t contract[20]);
 bool erc7730_program_loader_complete(const Erc7730ProgramLoader* loader,
                                      Erc7730AbiProgram* program);
 void erc7730_program_loader_clear(Erc7730ProgramLoader* loader);
@@ -295,19 +298,6 @@ bool erc7730_program_condition_feed(Erc7730ProgramCondition* condition,
 bool erc7730_program_condition_complete(
     const Erc7730ProgramCondition* condition, Erc7730Condition* result);
 void erc7730_program_condition_clear(Erc7730ProgramCondition* condition);
-
-void erc7730_program_token_metadata_begin(Erc7730ProgramTokenMetadata* metadata,
-                                          uint32_t section_length,
-                                          uint64_t chain_id,
-                                          const uint8_t address[20]);
-bool erc7730_program_token_metadata_feed(Erc7730ProgramTokenMetadata* metadata,
-                                         uint32_t section_offset,
-                                         const uint8_t* data, size_t data_len);
-bool erc7730_program_token_metadata_complete(
-    const Erc7730ProgramTokenMetadata* metadata, Erc7730TokenMetadata* result);
-void erc7730_program_network_metadata_begin(
-    Erc7730ProgramTokenMetadata* metadata, uint32_t section_length,
-    uint64_t chain_id);
 void erc7730_program_literal_begin(Erc7730ProgramLiteral* literal,
                                    uint32_t section_length,
                                    uint16_t target_index);

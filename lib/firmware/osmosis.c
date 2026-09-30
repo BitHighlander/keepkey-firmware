@@ -227,7 +227,11 @@ bool osmosis_signTxUpdateMsgSend(const char* amount, const char* to_address,
      network nor the payload length was checked, so a wrong-chain address, a
      module or operator address, or a punctuation-bearing HRP passed through
      into the signed document. */
-  if (!osmosis_isCanonicalUint64(amount) || !osmosis_isValidDenom(denom) ||
+  /* The uint64 ceiling is the native-asset display policy only. IBC and
+     factory denoms have an exponent the device cannot know, so they keep the
+     32-digit wire bound (an 18-decimal asset must not cap near 18.4 tokens). */
+  if (!osmosis_isCanonicalAmount(amount) || !osmosis_isValidDenom(denom) ||
+      (strcmp(denom, "uosmo") == 0 && !osmosis_isCanonicalUint64(amount)) ||
       !tendermint_validateBech32Address(to_address,
                                         testnet ? testnetp : mainnetp)) {
     return false;

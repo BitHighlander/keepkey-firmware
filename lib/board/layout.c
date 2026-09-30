@@ -39,6 +39,7 @@ static AnimationQueue active_queue = {NULL, 0};
 static AnimationQueue free_queue = {NULL, 0};
 static Animation animations[MAX_ANIMATIONS];
 static Canvas* canvas = NULL;
+static uint32_t layout_generation;
 static volatile bool animate_flag = false;
 static leaving_handler_t leaving_handler;
 static bool iconLayout = false;
@@ -204,9 +205,17 @@ static Animation* animation_queue_get(AnimationQueue* queue,
 void layout_init(Canvas* new_canvas) {
   canvas = new_canvas;
 
-  int i;
+  /* A repeated board init must discard old animation links and callbacks. */
+  active_queue.head = NULL;
+  active_queue.size = 0;
+  free_queue.head = NULL;
+  free_queue.size = 0;
+  memset(animations, 0, sizeof(animations));
+  animate_flag = false;
+  leaving_handler = NULL;
+  iconLayout = false;
 
-  for (i = 0; i < MAX_ANIMATIONS; i++) {
+  for (int i = 0; i < MAX_ANIMATIONS; i++) {
     animation_queue_push(&free_queue, &animations[i]);
   }
 
@@ -224,6 +233,8 @@ void layout_init(Canvas* new_canvas) {
  *     pointer to canvas
  */
 Canvas* layout_get_canvas(void) { return canvas; }
+
+uint32_t layout_get_generation(void) { return layout_generation; }
 
 /*
  * call_leaving_handler() - Call leaving handler
@@ -659,13 +670,16 @@ void layout_animate_images(void* data, uint32_t duration, uint32_t elapsed) {
 }
 
 #if DEBUG_LINK
+/* Not drawn by layout_clear() any more -- the watermark overlapped the bottom
+ * body row, which the measured pager now accounts for. tools/bootloader still
+ * stamps its own screens with it under DEBUG_LINK, so the definition stays. */
 void layout_debuglink_watermark(void) {
   const Font* font = get_body_font();
   const char* watermark = "DEBUG_LINK";
   DrawableParams sp;
   sp.x = KEEPKEY_DISPLAY_WIDTH - calc_str_width(font, watermark) -
          BODY_FONT_LINE_PADDING;
-  sp.y = KEEPKEY_DISPLAY_HEIGHT - font_height(font);
+  sp.y = KEEPKEY_DISPLAY_HEIGHT - 1 * font_height(font);
   sp.color = 0x22;
   draw_string(canvas, font, watermark, &sp, KEEPKEY_DISPLAY_WIDTH,
               font_height(font));
@@ -684,9 +698,6 @@ void layout_clear(void) {
   layout_clear_animations();
 
   layout_clear_static();
-#if DEBUG_LINK
-  layout_debuglink_watermark();
-#endif
 }
 
 /*
@@ -699,6 +710,8 @@ void layout_clear(void) {
  */
 void layout_clear_static(void) {
   if (!canvas) return;
+
+  layout_generation++;
 
   display_constant_power(false);
 

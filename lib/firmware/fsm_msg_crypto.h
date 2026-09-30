@@ -9,8 +9,8 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
 
   CHECK_PIN
 
-  const HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
-                                          msg->address_n_count, NULL);
+  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
 
   if (!node) {
     return;
@@ -22,6 +22,7 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
 
   if ((encrypt && ask_on_encrypt) || (!encrypt && ask_on_decrypt)) {
     if (!confirm_cipher(encrypt, msg->key)) {
+      FSM_SCRUB_OBJ(*node);
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "CipherKeyValue cancelled");
       layoutHome();
@@ -35,6 +36,7 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
   strlcat((char*)data, ask_on_decrypt ? "D1" : "D0", sizeof(data));
 
   hmac_sha512(node->private_key, 32, data, strlen((char*)data), data);
+  FSM_SCRUB_OBJ(*node);
 
   RESP_INIT(CipheredKeyValue);
 
@@ -44,16 +46,16 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
     aes_cbc_encrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    memzero(&ctx, sizeof(ctx));
+    FSM_SCRUB_OBJ(ctx);
   } else {
     aes_decrypt_ctx ctx;
     aes_decrypt_key256(data, &ctx);
     aes_cbc_decrypt(msg->value.bytes, resp->value.bytes, msg->value.size,
                     ((msg->iv.size == 16) ? (msg->iv.bytes) : (data + 32)),
                     &ctx);
-    memzero(&ctx, sizeof(ctx));
+    FSM_SCRUB_OBJ(ctx);
   }
-  memzero(data, sizeof(data));
+  FSM_SCRUB(data);
 
   resp->has_value = true;
   resp->value.size = msg->value.size;
@@ -66,14 +68,9 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
 
   CHECK_INITIALIZED
 
-  CHECK_PARAM(msg->has_identity, "Invalid identity");
-
-  const bool sign_ssh =
-      msg->identity.has_proto && strcmp(msg->identity.proto, "ssh") == 0;
-  const bool sign_gpg =
-      msg->identity.has_proto && strcmp(msg->identity.proto, "gpg") == 0;
   const char* curve =
       msg->has_ecdsa_curve_name ? msg->ecdsa_curve_name : SECP256K1_NAME;
+
   /* Establish that there is something signable BEFORE asking anyone to approve
      it. The identity check used to sit after the confirmation and the curve was
      not checked until fsm_getDerivedNode() below, so a request with no identity
@@ -81,43 +78,38 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
      PIN entry -- before failing. The curve also selects the key, so it belongs
      on the screen's side of the line, not after it. */
   uint8_t hash[32];
-  if (cryptoIdentityFingerprint(&(msg->identity), hash) == 0) {
+  if (!msg->has_identity ||
+      cryptoIdentityFingerprint(&(msg->identity), hash) == 0) {
+    memzero(hash, sizeof(hash));
     fsm_sendFailure(FailureType_Failure_Other, "Invalid identity");
     layoutHome();
     return;
   }
 
   if (!get_curve_by_name(curve)) {
-    memzero(hash, sizeof(hash));
+    FSM_SCRUB(hash);
     fsm_sendFailure(FailureType_Failure_SyntaxError, "Unknown ecdsa curve");
     layoutHome();
     return;
   }
 
-  /* SSH/GPG sign only challenge_hidden. Generic identity signatures bind both
-   * challenges, so review both there; SSH/GPG review only the actual signed
-   * payload and never present the unsigned visual field as authoritative. */
-  if (!confirm_sign_identity(&msg->identity, NULL, curve) ||
-      ((!sign_ssh && !sign_gpg) &&
-       !confirm_bytes(
-           ButtonRequestType_ButtonRequest_SignIdentity, "Visual Challenge",
-           (const uint8_t*)msg->challenge_visual,
-           msg->has_challenge_visual ? strlen(msg->challenge_visual) : 0)) ||
-      !confirm_bytes(
-          ButtonRequestType_ButtonRequest_SignIdentity,
-          sign_ssh   ? "Signed SSH Challenge"
-          : sign_gpg ? "Signed GPG Digest"
-                     : "Hidden Challenge",
-          msg->challenge_hidden.bytes,
-          msg->has_challenge_hidden ? msg->challenge_hidden.size : 0)) {
-    memzero(hash, sizeof(hash));
+  if (!confirm_sign_identity(
+          &(msg->identity),
+          msg->has_challenge_visual ? msg->challenge_visual : 0, curve)) {
+    FSM_SCRUB(hash);
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign identity cancelled");
     layoutHome();
     return;
   }
 
-  CHECK_PIN
+  /* CHECK_PIN would return with the identity fingerprint still on the stack:
+   * it is the seed of the derivation path, and the PIN was not yet verified. */
+  if (!pin_protect_cached()) {
+    FSM_SCRUB(hash);
+    layoutHome();
+    return;
+  }
 
   uint32_t address_n[5];
   address_n[0] = 0x80000000 | 13;
@@ -131,9 +123,16 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
                  ((uint32_t)hash[15] << 24);
 
   HDNode* node = fsm_getDerivedNode(curve, address_n, 5, NULL);
+  FSM_SCRUB(hash);
+  FSM_SCRUB(address_n);
   if (!node) {
     return;
   }
+
+  bool sign_ssh =
+      msg->identity.has_proto && (strcmp(msg->identity.proto, "ssh") == 0);
+  bool sign_gpg =
+      msg->identity.has_proto && (strcmp(msg->identity.proto, "gpg") == 0);
 
   int result = 0;
   layout_simple_message("Signing Identity...");
@@ -152,6 +151,7 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     result = cryptoMessageSign(coinByName("Bitcoin"), node,
                                InputScriptType_SPENDADDRESS, digest, 64,
                                resp->signature.bytes);
+    FSM_SCRUB(digest);
   }
 
   if (result == 0) {
@@ -174,8 +174,10 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     }
     resp->has_signature = true;
     resp->signature.size = 65;
+    FSM_SCRUB_OBJ(*node);
     msg_write(MessageType_MessageType_SignedIdentity, resp);
   } else {
+    FSM_SCRUB_OBJ(*node);
     fsm_sendFailure(FailureType_Failure_Other, "Error signing identity");
   }
 
