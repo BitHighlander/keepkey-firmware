@@ -68,7 +68,13 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
           break;
       }
     }
-    if (!confirm_ethereum_address(role_label, public_key)) {
+    // NOT confirm_ethereum_address(): that layout wraps its body at 140 px and
+    // has room for two rows, so the tail of a 53-54 character STM key -- the
+    // part the user is comparing -- is silently never drawn. confirm()
+    // measures and pages the body. The QR is not needed: an STM public key is
+    // read back into a wallet, never scanned to be paid.
+    if (!confirm(ButtonRequestType_ButtonRequest_Address, role_label, "%s",
+                 public_key)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
       layoutHome();
       return;
