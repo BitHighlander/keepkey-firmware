@@ -33,6 +33,13 @@
   MAX_WORDS*(MAX_WORD_LEN + ADDITIONAL_WORD_PAD) + 1
 #define MNEMONIC_BY_SCREEN_BUF WORDS_PER_SCREEN*(MAX_WORD_LEN + 1) + 1
 
+/* Shared sensitive display scratch for reset backup and BIP-85. Both flows
+ * clear the complete arrays before formatting and after the last page. */
+extern char mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
+extern char mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
+extern char mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
+extern char mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
+
 /* ---- setup ceremony -------------------------------------------------
  *
  * ResetDevice and RecoveryDevice are transactions. The settings the host
@@ -84,17 +91,24 @@ void setup_arm(SetupKind kind);
 /// ceremony before modifying storage, reports Failure, and returns false.
 bool setup_commit(SetupKind kind, const char* mnemonic, bool imported);
 
-/* \a dice_entropy runs the on-device dice collection, which folds into the
- * device half BEFORE the EntropyRequest and entirely before setup_arm(). */
+/* No display_random parameter: ResetDevice.display_random remains on the wire
+ * for host compatibility but is ignored, because internal entropy is seed
+ * pre-image material and must never be rendered. \a dice_entropy runs the
+ * on-device dice ceremony -- MIXED: the device draw is shown as 24 words, then
+ * seed = SHA256d(tag || draw || SHA256(tag || rolls)); with \a dice_only the
+ * seed is SHA256(rolls) alone. Both are confirmed on-device before anything
+ * runs, complete before setup_arm(), and drop the host's EntropyAck bytes. */
 void reset_init(uint32_t _strength, bool passphrase_protection,
                 bool pin_protection, const char* language, const char* label,
                 bool _no_backup, uint32_t _auto_lock_delay_ms,
-                uint32_t _u2f_counter, bool dice_entropy);
+                uint32_t _u2f_counter, bool dice_entropy, bool dice_only);
 void reset_entropy(const uint8_t* ext_entropy, uint32_t len);
+/* True from dice setup through commit/abort, including pre-arm UI waits. */
+bool reset_debug_is_private(void);
 uint32_t reset_get_int_entropy(uint8_t* entropy);
 const char* reset_get_word(void);
 /// \returns 32 and fills \a digest with SHA-256 of the roll string, or 0 if
-/// the current ceremony collected no dice. Cleared by setup_abort().
+/// disclosure is private or no digest is available. Cleared by setup_abort().
 uint32_t reset_get_dice_digest(uint8_t* digest);
 
 #endif
