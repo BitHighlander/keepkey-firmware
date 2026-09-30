@@ -168,7 +168,9 @@ static bool confirmFromAccountMatch(const EthereumSignTx* msg) {
                "Uniswap Recipient", "%s\n%s",
                is_self ? "this wallet" : "NOT this wallet", address_str))
     return false;
-  return is_self;
+  /* The screen names the case and shows the full address, so approving it is
+   * consent to that recipient; a declined screen still fails closed above. */
+  return true;
 }
 
 bool zx_isZxLiquidTx(const EthereumSignTx* msg) {

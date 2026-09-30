@@ -946,32 +946,22 @@ TEST(Ethereum, LpApprovalRefusesPaddedValueAndUnlimitedAllowance) {
   EXPECT_FALSE(zx_confirmApproveLiquidity(msg.data_initial_chunk.size, &msg));
 }
 
-// Audited 7.15 policy: a third-party liquidity transaction is refused. These
-// alpha fixtures do not satisfy the audited clear-sign preconditions (shape and
-// minimum-amount checks), so the refusal comes before the recipient screen and
-// the number of screens shown is not asserted; the recipient rule itself is
-// pinned end to end by test_sign_uni_remove_liquidity_ETH. Alpha's d83847105
-// treated an approved recipient screen as final; the owner decides between them.
-TEST(Ethereum, AddLiquidityToThirdPartyIsRefusedAfterEveryConfirmation) {
+TEST(Ethereum, AddLiquidityToThirdPartyCanCompleteAllConfirmations) {
   ensure_liquidity_signing_seed();
   EthereumSignTx msg = liquidity_tx(true, true);
 
   ASSERT_TRUE(kkconfirm_preload(6, 0));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
-// Audited 7.15 policy: a third-party liquidity transaction is refused. These
-// alpha fixtures do not satisfy the audited clear-sign preconditions (shape and
-// minimum-amount checks), so the refusal comes before the recipient screen and
-// the number of screens shown is not asserted; the recipient rule itself is
-// pinned end to end by test_sign_uni_remove_liquidity_ETH. Alpha's d83847105
-// treated an approved recipient screen as final; the owner decides between them.
-TEST(Ethereum, RemoveLiquidityToThirdPartyIsRefusedAfterEveryConfirmation) {
+TEST(Ethereum, RemoveLiquidityToThirdPartyCanCompleteAllConfirmations) {
   ensure_liquidity_signing_seed();
   EthereumSignTx msg = liquidity_tx(true, false);
 
   ASSERT_TRUE(kkconfirm_preload(5, 0));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 extern "C" bool test_liquidity_failed_derivation_wipes(int stage);

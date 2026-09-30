@@ -343,8 +343,9 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
   storage_reset();
   ASSERT_FALSE(storage_isInitialized());
 
-  // enforce_wordlist is omitted by default on the wire, which is what makes
-  // the commit condition skip mnemonic_check() entirely.
+  // enforce_wordlist is omitted by default on the wire. Firmware now ignores
+  // it and always checks words, but the empty ceremony must still be refused
+  // by the word-count guard before any check runs.
   recovery_cipher_init(/*word_count=*/12, /*passphrase_protection=*/false,
                        /*pin_protection=*/false, "english", "spaces",
                        /*enforce_wordlist=*/false, /*auto_lock_delay_ms=*/0,

@@ -310,7 +310,11 @@ void recovery_cipher_init(uint32_t _word_count, bool passphrase_protection,
   }
 
   word_count = _word_count;
-  enforce_wordlist = _enforce_wordlist;
+  /* The wire flag is ignored. Its default (omitted = false) let any host that
+   * forgot it store mistyped words as a seed; cipher entry autocompletes to
+   * BIP-39 anyway, so every recovery requires valid words and checksum. */
+  (void)_enforce_wordlist;
+  enforce_wordlist = true;
   dry_run = _dry_run;
 
   if (!dry_run) {
