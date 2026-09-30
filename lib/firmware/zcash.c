@@ -617,6 +617,10 @@ bool zcash_derive_orchard_keys_with_progress(
     const uint8_t* seed, uint32_t seed_len, uint32_t account,
     ZcashOrchardKeys* keys, ZcashOrchardProgressCallback progress,
     void* progress_context) {
+  /* ZIP-32 accounts are hardened indices below 2^31: a caller-supplied
+   * hardened bit would alias account & 0x7fffffff. Refuse before writing. */
+  if (!seed || !keys || (account & ZIP32_HARDENED)) return false;
+
   uint8_t I[64];
   uint8_t sk[32], chain_code[32];
 

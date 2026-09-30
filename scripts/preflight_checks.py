@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -66,6 +67,16 @@ add_subdirectory("${FIRMWARE_ROOT}/unittests" unittests)
                        check=True, stdout=subprocess.DEVNULL)
         commands = json.loads((project / 'build/compile_commands.json').read_text())
         built = {str((Path(c['directory']) / c['file']).resolve()) for c in commands}
+    # Some test executables (unittests/emulator) are registered by the root
+    # CMakeLists.txt, which cannot be configured standalone; count their direct
+    # add_executable() sources, ignoring commented-out lines.
+    top = root / 'CMakeLists.txt'
+    if top.exists():
+        text = re.sub(r'#[^\n]*', '', top.read_text())
+        for call in re.finditer(r'\badd_executable\s*\(([^)]*)\)', text, re.I):
+            for arg in call.group(1).split()[1:]:
+                arg = arg.replace('${CMAKE_SOURCE_DIR}/', '')
+                built.add(str((root / arg).resolve()))
     return sorted(str(Path(p).relative_to(root)) for p in expected - built)
 
 

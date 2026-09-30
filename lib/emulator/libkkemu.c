@@ -58,6 +58,7 @@ extern void fsm_init(void);
  */
 #ifdef _WIN32
 static CRITICAL_SECTION g_fw_lock;
+static int g_fw_lock_ready = 0; /* initialized once, never deleted */
 static HANDLE g_poll_thread = NULL;
 #define FW_LOCK() EnterCriticalSection(&g_fw_lock)
 #define FW_UNLOCK() LeaveCriticalSection(&g_fw_lock)
@@ -76,6 +77,11 @@ static pthread_t g_poll_thread;
 static _Atomic int g_poll_running = 0;
 #define POLL_RUNNING() atomic_load_explicit(&g_poll_running, memory_order_acquire)
 #define POLL_SET(v) atomic_store_explicit(&g_poll_running, (v), memory_order_release)
+
+/* Set while the HOST holds g_fw_lock via kkemu_lock()/kkemu_trylock(), so
+ * kkemu_unlock() releases exactly what was acquired even if kkemu_stop()
+ * cleared g_poll_running in between. Only touched by the lock holder. */
+static int g_host_holds_lock = 0;
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
@@ -468,12 +474,14 @@ int kkemu_start(void) {
   if (POLL_RUNNING()) return 0; /* idempotent */
 
 #ifdef _WIN32
-  InitializeCriticalSection(&g_fw_lock);
+  if (!g_fw_lock_ready) {
+    InitializeCriticalSection(&g_fw_lock);
+    g_fw_lock_ready = 1;
+  }
   POLL_SET(1);
   g_poll_thread = CreateThread(NULL, 0, kkemu_poll_thread_fn, NULL, 0, NULL);
   if (!g_poll_thread) {
     POLL_SET(0);
-    DeleteCriticalSection(&g_fw_lock);
     return -1;
   }
 #else
@@ -498,7 +506,7 @@ void kkemu_stop(void) {
     CloseHandle(g_poll_thread);
     g_poll_thread = NULL;
   }
-  DeleteCriticalSection(&g_fw_lock);
+  /* Not deleted: the host may still hold it and must be able to release it. */
 #else
   pthread_join(g_poll_thread, NULL);
 #endif
@@ -506,8 +514,9 @@ void kkemu_stop(void) {
 
 /* Host-side guard for reading the shared flash buffer (saveFlash) without
  * tearing a concurrent storage_commit on the poll thread. No-op when the
- * thread isn't running (single-threaded test path needs no lock, and on
- * Windows the CRITICAL_SECTION only exists between start and stop).
+ * thread isn't running (single-threaded test path needs no lock). Unlock is
+ * keyed on ownership, not on the running flag, so an acquisition that races
+ * kkemu_stop() is still released and the join can complete.
  *
  * WARNING: kkemu_lock() BLOCKS, and the poll thread can hold g_fw_lock for the
  * whole duration of a pending confirm. The host must therefore NOT call
@@ -516,11 +525,15 @@ void kkemu_stop(void) {
  * yield there instead. kkemu_lock() is retained for paths with no pending
  * confirm. */
 void kkemu_lock(void) {
-  if (POLL_RUNNING()) FW_LOCK();
+  if (!POLL_RUNNING()) return;
+  FW_LOCK();
+  g_host_holds_lock = 1;
 }
 
 void kkemu_unlock(void) {
-  if (POLL_RUNNING()) FW_UNLOCK();
+  if (!g_host_holds_lock) return;
+  g_host_holds_lock = 0;
+  FW_UNLOCK();
 }
 
 /* Non-blocking acquire. Returns 1 if the firmware lock is now held by the
@@ -531,10 +544,12 @@ void kkemu_unlock(void) {
 int kkemu_trylock(void) {
   if (!POLL_RUNNING()) return 1;
 #ifdef _WIN32
-  return TryEnterCriticalSection(&g_fw_lock) ? 1 : 0;
+  if (!TryEnterCriticalSection(&g_fw_lock)) return 0;
 #else
-  return pthread_mutex_trylock(&g_fw_lock) == 0 ? 1 : 0;
+  if (pthread_mutex_trylock(&g_fw_lock) != 0) return 0;
 #endif
+  g_host_holds_lock = 1;
+  return 1;
 }
 
 /*

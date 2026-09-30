@@ -170,6 +170,7 @@ void setup_abort(void);
 void recovery_cipher_reset(void);
 bool recovery_review_delete_resync(const char*, const char*, bool, char*,
                                    char*);
+void recovery_review_previous_after_delete(const char*, char*);
 }
 
 TEST(Recovery, DeleteKeepsTypedCipherCharactersNotTheCurrentMapping) {
@@ -202,4 +203,15 @@ TEST(Recovery, AbortAndResetClearPreviousWordAndDisplayEquivalent) {
   EXPECT_TRUE(recovery_review_scratch_empty());
   setup_abort();
   EXPECT_TRUE(recovery_review_scratch_empty());
+}
+
+TEST(Recovery, DeleteAcrossWordBoundaryShowsTheWordBeforeTheEditedOne) {
+  char previous[12];
+  // "aban zoo " -> "aban zoo": zoo is being edited, aban(don) precedes it.
+  recovery_review_previous_after_delete("aban zoo", previous);
+  EXPECT_STREQ("abandon", previous);
+  recovery_review_previous_after_delete("abandon  zoo", previous);
+  EXPECT_STREQ("abandon", previous);
+  recovery_review_previous_after_delete("zoo", previous);  // first word
+  EXPECT_STREQ("", previous);
 }

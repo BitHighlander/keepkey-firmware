@@ -280,7 +280,7 @@ bool attempt_auto_complete(char* partial_word) {
  *     - pin_protection: whether to use pin protection
  *     - language: language for device
  *     - label: label for device
- *     - _enforce_wordlist: whether to enforce bip 39 word list
+ *     - _enforce_wordlist: ignored; BIP-39 words are always enforced
  * OUTPUT
  *     none
  */
@@ -605,6 +605,23 @@ static void resync_current_word_after_delete(void) {
   }
 }
 
+/* After a delete removes a word separator, the word last_completed_word named
+ * is being edited again. Point the previous-word indicator at the completed
+ * word before it (auto-expanded, as when it was entered), or clear it. */
+static void resync_previous_word_after_delete(void) {
+  memzero(last_completed_word, sizeof(last_completed_word));
+  const char* end = strrchr(mnemonic, ' ');
+  if (!end) return;
+  while (end > mnemonic && end[-1] == ' ') end--;
+  const char* start = end;
+  while (start > mnemonic && start[-1] != ' ') start--;
+  const size_t n = (size_t)(end - start);
+  if (n == 0 || n > BIP39_MAX_WORD_LEN) return;
+  memcpy(last_completed_word, start, n);
+  if (!attempt_auto_complete(last_completed_word))
+    memzero(last_completed_word, sizeof(last_completed_word));
+}
+
 /*
  * recovery_delete_character() - Deletes previously received recovery character
  *
@@ -623,13 +640,18 @@ void recovery_delete_character(void) {
   }
 
   size_t len = strlen(mnemonic);
+  bool crossed_word = false;
   if (len > 0) {
-    if (mnemonic[len - 1] == ' ') words_entered--;
+    if (mnemonic[len - 1] == ' ') {
+      words_entered--;
+      crossed_word = true;
+    }
 
     mnemonic[len - 1] = '\0';
   }
 
   resync_current_word_after_delete();
+  if (crossed_word) resync_previous_word_after_delete();
   next_character();
   if (len > 0 && setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
@@ -701,10 +723,11 @@ void recovery_cipher_finalize(void) {
   /* words_entered counts SEPARATORS, and strtok() collapses runs of them, so a
    * ceremony driven with nothing but spaces satisfies the count gate above
    * while producing no words at all. The phrase that then reaches the commit
-   * is empty, !enforce_wordlist (the wire default) skips mnemonic_check(), and
-   * the device stores a seed every attacker can derive. Require the words the
-   * loop actually emitted to be the count the ceremony claimed -- on every
-   * path, including the dry run, where a short phrase is equally meaningless.
+   * is empty, and without this guard only the mandatory mnemonic_check()
+   * would stand between it and a seed every attacker can derive. Require the
+   * words the loop actually emitted to be the count the ceremony claimed -- on
+   * every path, including the dry run, where a short phrase is equally
+   * meaningless.
    */
   if (words_committed != words_entered) {
     memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
@@ -716,8 +739,9 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  /* An enforced recovery must decode to BIP-39 words. Import mode deliberately
-   * accepts non-word phrases; the count/nonempty guard above still applies. */
+  /* Recovery must decode to BIP-39 words: recovery_cipher_init() forces
+   * enforce_wordlist on and ignores the wire flag, so there is no import
+   * mode that accepts non-word phrases. */
   if (enforce_wordlist && !auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "

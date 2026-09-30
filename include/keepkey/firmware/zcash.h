@@ -118,9 +118,11 @@ bool zcash_pczt_signing_request_is_clear(
  *
  * @param seed       BIP-39 master seed
  * @param seed_len   Seed length (typically 64 bytes)
- * @param account    Account index (0-based, will be hardened)
+ * @param account    Account index (0-based, will be hardened; must be
+ *                   below 0x80000000)
  * @param keys       Output: derived Orchard keys
- * @return true on success
+ * @return true on success; false (keys untouched) for a NULL seed/keys or
+ *         an account with the hardened bit set
  */
 bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
                                uint32_t account, ZcashOrchardKeys* keys);

@@ -1168,6 +1168,27 @@ TEST(Zcash, DeriveOrchardKeys_FieldRanges) {
   }
 }
 
+TEST(Zcash, DeriveOrchardKeys_RejectsInvalidInputsBeforeWriting) {
+  /* A hardened account would alias account & 0x7fffffff (ZIP-32 re-hardens
+   * it), and NULL pointers must not be dereferenced. Outputs stay untouched. */
+  ZcashOrchardKeys keys, sentinel;
+  memset(&sentinel, 0xa5, sizeof(sentinel));
+  keys = sentinel;
+  EXPECT_FALSE(zcash_derive_orchard_keys(SEED_ALL, 64, 0x80000000u, &keys));
+  EXPECT_FALSE(zcash_derive_orchard_keys(SEED_ALL, 64, 0xffffffffu, &keys));
+  EXPECT_FALSE(zcash_derive_orchard_keys(NULL, 64, 0, &keys));
+  EXPECT_EQ(0, memcmp(&keys, &sentinel, sizeof(keys)));
+  EXPECT_FALSE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, NULL));
+
+  /* The highest valid account derives, and differs from account 0. */
+  ZcashOrchardKeys keys0;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0x7fffffffu, &keys));
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys0));
+  EXPECT_NE(0, memcmp(keys.sk, keys0.sk, sizeof(keys.sk)));
+  memzero(&keys, sizeof(keys));
+  memzero(&keys0, sizeof(keys0));
+}
+
 TEST(Zcash, AkSignBit_AlwaysClear) {
   /*
    * For every account, compute ak = [ask]*G and verify the sign bit

@@ -847,6 +847,11 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     layoutHome();
     return;
   }
+  /* The session signs with ask/ak only; do not keep sk, nk, rivk, dk. */
+  memzero(zcash_signing.keys.sk, sizeof(zcash_signing.keys.sk));
+  memzero(zcash_signing.keys.nk, sizeof(zcash_signing.keys.nk));
+  memzero(zcash_signing.keys.rivk, sizeof(zcash_signing.keys.rivk));
+  memzero(zcash_signing.keys.dk, sizeof(zcash_signing.keys.dk));
 
   /* Initialize signing state */
   zcash_signing.active = true;

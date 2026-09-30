@@ -108,3 +108,29 @@ TEST_F(EmulatorLifecycle, ShutdownWakesConfirmationWaitingForHostDecision) {
   kkemu_shutdown();
   EXPECT_EQ(0, kkemu_is_running());
 }
+
+TEST_F(EmulatorLifecycle, UnlockReleasesLockAcquiredBeforeConcurrentStop) {
+  ASSERT_EQ(0, kkemu_start());
+  kkemu_lock();
+  usleep(50000);  // let the poll thread block on the lock we hold
+  std::atomic<bool> stopped{false};
+  std::thread stopper([&] {
+    kkemu_stop();
+    stopped.store(true);
+  });
+  // trylock is a no-op success once kkemu_stop() has cleared the flag.
+  while (!kkemu_trylock()) std::this_thread::yield();
+  kkemu_unlock();  // must still release the acquisition made while running
+  for (int i = 0; i < 2000 && !stopped.load(); ++i) usleep(1000);
+  if (!stopped.load()) {
+    stopper.detach();
+    FAIL() << "kkemu_stop() never joined: the lock was not released";
+  }
+  stopper.join();
+  ASSERT_EQ(0, kkemu_start());  // a leaked lock would park the new poll thread
+  bool acquired = false;
+  for (int i = 0; i < 2000 && !acquired; ++i)
+    if (!(acquired = kkemu_trylock())) usleep(1000);
+  ASSERT_TRUE(acquired);
+  kkemu_unlock();
+}

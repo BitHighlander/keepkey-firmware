@@ -40,6 +40,19 @@ class PreflightChecks(unittest.TestCase):
         p.write_text('set(sources ' + source_list + ')\nadd_executable(two ${sources})\n')
         self.assertEqual([], unbuilt_tests(self.root))
 
+    def test_root_registered_test_sources_count_as_built(self):
+        d = self.root / 'unittests/emulator'
+        d.mkdir(parents=True)
+        for name in ('lifecycle.cpp', 'other.cpp'):
+            (d / name).write_text('int probe(void) { return 0; }\n')
+        (d / 'unit.c').write_text('int probe(void) { return 0; }\n')
+        (self.root / 'unittests/CMakeLists.txt').write_text('add_executable(unit emulator/unit.c)\n')
+        top = self.root / 'CMakeLists.txt'
+        top.write_text('# add_executable(x unittests/emulator/other.cpp)\n'
+                       'add_executable(emulator-unit unittests/emulator/lifecycle.cpp)\n')
+        self.git('add', '.')
+        self.assertEqual(['unittests/emulator/other.cpp'], unbuilt_tests(self.root))
+
     def test_whitespace_in_committed_push_range_and_worktree(self):
         p = self.root / 'file.txt'
         p.write_text('clean\n')

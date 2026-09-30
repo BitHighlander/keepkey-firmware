@@ -31,3 +31,14 @@ bool recovery_review_delete_resync(const char* mnemonic_after_delete,
   recovery_cipher_reset();
   return result;
 }
+
+/* Previous-word resync after a delete removed the separator of the word the
+ * indicator named. */
+void recovery_review_previous_after_delete(const char* mnemonic_after_delete,
+                                           char previous_out[12]) {
+  strlcpy(mnemonic, mnemonic_after_delete, sizeof(mnemonic));
+  strlcpy(last_completed_word, "stale", sizeof(last_completed_word));
+  resync_previous_word_after_delete();
+  memcpy(previous_out, last_completed_word, sizeof(last_completed_word));
+  recovery_cipher_reset();
+}

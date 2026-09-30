@@ -377,7 +377,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
                "Sign %s on %s? Fee: %" PRIu32 " cacao. Gas: %" PRIu32 ".",
-               msg->has_send ? msg->send.denom : "CACAO", sign_tx->chain_id,
+               msg->has_send ? coin_denom : "CACAO", sign_tx->chain_id,
                sign_tx->fee_amount, sign_tx->gas)) {
     mayachain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
