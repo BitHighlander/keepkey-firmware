@@ -229,8 +229,13 @@ class CapabilityWaivers(unittest.TestCase):
             report.approved_capabilities(candidate)
 
     def test_candidate_can_narrow_immutable_ledger(self):
-        self.assertEqual({"osmosis-wire-guards"}, report.approved_capabilities(
-            "    KK_RELEASE_MISSING_CAPABILITIES: osmosis-wire-guards\n"))
+        # Pin the authority: the live one is the PR base on pull_request runs
+        # and the admin-set commit otherwise, so this must not depend on either.
+        trusted = "    KK_RELEASE_MISSING_CAPABILITIES: osmosis-wire-guards,storage-v19-kdf\n"
+        with unittest.mock.patch.object(report, "waiver_authority_commit", return_value="a" * 40):
+            with unittest.mock.patch.object(report, "git", return_value=trusted):
+                self.assertEqual({"osmosis-wire-guards"}, report.approved_capabilities(
+                    "    KK_RELEASE_MISSING_CAPABILITIES: osmosis-wire-guards\n"))
 
     def test_missing_authority_fails_closed(self):
         import subprocess
