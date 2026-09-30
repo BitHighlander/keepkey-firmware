@@ -66,6 +66,11 @@ void fsm_msgCipherKeyValue(CipherKeyValue* msg) {
 void fsm_msgSignIdentity(SignIdentity* msg) {
   RESP_INIT(SignedIdentity);
 
+  const bool sign_ssh = msg->has_identity && msg->identity.has_proto &&
+                        strcmp(msg->identity.proto, "ssh") == 0;
+  const bool sign_gpg = msg->has_identity && msg->identity.has_proto &&
+                        strcmp(msg->identity.proto, "gpg") == 0;
+
   CHECK_INITIALIZED
 
   const char* curve =
@@ -93,9 +98,22 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     return;
   }
 
-  if (!confirm_sign_identity(
-          &(msg->identity),
-          msg->has_challenge_visual ? msg->challenge_visual : 0, curve)) {
+  /* SSH/GPG sign only challenge_hidden. Generic identity signatures bind both
+   * challenges, so review both there; SSH/GPG review only the actual signed
+   * payload and never present the unsigned visual field as authoritative. */
+  if (!confirm_sign_identity(&msg->identity, NULL, curve) ||
+      ((!sign_ssh && !sign_gpg) &&
+       !confirm_bytes(
+           ButtonRequestType_ButtonRequest_SignIdentity, "Visual Challenge",
+           (const uint8_t*)msg->challenge_visual,
+           msg->has_challenge_visual ? strlen(msg->challenge_visual) : 0)) ||
+      !confirm_bytes(
+          ButtonRequestType_ButtonRequest_SignIdentity,
+          sign_ssh   ? "Signed SSH Challenge"
+          : sign_gpg ? "Signed GPG Digest"
+                     : "Hidden Challenge",
+          msg->challenge_hidden.bytes,
+          msg->has_challenge_hidden ? msg->challenge_hidden.size : 0)) {
     FSM_SCRUB(hash);
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Sign identity cancelled");
@@ -128,11 +146,6 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
   if (!node) {
     return;
   }
-
-  bool sign_ssh =
-      msg->identity.has_proto && (strcmp(msg->identity.proto, "ssh") == 0);
-  bool sign_gpg =
-      msg->identity.has_proto && (strcmp(msg->identity.proto, "gpg") == 0);
 
   int result = 0;
   layout_simple_message("Signing Identity...");

@@ -158,7 +158,6 @@ static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count,
   return hive_slip48_path_valid_for_role(address_n, count, required_role);
 }
 
-
 // ── HiveSignTx (transfer) ─────────────────────────────────────────────────
 
 // Keep custom-domain support, but make the exact signing domain part of
@@ -1134,4 +1133,3 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
   msg_write(MessageType_MessageType_HiveSignedOperations, resp);
   layoutHome();
 }
-

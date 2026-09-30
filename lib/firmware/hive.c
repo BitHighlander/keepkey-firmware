@@ -882,7 +882,6 @@ void hive_signMessage(const HDNode* node, const HiveSignMessage* msg,
   memzero(sig, sizeof(sig));
 }
 
-
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
 
 // Resolve the requested asset symbol to the symbol signed on the wire, the
