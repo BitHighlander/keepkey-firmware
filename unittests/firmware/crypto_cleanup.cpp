@@ -234,11 +234,16 @@ TEST_F(CryptoCleanup,
         request.identity.has_path = true;
         std::strcpy(request.identity.path, "/login");
       }
-      ASSERT_TRUE(kkconfirm_preload(https ? 4 : 3, 0));
-      sign(&request, wire);
-      EXPECT_EQ(0, kkconfirm_drain());
       const bool generic = std::strcmp(v.protocol, "ssh") != 0 &&
                            std::strcmp(v.protocol, "gpg") != 0;
+      // Screens: Identity Key, [Identity Path when a path is sent], the
+      // identity summary, then (generic only) a separate Visual Challenge, and
+      // finally the signed hidden challenge. SSH/GPG sign only the hidden
+      // challenge, so they skip the Visual Challenge screen.
+      const int screens = 2 + (https ? 1 : 0) + (generic ? 1 : 0) + 1;
+      ASSERT_TRUE(kkconfirm_preload(screens, 0));
+      sign(&request, wire);
+      EXPECT_EQ(0, kkconfirm_drain());
       ExpectWorkspaceWipes(1, 1, generic ? 1 : 0, 1);
       SignedIdentity result = {};
       response(MessageType_MessageType_SignedIdentity, SignedIdentity_fields,
@@ -277,7 +282,9 @@ TEST_F(CryptoCleanup, GpgExactDigestWithoutVisualChallengeSignsAndScrubs) {
     auto request = identity("gpg", "secp256k1");
     request.has_challenge_visual = false;
     request.challenge_visual[0] = '\0';
-    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    // Identity Key, identity summary, then the signed GPG digest screen (the
+    // hidden challenge is reviewed even though there is no visual challenge).
+    ASSERT_TRUE(kkconfirm_preload(3, 0));
     sign(&request, wire);
     EXPECT_EQ(0, kkconfirm_drain());
     ExpectWorkspaceWipes(1, 1, 0, 1);

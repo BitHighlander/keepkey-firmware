@@ -333,8 +333,11 @@ class Block13CoinProgress : public Block13ResetProgress,
 #undef SEND_WIRE
   }
   int ReviewCount() {
+    // Osmosis MsgSend shows "Send Amount" and "Send To" as separate
+    // renderer-measured screens, so a wrapped body cannot hide the address.
     return GetParam() == ProgressChain::Thorchain ||
-           GetParam() == ProgressChain::Mayachain ? 2 : 1;
+           GetParam() == ProgressChain::Mayachain ||
+           GetParam() == ProgressChain::Osmosis ? 2 : 1;
   }
 };
 
@@ -488,7 +491,7 @@ TEST_F(Block13OsmosisWire, SendAcceptsCanonicalUint64BoundaryAndZero) {
   for (const char* amount : {"0", "1", "18446744073709551614", "18446744073709551615"}) {
     SCOPED_TRACE(amount);
     Start();
-    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
     auto ack = Send(amount);
     increment_idle_time(kDeadline - 1);
     Receive(ack);
@@ -521,7 +524,7 @@ TEST_F(Block13OsmosisWire, SendRejectsOverflowAndNoncanonicalBeforeReview) {
     EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
   }
   Start();
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
   auto valid = Send("1");
   Receive(valid);
   EXPECT_TRUE(osmosis_signingIsInited());
@@ -610,7 +613,7 @@ TEST_F(Block13OsmosisWire, SwapAndPoolAmountsRemainWiderThanUint64) {
       std::strcpy(msg.token_in_amount, wide);
       std::strcpy(msg.token_out_min_amount, wide);
     }
-    ASSERT_TRUE(kkconfirm_preload(pool ? 4 : 2, 0));
+    ASSERT_TRUE(kkconfirm_preload(pool ? 4 : 3, 0));
     Receive(ack);
     EXPECT_EQ(0, kkconfirm_drain());
     EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));

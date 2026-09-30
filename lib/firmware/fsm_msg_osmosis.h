@@ -3,7 +3,7 @@
 
 static bool osmosis_formatAmountOrFail(char* out, size_t out_len,
                                        const char* value, const char* denom) {
-  if (osmosis_formatAmount(out, out_len, value, denom)) return true;
+  if (osmosis_formatAmountUncapped(out, out_len, value, denom)) return true;
 
   osmosis_signAbort();
   fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -190,9 +190,14 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
       return;
     }
 
+    // MsgSend is the only message that bounds native uosmo to uint64.
     char amount_str[OSMOSIS_AMOUNT_STR_LEN];
-    if (!osmosis_formatAmountOrFail(amount_str, sizeof(amount_str),
-                                    msg->send.amount, msg->send.denom)) {
+    if (!osmosis_formatAmount(amount_str, sizeof(amount_str), msg->send.amount,
+                              msg->send.denom)) {
+      osmosis_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid Osmosis amount or denomination");
+      layoutHome();
       return;
     }
 

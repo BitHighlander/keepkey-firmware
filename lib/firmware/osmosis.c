@@ -887,12 +887,11 @@ bool osmosis_signTxFinalize(uint8_t* public_key, uint8_t* signature) {
  * the decimal point in integer math, the same way the Hive and Ethereum
  * confirm screens do.
  */
-bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
-                          const char* denom) {
+bool osmosis_formatAmountUncapped(char* out, size_t out_len, const char* value,
+                                  const char* denom) {
   if (!out || out_len == 0) return false;
   out[0] = '\0';
-  if (!osmosis_isCanonicalAmount(value) || !osmosis_isValidDenom(denom) ||
-      (strcmp(denom, "uosmo") == 0 && !osmosis_isCanonicalUint64(value))) {
+  if (!osmosis_isCanonicalAmount(value) || !osmosis_isValidDenom(denom)) {
     return false;
   }
 
@@ -913,6 +912,15 @@ bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
     return false;
   }
   return true;
+}
+
+/* MsgSend display: native uosmo is additionally bounded to uint64. */
+bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
+                          const char* denom) {
+  if (out && out_len > 0) out[0] = '\0';
+  if (denom && strcmp(denom, "uosmo") == 0 && !osmosis_isCanonicalUint64(value))
+    return false;
+  return osmosis_formatAmountUncapped(out, out_len, value, denom);
 }
 
 bool osmosis_signingIsInited(void) { return initialized; }

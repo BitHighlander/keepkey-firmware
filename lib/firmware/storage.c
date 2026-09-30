@@ -1010,7 +1010,10 @@ void storage_readStorageV1(SessionState* ss, Storage* storage, const char* ptr,
   storage_resetPolicies(storage);
   if (storage->version != 1) {
     PolicyType legacy_policy = {0};
-    storage_readPolicyV1(&legacy_policy, ptr + 464, 17);
+    /* 18, not 17: the record's last field (enabled) is at +17, and
+     * storage_readPolicyV1() refuses anything shorter than 18 (its bounds fix).
+     * Passing 17 made it return early, silently dropping the preference. */
+    storage_readPolicyV1(&legacy_policy, ptr + 464, 18);
     // Only ShapeShift existed in this format. Preserve its preference while
     // refusing injected names that could enable later security policies.
     if (legacy_policy.has_policy_name && legacy_policy.has_enabled &&

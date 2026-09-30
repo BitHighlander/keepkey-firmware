@@ -918,20 +918,58 @@ TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
 }
 
 #if !BITCOIN_ONLY
+// alpha (7.16 track) embeds the ClearSign root and verifies certified Solana
+// requests, so a certificate is no longer refused outright with
+// UnexpectedMessage as on the 7.15 line. What must still hold is that a
+// decoded certificate never falls through to ordinary or blind signing: a
+// malformed one is refused at the production handler. The handler reads its
+// own gates in order (initialised, PIN, raw_tx present, structurally sound),
+// so the fixture is an initialised wallet and a structurally valid opaque
+// legacy message; only the certificate is wrong.
 TEST(Fsm, SolanaCertificateIsRejectedAtTheProductionHandler) {
   kk_test_board_init();
   fsm_init();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  ASSERT_TRUE(storage_isInitialized());
   fsm_test_clearLastFailure();
 
   SolanaSignTx request = {};
+  request.address_n_count = 4;
+  request.address_n[0] = 0x80000000 | 44;
+  request.address_n[1] = 0x80000000 | 501;
+  request.address_n[2] = 0x80000000;
+  request.address_n[3] = 0x80000000;
+  request.has_raw_tx = true;
+  uint8_t* raw = request.raw_tx.bytes;
+  size_t pos = 0;
+  raw[pos++] = 1;  // required signatures
+  raw[pos++] = 0;  // readonly signed
+  raw[pos++] = 1;  // readonly unsigned (the program)
+  raw[pos++] = 2;  // accounts: fee payer, program
+  std::memset(raw + pos, 0x11, 32);
+  pos += 32;
+  std::memset(raw + pos, 0x22, 32);
+  pos += 32;
+  std::memset(raw + pos, 0xBB, 32);  // recent blockhash
+  pos += 32;
+  raw[pos++] = 1;  // one instruction
+  raw[pos++] = 1;  // program index
+  raw[pos++] = 1;  // one account index
+  raw[pos++] = 0;
+  raw[pos++] = 1;  // one data byte
+  raw[pos++] = 0;
+  request.raw_tx.size = pos;
   request.has_clearsign_certificate = true;
   request.clearsign_certificate.size = 1;
   request.clearsign_certificate.bytes[0] = 0x01;
   receiveMessage(MessageType_MessageType_SolanaSignTx, SolanaSignTx_fields,
                  &request);
 
-  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode())
       << "a decoded certificate must not fall through to ordinary signing";
+  EXPECT_STREQ("Incomplete certified Solana ClearSign proof",
+               fsm_test_lastFailureMessage());
   layoutHomeForced();
 }
 #endif
@@ -1522,7 +1560,7 @@ TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
   ack.send.has_denom = true;
   std::strcpy(ack.send.denom, "uosmo");
   for (int i = 0; i < 2; ++i) {
-    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
     increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
     receiveMessage(MessageType_MessageType_OsmosisMsgAck, OsmosisMsgAck_fields,
                    &ack);
@@ -2436,6 +2474,14 @@ TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {
     auto* active =
         reinterpret_cast<uint8_t*>(flash_write_helper(storage_getLocation()));
     std::memcpy(active + 44, &version, sizeof(version));
+    // The committed record carries a CRC trailer that covers the version word.
+    // Patching the version invalidates it, and find_active_storage() then
+    // skips the sector as torn instead of reading its version. Erase the
+    // trailer magic so it is a legacy-form record, whose version is read
+    // as-is: the same shape a real future-format wallet has when flashed by
+    // firmware that predates the CRC envelope.
+    std::memset(active + STORAGE_RECORD_DATA_LEN, 0xff,
+                STORAGE_RECORD_TRAILER_MAGIC_LEN);
     storage_init();
     ASSERT_TRUE(storage_isFirmwareTooOld() || storage_isBitcoinOnlyLocked());
     const auto before = flash.bytes;
