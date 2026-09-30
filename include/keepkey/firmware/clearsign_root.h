@@ -157,4 +157,10 @@ bool clearsign_root_verify_erc7730_catalog(
  * decision and so the unit suite can tie the firmware version to the root. */
 bool clearsign_root_is_present(void);
 
+#if DEBUG_LINK && defined(EMULATOR)
+/* Unit tests only: verify certificates against `pubkey` (33 bytes, caller
+ * keeps it alive) instead of the compiled-in root; NULL restores it. */
+void clearsign_root_set_test_root(const uint8_t* pubkey);
+#endif
+
 #endif

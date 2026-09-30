@@ -205,3 +205,103 @@ TEST(Erc7730Workflow, ResolvesNegativeTypedArrayIndexFromStreamedLength) {
                                               value, sizeof(value)));
   EXPECT_TRUE(erc7730_workflow_eip712_finish(&workflow));
 }
+
+TEST(Erc7730Workflow, InnerDefinitionIsNeverShownAboveItsOuterTier) {
+  const struct {
+    uint8_t outer, inner, shown;
+  } cases[] = {
+      {METADATA_TIER_RUNTIME, METADATA_TIER_KEEPKEY, METADATA_TIER_RUNTIME},
+      {METADATA_TIER_KEEPKEY, METADATA_TIER_RUNTIME, METADATA_TIER_RUNTIME},
+      {METADATA_TIER_KEEPKEY, METADATA_TIER_KEEPKEY, METADATA_TIER_KEEPKEY},
+      {METADATA_TIER_RUNTIME, METADATA_TIER_RUNTIME, METADATA_TIER_RUNTIME},
+  };
+  for (const auto& c : cases) {
+    Erc7730Workflow workflow{};
+    workflow.phase = ERC7730_WORKFLOW_READY;
+    workflow.identity.tier = c.outer;
+    workflow.field.has_inner = true;
+    workflow.field.has_address = true;
+    workflow.field.inner_selector_length = 4;
+    EXPECT_EQ(erc7730_workflow_tier(&workflow), c.outer);
+    ASSERT_TRUE(erc7730_workflow_begin_fetch(&workflow, 1));
+    // What erc7730_workflow_fetch_complete installs for a bound inner
+    // definition: its own identity, at depth 1.
+    workflow.identity.tier = c.inner;
+    workflow.depth = 1;
+    EXPECT_EQ(erc7730_workflow_tier(&workflow), c.shown)
+        << (int)c.outer << " " << (int)c.inner;
+  }
+}
+
+/* #821: every host-streamed calldata pass must carry the bytes the first pass
+ * reviewed, and the signing pass must match them. A hostile host that shows
+ * benign arguments and signs different ones of the same length is refused. */
+static void prepareCalldataWorkflow(Erc7730Workflow* workflow,
+                                    EthereumSignTx* tx) {
+  prepareTypedUintWorkflow(workflow);
+  workflow->typed_data = false;
+  tx->has_data_length = true;
+  tx->data_length = 36;
+  tx->has_data_initial_chunk = true;
+  tx->data_initial_chunk.size = 4;
+  tx->data_initial_chunk.bytes[0] = 0xaa;
+  ASSERT_TRUE(erc7730_tx_continuation_capture(&workflow->continuation, tx));
+}
+
+static Erc7730AbiResult hostPass(Erc7730Workflow* workflow, EthereumSignTx* tx,
+                                 uint8_t fill) {
+  // A later display pass starts from the field the previous one completed.
+  if (workflow->phase == ERC7730_WORKFLOW_COMPLETE &&
+      !erc7730_workflow_resume_field(workflow))
+    return ERC7730_ABI_BOUNDS;
+  if (!erc7730_workflow_restore_and_start_calldata(workflow, tx))
+    return ERC7730_ABI_BOUNDS;
+  uint8_t word[32] = {0};
+  word[31] = fill;
+  const Erc7730AbiResult fed =
+      erc7730_workflow_calldata_feed(workflow, word, sizeof(word));
+  if (fed != ERC7730_ABI_OK) return fed;
+  return erc7730_workflow_calldata_finish(workflow);
+}
+
+static bool signingPass(Erc7730Workflow* workflow, EthereumSignTx* tx,
+                        uint8_t fill) {
+  if (!erc7730_workflow_start_signing(workflow, tx)) return false;
+  uint8_t word[32] = {0};
+  word[31] = fill;
+  return erc7730_workflow_calldata_feed(workflow, word, 16) == ERC7730_ABI_OK &&
+         erc7730_workflow_calldata_feed(workflow, word + 16, 16) ==
+             ERC7730_ABI_OK &&
+         erc7730_workflow_calldata_finish(workflow) == ERC7730_ABI_OK;
+}
+
+TEST(Erc7730Workflow, DisplayPassesMustCarryTheSameCalldata) {
+  Erc7730Workflow workflow{};
+  EthereumSignTx tx{};
+  prepareCalldataWorkflow(&workflow, &tx);
+  ASSERT_EQ(hostPass(&workflow, &tx, 1), ERC7730_ABI_OK);  // field capture
+  ASSERT_EQ(hostPass(&workflow, &tx, 1), ERC7730_ABI_OK);  // later pass
+  EXPECT_NE(hostPass(&workflow, &tx, 2), ERC7730_ABI_OK);  // swapped argument
+  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+}
+
+TEST(Erc7730Workflow, SigningPassMustMatchReviewedCalldata) {
+  Erc7730Workflow workflow{};
+  EthereumSignTx tx{};
+  prepareCalldataWorkflow(&workflow, &tx);
+  ASSERT_EQ(hostPass(&workflow, &tx, 7), ERC7730_ABI_OK);
+  EXPECT_TRUE(signingPass(&workflow, &tx, 7));
+  EXPECT_FALSE(
+      signingPass(&workflow, &tx, 8));  // benign review, malicious sign
+  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+}
+
+TEST(Erc7730Workflow, NoReviewedCalldataMeansNoneMayBeSigned) {
+  Erc7730Workflow workflow{};
+  EthereumSignTx tx{};
+  prepareCalldataWorkflow(&workflow, &tx);
+  EXPECT_FALSE(signingPass(&workflow, &tx, 1));
+  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+  // Nothing streamed afterwards becomes the reviewed calldata.
+  EXPECT_FALSE(erc7730_workflow_restore_and_start_calldata(&workflow, &tx));
+}

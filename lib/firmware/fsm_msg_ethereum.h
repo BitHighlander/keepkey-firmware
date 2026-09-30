@@ -313,13 +313,25 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
     return ERC7730_UI_INVALID;
   const bool inner = workflow->depth != 0;
   if (!workflow->identity_confirmed) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 inner ? "Inner signer" : "Runtime signer", "%s (%s)",
-                 workflow->identity.delegate_alias,
-                 workflow->identity.delegate_fingerprint) ||
-        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Unverified data", "NOT verified by KeepKey"))
+    /* Root-certified, and for an inner call its outer definition was too.
+     * Provenance only: AdvancedMode and the raw-data review are unchanged. */
+    if (erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Verified by KeepKey", "%s (%s)\ndescribes %s.",
+                   workflow->identity.delegate_alias,
+                   workflow->identity.delegate_fingerprint,
+                   inner                  ? "the inner call"
+                   : workflow->typed_data ? "this message"
+                                          : "this transaction"))
+        return ERC7730_UI_CANCELLED;
+    } else if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                        inner ? "Inner signer" : "Runtime signer", "%s (%s)",
+                        workflow->identity.delegate_alias,
+                        workflow->identity.delegate_fingerprint) ||
+               !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                        "Unverified data", "NOT verified by KeepKey")) {
       return ERC7730_UI_CANCELLED;
+    }
     workflow->identity_confirmed = true;
   }
   if (!workflow->intent_confirmed) {

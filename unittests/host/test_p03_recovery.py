@@ -5,30 +5,25 @@ from keepkeylib import messages_pb2 as proto
 
 
 class TestP03Recovery(common.KeepKeyTest):
-    def test_import_without_wordlist_accepts_non_bip39_phrase(self):
+    def test_omitted_wordlist_flag_still_rejects_non_bip39_word(self):
+        # The wire flag is ignored: a host that omits enforce_wordlist (the
+        # proto default, false) must not be able to store a non-BIP-39 seed.
         response = self.client.call_raw(proto.RecoveryDevice(
             word_count=12, pin_protection=False,
             passphrase_protection=False, use_character_cipher=True))
         self.assertIsInstance(response, proto.ButtonRequest)
         self.client.debug.press_yes()
         response = self.client.call_raw(proto.ButtonAck())
-
-        for index in range(12):
-            for letter in 'zzzz':
-                self.assertIsInstance(response, proto.CharacterRequest)
-                cipher = self.client.debug.read_recovery_cipher()
-                response = self.client.call_raw(proto.CharacterAck(
-                    character=cipher[ord(letter) - ord('a')]))
-            if index < 11:
-                response = self.client.call_raw(proto.CharacterAck(character=' '))
-
-        self.assertIsInstance(response, proto.CharacterRequest)
-        response = self.client.call_raw(proto.CharacterAck(done=True))
-        self.assertIsInstance(response, proto.Success)
+        for letter in 'zzzz':
+            self.assertIsInstance(response, proto.CharacterRequest)
+            cipher = self.client.debug.read_recovery_cipher()
+            response = self.client.call_raw(proto.CharacterAck(
+                character=cipher[ord(letter) - ord('a')]))
+        response = self.client.call_raw(proto.CharacterAck(character=' '))
+        self.assertIsInstance(response, proto.Failure)
+        self.assertIn('Word not found', response.message)
         self.client.init_device()
-        self.assertTrue(self.client.features.imported)
-        self.assertEqual(' '.join(['zzzz'] * 12),
-                         self.client.debug.read_mnemonic())
+        self.assertFalse(self.client.features.initialized)
 
     def test_enforced_wordlist_rejects_non_bip39_word(self):
         response = self.client.call_raw(proto.RecoveryDevice(

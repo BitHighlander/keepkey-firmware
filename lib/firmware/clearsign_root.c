@@ -51,6 +51,18 @@ static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
     0x2e, 0x61, 0x0c, 0x67, 0x5c, 0xcc, 0xbb, 0xd6, 0x06, 0xda, 0xe7,
 };
 
+#if DEBUG_LINK && defined(EMULATOR)
+/* Unit-test root. Emulator debug-link builds only, so no device image carries
+ * it, and no message reaches it: only the unit suite calls the setter, to sign
+ * certificate fixtures with a key it holds. NULL restores the compiled-in
+ * root. */
+static const uint8_t* test_root_pubkey;
+
+void clearsign_root_set_test_root(const uint8_t* pubkey) {
+  test_root_pubkey = pubkey;
+}
+#endif
+
 bool clearsign_root_is_present(void) {
   for (size_t i = 0; i < CLEARSIGN_PUBKEY_LEN; i++) {
     if (kk_clearsign_root_pubkey[i] != 0x00) return true;
@@ -126,8 +138,12 @@ bool clearsign_root_verify_cert(const uint8_t* cert, size_t cert_len) {
   sha3_Update(&ctx, digest, sizeof(digest));
   keccak_Final(&ctx, digest);
 
-  return ecdsa_verify_digest(&secp256k1, kk_clearsign_root_pubkey,
-                             &cert[CLEARSIGN_CERT_OFF_SIG], digest) == 0;
+  const uint8_t* root = kk_clearsign_root_pubkey;
+#if DEBUG_LINK && defined(EMULATOR)
+  if (test_root_pubkey) root = test_root_pubkey;
+#endif
+  return ecdsa_verify_digest(&secp256k1, root, &cert[CLEARSIGN_CERT_OFF_SIG],
+                             digest) == 0;
 }
 
 bool clearsign_root_cert_delegate(const uint8_t* cert, size_t cert_len,
