@@ -36,28 +36,4 @@ if(${KK_EMULATOR})
     target_link_libraries(kkemu ${FIRMWARE_LIBS} kkemulator)
   endif()
 
-  # Shared library (ring buffers, no sockets) for in-process FFI — this is what
-  # the vault loads via bun:ffi (libkkemu.dylib on macOS, .so on Linux, .dll on
-  # Windows).
-  if(KK_BUILD_DYLIB)
-    if(WIN32)
-      # kkrand and trezorcrypto cross-reference each other (random32 /
-      # random_uniform). GNU/MinGW ld resolves static archives left-to-right in
-      # a single pass, so wrap FIRMWARE_LIBS in a linker group. Use the raw
-      # --start-group/--end-group flags rather than the LINK_GROUP genex: the
-      # genex needs CMake >= 3.24, but this repo's cmake_minimum_required is
-      # 3.7.2. macOS ld64 is multi-pass and needs neither.
-      # Also: MinGW exports nothing from a DLL by default (unlike Mach-O/ELF),
-      # so export the kkemu_* FFI entry points; and link the Windows CSPRNG
-      # (bcrypt, BCryptGenRandom) used by setup.c / rng.c on _WIN32.
-      target_link_libraries(kkemulator_dylib
-          -Wl,--start-group ${FIRMWARE_LIBS} -Wl,--end-group bcrypt)
-      target_link_options(kkemulator_dylib PRIVATE "-Wl,--export-all-symbols")
-    else()
-      target_link_libraries(kkemulator_dylib ${FIRMWARE_LIBS})
-      if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
-        target_link_options(kkemulator_dylib PRIVATE "-Wl,-no_fixup_chains")
-      endif()
-    endif()
-  endif()
 endif()

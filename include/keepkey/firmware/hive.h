@@ -61,7 +61,8 @@ bool hive_deriveRawKey(const HDNode* root, uint32_t role_hardened,
 /**
  * Derive all four SLIP-0048 role keys for a given account index and encode
  * each as an STM-prefixed string. All output buffers must be >= 64 bytes.
- * Returns false if any derivation or encoding step fails.
+ * Returns false for an account_index above 0x7fffffff (bit 31 would alias
+ * a lower account) or if any derivation or encoding step fails.
  */
 bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
                         char* owner_out, size_t owner_len, char* active_out,

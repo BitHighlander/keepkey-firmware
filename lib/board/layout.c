@@ -346,7 +346,7 @@ void layout_set_runtime_icon(const struct AnimationFrame_* frame) {
 void layout_add_icon(IconType type) {
   switch (type) {
     case ETHEREUM_ICON:
-    /* ponytail: reuse the ETH glyph as the "verified" mark — it's an ETH tx.
+    /* Note: reuse the ETH glyph as the "verified" mark — it's an ETH tx.
      * Swap in a dedicated checkmark bitmap if the trust mark needs to differ.
      */
     case VERIFIED_ICON:
@@ -916,7 +916,7 @@ static void trickle_progress_callback(void* data, uint32_t duration,
    * last 10% is only crossed by the next REAL milestone, so the bar never
    * claims work that hasn't happened. The breathing glint keeps signalling
    * activity while the ramp holds.
-   * ponytail: EXPECTED_MS is a guess, not a measurement — retune if host
+   * Note: EXPECTED_MS is a guess, not a measurement — retune if host
    * proof times change materially. */
   const uint32_t EXPECTED_MS = 45000;
   int span = trickle.target - trickle.base;

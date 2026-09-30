@@ -107,19 +107,33 @@ static void capture_array_length(Erc7730AbiStream* s,
   s->capture_found = true;
 }
 
-static Erc7730AbiResult make_sequence(const Erc7730AbiStream* s,
+/* Reserve one pending slot per dynamic child. Head offsets are stored top
+ * down so the tail consumes, and releases, them from the top of the stack:
+ * a nested sequence only needs the slots its parent has not yet consumed. */
+static Erc7730AbiResult make_sequence(Erc7730AbiStream* s,
                                       Erc7730AbiStreamFrame* f,
                                       uint16_t first_child,
                                       uint16_t child_count, bool repeated,
                                       size_t base) {
   if (child_count > ERC7730_ABI_MAX_ARRAY_ELEMENTS)
     return ERC7730_ABI_RESOURCE_LIMIT;
+  uint16_t dynamic_count = 0;
+  for (uint16_t i = 0; i < child_count; i++) {
+    bool dynamic = false;
+    if (!node_dynamic(&s->program, (uint16_t)(first_child + (repeated ? 0 : i)),
+                      0, &dynamic))
+      return ERC7730_ABI_BAD_PROGRAM;
+    if (dynamic) dynamic_count++;
+  }
+  if (dynamic_count > ERC7730_ABI_STREAM_MAX_PENDING - s->pending_used)
+    return ERC7730_ABI_RESOURCE_LIMIT;
   f->first_child = first_child;
   f->child_count = child_count;
   f->item_index = 0;
   f->pending_start = s->pending_used;
-  f->pending_count = 0;
+  f->pending_count = dynamic_count;
   f->pending_index = 0;
+  s->pending_used += dynamic_count;
   f->base = base;
   f->repeated = repeated;
   f->mode = STREAM_SEQUENCE_HEAD;
@@ -182,12 +196,11 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
       continue;
     }
     if (f->mode == STREAM_SEQUENCE_TAIL) {
-      if (f->pending_index == f->pending_count) {
+      if (s->pending_used == f->pending_start) {
         pop_frame(s);
         continue;
       }
-      const Erc7730AbiPending* pending =
-          &s->pending[f->pending_start + f->pending_index++];
+      const Erc7730AbiPending* pending = &s->pending[--s->pending_used];
       if (word_start < f->base ||
           word_start - f->base != pending->declared_offset)
         return ERC7730_ABI_NON_CANONICAL;
@@ -289,15 +302,13 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
     size_t declared = 0;
     if (!word_size(s->word, &declared) || (declared & 31u) != 0)
       return ERC7730_ABI_NON_CANONICAL;
-    if (s->pending_used >= ERC7730_ABI_STREAM_MAX_PENDING)
-      return ERC7730_ABI_RESOURCE_LIMIT;
+    if (f->pending_index >= f->pending_count) return ERC7730_ABI_BAD_PROGRAM;
     const uint16_t item_index = f->item_index - 1u;
     uint8_t path_depth = 0;
     bool target_prefix = false;
     child_target(s, f, n, item_index, &path_depth, &target_prefix);
-    s->pending[s->pending_used++] =
+    s->pending[f->pending_start + f->pending_count - 1u - f->pending_index++] =
         (Erc7730AbiPending){declared, child, path_depth, target_prefix};
-    f->pending_count++;
   } else if (f->mode == STREAM_BYTES_LENGTH) {
     size_t length = 0;
     if (!word_size(s->word, &length)) return ERC7730_ABI_BOUNDS;

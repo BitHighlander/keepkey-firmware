@@ -25,6 +25,7 @@
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/blake2b.h"
+#include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/hasher.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/pallas.h"
@@ -844,6 +845,26 @@ static void zcash_blake2b_personal_256(const char personal[16],
     blake2b_Update(&ctx, data, data_len);
   }
   blake2b_Final(&ctx, digest_out, 32);
+}
+
+bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id) {
+  return (version == 5 && version_group_id == 0x26A7270A) ||
+         (version == 6 && version_group_id == 0xD884B698);
+}
+
+bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,
+                                       size_t script_size,
+                                       const uint8_t public_key[33]) {
+  if (!script || !public_key || script_size != 25 || script[0] != 0x76 ||
+      script[1] != 0xa9 || script[2] != 0x14 || script[23] != 0x88 ||
+      script[24] != 0xac) {
+    return false;
+  }
+  uint8_t hash160[20];
+  ecdsa_get_pubkeyhash(public_key, HASHER_SHA2_RIPEMD, hash160);
+  const bool match = memcmp(hash160, script + 3, sizeof(hash160)) == 0;
+  memzero(hash160, sizeof(hash160));
+  return match;
 }
 
 bool zcash_compute_header_digest(uint32_t version, uint32_t version_group_id,

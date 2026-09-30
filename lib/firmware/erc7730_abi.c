@@ -7,6 +7,7 @@ typedef struct {
   const uint8_t* data;
   size_t len;
   uint32_t elements;
+  uint32_t pending;
 } AbiContext;
 
 static bool add_size(size_t a, size_t b, size_t* out) {
@@ -186,6 +187,7 @@ static Erc7730AbiResult validate_sequence(AbiContext* ctx, uint16_t first_node,
                                           size_t* encoded_len) {
   if (depth > ERC7730_ABI_MAX_DEPTH) return ERC7730_ABI_RESOURCE_LIMIT;
   size_t head_size = 0;
+  size_t dynamic_count = 0;
   for (size_t i = 0; i < count; i++) {
     uint16_t child = node_count ? (uint16_t)(first_node + i) : repeated_node;
     bool dynamic = false;
@@ -194,12 +196,18 @@ static Erc7730AbiResult validate_sequence(AbiContext* ctx, uint16_t first_node,
       return ERC7730_ABI_BAD_PROGRAM;
     if (dynamic) {
       slot = 32;
+      dynamic_count++;
     } else if (!static_size(ctx->program, child, depth + 1, &slot)) {
       return ERC7730_ABI_BAD_PROGRAM;
     }
     if (!add_size(head_size, slot, &head_size)) return ERC7730_ABI_BOUNDS;
   }
   if (!range_ok(ctx, base, head_size)) return ERC7730_ABI_BOUNDS;
+  /* Mirror the stream decoder: this sequence's offsets stay held until each
+   * dynamic child is reached, on top of those its ancestors still hold. */
+  if (dynamic_count > ERC7730_ABI_MAX_PENDING - ctx->pending)
+    return ERC7730_ABI_RESOURCE_LIMIT;
+  ctx->pending += (uint32_t)dynamic_count;
 
   size_t head = 0;
   size_t tail = head_size;
@@ -218,6 +226,7 @@ static Erc7730AbiResult validate_sequence(AbiContext* ctx, uint16_t first_node,
        */
       if (relative != tail || (relative & 31) != 0)
         return ERC7730_ABI_NON_CANONICAL;
+      ctx->pending--;
       size_t child_off = 0;
       if (!add_size(base, relative, &child_off)) return ERC7730_ABI_BOUNDS;
       Erc7730AbiResult r =
@@ -373,7 +382,7 @@ Erc7730AbiResult erc7730_abi_validate(const Erc7730AbiProgram* program,
   Erc7730AbiResult r = erc7730_abi_validate_program(program);
   if (r != ERC7730_ABI_OK) return r;
   if (!data && data_len != 0) return ERC7730_ABI_BOUNDS;
-  AbiContext ctx = {program, data, data_len, 0};
+  AbiContext ctx = {program, data, data_len, 0, 0};
   size_t used = 0;
   r = validate_value(&ctx, program->root, 0, 0, &used);
   if (r != ERC7730_ABI_OK) return r;
@@ -446,7 +455,7 @@ Erc7730AbiResult erc7730_abi_resolve(const Erc7730AbiProgram* program,
     return ERC7730_ABI_BAD_PATH;
   Erc7730AbiResult r = erc7730_abi_validate(program, data, data_len);
   if (r != ERC7730_ABI_OK) return r;
-  AbiContext ctx = {program, data, data_len, 0};
+  AbiContext ctx = {program, data, data_len, 0, 0};
   uint16_t node = program->root;
   size_t off = 0;
   for (size_t i = 0; i < path_len; i++) {
@@ -463,7 +472,8 @@ Erc7730AbiResult erc7730_abi_resolve(const Erc7730AbiProgram* program,
     if (!read_word_size(&ctx, off, &view_len) || !add_size(off, 32, &view_off))
       return ERC7730_ABI_BOUNDS;
   }
-  out->data = data + view_off;
+  /* The canonical empty root tuple may arrive as (NULL, 0): no NULL + 0. */
+  out->data = data ? data + view_off : NULL;
   out->data_len = view_len;
   out->node = node;
   out->encoded_offset = off;

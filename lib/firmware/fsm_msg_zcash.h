@@ -682,6 +682,16 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     layoutHome();
     return;
   }
+  /* transaction_v6 and every digest personalization key off tx_version, so
+   * an unknown version / versionGroupId pair must not reach them. Missing
+   * fields are refused by the header-field check below. */
+  if (msg->has_tx_version && msg->has_version_group_id &&
+      !zcash_tx_version_supported(msg->tx_version, msg->version_group_id)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Unsupported transaction version"));
+    layoutHome();
+    return;
+  }
   if (is_ironwood &&
       (!msg->has_tx_version || msg->tx_version != 6 ||
        !msg->has_version_group_id || msg->version_group_id != 0xD884B698 ||
@@ -1642,6 +1652,31 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
   if (msg->address_n[4] & 0x80000000) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Index must not be hardened"));
+    zcash_signing_abort();
+    layoutHome();
+    return;
+  }
+
+  /* The scriptPubKey is the sighash scriptCode: it must pay the key that
+   * address_n will sign with. */
+  const CoinType* coin = fsm_getCoin(true, "Zcash");
+  if (!coin) {
+    zcash_signing_abort();
+    return;
+  }
+  HDNode* node = fsm_getDerivedNode(coin->curve_name, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) {
+    zcash_signing_abort();
+    return;
+  }
+  hdnode_fill_public_key(node);
+  const bool script_matches = zcash_p2pkh_script_matches_pubkey(
+      msg->script_pubkey.bytes, msg->script_pubkey.size, node->public_key);
+  memzero(node, sizeof(*node));
+  if (!script_matches) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Transparent input script does not match path"));
     zcash_signing_abort();
     layoutHome();
     return;

@@ -9,29 +9,36 @@
  * (at your option) any later version.
  */
 
+static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count);
+
 // ── HiveGetPublicKey ──────────────────────────────────────────────────────
 // Returns a single STM-prefixed public key for the given SLIP-0048 path.
 // Path format: m/48'/13'/role'/account'/0' (all 5 components hardened).
 
 void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
-  RESP_INIT(HivePublicKey);
-
   CHECK_INITIALIZED
   CHECK_PIN
+
+  // Only a full Hive SLIP-0048 path may be derived and labelled as a Hive key.
+  if (!hive_slip48_path_ok(msg->address_n, msg->address_n_count)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive SLIP-0048 path"));
+    layoutHome();
+    return;
+  }
 
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  resp->has_raw_public_key = true;
-  resp->raw_public_key.size = 33;
-  memcpy(resp->raw_public_key.bytes, node->public_key, 33);
-
-  resp->has_public_key = true;
-  if (!hive_getPublicKey(node->public_key, resp->public_key,
-                         sizeof(resp->public_key))) {
-    memzero(node, sizeof(*node));
+  // Stage the key locally: a debug-link read during the confirm below reuses
+  // msg_resp, so the response is only built after the last confirmation.
+  uint8_t raw_public_key[33];
+  memcpy(raw_public_key, node->public_key, sizeof(raw_public_key));
+  memzero(node, sizeof(*node));
+  char public_key[sizeof(((HivePublicKey*)0)->public_key)];
+  if (!hive_getPublicKey(raw_public_key, public_key, sizeof(public_key))) {
     fsm_sendFailure(FailureType_Failure_FirmwareError,
                     _("Failed to encode Hive public key"));
     layoutHome();
@@ -61,15 +68,19 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
           break;
       }
     }
-    if (!confirm_ethereum_address(role_label, resp->public_key)) {
-      memzero(node, sizeof(*node));
+    if (!confirm_ethereum_address(role_label, public_key)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
       layoutHome();
       return;
     }
   }
 
-  memzero(node, sizeof(*node));
+  RESP_INIT(HivePublicKey);
+  resp->has_raw_public_key = true;
+  resp->raw_public_key.size = 33;
+  memcpy(resp->raw_public_key.bytes, raw_public_key, 33);
+  resp->has_public_key = true;
+  strlcpy(resp->public_key, public_key, sizeof(resp->public_key));
   msg_write(MessageType_MessageType_HivePublicKey, resp);
   layoutHome();
 }
@@ -79,27 +90,29 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
 // given account index in a single device interaction.
 
 void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
-  RESP_INIT(HivePublicKeys);
-
   CHECK_INITIALIZED
   CHECK_PIN
 
   uint32_t account_index = msg->has_account_index ? msg->account_index : 0;
+  // Bit 31 is the hardening flag; accepting it would alias a lower account.
+  if (account_index > 0x7FFFFFFFu) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive account index"));
+    layoutHome();
+    return;
+  }
 
   HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
-  resp->has_owner_key = true;
-  resp->has_active_key = true;
-  resp->has_memo_key = true;
-  resp->has_posting_key = true;
-
-  if (!hive_getPublicKeys(root, account_index, resp->owner_key,
-                          sizeof(resp->owner_key), resp->active_key,
-                          sizeof(resp->active_key), resp->memo_key,
-                          sizeof(resp->memo_key), resp->posting_key,
-                          sizeof(resp->posting_key))) {
-    memzero(root, sizeof(*root));
+  // Stage the keys locally: a debug-link read during the confirm below reuses
+  // msg_resp, so the response is only built after the last confirmation.
+  char keys[4][sizeof(((HivePublicKeys*)0)->owner_key)];
+  bool keys_ok = hive_getPublicKeys(
+      root, account_index, keys[0], sizeof(keys[0]), keys[1], sizeof(keys[1]),
+      keys[2], sizeof(keys[2]), keys[3], sizeof(keys[3]));
+  memzero(root, sizeof(*root));
+  if (!keys_ok) {
     fsm_sendFailure(FailureType_Failure_FirmwareError,
                     _("Failed to derive Hive keys"));
     layoutHome();
@@ -110,21 +123,26 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "Hive Keys",
                  "Export all Hive keys for account %u?",
                  (unsigned int)account_index)) {
-      memzero(root, sizeof(*root));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
       layoutHome();
       return;
     }
   }
 
-  memzero(root, sizeof(*root));
+  RESP_INIT(HivePublicKeys);
+  resp->has_owner_key = true;
+  resp->has_active_key = true;
+  resp->has_memo_key = true;
+  resp->has_posting_key = true;
+  strlcpy(resp->owner_key, keys[0], sizeof(resp->owner_key));
+  strlcpy(resp->active_key, keys[1], sizeof(resp->active_key));
+  strlcpy(resp->memo_key, keys[2], sizeof(resp->memo_key));
+  strlcpy(resp->posting_key, keys[3], sizeof(resp->posting_key));
   msg_write(MessageType_MessageType_HivePublicKeys, resp);
   layoutHome();
 }
 
 // ── HiveSignTx (transfer) ─────────────────────────────────────────────────
-
-static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count);
 
 // Keep custom-domain support, but make the exact signing domain part of
 // consent. Mainnet (explicit or omitted) keeps the ordinary flow.
@@ -143,8 +161,6 @@ static bool hive_confirm_chain(bool present, const uint8_t* chain) {
 }
 
 void fsm_msgHiveSignTx(const HiveSignTx* msg) {
-  RESP_INIT(HiveSignedTx);
-
   CHECK_INITIALIZED
   CHECK_PIN
 
@@ -225,6 +241,8 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
     return;
   }
 
+  // Debug-link reads during the confirms reuse msg_resp; init it here.
+  RESP_INIT(HiveSignedTx);
   hive_signTx(node, msg, resp);
   memzero(node, sizeof(*node));
 
@@ -264,8 +282,6 @@ static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count) {
 // the actual transaction. KeepKey is the sole root of trust from genesis.
 
 void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
-  RESP_INIT(HiveSignedAccountCreate);
-
   CHECK_INITIALIZED
   CHECK_PIN
 
@@ -389,6 +405,8 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
+  // Debug-link reads during the confirms reuse msg_resp; init it here.
+  RESP_INIT(HiveSignedAccountCreate);
   hive_signAccountCreate(node, msg, owner_raw, active_raw, posting_raw,
                          memo_raw, resp);
   memzero(node, sizeof(*node));
@@ -415,8 +433,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
 // so the user can verify it matches their device before replacing all keys.
 
 void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
-  RESP_INIT(HiveSignedAccountUpdate);
-
   CHECK_INITIALIZED
   CHECK_PIN
 
@@ -521,6 +537,8 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
+  // Debug-link reads during the confirms reuse msg_resp; init it here.
+  RESP_INIT(HiveSignedAccountUpdate);
   hive_signAccountUpdate(node, msg, owner_raw, active_raw, posting_raw,
                          memo_raw, resp);
   memzero(node, sizeof(*node));

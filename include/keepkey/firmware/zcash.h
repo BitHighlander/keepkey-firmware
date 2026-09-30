@@ -166,6 +166,20 @@ bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
                                        uint8_t sighash_out[32]);
 
 /**
+ * True only for the (version, versionGroupId) pairs this signer implements:
+ * v5 (ZIP-225) and v6. The digest selection keys off version, so any other
+ * pair must be refused before confirmation.
+ */
+bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id);
+
+/**
+ * True when script is a P2PKH scriptPubKey paying HASH160(public_key).
+ */
+bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,
+                                       size_t script_size,
+                                       const uint8_t public_key[33]);
+
+/**
  * Compute ZIP-244 T.1 header_digest from plaintext transaction header fields.
  */
 bool zcash_compute_header_digest(uint32_t version, uint32_t version_group_id,

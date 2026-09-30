@@ -43,8 +43,6 @@ def unbuilt_tests(root):
         cwd=root).decode().split('\0')
     expected = {str((root / p).resolve()) for p in tracked
                 if Path(p).suffix.lower() in {'.c', '.cc', '.cpp', '.cxx'}}
-    # Owned by hive-release-review; all other tracked suites must be reachable.
-    expected.discard(str(root / 'unittests/firmware/hive.cpp'))
     with tempfile.TemporaryDirectory(prefix='kk-preflight-cmake-') as tmp:
         project = Path(tmp)
         # Preserve repository-root paths used by the actual test definitions.

@@ -61,6 +61,11 @@ static char debug_confirm_body[BODY_CHAR_MAX];
 
 const char* confirm_debug_title(void) { return debug_confirm_title; }
 const char* confirm_debug_body(void) { return debug_confirm_body; }
+
+void confirm_debug_clear(void) {
+  memzero(debug_confirm_title, sizeof(debug_confirm_title));
+  memzero(debug_confirm_body, sizeof(debug_confirm_body));
+}
 #endif
 
 /* vsnprintf() returns the length it WOULD have written. Treat anything that

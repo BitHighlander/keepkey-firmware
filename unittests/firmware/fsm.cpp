@@ -5,6 +5,7 @@ extern "C" {
 #include "keepkey/board/memory.h"
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/confirm_sm.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
 #include "trezor/crypto/bip32.h"
@@ -2469,6 +2470,52 @@ TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
   setup_abort();
   EXPECT_FALSE(reset_debug_is_private());
   for (size_t i = 0; i < size; ++i) ASSERT_EQ(0, canvas->buffer[i]);
+}
+
+TEST(DiceCeremonyPrivacy, AbortClearsConfirmTextBeforeDiagnosticsResume) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  reset_init(128, false, false, "english", "text", false, 0, 0, true, false);
+  ASSERT_TRUE(reset_debug_is_private());
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(confirm(ButtonRequestType_ButtonRequest_DiceRoll, "Dice Rolls",
+                      "%s", "private page"));
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_STREQ("private page", confirm_debug_body());
+  setup_abort();
+  EXPECT_FALSE(reset_debug_is_private());
+  EXPECT_STREQ("", confirm_debug_title());
+  EXPECT_STREQ("", confirm_debug_body());
+}
+
+TEST(Fsm, Bip85CompletionAndCancelClearConfirmText) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  struct WipeOnExit {
+    ~WipeOnExit() { storage_wipe(); }
+  } cleanup;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  GetBip85Mnemonic request = {};
+  request.word_count = 12;
+  for (bool cancel : {false, true}) {
+    SCOPED_TRACE(cancel);
+    // Approve the derivation prompt, then every page or only the first.
+    ASSERT_TRUE(kkconfirm_preload(cancel ? 2 : 20, cancel ? 1 : 0));
+    fsm_test_clearLastFailure();
+    fsm_msgGetBip85Mnemonic(&request);
+    EXPECT_EQ(cancel ? FailureType_Failure_ActionCancelled : 0,
+              static_cast<int>(fsm_test_lastFailureCode()));
+    kkconfirm_drain();
+    EXPECT_FALSE(bip85_debug_is_private());
+    EXPECT_STREQ("", confirm_debug_title());
+    EXPECT_STREQ("", confirm_debug_body());
+  }
 }
 
 TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {

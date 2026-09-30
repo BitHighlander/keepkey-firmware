@@ -68,6 +68,8 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
   char* outs[4] = {owner_out, active_out, memo_out, posting_out};
   const size_t lens[4] = {owner_len, active_len, memo_len, posting_len};
 
+  // Bit 31 is the hardening flag; accepting it would alias a lower account.
+  if (account_index > 0x7FFFFFFFu) return false;
   uint32_t account_hardened = account_index | 0x80000000u;
 
   for (int i = 0; i < 4; i++) {

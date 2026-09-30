@@ -14,6 +14,7 @@ def source(path):
 
 
 def function_body(text, name):
+    text = code_only(text)
     match = re.search(r"\b" + re.escape(name) + r"\s*\([^;]*?\)\s*\{", text, re.S)
     if not match:
         raise AssertionError("function not found: " + name)
@@ -30,7 +31,29 @@ def function_body(text, name):
 
 
 def code_only(text):
-    return re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+    """Blank comments and string/char literals so neither can satisfy a token
+    check or unbalance the brace count. Literals keep their quotes."""
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif text[i] in "\"'":
+            quote = text[i]
+            i += 1
+            while i < n and text[i] != quote and text[i] != "\n":
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            out.append(quote + quote)
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
 
 
 def require(body, token, where):

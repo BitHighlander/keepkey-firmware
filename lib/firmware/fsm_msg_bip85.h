@@ -2,6 +2,9 @@ static void bip85_finish_private_display(void) {
   /* Clear the last mnemonic page before diagnostics become available again. */
   layout_clear();
   layoutHome();
+#if DEBUG_LINK
+  confirm_debug_clear();
+#endif
   bip85_set_private_display(false);
 }
 

@@ -43,7 +43,7 @@
  * blind-sign gate. Avalanche C-Chain router, verified live against THORChain
  * /inbound_addresses via a Pioneer quote (2026-07). Lowercase, no 0x, to match
  * thor_format_to_addr's output. Same migration caveat as THOR_ROUTER.
- * ponytail: BSC (chainId 56) and Base (8453) routers also exist on-chain but
+ * Note: BSC (chainId 56) and Base (8453) routers also exist on-chain but
  * are omitted until verified against a live node — the shipped Pioneer catalog
  * lists STALE addresses (its AVAX entry 8f66c4ae.. is already wrong vs the live
  * 00dc6100..), and Pioneer currently routes BSC/Base swaps via Relay, not a

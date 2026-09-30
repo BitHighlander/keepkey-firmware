@@ -1416,6 +1416,39 @@ TEST(Zcash, ComputeHeaderDigest_FromPlaintextFields) {
   EXPECT_TRUE(memcmp(digest, ZIP244_EXPECTED_HEADER_DIGEST, 32) == 0);
 }
 
+TEST(Zcash, TxVersionSupported_OnlyV5AndV6Pairs) {
+  EXPECT_TRUE(zcash_tx_version_supported(5, 0x26A7270A));
+  EXPECT_TRUE(zcash_tx_version_supported(6, 0xD884B698));
+  EXPECT_FALSE(zcash_tx_version_supported(5, 0xD884B698));
+  EXPECT_FALSE(zcash_tx_version_supported(6, 0x26A7270A));
+  EXPECT_FALSE(zcash_tx_version_supported(4, 0x892F2085));
+  EXPECT_FALSE(zcash_tx_version_supported(7, 0xD884B698));
+  EXPECT_FALSE(zcash_tx_version_supported(0, 0));
+}
+
+TEST(Zcash, P2pkhScriptMatchesPubkey_ComparesHash160) {
+  /* Compressed secp256k1 generator (private key 1); HASH160 is the public
+   * value behind 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH. */
+  static const uint8_t pubkey[33] = {
+      0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+      0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
+      0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98};
+  uint8_t script[25] = {0x76, 0xa9, 0x14, 0x75, 0x1e, 0x76, 0xe8, 0x19, 0x91,
+                        0x96, 0xd4, 0x54, 0x94, 0x1c, 0x45, 0xd1, 0xb3, 0xa3,
+                        0x23, 0xf1, 0x43, 0x3b, 0xd6, 0x88, 0xac};
+  EXPECT_TRUE(
+      zcash_p2pkh_script_matches_pubkey(script, sizeof(script), pubkey));
+  script[22] ^= 0x01;
+  EXPECT_FALSE(
+      zcash_p2pkh_script_matches_pubkey(script, sizeof(script), pubkey));
+  script[22] ^= 0x01;
+  script[24] = 0x87;
+  EXPECT_FALSE(
+      zcash_p2pkh_script_matches_pubkey(script, sizeof(script), pubkey));
+  script[24] = 0xac;
+  EXPECT_FALSE(zcash_p2pkh_script_matches_pubkey(script, 24, pubkey));
+}
+
 TEST(Zcash, ComputeTransparentDigest_DistinctFromPerInputSighash) {
   ZcashTransparentInputDigestInfo inputs[2] = {};
   ZcashTransparentOutputDigestInfo outputs[2] = {};

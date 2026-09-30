@@ -98,7 +98,13 @@ bool setup_isArmedAs(SetupKind kind) {
 void setup_abort(void) {
   /* Do not reopen screenshots with the last secret page still in the canvas
    * or queued animations after cancellation/commit. */
-  if (dice_mode != DICE_MODE_NONE) layout_clear();
+  if (dice_mode != DICE_MODE_NONE) {
+    layout_clear();
+#if DEBUG_LINK
+    /* The retained confirm text is the last dice or seed page shown. */
+    confirm_debug_clear();
+#endif
+  }
   /* The recovery half owns its own word buffers. Clearing them is a memzero
    * too; like everything here it touches no storage. */
   recovery_cipher_reset();

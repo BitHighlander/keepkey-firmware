@@ -1,5 +1,8 @@
 extern "C" {
+#include "keepkey/board/memory.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/hive.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
@@ -9,6 +12,9 @@ extern "C" {
 #include "gtest/gtest.h"
 #include <cstring>
 #include <vector>
+
+bool kkconfirm_preload(int, int);
+int kkconfirm_drain(void);
 
 static HiveSignTx transfer_request() {
   HiveSignTx msg = {};
@@ -364,4 +370,70 @@ TEST(Hive, AccountUpdateBytesMatchIndependentGrapheneLayout) {
     expect_signed_over(node, expected, response.serialized_tx.bytes,
                        response.serialized_tx.size, response.signature.bytes);
   }
+}
+
+TEST(Hive, PublicKeysRejectAccountIndexWithHardeningBit) {
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &root));
+  char keys[4][64];
+  EXPECT_TRUE(hive_getPublicKeys(&root, 0x7FFFFFFFu, keys[0], 64, keys[1], 64,
+                                 keys[2], 64, keys[3], 64));
+  EXPECT_FALSE(hive_getPublicKeys(&root, 0x80000000u, keys[0], 64, keys[1], 64,
+                                  keys[2], 64, keys[3], 64));
+}
+
+TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
+  std::vector<uint8_t> flash(FLASH_TOTAL_SIZE, 0xff);
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  uint8_t* previous = emulator_flash_base;
+  emulator_flash_base = flash.data();
+  storage_init();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+
+  HiveGetPublicKey key = {};
+  const uint32_t hive_path[5] = {HIVE_SLIP48_PURPOSE, HIVE_SLIP48_NETWORK,
+                                 HIVE_ROLE_OWNER, 0x80000000u, 0x80000000u};
+  key.address_n_count = 5;
+  memcpy(key.address_n, hive_path, sizeof(hive_path));
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKey(&key);
+  EXPECT_EQ(0, fsm_test_lastFailureCode());  // control: real Hive path
+  // Every component outside the SLIP-0048 Hive shape is refused before
+  // derivation, including the role slot the display label is taken from.
+  for (int i = 0; i < 5; ++i) {
+    SCOPED_TRACE(i);
+    memcpy(key.address_n, hive_path, sizeof(hive_path));
+    key.address_n[i] = i == 2   ? 0x80000002u
+                       : i == 3 ? 0u
+                                : key.address_n[i] ^ 1u;
+    fsm_test_clearLastFailure();
+    fsm_msgHiveGetPublicKey(&key);
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  }
+  key.address_n_count = 4;
+  memcpy(key.address_n, hive_path, sizeof(hive_path));
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKey(&key);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+
+  HiveGetPublicKeys keys = {};
+  keys.has_account_index = true;
+  keys.account_index = 0x7FFFFFFFu;
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKeys(&keys);
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  keys.account_index = 0x80000001u;
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKeys(&keys);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  storage_wipe();
+  storage_reset();
+  emulator_flash_base = previous;
 }

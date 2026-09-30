@@ -117,6 +117,9 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 #if DEBUG_LINK
 const char* confirm_debug_title(void);
 const char* confirm_debug_body(void);
+/// Forget the retained confirmation text, e.g. the last page of a private
+/// seed display, before DebugLinkState is allowed to report it again.
+void confirm_debug_clear(void);
 #endif
 
 bool confirm(ButtonRequestType type, const char* request_title,

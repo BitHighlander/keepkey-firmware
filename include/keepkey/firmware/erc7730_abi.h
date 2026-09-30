@@ -11,6 +11,10 @@
 #define ERC7730_ABI_MAX_DEPTH 8
 #define ERC7730_ABI_MAX_ARRAY_ELEMENTS 64
 #define ERC7730_ABI_MAX_PATH 16
+/* Dynamic-member offsets held at once: the unconsumed head offsets of every
+ * open sequence. The stream decoder has exactly this many slots; the one-shot
+ * validator enforces the same bound so both accept the same encodings. */
+#define ERC7730_ABI_MAX_PENDING 64
 
 #define ERC7730_ABI_DYNAMIC_ARRAY UINT16_MAX
 

@@ -369,3 +369,58 @@ TEST(Erc7730AbiStream, RejectsNonCanonicalEncodingsLikeTheValidator) {
     }
   }
 }
+
+namespace {
+
+// (uint256,bytes)[] with `count` elements, as the tail of its parent.
+std::vector<uint8_t> dynamicTupleArray(size_t count) {
+  std::vector<uint8_t> out = w(count);
+  for (size_t i = 0; i < count; i++) word(out, count * 32 + i * 128);
+  for (size_t i = 0; i < count; i++) out = cat({out, w(i), w(64), dyn("x")});
+  return out;
+}
+
+}  // namespace
+
+TEST(Erc7730AbiStream, FullDynamicTupleArrayAgreesWithTheValidator) {
+  // (T[]) and (T[], bytes) with T = (uint256, bytes): every element holds a
+  // pending offset of its own while the array's later offsets are pending.
+  const Erc7730AbiNode array_only[] = {
+      {ERC7730_ABI_TUPLE, 0, 1, 1, 0},
+      {ERC7730_ABI_ARRAY, 0, 2, 1, ERC7730_ABI_DYNAMIC_ARRAY},
+      {ERC7730_ABI_TUPLE, 0, 3, 2, 0},
+      {ERC7730_ABI_UINT, 256, 0, 0, 0},
+      {ERC7730_ABI_BYTES, 0, 0, 0, 0}};
+  const Erc7730AbiNode array_then_bytes[] = {
+      {ERC7730_ABI_TUPLE, 0, 1, 2, 0},
+      {ERC7730_ABI_ARRAY, 0, 3, 1, ERC7730_ABI_DYNAMIC_ARRAY},
+      {ERC7730_ABI_BYTES, 0, 0, 0, 0},
+      {ERC7730_ABI_TUPLE, 0, 4, 2, 0},
+      {ERC7730_ABI_UINT, 256, 0, 0, 0},
+      {ERC7730_ABI_BYTES, 0, 0, 0, 0}};
+  const Erc7730AbiProgram one{array_only, 5, 0};
+  const Erc7730AbiProgram two{array_then_bytes, 6, 0};
+  const auto full = dynamicTupleArray(ERC7730_ABI_MAX_ARRAY_ELEMENTS);
+  const auto short_by_one =
+      dynamicTupleArray(ERC7730_ABI_MAX_ARRAY_ELEMENTS - 1);
+  const struct {
+    const Erc7730AbiProgram* program;
+    std::vector<uint8_t> encoded;
+    Erc7730AbiResult expected;
+  } cases[] = {
+      {&one, cat({w(32), full}), ERC7730_ABI_OK},
+      {&two, cat({w(64), w(64 + short_by_one.size()), short_by_one, dyn("b")}),
+       ERC7730_ABI_OK},
+      // One offset more than the decoder can hold: both refuse it alike.
+      {&two, cat({w(64), w(64 + full.size()), full, dyn("b")}),
+       ERC7730_ABI_RESOURCE_LIMIT},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.encoded.size());
+    EXPECT_EQ(
+        erc7730_abi_validate(c.program, c.encoded.data(), c.encoded.size()),
+        c.expected);
+    for (size_t chunk : {size_t{1}, size_t{32}, size_t{4096}})
+      EXPECT_EQ(stream(c.program, c.encoded, chunk), c.expected) << chunk;
+  }
+}

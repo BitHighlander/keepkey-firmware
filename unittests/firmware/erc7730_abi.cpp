@@ -64,6 +64,11 @@ TEST(Erc7730Abi, AcceptsOnlyCanonicalEmptyRootTuple) {
   Erc7730AbiProgram program{empty, 1, 0};
   EXPECT_EQ(erc7730_abi_validate_program(&program), ERC7730_ABI_OK);
   EXPECT_EQ(erc7730_abi_validate(&program, nullptr, 0), ERC7730_ABI_OK);
+  Erc7730AbiValue value{};
+  ASSERT_EQ(erc7730_abi_resolve(&program, nullptr, 0, nullptr, 0, &value),
+            ERC7730_ABI_OK);
+  EXPECT_EQ(value.data, nullptr);  // NULL is kept, never offset
+  EXPECT_EQ(value.data_len, 0u);
 
   const Erc7730AbiNode noncanonical[] = {{ERC7730_ABI_TUPLE, 0, 1, 0, 0}};
   program = {noncanonical, 1, 0};
