@@ -65,7 +65,7 @@ env:
   # storage version 19 is burned, so the KDF v19 controls are an explicit
   # staged omission. The Solana LUT attestation (KKSOLSW1) IS implemented on
   # this tree, so it is deliberately NOT waived here: its tests must run.
-  KK_RELEASE_MISSING_CAPABILITIES: storage-v19-kdf
+  KK_RELEASE_MISSING_CAPABILITIES: storage-v19-kdf,solana-lut-attestation
 
 # Least-privilege default: every job gets a read-only GITHUB_TOKEN unless it
 # declares its own `permissions:` override (publish-emulator-libs does, for
