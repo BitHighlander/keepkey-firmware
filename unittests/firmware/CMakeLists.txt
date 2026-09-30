@@ -36,14 +36,20 @@ if(NOT ${KK_BITCOIN_ONLY})
       binance.cpp
       coins.cpp
       cosmos.cpp
+      eip712.cpp
       eos.cpp
       eos_authorization.cpp
       eos_authorization_probe.c
       ethereum.cpp
+      eip712_stream.cpp
+      liquidity_key_probe.c
+      review_integer.cpp
       mayachain.cpp
       nano.cpp
       osmosis.cpp
       ripple.cpp
+      signed_metadata.cpp
+      erc7730_format.cpp
       solana.cpp
       thorchain.cpp)
 endif()
