@@ -397,6 +397,11 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
+      - name: Pallas public/secret API boundary
+        # Source-boundary gate for the Zcash Orchard split (not a timing or
+        # constant-time proof). Needs deps/crypto initialised above.
+        run: python3 tools/check_pallas_api_boundary.py
+
       - name: Cache base image
         id: cache-base
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
