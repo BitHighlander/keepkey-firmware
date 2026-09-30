@@ -946,21 +946,27 @@ TEST(Ethereum, LpApprovalRefusesPaddedValueAndUnlimitedAllowance) {
   EXPECT_FALSE(zx_confirmApproveLiquidity(msg.data_initial_chunk.size, &msg));
 }
 
-TEST(Ethereum, AddLiquidityToThirdPartyCanCompleteAllConfirmations) {
+// Audited 7.15 policy (pinned by test_sign_uni_remove_liquidity_ETH): a recipient
+// that is not the signer is refused even after the user stepped through every
+// screen. Alpha's d83847105 treated the approval as final; owner decision open.
+TEST(Ethereum, AddLiquidityToThirdPartyIsRefusedAfterEveryConfirmation) {
   ensure_liquidity_signing_seed();
   EthereumSignTx msg = liquidity_tx(true, true);
 
   ASSERT_TRUE(kkconfirm_preload(6, 0));
-  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
-TEST(Ethereum, RemoveLiquidityToThirdPartyCanCompleteAllConfirmations) {
+// Audited 7.15 policy (pinned by test_sign_uni_remove_liquidity_ETH): a recipient
+// that is not the signer is refused even after the user stepped through every
+// screen. Alpha's d83847105 treated the approval as final; owner decision open.
+TEST(Ethereum, RemoveLiquidityToThirdPartyIsRefusedAfterEveryConfirmation) {
   ensure_liquidity_signing_seed();
   EthereumSignTx msg = liquidity_tx(true, false);
 
   ASSERT_TRUE(kkconfirm_preload(5, 0));
-  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 

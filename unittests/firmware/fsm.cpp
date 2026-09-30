@@ -1714,6 +1714,12 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   generic.msg_count = 1;
   generic.has_chain_id = true;
   std::strcpy(generic.chain_id, "cosmoshub-4");
+  generic.has_chain_name = true;
+  std::strcpy(generic.chain_name, "Cosmos");
+  generic.has_denom = true;
+  std::strcpy(generic.denom, "uatom");
+  generic.has_message_type_prefix = true;
+  std::strcpy(generic.message_type_prefix, "cosmos-sdk");
   ASSERT_TRUE(tendermint_signTxInit(&node, &generic, sizeof(generic), "uatom",
                                     TENDERMINT_SIGNING_GENERIC));
   ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
