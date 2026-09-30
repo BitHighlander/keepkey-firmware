@@ -270,7 +270,7 @@ _BLOCK13_NATIVE_FULL_ONLY = {
         "DeclinedContinuationCannotRenewAndFreshRetryWorks",
     )
     for chain in (
-        "Binance", "Cosmos", "Osmosis", "Thorchain", "Mayachain",
+        "Cosmos", "Osmosis", "Thorchain", "Mayachain",
         "TendermintDirectHandler",
     )
 }

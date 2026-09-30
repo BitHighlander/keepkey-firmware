@@ -112,7 +112,9 @@ class NativeContractEvidence(unittest.TestCase):
             self.paths[variant] = path
 
     def test_complete_product_contracts_pass_and_bind_both_files(self):
-        self.assertEqual(55, len(report.BLOCK13_NATIVE_CASES["full"]))
+        # Binance is retired on alpha (ROM reclaim), so its five continuation cases
+        # are no longer owned: 55 - 5.
+        self.assertEqual(50, len(report.BLOCK13_NATIVE_CASES["full"]))
         self.assertEqual(18, len(report.BLOCK13_NATIVE_CASES["bitcoin-only"]))
         evidence = report.validate_native_contract_junit(self.root)
         self.assertEqual({"full", "bitcoin-only"},
