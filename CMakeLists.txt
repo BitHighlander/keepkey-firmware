@@ -250,6 +250,21 @@ if(${KK_EMULATOR} AND NOT WIN32)
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
   add_dependencies(xunit firmware-unit board-unit crypto-unit)
 
+  if(TARGET erc7730-validator-test)
+    add_test(NAME test-erc7730-validator
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/erc7730-validate/test_cli.py
+                $<TARGET_FILE:erc7730-validate>)
+    add_dependencies(xunit erc7730-validator-test)
+  endif()
+
+  if(TARGET zcash-display-unit)
+    add_test(test-zcash-display ${CMAKE_BINARY_DIR}/bin/zcash-display-unit)
+    add_dependencies(xunit zcash-display-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-display-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-display.xml)
+  endif()
+
   if(KK_BUILD_DYLIB AND NOT WIN32)
     find_package(Threads REQUIRED)
     add_executable(emulator-unit unittests/emulator/lifecycle.cpp)
