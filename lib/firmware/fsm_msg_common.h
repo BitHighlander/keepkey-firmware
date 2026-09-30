@@ -547,6 +547,11 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_reset();
   storage_resetUuid();
   storage_commit();
+  /* Factory reset drops runtime trust anchors too: loaded clearsign
+   * signers (and any metadata they verified) must not survive a wipe. */
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
 
@@ -618,6 +623,9 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
   }
 
   storage_loadDevice(msg);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   storage_commit();
 
@@ -631,6 +639,9 @@ void fsm_msgResetDevice(ResetDevice* msg) {
   CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   // display_random remains in the wire schema for host compatibility, but is
   // intentionally ignored: internal entropy is seed pre-image material and
@@ -777,6 +788,11 @@ void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
    * after both init-state checks have passed: a recovery that is about to be
    * rejected must not tear down work it never replaces. */
   fsm_abort_workflows();
+#if !BITCOIN_ONLY
+  if (!(msg->has_dry_run && msg->dry_run)) {
+    signed_metadata_clear_signers();
+  }
+#endif
 
   recovery_cipher_init(
       msg->has_word_count ? msg->word_count : 0,
