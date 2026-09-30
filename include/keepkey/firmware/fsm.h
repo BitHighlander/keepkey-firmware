@@ -30,6 +30,27 @@ void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
 void fsm_test_clearLastFailure(void);
 FailureType fsm_test_lastFailureCode(void);
+const char* fsm_test_lastFailureMessage(void);
+/* Wipes routed through FSM_SCRUB() since the last clear, by buffer size, so a
+ * test can tell that a function-local secret buffer was wiped. */
+void fsm_test_recordScrub(size_t size);
+void fsm_test_clearScrubs(void);
+size_t fsm_test_scrubCount(size_t size);
+/* memzero() of a whole array or object, observable by tests in DEBUG_LINK
+ * builds. FSM_SCRUB takes an array; FSM_SCRUB_OBJ takes any lvalue. */
+#define FSM_SCRUB(array)                 \
+  do {                                   \
+    memzero((array), sizeof(array));     \
+    fsm_test_recordScrub(sizeof(array)); \
+  } while (0)
+#define FSM_SCRUB_OBJ(obj)             \
+  do {                                 \
+    memzero(&(obj), sizeof(obj));      \
+    fsm_test_recordScrub(sizeof(obj)); \
+  } while (0)
+#else
+#define FSM_SCRUB(array) memzero((array), sizeof(array))
+#define FSM_SCRUB_OBJ(obj) memzero(&(obj), sizeof(obj))
 #endif
 
 #define RESP_INIT(TYPE)                                                    \
@@ -99,6 +120,14 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg);
 void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg);
 void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg);
 void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg);
+void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg);
+void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg);
+void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg);
+void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg);
+void fsm_msgEthereumClearSignDefinition(const EthereumClearSignDefinition* msg);
+void fsm_msgEthereumClearSignDefinitionChunk(
+    const EthereumClearSignDefinitionChunk* msg);
+void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg);
 
 void fsm_msgNanoGetAddress(NanoGetAddress* msg);
 void fsm_msgNanoSignTx(NanoSignTx* msg);
@@ -145,6 +174,20 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg);
 void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg);
 void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg);
 
+#if ZCASH_PRIVACY
+void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg);
+void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg);
+void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg);
+void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg);
+void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg);
+void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg);
+#endif
+void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg);
+void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg);
+void fsm_msgHiveSignTx(const HiveSignTx* msg);
+void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg);
+void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg);
+
 #if DEBUG_LINK
 // void fsm_msgDebugLinkDecision(DebugLinkDecision *msg);
 void fsm_msgDebugLinkGetState(DebugLinkGetState* msg);
@@ -155,5 +198,7 @@ void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump* msg);
 void fsm_msgFlashWrite(FlashWrite* msg);
 void fsm_msgFlashHash(FlashHash* msg);
 void fsm_msgSoftReset(SoftReset* msg);
+
+void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic* msg);
 
 #endif

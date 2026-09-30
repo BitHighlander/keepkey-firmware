@@ -76,11 +76,14 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   ensure_recovery_storage_ready();
   storage_wipe();
+  // Wiping flash does not reset the RAM shadow. A reused emulator image or
+  // preceding wallet test can leave it initialized; match WipeDevice's order.
   storage_reset();
   ASSERT_FALSE(storage_isInitialized());
 
-  // enforce_wordlist is omitted by default on the wire, which is what makes
-  // the commit condition skip mnemonic_check() entirely.
+  // enforce_wordlist is omitted by default on the wire. Firmware now ignores
+  // it and always checks words, but the empty ceremony must still be refused
+  // by the word-count guard before any check runs.
   recovery_cipher_init(/*word_count=*/12, /*passphrase_protection=*/false,
                        /*pin_protection=*/false, "english", "spaces",
                        /*enforce_wordlist=*/false, /*auto_lock_delay_ms=*/0,
@@ -100,6 +103,7 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
   EXPECT_FALSE(setup_isArmed());
   (void)kkconfirm_drain();
   storage_wipe();
+  storage_reset();
   layoutHomeForced();
 }
 
@@ -157,4 +161,45 @@ TEST(Recovery, UnrelatedTransportFailureKeepsCurrentCipherVisible) {
   setup_abort();
   (void)kkconfirm_drain();
   layoutHomeForced();
+}
+
+extern "C" {
+void recovery_review_seed_scratch(void);
+bool recovery_review_scratch_empty(void);
+void setup_abort(void);
+void recovery_cipher_reset(void);
+bool recovery_review_delete_resync(const char*, const char*, bool, char*,
+                                   char*);
+}
+
+TEST(Recovery, DeleteKeepsTypedCipherCharactersNotTheCurrentMapping) {
+  char coded[12], decoded[12];
+  // "ab" remains of word "abc", typed as "qwe" under per-character ciphers.
+  EXPECT_FALSE(recovery_review_delete_resync("zoo ab", "qwe", false, coded,
+                                             decoded));
+  EXPECT_STREQ("qw", coded);  // recomputing from the identity would be "ab"
+  EXPECT_STREQ("ab", decoded);
+
+  // Stepping back over a space into a finished word: its typed characters
+  // were discarded, so the heuristic must not see a guessed coded prefix.
+  EXPECT_TRUE(recovery_review_delete_resync("zoo", "", false, coded, decoded));
+  EXPECT_STREQ("", coded);
+  EXPECT_STREQ("zoo", decoded);
+
+  // Once unknown, stays unknown until the word is emptied.
+  EXPECT_TRUE(recovery_review_delete_resync("zo", "x", true, coded, decoded));
+  EXPECT_STREQ("", coded);
+  EXPECT_FALSE(recovery_review_delete_resync("", "", true, coded, decoded));
+  EXPECT_STREQ("", decoded);
+}
+TEST(Recovery, AbortAndResetClearPreviousWordAndDisplayEquivalent) {
+  recovery_review_seed_scratch();
+  ASSERT_FALSE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  recovery_review_seed_scratch();
+  recovery_cipher_reset();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
 }

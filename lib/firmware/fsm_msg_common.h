@@ -42,6 +42,13 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_supports_taproot = true;
   resp->supports_taproot = true;
 
+  /* Verifiable dice modes: the on-device consent screen, ResetDevice.dice_only
+     and the tagged MIXED derivation. Reported as a capability because older
+     firmware skips the unknown dice_only field and would derive a different
+     wallet without complaint; a host must fail closed on this bit. */
+  resp->has_supports_dice_modes = true;
+  resp->supports_dice_modes = true;
+
   /* Variant Name */
   resp->has_firmware_variant = true;
 #if BITCOIN_ONLY
@@ -136,8 +143,19 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   msg_write(MessageType_MessageType_Features, resp);
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetCoinTable(GetCoinTable* msg) {
-  RESP_INIT(CoinTable);
+  _Static_assert(sizeof(CoinTable) <= MAX_DECODE_SIZE,
+                 "CoinTable exceeds decoded-request scratch");
+  _Static_assert(_Alignof(CoinTable) <= 8,
+                 "CoinTable requires stronger scratch alignment");
+
+  /* The incoming GetCoinTable is held in decode_buffer. Copy its fields and
+   * validate them before reclaiming that storage for the large response. */
+  const bool has_start = msg->has_start;
+  const bool has_end = msg->has_end;
+  const uint32_t start = msg->start;
+  const uint32_t end = msg->end;
 
 #if BITCOIN_ONLY
   const size_t coin_table_count = COINS_COUNT;
@@ -145,15 +163,14 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
 #endif
 
-  CHECK_PARAM(msg->has_start == msg->has_end,
-              "Incorrect GetCoinTable parameters");
+  CHECK_PARAM(has_start == has_end, "Incorrect GetCoinTable parameters");
 
-  resp->has_chunk_size = true;
-  resp->chunk_size = sizeof(resp->table) / sizeof(resp->table[0]);
+  const size_t chunk_size =
+      sizeof(((CoinTable*)0)->table) / sizeof(((CoinTable*)0)->table[0]);
 
-  if (msg->has_start && msg->has_end) {
-    if (coin_table_count <= msg->start || coin_table_count < msg->end ||
-        msg->end < msg->start || resp->chunk_size < msg->end - msg->start) {
+  if (has_start) {
+    if (coin_table_count <= start || coin_table_count < end || end < start ||
+        chunk_size < end - start) {
       fsm_sendFailure(FailureType_Failure_Other,
                       "Incorrect GetCoinTable parameters");
       layoutHome();
@@ -161,18 +178,22 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
     }
   }
 
+  CoinTable* resp = (CoinTable*)msg_decoded_request_response_scratch();
+  memzero(resp, sizeof(*resp));
+  resp->has_chunk_size = true;
+  resp->chunk_size = chunk_size;
   resp->has_num_coins = true;
   resp->num_coins = coin_table_count;
 
-  if (msg->has_start && msg->has_end) {
-    resp->table_count = msg->end - msg->start;
+  if (has_start) {
+    resp->table_count = end - start;
 
-    for (size_t i = 0; i < msg->end - msg->start; i++) {
-      if (msg->start + i < COINS_COUNT) {
-        resp->table[i] = coins[msg->start + i];
+    for (size_t i = 0; i < end - start; i++) {
+      if (start + i < COINS_COUNT) {
+        resp->table[i] = coins[start + i];
 #if !BITCOIN_ONLY
-      } else if (msg->start + i - COINS_COUNT < TOKENS_COUNT) {
-        coinFromToken(&resp->table[i], &tokens[msg->start + i - COINS_COUNT]);
+      } else if (start + i < COINS_COUNT + TOKENS_COUNT) {
+        coinFromToken(&resp->table[i], &tokens[start + i - COINS_COUNT]);
 #endif
       }
     }
@@ -222,6 +243,7 @@ void fsm_msgPing(Ping* msg) {
       "Authenticator secret seed too large",
       "passphrase incorrect for authdata",
       "Auth secret unknown error",
+      "Authenticator account already exists",
       "Action cancelled",
   };
 
@@ -268,6 +290,8 @@ void fsm_msgPing(Ping* msg) {
   }
 
   if (authMsg < NUM_AUTHMESSAGES) {
+    /* Even reads can re-encrypt and persist authenticator storage. */
+    CHECK_STORAGE_WRITABLE
     // this is an authenticator message
     unsigned errcode;
     char otp[9] = {0};  // allow room for an 8 digit otp
@@ -362,8 +386,9 @@ void fsm_msgPing(Ping* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangePin(ChangePin* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
@@ -414,8 +439,9 @@ void fsm_msgChangePin(ChangePin* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
@@ -487,6 +513,11 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
 #endif
 }
 
+/* Budget returned bytes, not requests. A confirmed factory wipe starts a new
+ * uninitialized audit; Initialize and session changes must not replenish it. */
+#define ENTROPY_AUDIT_BUDGET (64u * 1024u)
+static uint32_t entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
+
 void fsm_msgWipeDevice(WipeDevice* msg) {
   (void)msg;
 
@@ -516,6 +547,13 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_reset();
   storage_resetUuid();
   storage_commit();
+  /* Factory reset drops runtime trust anchors too: loaded clearsign
+   * signers (and any metadata they verified) must not survive a wipe. */
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
+
+  entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
 
   fsm_sendSuccess("Device wiped");
   layoutHome();
@@ -533,8 +571,23 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
                   "Not in bootloader mode");
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  if (!confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
+  /* Uninitialized storage does not mean there is no secret: reset/recovery
+   * may already hold one in RAM. Preserve that ceremony and its screen. */
+  if (setup_isArmed()) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    "Entropy unavailable during setup");
+    return;
+  }
+
+  uint32_t len = msg->size;
+  if (len > ENTROPY_BUF) len = ENTROPY_BUF;
+  const bool press_free =
+      !storage_isInitialized() && !storage_isBitcoinOnlyLocked() &&
+      !storage_isFirmwareTooOld() && len <= entropy_audit_remaining;
+  if (!press_free &&
+      !confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
                "Do you want to generate and return entropy using the hardware "
                "RNG?")) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
@@ -542,13 +595,8 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
     return;
   }
 
+  if (press_free) entropy_audit_remaining -= len;
   RESP_INIT(Entropy);
-  uint32_t len = msg->size;
-
-  if (len > ENTROPY_BUF) {
-    len = ENTROPY_BUF;
-  }
-
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
   msg_write(MessageType_MessageType_Entropy, resp);
@@ -556,6 +604,7 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 }
 
 void fsm_msgLoadDevice(LoadDevice* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
 
   if (!confirm_load_device(msg->has_node)) {
@@ -574,6 +623,9 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
   }
 
   storage_loadDevice(msg);
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   storage_commit();
 
@@ -584,8 +636,12 @@ void fsm_msgLoadDevice(LoadDevice* msg) {
 }
 
 void fsm_msgResetDevice(ResetDevice* msg) {
+  CHECK_NOT_BTC_ONLY_LOCKED
   CHECK_NOT_INITIALIZED
   CHECK_NO_CEREMONY
+#if !BITCOIN_ONLY
+  signed_metadata_clear_signers();
+#endif
 
   // display_random remains in the wire schema for host compatibility, but is
   // intentionally ignored: internal entropy is seed pre-image material and
@@ -599,9 +655,11 @@ void fsm_msgResetDevice(ResetDevice* msg) {
              msg->has_auto_lock_delay_ms ? msg->auto_lock_delay_ms
                                          : STORAGE_DEFAULT_SCREENSAVER_TIMEOUT,
              msg->has_u2f_counter ? msg->u2f_counter : 0,
-             msg->has_dice_entropy && msg->dice_entropy);
+             msg->has_dice_entropy && msg->dice_entropy,
+             msg->has_dice_only && msg->dice_only);
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgEntropyAck(EntropyAck* msg) {
   if (msg->has_entropy) {
     reset_entropy(msg->entropy.bytes, msg->entropy.size);
@@ -621,7 +679,7 @@ void fsm_msgCancel(Cancel* msg) {
 }
 
 void fsm_msgApplySettings(ApplySettings* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",
@@ -730,6 +788,11 @@ void fsm_msgRecoveryDevice(RecoveryDevice* msg) {
    * after both init-state checks have passed: a recovery that is about to be
    * rejected must not tear down work it never replaces. */
   fsm_abort_workflows();
+#if !BITCOIN_ONLY
+  if (!(msg->has_dry_run && msg->dry_run)) {
+    signed_metadata_clear_signers();
+  }
+#endif
 
   recovery_cipher_init(
       msg->has_word_count ? msg->word_count : 0,
@@ -755,7 +818,7 @@ void fsm_msgCharacterAck(CharacterAck* msg) {
 }
 
 void fsm_msgApplyPolicies(ApplyPolicies* msg) {
-  CHECK_NOT_BITCOIN_ONLY_LOCKED
+  CHECK_STORAGE_WRITABLE
 
   CHECK_PARAM(msg->policy_count > 0, "No policies provided");
 

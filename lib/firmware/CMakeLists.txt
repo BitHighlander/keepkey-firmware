@@ -2,6 +2,7 @@ set(sources
     app_confirm.c
     app_layout.c
     authenticator.c
+    bip85.c
     coins.c
     crypto.c
     dice_input.c
@@ -22,13 +23,25 @@ set(sources
 # Non-Bitcoin coin families -- excluded from the bitcoin-only image.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
+      bip85.c
       binance.c
       eip712.c
+      eip712_stream.c
       eos.c
       eos-contracts/eosio.system.c
       eos-contracts/eosio.token.c
       ethereum.c
       ethereum_contracts.c
+      erc7730_abi.c
+      erc7730_abi_stream.c
+      erc7730_capabilities.c
+      erc7730_catalog.c
+      erc7730_condition.c
+      erc7730_field.c
+      erc7730_format.c
+      erc7730_program.c
+      erc7730_tx.c
+      erc7730_workflow.c
       ethereum_contracts/makerdao.c
       ethereum_contracts/saproxy.c
       ethereum_contracts/zxappliquid.c
@@ -37,6 +50,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts/zxtransERC20.c
       ethereum_contracts/zxswap.c
       ethereum_tokens.c
+      signed_metadata.c
       mayachain.c
       nano.c
       osmosis.c
@@ -44,10 +58,16 @@ if(NOT ${KK_BITCOIN_ONLY})
       ripple_base58.c
       signtx_tendermint.c
       solana.c
+      hive.c
       tron.c
       ton.c
       tendermint.c
       thorchain.c)
+endif()
+
+# Zcash shielded/Orchard engine -- transparent Zcash needs none of this.
+if(${KK_ZCASH_PRIVACY})
+  list(APPEND sources zcash.c)
 endif()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"

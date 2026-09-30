@@ -6,7 +6,7 @@ set(sources
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_BINARY_DIR}/include
-    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto)
+    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
 
 add_executable(crypto-unit ${sources})
 target_link_libraries(crypto-unit
@@ -23,3 +23,6 @@ target_link_libraries(crypto-unit
     kkemulator
     trezorcrypto
     kktransport)
+
+# Zcash coverage belongs to firmware-unit when KK_ZCASH_PRIVACY is enabled.
+# Its normal xunit/CTest registration runs the shared firmware/zcash.cpp suite.

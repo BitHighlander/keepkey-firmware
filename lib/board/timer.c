@@ -23,8 +23,19 @@
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/cm3/cortex.h>
 #else
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
+#include <windows.h>        /* Sleep() */
+#else
 #include <signal.h>
 #include <unistd.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
+                               shutdown(SOCKET,int) */
+#include <windows.h>        /* Sleep() */
+#endif
+#endif
 #endif
 
 #include "keepkey/board/keepkey_board.h"
@@ -34,6 +45,7 @@
 #include "trezor/crypto/rand.h"
 
 #include <stddef.h>
+#include <string.h>
 
 static volatile uint32_t remaining_delay = UINT32_MAX;
 static volatile uint32_t timeSinceWakeup = 0;
@@ -193,11 +205,31 @@ static void run_runnables(void) {
   }
 }
 
-void kk_timer_init(void) {
+/* A second board/emulator session must not relink nodes that are still in a
+ * queue from the first one. Reset both queues and the node contents before
+ * rebuilding the free list, including callbacks and their contexts. */
+static void reset_runnable_queues(void) {
+#ifndef EMULATOR
+  svc_disable_interrupts();
+#endif
+  free_queue.head = NULL;
+  free_queue.size = 0;
+  active_queue.head = NULL;
+  active_queue.size = 0;
+  memset(runnables, 0, sizeof(runnables));
+  remaining_delay = UINT32_MAX;
+  timeSinceWakeup = 0;
   for (int i = 0; i < MAX_RUNNABLES; i++) {
-    runnable_queue_push(&free_queue, &runnables[i]);
+    runnables[i].next = free_queue.head;
+    free_queue.head = &runnables[i];
+    free_queue.size++;
   }
+#ifndef EMULATOR
+  svc_enable_interrupts();
+#endif
 }
+
+void kk_timer_init(void) { reset_runnable_queues(); }
 
 /*
  * timer_init() - Timer 4 initialization.  Main timer for round robin tasking.
@@ -208,11 +240,7 @@ void kk_timer_init(void) {
  *     none
  */
 void timer_init(void) {
-  int i;
-
-  for (i = 0; i < MAX_RUNNABLES; i++) {
-    runnable_queue_push(&free_queue, &runnables[i]);
-  }
+  reset_runnable_queues();
 
 #ifndef EMULATOR
   // Set up the timer.
@@ -229,11 +257,13 @@ void timer_init(void) {
   nvic_set_priority(NVIC_TIM4_IRQ, 16 * 2);
 
   timer_enable_counter(TIM4);
-#else
+#elif !defined(_WIN32)
   void tim4_sighandler(int sig);
   signal(SIGALRM, tim4_sighandler);
   ualarm(1000, 1000);
 #endif
+  /* _WIN32: no SIGALRM/ualarm — libkkemu's kkemu_poll() drives timerisr_usr().
+   */
 }
 
 uint32_t fi_defense_delay(volatile uint32_t value) {
@@ -271,8 +301,17 @@ void delay_us(uint32_t us) {
   while (cnt--) {
     __asm__("nop");
   }
+#elif defined(_WIN32)
+  /* Sleep has millisecond resolution. Round up without overflowing us. */
+  Sleep(us / 1000u + (us % 1000u != 0u));
+#else
+#ifdef _WIN32
+  /* Windows has no POSIX usleep. Round up to the next millisecond so even a
+   * sub-millisecond USB poll delay still yields to the host. */
+  if (us != 0) Sleep(us / 1000 + (us % 1000 != 0));
 #else
   usleep(us);
+#endif
 #endif
 }
 
@@ -287,8 +326,21 @@ void delay_us(uint32_t us) {
 void delay_ms(uint32_t ms) {
   remaining_delay = ms;
 
+#ifdef _WIN32
+  /* No async SIGALRM timer on Windows, and kkemu_poll() drives timerisr_usr()
+   * only once per poll — so a plain spin here would never make progress when
+   * delay_ms() is reached from inside usbPoll() (e.g. PIN/U2F/authenticator
+   * flows). Advance the tick ourselves from wall-clock Sleep instead. Keeps
+   * timeSinceWakeup + the runnable queue moving exactly like the SIGALRM path,
+   * and stays single-threaded (no data races). */
+  while (remaining_delay > 0) {
+    Sleep(1);
+    timerisr_usr();
+  }
+#else
   while (remaining_delay > 0) {
   }
+#endif
 }
 
 /*
@@ -310,6 +362,12 @@ void delay_ms_with_callback(uint32_t ms, callback_func_t callback_func,
     if (remaining_delay % frequency_ms == 0) {
       (*callback_func)();
     }
+#ifdef _WIN32
+    /* See delay_ms(): drive the tick from wall-clock Sleep on Windows so this
+     * loop terminates when reached from inside usbPoll(). */
+    Sleep(1);
+    timerisr_usr();
+#endif
   }
 }
 
@@ -348,7 +406,7 @@ void timerisr_usr(void) {
 #endif
 }
 
-#ifdef EMULATOR
+#if defined(EMULATOR) && !defined(_WIN32)
 void tim4_sighandler(int sig) { timerisr_usr(); }
 #endif
 
