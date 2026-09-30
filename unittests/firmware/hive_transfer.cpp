@@ -394,6 +394,8 @@ TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
   load.has_mnemonic = true;
   strcpy(load.mnemonic, "all all all all all all all all all all all all");
   storage_loadDevice(&load);
+  // Nothing below may show a screen: only the sentinel is queued.
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
 
   HiveGetPublicKey key = {};
   const uint32_t hive_path[5] = {HIVE_SLIP48_PURPOSE, HIVE_SLIP48_NETWORK,
