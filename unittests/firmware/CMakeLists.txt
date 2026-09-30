@@ -41,6 +41,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       eos_authorization.cpp
       eos_authorization_probe.c
       ethereum.cpp
+      hive_transfer.cpp
       eip712_stream.cpp
       liquidity_key_probe.c
       review_integer.cpp
@@ -58,7 +59,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_tx.cpp
       erc7730_workflow.cpp
       solana.cpp
-      thorchain.cpp)
+      thorchain.cpp
+      tron.cpp)
 endif()
 
 include_directories(

@@ -38,6 +38,23 @@ bool thorchain_confirm_full_memo(const char* title, const char* memo,
   return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                        (const uint8_t*)memo, len);
 }
+
+bool thorchain_isValidDenom(const char* denom) {
+  if (!denom || !denom[0]) return false;
+  for (size_t i = 0; denom[i]; i++) {
+    const char c = denom[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
+          c == '/' || c == '-')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool thorchain_isValidAsset(const char* asset) {
+  return tendermint_isValidAsset(asset);
+}
+
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
@@ -124,7 +141,7 @@ bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg) {
 }
 
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
-                                   const char* to_address) {
+                                   const char* to_address, const char* denom) {
   if (!initialized || msgs_remaining == 0) return false;
 
   const char mainnetp[] = "thor";
@@ -155,6 +172,9 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
+  const char* coin_denom = (denom && denom[0]) ? denom : "rune";
+  if (!thorchain_isValidDenom(coin_denom)) return false;
+
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);
   }
@@ -164,10 +184,12 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   const char* const prelude = "{\"type\":\"thorchain/MsgSend\",\"value\":{";
   sha256_Update(&ctx, (uint8_t*)prelude, strlen(prelude));
 
-  // 21 + ^20 + 19 = ^60
+  // Serialize the host-provided denomination exactly as reviewed.
   success &= tendermint_snprintf(
       &ctx, buffer, sizeof(buffer),
-      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"rune\"}]", amount);
+      "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"", amount);
+  tendermint_sha256UpdateEscaped(&ctx, coin_denom, strlen(coin_denom));
+  sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
   // 17 + 45 + 1 = 63
   success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
@@ -186,8 +208,8 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   if (!initialized || msgs_remaining == 0) return false;
 
   const char* const signer_prefix = testnet ? "tthor" : "thor";
-  if (!depmsg || !depmsg->has_asset ||
-      !tendermint_validateSafeText(depmsg->asset) || !depmsg->has_signer ||
+  if (!depmsg || !depmsg->has_asset || !thorchain_isValidAsset(depmsg->asset) ||
+      !depmsg->has_signer ||
       !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
     return false;
   }
@@ -208,9 +230,11 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
                                  "\"coins\":[{\"amount\":\"%" PRIu64 "\"",
                                  depmsg->amount);
 
-  // 10 + ^20 + 3 = ^33
-  success &= tendermint_snprintf(&ctx, buffer, sizeof(buffer),
-                                 ",\"asset\":\"%s\"}]", depmsg->asset);
+  // Use escaping as defense-in-depth; valid assets have no escapable chars
+  const char* const asset_prefix = ",\"asset\":\"";
+  sha256_Update(&ctx, (uint8_t*)asset_prefix, strlen(asset_prefix));
+  tendermint_sha256UpdateEscaped(&ctx, depmsg->asset, strlen(depmsg->asset));
+  sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
   // <escape memo>
   const char* const memo_prefix = ",\"memo\":\"";
@@ -546,7 +570,6 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
     } else {
       return THORCHAIN_MEMO_UNPARSED;  // malformed memo
     }
-
     uint16_t bps = 0;
     if (!thorchain_parse_bps(parseTokPtrs[3], &bps)) {
       return THORCHAIN_MEMO_UNPARSED;
