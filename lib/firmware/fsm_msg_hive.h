@@ -566,6 +566,10 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
 // cold owner key must not be normalized into dApp flows. The full path
 // shape is still enforced like the tx handlers.
 
+/* Defined below with the SignOperations helpers; SignMessage needs it first. */
+static bool hive_confirm_slice(ButtonRequestType type, const char* title,
+                               const uint8_t* s, uint16_t len);
+
 static bool hive_slip48_message_path_ok(const uint32_t* address_n,
                                         uint32_t count,
                                         const char** role_label) {
