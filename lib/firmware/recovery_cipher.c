@@ -31,6 +31,7 @@
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
+#include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/bip39.h"
 #include "trezor/crypto/bip39_english.h"
 #include "trezor/crypto/memzero.h"
@@ -371,7 +372,13 @@ void next_character(void) {
 
   /* Scramble cipher */
   strlcpy(cipher, english_alphabet, ENGLISH_ALPHABET_BUF);
-  random_permute_char(cipher, strlen(cipher));
+  if (!random_permute_char_checked(cipher, strlen(cipher))) {
+    recovery_cipher_abort();
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "RNG health check failed; recovery refused");
+    layoutHome();
+    return;
+  }
 
   get_current_word(current_word_scratch);
 
