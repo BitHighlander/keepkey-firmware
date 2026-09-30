@@ -1657,7 +1657,7 @@ TEST(Solana, StakeAuthorizeShortDataIsOpaque) {
 /* The runtime rejects a transaction with two SetComputeUnitLimit (or two
  * SetComputeUnitPrice) instructions. Displaying only one of them would
  * describe a transaction that cannot run, so the parser refuses it. */
-TEST(Solana, DuplicateComputeBudgetInstructionIsMalformed) {
+TEST(Solana, DuplicateComputeBudgetInstructionIsFlagged) {
   for (uint8_t kind = 0; kind < 2; kind++) {
     const bool price = kind == 1;
     uint8_t data[9] = {price ? (uint8_t)SOL_CB_SET_COMPUTE_UNIT_PRICE
@@ -1686,8 +1686,15 @@ TEST(Solana, DuplicateComputeBudgetInstructionIsMalformed) {
         pos += data_len;
       }
       SolanaParsedTx tx;
-      EXPECT_EQ(solana_inspectTx(raw, pos, &tx),
-                copies == 1 ? SOL_TX_REVIEW_VERIFIED : SOL_TX_REVIEW_MALFORMED)
+      /* The parser still classifies the structure, but flags the duplicate:
+       * solana_parseTx refuses it and the FSM refuses it on every path
+       * (solana_validatePriorityFee for fee-binding reviews, the
+       * duplicate_compute_budget check for the rest). */
+      EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED)
+          << "kind=" << (int)kind << " copies=" << (int)copies;
+      EXPECT_EQ(tx.duplicate_compute_budget, copies == 2)
+          << "kind=" << (int)kind << " copies=" << (int)copies;
+      EXPECT_EQ(solana_parseTx(raw, pos, &tx), copies == 1)
           << "kind=" << (int)kind << " copies=" << (int)copies;
     }
   }

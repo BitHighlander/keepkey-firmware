@@ -578,12 +578,12 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           pi->type = SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME;
           pi->extra_value = read_le32(instr_data + 1);
         } else if (cb_instr == SOL_CB_SET_COMPUTE_UNIT_LIMIT && data_len == 5) {
-          if (seen_compute_limit) return -1;
+          if (seen_compute_limit) tx->duplicate_compute_budget = true;
           seen_compute_limit = true;
           pi->type = SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT;
           pi->extra_value = read_le32(instr_data + 1);
         } else if (cb_instr == SOL_CB_SET_COMPUTE_UNIT_PRICE && data_len == 9) {
-          if (seen_compute_price) return -1;
+          if (seen_compute_price) tx->duplicate_compute_budget = true;
           seen_compute_price = true;
           pi->type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
           pi->extra_value = read_le64(instr_data + 1);
@@ -1121,7 +1121,8 @@ bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
 }
 
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {
-  return solana_inspectTx(raw, raw_len, tx) == SOL_TX_REVIEW_VERIFIED;
+  return solana_inspectTx(raw, raw_len, tx) == SOL_TX_REVIEW_VERIFIED &&
+         !tx->duplicate_compute_budget;
 }
 
 /* ------------------------------------------------------------------ */

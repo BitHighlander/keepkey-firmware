@@ -93,6 +93,9 @@ static bool solana_confirmPriorityFee(const SolanaParsedTx* tx) {
  * showing any consent screen. The runtime rejects duplicate price/limit fields;
  * displaying only the last one would describe a transaction it cannot run. */
 static bool solana_validatePriorityFee(const SolanaParsedTx* tx) {
+  /* The parser saw a duplicate even if it was not stored (instruction count
+   * above SOL_MAX_INSTRUCTIONS), so the loop below alone is not enough. */
+  if (tx->duplicate_compute_budget) return false;
   uint64_t price = 0;
   uint64_t limit = 1400000u;
   bool seen_price = false;
@@ -946,6 +949,12 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       return;
     }
     signed_metadata_pubkey_fingerprint(delegate_pub, signer_fp);
+    /* The root-certified delegate is authenticated by the KeepKey root
+     * signature over its certificate, not by a human comparing this id, so
+     * the signer line keeps the 8-hex-digit form the certified screens (and
+     * their host tests) pin. Runtime-loaded signers are unauthenticated and
+     * keep the full-length fingerprint below. */
+    signer_fp[8] = '\0';
     memzero(delegate_pub, sizeof(delegate_pub));
 
     if (has_lut_material) {
@@ -1061,6 +1070,16 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_SyntaxError, _("Invalid priority fee"));
+    layoutHome();
+    return;
+  }
+  /* Blind-sign / opaque reviews do not bind the fee, but a message with a
+   * duplicate compute-budget instruction is still one the runtime rejects. */
+  if (!review_binds_fee && parsed.duplicate_compute_budget) {
+    memzero(node, sizeof(*node));
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Malformed Solana transaction"));
     layoutHome();
     return;
   }

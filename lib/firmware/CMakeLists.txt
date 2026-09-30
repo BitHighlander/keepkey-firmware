@@ -25,7 +25,6 @@ set(sources
 # Non-Bitcoin coin families -- excluded from the bitcoin-only image.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      binance.c
       eip712.c
       eip712_stream.c
       eos.c

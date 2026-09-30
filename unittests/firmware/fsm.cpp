@@ -10,7 +10,6 @@ extern "C" {
 #include "trezor/crypto/bip39.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/bip85.h"
-#include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/ethereum.h"
@@ -168,16 +167,6 @@ static void expectSigningSessionsCleared(bool initialize) {
   HDNode node = {};
   node.curve = &secp256k1_info;
 
-  BinanceSignTx binance = {};
-  binance.has_msg_count = true;
-  binance.msg_count = 1;
-  binance.has_account_number = true;
-  binance.has_chain_id = true;
-  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
-  binance.has_sequence = true;
-  binance.has_source = true;
-  ASSERT_TRUE(binance_signTxInit(&node, &binance));
-
   TendermintSignTx tendermint = {};
   tendermint.has_msg_count = true;
   tendermint.msg_count = 1;
@@ -218,7 +207,6 @@ static void expectSigningSessionsCleared(bool initialize) {
   uint32_t eos_path[8] = {};
   eos_signingInit(eos_chain_id, 1, &eos_header, &node, eos_path, 0);
 
-  ASSERT_TRUE(binance_signingIsInited());
   ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
   ASSERT_TRUE(osmosis_signingIsInited());
   ASSERT_TRUE(thorchain_signingIsInited());
@@ -233,7 +221,6 @@ static void expectSigningSessionsCleared(bool initialize) {
     fsm_abort_workflows();
   }
 
-  EXPECT_FALSE(binance_signingIsInited());
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
   EXPECT_FALSE(osmosis_signingIsInited());
   EXPECT_FALSE(thorchain_signingIsInited());
@@ -1231,42 +1218,6 @@ TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
 }
 
 #if !BITCOIN_ONLY
-TEST_F(AutoLockProgress, BinanceStartRenewsButPollingDoesNot) {
-  ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-  BinanceSignTx start = {};
-  start.has_msg_count = true;
-  start.msg_count = 2;
-  start.has_account_number = start.has_chain_id = start.has_sequence = true;
-  std::strcpy(start.chain_id, "chain-1");
-  start.has_source = true;
-  std::strcpy(start.chain_id, "Binance-Chain-Nile");
-  receiveMessage(MessageType_MessageType_BinanceSignTx, BinanceSignTx_fields,
-                 &start);
-  ASSERT_TRUE(binance_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  ASSERT_TRUE(binance_signingIsInited());
-  GetFeatures poll = {};
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
-                 &poll);
-  toggle_screensaver();
-  ASSERT_TRUE(binance_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  EXPECT_FALSE(binance_signingIsInited());
-  EXPECT_EQ(SCREENSAVER, home_get_state());
-}
-
 TEST_F(AutoLockProgress, CosmosStartRenewsButPollingDoesNot) {
   ScopedFlash flash;
   signing_abort();
@@ -1427,60 +1378,6 @@ TEST_F(AutoLockProgress, MayachainStartRenewsButPollingDoesNot) {
   increment_idle_time(1);
   toggle_screensaver();
   EXPECT_FALSE(mayachain_signingIsInited());
-  EXPECT_EQ(SCREENSAVER, home_get_state());
-}
-
-TEST_F(AutoLockProgress, BinanceContinuationRenewsAndMalformedAckTerminates) {
-  ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  BinanceSignTx start = {};
-  start.has_msg_count = true;
-  start.msg_count = 3;
-  start.has_account_number = start.has_chain_id = start.has_sequence = true;
-  start.has_source = true;
-  std::strcpy(start.chain_id, "Binance-Chain-Nile");
-  receiveMessage(MessageType_MessageType_BinanceSignTx, BinanceSignTx_fields,
-                 &start);
-  ASSERT_TRUE(binance_signingIsInited());
-  HDNode signer = {};
-  ASSERT_TRUE(storage_getRootNode("secp256k1", false, &signer));
-  hdnode_fill_public_key(&signer);
-  BinanceTransferMsg ack = {};
-  ack.inputs_count = ack.outputs_count = 1;
-  ack.inputs[0].has_address = ack.outputs[0].has_address = true;
-  ASSERT_TRUE(tendermint_getAddress(&signer, "tbnb", ack.inputs[0].address));
-  std::strcpy(ack.outputs[0].address,
-              "tbnb1ss57e8sa7xnwq030k2ctr775uac9gjzglqhvpy");
-  ack.inputs[0].coins_count = ack.outputs[0].coins_count = 1;
-  ack.inputs[0].coins[0].has_amount = ack.outputs[0].coins[0].has_amount = true;
-  ack.inputs[0].coins[0].amount = ack.outputs[0].coins[0].amount = 1;
-  ack.inputs[0].coins[0].has_denom = ack.outputs[0].coins[0].has_denom = true;
-  std::strcpy(ack.inputs[0].coins[0].denom, "BNB");
-  std::strcpy(ack.outputs[0].coins[0].denom, "BNB");
-  for (int i = 0; i < 2; ++i) {
-    ASSERT_TRUE(kkconfirm_preload(1, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
-    receiveMessage(MessageType_MessageType_BinanceTransferMsg,
-                   BinanceTransferMsg_fields, &ack);
-    ASSERT_EQ(0, kkconfirm_drain());
-    ASSERT_TRUE(binance_signingIsInited());
-    increment_idle_time(1);
-    toggle_screensaver();
-    ASSERT_TRUE(binance_signingIsInited());
-  }
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  ack = {};
-  receiveMessage(MessageType_MessageType_BinanceTransferMsg,
-                 BinanceTransferMsg_fields, &ack);
-  EXPECT_FALSE(binance_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
@@ -1812,21 +1709,19 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   HDNode node = {};
   node.curve = &secp256k1_info;
 
-  BinanceSignTx binance = {};
-  binance.has_msg_count = true;
-  binance.msg_count = 1;
-  binance.has_account_number = true;
-  binance.has_chain_id = true;
-  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
-  binance.has_sequence = true;
-  binance.has_source = true;
-  ASSERT_TRUE(binance_signTxInit(&node, &binance));
-  ASSERT_TRUE(binance_signingIsInited());
+  TendermintSignTx generic = {};
+  generic.has_msg_count = true;
+  generic.msg_count = 1;
+  generic.has_chain_id = true;
+  std::strcpy(generic.chain_id, "cosmoshub-4");
+  ASSERT_TRUE(tendermint_signTxInit(&node, &generic, sizeof(generic), "uatom",
+                                    TENDERMINT_SIGNING_GENERIC));
+  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
 
   CosmosMsgAck cosmos_ack = {};
   receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
                  &cosmos_ack);
-  EXPECT_FALSE(binance_signingIsInited());
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
 
   TendermintSignTx cosmos = {};
   cosmos.has_msg_count = true;
@@ -1837,9 +1732,9 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
                                     TENDERMINT_SIGNING_COSMOS));
   ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 
-  BinanceTransferMsg binance_ack = {};
-  receiveMessage(MessageType_MessageType_BinanceTransferMsg,
-                 BinanceTransferMsg_fields, &binance_ack);
+  OsmosisMsgAck osmosis_ack = {};
+  receiveMessage(MessageType_MessageType_OsmosisMsgAck, OsmosisMsgAck_fields,
+                 &osmosis_ack);
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
 

@@ -39,7 +39,6 @@
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/cosmos.h"
-#include "keepkey/firmware/binance.h"
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts.h"
@@ -91,7 +90,6 @@
 
 #include "messages.pb.h"
 #include "messages-ethereum.pb.h"
-#include "messages-binance.pb.h"
 #include "messages-cosmos.pb.h"
 #include "messages-osmosis.pb.h"
 #include "messages-eos.pb.h"
@@ -505,10 +503,6 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
       if (!osmosis_signingIsInited())
         return reject_stale_continuation("Osmosis signing not in progress");
       return true;
-    case MessageType_MessageType_BinanceTransferMsg:
-      if (!binance_signingIsInited())
-        return reject_stale_continuation("Signing not in progress?");
-      return true;
     case MessageType_MessageType_EosTxActionAck:
       if (!eos_signingIsInited())
         return reject_stale_continuation("EOS signing not in progress");
@@ -550,7 +544,6 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         case MessageType_MessageType_NanoSignTx:
         case MessageType_MessageType_CosmosSignTx:
         case MessageType_MessageType_OsmosisSignTx:
-        case MessageType_MessageType_BinanceSignTx:
         case MessageType_MessageType_EosSignTx:
         case MessageType_MessageType_RippleSignTx:
         case MessageType_MessageType_ThorchainSignTx:
@@ -659,7 +652,6 @@ static void abort_signing_engines(void) {
   ethereum_signing_abort();
   eip712_stream_abort();
   nano_signingAbort();
-  binance_signAbort();
   tendermint_signAbort();
   osmosis_signAbort();
   thorchain_signAbort();
@@ -687,7 +679,7 @@ void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
   fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
-  /* Several abort routines -- Binance, Tendermint, Osmosis, THORChain,
+  /* Several abort routines -- Tendermint, Osmosis, THORChain,
      MAYAChain, EOS, Nano -- only clear state and touch no layout, so without
      this the approval screen of the transaction just cancelled stays on the
      OLED, describing an operation that no longer exists.
@@ -712,7 +704,6 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_eos.h"
 #include "fsm_msg_cosmos.h"
 #include "fsm_msg_osmosis.h"
-#include "fsm_msg_binance.h"
 #include "fsm_msg_ripple.h"
 #include "fsm_msg_tendermint.h"
 #include "fsm_msg_thorchain.h"

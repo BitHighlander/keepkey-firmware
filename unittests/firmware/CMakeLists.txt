@@ -39,7 +39,6 @@ set(sources
 # bitcoin-only firmware; they only build against a full-feature firmware.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      binance.cpp
       coins.cpp
       cosmos.cpp
       eip712.cpp

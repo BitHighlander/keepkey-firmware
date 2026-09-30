@@ -197,6 +197,11 @@ typedef struct {
    * certification is sufficient) from an externally-resolved transaction
    * (a transaction-bound LUT proof is mandatory). */
   bool has_address_lookups;
+  /* True when the message carries more than one SetComputeUnitLimit or
+   * SetComputeUnitPrice instruction. The runtime rejects such a message, so
+   * no review may treat it as signable; the FSM refuses it (the fee-binding
+   * reviews with "Invalid priority fee", every other path as malformed). */
+  bool duplicate_compute_budget;
   uint8_t num_instructions;
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
 } SolanaParsedTx;
