@@ -1568,6 +1568,13 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
 
   storage_resetPolicies(&cfg->storage);
 
+  /* Every fresh or wiped record needs its own PIN-KDF salt. Only the V1
+   * migration minted one, so records created since persisted zeroes for the
+   * device's lifetime. Draw it here, before storage_setPin_impl() derives the
+   * wrapping key from it, so factory init, WipeDevice, invalid-storage
+   * recovery and LoadDevice all get one. */
+  storage_drawKeyMaterial(cfg->storage.pub.random_salt, RANDOM_SALT_LEN);
+
   storage_setPin_impl(ss, &cfg->storage, "");
 
   cfg->storage.version = STORAGE_VERSION;
