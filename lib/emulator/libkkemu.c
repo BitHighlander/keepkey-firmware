@@ -62,11 +62,13 @@ static int g_fw_lock_ready = 0; /* initialized once, never deleted */
 static HANDLE g_poll_thread = NULL;
 #define FW_LOCK() EnterCriticalSection(&g_fw_lock)
 #define FW_UNLOCK() LeaveCriticalSection(&g_fw_lock)
+#define FW_TRYLOCK() TryEnterCriticalSection(&g_fw_lock)
 #else
 static pthread_mutex_t g_fw_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t g_poll_thread;
 #define FW_LOCK() pthread_mutex_lock(&g_fw_lock)
 #define FW_UNLOCK() pthread_mutex_unlock(&g_fw_lock)
+#define FW_TRYLOCK() (pthread_mutex_trylock(&g_fw_lock) == 0)
 #endif
 
 /* Cross-thread poll-running flag. _Atomic (not volatile — volatile is not a
@@ -450,23 +452,50 @@ static void* kkemu_poll_thread_fn(void* arg) {
  * push can only fail if rb_main_in is full; the parked confirm drains one input
  * frame per spin, so a slot frees within ~a poll tick. Retry briefly, and shout
  * loudly if it somehow never takes rather than dropping it. */
-static void kkemu_inject_cancel(void) {
-  uint8_t frame[KKEMU_PACKET_SIZE];
-  memset(frame, 0, sizeof(frame));
-  frame[0] = 0x3F; /* '?' HID report marker */
-  frame[1] = 0x23; /* '#' */
-  frame[2] = 0x23; /* '#' */
-  frame[3] = 0x00; /* MessageType_Cancel high */
-  frame[4] = 0x14; /* MessageType_Cancel low (20) */
-  /* payload length 0 (bytes 5-8 already zero) */
+/* '?##', MessageType_Cancel (20), payload length 0. */
+static const uint8_t kkemu_cancel_frame[KKEMU_PACKET_SIZE] = {0x3F, 0x23, 0x23,
+                                                              0x00, 0x14};
+
+static int kkemu_inject_cancel(void) {
   for (int i = 0; i < 200; i++) {
-    if (ringbuf_push(&rb_main_in, frame, sizeof(frame))) return;
+    if (ringbuf_push(&rb_main_in, kkemu_cancel_frame, KKEMU_PACKET_SIZE))
+      return 1;
     kkemu_sleep_ms(1);
   }
   fprintf(stderr,
           "[libkkemu] FATAL: could not inject Cancel to wake a parked confirm "
           "before join — rb_main_in stayed full for ~200ms; the poll thread may "
           "not exit\n");
+  return 0;
+}
+
+/* Called after POLL_SET(0). Returns 1 once g_fw_lock is taken: the thread is
+ * then between bodies, and re-checks the flag under the lock, so it exits
+ * without polling again and needs no Cancel. A parked confirm holds the lock
+ * for its whole wait; an ordinary body releases it within a poll tick. A Cancel
+ * injected into an ordinary body could be read as a fresh request and answered
+ * with an unsolicited Failure. */
+static int kkemu_poll_body_quiesced(void) {
+  for (int i = 0; i < 2 * KKEMU_POLL_INTERVAL_MS; i++) {
+    if (FW_TRYLOCK()) {
+      FW_UNLOCK();
+      return 1;
+    }
+    kkemu_sleep_ms(1);
+  }
+  return 0;
+}
+
+/* After the join nothing consumes rb_main_in, so drop the wake Cancel if the
+ * thread exited without reading it (e.g. the lock was held by the host rather
+ * than a parked confirm); the next session would answer it with an unsolicited
+ * Failure. The ring is FIFO, so an unread wake frame is the newest slot. */
+static void kkemu_discard_unread_cancel(void) {
+  uint32_t head = atomic_load_explicit(&rb_main_in.head, memory_order_relaxed);
+  uint32_t last = (head + RINGBUF_CAPACITY - 1) % RINGBUF_CAPACITY;
+  if (!ringbuf_empty(&rb_main_in) &&
+      memcmp(rb_main_in.data[last], kkemu_cancel_frame, KKEMU_PACKET_SIZE) == 0)
+    atomic_store_explicit(&rb_main_in.head, last, memory_order_release);
 }
 
 int kkemu_start(void) {
@@ -499,7 +528,7 @@ void kkemu_stop(void) {
 
   POLL_SET(0);
   /* Unblock any confirm_helper currently parked on the thread, then join. */
-  kkemu_inject_cancel();
+  int injected = !kkemu_poll_body_quiesced() && kkemu_inject_cancel();
 #ifdef _WIN32
   if (g_poll_thread) {
     WaitForSingleObject(g_poll_thread, INFINITE);
@@ -510,6 +539,7 @@ void kkemu_stop(void) {
 #else
   pthread_join(g_poll_thread, NULL);
 #endif
+  if (injected) kkemu_discard_unread_cancel();
 }
 
 /* Host-side guard for reading the shared flash buffer (saveFlash) without

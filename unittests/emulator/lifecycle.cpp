@@ -134,3 +134,29 @@ TEST_F(EmulatorLifecycle, UnlockReleasesLockAcquiredBeforeConcurrentStop) {
   ASSERT_TRUE(acquired);
   kkemu_unlock();
 }
+
+// Serve any queued request in host-driven mode; a leftover wake Cancel would
+// be answered with an unsolicited Failure.
+static bool hostPollAnswersNothing() {
+  for (int i = 0; i < 10; ++i) EXPECT_EQ(0, kkemu_poll());
+  uint8_t reply[64];
+  return kkemu_read(reply, sizeof(reply), KKEMU_IFACE_MAIN) == 0;
+}
+
+TEST_F(EmulatorLifecycle, StopOfIdlePollThreadLeavesNoCancelBehind) {
+  ASSERT_EQ(0, kkemu_start());
+  usleep(20000);
+  kkemu_stop();
+  EXPECT_TRUE(hostPollAnswersNothing());
+}
+
+TEST_F(EmulatorLifecycle, StopDiscardsCancelThePollThreadNeverRead) {
+  ASSERT_EQ(0, kkemu_start());
+  kkemu_lock();  // the thread blocks on the lock, so stop must inject a Cancel
+  usleep(50000);
+  std::thread stopper([] { kkemu_stop(); });
+  usleep(100000);  // past the stop's quiesce wait: the Cancel is queued now
+  kkemu_unlock();  // the thread takes the lock, sees the flag and exits
+  stopper.join();
+  EXPECT_TRUE(hostPollAnswersNothing());
+}

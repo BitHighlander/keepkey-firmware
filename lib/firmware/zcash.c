@@ -249,6 +249,8 @@ static bool ff1_round_y_mod_2_44(const aes_encrypt_ctx* ctx, uint8_t round,
   uint8_t y[16];
   uint8_t block[16];
   uint8_t r[16];
+  uint64_t low48 = 0;
+  bool ok = false;
 
   /*
    * Q = T || [0]^{(-t-b-1) mod 16} || [i]_1 || [NUM(B)]_b
@@ -258,27 +260,29 @@ static bool ff1_round_y_mod_2_44(const aes_encrypt_ctx* ctx, uint8_t round,
   ff1_store_be48(b, q + 10);
 
   /* PRF(P || Q) = CBC-MAC_AES(P || Q), IV = 0. */
-  if (!aes256_encrypt_block(ctx, P, y)) return false;
+  if (!aes256_encrypt_block(ctx, P, y)) goto cleanup;
   for (int i = 0; i < 16; i++) {
     block[i] = y[i] ^ q[i];
   }
-  if (!aes256_encrypt_block(ctx, block, r)) return false;
+  if (!aes256_encrypt_block(ctx, block, r)) goto cleanup;
 
   /*
    * d = 4 * ceil(6 / 4) + 4 = 12, so S is the first 12 bytes of R.
    * We only need NUM(S) modulo 2^44, i.e. the low 44 bits of R[0..11].
    */
-  uint64_t low48 = 0;
   for (int i = 6; i < 12; i++) {
     low48 = (low48 << 8) | r[i];
   }
   *y_mod = low48 & ZCASH_FF1_MASK44;
+  ok = true;
 
+cleanup:
   memzero(q, sizeof(q));
   memzero(y, sizeof(y));
   memzero(block, sizeof(block));
   memzero(r, sizeof(r));
-  return true;
+  memzero(&low48, sizeof(low48));
+  return ok;
 }
 
 bool zcash_orchard_derive_diversifier(const uint8_t dk[32],
@@ -302,6 +306,8 @@ bool zcash_orchard_derive_diversifier(const uint8_t dk[32],
     uint64_t y;
     if (!ff1_round_y_mod_2_44(&ctx, round, B, &y)) {
       memzero(&ctx, sizeof(ctx));
+      memzero(&A, sizeof(A));
+      memzero(&B, sizeof(B));
       return false;
     }
     uint64_t C = (A + y) & ZCASH_FF1_MASK44;

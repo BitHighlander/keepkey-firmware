@@ -20,7 +20,7 @@ ZcashPCZTAction.cmx                                 max_size:32
 ZcashPCZTAction.epk                                 max_size:32
 ZcashPCZTAction.enc_compact                         max_size:52
 ZcashPCZTAction.enc_memo                            max_size:512
-ZcashPCZTAction.enc_noncompact                      max_size:564
+ZcashPCZTAction.enc_noncompact                      max_size:16
 ZcashPCZTAction.rk                                  max_size:32
 ZcashPCZTAction.out_ciphertext                      max_size:80
 ZcashPCZTAction.recipient                           max_size:43

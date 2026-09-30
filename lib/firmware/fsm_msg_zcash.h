@@ -301,8 +301,7 @@ static bool zcash_verify_and_confirm_orchard_output(
   /* Two screens, deliberately.
    *
    * A unified address is 106 characters, which is three full body rows on its
-   * own -- exactly what layout_zcash_address_text_notification is built to
-   * render, and what the display-address flow already shows. The standard
+   * own, and what the display-address flow already shows. The standard
    * notification body is three rows and draw_string simply stops emitting
    * once a character will not fit: there is no scroll and no pagination, so
    * surplus text is dropped without any indication.
@@ -317,7 +316,7 @@ static bool zcash_verify_and_confirm_orchard_output(
    * see the value being committed to.
    *
    * Amount first, on a body that cannot overflow, then the full address
-   * through the layout that fits it.
+   * through confirm(), which pages a body that does not fit.
    *
    * test_msg_zcash_sign_pczt_device.py asserts both screens are emitted; it
    * fails with "expected 2 ConfirmOutput screens, got 1" against the packed
@@ -330,9 +329,8 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                  "Shielded recipient", "%s", address)) {
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               "Shielded recipient", "%s", address)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));
     memzero(address, sizeof(address));
