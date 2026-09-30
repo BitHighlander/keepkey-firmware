@@ -5,7 +5,6 @@ extern "C" {
 #include "keepkey/board/memory.h"
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/keepkey_board.h"
-#include "keepkey/board/confirm_sm.h"
 #include "pb_encode.h"
 #include "trezor/crypto/sha2.h"
 #include "trezor/crypto/bip32.h"
@@ -42,6 +41,11 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 #include <cstring>
 #include <algorithm>
 #include <vector>
+
+// After the C++ headers: confirm_sm.h defines an isprint() macro.
+extern "C" {
+#include "keepkey/board/confirm_sm.h"
+}
 
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
