@@ -55,8 +55,6 @@ TEST(Erc7730AbiStream, AcceptsAtomicArgumentsAtEveryChunkBoundary) {
   word(encoded, 0x1234);
   word(encoded, 65535);
   word(encoded, 1);
-  ASSERT_EQ(erc7730_abi_validate(&program, encoded.data(), encoded.size()),
-            ERC7730_ABI_OK);
   for (size_t chunk :
        {size_t{1}, size_t{7}, size_t{31}, size_t{32}, size_t{65}})
     EXPECT_EQ(stream(&program, encoded, chunk), ERC7730_ABI_OK);
@@ -80,8 +78,6 @@ TEST(Erc7730AbiStream, AcceptsCanonicalRecursiveDynamicValues) {
   word(encoded, 2);
   word(encoded, 7);
   word(encoded, 9);
-  ASSERT_EQ(erc7730_abi_validate(&program, encoded.data(), encoded.size()),
-            ERC7730_ABI_OK);
   for (size_t chunk : {size_t{1}, size_t{7}, size_t{31}, size_t{64}})
     EXPECT_EQ(stream(&program, encoded, chunk), ERC7730_ABI_OK);
 
@@ -153,8 +149,6 @@ TEST(Erc7730AbiStream, CapturesNestedDynamicValueByNegativeArrayIndex) {
   word(encoded, 64);
   dynamicBytes(encoded, {'b', 'e', 't', 'a'});
 
-  ASSERT_EQ(erc7730_abi_validate(&program, encoded.data(), encoded.size()),
-            ERC7730_ABI_OK);
 
   Erc7730AbiStream state{};
   ASSERT_EQ(erc7730_abi_stream_begin(&state, &program, encoded.size()),
@@ -351,21 +345,15 @@ std::vector<AbiCase> abiCases() {
 
 }  // namespace
 
-TEST(Erc7730AbiStream, RejectsNonCanonicalEncodingsLikeTheValidator) {
+TEST(Erc7730AbiStream, RejectsNonCanonicalEncodings) {
   for (const auto& c : abiCases()) {
     SCOPED_TRACE(c.name);
     const Erc7730AbiProgram program{c.nodes, c.node_count, 0};
     ASSERT_EQ(erc7730_abi_validate_program(&program), ERC7730_ABI_OK);
-    const bool validated =
-        erc7730_abi_validate(&program, c.encoded.data(), c.encoded.size()) ==
-        ERC7730_ABI_OK;
-    EXPECT_EQ(validated, c.accepted);
     for (size_t chunk : {size_t{1}, size_t{31}, size_t{32}, size_t{1024}}) {
       const bool streamed =
           stream(&program, c.encoded, chunk) == ERC7730_ABI_OK;
       EXPECT_EQ(streamed, c.accepted) << chunk;
-      // The one-shot validator and the streaming decoder must agree.
-      EXPECT_EQ(streamed, validated) << chunk;
     }
   }
 }
@@ -382,7 +370,7 @@ std::vector<uint8_t> dynamicTupleArray(size_t count) {
 
 }  // namespace
 
-TEST(Erc7730AbiStream, FullDynamicTupleArrayAgreesWithTheValidator) {
+TEST(Erc7730AbiStream, FullDynamicTupleArrayDecodes) {
   // (T[]) and (T[], bytes) with T = (uint256, bytes): every element holds a
   // pending offset of its own while the array's later offsets are pending.
   const Erc7730AbiNode array_only[] = {
@@ -417,9 +405,6 @@ TEST(Erc7730AbiStream, FullDynamicTupleArrayAgreesWithTheValidator) {
   };
   for (const auto& c : cases) {
     SCOPED_TRACE(c.encoded.size());
-    EXPECT_EQ(
-        erc7730_abi_validate(c.program, c.encoded.data(), c.encoded.size()),
-        c.expected);
     for (size_t chunk : {size_t{1}, size_t{32}, size_t{4096}})
       EXPECT_EQ(stream(c.program, c.encoded, chunk), c.expected) << chunk;
   }

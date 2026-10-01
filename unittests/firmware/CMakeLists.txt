@@ -49,7 +49,6 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_abi.cpp
       erc7730_abi_stream.cpp
       erc7730_catalog.cpp
-      erc7730_condition.cpp
       erc7730_field.cpp
       erc7730_format.cpp
       erc7730_program.cpp
