@@ -3112,3 +3112,193 @@ TEST(Solana, SchemaCertifiedRefusesTransferToLookupTableKey) {
     EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)to_index;
   }
 }
+
+/* ---- Real mainnet PumpSwap trades (wallet history, 2026-10-01 corpus) ---- */
+/* PumpSwap sell, 6 instructions: compute x2, fee transfer, create WSOL account,
+ * sell, close WSOL account. Source: vault dev api_log 919632 (2026-10-01) */
+static const char kPumpSellMessageHex[] =
+    "800100111bec3979a4dc6b401bd045171a189f26856fab9eab75560214f972b2edc16430"
+    "0fbc2b57065ef1dd665430be606ba6596c0295301badef8b5afc41014150f412745302eb"
+    "9c05fef2f27c336ea5941d578a7c5542d9606be75c2e8f4b01ee7202759668dd5fabab39"
+    "2154d1490485b2a92fec5ff91a4f3a686c6f60fb1b4f37a11ffc4da258d76a62aa6a0c64"
+    "1d34cefc33c97f0b9424c1678e26ee25b4c49b7bda7b23ea1791a0796c88715deed40e91"
+    "27bf56fdcc28de0829063f2e38c3bd1c7f51941d67069bf895e41b0a193e12e269facebf"
+    "80ed8888c2d862d95b7c2dda5901c821f3a8f08fef88dc31424a7680ae8c9681704cf1e5"
+    "f5c88e2799b7f98221632aa757efcc80c7ff6df799f09cf2a1bd496339047449f36ee0ee"
+    "516bb838d30c7d1d9d82d81a12034077d425bfe2c00394d530d828450bb47819aca30023"
+    "910306466fe5211732ffecadba72c39be7bc8ce5bbc5f7126b2c439b3a400000000af1c3"
+    "432188ca3a635135a13a18951acebd29e6ac2dae67ffdb06d7408ea2cf00000000000000"
+    "000000000000000000000000000000000000000000000000008c97258f4e2489f1bb3d10"
+    "29148e0d830b5a1399daff1084048e7bd8dbe9f859069b8857feab8184fb687f634618c0"
+    "35dac439dc1aeb3b5598a0f0000000000106ddf6e1d765a193d9cbe146ceeb79ac1cb485"
+    "ed5f5b37913a8cf5857eff00a90c14defc825ec67694250818bb654065f4298d3156d571"
+    "b4d4f8090c18e9a863890ba644fe1f55aa19f11cd2d2ec14d3233b6e0a4beaeef72b6985"
+    "8e21e170d638278241da03c70dd0fc885f7ad2123bad32b33a5402340739af8ae5d84cac"
+    "efd7aa8fb060d8291b4c4d475daff762c96bdc0daceb36c012ead12ed3a948416106ddf6"
+    "e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfce54a709528839f"
+    "61c0b9b86079891c139216e47a71b62fb73bec72169458745ecb1f7d18c5d1b3784e72ec"
+    "cf5b737f96767ad7fec197df8407b9661a762ac3e741246ecc7d78fe81e41773a4696541"
+    "9937923a07644797df6f3eb514426010cb0c35ffa9055a8e568da8f7bc075615274cf1c9"
+    "2ca41f40009c516aa414c27c700f61d91ecc71463e7eea4325d604219918fa3804069466"
+    "5e7e04089c56ac8f178770157eebeb678a655db99b37f6b1326c7657db90cfb8a87abef8"
+    "c7b6f2c869e43b31ad24c0c701bd4f237d8d7d5c03f6ad14be4ac948ce9d1b8ed1b5c9e6"
+    "12060a010b0502400d03000a000903404b4c00000000000c0200010c0200000040420f00"
+    "000000000d060002000e0c0f01011018030011120e040205061307140f0c0d1510081617"
+    "18191a091833e685a4017f83ad3da6e7ab0907000031c934fb010000000f030200000109"
+    "00";
+/* PumpSwap buy, 8 instructions, mainnet tx
+ * tyit2ie4K1xU3Kp3xvCEShfiAbiNkijaJDdU8uvKEnYXnPsDz9vd3QuWuekiZ1f43QabWqepUCgAQgcrV2LTFCv
+ */
+static const char kPumpBuy8MessageHex[] =
+    "800100121dec3979a4dc6b401bd045171a189f26856fab9eab75560214f972b2edc16430"
+    "0f78521cb179cebb8589b556a2d5ec94d2498682fdf9bb2af5ad64e491cc4153da5302eb"
+    "9c05fef2f27c336ea5941d578a7c5542d9606be75c2e8f4b01ee7202759668dd5fabab39"
+    "2154d1490485b2a92fec5ff91a4f3a686c6f60fb1b4f37a11ffc4da258d76a62aa6a0c64"
+    "1d34cefc33c97f0b9424c1678e26ee25b4c49b7bda7b23ea1791a0796c88715deed40e91"
+    "27bf56fdcc28de0829063f2e38c3bd1c7f51941d67069bf895e41b0a193e12e269facebf"
+    "80ed8888c2d862d95b7c2dda59d4117b96463aea6b0dbc831a1e079d81da72bdaa8cb2e6"
+    "c87ec2524a88ad5a55632aa757efcc80c7ff6df799f09cf2a1bd496339047449f36ee0ee"
+    "516bb838d3bd4a092da8f105904cba6e0a53b7f9eea6721a6e3f8f0740af043136a9e27e"
+    "4bf89839a1cb7de9595dcd77d1c285d56a76c8f52b7de42e4f1f78da821f6c4adb030646"
+    "6fe5211732ffecadba72c39be7bc8ce5bbc5f7126b2c439b3a400000000af1c3432188ca"
+    "3a635135a13a18951acebd29e6ac2dae67ffdb06d7408ea2cf0000000000000000000000"
+    "0000000000000000000000000000000000000000008c97258f4e2489f1bb3d1029148e0d"
+    "830b5a1399daff1084048e7bd8dbe9f859069b8857feab8184fb687f634618c035dac439"
+    "dc1aeb3b5598a0f0000000000106ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37"
+    "913a8cf5857eff00a90c14defc825ec67694250818bb654065f4298d3156d571b4d4f809"
+    "0c18e9a863890ba644fe1f55aa19f11cd2d2ec14d3233b6e0a4beaeef72b69858e21e170"
+    "d638278241da03c70dd0fc885f7ad2123bad32b33a5402340739af8ae5d84cacef8d181a"
+    "0c849fa937a6f34aded3081ef95700aacb0c9bb3d909a4b9147527a4eb06ddf6e1ee758f"
+    "de18425dbce46ccddab61afc4d83b90d27febdf928d8a18bfce54a709528839f61c0b9b8"
+    "6079891c139216e47a71b62fb73bec72169458745ecb1f7d18c5d1b3784e72eccf5b737f"
+    "96767ad7fec197df8407b9661a762ac3e7a3d7bb127e58adc12ca68f83437ec2e1c3f982"
+    "0de93e58f9178a2918ddaaf7b441246ecc7d78fe81e41773a46965419937923a07644797"
+    "df6f3eb514426010cb0c35ffa9055a8e568da8f7bc075615274cf1c92ca41f40009c516a"
+    "a414c27c700f61d91ecc71463e7eea4325d604219918fa38040694665e7e04089c56ac8f"
+    "17439e6510c03d65fad931e89d04be0bb70d51971f51c415fb344c07db419f212280a859"
+    "6fdc6c089980ecc846bcf37c3b70a2abb6626726ea264ecff4bfc15031080b010c050240"
+    "0d03000b000903404b4c00000000000d0200010c0200000040420f00000000000e060002"
+    "000f0d1001010d0200020c020000000a501929000000001001020111111a030012130f04"
+    "020506140715100d0e161108171809191a1b1c0a1966063d1201daebeab7442f09e20100"
+    "000a50192900000000011003020000010900";
+/* PumpSwap buy, 9 instructions, mainnet tx
+ * 2TVzaEUKCa1HQoPeZLPbYAtwHfeMrP3F7DYsiDvv9FdMTAN9dXe2WcSkgTWuDHgBqHUwrsXUEvdDfQEs2UXjPvxM
+ */
+static const char kPumpBuy9MessageHex[] =
+    "800100121dec3979a4dc6b401bd045171a189f26856fab9eab75560214f972b2edc16430"
+    "0fbf971b59108b5b85a04fb093f1e21b4e3fd4c4c8f487dd09b95752769f0dd8c35302eb"
+    "9c05fef2f27c336ea5941d578a7c5542d9606be75c2e8f4b01ee720275fc4da258d76a62"
+    "aa6a0c641d34cefc33c97f0b9424c1678e26ee25b4c49b7bda9668dd5fabab392154d149"
+    "0485b2a92fec5ff91a4f3a686c6f60fb1b4f37a11f7b23ea1791a0796c88715deed40e91"
+    "27bf56fdcc28de0829063f2e38c3bd1c7f51941d67069bf895e41b0a193e12e269facebf"
+    "80ed8888c2d862d95b7c2dda5977d915955f8880731ceb4a75a0cc96c174fa4095c4e1d9"
+    "967acfc42845ae67ae632aa757efcc80c7ff6df799f09cf2a1bd496339047449f36ee0ee"
+    "516bb838d3bd4a092da8f105904cba6e0a53b7f9eea6721a6e3f8f0740af043136a9e27e"
+    "4b90f794bd351e64fca793a0ad419e94cb252a27b36c1863dc637b3bd3a14664ff030646"
+    "6fe5211732ffecadba72c39be7bc8ce5bbc5f7126b2c439b3a400000000af1c3432188ca"
+    "3a635135a13a18951acebd29e6ac2dae67ffdb06d7408ea2cf0000000000000000000000"
+    "0000000000000000000000000000000000000000008c97258f4e2489f1bb3d1029148e0d"
+    "830b5a1399daff1084048e7bd8dbe9f859069b8857feab8184fb687f634618c035dac439"
+    "dc1aeb3b5598a0f0000000000106ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37"
+    "913a8cf5857eff00a938278241da03c70dd0fc885f7ad2123bad32b33a5402340739af8a"
+    "e5d84cacef06ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928d8a18b"
+    "fc0c14defc825ec67694250818bb654065f4298d3156d571b4d4f8090c18e9a863890ba6"
+    "44fe1f55aa19f11cd2d2ec14d3233b6e0a4beaeef72b69858e21e170d64ac2f8d0dd5cbc"
+    "97e3289c197cb5062a54f3d956b9ce6e5115f96567aa5cb3e6e54a709528839f61c0b9b8"
+    "6079891c139216e47a71b62fb73bec72169458745ecb1f7d18c5d1b3784e72eccf5b737f"
+    "96767ad7fec197df8407b9661a762ac3e7a3d7bb127e58adc12ca68f83437ec2e1c3f982"
+    "0de93e58f9178a2918ddaaf7b441246ecc7d78fe81e41773a46965419937923a07644797"
+    "df6f3eb514426010cb0c35ffa9055a8e568da8f7bc075615274cf1c92ca41f40009c516a"
+    "a414c27c700f61d91ecc71463e7eea4325d604219918fa38040694665e7e04089c56ac8f"
+    "17e6a7e22068bb88640aa57f909308c61fef711a0163f5a755c070bc860d1f63674d576c"
+    "b8b60d7a171cd404dcbf86eed11586dfdbd602dc0feba2dbec334451b6090b010c050240"
+    "0d03000b000903404b4c00000000000d0200010c0200000040420f00000000000e060002"
+    "000f0d1001010d0200020c02000000ea71bb1f0000000010010201110e06000300110d12"
+    "0101131a040014110f03020506150712100d0e161308171809191a1b1c0a1966063d1201"
+    "daebeaefc1aea8b9020000ea71bb1f00000000011003020000010900";
+/* ClearSign server catalog entry pumpAmmBuy, serialized */
+static const char kPumpAmmBuySchemaHex[] =
+    "4b4b534f4c534331010c14defc825ec67694250818bb654065f4298d3156d571b4d4f809"
+    "0c18e9a8630866063d1201daebea0850756d7020414d4d0342757903010e426173652075"
+    "6e697473206f7574010f4d61782071756f746520756e697473020c547261636b20766f6c"
+    "756d6504030e42757920746f6b656e206d696e74040e50617920746f6b656e206d696e74"
+    "050f52656365697665206163636f756e74060b506179206163636f756e74";
+/* pumpAmmSell (Anchor global:sell, u64 base in, u64 min quote out), serialized
+ */
+static const char kPumpAmmSellSchemaHex[] =
+    "4b4b534f4c534331010c14defc825ec67694250818bb654065f4298d3156d571b4d4f809"
+    "0c18e9a8630833e685a4017f83ad0850756d7020414d4d0453656c6c02010d4261736520"
+    "756e69747320696e010f4d696e2071756f746520756e69747304030f53656c6c20746f6b"
+    "656e206d696e74040e47657420746f6b656e206d696e74050c53656c6c206163636f756e"
+    "74060f52656365697665206163636f756e74";
+
+static bool pump_certified(const std::vector<uint8_t>& raw,
+                           const char* schema_hex, uint8_t* idx) {
+  SolanaParsedTx tx;
+  if (solana_inspectTx(raw.data(), raw.size(), &tx) == SOL_TX_REVIEW_MALFORMED)
+    return false;
+  const std::vector<uint8_t> blob = solana_unhex(schema_hex);
+  SolanaInstrSchema s;
+  if (!solana_parseInstrSchema(blob.data(), blob.size(), &s)) return false;
+  return solana_schemaAppliesCertified(&s, &tx, idx);
+}
+
+/* Point account slot `slot` of instruction `ix` at the pool (instruction
+ * `pool_ix`'s first account), which is not a signer. */
+static void pump_redirect(std::vector<uint8_t>* raw, uint8_t ix, uint8_t slot,
+                          uint8_t pool_ix) {
+  SolanaParsedTx tx;
+  ASSERT_NE(solana_inspectTx(raw->data(), raw->size(), &tx),
+            SOL_TX_REVIEW_MALFORMED);
+  const uint8_t pool = tx.instructions[pool_ix].acct_indices[0];
+  const size_t off = tx.instructions[ix].acct_indices + slot - raw->data();
+  (*raw)[off] = pool;
+}
+
+TEST(Solana, CertifiedRealPumpSellAdmitsSignerWrapAndUnwrap) {
+  std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 6);
+  EXPECT_EQ(tx.instructions[3].type, SOL_INSTR_ATA_CREATE);
+  EXPECT_EQ(tx.instructions[4].type, SOL_INSTR_UNKNOWN);
+  EXPECT_EQ(tx.instructions[5].type, SOL_INSTR_TOKEN_CLOSE_ACCOUNT);
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(pump_certified(raw, kPumpAmmSellSchemaHex, &idx));
+  EXPECT_EQ(idx, 4);
+  /* Runtime (uncertified) schemas still refuse any non-inert companion. */
+  const std::vector<uint8_t> blob = solana_unhex(kPumpAmmSellSchemaHex);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+  /* The buy schema does not describe a sell. */
+  EXPECT_FALSE(pump_certified(raw, kPumpAmmBuySchemaHex, &idx));
+
+  /* Closing the account to anyone but the signer is refused. */
+  std::vector<uint8_t> stolen = raw;
+  pump_redirect(&stolen, 5, 1, 4);
+  EXPECT_FALSE(pump_certified(stolen, kPumpAmmSellSchemaHex, &idx));
+  /* So is creating an account the signer funds for another owner. */
+  std::vector<uint8_t> gifted = raw;
+  pump_redirect(&gifted, 3, 2, 4);
+  EXPECT_FALSE(pump_certified(gifted, kPumpAmmSellSchemaHex, &idx));
+}
+
+TEST(Solana, CertifiedRealPumpBuysAdmitWrapAndUnwrap) {
+  uint8_t idx = 0xFF;
+  std::vector<uint8_t> buy8 = solana_unhex(kPumpBuy8MessageHex);
+  ASSERT_TRUE(pump_certified(buy8, kPumpAmmBuySchemaHex, &idx));
+  EXPECT_EQ(idx, 6);
+
+  /* Nine instructions: over the old cap of 8, which parsed none of them. */
+  std::vector<uint8_t> buy9 = solana_unhex(kPumpBuy9MessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(buy9.data(), buy9.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 9);
+  idx = 0xFF;
+  ASSERT_TRUE(pump_certified(buy9, kPumpAmmBuySchemaHex, &idx));
+  EXPECT_EQ(idx, 7);
+  EXPECT_FALSE(pump_certified(buy9, kPumpAmmSellSchemaHex, &idx));
+}

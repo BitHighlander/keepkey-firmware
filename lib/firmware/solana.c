@@ -938,6 +938,33 @@ static bool schema_transferIsStatic(const SolanaParsedTx* tx,
   return true;
 }
 
+static bool schema_isTxSigner(const SolanaParsedTx* tx, const uint8_t* key) {
+  for (uint8_t i = 0; i < tx->num_required_sigs && i < tx->num_accounts; i++)
+    if (memcmp(tx->accounts[i], key, SOL_PUBKEY_SIZE) == 0) return true;
+  return false;
+}
+
+/* Certified companions beyond inert ones and static Transfers: the SOL
+ * wrap/unwrap a DEX trade brackets itself with. Each is natively decoded and
+ * screened by the certified review, and only the signer's own accounts
+ * qualify: a token account the signer funds and owns, a sync of wrapped SOL,
+ * and closing the signer's account back to the signer. */
+static bool schema_signerAccountCompanion(const SolanaParsedTx* tx,
+                                          const SolanaParsedInstruction* ix) {
+  switch (ix->type) {
+    case SOL_INSTR_ATA_CREATE:
+      return schema_isTxSigner(tx, ix->from) &&
+             schema_isTxSigner(tx, ix->authority);
+    case SOL_INSTR_TOKEN_SYNC_NATIVE:
+      return true;
+    case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
+      return schema_isTxSigner(tx, ix->to) &&
+             schema_isTxSigner(tx, ix->authority);
+    default:
+      return false;
+  }
+}
+
 static bool schema_applies(const SolanaInstrSchema* schema,
                            const SolanaParsedTx* tx, bool certified,
                            uint8_t* out_index) {
@@ -995,6 +1022,7 @@ static bool schema_applies(const SolanaInstrSchema* schema,
     const SolanaParsedInstruction* companion = &tx->instructions[i];
     if (companion->external) return false;
     if (solana_schemaCompanionIsInert(companion->type)) continue;
+    if (certified && schema_signerAccountCompanion(tx, companion)) continue;
     if (!certified || companion->type != SOL_INSTR_SYSTEM_TRANSFER ||
         !schema_transferIsStatic(tx, companion)) {
       return false;
