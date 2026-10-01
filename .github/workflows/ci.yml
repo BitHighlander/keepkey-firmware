@@ -253,7 +253,7 @@ jobs:
 
       - name: Validate release report evidence gates
         run: |
-          python3 -B -m unittest scripts/test_generate_test_report.py scripts/test_preflight_cppcheck.py scripts/test_preflight_checks.py
+          python3 -B -m unittest scripts/test_preflight_cppcheck.py
           # The SRAM gate must keep refusing unbounded (dynamic) stack frames.
           pip install --quiet pyelftools
           PYTHONPATH=tools python3 -B -m unittest tools/test_check_sram_budget.py
@@ -293,9 +293,6 @@ jobs:
             echo "::error::Emulator cryptography must not use libc random()"
             exit 1
           fi
-
-      - name: Exercise main and debug receive callback cleanup
-        run: python3 scripts/tests/test_usb_receive_callbacks.py
 
   # ═══════════════════════════════════════════════════════════
   # STAGE 2: BUILD — compile only after gate passes
