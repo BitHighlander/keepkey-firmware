@@ -3,7 +3,6 @@
 #include "keepkey/firmware/ctap2/cbor.h"
 #include "keepkey/board/common.h"
 #include "keepkey/board/keepkey_flash.h"
-#include "keepkey/board/memcmp_s.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f.h"
@@ -199,6 +198,14 @@ static bool copy_text(const CborValue* value, char* destination,
   return true;
 }
 
+/* Constant-time equality for the 16-byte PIN values; memcmp_s aborts on
+ * anything shorter than 32 bytes. */
+static bool equal16(const uint8_t* a, const uint8_t* b) {
+  uint8_t diff = 0;
+  for (size_t i = 0; i < 16; ++i) diff |= a[i] ^ b[i];
+  return diff == 0;
+}
+
 static void write_error(uint8_t error, uint8_t* response, size_t* length) {
   response[0] = error;
   *length = 1;
@@ -312,7 +319,7 @@ static bool valid_pin_auth(const uint8_t shared_secret[32],
   uint8_t authentication[32];
   if (pin_auth->type != CBOR_TYPE_BYTES || pin_auth->length != 16) return false;
   hmac_sha256(shared_secret, 32, message, message_length, authentication);
-  bool valid = memcmp_s(authentication, pin_auth->data, 16) == 0;
+  bool valid = equal16(authentication, pin_auth->data);
   memzero(authentication, sizeof(authentication));
   return valid;
 }
@@ -409,7 +416,7 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
     return CTAP2_ERR_PIN_AUTH_INVALID;
   uint8_t expected[32];
   hmac_sha256(pin_token, sizeof(pin_token), client_data_hash, 32, expected);
-  bool matches = memcmp_s(expected, auth.data, 16) == 0;
+  bool matches = equal16(expected, auth.data);
   memzero(expected, sizeof(expected));
   if (!matches) return CTAP2_ERR_PIN_AUTH_INVALID;
   *verified = true;
@@ -1054,7 +1061,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
                  sizeof(supplied_hash));
       passkey_pin_digest(supplied_hash, sizeof(supplied_hash), storage.pin_salt,
                          verifier);
-      if (memcmp_s(verifier, storage.pin_hash, sizeof(storage.pin_hash)) != 0) {
+      if (!equal16(verifier, storage.pin_hash)) {
         --storage.pin_retries;
         ++pin_attempts_since_boot;
         storage_setPasskeyData(&storage);
@@ -1144,7 +1151,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
                  sizeof(supplied_hash));
       passkey_pin_digest(supplied_hash, sizeof(supplied_hash), storage.pin_salt,
                          verifier);
-      if (memcmp_s(verifier, storage.pin_hash, sizeof(storage.pin_hash)) != 0) {
+      if (!equal16(verifier, storage.pin_hash)) {
         --storage.pin_retries;
         ++pin_attempts_since_boot;
         storage_setPasskeyData(&storage);
