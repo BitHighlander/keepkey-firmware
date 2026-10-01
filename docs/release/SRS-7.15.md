@@ -1,7 +1,8 @@
 # SRS — KeepKey Firmware 7.15.0
 
 Software Requirements Specification, IEEE 830 (concise form).
-Status: **draft against `alpha`**. Baseline `dda531024`.
+Status: **candidate on the fork's develop stack**: `stack/715-b6-gaps-20260930`
+@ `5937abd1c` (PRs #894-#899, CI gate green). `alpha` is ahead (7.16+).
 
 ---
 
@@ -58,7 +59,10 @@ what a selector or an ABI offset is.
 ### 2.3 Constraints
 - **C-1** STM32F205: ≥16 KiB SRAM reserve between `_ebss` and `_stack`, enforced
   by a linker `ASSERT` and `tools/check_sram_budget.py`.
-- **C-2** No bootloader changes in this release.
+- **C-2** No bootloader is built, shipped or flashed by this release. Shared
+  libraries the bootloader also links (USB, message framing, flash helpers,
+  RNG, crypto) are hardened for the firmware; bootloader sources are unchanged,
+  and devices keep their installed bootloader.
 - **C-3** The device's `snprintf` is integer-only; no float conversions.
 - **C-4** `confirm()` paginates a body over `BODY_ROWS = 3`; bytes outside
   `0x21..0x7e` render as 4-glyph `\xNN` escapes.
@@ -145,8 +149,8 @@ wrong scale. *Verify:* `Solana.FormatTokenAmountNeverShowsZeroForNonzero`.
 for instructions whose accounts are not in the signed message (Address Lookup
 Tables), behind AdvancedMode, additive.
 
-**Status: implemented** (`KKSOLSW1`, firmware PR #500 — 146 added lines, no new
-crypto primitive). Before it, `solana.c` skipped such instructions and rendered
+**Status: implemented** (`KKSOLSW1`; develop commit `5937abd1c`, ~130 lines, no
+new crypto primitive; advertised as `Features.supports_solana_lut_attestation`). Before it, `solana.c` skipped such instructions and rendered
 **nothing**: the accounts an instruction would actually touch were invisible
 while still being signed. That is the gap 7.15 closes, and closing it adds
 screens.
@@ -155,7 +159,8 @@ The attestation binds to the transaction, not to the account list alone:
 
 ```
 preimage = "KeepKeySolanaTxAccounts/1"
-        || sha256(raw_tx)
+        || sha256(message)  (raw_tx minus a leading zero signature count:
+                             the bytes the device signs)
         || count            (le32)
         || key[0..count-1]  (32 bytes each)
 ```
@@ -164,7 +169,7 @@ Verified through the existing chain-agnostic
 `signed_metadata_verify_attestation()`. Three properties follow, each with a
 test in section S of the atlas:
 
-- `sha256(raw_tx)` in the preimage means an attestation harvested from one
+- `sha256(message)` in the preimage means an attestation harvested from one
   transaction cannot be replayed onto another — the same accounts under a
   different transaction do not verify;
 - a bad signature degrades to today's flow rather than refusing, so a broken
@@ -197,18 +202,39 @@ bitcoin-only 32,092 B.
 **R-7.2** Both products build for ARM with `-Werror`.
 **R-7.3** No CI job may silently skip. *Verify:* the aggregate `CI gate`.
 
+### 3.8 Feature scope
+
+What the full product ships, by test-atlas section (bitcoin-only: B, L, D, C,
+K, U). Sections first required at 7.15.0 are marked **new**.
+
+| Area | Atlas | Notes |
+|---|---|---|
+| Clear-sign provider context (EVM) | V, F, I **new** | additive; R-1.x, R-2.x |
+| ERC-7730 runtime clear-signing | EX **new** | calldata and EIP-712 definitions, embedded calls with their own definition; what cannot be clear-signed is shown under a "Blind signature" warning (AdvancedMode). 7.16 refuses it instead. Registry conformance (ER) is 7.19 |
+| Structured (streaming) EIP-712 | TD **new** | the legacy JSON endpoint stays disabled |
+| Solana | S | KKSOLSW1 (R-4.1), KKSOLSC1 runtime schemas (AdvancedMode; the blind-sign warning follows), x402/USDC, plain-text SignMessage |
+| Hive | G **new** | |
+| Osmosis wire guards | P **new** | |
+| TRON, TON, XRP, THORChain, Maya, Cosmos, EOS, Nano | T, N, R, H, M, A, O, W | |
+| Zcash transparent and Orchard | Y, Z | full product only |
+| BIP-85 | D | paged child-seed screens |
+| Seed generation hardening, dice | K **new** | |
+| Authenticator identity and consent | AU **new** | |
+| Bitcoin-only variant, storage upgrade | L, U **new** | R-5.x, R-6.x |
+
+Not in 7.15: the KeepKey-certified tier (pinned root, delegates, R-1.4 above),
+Binance retirement, storage V20 and CTAP2 (all 7.16).
+
 ---
 
 ## 4. Verification status
 
 | | |
 |---|---|
-| `firmware-unit` (full) | 439/439 |
-| `board-unit` | 12/12 |
-| `firmware-unit` (bitcoin-only) | 63/63 |
-| pyk suite (full emulator) | 620 passed, 33 skipped, 0 failed |
+| `firmware-unit`, `board-unit` (both products) | green in CI (aggregate `CI gate`, run 36912295951) |
+| pyk suite (full emulator, `5937abd1c`) | 807 passed, 88 skipped, 0 failed |
 | pyk suite (bitcoin-only emulator) | 11/11 |
-| ARM SRAM reserve | full **17,716 B** · btc-only **31,648 B** (budget ≥ 16,384 B, both PASS) |
+| ARM SRAM reserve | full **20,624 B** · btc-only **41,952 B** (budget ≥ 16,384 B, both PASS) |
 | Token table applied | `ethereum_tokens: 350 of 1378 kept` · `uniswap_tokens: 150 of 568 kept` |
 | Hardware (gate 3) | **NOT PERFORMED** |
 
@@ -216,13 +242,11 @@ Measured on the ARM cross-build of the KKSOLSW1 candidate, both variants. The
 reserve is `_stack - _ebss` and the gate is enforced in CI, not read off a
 build log.
 
-The full-variant reserve fell 456 B from the previous line (18,172 B) and that
-is KKSOLSW1: `fsm_msg_solana.h` flattens the nanopb array into a
+KKSOLSW1 flattens the nanopb lookup-key array into a stack-local
 `uint8_t lut_keys[SOL_MAX_LUT_ACCOUNTS][SOL_PUBKEY_SIZE]` so the attested keys
-are contiguous for hashing. It is the honest cost of the feature and it is
-recorded here rather than absorbed silently, because SRAM on this part is spent
-once and an unexplained 456 B is the kind of thing that only becomes visible
-when the next feature does not fit.
+are contiguous for hashing. On the develop candidate it costs +720 B of flash
+and leaves the static reserve unchanged; its stack frame is covered by the CI
+largest-frame check.
 
 The token budget is what pays for it: 500 of 1,946 candidate entries, −23,104 B
 of flash. See `TOKEN-TABLE-BUDGET.md` for what that cannot buy — the pinned
@@ -234,7 +258,7 @@ of anything current.
 ## 5. Exit criteria
 
 1. ~~R-4.1 implemented, or explicitly deferred~~ — **met.** KKSOLSW1 landed
-   (firmware #500); §3.4.
+   (develop `5937abd1c`); its four atlas S tests run and pass; §3.4.
 2. Gate 3 OLED evidence per `7.15.0-rc21-clearsign-release-control.md`: a
    44-character base58 program ID, an 8-byte discriminator on its own screen,
    all four argument types, 16-character labels. **CI success alone does not
