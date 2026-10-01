@@ -150,6 +150,10 @@ static bool ctap_cancelled;
 void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
   if (ctap_active) {
     if (f->init.cmd == U2FHID_INIT) {
+      if (MSG_LEN(*f) != 8) { /* INIT carries exactly an 8-byte nonce */
+        send_u2fhid_error(f->cid, ERR_INVALID_LEN);
+        return;
+      }
       if (f->cid == ctap_cid) ctap_cancelled = true;
       u2fhid_init(f);
       cid = ctap_cid; /* a new channel allocation must not take this one */

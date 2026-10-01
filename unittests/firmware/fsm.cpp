@@ -2861,6 +2861,37 @@ TEST(Fsm, StorageStagedRecordWinsOverAHalfErasedOldSector) {
   EXPECT_STREQ("staged", storage_getLabel());
 }
 
+// An erase of the old record cut after clearing only its magic leaves a
+// stale record that looks staged; the newer commit must win, never roll back.
+TEST(Fsm, StorageNeverRollsBackToAStaleRecordMissingItsMagic) {
+  ScopedFlash flash;
+  // Each commit moves two sectors on, so three rounds cover every placement
+  // of the stale record relative to the new one.
+  for (int round = 0; round < 3; round++) {
+    storage_setLabel("old");
+    storage_commit();
+    Allocation old_sector;
+    ASSERT_TRUE(find_active_storage(&old_sector));
+    std::vector<char> old_bytes(Sector(old_sector), Sector(old_sector) + 2580);
+    storage_setLabel("new");
+    storage_commit();
+    Allocation new_sector;
+    ASSERT_TRUE(find_active_storage(&new_sector));
+    for (int pass = 0; pass < 2; pass++) {  // new already active, then staged
+      // The old record without its magic, as an interrupted erase leaves it.
+      memcpy(Sector(old_sector), old_bytes.data(), old_bytes.size());
+      memset(Sector(old_sector), 0xff, STORAGE_MAGIC_LEN);
+      if (pass == 1) memset(Sector(new_sector), 0xff, STORAGE_MAGIC_LEN);
+      storage_init();
+      Allocation active;
+      ASSERT_TRUE(find_active_storage(&active));
+      EXPECT_EQ(new_sector, active) << "round " << round << " pass " << pass;
+      EXPECT_EQ(1, ActiveSectors());
+      EXPECT_STREQ("new", storage_getLabel());
+    }
+  }
+}
+
 TEST(Fsm, StorageNeverRecoversACorruptPendingRecord) {
   ScopedFlash flash;
   storage_setLabel("lost");

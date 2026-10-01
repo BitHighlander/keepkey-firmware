@@ -1257,11 +1257,20 @@ static void storage_defaultPasskeyData(PasskeyStorage* passkeys) {
   passkeys->pin_retries = PASSKEY_PIN_RETRIES;
 }
 
+/* Corrupt V20 metadata fails closed: current version with no generation, so
+ * the next credential operation mints a fresh generation with legacy handles
+ * disabled. Version 1 is only for a real V17 upgrade, where it re-enables
+ * them. */
+static void storage_failClosedPasskeyData(PasskeyStorage* passkeys) {
+  storage_defaultPasskeyData(passkeys);
+  passkeys->version = PASSKEY_STORAGE_VERSION;
+}
+
 static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
   if ((passkeys->version != 1 &&
        passkeys->version != PASSKEY_STORAGE_VERSION) ||
       passkeys->pin_set > 1 || passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
-    storage_defaultPasskeyData(passkeys);
+    storage_failClosedPasskeyData(passkeys);
     return;
   }
   if (passkeys->version == 1) {
@@ -1273,7 +1282,7 @@ static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
             sizeof(passkeys->credential_generation));
     passkeys->legacy_credentials_enabled = 0;
   } else if (passkeys->legacy_credentials_enabled > 1) {
-    storage_defaultPasskeyData(passkeys);
+    storage_failClosedPasskeyData(passkeys);
     return;
   }
   for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
@@ -1612,32 +1621,63 @@ static bool storage_finalizePending(Allocation pending) {
          find_active_storage(&active) && active == pending;
 }
 
+/* Erase reports no status: confirm the whole record area reads erased, so a
+ * partial erase cannot leave an old marker or magic word under the stage. */
+static bool storage_sectorErased(Allocation s) {
+  const uint8_t* p = (const uint8_t*)flash_write_helper(s);
+  for (size_t i = 0; i < STORAGE_RECORD_LEN + 8; i++)
+    if (p[i] != 0xff) return false;
+  return true;
+}
+
 static bool storage_finalizeWithRetries(Allocation pending) {
   for (int attempt = 0; attempt < STORAGE_RETRIES; attempt++)
     if (storage_finalizePending(pending)) return true;
   return false;
 }
 
-/* Finish a commit that lost power after staging. A CRC-valid staged record is
- * always the newest intent (every erase clears whole sectors, so nothing else
- * leaves one), and it wins over an older magic that an interrupted erase of
- * the old sector may have left readable. It is never discarded: if it cannot
- * be finalized, halt rather than start fresh storage over it. */
-static void storage_recoverPending(void) {
+/* A record this firmware wrote: crc1 trailer and a CRC over bytes [4, 2572).
+ * The magic is not covered, so a record is judged with or without it. */
+static bool storage_recordValid(Allocation s) {
+  const char* record = (const char*)flash_write_helper(s);
+  uint32_t crc;
+  memcpy(&crc, record + STORAGE_RECORD_LEN + 4, sizeof(crc));
+  return memcmp(record + STORAGE_RECORD_LEN, STORAGE_PENDING_TAG, 4) == 0 &&
+         storage_recordCrc(record) == crc;
+}
+
+/* Boot selection for records with trailers. Commits go to next(next(old)),
+ * so of two valid records X and Y, X is newer iff next(X) == Y: the newest is
+ * the valid record whose predecessor next(next(X)) is not valid. Magic is not
+ * trusted for ordering: an interrupted erase can clear only the old magic
+ * (leaving a stale record that looks staged) or leave it over damaged data.
+ * The newest is finalized unless it is already marked active, and is never
+ * discarded: if it cannot be finalized, halt. False when no record has a
+ * trailer (legacy V17 storage, or none). */
+static bool storage_selectNewestRecord(Allocation* out) {
+  int valid = 0;
+  Allocation newest = FLASH_STORAGE1;
   for (Allocation s = FLASH_STORAGE1; s <= FLASH_STORAGE3; s++) {
-    const char* record = (const char*)flash_write_helper(s);
-    uint32_t crc;
-    memcpy(&crc, record + STORAGE_RECORD_LEN + 4, sizeof(crc));
-    if (memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) != 0 &&
-        memcmp(record + STORAGE_RECORD_LEN, STORAGE_PENDING_TAG, 4) == 0 &&
-        storage_recordCrc(record) == crc) {
-      if (!storage_finalizeWithRetries(s)) {
-        layout_warning_static("Storage Unsafe. Keep Powered!");
-        shutdown();
-      }
-      return;
-    }
+    if (!storage_recordValid(s)) continue;
+    valid++;
+    if (!storage_recordValid(next_storage(next_storage(s)))) newest = s;
   }
+  if (valid == 0) return false;
+  if (valid == 3) { /* no commit sequence leaves three: refuse to guess */
+    layout_warning_static("Storage Unsafe. Keep Powered!");
+    shutdown();
+  }
+  const char* record = (const char*)flash_write_helper(newest);
+  const bool active =
+      memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0 &&
+      memcmp((const void*)flash_write_helper(next_storage(newest)),
+             STORAGE_PROTECT_OFF_MAGIC, sizeof(STORAGE_PROTECT_OFF_MAGIC)) == 0;
+  if (!active && !storage_finalizeWithRetries(newest)) {
+    layout_warning_static("Storage Unsafe. Keep Powered!");
+    shutdown();
+  }
+  *out = newest;
+  return true;
 }
 
 void storage_init(void) {
@@ -1651,8 +1691,8 @@ void storage_init(void) {
   firmware_too_old = false;
 
   // Find storage sector with valid data and set storage_location variable.
-  storage_recoverPending();
-  if (!find_active_storage(&storage_location)) {
+  if (!storage_selectNewestRecord(&storage_location) &&
+      !find_active_storage(&storage_location)) {
     // Otherwise initialize it to the default sector.
     storage_location = STORAGE_SECT_DEFAULT;
   }
@@ -1939,7 +1979,8 @@ void storage_commit(void) {
 
     /* Stage everything but the magic; the active record is untouched. */
     flash_erase_word(pending);
-    if (!flash_write_word(pending, STORAGE_MAGIC_LEN,
+    if (!storage_sectorErased(pending) ||
+        !flash_write_word(pending, STORAGE_MAGIC_LEN,
                           sizeof(flash_temp) - STORAGE_MAGIC_LEN,
                           (uint8_t*)flash_temp + STORAGE_MAGIC_LEN) ||
         !flash_write_word(pending, sizeof(flash_temp), sizeof(trailer),
