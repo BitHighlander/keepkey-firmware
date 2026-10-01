@@ -120,9 +120,10 @@
  *
  * Checks, in order: length, version, reserved flag bits, nonzero chain id,
  * expiry against the floor, delegate pubkey prefix, then the signature.
- * Returns false on any failure, and the CALLER degrades to the 7.15 additive
- * path -- never to a refusal. A stale or unverifiable describer is one we no
- * longer trust, and an undescribed transaction is what 7.15 already handles.
+ * Returns false on any failure. It checks neither MAY_SUPPRESS_RAW nor scope,
+ * so it can never by itself authorise replacing the raw review: certified
+ * describers go through clearsign_root_cert_delegate(), and a failed certified
+ * claim is refused, never downgraded (SRS R-1.4).
  *
  * THE ONLY FUNCTION THAT READS THE ROOT KEY. */
 bool clearsign_root_verify_cert(const uint8_t* cert, size_t cert_len);
