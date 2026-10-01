@@ -133,9 +133,7 @@ bool rng_health_observe(const uint8_t* buf, size_t len);
 /// gated, you have to call this function by name.
 bool random_buffer_checked(uint8_t* buf, size_t len);
 
-/// Fisher-Yates permutation whose random draws are all folded into the
-/// continuous RNG health test. Returns false without exposing a predictable
-/// partial permutation when the source fails.
+/// Health-tested Fisher-Yates; false (no partial permutation) on RNG failure.
 bool random_permute_char_checked(char* str, size_t len);
 
 #ifdef EMULATOR
