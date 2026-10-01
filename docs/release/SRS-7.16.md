@@ -131,8 +131,10 @@ domain-only behavior SHALL match independent host-side hashes and signatures.
 credential management, enterprise attestation, large blobs, `hmac-secret`, and
 PIN/UV protocol 2 remain unadvertised.
 
-**R-3.2** The production artifact SHALL contain the registered production
-AAGUID. The provisional development AAGUID is a release blocker.
+**R-3.2** The artifact SHALL contain the KeepKey AAGUID
+`4ae2ccc1-d032-4099-9085-9e0b4f61e8c8`, a self-assigned random v4 UUID (owner
+decision 2026-10-01). FIDO certification is not pursued. Listing it in the
+public authenticator registry waits until our own device testing passes.
 
 **R-3.3** ClientPIN ECDH private keys, PIN salts, PIN tokens, U2F derivation
 paths, and authenticator-reset generations SHALL use the checked RNG path and
@@ -231,7 +233,8 @@ candidate. These cannot be waived by green unit tests:
 
 1. Production root and delegate custody ceremony, production keys, expiry and
    revocation decision, plus independent human approval.
-2. Production AAGUID registration and FIDO Alliance CTAP2 conformance.
+2. The artifact advertises the assigned AAGUID. Registry listing follows
+   our device testing; FIDO certification is out of scope.
 3. Passkey registration/authentication on current Chrome, Edge, Firefox,
    Safari, Windows Hello, macOS, Linux/libfido2, Android and iOS wherever USB
    security keys are supported.
