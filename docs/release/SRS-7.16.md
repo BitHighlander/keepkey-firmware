@@ -106,8 +106,9 @@ issuance require independent human approval.
 
 **R-2.1** The legacy monolithic `Ethereum712TypesValues` endpoint SHALL remain
 disabled. 7.16's supported structured path is the streaming
-`EthereumSignTypedData` protocol, gated by AdvancedMode until its exact-candidate
-hardware evidence is accepted.
+`EthereumSignTypedData` protocol, enabled as in 7.15 (no AdvancedMode gate;
+owner decision 2026-10-01). Its exact-candidate hardware evidence is produced by
+the release QA in section 4.2.
 
 **R-2.2** The streaming implementation SHALL request canonical type definitions
 and values, reject duplicate/incomplete/non-canonical structures, bind the
@@ -157,13 +158,14 @@ numbers.
 **R-4.2** A V17-to-V20 upgrade SHALL preserve wallet secrets and settings,
 initialize passkey metadata safely, and scrub the retired clear-sign identity
 block. Interrupted commits SHALL select the newest complete authenticated/CRC
-record and never a pending or corrupt record.
+record and never a pending or corrupt record. 7.16 meets this in firmware only
+(staged commit, magic written last, recovery at boot); bootloader-linked
+storage code is unchanged.
 
-**R-4.3** Because older signed firmware intentionally wipes storage it cannot
-parse, V20 SHALL NOT ship until the bootloader minimum-security epoch refuses
-firmware unable to read V20 before that firmware starts. Signed downgrade,
-interrupted bootloader update, recovery, and every supported board revision are
-mandatory tests.
+**R-4.3** A signed downgrade to firmware that cannot read V20 wipes, which is
+the standing policy for downgrades (a signed upgrade never wipes). No
+bootloader security epoch is required for V20 (owner decision 2026-10-01;
+bootloader work is planned on alpha, tentatively 7.17).
 
 **R-4.4** The dormant PIN-KDF V19 rewrap SHALL remain disabled. Storage number
 20 does not authorize enabling `STORAGE_PIN_KDF_V19` without its separate
@@ -237,9 +239,9 @@ candidate. These cannot be waived by green unit tests:
    U2F credentials; PIN set/change/wrong-PIN/blocking; cancellation; timeout;
    exclude/allow lists; multiple accounts; power cycles; and repeated-write
    flash/RAM/stack soak.
-5. Exact-candidate V17-to-V20 migration, interrupted writes, wipe/recovery,
-   bootloader-update interruption, and signed downgrade refusal on every board
-   revision.
+5. Exact-candidate V17-to-V20 migration, interrupted writes (power cut at
+   each commit step), wipe/recovery, and signed downgrade (expected to wipe)
+   on every board revision.
 6. Streaming EIP-712 screen captures and independent hash/signature comparison
    for canonical positive vectors and malformed/cancelled negative vectors.
 7. Certified and runtime clear-sign screen evidence side by side, including
