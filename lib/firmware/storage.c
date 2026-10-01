@@ -1938,7 +1938,12 @@ void storage_commit(void) {
 
     /* A verified pending record is recovered at boot if this is cut short,
      * so never retry by erasing it and never wipe here. */
-    if (!storage_finalizePending(pending)) {
+    /* Finalizing rewrites the same marker word, so a transient flash error
+     * is retried; a persistent one leaves the pending record for boot. */
+    bool finalized = false;
+    for (int attempt = 0; attempt < STORAGE_RETRIES && !finalized; attempt++)
+      finalized = storage_finalizePending(pending);
+    if (!finalized) {
       memzero(flash_temp, sizeof(flash_temp));
       layout_warning_static("Storage Unsafe. Keep Powered!");
       shutdown();
