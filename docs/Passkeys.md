@@ -56,8 +56,9 @@ the bootloader security epoch refuses such a downgrade before firmware starts.
   only after a valid PIN-token MAC.
 - The FIDO ClientPIN is a separate security-key PIN entered by the platform;
   it is not the wallet-unlock PIN entered on the KeepKey PIN matrix.
-- The AAGUID in this development branch is provisional. Replace it with the
-  production AAGUID registered in FIDO Metadata Service before release.
+- The AAGUID is `4ae2ccc1-d032-4099-9085-9e0b4f61e8c8`, self-assigned
+  (random v4) and not FIDO-certified. It is not yet listed in the public
+  authenticator registry; that waits for our own device testing.
 
 ## Release gate
 
