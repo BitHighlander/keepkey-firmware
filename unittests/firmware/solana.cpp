@@ -1,10 +1,19 @@
 extern "C" {
+#include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/solana.h"
+#include "trezor/crypto/curves.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
+#include "trezor/crypto/sha3.h"
+#include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
 }
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
+#include <vector>
 
 TEST(Solana, FormatAmount) {
   char buf[32];
@@ -545,6 +554,54 @@ TEST(Solana, ParseTxTooShort) {
   EXPECT_FALSE(solana_parseTx(raw, sizeof(raw), &tx));
 }
 
+/* #550 boundary regressions, requested by independent review before PR #557
+ * merged (and only added afterward, in round 4's remediation, per #583).
+ * tx->accounts[] has exactly SOL_MAX_ACCOUNTS(32) entries; num_accounts must
+ * be rejected -- MALFORMED, fully closed -- before it's ever stored or used
+ * as a loop bound, whether it's a small overage (33..255, which would read
+ * past accounts[31] as a uint16_t loop bound) or a value that silently wraps
+ * to a small/zero uint8_t (256, 512, ...), which would have reintroduced the
+ * original signer-check bypass this fix closed. */
+TEST(Solana, RejectsThirtyThreeAccounts) {
+  uint8_t raw[4];
+  size_t pos = 0;
+  raw[pos++] = 1;  /* num_required_sigs */
+  raw[pos++] = 0;  /* num_readonly_signed */
+  raw[pos++] = 1;  /* num_readonly_unsigned */
+  raw[pos++] = 33; /* compact-u16 num_accounts: 33 > SOL_MAX_ACCOUNTS(32) */
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
+TEST(Solana, RejectsAccountCountWrapAt256) {
+  uint8_t raw[5];
+  size_t pos = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  /* compact-u16 for 256: byte0 = (256 & 0x7F) | 0x80, byte1 = 256 >> 7 */
+  raw[pos++] = 0x80;
+  raw[pos++] = 0x02;
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
+TEST(Solana, RejectsAccountCountWrapAt512) {
+  uint8_t raw[5];
+  size_t pos = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  /* compact-u16 for 512: byte0 = (512 & 0x7F) | 0x80, byte1 = 512 >> 7 */
+  raw[pos++] = 0x80;
+  raw[pos++] = 0x04;
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
 TEST(Solana, RejectsTrailingBytes) {
   /* Build a valid 1-instruction system transfer, then append extra bytes */
   uint8_t raw[256];
@@ -735,6 +792,7 @@ TEST(Solana, VersionedMessageNoLookupTablesIsVerified) {
    * verifiable as a legacy message — swap providers build these. */
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_FALSE(tx.has_address_lookups);
   EXPECT_TRUE(solana_parseTx(raw, pos, &tx));
   ASSERT_EQ(tx.num_instructions, 1);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
@@ -894,6 +952,130 @@ TEST(Solana, VersionedMessageWithUnreferencedLookupTableIsOpaque) {
   EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
+/* SRS R-5.1: more lookup entries than a certified proof may bind still makes
+ * an UNcertified message opaque, but its tail must be parsed first -- a
+ * malformed message is refused, never handed to the blind-sign path. */
+/* The certified LUT proof, built here from its documented preimage rather
+ * than by the code under test: "KeepKeySolanaTxAccounts/1" || sha256(message)
+ * || count(le32) || keys, signed by a delegate the (test) root certified for
+ * Solana. It binds the message, the keys, their order and their count. */
+TEST(Solana, CertifiedLookupProofBindsMessageKeysOrderAndScope) {
+  static const uint8_t root_priv[32] = {
+      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      0xcc, 0xdd, 0xee, 0xf0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11};
+  static const uint8_t delegate_priv[32] = {7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                                            7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                                            7, 7, 7, 7, 7, 7, 7, 7, 7, 7};
+  uint8_t root_pub[33], delegate_pub[33];
+  ecdsa_get_public_key33(&secp256k1, root_priv, root_pub);
+  ecdsa_get_public_key33(&secp256k1, delegate_priv, delegate_pub);
+  clearsign_root_set_test_root(root_pub);
+
+  auto mint = [&](uint32_t scope) {
+    std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
+    c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
+    c[CLEARSIGN_CERT_OFF_FLAGS] = CLEARSIGN_USAGE_MAY_SUPPRESS_RAW;
+    for (int i = 0; i < 4; i++) {
+      c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
+      c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
+    }
+    memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
+    memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, 33);
+    const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
+    uint8_t pre[66] = {0x19, 0x01};
+    memcpy(pre + 2, ds, 32);
+    keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
+    uint8_t digest[32];
+    keccak_256(pre, sizeof(pre), digest);
+    EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, root_priv, digest,
+                                   &c[CLEARSIGN_CERT_OFF_SIG], NULL, NULL));
+    return c;
+  };
+  const std::vector<uint8_t> cert = mint(CLEARSIGN_SCOPE_SOLANA);
+
+  const std::vector<uint8_t> message = {1, 0, 1, 2, 0xAA, 0xBB, 0xCC};
+  uint8_t keys[2][32];
+  memset(keys[0], 0x41, 32);
+  memset(keys[1], 0x42, 32);
+  std::vector<uint8_t> pre((const uint8_t*)"KeepKeySolanaTxAccounts/1",
+                           (const uint8_t*)"KeepKeySolanaTxAccounts/1" + 25);
+  uint8_t h[32];
+  sha256_Raw(message.data(), message.size(), h);
+  pre.insert(pre.end(), h, h + 32);
+  pre.insert(pre.end(), {2, 0, 0, 0});
+  pre.insert(pre.end(), keys[0], keys[0] + 32);
+  pre.insert(pre.end(), keys[1], keys[1] + 32);
+  uint8_t digest[32], sig[64];
+  sha256_Raw(pre.data(), pre.size(), digest);
+  ASSERT_EQ(
+      0, ecdsa_sign_digest(&secp256k1, delegate_priv, digest, sig, NULL, NULL));
+
+  auto ok = [&](const std::vector<uint8_t>& raw, const uint8_t (*k)[32],
+                size_t n, const std::vector<uint8_t>& c, const uint8_t* sg) {
+    return solana_lut_accounts_certified(raw.data(), raw.size(), k, n, c.data(),
+                                         c.size(), sg, 64);
+  };
+  EXPECT_TRUE(ok(message, keys, 2, cert, sig));
+  std::vector<uint8_t> unsigned_tx(1, 0); /* zero signature count prefix */
+  unsigned_tx.insert(unsigned_tx.end(), message.begin(), message.end());
+  EXPECT_TRUE(ok(unsigned_tx, keys, 2, cert, sig));
+
+  std::vector<uint8_t> other = message;
+  other.back() ^= 1;
+  EXPECT_FALSE(ok(other, keys, 2, cert, sig)) << "another message";
+  uint8_t swapped[2][32];
+  memcpy(swapped[0], keys[1], 32);
+  memcpy(swapped[1], keys[0], 32);
+  EXPECT_FALSE(ok(message, swapped, 2, cert, sig)) << "reordered keys";
+  EXPECT_FALSE(ok(message, keys, 1, cert, sig)) << "dropped key";
+  EXPECT_FALSE(ok(message, keys, 2, mint(1), sig)) << "EVM-scoped certificate";
+  uint8_t bad[64];
+  memcpy(bad, sig, 64);
+  bad[10] ^= 1;
+  EXPECT_FALSE(ok(message, keys, 2, cert, bad)) << "altered signature";
+
+  clearsign_root_set_test_root(NULL);
+}
+
+TEST(Solana, OversizedLookupSectionStillRefusesAMalformedTail) {
+  uint8_t raw[256];
+  size_t pos = 0;
+  raw[pos++] = 0x80; /* v0 prefix */
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 3; /* static accounts: payer, recipient, system program */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memset(raw + pos, 0x00, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 1; /* one system transfer, static accounts only */
+  raw[pos++] = 2;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 12;
+  const uint8_t transfer[12] = {2, 0, 0, 0, 0x00, 0xCA, 0x9A, 0x3B};
+  memcpy(raw + pos, transfer, sizeof(transfer));
+  pos += sizeof(transfer);
+  raw[pos++] = 1; /* one lookup table */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = SOL_MAX_LUT_ACCOUNTS + 1; /* writable indexes */
+  for (int i = 0; i <= SOL_MAX_LUT_ACCOUNTS; i++) raw[pos++] = (uint8_t)i;
+  raw[pos++] = 0; /* readonly indexes */
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  raw[pos] = 0xEE; /* one trailing byte */
+  EXPECT_EQ(solana_inspectTx(raw, pos + 1, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
 TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
   uint8_t raw[256];
   size_t pos = 0;
@@ -946,6 +1128,20 @@ TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
   SolanaParsedTx tx;
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
+
+  uint8_t resolved[1][SOL_PUBKEY_SIZE];
+  memset(resolved[0], 0x44, SOL_PUBKEY_SIZE);
+  ASSERT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 1, &tx),
+            SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx.num_accounts, 4);
+  EXPECT_EQ(memcmp(tx.instructions[0].to, resolved[0], SOL_PUBKEY_SIZE), 0);
+
+  /* The signed lookup section requests exactly one key. A certified host may
+   * not append a second key and shift account meanings. */
+  uint8_t surplus[2][SOL_PUBKEY_SIZE];
+  memset(surplus, 0x45, sizeof(surplus));
+  EXPECT_EQ(solana_inspectTxWithTrustedLut(raw, pos, surplus, 2, &tx),
+            SOL_TX_REVIEW_MALFORMED);
 }
 
 TEST(Solana, MemoBodyCaptured) {
@@ -1183,8 +1379,8 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
   size_t len;
 
   static const uint8_t kExact[10] = {12, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6};
-  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kExact,
-                              sizeof(kExact));
+  len =
+      build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kExact, sizeof(kExact));
   ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
 
@@ -1246,8 +1442,8 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
 
   /* System Transfer is exactly 12 bytes. */
   uint8_t sys_ok[12] = {SOL_SYS_TRANSFER, 0, 0, 0, 1};
-  len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, sys_ok,
-                              sizeof(sys_ok));
+  len =
+      build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, sys_ok, sizeof(sys_ok));
   ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
 
@@ -1265,8 +1461,8 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 
   /* Compute-budget SetComputeUnitLimit is exactly 5 bytes. */
-  static const uint8_t kCbLong[6] = {SOL_CB_SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0,
-                                     0xEE};
+  static const uint8_t kCbLong[6] = {
+      SOL_CB_SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0, 0xEE};
   len = build_single_instr_tx(raw, SOL_COMPUTE_BUDGET_PROGRAM, 1, kCbLong,
                               sizeof(kCbLong));
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
@@ -1299,7 +1495,8 @@ TEST(Solana, RecognizedInstructionMissingAccountsIsOpaque) {
 
   /* Token Close needs 3 accounts, Revoke 2. */
   static const uint8_t kClose[1] = {SOL_TOKEN_CLOSE_ACCOUNT_IX};
-  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kClose, sizeof(kClose));
+  len =
+      build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kClose, sizeof(kClose));
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 
@@ -1356,8 +1553,10 @@ static const uint8_t kRelayDisc[8] = {0x0d, 0x9e, 0x0d, 0xdf,
 
 /* Build a KKSOLSC1 payload: one u64 arg ("Amount") and one account ("Vault").
  */
-static size_t build_relay_schema(uint8_t* out, const uint8_t* program,
-                                 uint8_t n_args = 1) {
+static size_t build_relay_schema(
+    uint8_t* out, const uint8_t* program, uint8_t n_args = 1,
+    uint8_t account_index = 0,
+    SolanaSchemaArgType amount_type = SOL_SCHEMA_ARG_U64) {
   size_t p = 0;
   memcpy(out + p, "KKSOLSC1", 8);
   p += 8;
@@ -1375,7 +1574,7 @@ static size_t build_relay_schema(uint8_t* out, const uint8_t* program,
   p += 7; /* instruction name */
   out[p++] = n_args;
   if (n_args >= 1) {
-    out[p++] = SOL_SCHEMA_ARG_U64;
+    out[p++] = amount_type;
     out[p++] = 6;
     memcpy(out + p, "Amount", 6);
     p += 6;
@@ -1387,11 +1586,30 @@ static size_t build_relay_schema(uint8_t* out, const uint8_t* program,
     p += 5;
   }
   out[p++] = 1; /* one displayed account */
-  out[p++] = 0; /* index 0 */
+  out[p++] = account_index;
   out[p++] = 5;
   memcpy(out + p, "Vault", 5);
   p += 5;
   return p;
+}
+
+static std::vector<uint8_t> solana_unhex(const std::string& hex) {
+  std::vector<uint8_t> out;
+  if ((hex.size() & 1U) != 0) return out;
+  out.reserve(hex.size() / 2);
+  for (size_t i = 0; i < hex.size(); i += 2) {
+    const auto nibble = [](char c) -> int {
+      if (c >= '0' && c <= '9') return c - '0';
+      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+      return -1;
+    };
+    const int hi = nibble(hex[i]);
+    const int lo = nibble(hex[i + 1]);
+    if (hi < 0 || lo < 0) return {};
+    out.push_back((uint8_t)((hi << 4) | lo));
+  }
+  return out;
 }
 
 /* Relay's instruction data: discriminator + amount + 32-byte order id. */
@@ -1534,6 +1752,156 @@ TEST(Solana, SchemaAppliesWithFullCoverage) {
     amount |= ((uint64_t)ix->data[s.disc_len + i]) << (8 * i);
   }
   EXPECT_EQ(amount, 526490980ULL);
+}
+
+/* Exact message bytes from the real Relay SOL->ETH quote captured
+ * 2026-08-24 America/Chicago. The outer signature vector was removed because
+ * SolanaSignTx receives the message itself. This is v0 but self-contained:
+ * all five accounts are static and the trailing lookup-table count is zero.
+ * It is the production shape that exposed the erroneous assumption that every
+ * certified Relay schema also needs a LUT proof. */
+TEST(Solana, RealRelayV0NoLookupFixtureAcceptsCompleteSchema) {
+  const std::vector<uint8_t> raw = solana_unhex(
+      "8001000305ec3979a4dc6b401bd045171a189f26856fab9eab75560214f972b2"
+      "edc164300f66963b37e581dc14a0f573eeede8e54a257d83d082c54ab208cbff"
+      "d1dc2a70ca792689378ecd51d80406eb0caa3b62795beb10b6c5dc96bc2e0df0"
+      "3cbfee1abfbe3e6d285d2ee963351b6deeb0a1e96c881435ccd450b2645f24cc"
+      "27960bee47000000000000000000000000000000000000000000000000000000"
+      "0000000000d96db9f622f840ffda97430208ddbc7950d2c1ea45ecc9c2933151"
+      "c02963f3860102050300000104300d9e0ddf5fd51c06f075633b000000000370"
+      "4dea2a5eb9cf98e2f625a96080df1f0c5c24ccec3a6d8827b3ab25c0b11800");
+  ASSERT_EQ(raw.size(), 255U);
+
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(tx.has_address_lookups);
+  ASSERT_EQ(tx.num_accounts, 5);
+  ASSERT_EQ(tx.num_instructions, 1);
+  const SolanaParsedInstruction* instr = &tx.instructions[0];
+  EXPECT_FALSE(instr->external);
+  ASSERT_EQ(instr->num_acct_indices, 5);
+  EXPECT_EQ(instr->acct_indices[3], 1); /* Vault is signed static account 1. */
+  uint64_t amount = 0;
+  for (int i = 0; i < 8; i++) {
+    amount |= ((uint64_t)instr->data[8 + i]) << (8 * i);
+  }
+  EXPECT_EQ(amount, 996374000ULL);
+
+  uint8_t schema_blob[256];
+  const size_t schema_len = build_relay_schema(schema_blob, instr->program_id,
+                                               2, 3, SOL_SCHEMA_ARG_LAMPORTS);
+  SolanaInstrSchema schema;
+  ASSERT_TRUE(solana_parseInstrSchema(schema_blob, schema_len, &schema));
+  ASSERT_EQ(schema.args[0].type, SOL_SCHEMA_ARG_LAMPORTS);
+  EXPECT_EQ(solana_schemaArgWidth(schema.args[0].type), 8);
+  char amount_display[32];
+  solana_formatAmount(amount_display, sizeof(amount_display), amount);
+  EXPECT_STREQ(amount_display, "0.996374000 SOL");
+  uint8_t schema_ix = 0xFF;
+  ASSERT_TRUE(solana_schemaApplies(&schema, &tx, &schema_ix));
+  EXPECT_EQ(schema_ix, 0);
+  EXPECT_EQ(memcmp(tx.accounts[instr->acct_indices[3]], tx.accounts[1], 32), 0);
+}
+
+TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t data[48];
+  build_relay_data(data, 1034498840ULL);
+
+  uint8_t raw[512];
+  size_t pos = 0;
+  raw[pos++] = 0x80; /* v0 */
+  raw[pos++] = 1;    /* required signatures */
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 1; /* one static account: signer */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 1; /* one instruction */
+  raw[pos++] = 1; /* program is resolved account 0 */
+  raw[pos++] = 1; /* one instruction account */
+  raw[pos++] = 2; /* resolved account 1 */
+  raw[pos++] = sizeof(data);
+  memcpy(raw + pos, data, sizeof(data));
+  pos += sizeof(data);
+  raw[pos++] = 1; /* one lookup table */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = 2; /* two writable lookup indices */
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 0; /* no readonly indices */
+
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(tx.has_address_lookups);
+
+  uint8_t resolved[2][SOL_PUBKEY_SIZE];
+  memcpy(resolved[0], program, 32);
+  memset(resolved[1], 0x77, 32);
+  ASSERT_EQ(
+      solana_inspectTxWithTrustedLut(raw, pos, resolved, 2, &tx),
+      SOL_TX_REVIEW_OPAQUE); /* unknown Relay instruction, now resolvable */
+  EXPECT_TRUE(tx.has_address_lookups);
+  ASSERT_FALSE(tx.instructions[0].external);
+  EXPECT_EQ(memcmp(tx.instructions[0].program_id, program, 32), 0);
+
+  uint8_t blob[256];
+  const size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema schema;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &schema));
+  uint8_t ix = 0xFF;
+  ASSERT_TRUE(solana_schemaApplies(&schema, &tx, &ix));
+  EXPECT_EQ(ix, 0);
+  EXPECT_EQ(
+      memcmp(tx.accounts[tx.instructions[ix].acct_indices[0]], resolved[1], 32),
+      0);
+}
+
+TEST(Solana, SchemaNeverOverridesNativeDecoder) {
+  uint8_t transfer_data[12] = {2, 0, 0, 0};
+  transfer_data[4] = 0xD2;
+  transfer_data[5] = 0x04;
+  uint8_t raw[256];
+  const size_t len = build_single_instr_tx(
+      raw, SOL_SYSTEM_PROGRAM, 2, transfer_data, sizeof(transfer_data));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
+
+  uint8_t fake_schema_bytes[256];
+  size_t schema_len = 0;
+  memcpy(fake_schema_bytes + schema_len, "KKSOLSC1", 8);
+  schema_len += 8;
+  fake_schema_bytes[schema_len++] = 1;
+  memcpy(fake_schema_bytes + schema_len, SOL_SYSTEM_PROGRAM, 32);
+  schema_len += 32;
+  fake_schema_bytes[schema_len++] = 4;
+  memcpy(fake_schema_bytes + schema_len, transfer_data, 4);
+  schema_len += 4;
+  fake_schema_bytes[schema_len++] = 6;
+  memcpy(fake_schema_bytes + schema_len, "System", 6);
+  schema_len += 6;
+  fake_schema_bytes[schema_len++] = 8;
+  memcpy(fake_schema_bytes + schema_len, "Transfer", 8);
+  schema_len += 8;
+  fake_schema_bytes[schema_len++] = 1;
+  fake_schema_bytes[schema_len++] = SOL_SCHEMA_ARG_U64;
+  fake_schema_bytes[schema_len++] = 6;
+  memcpy(fake_schema_bytes + schema_len, "Amount", 6);
+  schema_len += 6;
+  fake_schema_bytes[schema_len++] = 1;
+  fake_schema_bytes[schema_len++] = 1;
+  fake_schema_bytes[schema_len++] = 9;
+  memcpy(fake_schema_bytes + schema_len, "Recipient", 9);
+  schema_len += 9;
+  SolanaInstrSchema schema;
+  ASSERT_TRUE(solana_parseInstrSchema(fake_schema_bytes, schema_len, &schema));
+  uint8_t ix = 0;
+  EXPECT_FALSE(solana_schemaApplies(&schema, &tx, &ix));
 }
 
 /* A schema for a different program must never match. */
@@ -1724,11 +2092,119 @@ TEST(Solana, AtaUnknownInstructionStillOpaque) {
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
 }
 
-/* Plain SolanaSignMessage payloads skip AdvancedMode only when they cannot be
- * transaction messages for the signing key. */
+/* Build a two-instruction legacy message: ix0 is the schema-described call on
+ * `program` (unknown to the parser, so the message is OPAQUE and the schema
+ * review path runs), ix1 is a companion instruction on `companion_program`. */
+static size_t build_schema_plus_companion_tx(
+    uint8_t* raw, const uint8_t* program, const uint8_t* instr_data,
+    uint8_t data_len, const uint8_t* companion_program, uint8_t companion_accts,
+    const uint8_t* companion_data, uint8_t companion_len) {
+  size_t pos = 0;
+  raw[pos++] = 1; /* num_required_sigs */
+  raw[pos++] = 0; /* num_readonly_signed */
+  raw[pos++] = 2; /* num_readonly_unsigned: both programs */
+  raw[pos++] = 4; /* sender, vault, schema program, companion program */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memcpy(raw + pos, program, 32);
+  pos += 32;
+  memcpy(raw + pos, companion_program, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* recent blockhash */
+  pos += 32;
+
+  raw[pos++] = 2; /* two instructions */
+
+  raw[pos++] = 2; /* ix0 program index */
+  raw[pos++] = 2; /* two account indices */
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = data_len;
+  memcpy(raw + pos, instr_data, data_len);
+  pos += data_len;
+
+  raw[pos++] = 3; /* ix1 program index */
+  raw[pos++] = companion_accts;
+  for (uint8_t i = 0; i < companion_accts; i++) raw[pos++] = i;
+  raw[pos++] = companion_len;
+  memcpy(raw + pos, companion_data, companion_len);
+  pos += companion_len;
+  return pos;
+}
+
+/* SystemProgram Transfer: u32 LE type 2 + u64 LE lamports (1 SOL). */
+static const uint8_t kSystemTransfer12[12] = {2,    0,    0,    0, 0x00, 0xCA,
+                                              0x9A, 0x3B, 0x00, 0, 0,    0};
+
+/* A schema describes ONE instruction, and the schema review path draws no
+ * screen for any other -- it goes from the schema screens straight to the
+ * blind-sign warning. So a recognised-but-undescribed instruction must not be
+ * allowed to ride along: this SystemProgram Transfer would otherwise be signed
+ * without a single screen naming its amount or destination, which is exactly
+ * the property solana.h says a schema can never green-light. */
+TEST(Solana, SchemaRejectsUndescribedValueInstruction) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+
+  const uint8_t system_program[32] = {0};
+  uint8_t raw[512];
+  size_t pos = build_schema_plus_companion_tx(
+      raw, program, d, sizeof(d), system_program, 2, kSystemTransfer12,
+      sizeof(kSystemTransfer12));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 2);
+  /* The parser DOES recognise it -- that is the point: recognition alone used
+   * to be the whole gate. */
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_SYSTEM_TRANSFER);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* Control: an inert companion (SetComputeUnitPrice moves no value and grants
+ * no authority) still applies, so the rejection above is about the unscreened
+ * transfer and not about the message simply having two instructions. */
+TEST(Solana, SchemaAppliesBesideInertComputeBudget) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+
+  const uint8_t unit_price[9] = {3, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos = build_schema_plus_companion_tx(raw, program, d, sizeof(d),
+                                              SOL_COMPUTE_BUDGET_PROGRAM, 0,
+                                              unit_price, sizeof(unit_price));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE);
+
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaApplies(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0);
+}
+
+/* Raw SolanaSignMessage skips AdvancedMode only for printable text that never
+   contains the signer's key. The two real messages are dApp logins captured on
+   2026-09-17 (soltoshidice.wtf); a transaction signature only verifies when
+   the signer's key is in the message, so their absence of the key is the whole
+   safety argument. */
 TEST(Solana, RawMessagePlainTextNeedsNoAdvancedMode) {
   uint8_t key[SOL_PUBKEY_SIZE];
-  memset(key, 0xAB, sizeof(key));
+  memset(key, 0xAB, sizeof(key));  // not printable, like any real key
 
   const std::string login =
       "SoltoshiDICE wallet\n"
@@ -1777,7 +2253,862 @@ TEST(Solana, RawMessageContainingSignerKeyKeepsAdvancedMode) {
                                               text.size(), key))
         << text;
   }
+  // 31 matching bytes are not the key.
   const std::string near(31, 'K');
   EXPECT_TRUE(solana_rawMessageIsPlainText((const uint8_t*)near.data(),
                                            near.size(), key));
+}
+
+/* ── KKSOLSC1 version 2: token amounts, durations, up to eight args ────
+ *
+ * Real transaction: SoltoshiDICE "Blackjack join" (program
+ * CuTLp7pDmNGkFgi4aoh8Ef1YSjc2BzECQRLzYqaoVWBR, native Rust, no IDL), as Vault
+ * received it from soltoshidice.wtf on 2026-09-18. The unsigned signature
+ * section was removed because SolanaSignTx receives the message itself.
+ * Instructions: [ComputeBudget SetComputeUnitLimit, System Transfer of
+ * 2,000,000 lamports to the session key, the 82-byte join].
+ */
+static const char* kSoltoshiJoinMessageHex =
+    "0100060dec3979a4dc6b401bd045171a189f26856fab9eab75560214f972b2ed"
+    "c164300f209892e406a5c1bf530d7721f4634090040c3fbe35df3834a2e80d97"
+    "bee0620e635230d0ec6d2689ed9f0bf1da57e147ac13babc4430c5af1ade2e40"
+    "c9cf3ee577e4b4511f351e94a764bde876019ec3523510049d3b50b3a8c70fd3"
+    "8b6007f9847d3c28e2cbbff9e7c4f7cb6d6d71e5bc16d50aa6ed4ffe3aeae6a0"
+    "d6c6eaa4a11b0a513ec5310074c9de56117aad169ab339ec9a544b3c4cf33a74"
+    "d0cc37c6fc4da258d76a62aa6a0c641d34cefc33c97f0b9424c1678e26ee25b4"
+    "c49b7bda00000000000000000000000000000000000000000000000000000000"
+    "0000000038278241da03c70dd0fc885f7ad2123bad32b33a5402340739af8ae5"
+    "d84cacef8b673cda2e293e0220ab3e01d2b58ed055c9c1b2762dd515612b10ca"
+    "cd6e34360306466fe5211732ffecadba72c39be7bc8ce5bbc5f7126b2c439b3a"
+    "40000000b0e08af4a4fcfad13ef8fcfd9dc70975eb6fc2e04a7c76611540a51c"
+    "d5db9ed006ddf6e1ee758fde18425dbce46ccddab61afc4d83b90d27febdf928"
+    "d8a18bfcf9adfb23cba734d5c630dc94ffe9bc6964e347bd3af8c3afb795b849"
+    "cab5d927030a000502400d0300070200050c0200000080841e00000000000b09"
+    "0002040803010c060952515600000000000000d4030000000000000100ca9a3b"
+    "00000000a11b0a513ec5310074c9de56117aad169ab339ec9a544b3c4cf33a74"
+    "d0cc37c6100e00000000000000ca9a3b0000000000ca9a3b00000000";
+
+/* The catalog schema, serialized from the shared wire spec by a separate
+ * (Python) implementation, not by anything in this repository:
+ *   SoltoshiDICE / Blackjack join, disc [0x51], args Round U64, Revision U64,
+ *   Seat U8, Buy-in TOKEN_AMOUNT(mint 3), Session key PUBKEY, Expires in
+ *   DURATION, Allowance TOKEN_AMOUNT(mint 3), Max wager TOKEN_AMOUNT(mint 3);
+ *   no accounts. */
+static const char* kSoltoshiJoinSchemaHex =
+    "4b4b534f4c53433102b0e08af4a4fcfad13ef8fcfd9dc70975eb6fc2e04a7c7661"
+    "1540a51cd5db9ed001510c536f6c746f736869444943450e426c61636b6a61636b"
+    "206a6f696e080105526f756e6401085265766973696f6e02045365617406064275"
+    "792d696e03030b53657373696f6e206b6579070a4578706972657320696e060941"
+    "6c6c6f77616e63650306094d61782077616765720300";
+
+/* 4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump: SDICE, Token-2022, 6 dp. */
+static const uint8_t kSdiceMint[32] = {
+    0x38, 0x27, 0x82, 0x41, 0xda, 0x03, 0xc7, 0x0d, 0xd0, 0xfc, 0x88,
+    0x5f, 0x7a, 0xd2, 0x12, 0x3b, 0xad, 0x32, 0xb3, 0x3a, 0x54, 0x02,
+    0x34, 0x07, 0x39, 0xaf, 0x8a, 0xe5, 0xd8, 0x4c, 0xac, 0xef};
+
+/* The production ClearSign Worker's certify response for this join
+ * (keepkey-clearsign.bithighlander.workers.dev, source ee1488807, version
+ * dc2adba8). None of it is secret, and none of it is bound to one
+ * transaction: the schema signature covers only kSoltoshiJoinSchemaHex (the
+ * Worker returned those exact 154 bytes), and the token signature covers only
+ * the SDICE definition.
+ *
+ * kCert501Hex: the public scope-501 delegate certificate, the same bytes as
+ * python-keepkey's CERT_501. Alias "KeepKey Vault", MAY_SUPPRESS_RAW,
+ * not_after 1818806400. It verifies only against the alpha root.
+ *
+ * kSoltoshiJoinSchemaSigHex: the delegate's signature over
+ * sha256(kSoltoshiJoinSchemaHex), signer_key_id 0x80.
+ *
+ * kSdiceTokenDefSigHex: the delegate's signature over sha256 of
+ *   "KeepKeySolanaTokenDef/2" || kSdiceMint || Token-2022 program
+ *     || le32(6) || "SDICE"
+ * signer_key_id 0x80. */
+static const char* kCert501Hex =
+    "0101000001f56c68c8804b6565704b6579205661756c74000000000000000000"
+    "000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b"
+    "2dc9f48abcd2e46d4850cfa2753fac6068a45747a32a4a39f249af72b55370f3"
+    "491913b7fb9a80207d619b3b4fca6750fc1fdc790da5562b42a351e12cde3c0f"
+    "084056a24ca8d1bf2c36b5";
+static const char* kSoltoshiJoinSchemaSigHex =
+    "7302c703ce5fee498427bf87801384c21660f4d3451aef18549f2a31d8cd2561"
+    "1d99c94afcaeafcbd6a8d04c3c1b49232a77a2b949451ba84ff217c590c14700";
+static const char* kSdiceTokenDefSigHex =
+    "36ed412ef38eb9ade9a7ac3e5b60841f9d032ea870c7886b87155c202f2ecfa1"
+    "1fc87848280fea855881f9e34127fbd2dfb91c4ed556dbd54cd1fb18e279d41a";
+
+struct SchemaArgSpec {
+  uint8_t type;
+  const char* label;
+  uint8_t mint_account; /* serialized for TOKEN_AMOUNT only */
+};
+
+static std::vector<SchemaArgSpec> soltoshi_join_args(uint8_t mint = 3) {
+  return {{SOL_SCHEMA_ARG_U64, "Round", 0},
+          {SOL_SCHEMA_ARG_U64, "Revision", 0},
+          {SOL_SCHEMA_ARG_U8, "Seat", 0},
+          {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", mint},
+          {SOL_SCHEMA_ARG_PUBKEY, "Session key", 0},
+          {SOL_SCHEMA_ARG_DURATION, "Expires in", 0},
+          {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", mint},
+          {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", mint}};
+}
+
+static std::vector<uint8_t> build_schema(
+    uint8_t version, const uint8_t program[32],
+    const std::vector<SchemaArgSpec>& args) {
+  std::vector<uint8_t> p = {'K', 'K', 'S', 'O', 'L', 'S', 'C', '1', version};
+  p.insert(p.end(), program, program + 32);
+  p.push_back(1);    /* disc_len */
+  p.push_back(0x51); /* join tag */
+  const auto text = [&p](const char* s) {
+    p.push_back((uint8_t)strlen(s));
+    p.insert(p.end(), s, s + strlen(s));
+  };
+  text("SoltoshiDICE");
+  text("Blackjack join");
+  p.push_back((uint8_t)args.size());
+  for (const SchemaArgSpec& a : args) {
+    p.push_back(a.type);
+    text(a.label);
+    if (a.type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) p.push_back(a.mint_account);
+  }
+  p.push_back(0); /* no displayed accounts */
+  return p;
+}
+
+static void put_le64(std::vector<uint8_t>& v, uint64_t x) {
+  for (int i = 0; i < 8; i++) v.push_back((uint8_t)(x >> (8 * i)));
+}
+
+static uint64_t get_le64(const uint8_t* p) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; i++) v |= ((uint64_t)p[i]) << (8 * i);
+  return v;
+}
+
+TEST(Solana, SchemaV2ParsesSoltoshiDiceBlackjackJoin) {
+  const std::vector<uint8_t> blob = solana_unhex(kSoltoshiJoinSchemaHex);
+  ASSERT_EQ(blob.size(), 154U);
+  ASSERT_LE(blob.size(), sizeof(((SolanaSignTx*)0)->schema_payload.bytes));
+
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  EXPECT_STREQ(s.program_name, "SoltoshiDICE");
+  EXPECT_STREQ(s.instruction_name, "Blackjack join");
+  ASSERT_EQ(s.disc_len, 1);
+  EXPECT_EQ(s.disc[0], 0x51);
+  EXPECT_EQ(s.num_accounts, 0);
+  const std::vector<SchemaArgSpec> want = soltoshi_join_args();
+  ASSERT_EQ(s.num_args, want.size());
+  uint32_t covered = s.disc_len;
+  for (size_t i = 0; i < want.size(); i++) {
+    EXPECT_EQ(s.args[i].type, want[i].type) << i;
+    EXPECT_STREQ(s.args[i].label, want[i].label) << i;
+    if (want[i].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) {
+      EXPECT_EQ(s.args[i].mint_account, 3) << i;
+    }
+    covered += solana_schemaArgWidth(s.args[i].type);
+  }
+  EXPECT_EQ(covered, 82U); /* the join's exact data length */
+
+  /* The test builder is a second, independent serialization of the same spec
+   * entry; both must agree byte for byte. */
+  EXPECT_EQ(build_schema(2, s.program_id, want), blob);
+}
+
+/* The 82 bytes built from the documented field values are exactly the join
+ * instruction in the real message, and only the certified review admits the
+ * System Transfer that rides beside it. */
+TEST(Solana, SchemaV2RealSoltoshiDiceJoinAppliesOnlyWhenCertified) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  ASSERT_EQ(raw.size(), 572U);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 3);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_SYSTEM_TRANSFER);
+  EXPECT_EQ(tx.instructions[1].lamports, 2000000ULL);
+  const SolanaParsedInstruction* join = &tx.instructions[2];
+  ASSERT_EQ(join->type, SOL_INSTR_UNKNOWN);
+  ASSERT_EQ(join->num_acct_indices, 9);
+  EXPECT_EQ(memcmp(tx.accounts[join->acct_indices[3]], kSdiceMint, 32), 0);
+  /* The transfer funds the session key the join names. */
+  EXPECT_EQ(memcmp(tx.instructions[1].to, join->data + 26, 32), 0);
+
+  std::vector<uint8_t> want = {0x51};
+  put_le64(want, 86);            /* round */
+  put_le64(want, 980);           /* revision */
+  want.push_back(1);             /* seat */
+  put_le64(want, 1000000000ULL); /* buy-in: 1,000 SDICE */
+  want.insert(want.end(), tx.instructions[1].to, tx.instructions[1].to + 32);
+  put_le64(want, 3600);          /* seconds */
+  put_le64(want, 1000000000ULL); /* allowance */
+  put_le64(want, 1000000000ULL); /* max wager */
+  ASSERT_EQ(want.size(), 82U);
+  ASSERT_EQ(join->data_len, 82);
+  EXPECT_EQ(std::vector<uint8_t>(join->data, join->data + join->data_len),
+            want);
+
+  const std::vector<uint8_t> blob = solana_unhex(kSoltoshiJoinSchemaHex);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  ASSERT_EQ(memcmp(s.program_id, join->program_id, 32), 0);
+
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  EXPECT_EQ(idx, 2);
+  /* Runtime (AdvancedMode) schemas keep the inert-only companion rule. */
+  idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0xFF);
+}
+
+/* Control for the certified exception: it is the System Transfer, not any
+ * recognisable-looking companion. The same message with the System program
+ * key replaced by an unknown program is refused on both paths. */
+TEST(Solana, SchemaV2UnknownCompanionRejectedEvenWhenCertified) {
+  std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  const size_t system_key = 4 + 7 * 32; /* header(3) + count(1) + 7 keys */
+  for (size_t i = 0; i < 32; i++) ASSERT_EQ(raw[system_key + i], 0);
+  memset(raw.data() + system_key, 0x77, 32);
+
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_UNKNOWN);
+
+  const std::vector<uint8_t> blob = solana_unhex(kSoltoshiJoinSchemaHex);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  uint8_t idx = 0xFF;
+  EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* mint_account indexes the instruction's own account list; the join has nine
+ * (0..8), so 8 applies and 9 does not. */
+TEST(Solana, SchemaV2TokenMintOutOfRangeDoesNotApply) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  const uint8_t* program = tx.instructions[2].program_id;
+
+  for (uint8_t mint : {(uint8_t)8, (uint8_t)9, (uint8_t)255}) {
+    const std::vector<uint8_t> blob =
+        build_schema(2, program, soltoshi_join_args(mint));
+    SolanaInstrSchema s;
+    ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), mint == 8)
+        << (unsigned)mint;
+  }
+}
+
+TEST(Solana, SchemaV2AcceptsEightArgsRejectsNine) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  std::vector<SchemaArgSpec> args(8, {SOL_SCHEMA_ARG_U8, "b", 0});
+  std::vector<uint8_t> blob = build_schema(2, program, args);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  EXPECT_EQ(s.num_args, 8);
+
+  args.push_back({SOL_SCHEMA_ARG_U8, "b", 0});
+  blob = build_schema(2, program, args);
+  EXPECT_FALSE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+}
+
+/* Version 1 keeps exactly its old rules: types 1..5 and at most four args.
+ * Each rejection has a version-2 control so the version byte is what
+ * decides. */
+TEST(Solana, SchemaV1RejectsV2TypesAndLimits) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  SolanaInstrSchema s;
+
+  const std::vector<std::vector<SchemaArgSpec>> v2_only = {
+      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Amount", 0}},
+      {{SOL_SCHEMA_ARG_DURATION, "Expires in", 0}},
+      std::vector<SchemaArgSpec>(5, {SOL_SCHEMA_ARG_U8, "b", 0}),
+  };
+  for (const auto& args : v2_only) {
+    const std::vector<uint8_t> v1 = build_schema(1, program, args);
+    EXPECT_FALSE(solana_parseInstrSchema(v1.data(), v1.size(), &s));
+    const std::vector<uint8_t> v2 = build_schema(2, program, args);
+    EXPECT_TRUE(solana_parseInstrSchema(v2.data(), v2.size(), &s));
+  }
+
+  /* Unknown versions and types stay refused. */
+  const std::vector<SchemaArgSpec> one = {{SOL_SCHEMA_ARG_U64, "Amount", 0}};
+  for (uint8_t version : {(uint8_t)0, (uint8_t)3, (uint8_t)0xFF}) {
+    const std::vector<uint8_t> blob = build_schema(version, program, one);
+    EXPECT_FALSE(solana_parseInstrSchema(blob.data(), blob.size(), &s))
+        << (unsigned)version;
+  }
+  for (uint8_t type : {(uint8_t)0, (uint8_t)8}) {
+    const std::vector<uint8_t> blob =
+        build_schema(2, program, {{type, "Amount", 0}});
+    EXPECT_FALSE(solana_parseInstrSchema(blob.data(), blob.size(), &s))
+        << (unsigned)type;
+  }
+}
+
+/* The TOKEN_AMOUNT entry is type, label, then mint_account: a payload that
+ * stops before the mint byte, or whose last arg's mint is followed by nothing
+ * where n_accounts belongs, is malformed. */
+TEST(Solana, SchemaV2RejectsTruncatedTokenAmount) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  const std::vector<uint8_t> blob =
+      build_schema(2, program, {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Amount", 3}});
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  EXPECT_EQ(s.args[0].mint_account, 3);
+  /* Drop n_accounts: the mint byte is now last. */
+  EXPECT_FALSE(solana_parseInstrSchema(blob.data(), blob.size() - 1, &s));
+  /* Drop the mint byte too. */
+  EXPECT_FALSE(solana_parseInstrSchema(blob.data(), blob.size() - 2, &s));
+}
+
+TEST(Solana, SchemaDurationUsesExactUnits) {
+  const struct {
+    uint64_t seconds;
+    const char* shown;
+  } cases[] = {
+      {3600, "1 h"},
+      {86400, "1 d"},
+      {172800, "2 d"},
+      {90000, "25 h"},
+      {5400, "90 min"},
+      {60, "1 min"},
+      {3660, "61 min"},
+      {59, "59 s"},
+      {3601, "3601 s"},
+      {0, "0 d"},
+      {UINT64_MAX, "18446744073709551615 s"},
+  };
+  for (const auto& c : cases) {
+    char buf[32];
+    solana_formatDuration(buf, sizeof(buf), c.seconds);
+    EXPECT_STREQ(buf, c.shown) << c.seconds;
+  }
+}
+
+/* Without a trusted definition the device may not guess a scale or a name:
+ * it shows the signed integer and the full mint. With one, it scales by the
+ * definition's decimals and names its symbol -- and still shows the mint,
+ * because a symbol is not an identity. */
+TEST(Solana, SchemaTokenAmountTrustedOrRawWithMint) {
+  char buf[96];
+  ASSERT_TRUE(solana_formatSchemaTokenAmount(buf, sizeof(buf), 1000000000ULL,
+                                             kSdiceMint, nullptr));
+  EXPECT_STREQ(buf,
+               "1000000000 base units of mint\n"
+               "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
+  ASSERT_TRUE(solana_formatSchemaTokenAmount(buf, sizeof(buf), UINT64_MAX,
+                                             kSdiceMint, nullptr));
+  EXPECT_STREQ(buf,
+               "18446744073709551615 base units of mint\n"
+               "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
+
+  SolanaTokenInfo ti;
+  memset(&ti, 0, sizeof(ti));
+  ti.has_mint = true;
+  ti.mint.size = 32;
+  memcpy(ti.mint.bytes, kSdiceMint, 32);
+  ti.has_symbol = true;
+  strcpy(ti.symbol, "SDICE");
+  ti.has_decimals = true;
+  ti.decimals = 6;
+  ASSERT_TRUE(solana_formatSchemaTokenAmount(buf, sizeof(buf), 1000000000ULL,
+                                             kSdiceMint, &ti));
+  EXPECT_STREQ(buf,
+               "1000 SDICE\n"
+               "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
+  /* The longest trusted text still fits the renderer's 96-byte value. */
+  strcpy(ti.symbol, "ABCDEFGHIJKL");
+  ti.decimals = 9;
+  ASSERT_TRUE(solana_formatSchemaTokenAmount(buf, sizeof(buf), UINT64_MAX,
+                                             kSdiceMint, &ti));
+  EXPECT_STREQ(buf,
+               "18446744073.709551615 ABCDEFGHIJKL\n"
+               "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
+}
+
+/* Token definitions reach a TOKEN_AMOUNT only through their own tier. A
+ * delegate-addressed (0x80) definition needs the request's Solana root
+ * certificate; without one nothing is trusted on either path, so the review
+ * falls back to the raw amount and mint. (The positive runtime control and the
+ * cross-tier refusal live in signed_metadata.cpp beside the signer fixture.) */
+TEST(Solana, SchemaTokenTrustNeedsItsTiersRoot) {
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.token_info_count = 1;
+  SolanaTokenInfo* ti = &msg.token_info[0];
+  ti->has_mint = true;
+  ti->mint.size = 32;
+  memcpy(ti->mint.bytes, kSdiceMint, 32);
+  ti->has_symbol = true;
+  strcpy(ti->symbol, "SDICE");
+  ti->has_decimals = true;
+  ti->decimals = 6;
+  ti->has_signature = true;
+  ti->signature.size = 64;
+  memset(ti->signature.bytes, 0x5A, 64);
+  ti->has_signer_key_id = true;
+  ti->signer_key_id = 0x80; /* METADATA_KEYID_DELEGATE */
+
+  EXPECT_EQ(solana_findTokenInfo(&msg, kSdiceMint), ti);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, false), nullptr);
+
+  /* A certificate of the wrong length is no certificate. */
+  msg.has_clearsign_certificate = true;
+  msg.clearsign_certificate.size = 1;
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr);
+
+  uint8_t other[32];
+  memset(other, 0x42, sizeof(other));
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, other, true), nullptr);
+  EXPECT_EQ(solana_schemaTrustedToken(nullptr, kSdiceMint, true), nullptr);
+}
+
+/* What the review draws for the real join, arg by arg, through the renderer
+ * itself, with no token definition supplied. Each TOKEN_AMOUNT's mint is the
+ * join's account 3, which is message key 8 (SDICE). Message key 3 is
+ * 951nS8NJoi7ajueDo7iztaWQiapUZuHAx5xt3vVApJXa: reading the index against the
+ * wrong list would name a different token. */
+TEST(Solana, SchemaV2SoltoshiDiceJoinRendersEachArg) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  const std::vector<uint8_t> blob = solana_unhex(kSoltoshiJoinSchemaHex);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  const SolanaParsedInstruction* ix = &tx.instructions[idx];
+  ASSERT_EQ(ix->acct_indices[3], 8);
+  ASSERT_NE(memcmp(tx.accounts[3], kSdiceMint, 32), 0);
+
+  const char* raw_sdice =
+      "1000000000 base units of mint\n"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+  const char* const want[] = {"86",
+                              "980",
+                              "1",
+                              raw_sdice,
+                              "BqtZ8PRQywD9Z5xXeB5112wtPG3xtj7TqF56hroicGjX",
+                              "1 h",
+                              raw_sdice,
+                              raw_sdice};
+  ASSERT_EQ(s.num_args, sizeof(want) / sizeof(want[0]));
+
+  static SolanaSignTx msg; /* no token definitions, no certificate */
+  memset(&msg, 0, sizeof(msg));
+  for (bool certified : {true, false}) {
+    SolanaSchemaTokenCache cache = {nullptr, nullptr};
+    size_t off = s.disc_len;
+    for (uint8_t a = 0; a < s.num_args; a++) {
+      char value[96];
+      ASSERT_TRUE(solana_schemaArgValue(&msg, certified, &tx, ix, &s.args[a],
+                                        ix->data + off, &cache, value,
+                                        sizeof(value)))
+          << s.args[a].label;
+      EXPECT_STREQ(value, want[a]) << s.args[a].label << " " << certified;
+      off += solana_schemaArgWidth(s.args[a].type);
+    }
+    EXPECT_EQ(off, ix->data_len);
+  }
+}
+
+/* A certified request for the real join as Vault sends it: the Worker's
+ * certificate, the schema with its delegate signature, and the SDICE
+ * definition addressed to the delegate (0x80, METADATA_KEYID_DELEGATE). */
+static void fill_certified_soltoshi_join(SolanaSignTx* msg) {
+  memset(msg, 0, sizeof(*msg));
+  const std::vector<uint8_t> cert = solana_unhex(kCert501Hex);
+  const std::vector<uint8_t> schema = solana_unhex(kSoltoshiJoinSchemaHex);
+  const std::vector<uint8_t> schema_sig =
+      solana_unhex(kSoltoshiJoinSchemaSigHex);
+  const std::vector<uint8_t> token_sig = solana_unhex(kSdiceTokenDefSigHex);
+  ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
+  ASSERT_EQ(schema.size(), 154U);
+  ASSERT_EQ(schema_sig.size(), 64U);
+  ASSERT_EQ(token_sig.size(), 64U);
+
+  msg->has_clearsign_certificate = true;
+  msg->clearsign_certificate.size = cert.size();
+  memcpy(msg->clearsign_certificate.bytes, cert.data(), cert.size());
+  msg->has_schema_payload = true;
+  msg->schema_payload.size = schema.size();
+  memcpy(msg->schema_payload.bytes, schema.data(), schema.size());
+  msg->has_schema_signature = true;
+  msg->schema_signature.size = schema_sig.size();
+  memcpy(msg->schema_signature.bytes, schema_sig.data(), schema_sig.size());
+  msg->has_schema_signer_key_id = true;
+  msg->schema_signer_key_id = 0x80;
+
+  msg->token_info_count = 1;
+  SolanaTokenInfo* ti = &msg->token_info[0];
+  ti->has_mint = true;
+  ti->mint.size = 32;
+  memcpy(ti->mint.bytes, kSdiceMint, 32);
+  ti->has_symbol = true;
+  strcpy(ti->symbol, "SDICE");
+  ti->has_decimals = true;
+  ti->decimals = 6;
+  ti->has_signature = true;
+  ti->signature.size = token_sig.size();
+  memcpy(ti->signature.bytes, token_sig.data(), token_sig.size());
+  ti->has_signer_key_id = true;
+  ti->signer_key_id = 0x80;
+}
+
+/* The Worker's schema signature verifies the way fsm_msgSolanaSignTx checks
+ * it: clearsign_root_verify_delegate_attestation gets the raw schema_payload
+ * and verifies sha256(payload) with the scope-501 certificate's delegate. A
+ * flipped byte in the signature or the schema, or another scope, fails. */
+TEST(Solana, CertifiedSoltoshiJoinSchemaSignatureVerifies) {
+  const std::vector<uint8_t> cert = solana_unhex(kCert501Hex);
+  std::vector<uint8_t> schema = solana_unhex(kSoltoshiJoinSchemaHex);
+  std::vector<uint8_t> sig = solana_unhex(kSoltoshiJoinSchemaSigHex);
+  ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
+  ASSERT_EQ(sig.size(), 64U);
+  /* The certificate needs the alpha root every 7.16 build embeds
+   * (ClearsignRoot.TheEmbeddedRootIsTheAlphaRoot). */
+  ASSERT_TRUE(clearsign_root_verify_cert(cert.data(), cert.size()));
+  const auto verifies = [&](uint32_t scope) {
+    return clearsign_root_verify_delegate_attestation(
+        cert.data(), cert.size(), scope, schema.data(), schema.size(),
+        sig.data(), sig.size());
+  };
+  EXPECT_TRUE(verifies(501));
+  EXPECT_FALSE(verifies(1));
+
+  for (size_t i = 0; i < sig.size(); i++) {
+    sig[i] ^= 0x01;
+    EXPECT_FALSE(verifies(501)) << "signature byte " << i;
+    sig[i] ^= 0x01;
+  }
+  /* The join's discriminator byte: the same signature over a schema for
+   * another instruction of the program. */
+  const size_t disc_at = 9 + 32 + 1;
+  ASSERT_EQ(schema[disc_at], 0x51);
+  schema[disc_at] ^= 0x01;
+  EXPECT_FALSE(verifies(501));
+  schema[disc_at] ^= 0x01;
+  EXPECT_TRUE(verifies(501));
+}
+
+/* The Worker's SDICE definition (KeepKeySolanaTokenDef/2, signer 0x80) is
+ * trusted on the certified review, through the request's certificate. The
+ * same entry is not trusted on the runtime tier, whose signers never include
+ * the certificate's delegate. Nor is it trusted under another key id, without
+ * the certificate, or after a one-byte change to its signature, symbol,
+ * decimals or mint. */
+TEST(Solana, CertifiedSdiceTokenDefinitionTrustedOnlyAsSigned) {
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  SolanaTokenInfo* ti = &msg.token_info[0];
+  ASSERT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), ti);
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, false), nullptr);
+
+  for (uint32_t key_id : {0U, 3U, 0x7FU, 0x81U}) {
+    ti->signer_key_id = key_id;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << "signer_key_id " << key_id;
+  }
+  ti->signer_key_id = 0x80;
+  ti->has_signer_key_id = false;
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr);
+  ti->has_signer_key_id = true;
+
+  msg.has_clearsign_certificate = false;
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr);
+  msg.has_clearsign_certificate = true;
+
+  for (size_t i = 0; i < ti->signature.size; i++) {
+    ti->signature.bytes[i] ^= 0x01;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << "signature byte " << i;
+    ti->signature.bytes[i] ^= 0x01;
+  }
+  /* Each flip leaves a well-formed ticker ("RDICE", "SEICE", ...), so the
+   * signature is what refuses it. */
+  for (size_t i = 0; i < strlen("SDICE"); i++) {
+    ti->symbol[i] ^= 0x01;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << ti->symbol;
+    ti->symbol[i] ^= 0x01;
+  }
+  /* 7, 4 and 2 stay within the display cap of 9 decimals, so again the
+   * signature refuses them, not the cap. */
+  for (uint32_t flip : {0x01U, 0x02U, 0x04U}) {
+    ti->decimals ^= flip;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), nullptr)
+        << "decimals " << ti->decimals;
+    ti->decimals ^= flip;
+  }
+  /* Looked up by the altered mint, so the entry is found and the signature
+   * refuses it. */
+  for (size_t i = 0; i < SOL_PUBKEY_SIZE; i++) {
+    ti->mint.bytes[i] ^= 0x01;
+    EXPECT_EQ(solana_schemaTrustedToken(&msg, ti->mint.bytes, true), nullptr)
+        << "mint byte " << i;
+    ti->mint.bytes[i] ^= 0x01;
+  }
+  EXPECT_EQ(solana_schemaTrustedToken(&msg, kSdiceMint, true), ti);
+}
+
+/* The certified review of the real join with the Worker's envelope, arg by
+ * arg, through the renderer. Each TOKEN_AMOUNT is scaled and named by the
+ * SDICE definition and still shows the mint. The same request on the runtime
+ * tier renders the raw base units. */
+TEST(Solana, CertifiedSoltoshiJoinRendersSdiceAmounts) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(msg.schema_payload.bytes,
+                                      msg.schema_payload.size, &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  const SolanaParsedInstruction* ix = &tx.instructions[idx];
+
+  const char* sdice =
+      "1000 SDICE\n"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+  const char* raw_sdice =
+      "1000000000 base units of mint\n"
+      "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+  const char* session = "BqtZ8PRQywD9Z5xXeB5112wtPG3xtj7TqF56hroicGjX";
+  const struct {
+    const char* label;
+    const char* certified;
+    const char* runtime;
+  } want[] = {
+      {"Round", "86", "86"},
+      {"Revision", "980", "980"},
+      {"Seat", "1", "1"},
+      {"Buy-in", sdice, raw_sdice},
+      {"Session key", session, session},
+      {"Expires in", "1 h", "1 h"},
+      {"Allowance", sdice, raw_sdice},
+      {"Max wager", sdice, raw_sdice},
+  };
+  ASSERT_EQ(s.num_args, sizeof(want) / sizeof(want[0]));
+
+  for (bool certified : {true, false}) {
+    SolanaSchemaTokenCache cache = {nullptr, nullptr};
+    size_t off = s.disc_len;
+    for (uint8_t a = 0; a < s.num_args; a++) {
+      EXPECT_STREQ(s.args[a].label, want[a].label);
+      char value[96];
+      ASSERT_TRUE(solana_schemaArgValue(&msg, certified, &tx, ix, &s.args[a],
+                                        ix->data + off, &cache, value,
+                                        sizeof(value)))
+          << want[a].label;
+      EXPECT_STREQ(value, certified ? want[a].certified : want[a].runtime)
+          << want[a].label << " certified=" << certified;
+      off += solana_schemaArgWidth(s.args[a].type);
+    }
+    EXPECT_EQ(off, ix->data_len);
+  }
+}
+
+/* The types the join does not use, and what the renderer refuses: OPAQUE32,
+ * which the caller pages as bytes, and a mint that is not an account of this
+ * instruction or of this message. */
+TEST(Solana, SchemaArgValueRemainingTypesAndRefusals) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  const SolanaParsedInstruction* ix = &tx.instructions[2];
+  static SolanaSignTx msg;
+  memset(&msg, 0, sizeof(msg));
+  SolanaSchemaTokenCache cache = {nullptr, nullptr};
+  char value[96];
+
+  std::vector<uint8_t> data;
+  put_le64(data, 996374000ULL);
+  const SolanaSchemaArg lamports = {SOL_SCHEMA_ARG_LAMPORTS, "Amount", 0};
+  ASSERT_TRUE(solana_schemaArgValue(&msg, true, &tx, ix, &lamports, data.data(),
+                                    &cache, value, sizeof(value)));
+  EXPECT_STREQ(value, "0.996374000 SOL");
+
+  const SolanaSchemaArg opaque = {SOL_SCHEMA_ARG_OPAQUE32, "Order", 0};
+  EXPECT_FALSE(solana_schemaArgValue(&msg, true, &tx, ix, &opaque, ix->data + 1,
+                                     &cache, value, sizeof(value)));
+
+  SolanaSchemaArg token = {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 8};
+  ASSERT_TRUE(solana_schemaArgValue(&msg, true, &tx, ix, &token, data.data(),
+                                    &cache, value, sizeof(value)));
+  token.mint_account = 9; /* the join has nine accounts, 0..8 */
+  EXPECT_FALSE(solana_schemaArgValue(&msg, true, &tx, ix, &token, data.data(),
+                                     &cache, value, sizeof(value)));
+  token.mint_account = 3; /* message key 8, beyond a shortened key list */
+  SolanaParsedTx short_tx = tx;
+  short_tx.num_accounts = 8;
+  EXPECT_FALSE(
+      solana_schemaArgValue(&msg, true, &short_tx, &short_tx.instructions[2],
+                            &token, data.data(), &cache, value, sizeof(value)));
+}
+
+/* A certified schema of either version admits a SystemProgram Transfer beside
+ * the instruction it describes: the certified review renders the transfer in
+ * full. Already-certified version 1 schemas (Relay's) gain this too. The
+ * runtime (AdvancedMode) path still refuses it. */
+TEST(Solana, SchemaV1CertifiedAdmitsStaticTransferCompanion) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+  const uint8_t system_program[32] = {0};
+  uint8_t raw[512];
+  const size_t pos = build_schema_plus_companion_tx(
+      raw, program, d, sizeof(d), system_program, 2, kSystemTransfer12,
+      sizeof(kSystemTransfer12));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_SYSTEM_TRANSFER);
+  EXPECT_EQ(tx.num_static_accounts, tx.num_accounts);
+
+  uint8_t blob[256];
+  const size_t len = build_relay_schema(blob, program, 2);
+  ASSERT_EQ(blob[8], 1); /* version 1 */
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0);
+  idx = 0xFF;
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+  EXPECT_EQ(idx, 0xFF);
+}
+
+/* Parity with the Vault/Worker (isCertifiedCompanion): a certified Transfer
+ * companion names exactly two accounts. The same Transfer with a third static
+ * account still parses as a SystemProgram Transfer, and the certified path
+ * refuses it; with two it is admitted. */
+TEST(Solana, SchemaCertifiedTransferCompanionNeedsExactlyTwoAccounts) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 526490980ULL);
+  const uint8_t system_program[32] = {0};
+  uint8_t blob[256];
+  const size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+
+  for (uint8_t accts : {(uint8_t)3, (uint8_t)2}) {
+    uint8_t raw[512];
+    const size_t pos = build_schema_plus_companion_tx(
+        raw, program, d, sizeof(d), system_program, accts, kSystemTransfer12,
+        sizeof(kSystemTransfer12));
+    SolanaParsedTx tx;
+    ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+    ASSERT_EQ(tx.instructions[1].type, SOL_INSTR_SYSTEM_TRANSFER);
+    ASSERT_EQ(tx.instructions[1].num_acct_indices, accts);
+    ASSERT_EQ(tx.num_static_accounts, tx.num_accounts);
+
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), accts == 2)
+        << (unsigned)accts;
+    EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)accts;
+  }
+}
+
+/* v0 message: static keys [signer, schema program, System program, 0x33..];
+ * one lookup table resolving one key. ix0 is the Relay-shaped call, ix1 a
+ * System Transfer from the signer to message key `to_index`. */
+static size_t build_lut_transfer_tx(uint8_t* raw, const uint8_t* program,
+                                    uint8_t to_index) {
+  uint8_t data[48];
+  build_relay_data(data, 526490980ULL);
+  size_t pos = 0;
+  raw[pos++] = 0x80; /* v0 */
+  raw[pos++] = 1;    /* required signatures */
+  raw[pos++] = 0;
+  raw[pos++] = 2;
+  raw[pos++] = 4; /* four static keys */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memcpy(raw + pos, program, 32);
+  pos += 32;
+  memcpy(raw + pos, SOL_SYSTEM_PROGRAM, 32);
+  pos += 32;
+  memset(raw + pos, 0x33, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 2; /* two instructions */
+  raw[pos++] = 1; /* ix0: schema program */
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 3;
+  raw[pos++] = sizeof(data);
+  memcpy(raw + pos, data, sizeof(data));
+  pos += sizeof(data);
+  raw[pos++] = 2; /* ix1: System program */
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = to_index;
+  raw[pos++] = sizeof(kSystemTransfer12);
+  memcpy(raw + pos, kSystemTransfer12, sizeof(kSystemTransfer12));
+  pos += sizeof(kSystemTransfer12);
+  raw[pos++] = 1; /* one lookup table */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = 1; /* one writable index */
+  raw[pos++] = 0;
+  raw[pos++] = 0; /* no readonly indices */
+  return pos;
+}
+
+/* A certified lookup-table proof resolves key 4, and the parser then treats
+ * a Transfer to it as fully decoded. Its destination would be a key the
+ * service attested, not one the user signs, so the certified schema refuses
+ * that companion. The same message paying static key 3 is the control. */
+TEST(Solana, SchemaCertifiedRefusesTransferToLookupTableKey) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t resolved[1][SOL_PUBKEY_SIZE];
+  memset(resolved[0], 0x77, sizeof(resolved[0]));
+  uint8_t blob[256];
+  const size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+
+  for (uint8_t to_index : {(uint8_t)4, (uint8_t)3}) {
+    uint8_t raw[512];
+    const size_t pos = build_lut_transfer_tx(raw, program, to_index);
+    SolanaParsedTx tx;
+    ASSERT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 1, &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    ASSERT_TRUE(tx.has_address_lookups);
+    ASSERT_EQ(tx.num_static_accounts, 4);
+    ASSERT_EQ(tx.num_accounts, 5);
+    const SolanaParsedInstruction* transfer = &tx.instructions[1];
+    ASSERT_EQ(transfer->type, SOL_INSTR_SYSTEM_TRANSFER);
+    ASSERT_FALSE(transfer->external);
+    EXPECT_EQ(
+        memcmp(transfer->to, to_index == 4 ? resolved[0] : tx.accounts[3], 32),
+        0);
+
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), to_index == 3)
+        << (unsigned)to_index;
+    EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)to_index;
+  }
 }

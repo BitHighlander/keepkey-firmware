@@ -120,6 +120,9 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg);
 void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg);
 void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg);
 void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg);
+void fsm_msgClearsignAttestorGetPublicKey(
+    const ClearsignAttestorGetPublicKey* msg);
+void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg);
 void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg);
 void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg);
 void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg);
