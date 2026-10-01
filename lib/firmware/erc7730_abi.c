@@ -2,8 +2,8 @@
 
 #include <limits.h>
 
-static bool node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
-                         uint8_t depth, bool* dynamic) {
+bool erc7730_abi_node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
+                              uint8_t depth, bool* dynamic) {
   if (!p || !p->nodes || index >= p->node_count ||
       depth > ERC7730_ABI_MAX_DEPTH)
     return false;
@@ -18,13 +18,13 @@ static bool node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
         *dynamic = true;
         return true;
       }
-      return node_dynamic(p, n->first_child, depth + 1, dynamic);
+      return erc7730_abi_node_dynamic(p, n->first_child, depth + 1, dynamic);
     }
     case ERC7730_ABI_TUPLE:
       for (uint16_t i = 0; i < n->child_count; i++) {
         bool child_dynamic = false;
-        if (!node_dynamic(p, (uint16_t)(n->first_child + i), depth + 1,
-                          &child_dynamic))
+        if (!erc7730_abi_node_dynamic(p, (uint16_t)(n->first_child + i),
+                                      depth + 1, &child_dynamic))
           return false;
         if (child_dynamic) {
           *dynamic = true;
@@ -104,6 +104,7 @@ Erc7730AbiResult erc7730_abi_validate_program(const Erc7730AbiProgram* p) {
                                          : (UINT64_C(1) << p->node_count) - 2u;
   if (child_mask != expected_children) return ERC7730_ABI_BAD_PROGRAM;
   bool ignored = false;
-  if (!node_dynamic(p, p->root, 0, &ignored)) return ERC7730_ABI_RESOURCE_LIMIT;
+  if (!erc7730_abi_node_dynamic(p, p->root, 0, &ignored))
+    return ERC7730_ABI_RESOURCE_LIMIT;
   return ERC7730_ABI_OK;
 }
