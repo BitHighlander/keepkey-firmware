@@ -50,29 +50,25 @@ static uint32_t words_entered = 0;
 static bool enforce_wordlist = true;
 static bool dry_run = true;
 static bool awaiting_character;
+static bool cipher_layout_visible;
+static uint32_t cipher_layout_generation;
 static CONFIDENTIAL char mnemonic[MNEMONIC_BUF];
 static const char english_alphabet[ENGLISH_ALPHABET_BUF] =
     "abcdefghijklmnopqrstuvwxyz";
 static CONFIDENTIAL char cipher[ENGLISH_ALPHABET_BUF];
 static int uncyphered_word_count = 0;
 static bool definitely_using_cipher = false;
+/* The cipher is re-scrambled before every character, so coded_word can only
+ * hold what the user actually typed. After a delete steps back into an
+ * earlier word, those characters are gone and this is set until the word
+ * ends. */
+static bool coded_word_unknown = false;
 /* Accumulators for the word currently being entered. File-scope so
- * recovery_delete_character() can keep them in sync with backspaces —
- * otherwise stale bytes make a re-entered word fail validation and wipe a
- * real recovery. last_completed_word backs the "previous word" indicator. */
+ * recovery_delete_character() can keep them synchronized with backspaces.
+ * last_completed_word backs the previous-word indicator. */
 static CONFIDENTIAL char coded_word[12];
 static CONFIDENTIAL char decoded_word[12];
 static CONFIDENTIAL char last_completed_word[12];
-/* Raw cipher bytes for the whole mnemonic entered so far, mirroring
- * `mnemonic` byte-for-byte (same appends, same truncations, always the same
- * length) but holding the literal characters the host sent instead of their
- * decoded plaintext. cipher rotates after every character, so re-deriving a
- * word's coded form from its decoded form via the CURRENT cipher does not
- * recover what was actually sent for any earlier position -- only bytes
- * preserved at the time they were typed do. Backspacing, of any depth across
- * any number of completed words, is then just "truncate like mnemonic and
- * re-derive the current word" -- see get_current_coded_word(). */
-static CONFIDENTIAL char coded_mnemonic[MNEMONIC_BUF];
 static CONFIDENTIAL char current_word_scratch[CURRENT_WORD_BUF];
 static CONFIDENTIAL char formatted_word_scratch[CURRENT_WORD_BUF + 10];
 static CONFIDENTIAL char final_mnemonic_scratch[MNEMONIC_BUF];
@@ -84,19 +80,21 @@ static char auto_completed_word[CURRENT_WORD_BUF];
 
 static uint32_t get_current_word_pos(void);
 static void get_current_word(char* current_word);
-static void get_current_coded_word(char* current_coded_word);
+static void render_current_cipher(bool animate_cipher);
 
 void recovery_cipher_reset(void) {
   awaiting_character = false;
+  cipher_layout_visible = false;
+  cipher_layout_generation = 0;
   enforce_wordlist = true;
   dry_run = true;
   words_entered = 0;
   word_count = 0;
   memzero(mnemonic, sizeof(mnemonic));
-  memzero(coded_mnemonic, sizeof(coded_mnemonic));
   memzero(cipher, sizeof(cipher));
   uncyphered_word_count = 0;
   definitely_using_cipher = false;
+  coded_word_unknown = false;
   memzero(coded_word, sizeof(coded_word));
   memzero(decoded_word, sizeof(decoded_word));
   memzero(last_completed_word, sizeof(last_completed_word));
@@ -174,21 +172,6 @@ static void get_current_word(char* current_word) {
     strlcpy(current_word, pos, CURRENT_WORD_BUF);
   } else {
     strlcpy(current_word, mnemonic, CURRENT_WORD_BUF);
-  }
-}
-
-/// \returns the current word's raw typed cipher bytes by parsing
-/// coded_mnemonic thus far -- mirrors get_current_word() exactly, but reads
-/// the coded form instead of the decoded plaintext.
-/// \param current_coded_word[out]  Array to populate; sized like coded_word.
-static void get_current_coded_word(char* current_coded_word) {
-  char* pos = strrchr(coded_mnemonic, ' ');
-
-  if (pos) {
-    pos++;
-    strlcpy(current_coded_word, pos, sizeof(coded_word));
-  } else {
-    strlcpy(current_coded_word, coded_mnemonic, sizeof(coded_word));
   }
 }
 
@@ -327,7 +310,11 @@ void recovery_cipher_init(uint32_t _word_count, bool passphrase_protection,
   }
 
   word_count = _word_count;
-  enforce_wordlist = _enforce_wordlist;
+  /* The wire flag is ignored. Its default (omitted = false) let any host that
+   * forgot it store mistyped words as a seed; cipher entry autocompletes to
+   * BIP-39 anyway, so every recovery requires valid words and checksum. */
+  (void)_enforce_wordlist;
+  enforce_wordlist = true;
   dry_run = _dry_run;
 
   if (!dry_run) {
@@ -363,6 +350,7 @@ void recovery_cipher_init(uint32_t _word_count, bool passphrase_protection,
   words_entered = 1;
   setup_arm(SETUP_RECOVERY);
   next_character();
+  if (setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -422,6 +410,25 @@ void next_character(void) {
 
   msg_write(MessageType_MessageType_CharacterRequest, &resp);
 
+  render_current_cipher(true);
+}
+
+void recovery_cipher_redraw(void) {
+  if (!awaiting_character || !setup_isArmedAs(SETUP_RECOVERY)) return;
+  if (cipher_layout_visible &&
+      cipher_layout_generation == layout_get_generation())
+    return;
+
+  render_current_cipher(false);
+}
+
+static void render_current_cipher(bool animate_cipher) {
+  /* An unrelated request may have replaced the screen while preserving the
+   * ceremony. Render the SAME input and mapping: next_character() would
+   * silently invalidate the cipher that the user is still reading. */
+  get_current_word(current_word_scratch);
+  const uint32_t word_pos = get_current_word_pos();
+
   /* Attempt to auto complete if we have at least 3 characters */
   bool auto_completed = false;
   if (strlen(current_word_scratch) >= 3) {
@@ -442,7 +449,7 @@ void next_character(void) {
   memzero(current_word_scratch, sizeof(current_word_scratch));
 
   /* Format previous word indicator (e.g. "(1.alcohol)" when entering word 2) */
-  static CONFIDENTIAL char prev_info[32];
+  char prev_info[32];
   prev_info[0] = '\0';
   if (word_pos > 0 && last_completed_word[0]) {
     snprintf(prev_info, sizeof(prev_info), "(%" PRIu32 ".%s)", word_pos,
@@ -450,7 +457,9 @@ void next_character(void) {
   }
 
   /* Show cipher and partial word */
-  layout_cipher(formatted_word_scratch, cipher, prev_info);
+  layout_cipher(formatted_word_scratch, cipher, prev_info, animate_cipher);
+  cipher_layout_generation = layout_get_generation();
+  cipher_layout_visible = true;
   memzero(prev_info, sizeof(prev_info));
   memzero(formatted_word_scratch, sizeof(formatted_word_scratch));
 }
@@ -483,7 +492,7 @@ void recovery_character(const char* character) {
   const char* pos = strchr(cipher, character[0]);
 
   // If not a space and not a legitmate cipher character, send failure.
-  if (character[0] != ' ' && pos == NULL) {
+  if (character[0] == '\0' || (character[0] != ' ' && pos == NULL)) {
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Character must be from a to z");
@@ -491,9 +500,11 @@ void recovery_character(const char* character) {
     return;
   }
 
+  // Count of words we think the user has entered without using the cipher:
   if (!mnemonic[0]) {
     uncyphered_word_count = 0;
     definitely_using_cipher = false;
+    coded_word_unknown = false;
     memzero(coded_word, sizeof(coded_word));
     memzero(decoded_word, sizeof(decoded_word));
     memzero(last_completed_word, sizeof(last_completed_word));
@@ -507,7 +518,7 @@ void recovery_character(const char* character) {
     strlcat(coded_word, character, sizeof(coded_word));
     strlcat(decoded_word, decoded_character, sizeof(decoded_word));
 
-    if (enforce_wordlist && 4 <= strlen(coded_word)) {
+    if (enforce_wordlist && !coded_word_unknown && 4 <= strlen(coded_word)) {
       // Check & bail if the user is entering their seed without using the
       // cipher. Note that for each word, this can give false positives about
       // ~0.4% of the time (2048/26^4).
@@ -557,12 +568,10 @@ void recovery_character(const char* character) {
 
     memzero(coded_word, sizeof(coded_word));
     memzero(decoded_word, sizeof(decoded_word));
+    coded_word_unknown = false;
 
     if (word_count && words_entered == word_count) {
-      // Keep coded_mnemonic's length-per-mnemonic invariant even on this
-      // early-return path -- it skips the shared append below.
       strlcat(mnemonic, " ", MNEMONIC_BUF);
-      strlcat(coded_mnemonic, character, MNEMONIC_BUF);
       recovery_cipher_finalize();
       return;
     }
@@ -578,11 +587,29 @@ void recovery_character(const char* character) {
     }
   }
 
-  // concat to mnemonic, and to its raw-cipher-bytes mirror in lockstep
+  // concat to mnemonic
   strlcat(mnemonic, decoded_character, MNEMONIC_BUF);
-  strlcat(coded_mnemonic, character, MNEMONIC_BUF);
 
   next_character();
+  if (setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
+}
+
+/* Resync the current-word accumulators with the edited mnemonic so a
+ * corrected word is validated on its real value. decoded_word comes from the
+ * mnemonic. coded_word keeps only characters the user actually typed: it
+ * cannot be recomputed, because the cipher changes after every character. */
+static void resync_current_word_after_delete(void) {
+  char cur[CURRENT_WORD_BUF];
+  get_current_word(cur);
+  strlcpy(decoded_word, cur, sizeof(decoded_word));
+  memzero(cur, sizeof(cur));
+  const size_t wlen = strlen(decoded_word);
+  if (!coded_word_unknown && strlen(coded_word) == wlen + 1) {
+    coded_word[wlen] = '\0';
+  } else {
+    memzero(coded_word, sizeof(coded_word));
+    coded_word_unknown = wlen > 0;
+  }
 }
 
 /*
@@ -603,53 +630,15 @@ void recovery_delete_character(void) {
   }
 
   size_t len = strlen(mnemonic);
-  bool deleted_separator = len > 0 && mnemonic[len - 1] == ' ';
   if (len > 0) {
-    if (deleted_separator) words_entered--;
+    if (mnemonic[len - 1] == ' ') words_entered--;
 
     mnemonic[len - 1] = '\0';
-    // coded_mnemonic is always exactly as long as mnemonic -- every append
-    // to one is paired with an append to the other in recovery_character(),
-    // and CharacterAck.character is nanopb-bounded to one byte -- so the
-    // same truncation applies to both, regardless of how many characters or
-    // word boundaries are being backed up over.
-    coded_mnemonic[len - 1] = '\0';
   }
 
-  /* Resync the current-word accumulators with the edited mnemonic so a
-   * corrected word is validated on its real value (stale bytes here would
-   * fail validation and trigger a storage_reset on a real recovery).
-   * decoded_word is plaintext, always safe to rebuild from mnemonic.
-   * coded_word must hold the literal bytes the host actually typed -- cipher
-   * rotates every character, so re-deriving it from decoded_word via the
-   * CURRENT cipher does not recover what was sent for any earlier position.
-   * Re-deriving it from coded_mnemonic the same way decoded_word is
-   * re-derived from mnemonic does, at any backspace depth or word count. */
-  char cur[CURRENT_WORD_BUF];
-  if (deleted_separator) {
-    /* Moving back a word changes which completed word precedes the cursor. */
-    memzero(last_completed_word, sizeof(last_completed_word));
-    const char* end = strrchr(mnemonic, ' ');
-    if (end) {
-      const char* start = end;
-      while (start > mnemonic && start[-1] != ' ') start--;
-      size_t previous_len = (size_t)(end - start);
-      if (previous_len < sizeof(cur)) {
-        memcpy(cur, start, previous_len);
-        cur[previous_len] = '\0';
-        attempt_auto_complete(cur);
-        strlcpy(last_completed_word, cur, sizeof(last_completed_word));
-      }
-    }
-    memzero(cur, sizeof(cur));
-  }
-  get_current_word(cur);
-  strlcpy(decoded_word, cur, sizeof(decoded_word));
-  memzero(cur, sizeof(cur));
-
-  get_current_coded_word(coded_word);
-
+  resync_current_word_after_delete();
   next_character();
+  if (len > 0 && setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }
 
 /*
@@ -691,6 +680,10 @@ void recovery_cipher_finalize(void) {
     }
   }
 
+  /* The input ceremony is over. Finalization mutates mnemonic in place and
+   * may display a dry-run review; a rejected tiny packet there must not
+   * redraw that intermediate buffer as an input screen. */
+  awaiting_character = false;
   volatile bool auto_completed = true;
 
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
@@ -722,7 +715,6 @@ void recovery_cipher_finalize(void) {
    */
   if (words_committed != words_entered) {
     memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
-    memzero(temp_word_scratch, sizeof(temp_word_scratch));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Not enough words entered");
     setup_abort();
@@ -731,21 +723,12 @@ void recovery_cipher_finalize(void) {
   }
   memzero(temp_word_scratch, sizeof(temp_word_scratch));
 
-  /* Cipher recovery decodes to BIP-39 words, so every word must
-   * auto-complete regardless of enforce_wordlist. Failing only when
-   * enforce_wordlist was set left the default (host-omitted) path storing a
-   * mistyped/garbage phrase as the seed and reporting success.
-   *
-   * alpha's storage_reset() on this path is deliberately NOT restored: #429
-   * removed the cancelled-recovery path that armed a host-only storage_reset()
-   * with no button press, and setup_abort() below is its replacement. */
-  if (!auto_completed) {
+  /* An enforced recovery must decode to BIP-39 words. Import mode deliberately
+   * accepts non-word phrases; the count/nonempty guard above still applies. */
+  if (enforce_wordlist && !auto_completed) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
                     "the substition cipher.");
-    /* A host-triggered early finalize can leave 23 expanded seed words in the
-     * file-scope scratch buffer unless this exit scrubs it before aborting. */
-    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
     setup_abort();
     layoutHome();
     return;
@@ -862,22 +845,16 @@ const char* recovery_get_auto_completed_word(void) {
  */
 const char* recovery_get_decoded_mnemonic(void) { return mnemonic; }
 
-/*
- * recovery_get_coded_mnemonic() - Gets the raw cipher bytes typed so far.
- * Test-only: lets a test assert directly that backspacing (at any depth,
- * across any number of word boundaries) leaves coded_mnemonic holding
- * exactly the bytes the host actually sent, not a stale/reconstructed
- * mixture. See #584.
- */
-const char* recovery_get_coded_mnemonic(void) { return coded_mnemonic; }
-
 /// Test-only: arms a recovery ceremony and generates the first cipher,
 /// bypassing recovery_cipher_init()'s confirm()/PIN gates so
 /// recovery_character()/recovery_delete_character() can be driven directly
 /// from a unit test. Mirrors the tail of recovery_cipher_init() exactly.
 void recovery_debugLinkStart(uint32_t _word_count) {
-  setup_stage(/*passphrase_protection=*/false, "english", "test",
-              /*auto_lock_delay_ms=*/0, /*u2f_counter=*/0, /*no_backup=*/false);
+  if (!setup_stage(/*passphrase_protection=*/false, "english", "test",
+                   /*auto_lock_delay_ms=*/0, /*u2f_counter=*/0,
+                   /*no_backup=*/false)) {
+    return;
+  }
   word_count = _word_count;
   enforce_wordlist = true;
   dry_run = true;

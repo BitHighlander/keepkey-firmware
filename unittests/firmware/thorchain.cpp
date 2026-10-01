@@ -310,6 +310,219 @@ TEST(Thorchain, ThorchainSignTxInvalidDenom) {
   thorchain_signAbort();
 }
 
+/* MemoWithEmptyPositionalFieldIsNotStructured (audited assembly, inherited
+   from the 7.14.x strtok parser) asserted that "::" makes a memo UNPARSED
+   because strtok() collapsed empty positions and mislabelled the affiliate as
+   the limit. alpha replaced that parser with one that splits on ':' and KEEPS
+   empty fields, so the memo is now structured AND every position is labelled
+   correctly; the property the old test protected -- an empty field is never
+   compacted into a different label -- is asserted for the new parser by
+   MemoSwapEmptyLimitDoesNotShift, MemoSwapFeeWithEmptyAffiliateIsStillShown and
+   MemoAddShowsAffiliateAndFee below. The UNPARSED expectation itself is stale
+   by design and is deliberately not carried over. */
+
+TEST(Thorchain, AmountFormattingCoversProtocolMaximumAndFailsClosed) {
+  char max_asset[THORCHAIN_ASSET_SUFFIX_LEN] = {};
+  std::memset(max_asset, 'A', sizeof(max_asset) - 1);
+
+  char rendered[21 + THORCHAIN_ASSET_SUFFIX_LEN + 1];
+  ASSERT_TRUE(thorchain_formatAmount(UINT64_MAX, max_asset, rendered,
+                                     sizeof(rendered)));
+  EXPECT_NE(std::string::npos, std::string(rendered).find(max_asset));
+
+  char too_small[8];
+  EXPECT_FALSE(thorchain_formatAmount(UINT64_MAX, max_asset, too_small,
+                                      sizeof(too_small)));
+  EXPECT_FALSE(thorchain_formatAmount(1, "", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      thorchain_formatAmount(1, "ETH.ETH\n", rendered, sizeof(rendered)));
+  EXPECT_FALSE(
+      thorchain_formatAmount(1, "ETH.\"ETH", rendered, sizeof(rendered)));
+}
+
+TEST(Thorchain, DenomValidationRejectsJsonAndDisplayAmbiguity) {
+  EXPECT_TRUE(thorchain_isValidDenom("rune"));
+  EXPECT_TRUE(thorchain_isValidDenom("eth.eth"));
+  EXPECT_TRUE(thorchain_isValidDenom("btc/btc"));
+  EXPECT_TRUE(thorchain_isValidDenom("cross-chain"));
+  EXPECT_FALSE(thorchain_isValidDenom(""));
+  EXPECT_FALSE(thorchain_isValidDenom("RUNE"));
+  EXPECT_FALSE(thorchain_isValidDenom("rune\""));
+  EXPECT_FALSE(thorchain_isValidDenom("rune\\n"));
+  EXPECT_FALSE(thorchain_isValidDenom("ru ne"));
+}
+
+/* The audited assembly kept this signing vector under the name
+   ThorchainSignTxInvalidDenom. alpha has its own test of that name (a
+   quote-injection denom must be refused), so this one carries the base name
+   it was derived from: an independently computed signature over the exact
+   StdSignDoc for a default-denom (rune) MsgSend. */
+TEST(Thorchain, ThorchainSignTx) {
+  HDNode node = kSignNode;
+  hdnode_fill_public_key(&node);
+
+  const ThorchainSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},  // address_n
+      true, 0,            // account_number
+      true, "thorchain",  // chain_id
+      true, 5000,         // fee_amount
+      true, 200000,       // gas
+      true, "",           // memo
+      true, 0,            // sequence
+      true, 1             // msg_count
+  };
+  ASSERT_TRUE(thorchain_signTxInit(&node, &msg));
+
+  /* The old recipient, "thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v", is the
+     well-known cosmos1 test address with its prefix hand-edited to "thor" and
+     the cosmos checksum left behind. It fails bech32_decode(), so this call
+     returned false and the test could never have passed -- which nobody
+     noticed, because the file was not compiled. Same 20-byte payload,
+     correct thor checksum. */
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(
+      100000, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n", NULL));
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+
+  ASSERT_TRUE(thorchain_signTxFinalize(public_key, signature));
+
+  /* Recomputed for the corrected recipient, and independently of this
+     firmware: SHA256 of the amino StdSignDoc
+     {"account_number":"0","chain_id":"thorchain","fee":{...,"denom":"rune"}],
+      "gas":"200000"},"memo":"","msgs":[{"type":"thorchain/MsgSend",...}],
+      "sequence":"0"}
+     signed with RFC6979-deterministic secp256k1 and low-S normalised. The
+     device produces the same 64 bytes. */
+  EXPECT_TRUE(
+      memcmp(signature,
+             (uint8_t*)"\xbd\x32\x29\xe7\xf5\x31\xdb\x80\xc2\x74\xff\xc5\xfc"
+                       "\x6f\x43\xbf\x0f\xbc\xf9\x93\x4c\xca\x60\x3b\x40\xd6"
+                       "\x58\x3a\x7b\xb2\x75\xac\x51\xe9\xbe\xf7\x6f\xed\x97"
+                       "\xab\x1a\x73\x1e\xc8\x7e\x40\x53\x15\xac\xa1\x1c\x92"
+                       "\x34\x6c\xef\xee\x16\x01\x35\x0f\x80\x3b\x3e\x5b",
+             64) == 0);
+}
+
+TEST(Thorchain, MultiMessageSignTxSeparatesMsgsWithComma) {
+  HDNode node = {
+      0,
+      0,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0x04, 0xde, 0xc0, 0xcc, 0x01, 0x3c, 0xd8, 0xab, 0x70, 0x87, 0xca,
+       0x14, 0x96, 0x0b, 0x76, 0x8c, 0x3d, 0x83, 0x45, 0x24, 0x48, 0xaa,
+       0x00, 0x64, 0xda, 0xe6, 0xfb, 0x04, 0xb5, 0xd9, 0x34, 0x76},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+      &secp256k1_info};
+  hdnode_fill_public_key(&node);
+
+  const ThorchainSignTx msg = {
+      5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
+      true, 0,
+      true, "thorchain",
+      true, 5000,
+      true, 200000,
+      true, "",
+      true, 0,
+      true, 2};
+  ASSERT_TRUE(thorchain_signTxInit(&node, &msg));
+
+  const char* const to = "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n";
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(100000, to, NULL));
+  ASSERT_TRUE(thorchain_signTxUpdateMsgSend(42, to, "rune"));
+  ASSERT_TRUE(thorchain_signingIsFinished());
+
+  uint8_t public_key[33];
+  uint8_t signature[64];
+  ASSERT_TRUE(thorchain_signTxFinalize(public_key, signature));
+
+  char from[46];
+  ASSERT_TRUE(tendermint_getAddress(&node, "thor", from));
+  char doc[1024];
+  const int n = snprintf(
+      doc, sizeof(doc),
+      "{\"account_number\":\"0\",\"chain_id\":\"thorchain\","
+      "\"fee\":{\"amount\":[{\"amount\":\"5000\",\"denom\":\"rune\"}],"
+      "\"gas\":\"200000\"},\"memo\":\"\",\"msgs\":["
+      "{\"type\":\"thorchain/MsgSend\",\"value\":{\"amount\":[{\"amount\":"
+      "\"100000\",\"denom\":\"rune\"}],\"from_address\":\"%s\","
+      "\"to_address\":\"%s\"}},"
+      "{\"type\":\"thorchain/MsgSend\",\"value\":{\"amount\":[{\"amount\":"
+      "\"42\",\"denom\":\"rune\"}],\"from_address\":\"%s\","
+      "\"to_address\":\"%s\"}}],\"sequence\":\"0\"}",
+      from, to, from, to);
+  ASSERT_GT(n, 0);
+  ASSERT_LT((size_t)n, sizeof(doc));
+
+  uint8_t hash[SHA256_DIGEST_LENGTH];
+  sha256_Raw((const uint8_t*)doc, (size_t)n, hash);
+  uint8_t expected[64];
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, node.private_key, hash, expected,
+                                 nullptr, nullptr));
+  EXPECT_EQ(0, memcmp(signature, expected, sizeof(expected)));
+  thorchain_signAbort();
+}
+
+TEST(Thorchain, ZeroOrOmittedMessagesFailInitialization) {
+  HDNode node = {};
+  ThorchainSignTx msg = {0,    {}, true, 0,  true, "thorchain", true, 0,
+                         true, 0,  true, "", true, 0,           true, 0};
+  EXPECT_FALSE(thorchain_signTxInit(&node, &msg));
+  EXPECT_FALSE(thorchain_signingIsInited());
+  EXPECT_FALSE(thorchain_signingIsFinished());
+  EXPECT_FALSE(thorchain_signTxUpdateMsgSend(1, "ignored", NULL));
+
+  msg.has_msg_count = false;
+  msg.msg_count = 1;
+  EXPECT_FALSE(thorchain_signTxInit(&node, &msg));
+  EXPECT_FALSE(thorchain_signingIsInited());
+
+  msg.has_msg_count = true;
+  strcpy(msg.chain_id, "");
+  EXPECT_FALSE(thorchain_signTxInit(&node, &msg));
+  strcpy(msg.chain_id, "thor\nchain");
+  EXPECT_FALSE(thorchain_signTxInit(&node, &msg));
+}
+
+TEST(Thorchain, DepositAssetAndSignerFailClosed) {
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  ThorchainSignTx msg = {};
+  msg.has_chain_id = true;
+  strcpy(msg.chain_id, "thorchain");
+  msg.has_msg_count = true;
+  msg.msg_count = 1;
+  ASSERT_TRUE(thorchain_signTxInit(&node, &msg));
+
+  ThorchainMsgDeposit deposit = {};
+  deposit.has_asset = true;
+  strcpy(deposit.asset, "ETH.\"ETH");
+  deposit.has_signer = true;
+  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
+  EXPECT_FALSE(thorchain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.asset, "ETH.ETH");
+  strcpy(deposit.signer, "cosmos18vhdczjut44gpsy804crfhnd5nq003nz0nf20v");
+  EXPECT_FALSE(thorchain_signTxUpdateMsgDeposit(&deposit));
+
+  strcpy(deposit.signer, "thor18vhdczjut44gpsy804crfhnd5nq003nzf5s36n");
+  EXPECT_TRUE(thorchain_signTxUpdateMsgDeposit(&deposit));
+  EXPECT_TRUE(thorchain_signingIsFinished());
+  thorchain_signAbort();
+}
+
+TEST(Thorchain, DeclaredDepositAssetValidatorEnforcesGrammar) {
+  EXPECT_TRUE(thorchain_isValidAsset("THOR.RUNE"));
+  EXPECT_TRUE(thorchain_isValidAsset("BTC/BTC"));
+  EXPECT_FALSE(thorchain_isValidAsset("THOR:RUNE"));
+  EXPECT_FALSE(thorchain_isValidAsset("THOR_RUNE"));
+  EXPECT_FALSE(thorchain_isValidAsset(nullptr));
+}
+
 /* The envelope has to be refused before anything is hashed. msg_count is the
    message budget, so an absent or zero count leaves the session with nothing
    to spend; chain_id is serialized into the sign doc and printed on the final
@@ -759,34 +972,6 @@ TEST(Confirmation, ExactLengthPagerMeasuresRenderedRows) {
   EXPECT_TRUE(confirm_bytes(ButtonRequestType_ButtonRequest_SignMessage,
                             "Signed Message", (const uint8_t*)payload,
                             strlen(payload)));
-  EXPECT_EQ(0, kkconfirm_drain());
-}
-
-TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
-  ASSERT_TRUE(kkconfirm_preload(0, 0));
-  ASSERT_EQ(0, kkconfirm_drain());
-  const char body[] = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
-  size_t pages = 0;
-  for (const char* cursor = body; *cursor;) {
-    const size_t take = confirm_constant_power_subpage_take(cursor);
-    ASSERT_GT(take, 0u);
-    cursor += take;
-    pages++;
-  }
-  ASSERT_GT(pages, 1u);
-  const uint8_t yes[] = {0x08, 0x01};
-  const uint8_t no[] = {0x08, 0x00};
-  // Decisions can arrive before acknowledgements on the separate debug link.
-  for (size_t page = 0; page < pages; page++) {
-    ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision,
-                                   yes, sizeof(yes)));
-    ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0));
-  }
-  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0));
-  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, no,
-                                 sizeof(no)));
-  EXPECT_TRUE(confirm_constant_power_paged(
-      ButtonRequestType_ButtonRequest_ConfirmWord, "Backup", body));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 

@@ -86,20 +86,29 @@ void storage_wipe(void);
 
 /// \brief True when flash holds storage this build must refuse to load or
 /// overwrite -- a bitcoin-only wallet seen by multi-chain firmware, or a newer
-/// in-band wallet than this build understands.
+/// bitcoin-only format than this build understands.
 ///
-/// Handlers that CREATE a seed must check this and refuse. The device looks
+/// Handlers that create a seed or persist settings must check both this and
+/// storage_isFirmwareTooOld() and refuse. The device looks
 /// uninitialized while locked (the RAM shadow was reset, so
 /// storage_isInitialized() is false), and storage_commit() silently declines to
 /// write, so a ceremony allowed to run would report success while persisting
 /// nothing -- and a seed the user funded would vanish on the next boot.
 ///
-/// The seed itself stays intact in flash -- nothing is committed while locked
-/// -- so reflashing bitcoin-only firmware recovers the wallet. Using the device
-/// under multi-chain firmware requires an explicit wipe first.
-///
-/// Cleared only by storage_wipe().
+/// Cleared by storage_wipe(), and recomputed from the image found by every
+/// storage_init(), so a re-initialized emulator loading a valid image is not
+/// left locked by an earlier one.
 bool storage_isBitcoinOnlyLocked(void);
+
+/// \brief True when the lock reported by storage_isBitcoinOnlyLocked() is a
+/// bitcoin-only format NEWER than this build understands. Unlike a foreign
+/// (older) bitcoin-only wallet, that wallet is recovered by upgrading firmware,
+/// so callers must not advise wiping. Implies storage_isBitcoinOnlyLocked().
+bool storage_isBitcoinOnlyTooNew(void);
+
+/// \brief True iff flash contains a newer storage format than this firmware.
+///        The bytes remain untouched until an explicit wipe.
+bool storage_isFirmwareTooOld(void);
 
 /// \brief Clear storage key and storage key fingerprint.
 void storage_clearKeys(void);

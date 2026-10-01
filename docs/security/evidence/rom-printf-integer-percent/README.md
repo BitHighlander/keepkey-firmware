@@ -1,8 +1,8 @@
 # Integer percent rendering on the THOR/Maya withdraw confirm
 
-Emulator captures for the change that routes all device `snprintf` calls to
-newlib's integer-only `sniprintf` and rewrites the last two float format
-users (`%3.2f` in `thorchain.c` / `mayachain.c`) as integer basis-point math.
+Historical emulator captures for integer basis-point formatting in the THOR/Maya
+withdraw screens (`snprintf`). These captures do not establish a global libc
+formatting remap in the current firmware build.
 
 - `01-thorchain-withdraw-25.05pct.png` — ETH router `deposit()` carrying memo
   `WITHDRAW:ETH.USDT-0xdac17f958d2ee523a2206206994597c13d831ec7:2505`.

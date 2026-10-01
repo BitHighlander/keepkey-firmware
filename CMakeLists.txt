@@ -19,6 +19,8 @@ set(BOOTLOADER_PATCH_VERSION 5)
 option(KK_EMULATOR "Build the emulator" OFF)
 option(KK_BUILD_DYLIB "Build libkkemu shared library (.dylib/.so)" OFF)
 option(KK_DEBUG_LINK "Build with debug-link enabled" OFF)
+option(KK_BUILD_BOOTLOADER_TOOLS
+       "Build bootloader, bootloader updater, and bootstrap artifacts" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
 # Zcash shielded/Orchard support is part of the regular firmware. It is an
@@ -197,7 +199,7 @@ elseif(
   OR "${CMAKE_BUILD_TYPE}" STREQUAL "")
   add_definitions(-DNDEBUG)
   add_definitions(-DMEMORY_PROTECT=1)
-  if(NOT ${KK_EMULATOR})
+  if(NOT ${KK_EMULATOR} AND KK_BUILD_BOOTLOADER_TOOLS)
     message(
       WARNING
         "*********************************************************************\n"
@@ -267,6 +269,26 @@ if(${KK_EMULATOR})
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/board.xml
     COMMAND ${CMAKE_BINARY_DIR}/bin/crypto-unit
             --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/crypto.xml)
+  add_dependencies(xunit firmware-unit board-unit crypto-unit)
+
+  if(TARGET erc7730-validator-test)
+    add_test(NAME test-erc7730-validator
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/erc7730-validate/test_cli.py
+                $<TARGET_FILE:erc7730-validate>)
+    add_dependencies(xunit erc7730-validator-test)
+  endif()
+
+  if(KK_BUILD_DYLIB AND NOT WIN32)
+    find_package(Threads REQUIRED)
+    add_executable(emulator-unit unittests/emulator/lifecycle.cpp)
+    target_include_directories(emulator-unit PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(emulator-unit gtest_main kkemulator_dylib Threads::Threads)
+    add_test(test-emulator ${CMAKE_BINARY_DIR}/bin/emulator-unit)
+    add_dependencies(xunit emulator-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/emulator-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/emulator.xml)
+  endif()
 
   if(${KK_ZCASH_PRIVACY})
     add_custom_command(TARGET xunit POST_BUILD

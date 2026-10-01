@@ -52,18 +52,29 @@ extern bool reset_msg_stack;
 
 static CONFIDENTIAL char strbuf[BODY_CHAR_MAX];
 
-/* The single place a host-supplied body is formatted. vsnprintf() returns the
- * length it WOULD have written, which is the only chance to notice that
- * strbuf was too small -- after this, the evidence is gone.
- *
- * Treat anything that did not fit as a refusal: once characters are lost, no
- * renderer and no pager can recover them, so there is no complete body left
- * for the user to approve. A warn-and-continue screen cannot substitute,
- * because the hold it takes is consent to bytes no screen ever contained. */
+#if DEBUG_LINK
+/* The text of the most recent confirmation, for DebugLinkState. Tests assert
+ * the exact displayed text; OLED pixels alone cannot tell a raw glyph from an
+ * escape sequence of the same width. */
+static char debug_confirm_title[TITLE_CHAR_MAX];
+static char debug_confirm_body[BODY_CHAR_MAX];
+
+const char* confirm_debug_title(void) { return debug_confirm_title; }
+const char* confirm_debug_body(void) { return debug_confirm_body; }
+#endif
+
+/* vsnprintf() returns the length it WOULD have written. Treat anything that
+ * did not fit as a refusal: once characters are lost, no renderer or pager can
+ * recover them and there is no complete body the user can approve. */
+static bool format_body_into(char* out, size_t out_len,
+                             const char* request_body, va_list vl) {
+  if (!out || out_len == 0 || !request_body) return false;
+  const int needed = vsnprintf(out, out_len, request_body, vl);
+  return needed >= 0 && (size_t)needed < out_len;
+}
+
 static bool format_body(const char* request_body, va_list vl) {
-  if (!request_body) return false;
-  const int needed = vsnprintf(strbuf, sizeof(strbuf), request_body, vl);
-  return needed >= 0 && (size_t)needed < sizeof(strbuf);
+  return format_body_into(strbuf, sizeof(strbuf), request_body, vl);
 }
 
 /// Handler for push button being pressed.
@@ -276,8 +287,12 @@ static bool confirm_screen(const char* request_title_param,
           break;
 #endif
 
+        case MSG_TINY_TYPE_ERROR:
+          break;
         default:
-          break; /* break from switch statement and stay in the while loop*/
+          msg_reject_unexpected_tiny();
+          ret_stat = false;
+          goto confirm_screen_exit;
       }
     }
 
@@ -363,24 +378,6 @@ bool confirm_body_fits(const char* body, uint16_t body_width) {
                           font_height(body_font) + BODY_FONT_LINE_PADDING);
 }
 
-/* The same probe, for constant-power screens.
- *
- * layout_constant_power_notification() draws from x = 128 + LEFT_MARGIN,
- * because the display driver mirrors the right half of the canvas onto the
- * panel. Only KEEPKEY_DISPLAY_WIDTH - (128 + LEFT_MARGIN) = 124 px exists past
- * that origin, while BODY_WIDTH (225) is what gets passed as the wrap width.
- * The wrap therefore never fires before the canvas edge does, draw_char_impl
- * rejects the first glyph that crosses 256, and draw_string_walk stops --
- * dropping the rest of the body, including whole later lines, with no ellipsis
- * and no indicator.
- *
- * Measuring with BODY_WIDTH from the LEFT margin (confirm_body_fits) would say
- * such a body fits, because from x = 4 it does. The origin is the whole point,
- * so this probe starts where the real draw starts. Same loop, same per-glyph
- * fit test, so measuring and drawing cannot disagree.
- *
- * body_width is accepted and forwarded unchanged so this can stand in for
- * confirm_body_fits() wherever a fit probe is selected by layout. */
 bool confirm_body_fits_constant_power(const char* body, uint16_t body_width) {
   Canvas* canvas = layout_get_canvas();
   const Font* body_font = get_body_font();
@@ -394,8 +391,6 @@ bool confirm_body_fits_constant_power(const char* body, uint16_t body_width) {
   } else if (body_line_count == TWO_LINES) {
     sp.y = TOP_MARGIN_FOR_TWO_LINES;
   }
-
-  /* Mirrors layout_constant_power_notification() exactly. */
   sp.y += font_height(body_font) + BODY_TOP_MARGIN;
   sp.x = 128 + LEFT_MARGIN;
   sp.color = BODY_COLOR;
@@ -404,23 +399,13 @@ bool confirm_body_fits_constant_power(const char* body, uint16_t body_width) {
                           font_height(body_font) + BODY_FONT_LINE_PADDING);
 }
 
-/// Fit probe selected by layout: measuring must start where drawing starts.
-typedef bool (*body_fits_fn)(const char*, uint16_t);
-
-static body_fits_fn fits_probe_for(layout_notification_t fn) {
-  if (fn == &layout_constant_power_notification) {
-    return &confirm_body_fits_constant_power;
-  }
-  return &confirm_body_fits;
-}
-
 /// How many characters of `body` fit one screen, starting from `body[0]`?
 ///
 /// Binary search over confirm_body_fits(), which replays the real placement.
 /// Returns at least 1 so a body of unrenderable glyphs still advances rather
 /// than looping forever.
 static size_t page_take(const char* body, uint16_t body_width, char* buf,
-                        size_t buf_size, body_fits_fn fits) {
+                        size_t buf_size) {
   const size_t len = strlen(body);
   if (len == 0) return 0;
 
@@ -432,7 +417,7 @@ static size_t page_take(const char* body, uint16_t body_width, char* buf,
     const size_t mid = lo + (hi - lo) / 2;
     memcpy(buf, body, mid);
     buf[mid] = '\0';
-    if (fits(buf, body_width)) {
+    if (confirm_body_fits(buf, body_width)) {
       best = mid;
       lo = mid + 1;
     } else {
@@ -454,6 +439,7 @@ static size_t page_take(const char* body, uint16_t body_width, char* buf,
 /// after the first writes its own request and clears button_request_acked, so
 /// a host that answers every request it is told about never waits on a press
 /// it never heard of.
+///
 /// `notify_host` is false for the *_without_button_request() entry points,
 /// which deliberately never message the host; emitting per-page requests for
 /// those would tell a host about presses it never asked to arbitrate.
@@ -462,7 +448,6 @@ static bool page_body_confirm(const char* request_title, const char* body,
                               bool constant_power, IconType iconNum,
                               bool immediate, uint16_t body_width,
                               bool notify_host) {
-  const body_fits_fn fits = fits_probe_for(layout_notification_func);
   static CONFIDENTIAL char page_buf[BODY_CHAR_MAX];
   static char page_title[TITLE_CHAR_MAX];
 
@@ -484,8 +469,7 @@ static bool page_body_confirm(const char* request_title, const char* body,
   {
     const char* p = body;
     while (*p) {
-      const size_t take =
-          page_take(p, body_width, page_buf, sizeof(page_buf), fits);
+      const size_t take = page_take(p, body_width, page_buf, sizeof(page_buf));
       if (take == 0) break;
       p += take;
       while (*p == ' ') p++; /* a leading space is dropped at a line start */
@@ -506,8 +490,7 @@ static bool page_body_confirm(const char* request_title, const char* body,
   bool ok = false;
   const char* p = body;
   for (size_t page = 0; page < pages && *p; page++) {
-    const size_t take =
-        page_take(p, body_width, page_buf, sizeof(page_buf), fits);
+    const size_t take = page_take(p, body_width, page_buf, sizeof(page_buf));
     if (take == 0) break;
     memcpy(page_buf, p, take);
     page_buf[take] = '\0';
@@ -560,46 +543,18 @@ static bool confirm_helper(const char* request_title, const char* request_body,
                            bool immediate, bool notify_host) {
   const uint16_t body_width =
       (uint16_t)((iconNum == NO_ICON) ? BODY_WIDTH : BODY_WIDTH_WITH_ICON);
+#if DEBUG_LINK
+  snprintf(debug_confirm_title, sizeof(debug_confirm_title), "%s",
+           request_title ? request_title : "");
+  snprintf(debug_confirm_body, sizeof(debug_confirm_body), "%s",
+           request_body ? request_body : "");
+#endif
 
-  /* The one way left for the user to be shown less than what is being
-   * approved, now that source loss is refused at the entry points:
-   *
-   *   RENDER       the body reached the renderer intact but did not fit the
-   *                canvas. draw_string_fits() replays the real placement and
-   *                reports whether the last character landed.
-   *
-   * The probe must start where the real draw starts, so it is selected by
-   * layout. layout_standard_notification wraps at BODY_WIDTH from LEFT_MARGIN;
-   * layout_constant_power_notification draws from x = 128 + LEFT_MARGIN, where
-   * the canvas edge and not BODY_WIDTH is the limit.
-   *
-   * Constant-power screens used to be excluded here on the grounds that
-   * measuring them against BODY_WIDTH would be wrong. It would have been -- but
-   * excluding them meant the seed-backup pages, which are drawn by exactly that
-   * layout, had NO completeness check at all. Measured over 200k random 24-word
-   * mnemonics with the real font tables: 1.7% produce a backup page the
-   * renderer silently clips, and 0.65% never show one of the words at all,
-   * because the walk stops at the first rejected glyph and drops every
-   * character after it. A user writes down 23 words and cannot restore.
-   *
-   * The answer is to measure at the right origin, not to skip the measurement.
-   * Custom layouts that place their own body still opt out. */
-  /* NOT wired to constant-power screens, deliberately, and this is a
-   * behavioural constraint rather than an oversight.
-   *
-   * page_body_confirm() emits one ButtonRequest PER PAGE (see #482: "Every page
-   * after the first writes its own request"). The seed-backup flow is driven by
-   * a host that reads one word group per ButtonRequest, so paging a backup
-   * screen makes the host read that group TWICE and reconstruct a mnemonic with
-   * duplicated words. That is a protocol change for every host, not just a test
-   * artifact, and it silently corrupts the thing the user is writing down.
-   *
-   * So the measurement stays available and honest -- see
-   * confirm_body_fits_constant_power(), and the test that pins a real clipped
-   * backup page -- but it does not silently change the flow. Fixing the
-   * clipping properly means packing reset.c's pages against the width they are
-   * actually drawn at, which needs MAX_PAGES raised (~3.7 KB more static SRAM)
-   * and on-device OLED verification. Tracked in #519. */
+  /* Only layout_standard_notification is known to wrap the body at BODY_WIDTH
+   * over BODY_ROWS rows. Custom layouts place and size their own body, and
+   * layout_constant_power_notification draws from x = 128 + LEFT_MARGIN where
+   * the canvas edge, not BODY_WIDTH, is the limit. Measuring either of those
+   * against BODY_WIDTH would be wrong, so leave them exactly as they were. */
   const bool render_incomplete =
       (layout_notification_func == &layout_standard_notification) &&
       !confirm_body_fits(request_body, body_width);
@@ -700,18 +655,24 @@ bool confirm_constant_power_paged(ButtonRequestType type,
 
 #if DEBUG_LINK
     if (decided_via_debug) {
-      /* Each debug-driven subpage must consume its own host acknowledgement. */
+      /* Each debug subpage must consume its own host acknowledgement. */
       button_request_acked = false;
+      /* Production keeps the legacy one-ButtonRequest-per-word-group
+       * protocol. The debug build emits a request for each renderer subpage
+       * so the evidence harness can capture every physical OLED page instead
+       * of silently retaining only the first one. */
       memset(&resp, 0, sizeof(resp));
       resp.has_code = true;
       resp.code = type;
+      button_request_acked = false;
       msg_write(MessageType_MessageType_ButtonRequest, &resp);
       decided_via_debug = false;
     }
 #endif
 
     ok = confirm_screen(request_title, sub, &layout_constant_power_notification,
-                        true, NO_ICON, /*immediate=*/!last);
+                        true, NO_ICON,
+                        /*immediate=*/!last);
 #if DEBUG_LINK
     if (ok && last_exit_was_debug_decision) decided_via_debug = true;
 #endif

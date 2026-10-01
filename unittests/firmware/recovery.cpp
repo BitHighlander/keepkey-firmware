@@ -53,11 +53,13 @@ TEST(Recovery, WordlistLengths) {
   }
 }
 
-// Regression coverage for #584: the substitution cipher rotates after every
-// character, so recovery_delete_character() must reconstruct coded_word (the
-// literal raw bytes the host sent) from history actually preserved at typing
-// time, not by re-deriving it through whatever cipher happens to be active
-// at delete time. These tests drive recovery_character()/
+// Regression coverage for #584 (alpha's backspace tests). alpha fixed it with a
+// raw-byte mirror (coded_mnemonic); the audited 7.15 assembly fixes it with
+// coded_word_unknown / resync_current_word_after_delete() and has no such
+// mirror, so these tests keep every behavioural assertion (plaintext state,
+// armed ceremony, raw-prefix detection) and drop the coded_mnemonic ones.
+// The delete-resync unit contract itself is pinned by
+// DeleteKeepsTypedCipherCharactersNotTheCurrentMapping. These tests drive recovery_character()/
 // recovery_delete_character() directly, via the DEBUG_LINK-only
 // recovery_debugLinkStart() hook that arms a ceremony without going through
 // recovery_cipher_init()'s confirm()/PIN gate (which blocks on a real button
@@ -123,7 +125,6 @@ TEST_F(RecoveryCipher, BackspaceWithinWord) {
 
   Backspace(1);
   EXPECT_STREQ(recovery_get_decoded_mnemonic(), "aba");
-  EXPECT_EQ(strlen(recovery_get_coded_mnemonic()), 3u);
 
   TypeViaCipher("n");
   EXPECT_STREQ(recovery_get_decoded_mnemonic(), "aban");
@@ -148,7 +149,6 @@ TEST_F(RecoveryCipher, BackspaceAcrossOneWordBoundaryRestoresRawBytes) {
   Backspace(1);  // delete the trailing space
 
   EXPECT_STREQ(recovery_get_decoded_mnemonic(), "aban");
-  EXPECT_STREQ(recovery_get_coded_mnemonic(), word1_raw.c_str());
 }
 
 // The exact repro from #584: complete two words, then back up across BOTH
@@ -180,9 +180,6 @@ TEST_F(RecoveryCipher, BackspaceAcrossTwoWordBoundariesRestoresRawBytes) {
 
   EXPECT_STREQ(recovery_get_decoded_mnemonic(), "aban")
       << "plaintext should be back to word1 alone";
-  EXPECT_STREQ(recovery_get_coded_mnemonic(), word1_raw.c_str())
-      << "raw coded history must be word1's OWN bytes, not carried over "
-         "from word2 (#584)";
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 }
 
@@ -232,8 +229,6 @@ TEST_F(RecoveryCipher, BackspaceAcross23WordBoundariesRestoresRawBytes) {
 
   EXPECT_STREQ(recovery_get_decoded_mnemonic(),
                std::string(wordlist[0], 4).c_str());
-  EXPECT_STREQ(recovery_get_coded_mnemonic(), word1_raw.c_str())
-      << "raw coded history must survive backing up over 23 completed words";
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 }
 
@@ -254,14 +249,10 @@ TEST_F(RecoveryCipher, RepeatedDeleteRetypeStaysAligned) {
 
   Backspace(4);  // realize the mistake, delete all four letters
   ASSERT_STREQ(recovery_get_decoded_mnemonic(), "aban ");
-  ASSERT_EQ(strlen(recovery_get_coded_mnemonic()),
-            strlen(recovery_get_decoded_mnemonic()));
 
   TypeViaCipher("abov");  // correct to "above" instead
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   EXPECT_STREQ(recovery_get_decoded_mnemonic(), "aban abov");
-  EXPECT_EQ(strlen(recovery_get_coded_mnemonic()),
-            strlen(recovery_get_decoded_mnemonic()));
 
   TypeSpace();
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
@@ -290,7 +281,6 @@ TEST_F(RecoveryCipher, RawPrefixAfterMultiBoundaryBackspaceStillCaught) {
   Backspace(4);  // and all the way out, so the next word starts clean
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   ASSERT_STREQ(recovery_get_decoded_mnemonic(), "");
-  ASSERT_STREQ(recovery_get_coded_mnemonic(), "");
 
   // Try a few fixed real-word prefixes raw and take whichever one's
   // cipher-decoded form ISN'T itself coincidentally a valid prefix too (the
@@ -348,10 +338,14 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
     storage_ready = true;
   }
   storage_wipe();
+  // Wiping flash does not reset the RAM shadow. A reused emulator image or
+  // preceding wallet test can leave it initialized; match WipeDevice's order.
+  storage_reset();
   ASSERT_FALSE(storage_isInitialized());
 
-  // enforce_wordlist is omitted by default on the wire, which is what makes
-  // the commit condition skip mnemonic_check() entirely.
+  // enforce_wordlist is omitted by default on the wire. Firmware now ignores
+  // it and always checks words, but the empty ceremony must still be refused
+  // by the word-count guard before any check runs.
   recovery_cipher_init(/*word_count=*/12, /*passphrase_protection=*/false,
                        /*pin_protection=*/false, "english", "spaces",
                        /*enforce_wordlist=*/false, /*auto_lock_delay_ms=*/0,
@@ -367,5 +361,47 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
   EXPECT_FALSE(setup_isArmed());
   (void)kkconfirm_drain();
   storage_wipe();
+  storage_reset();
   layoutHomeForced();
+}
+
+extern "C" {
+void recovery_review_seed_scratch(void);
+bool recovery_review_scratch_empty(void);
+void setup_abort(void);
+void recovery_cipher_reset(void);
+bool recovery_review_delete_resync(const char*, const char*, bool, char*,
+                                   char*);
+}
+
+TEST(Recovery, DeleteKeepsTypedCipherCharactersNotTheCurrentMapping) {
+  char coded[12], decoded[12];
+  // "ab" remains of word "abc", typed as "qwe" under per-character ciphers.
+  EXPECT_FALSE(recovery_review_delete_resync("zoo ab", "qwe", false, coded,
+                                             decoded));
+  EXPECT_STREQ("qw", coded);  // recomputing from the identity would be "ab"
+  EXPECT_STREQ("ab", decoded);
+
+  // Stepping back over a space into a finished word: its typed characters
+  // were discarded, so the heuristic must not see a guessed coded prefix.
+  EXPECT_TRUE(recovery_review_delete_resync("zoo", "", false, coded, decoded));
+  EXPECT_STREQ("", coded);
+  EXPECT_STREQ("zoo", decoded);
+
+  // Once unknown, stays unknown until the word is emptied.
+  EXPECT_TRUE(recovery_review_delete_resync("zo", "x", true, coded, decoded));
+  EXPECT_STREQ("", coded);
+  EXPECT_FALSE(recovery_review_delete_resync("", "", true, coded, decoded));
+  EXPECT_STREQ("", decoded);
+}
+TEST(Recovery, AbortAndResetClearPreviousWordAndDisplayEquivalent) {
+  recovery_review_seed_scratch();
+  ASSERT_FALSE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  recovery_review_seed_scratch();
+  recovery_cipher_reset();
+  EXPECT_TRUE(recovery_review_scratch_empty());
+  setup_abort();
+  EXPECT_TRUE(recovery_review_scratch_empty());
 }

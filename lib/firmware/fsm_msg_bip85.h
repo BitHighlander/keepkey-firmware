@@ -1,3 +1,10 @@
+static void bip85_finish_private_display(void) {
+  /* Clear the last mnemonic page before diagnostics become available again. */
+  layout_clear();
+  layoutHome();
+  bip85_set_private_display(false);
+}
+
 void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
   CHECK_INITIALIZED
 
@@ -33,6 +40,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
   }
 
   layout_simple_message("Deriving child seed...");
+  bip85_set_private_display(true);
 
   /* Derive the mnemonic */
   static CONFIDENTIAL char mnemonic_buf[241];
@@ -40,7 +48,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
                              sizeof(mnemonic_buf))) {
     memzero(mnemonic_buf, sizeof(mnemonic_buf));
     fsm_sendFailure(FailureType_Failure_Other, "BIP-85 derivation failed");
-    layoutHome();
+    bip85_finish_private_display();
     return;
   }
 
@@ -82,7 +90,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
         memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
         fsm_sendFailure(FailureType_Failure_Other,
                         "Too many pages of mnemonic words");
-        layoutHome();
+        bip85_finish_private_display();
         return;
       }
 
@@ -130,7 +138,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
       display_constant_power(false);
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "BIP-85 display cancelled");
-      layoutHome();
+      bip85_finish_private_display();
       return;
     }
   }
@@ -145,5 +153,5 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
 
   /* Send success — mnemonic is NOT sent over the wire */
   fsm_sendSuccess("BIP-85 seed displayed on device");
-  layoutHome();
+  bip85_finish_private_display();
 }

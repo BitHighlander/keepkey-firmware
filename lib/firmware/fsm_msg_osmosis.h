@@ -3,13 +3,30 @@
 
 static bool osmosis_formatAmountOrFail(char* out, size_t out_len,
                                        const char* value, const char* denom) {
-  if (osmosis_formatAmount(out, out_len, value, denom)) return true;
+  if (osmosis_formatAmountUncapped(out, out_len, value, denom)) return true;
 
   osmosis_signAbort();
   fsm_sendFailure(FailureType_Failure_SyntaxError,
                   "Invalid Osmosis amount or denomination");
   layoutHome();
   return false;
+}
+
+/* The audited MsgSend policy bounds the NATIVE amount to uint64 despite the
+ * decimal-string wire field. Other denominations (IBC hashes, factory denoms)
+ * have an exponent the firmware cannot know: an 18-decimal asset would be
+ * capped at about 18.4 tokens by the same bound. They keep the wire limit of
+ * 32 digits, and the exact integer is displayed and signed, so the bound is not
+ * applied to them. Pool shares and swap amounts use wider decimal strings, so
+ * this bound must not change their validator. */
+static bool osmosis_validate_send_amount(bool has_value, const char* value,
+                                         const char* denom) {
+  static const char maximum[] = "18446744073709551615";
+  if (!osmosis_validate_amount(has_value, value)) return false;
+  if (denom == NULL || strcmp(denom, "uosmo") != 0) return true;
+  const size_t length = strlen(value);
+  return length < sizeof(maximum) - 1 ||
+         (length == sizeof(maximum) - 1 && strcmp(value, maximum) <= 0);
 }
 
 void fsm_msgOsmosisGetAddress(const OsmosisGetAddress* msg) {
@@ -125,6 +142,7 @@ void fsm_msgOsmosisSignTx(const OsmosisSignTx* msg) {
   }
 
   memzero(node, sizeof(*node));
+  note_workflow_progress();
   msg_write(MessageType_MessageType_OsmosisMsgRequest, resp);
   layoutHome();
 }
@@ -153,10 +171,18 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
   /** Confirm required transaction parameters exist */
   if (msg->has_send) {
-    if (!osmosis_validate_account_address(msg->send.has_to_address,
-                                          msg->send.to_address) ||
-        !msg->send.has_amount ||
+    if (!osmosis_validate_send_amount(
+            msg->send.has_amount, msg->send.amount,
+            msg->send.has_denom ? msg->send.denom : NULL) ||
         !osmosis_validate_required_text(msg->send.has_denom, msg->send.denom)) {
+      osmosis_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid Osmosis amount or denomination");
+      layoutHome();
+      return;
+    }
+    if (!osmosis_validate_account_address(msg->send.has_to_address,
+                                          msg->send.to_address)) {
       osmosis_signAbort();
       fsm_sendFailure(FailureType_Failure_FirmwareError,
                       _("Message is missing required parameters"));
@@ -164,9 +190,14 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
       return;
     }
 
+    // MsgSend is the only message that bounds native uosmo to uint64.
     char amount_str[OSMOSIS_AMOUNT_STR_LEN];
-    if (!osmosis_formatAmountOrFail(amount_str, sizeof(amount_str),
-                                    msg->send.amount, msg->send.denom)) {
+    if (!osmosis_formatAmount(amount_str, sizeof(amount_str), msg->send.amount,
+                              msg->send.denom)) {
+      osmosis_signAbort();
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      "Invalid Osmosis amount or denomination");
+      layoutHome();
       return;
     }
 
@@ -803,6 +834,7 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
   if (!osmosis_signingIsFinished()) {
     RESP_INIT(OsmosisMsgRequest);
+    note_workflow_progress();
     msg_write(MessageType_MessageType_OsmosisMsgRequest, resp);
     return;
   }

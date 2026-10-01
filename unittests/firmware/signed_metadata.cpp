@@ -1,8 +1,8 @@
 /*
  * Unit tests for the EVM clear-signing ("Insight") signed-metadata module.
  *
- * The runtime-signer fixture loads a development key through
- * signed_metadata_store_signer,
+ * Phase 1 ships with NO built-in verification keys: every signer is loaded
+ * at runtime (signed_metadata_store_signer,
  * reached in production through the user-confirmed LoadClearsignSigner FSM
  * handler). The fixture loads the CI test key (02e3b3015c...ab5107) into
  * slot 3 with alias "CI Test"; all vectors are signed in-process with the
@@ -31,8 +31,10 @@ void setup(void);
 }
 
 #include "gtest/gtest.h"
+#include "kkconfirm_driver.h"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -294,8 +296,20 @@ TEST_F(SignedMetadataTest, RuntimeMetadataIsInertOutsideAdvancedMode) {
             0);
   EXPECT_FALSE(signed_metadata_verify_attestation(
       TEST_KEY_ID, data, sizeof(data) - 1, sig, sizeof(sig)));
+  char alias[METADATA_ALIAS_MAX_LEN + 1] = {0};
+  EXPECT_FALSE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
 
   set_advanced_mode_for_test(true);
+  // Re-enabling the policy must not resurrect a revoked session signer.
+  EXPECT_FALSE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
+  ExpectMalformed(blob, TEST_KEY_ID);
+  ASSERT_TRUE(signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB,
+                                           TEST_ALIAS, NULL, 0, 0, 0, false));
+  EXPECT_TRUE(signed_metadata_verify_runtime_attestation_for_pubkey(
+      EXPECTED_SLOT3_PUB, data, sizeof(data) - 1, sig, sizeof(sig), alias));
+  EXPECT_STREQ(alias, TEST_ALIAS);
 }
 
 TEST_F(SignedMetadataTest, ValidOpaqueClassification) {
@@ -760,6 +774,21 @@ TEST_F(SignedMetadataTest, NoSignerLoadedRejects) {
   ExpectMalformed(base_blob(), TEST_KEY_ID);
 }
 
+TEST_F(SignedMetadataTest, NoCompiledSignerSlots) {
+  signed_metadata_clear_signers();
+  EXPECT_FALSE(signed_metadata_available());
+  for (uint8_t slot = 0; slot < METADATA_MAX_KEYS; slot++) {
+    char fingerprint[METADATA_FINGERPRINT_LEN];
+    EXPECT_FALSE(signed_metadata_signer_is_runtime(slot))
+        << "slot " << (int)slot;
+    EXPECT_EQ(signed_metadata_signer_alias(slot), nullptr)
+        << "slot " << (int)slot;
+    EXPECT_FALSE(signed_metadata_signer_fingerprint(slot, fingerprint))
+        << "slot " << (int)slot;
+  }
+  EXPECT_EQ(signed_metadata_signer_alias(METADATA_MAX_KEYS), nullptr);
+}
+
 TEST_F(SignedMetadataTest, FromLoadedSignerTracksMetadata) {
   EXPECT_FALSE(signed_metadata_from_loaded_signer());  // nothing processed
   std::vector<uint8_t> blob = base_blob();
@@ -1043,16 +1072,29 @@ TEST(SignedMetadataSignerStore, RejectsPersistenceBeforeSessionMutation) {
 
 /* ---- signed_metadata_pubkey_fingerprint -------------------------------- */
 
+TEST(SignedMetadataFingerprint, Is64BitSha256Prefix) {
+  char fp[METADATA_FINGERPRINT_LEN];
+  signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
+  // First 8 bytes of sha256(EXPECTED_SLOT3_PUB), computed off-device.
+  EXPECT_STREQ(fp, "0C2CB8B9F467F147");
+  EXPECT_EQ(strlen(fp), 16u);
+  EXPECT_EQ(sizeof(fp), 17u);
+}
+
 TEST(SignedMetadataFingerprint, IsSha256Prefix) {
   char fp[METADATA_FINGERPRINT_LEN];
   signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
 
+  /* The expected text is computed here from sha256, not by the code under
+     test: uppercase hex of the first (LEN - 1) / 2 digest bytes. */
   uint8_t digest[32];
   sha256_Raw(EXPECTED_SLOT3_PUB, 33, digest);
   char expected[METADATA_FINGERPRINT_LEN];
-  snprintf(expected, sizeof(expected), "%02X%02X%02X%02X", digest[0], digest[1],
-           digest[2], digest[3]);
-  EXPECT_STREQ(fp, expected);
+  for (size_t i = 0; i < (METADATA_FINGERPRINT_LEN - 1) / 2; i++) {
+    snprintf(expected + 2 * i, 3, "%02X", digest[i]);
+  }
+  EXPECT_STREQ(expected, fp);
+  EXPECT_EQ(strlen(fp), METADATA_FINGERPRINT_LEN - 1u);
 }
 
 /* ===================================================================== *
@@ -1385,6 +1427,26 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesRelayEthToSolanaDeposit) {
   EXPECT_EQ(memcmp(md->args[1].value, ORDER_ID, 32), 0);
 }
 
+/* A v2 schema commits to calldata only. A payable call may use its decoded
+ * display, but ethereum.c must also show the transaction's native value. */
+TEST_F(SignedMetadataTest, V2PayableCallRequiresNativeValueConfirmation) {
+  std::vector<uint8_t> blob = v2_base_blob();
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  EthereumSignTx msg;
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true,
+              static_cast<uint32_t>(data.size()));
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+  msg.value.bytes[0] = 0;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+  signed_metadata_clear();
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+}
 /* Relay solver swap: selector 0x02d5f05f(token address, amount, requestId) —
  * three fixed single words, EXACTLY the shape pulled from real relay traffic
  * (100-byte calldata: 4 + 3*32, zero remainder, verified across 22 live
@@ -1538,6 +1600,29 @@ TEST_F(SignedMetadataTest, V2AcceptsBytesArg) {
   std::vector<uint8_t> blob = sign_body(build_v2_body(s));
   EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
             METADATA_VERIFIED);
+}
+
+/* Every byte of an opaque BYTES word is shown, on numbered pages: a
+ * prefix-only screen would hide a change in the second half of the word. */
+TEST_F(SignedMetadataTest, FixedBytesSchemaDecodesEntireWord) {
+  V2Spec spec = v2_base_spec();
+  spec.args[1] = V2Arg{"data", ARG_FORMAT_BYTES, 0, ""};
+  std::vector<uint8_t> blob = sign_body(build_v2_body(spec));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  for (size_t i = 36; i < data.size(); ++i) data[i] = (uint8_t)i;
+  EthereumSignTx msg;
+  make_v2_msg(&msg, CONTRACT_A, data, true, (uint32_t)data.size());
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  const SignedMetadata* decoded = signed_metadata_get();
+  ASSERT_NE(nullptr, decoded);
+  ASSERT_EQ(32u, decoded->args[1].value_len);
+  EXPECT_EQ(0, memcmp(decoded->args[1].value, data.data() + 36, 32));
+  // identity, method, contract, address, byte page 1 accepted; page 2 refused.
+  ASSERT_TRUE(kkconfirm_preload(5, 1));
+  EXPECT_FALSE(signed_metadata_confirm());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 /* Tampered v2 body must fail the signature check. */

@@ -20,8 +20,8 @@
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/util.h"
-#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
 #include "trezor/crypto/secp256k1.h"
@@ -221,14 +221,14 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
 bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   if (!initialized || msgs_remaining == 0) return false;
 
-  char buffer[64 + 1];
-
-  // Defended here too (not just by the FSM caller) so this signing path is
-  // safe even if called directly or reused elsewhere later.
-  if (!thorchain_isValidAsset(depmsg->asset) ||
-      !thorchain_isValidSigner(depmsg->signer)) {
+  const char* const signer_prefix = testnet ? "tthor" : "thor";
+  if (!depmsg || !depmsg->has_asset || !thorchain_isValidAsset(depmsg->asset) ||
+      !depmsg->has_signer ||
+      !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
     return false;
   }
+
+  char buffer[64 + 1];
 
   // See the MsgSend path: msgs[] elements need the separator.
   if (has_message) {

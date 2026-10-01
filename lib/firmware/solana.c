@@ -165,6 +165,9 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     tx->num_instructions = (uint8_t)num_instructions;
   }
 
+  bool seen_compute_limit = false;
+  bool seen_compute_price = false;
+
   for (uint16_t i = 0; i < num_instructions; i++) {
     if (pos >= raw_len) return -1;
     uint8_t program_idx = raw[pos++];
@@ -454,6 +457,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 4);
         } else if (stake_instr == SOL_STAKE_AUTHORIZE_IX && data_len == 40 &&
                    num_acct_indices >= 3) {
+          /* new_authority(32) at +4 then authorize_type(le32) at +36. */
           uint32_t role = read_le32(instr_data + 36);
           if (role <= 1) {
             pi->type = SOL_INSTR_STAKE_AUTHORIZE;
@@ -574,9 +578,13 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           pi->type = SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME;
           pi->extra_value = read_le32(instr_data + 1);
         } else if (cb_instr == SOL_CB_SET_COMPUTE_UNIT_LIMIT && data_len == 5) {
+          if (seen_compute_limit) tx->duplicate_compute_budget = true;
+          seen_compute_limit = true;
           pi->type = SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT;
           pi->extra_value = read_le32(instr_data + 1);
         } else if (cb_instr == SOL_CB_SET_COMPUTE_UNIT_PRICE && data_len == 9) {
+          if (seen_compute_price) tx->duplicate_compute_budget = true;
+          seen_compute_price = true;
           pi->type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
           pi->extra_value = read_le64(instr_data + 1);
         } else if (cb_instr == SOL_CB_SET_LOADED_ACCOUNTS_SIZE &&
@@ -1113,7 +1121,8 @@ bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
 }
 
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {
-  return solana_inspectTx(raw, raw_len, tx) == SOL_TX_REVIEW_VERIFIED;
+  return solana_inspectTx(raw, raw_len, tx) == SOL_TX_REVIEW_VERIFIED &&
+         !tx->duplicate_compute_budget;
 }
 
 /* ------------------------------------------------------------------ */

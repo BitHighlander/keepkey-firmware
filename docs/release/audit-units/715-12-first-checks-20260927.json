@@ -1,0 +1,39 @@
+{
+  "status": "initial targeted checkpoint; full audit incomplete",
+  "base": "476afea2ce9906caaac67bfffa900b6a961fa6c4",
+  "native_focused": {
+    "passed": 74,
+    "failed": 0
+  },
+  "wire": {
+    "passed": 11,
+    "skipped": 27,
+    "failures": 0,
+    "skip_reasons": [
+      "HiveSignMessage not supported by this firmware build",
+      "HiveSignOperations not supported by this firmware build"
+    ]
+  },
+  "negative_control": "wrong signed asset spelling causes Hive.TransferAssetShownIsAssetSigned to fail; restored tests pass2/2",
+  "build": "pinned 7438e53933d4 image, clang, emulator debug link; CMAKE_BUILD_TYPE unset (not final Debug/ARM qualification)",
+  "files": {
+    "block12-focused-native.xml": "9f3303ff6d09536368f2a31062115837b3ca72ed50b8d24b7108bbffeb73cf95",
+    "block12-hive-wire.xml": "ab000292799efab581f94509d9bed671a3cccb2b81f5dcf093b63e3938b644e2",
+    "block12-hive-wire-inventory.json": "c89c2980cbd89b764e883cc38c5acc4d6c552a71357a176088dbdd4f520fc894",
+    "block12-negative-native.xml": "e61de6dba536da449c30d90d712c6ef87cea7764fb2efea88b8a10dce714a11c",
+    "block12-restored-native.xml": "097d8ecb2991a1c04611211573d895c4a93c48eb3b4cd31812f4d597730ee8dd",
+    "block12-clang-full-build-final.log": "ecb4f2f68f23c433e1816799c4d3d1c0e6065d4050a64e1ad81d35f704bebb56",
+    "block12-hive-wire.log": "68d53c1342a6b0b3b48b89247d14468e795e2e31a52a9a8b416a6720210f5339",
+    "block12-negative-native.log": "bb3f804c9af90395eb1eb585e3b1618187618e9cdd7fa850a1b671a7b913911c",
+    "block12-restored-native.log": "27b98e1a322d9dffe5f9b5f9677ae3ffca9248f47423dcebfdb8d1927f16fb20"
+  },
+  "source_hashes": {
+    "include/keepkey/firmware/hive.h": "bd9df4dd3e8df6573ce662dd2e9094dff6e048fe45eabed5bfebdaa587d3b831",
+    "lib/firmware/hive.c": "1982c00eebfc456a6b23a1a5cd57914b2fd1387a1ca9a772d0b187aa50f93418",
+    "lib/firmware/fsm_msg_hive.h": "f1663c4aa64100fd6975f23badbc6450adb7819fd1ea368a8c21e150d5823f2b",
+    "lib/firmware/storage.c": "f7f554452af70e35ae254992ffcff114ca950c7d4f51d90057eca524e5ec76f5",
+    "lib/firmware/ethereum.c": "e6bf98c03ddefb88d23e8d3689f08858b35828351c52b0867e7af59b1d3c3162",
+    "unittests/firmware/hive_transfer.cpp": "2ab6983e26b14f0f02e03c18d4953276437f27c7be6cf32dfec41f1ac5d63e34",
+    "tools/check_pallas_api_boundary.py": "22ed6161e702376a4e5f051799bd8ae48671951ab47fa37a43c6d984eac15621"
+  }
+}

@@ -73,6 +73,7 @@ void fsm_msgTronGetAddress(const TronGetAddress* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgTronSignTx(TronSignTx* msg) {
   RESP_INIT(TronSignedTx);
 
@@ -103,27 +104,8 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
   }
 
   /* Clear-sign from raw_data itself — the exact bytes being signed.
-   *
-   * The signature covers raw_data and nothing else (tron.c: sha256_Raw over
-   * msg->raw_data, then ecdsa_sign_digest). The proto's to_address/amount
-   * fields are a host-supplied side channel that is never hashed, so the old
-   * "Send %s TRX to %s?" screen asserted a destination and an amount the
-   * device had no way to vouch for: a host could display one payee and get a
-   * signature over a transfer to another, and a host that simply omitted both
-   * optional fields suppressed the screen altogether.
-   *
-   * Everything shown below is therefore decoded from raw_data by
-   * tron_parseRawTx(), which is fail-closed: any payload it does not fully
-   * understand classifies as TRON_TX_UNVERIFIED and can only be signed blind,
-   * behind the same AdvancedMode policy used for opaque Solana transactions
-   * and unknown-data ETH calls.
-   *
-   * The gate covers exactly that branch. A parsed transfer discloses strictly
-   * more than the blind screen ever could — owner-bound, with the real payee
-   * and amount — so gating it would buy no safety, and AdvancedMode is session
-   * state that resets on every power cycle (see include/keepkey/firmware/
-   * policy.h), which would leave a plain TRX send broken on a default device
-   * after every replug. Same reasoning as the ETH message-signing fence. */
+   * (The proto's side-channel to_address/amount fields are never trusted:
+   * they are not part of what is signed.) */
   TronParsedTx parsed;
   TronTxType tx_type =
       tron_parseRawTx(msg->raw_data.bytes, msg->raw_data.size, &parsed);
@@ -138,15 +120,11 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
       layoutHome();
       return;
     }
-
-    /* Name what is unknown, rather than just the byte count. Formatted by
-     * confirm() directly: the full sentence does not fit the fixed-size
-     * intermediate buffer this used to build, and a truncated disclosure is
-     * worse than none. */
-    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Blind Sign",
-                 "Sign unverified %u-byte TRON transaction? Amount and "
-                 "destination unknown.",
-                 (unsigned)msg->raw_data.size)) {
+    char blind_msg[48];
+    snprintf(blind_msg, sizeof(blind_msg), "Sign %u-byte TRON transaction?",
+             (unsigned)msg->raw_data.size);
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TRON Blind Sign",
+                 "%s", blind_msg)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
       layoutHome();
@@ -204,14 +182,11 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     }
 
     if (confirmed && parsed.memo_len > 0) {
-      /* Page the COMPLETE memo (72-char ASCII / 40-byte hex pages) like every
-       * other memo surface. The old single-screen path showed up to 114 chars
-       * unpaged, but 3 OLED lines only guarantee ~84 chars with wide glyphs —
-       * an 85..114-char memo could have its signed tail (affiliate bps,
-       * destination tail) silently clipped. The pager also discloses
-       * non-printable memos as complete hex instead of a byte-count summary. */
-      confirmed = thorchain_confirm_full_memo("Memo", (const char*)parsed.memo,
-                                              parsed.memo_len);
+      /* raw_data.data is signed verbatim. A byte count or one unpaged screen
+       * hides a long memo's tail; confirm_bytes pages and escapes every byte.
+       */
+      confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
+                                "Memo", parsed.memo, parsed.memo_len);
     }
 
     if (!confirmed) {
@@ -220,14 +195,6 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
       layoutHome();
       return;
     }
-  }
-
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction",
-               "Really sign this TRON transaction?")) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
-    layoutHome();
-    return;
   }
 
   // Sign the transaction with secp256k1
@@ -250,35 +217,6 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
 
   CHECK_PIN
 
-  /* An omitted or zero-length message is not a message. confirm_bytes()
-     renders size 0 as the literal "(empty)" and returns whatever the owner
-     pressed, so without this the device would sign a payload no screen ever
-     showed -- the same hole already closed on the TON and Solana paths. */
-  if (!msg->has_message || msg->message.size == 0) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError, _("Missing message"));
-    layoutHome();
-    return;
-  }
-
-  /* Merge note (#432 vs this branch): #432 gated TRON message signing behind
-   * AdvancedMode because the message was a blind sign. It is not any more —
-   * confirm_bytes() below paginates and displays EVERY signed byte, which is
-   * the property the gate was standing in for.
-   *
-   * The gate is dropped here for the same reason it was dropped from
-   * fsm_msgEthereumSignMessage: full disclosure is the stronger guarantee, and
-   * keeping it would block a default device until the user explicitly enables
-   * blind signing. AdvancedMode persists across power cycles until explicitly
-   * disabled. Leaving ETH ungated while TRON stayed gated would also be an
-   * inconsistency with no principled basis, since both now show the user every
-   * byte.
-   *
-   * Note this is NOT the same call as the TRON SignTx fence (#405), which
-   * stays: a TronSignTx payload that tron_parseRawTx() cannot fully decode is
-   * still genuinely blind, and that TRON_TX_UNVERIFIED branch keeps its
-   * AdvancedMode gate. Payloads the parser does decode are bound to raw_data
-   * and disclosed, so only the undecodable ones are fenced. */
-
   // Validate path: m/44'/195'/...
   if (msg->address_n_count < 3 || msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 195)) {
@@ -288,6 +226,9 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
     return;
   }
 
+  CHECK_PARAM(msg->has_message && msg->message.size > 0 &&
+                  msg->message.size <= sizeof(msg->message.bytes),
+              _("Invalid TRON message"));
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
                      _("Sign TRON Message"), msg->message.bytes,
                      msg->message.size)) {
@@ -316,7 +257,9 @@ void fsm_msgTronSignMessage(TronSignMessage* msg) {
 
 void fsm_msgTronVerifyMessage(const TronVerifyMessage* msg) {
   CHECK_PARAM(msg->has_address, _("No address provided"));
-  CHECK_PARAM(msg->has_message, _("No message provided"));
+  CHECK_PARAM(msg->has_message && msg->message.size > 0 &&
+                  msg->message.size <= sizeof(msg->message.bytes),
+              _("Invalid TRON message"));
   CHECK_PARAM(msg->has_signature, _("No signature provided"));
 
   if (tron_message_verify(msg) != 0) {
@@ -331,7 +274,7 @@ void fsm_msgTronVerifyMessage(const TronVerifyMessage* msg) {
   }
 
   if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
-                     _("TRON Message Verified"), msg->message.bytes,
+                     _("Message Verified"), msg->message.bytes,
                      msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
@@ -364,30 +307,6 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
     return;
   }
 
-  /* Blind-sign gate: the device only receives pre-computed hashes — it cannot
-   * reconstruct or verify the original typed-data struct. Require the same
-   * AdvancedMode policy as TronSignTx blind-signing so this message type
-   * can't be used to route around the kill-switch. Checked here, before any
-   * key derivation, and explained on screen rather than failing silently. */
-  if (!tron_typed_hash_policy_allows(storage_isPolicyEnabled("AdvancedMode"))) {
-    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
-                 "TIP-712 blind signing is disabled. "
-                 "Enable AdvancedMode in device settings.");
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Enable AdvancedMode to blind-sign typed hashes"));
-    layoutHome();
-    return;
-  }
-
-  /* The user must explicitly acknowledge blind signing before the hashes. */
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, "TIP-712 Blind Sign",
-               "Device cannot verify typed-data contents. "
-               "Only proceed if you trust the host application.")) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-    layoutHome();
-    return;
-  }
-
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
@@ -398,6 +317,31 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
   if (!tron_getAddress(node->public_key, address, sizeof(address))) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_Other, _("Address derivation failed"));
+    layoutHome();
+    return;
+  }
+
+  /* Blind-sign gate: device only receives pre-computed hashes — it cannot
+   * reconstruct or verify the original typed-data struct. Require the same
+   * AdvancedMode policy as TronSignTx blind-signing so this message type
+   * can't be used to route around the kill-switch. */
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    memzero(node, sizeof(*node));
+    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
+                 "TIP-712 blind signing is disabled. "
+                 "Enable AdvancedMode in device settings.");
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Blind signing disabled by policy"));
+    layoutHome();
+    return;
+  }
+
+  /* The user must explicitly acknowledge blind signing before the hashes. */
+  if (!confirm(ButtonRequestType_ButtonRequest_Other, "TIP-712 Blind Sign",
+               "Device cannot verify typed-data contents. "
+               "Only proceed if you trust the host application.")) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }

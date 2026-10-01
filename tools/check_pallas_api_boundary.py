@@ -216,6 +216,12 @@ def main():
             "Orchard key derivation")
     forbid(key_derivation, "redpallas_scalar_mult_spendauth_G(",
            "Orchard key derivation")
+    address_derivation = code_only(function_body(
+        zcash, "zcash_orchard_derive_unified_address"))
+    require(address_derivation, "redpallas_scalar_mult_spendauth_G_progress",
+            "Orchard unified-address derivation")
+    forbid(address_derivation, "redpallas_scalar_mult_spendauth_G(",
+           "Orchard unified-address derivation")
     stored_key_derivation = code_only(function_body(
         storage, "storage_zcashOrchardKeys"))
     require(stored_key_derivation, "zcash_derive_orchard_keys_with_progress",

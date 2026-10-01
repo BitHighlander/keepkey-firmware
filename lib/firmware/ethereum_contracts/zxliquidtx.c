@@ -128,13 +128,20 @@ static HDNode* zx_getDerivedNode(const char* curve, const uint32_t* address_n,
                                  size_t address_n_count,
                                  uint32_t* fingerprint) {
   static HDNode CONFIDENTIAL node;
+  /* A prior call may have left a derived key in this long-lived buffer. */
+  memzero(&node, sizeof(node));
   if (fingerprint) *fingerprint = 0;
   if (!get_curve_by_name(curve)) return NULL;
-  if (!storage_getRootNode(curve, true, &node)) return NULL;
+  if (!storage_getRootNode(curve, true, &node)) {
+    memzero(&node, sizeof(node));
+    return NULL;
+  }
   if (!address_n || address_n_count == 0) return &node;
   if (hdnode_private_ckd_cached(&node, address_n, address_n_count,
-                                fingerprint) == 0)
+                                fingerprint) == 0) {
+    memzero(&node, sizeof(node));
     return NULL;
+  }
   return &node;
 }
 
@@ -157,22 +164,12 @@ static bool confirmFromAccountMatch(const EthereumSignTx* msg) {
     snprintf(&address_str[2 + i * 2], 3, "%02x", recipient[i]);
   }
 
-  /* The screen states plainly which of the two cases this is and shows the
-   * recipient's full address, so a press here is informed consent to exactly
-   * that recipient. Return whether the USER approved -- not whether the
-   * recipient happened to be us.
-   *
-   * `return is_self` refused the transaction AFTER the user approved it, and
-   * ethereum.c turns that false into ActionCancelled, so the device reported
-   * "Signing cancelled by user" for a transaction the user had just confirmed.
-   * That made every removeLiquidityETH to a third party unsignable, which is
-   * the normal way to withdraw a pool position to another address. Withholding
-   * the disclosure is not what makes this safe; showing "NOT this wallet" and
-   * the address is. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                "Uniswap Recipient", "%s\n%s",
                is_self ? "this wallet" : "NOT this wallet", address_str))
     return false;
+  /* The screen names the case and shows the full address, so approving it is
+   * consent to that recipient; a declined screen still fails closed above. */
   return true;
 }
 

@@ -10,10 +10,6 @@ docker image inspect "$IMAGETAG" > /dev/null || docker pull "$IMAGETAG"
 # Extra cmake flags pass straight through. The only alternate release product
 # is bitcoin-only: ./release.sh -DKK_BITCOIN_ONLY=ON
 
-# Extra cmake flags pass straight through. The only alternate release product
-# is bitcoin-only: ./release.sh -DKK_BITCOIN_ONLY=ON
-EXTRA_CMAKE_FLAGS="$*"
-
 docker run -t \
   -v "${KEEPKEY_FIRMWARE}:/root/keepkey-firmware:z" \
   "$IMAGETAG" /bin/sh -c '

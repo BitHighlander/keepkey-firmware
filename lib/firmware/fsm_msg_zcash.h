@@ -82,7 +82,7 @@ typedef struct {
 } ZcashTransparentOutputState;
 
 /* Zcash shielded signing state */
-static struct {
+static CONFIDENTIAL struct {
   bool active;
   uint32_t account;
   uint32_t n_actions;
@@ -137,6 +137,8 @@ void zcash_signing_abort(void) {
   layoutProgressTrickleStop();
   memzero(&zcash_signing, sizeof(zcash_signing));
 }
+
+bool zcash_signing_is_active(void) { return zcash_signing.active; }
 
 static bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size) {
   return script && script_size == 25 && script[0] == 0x76 &&
@@ -428,6 +430,7 @@ static void zcash_action_progress(uint32_t completed, uint32_t total,
 }
 
 static void zcash_send_action_ack(uint32_t next_index) {
+  note_workflow_progress();
   ZcashPCZTActionAck* resp_ack = (ZcashPCZTActionAck*)msg_resp;
   memset(resp_ack, 0, sizeof(ZcashPCZTActionAck));
   resp_ack->has_next_index = true;
@@ -448,6 +451,7 @@ static void zcash_send_action_ack(uint32_t next_index) {
 }
 
 static void zcash_send_transparent_output_ack(uint32_t next_index) {
+  note_workflow_progress();
   ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
   memset(resp, 0, sizeof(ZcashTransparentAck));
   resp->has_next_output_index = true;
@@ -456,6 +460,7 @@ static void zcash_send_transparent_output_ack(uint32_t next_index) {
 }
 
 static void zcash_send_transparent_input_ack(uint32_t next_index) {
+  note_workflow_progress();
   ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
   memset(resp, 0, sizeof(ZcashTransparentAck));
   resp->has_next_input_index = true;

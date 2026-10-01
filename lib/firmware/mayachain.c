@@ -29,6 +29,7 @@
 #include "trezor/crypto/segwit_addr.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -159,6 +160,11 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
      is the host's own declared count, and the countdown below underflows if a
      message arrives after it is spent. */
   if (!initialized || msgs_remaining == 0) return false;
+  /* The serializer never defaults: an absent or empty denom is refused here
+     without consuming the message. The FSM applies the "cacao" default before
+     anything is displayed, so the screen and the signed bytes agree. */
+  if (!mayachain_isValidDenom(denom)) return false;
+
   const char mainnetp[] = "maya";
   const char testnetp[] = "smaya";
   const char* pfix;
@@ -204,14 +210,6 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
     return false;
   }
 
-  // Default to "cacao" for backward compatibility; validate all non-default
-  // denoms. Defended here too (not just by the FSM caller) so this signing
-  // path is safe even if called directly or reused elsewhere later.
-  const char* coin_denom = (denom && denom[0]) ? denom : "cacao";
-  if (!mayachain_isValidDenom(coin_denom)) {
-    return false;
-  }
-
   bool success = true;
 
   /* msgs[] is a JSON array: every message after the first needs its
@@ -229,7 +227,7 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
       &ctx, buffer, sizeof(buffer),
       "\"amount\":[{\"amount\":\"%" PRIu64 "\",\"denom\":\"", amount);
   // Use escaping as defense-in-depth; valid denoms have no escapable chars
-  tendermint_sha256UpdateEscaped(&ctx, coin_denom, strlen(coin_denom));
+  tendermint_sha256UpdateEscaped(&ctx, denom, strlen(denom));
   // Close coins array: 3 bytes
   sha256_Update(&ctx, (uint8_t*)"\"}]", 3);
 
@@ -250,13 +248,20 @@ bool mayachain_signTxUpdateMsgSend(const uint64_t amount,
 
 bool mayachain_signTxUpdateMsgDeposit(const MayachainMsgDeposit* depmsg) {
   if (!initialized || msgs_remaining == 0) return false;
+
+  const char* const signer_prefix = testnet ? "smaya" : "maya";
+  if (!depmsg || !depmsg->has_asset || !mayachain_isValidAsset(depmsg->asset) ||
+      !depmsg->has_signer ||
+      !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
+    return false;
+  }
+
   char buffer[64 + 1];
 
-  // Defended here too (not just by the FSM caller) so this signing path is
-  // safe even if called directly or reused elsewhere later.
-  if (!mayachain_isValidAsset(depmsg->asset) ||
-      !mayachain_isValidSigner(depmsg->signer)) {
-    return false;
+  /* msgs[] is a JSON array: every message after the first needs its
+     separator (see the MsgSend path). */
+  if (has_message) {
+    sha256_Update(&ctx, (uint8_t*)",", 1);
   }
 
   bool success = true;
@@ -447,12 +452,26 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
    * the zeroed buffer provides termination. */
   memcpy(memoBuf, swapStr, size);
 
-  /* The field split below treats memoBuf as a C string and stops at the first
-     NUL, but all `size` bytes are covered by the signature. A memo carrying an
-     embedded zero would parse and confirm as if it ended there while the
-     suffix stayed signed. A length word that does not describe its own content
-     is a non-canonical encoding, so refuse it and let the caller disclose the
-     raw bytes. Mirrors thorchain.c. */
+  /* Refuse a declared length that does not describe its own content.
+
+     Be exact about what this does and does not buy on THIS chain, because the
+     wording copied from thorchain.c overstated it. On THORChain the same check
+     closes a live disclosure gap: two of its callers pass an EXTERNALLY
+     declared length -- a BTC OP_RETURN script length (transaction.c) and an
+     ABI length word (thortx.c) -- and the signature covers every byte of it,
+     so a memo carrying an embedded zero parsed as if it ended there while the
+     suffix stayed signed.
+
+     Maya has no such caller. Both call sites pass strnlen()
+     (fsm_msg_mayachain.h), and the signer hashes strlen(memo) (lines 88 and 165
+     above), so parsing and signing already stop at the same byte: nothing after
+     an embedded NUL is signed, and there is no gap here to close.
+
+     The check stays anyway, for two reasons that are worth stating rather than
+     dressing up as a fix. A length that misdescribes its content is a
+     non-canonical encoding and the device should not clear-sign one. And it
+     keeps this parser safe by construction if Maya ever gains a length-passing
+     caller of its own, which is exactly how THORChain acquired the real bug. */
   for (i = 0; i < size; i++) {
     if (memoBuf[i] == '\0') return MAYACHAIN_MEMO_UNPARSED;
   }
@@ -522,6 +541,18 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
         return MAYACHAIN_MEMO_CANCELLED;
       }
     }
+    /* Everything after the fee - DEX-aggregator routing - is executed by
+       MAYAChain and is hashed by strlen() in signTxUpdateMsgDeposit(), so a
+       suffix such as ":aggregator:token" would be signed unseen. Page each
+       remaining field rather than sign it unseen. The split stops at 8 fields,
+       so the last one carries any remainder verbatim. */
+    for (size_t field = 6; field < nfields; field++) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Mayachain swap", "Additional memo field\n%s",
+                   fields[field][0] ? fields[field] : "(empty)")) {
+        return MAYACHAIN_MEMO_CANCELLED;
+      }
+    }
     return MAYACHAIN_MEMO_CONFIRMED;
   }
 
@@ -539,6 +570,15 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
     if (pool != NULL) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Mayachain add liquidity", "Confirm to %s", pool)) {
+        return MAYACHAIN_MEMO_CANCELLED;
+      }
+    }
+    /* ADD:POOL:PAIREDADDR:AFFILIATE:FEE - the affiliate and its fee are
+       optional but router-executed, so neither may be hidden. */
+    for (size_t field = 3; field < nfields; field++) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Mayachain add liquidity", "Additional memo field\n%s",
+                   fields[field][0] ? fields[field] : "(empty)")) {
         return MAYACHAIN_MEMO_CANCELLED;
       }
     }
@@ -565,12 +605,14 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain withdraw liquidity",
-                 "Confirm withdraw %d.%02d%% of asset %s on chain %s",
-                 bps / 100, bps % 100, asset, chain)) {
+                 "Confirm withdraw %u.%02u%% of asset %s on chain %s",
+                 (unsigned)(bps / 100u), (unsigned)(bps % 100u), asset,
+                 chain)) {
       return MAYACHAIN_MEMO_CANCELLED;
     }
-    /* Field 4 selects an ASYMMETRIC (single-sided) withdrawal payout asset —
-     * it directs money and must never sign unseen (see thorchain.c). */
+    /* WD:POOL:BPS:ASSET - the optional 4th field pays the whole withdrawal
+       out single-sided in ASSET instead of the symmetric split. It directs
+       money and the screens are otherwise identical, so it must be shown. */
     if (nfields > 3 && fields[3][0] != '\0') {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Mayachain withdraw liquidity",

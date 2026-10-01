@@ -89,6 +89,11 @@ bool osmosis_signTxUpdateMsgSwap(const uint64_t pool_id,
 bool osmosis_formatAmount(char* out, size_t out_len, const char* value,
                           const char* denom);
 
+/* Same rendering without the native uint64 bound. The bound is a MsgSend-only
+ * policy; swap, pool, delegation and IBC amounts are wider decimal strings. */
+bool osmosis_formatAmountUncapped(char* out, size_t out_len, const char* value,
+                                  const char* denom);
+
 bool osmosis_signTxFinalize(uint8_t* public_key, uint8_t* signature);
 bool osmosis_signingIsInited(void);
 bool osmosis_signingIsFinished(void);

@@ -1,6 +1,6 @@
 #include "keepkey/firmware/erc7730_tx.h"
 
-#include "memzero.h"
+#include "trezor/crypto/memzero.h"
 #include "pb_decode.h"
 #include "pb_encode.h"
 

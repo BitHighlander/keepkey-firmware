@@ -31,13 +31,12 @@
    strings and address should be prefixed by 0x
 */
 
-#include <errno.h>
 #include <stdio.h>
-#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "trezor/crypto/sha3.h"
@@ -48,33 +47,6 @@ static dm confirmProp;
 
 static const char* nameForValue;
 
-static int hex_nibble(char c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return -1;
-}
-
-static bool decode_address(const char* string, uint8_t decoded[20]) {
-  if (!string || strlen(string) != ADDRESS_SIZE || string[0] != '0' ||
-      string[1] != 'x') {
-    return false;
-  }
-
-  for (size_t i = 0; i < 20; i++) {
-    const int high = hex_nibble(string[2 + 2 * i]);
-    const int low = hex_nibble(string[3 + 2 * i]);
-    if (high < 0 || low < 0) return false;
-    decoded[i] = (uint8_t)((high << 4) | low);
-  }
-  return true;
-}
-
-/* Append value to dest, a caller-allocated, NUL-terminated buffer of
-   STRBUFSIZE+1 bytes. Returns false and leaves dest untouched if the result
-   would not fit. Deliberately never truncates: a truncated encodeType string
-   hashes to a typehash the host did not ask for, and two distinct type sets
-   sharing a prefix would collide, so callers must fail closed instead. */
 static bool append_type_string(char* dest, const char* value) {
   if (!dest || !value) return false;
   const size_t used = strnlen(dest, STRBUFSIZE + 1);
@@ -84,12 +56,6 @@ static bool append_type_string(char* dest, const char* value) {
   return true;
 }
 
-/* Read a run of decimal digits at *cursor into *value, refusing anything that
-   would exceed limit. strtol()/strtoul() cannot be used for type-string widths:
-   they saturate silently, so "bytes4294967297" and "uint4294967552" become
-   small in-range numbers after the caller's cast and a type the host invented
-   gets encoded as a type the user was shown. Advances *cursor past the digits
-   only on success. */
 static bool parse_bounded_decimal(const char** cursor, size_t limit,
                                   size_t* value) {
   const char* p = *cursor;
@@ -107,8 +73,6 @@ static bool parse_bounded_decimal(const char** cursor, size_t limit,
   return true;
 }
 
-/* Parse the array part of a type name: "" (not an array), "[]" (dynamic) or
-   "[N]" (fixed, N > 0). Anything else is rejected outright. */
 static bool parse_array_suffix(const char* suffix, bool* fixed,
                                size_t* expected) {
   *fixed = false;
@@ -133,10 +97,6 @@ static bool type_array_suffix_is_valid(const char* suffix) {
   return parse_array_suffix(suffix, &fixed, &expected);
 }
 
-/* A declared Type[N] must be supplied with exactly N elements. Without this
-   the device hashes whatever cardinality the host sent while displaying it as
-   the declared type, so a compliant verifier reconstructing Type[N] computes a
-   different hash than the one the user approved. */
 static bool fixed_array_cardinality_matches(const char* type,
                                             const json_t* value) {
   const char* suffix = strchr(type, '[');
@@ -156,11 +116,6 @@ static bool fixed_array_cardinality_matches(const char* type,
   return actual == expected;
 }
 
-/* Match the WHOLE type name, not a prefix. The dispatch this replaces used
-   strncmp() with a truncated length, so a user-defined struct named
-   "addressBook" was classified ADDRESS, "interval" was INT and "stringUtils"
-   was STRING -- the struct the user is shown as a struct is encoded as a
-   primitive and its own definition never enters the encodeType string. */
 static bool type_matches(const char* type, const char* base) {
   const size_t len = strlen(base);
   return strncmp(type, base, len) == 0 &&
@@ -172,9 +127,12 @@ static bool type_is_integer(const char* type, const char* prefix) {
   if (strncmp(type, prefix, prefix_len) != 0) return false;
   const char* p = type + prefix_len;
   size_t bits = 0;
-  const bool has_bits = *p >= '0' && *p <= '9';
-  if (has_bits && !parse_bounded_decimal(&p, 256, &bits)) return false;
-  if (has_bits && (bits < 8 || bits > 256 || (bits % 8) != 0)) return false;
+  /* EIP-712 only defines uint8..uint256 / int8..int256. A bare "int"/"uint"
+   * or a width with a leading zero ("int08") is not a canonical type name and
+   * would hash to a different typehash than the canonical spelling. */
+  if (*p < '1' || *p > '9') return false;
+  if (!parse_bounded_decimal(&p, 256, &bits)) return false;
+  if (bits < 8 || bits > 256 || (bits % 8) != 0) return false;
   return type_array_suffix_is_valid(p);
 }
 
@@ -186,8 +144,6 @@ static unsigned integer_type_width(const char* type, const char* prefix) {
   return (unsigned)bits;
 }
 
-/* Classify "bytes" / "bytesN" and recover N without the 8-bit truncation the
-   old (uint8_t)strtol() cast performed. */
 static bool type_is_bytes(const char* type, unsigned* byte_size,
                           bool* dynamic) {
   if (strncmp(type, "bytes", 5) != 0) return false;
@@ -199,6 +155,7 @@ static bool type_is_bytes(const char* type, unsigned* byte_size,
     return true;
   }
   size_t size = 0;
+  if (*p < '1' || *p > '9') return false; /* no bytes0, no bytes01 */
   if (!parse_bounded_decimal(&p, 32, &size) || size == 0 ||
       !type_array_suffix_is_valid(p))
     return false;
@@ -207,14 +164,17 @@ static bool type_is_bytes(const char* type, unsigned* byte_size,
   return true;
 }
 
-/* A 0x-prefixed, even-length, all-hex string, optionally of an exact byte
-   count. The encoders walked the value two characters at a time with no
-   validation at all: an odd-length value stepped OVER the terminating NUL and
-   fed adjacent RAM into the keccak state while the OLED showed only the short
-   value the host sent. */
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
 static bool hex_string_is_valid(const char* string, size_t expected_bytes,
                                 bool exact_size) {
-  if (!string || string[0] != '0' || string[1] != 'x') return false;
+  if (!string || strlen(string) < 2 || string[0] != '0' || string[1] != 'x')
+    return false;
   const size_t chars = strlen(string + 2);
   if ((chars & 1) != 0 || (exact_size && chars != 2 * expected_bytes))
     return false;
@@ -222,6 +182,70 @@ static bool hex_string_is_valid(const char* string, size_t expected_bytes,
     if (hex_nibble(string[i + 2]) < 0) return false;
   }
   return true;
+}
+
+/* Encode canonical decimal integers directly into a 256-bit ABI word.
+ * strtoll rejects valid uint64..uint256 values above INT64_MAX. */
+static bool encode_canonical_integer(const char* type, const char* text,
+                                     bool is_uint, uint8_t encoded[32]) {
+  if (!text) return false;
+  const bool negative = text[0] == '-';
+  if (negative && is_uint) return false;
+  const char* digits = text + (negative ? 1 : 0);
+  if (*digits == '\0' || (digits[0] == '0' && (digits[1] != '\0' || negative)))
+    return false;
+
+  uint8_t magnitude[32] = {0};
+  for (const char* p = digits; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+    uint16_t carry = (uint16_t)(*p - '0');
+    for (size_t i = sizeof(magnitude); i-- > 0;) {
+      carry += (uint16_t)magnitude[i] * 10;
+      magnitude[i] = (uint8_t)carry;
+      carry >>= 8;
+    }
+    if (carry != 0) return false;
+  }
+
+  const unsigned bits = integer_type_width(type, is_uint ? "uint" : "int");
+  uint8_t limit[32] = {0};
+  if (is_uint) {
+    memset(limit + sizeof(limit) - bits / 8, 0xff, bits / 8);
+  } else {
+    const size_t byte = sizeof(limit) - 1 - (bits - 1) / 8;
+    const uint8_t sign_bit = (uint8_t)(1u << ((bits - 1) % 8));
+    limit[byte] = negative ? sign_bit : (uint8_t)(sign_bit - 1);
+    if (!negative) memset(limit + byte + 1, 0xff, sizeof(limit) - byte - 1);
+  }
+  if (memcmp(magnitude, limit, sizeof(magnitude)) > 0) return false;
+
+  memcpy(encoded, magnitude, sizeof(magnitude));
+  if (negative) {
+    uint16_t carry = 1;
+    for (size_t i = sizeof(magnitude); i-- > 0;) {
+      carry += (uint8_t)~encoded[i];
+      encoded[i] = (uint8_t)carry;
+      carry >>= 8;
+    }
+  }
+  return true;
+}
+
+/* A name that has the shape of an elementary integer/bytes type (int, uintN,
+ * bytesN with digits directly after the prefix, or a bare int/uint) but was
+ * not accepted as one (bytes0, bytes33, int7, int08, bare int, ...) must not
+ * silently become a user-defined struct name. Callers test the valid forms
+ * first. Names such as "intent" or "bytesLike" are ordinary struct names. */
+static bool type_has_reserved_shape(const char* type) {
+  static const char* const prefixes[] = {"uint", "int", "bytes"};
+  for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+    const size_t len = strlen(prefixes[i]);
+    if (strncmp(type, prefixes[i], len) != 0) continue;
+    const char next = type[len];
+    if (next >= '0' && next <= '9') return true;
+    if (i < 2 && (next == '\0' || next == '[')) return true;
+  }
+  return false;
 }
 
 int encodableType(const char* typeStr) {
@@ -236,21 +260,21 @@ int encodableType(const char* typeStr) {
     return STRING;
   }
   if (type_is_integer(typeStr, "int")) {
-    // This could be 'int8', 'int16', ..., 'int256'
     return INT;
   }
   if (type_is_integer(typeStr, "uint")) {
-    // This could be 'uint8', 'uint16', ..., 'uint256'
     return UINT;
   }
   unsigned byte_size = 0;
   bool dynamic = false;
   if (type_is_bytes(typeStr, &byte_size, &dynamic)) {
-    // This could be 'bytes', 'bytes1', ..., 'bytes32'
     return dynamic ? BYTES : BYTES_N;
   }
   if (type_matches(typeStr, "bool")) {
     return BOOL;
+  }
+  if (type_has_reserved_shape(typeStr)) {
+    return NOT_ENCODABLE;
   }
 
   // See if type already defined. If so, skip, otherwise add it to list
@@ -261,20 +285,11 @@ int encodableType(const char* typeStr) {
     strtok(typeNoArrTok, "[");  // eliminate the array tokens if there
 
     if (udefList[ctr] != 0) {
-      /* Compare the stored name (minus any array tokens) against the candidate
-         by equal length plus a real prefix match. The previous form passed
-         strlen(stored) - strlen(candidate) as the length: for two same-length
-         names that is 0, so strncmp() returned 0 and ANY same-length struct was
-         reported as already-defined -- parseType() then never appended that
-         struct's definition and the typehash was computed over an incomplete
-         type set. When the candidate was longer the subtraction underflowed to
-         a huge size_t. */
       const size_t previous_len = strcspn(udefList[ctr], "[");
       const size_t candidate_len = strlen(typeNoArrTok);
       if (previous_len == candidate_len &&
           strncmp(udefList[ctr], typeNoArrTok, candidate_len) == 0) {
         return PREV_USERDEF;
-      } else {
       }
 
     } else {
@@ -387,30 +402,29 @@ int parseType(const json_t* eip712Types, const char* typeS, char* typeStr) {
     typeStr[strlen(typeStr) - 1] = ')';
   } else {
     // append paren, there are no parameters
-    if (!append_type_string(typeStr, ")")) {
-      return UDEF_NAME_ERROR;
-    }
+    if (!append_type_string(typeStr, ")")) return UDEF_NAME_ERROR;
   }
   if (strlen(append) > 0) {
-    if (!append_type_string(typeStr, append)) {
-      return UDEF_NAME_ERROR;
-    }
+    if (!append_type_string(typeStr, append)) return UDEF_NAME_ERROR;
   }
 
   return SUCCESS;
 }
 
 int encAddress(const char* string, uint8_t* encoded) {
-  if (string == NULL) {
+  if (!string) {
     return ADDR_STRING_NULL;
   }
-  uint8_t decoded[20];
-  if (!decode_address(string, decoded)) {
+  if (strlen(string) != ADDRESS_SIZE ||
+      !hex_string_is_valid(string, 20, true)) {
     return ADDR_STRING_VFLOW;
   }
 
   memset(encoded, 0, 12);
-  memcpy(encoded + 12, decoded, sizeof(decoded));
+  for (size_t i = 0; i < 20; i++) {
+    encoded[12 + i] = (uint8_t)((hex_nibble(string[2 + 2 * i]) << 4) |
+                                hex_nibble(string[3 + 2 * i]));
+  }
   return SUCCESS;
 }
 
@@ -424,9 +438,6 @@ int encString(const char* string, uint8_t* encoded) {
 }
 
 int encodeBytes(const char* string, uint8_t* encoded) {
-  /* Refuse before hashing: the walk below steps two characters at a time, so
-     an odd-length or non-hex value would read past the end of the host's JSON
-     buffer and hash bytes the user was never shown. */
   if (!hex_string_is_valid(string, 0, false)) return GENERAL_ERROR;
   struct SHA3_CTX byteCtx;
   const char* valStrPtr = string + 2;
@@ -443,11 +454,6 @@ int encodeBytes(const char* string, uint8_t* encoded) {
 }
 
 int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
-  /* N comes from type_is_bytes(), which parses it with a bound instead of
-     (uint8_t)strtol(): "bytes4294967297" used to wrap to 1 and sail past the
-     "32 < byteTypeSize" guard. The value must then be exactly N bytes -- the
-     old code right-padded a short value and accepted an over-long one, in both
-     cases producing a struct hash for a type the host invented. */
   unsigned byteTypeSize = 0;
   bool dynamic = false;
   if (!type_is_bytes(typeT, &byteTypeSize, &dynamic) || dynamic) {
@@ -457,7 +463,6 @@ int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
     return BYTESN_STRING_ERROR;
   }
   memset(encoded, 0, 32);
-  // bytesN are zero padded on the right
   for (size_t i = 0; i < byteTypeSize; i++) {
     encoded[i] = (uint8_t)((hex_nibble(string[2 + 2 * i]) << 4) |
                            hex_nibble(string[3 + 2 * i]));
@@ -465,24 +470,13 @@ int encodeBytesN(const char* typeT, const char* string, uint8_t* encoded) {
   return SUCCESS;
 }
 
-/* These screens were review(), which calls confirm_helper() and then returns
-   true unconditionally. confirm_helper() returns false when the host sends a
-   Cancel or Initialize tiny message, so a host could refuse every field screen
-   and encode() would still hash typed data the user never saw. They are
-   confirm() now and refusal is reported to parseVals() as USER_CANCELLED, so
-   no hash is produced at all. */
 int confirmName(const char* name, bool valAvailable) {
+  (void)valAvailable;
   if (!name) return GENERAL_ERROR;
-  /* Record the name unconditionally. confirmValue() labels the value screen
-     with it, including every element of an array, and an aggregate field left
-     it holding the PREVIOUS field's name -- so the elements of an address[]
-     were each shown captioned with an unrelated field. */
   nameForValue = name;
-  if (!valAvailable) {
-    if (!confirm(ButtonRequestType_ButtonRequest_Other, "MESSAGE DATA",
-                 "Press button to continue for\n\"%s\" values", name)) {
-      return USER_CANCELLED;
-    }
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other, "EIP-712 Field",
+                     (const uint8_t*)name, strlen(name))) {
+    return USER_CANCELLED;
   }
   return SUCCESS;
 }
@@ -490,10 +484,11 @@ int confirmName(const char* name, bool valAvailable) {
 int confirmValue(const char* value) {
   /* A NULL value is a parse failure, not a refusal: reporting it as
      USER_CANCELLED would send FailureType_Failure_ActionCancelled for a
-     malformed message. It must never reach confirm("%s"). */
+     malformed message. It must never reach confirm_bytes(). */
   if (!value) return GENERAL_ERROR;
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, "MESSAGE DATA", "%s %s",
-               nameForValue, value)) {
+  if (!confirm_bytes(ButtonRequestType_ButtonRequest_Other,
+                     nameForValue ? "EIP-712 Value" : "MESSAGE DATA",
+                     (const uint8_t*)value, strlen(value))) {
     return USER_CANCELLED;
   }
   return SUCCESS;
@@ -501,7 +496,6 @@ int confirmValue(const char* value) {
 
 static const char *dsname = NULL, *dsversion = NULL, *dschainId = NULL,
                   *dsverifyingContract = NULL;
-
 bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
   if (!text || !value || text[0] == '\0') return false;
   if (text[0] == '0' && text[1] != '\0') return false;
@@ -520,15 +514,12 @@ bool eip712_parse_canonical_u32(const char* text, uint32_t* value) {
 
 /* chainStr in dsConfirm() is written with a 32-byte bound and holds
    "chain " + this + ",  ", so 20 digits is the widest value that reaches the
-   screen unclipped. It also covers the full range parseVals()' 64-bit integer
-   encoder can represent, so the bound turns away nothing the device could
-   have hashed correctly anyway. */
+   screen unclipped. It also covers the full range of a 64-bit chain id. */
 #define DS_CHAINID_MAX_DIGITS 20
 
 /* The domain's chainId is only ever DISPLAYED -- dsConfirm() prints the host's
-   own string and nothing consumes a numeric value (the icon selection it was
-   once parsed for is still TBD). Chain IDs above 2^32 are legal and in
-   production (Palm is 11297108109), so validating it with
+   own string and nothing consumes a numeric value. Chain IDs above 2^32 are
+   legal and in production (Palm is 11297108109), so validating it with
    eip712_parse_canonical_u32() refused the whole domain separator on those
    chains over a number that was discarded. Keep only the property the screen
    needs: canonical base-10 digits, so the string shown cannot disagree with
@@ -557,8 +548,9 @@ static void clearDsVals(void) {
    device knows how to disclose on dsConfirm()'s screen. EIP-712 spec-legally
    allows others (e.g. "salt") -- without this, such a field would still get
    hashed into the domain separator via the ordinary per-field dispatch in
-   parseVals(), with nothing on any screen ever showing it. */
+   parseVals(), with nothing on the domain summary screen ever showing it. */
 bool marshallDsVals(const char* value) {
+  if (!nameForValue) return false;
   if (0 == strncmp(nameForValue, "name", sizeof("name"))) {
     dsname = value;
     return true;
@@ -579,15 +571,9 @@ bool marshallDsVals(const char* value) {
   return false;
 }
 
-/* Domain-separator values are marshalled and shown together on dsConfirm()'s
-   single screen; every other value gets its own screen here. Refusal of either
-   is reported to parseVals() so no hash is produced. */
 static int confirmTypedValue(bool ds_vals, const char* value) {
   if (!value) return GENERAL_ERROR;
-  if (ds_vals) {
-    if (!marshallDsVals(value)) return GENERAL_ERROR;
-    return SUCCESS;
-  }
+  if (ds_vals && !marshallDsVals(value)) return GENERAL_ERROR;
   return confirmValue(value);
 }
 
@@ -608,25 +594,12 @@ int dsConfirm(void) {
   }
 
   if (dsverifyingContract != NULL) {
-    /* EIP-712 types are host-controlled, so verifyingContract may reach this
-     * function without having passed through the address encoder. Validate it
-     * before any fixed-offset read or display.
-     *
-     * Merge note (#439 vs #440/GH #436): both branches fixed the same OOB read.
-     * This one is kept because it is strictly stronger — it validates the hex
-     * digits as well as the length and prefix, and it fails closed. The other
-     * checked only length and "0x", then set dsverifyingContract = NULL and
-     * fell through to a raw display, so a value like "0xZZZZ..." still reached
-     * sscanf and a malformed contract was shown rather than refused. */
-    /* Scoped to this block: cppcheck's variableScope rightly flagged it at
-       function scope, and CI treats that as fatal. Twenty bytes exactly, the
-       destination decode_address() validates into. */
-    uint8_t addrHexStr[20] = {0};
-    if (!decode_address(dsverifyingContract, addrHexStr)) {
+    // Domain field names are host-controlled regardless of the declared type.
+    // Validate the exact address before any summary uses it.
+    if (!hex_string_is_valid(dsverifyingContract, 20, true)) {
       clearDsVals();
       return ADDR_STRING_VFLOW;
     }
-    (void)addrHexStr;
     snprintf(verifyingContract, sizeof(verifyingContract),
              "Verifying Contract: %s", dsverifyingContract);
   }
@@ -665,6 +638,62 @@ int dsConfirm(void) {
   return confirmed ? SUCCESS : USER_CANCELLED;
 }
 
+/* Refuse a value whose JSON shape or address/bytes encoding is already known
+ * to be invalid, before any screen is shown: the user must never be asked to
+ * approve a value the encoder is going to reject, and a queued refusal must not
+ * be spent on it. Integer range/canonical-form errors are still reported after
+ * the field and value screens (see the EIP712 integer tests). */
+static int precheck_value(const char* typeType, const json_t* value,
+                          jsonType_t value_type, const char* valStr) {
+  const bool array = typeType[strlen(typeType) - 1] == ']';
+  unsigned byte_size = 0;
+  bool dynamic = false;
+
+  if (type_matches(typeType, "address") || type_matches(typeType, "string")) {
+    const bool is_address = type_matches(typeType, "address");
+    if (array) {
+      if (value_type != JSON_ARRAY) return GENERAL_ERROR;
+      for (const json_t* item = json_getChild(value); item;
+           item = json_getSibling(item)) {
+        if (json_getType(item) != JSON_TEXT) return GENERAL_ERROR;
+        if (is_address && !hex_string_is_valid(json_getValue(item), 20, true))
+          return ADDR_STRING_VFLOW;
+      }
+    } else {
+      if (value_type != JSON_TEXT) return GENERAL_ERROR;
+      if (is_address && !hex_string_is_valid(valStr, 20, true))
+        return ADDR_STRING_VFLOW;
+    }
+  } else if (type_is_integer(typeType, "uint") ||
+             type_is_integer(typeType, "int")) {
+    if (!array && value_type != JSON_TEXT && value_type != JSON_INTEGER)
+      return GENERAL_ERROR;
+  } else if (type_is_bytes(typeType, &byte_size, &dynamic)) {
+    if (!array) {
+      if (value_type != JSON_TEXT) return GENERAL_ERROR;
+      if (dynamic && !hex_string_is_valid(valStr, 0, false))
+        return GENERAL_ERROR;
+      if (!dynamic && !hex_string_is_valid(valStr, byte_size, true))
+        return BYTESN_STRING_ERROR;
+    }
+  } else if (type_matches(typeType, "bool")) {
+    if (!array) {
+      if (value_type != JSON_BOOLEAN && value_type != JSON_TEXT)
+        return GENERAL_ERROR;
+      if (!valStr ||
+          (strcmp(valStr, "true") != 0 && strcmp(valStr, "false") != 0))
+        return GENERAL_ERROR;
+    }
+  } else if (type_has_reserved_shape(typeType)) {
+    return GENERAL_ERROR;
+  } else if (array) {
+    if (value_type != JSON_ARRAY) return GENERAL_ERROR;
+  } else if (value_type != JSON_OBJ) {
+    return GENERAL_ERROR;
+  }
+  return SUCCESS;
+}
+
 /*
     Entry:
             eip712Types points to the eip712 types structure
@@ -678,6 +707,9 @@ int dsConfirm(void) {
 */
 int parseVals(const json_t* eip712Types, const json_t* jType,
               const json_t* nextVal, struct SHA3_CTX* msgCtx) {
+  if (!eip712Types || !jType || json_getType(jType) != JSON_ARRAY ||
+      !json_getName(jType) || !msgCtx)
+    return GENERAL_ERROR;
   json_t const *tarray, *pairs, *walkVals, *obTest;
   int ctr;
   const char* typeType = NULL;
@@ -690,11 +722,10 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
   if (0 ==
       strncmp(json_getName(jType), "EIP712Domain", sizeof("EIP712Domain"))) {
     ds_vals = true;
-    /* dsname/dsversion/dschainId/dsverifyingContract are only cleared inside
-     * dsConfirm(), reached only when this field loop completes without an
-     * early return. A malformed field or a user Cancel on an earlier
-     * request could otherwise leave stale pointers set here going into a
-     * later, unrelated domain parse. Start every domain parse clean. */
+    /* The marshalled domain pointers are only cleared inside dsConfirm(),
+     * reached only when this field loop completes without an early return.
+     * Start every domain parse clean so a malformed field or an earlier
+     * refusal cannot leave stale pointers going into a later parse. */
     clearDsVals();
   }
 
@@ -715,12 +746,15 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
       if (NULL == (obTest = json_getSibling(pairs))) {
         return JSON_NO_PAIRS_SIB;
       }
-      if (NULL == (typeType = json_getValue(obTest))) {
+      if (json_getType(obTest) != JSON_TEXT ||
+          NULL == (typeType = json_getValue(obTest)) || !*typeType) {
         return JSON_TYPE_T_NOVAL;
       }
       walkVals = nextVal;
       while (0 != walkVals) {
-        if (0 == strcmp(json_getName(walkVals), typeName)) {
+        const char* value_name = json_getName(walkVals);
+        if (!value_name) return GENERAL_ERROR;
+        if (0 == strcmp(value_name, typeName)) {
           break;
         } else {
           // keep looking for val
@@ -739,6 +773,10 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
                             value_type == JSON_INTEGER ||
                             value_type == JSON_BOOLEAN;
       valStr = hasValue ? json_getValue(walkVals) : NULL;
+      if (SUCCESS !=
+          (errRet = precheck_value(typeType, walkVals, value_type, valStr))) {
+        return errRet;
+      }
       if (SUCCESS != (errRet = confirmName(typeName, hasValue))) {
         return errRet;
       }
@@ -824,55 +862,10 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
               return errRet;
             }
             const bool is_uint = type_is_integer(typeType, "uint");
-            /* A leading '-' only tells the digit scan where the number starts;
-             * it does not decide the sign of the encoded word. Sign-extending
-             * on the character encoded "-0" as -2^64 while the screen showed
-             * "-0", which reads as zero -- the one thing a signing device must
-             * never do. The fill below keys on the parsed value instead. */
-            const uint8_t hasMinus = (!is_uint && *valStr == '-') ? 1 : 0;
-            // all int strings are assumed to be base 10 and fit into 64 bits
-            const char* digits = valStr + hasMinus;
-            if (*digits == '\0') return GENERAL_ERROR;
-            for (const char* p = digits; *p; p++) {
-              if (*p < '0' || *p > '9') return GENERAL_ERROR;
-            }
-            errno = 0;
-            char* endptr = NULL;
-            long long intVal = strtoll(valStr, &endptr, 10);
-            if (errno == ERANGE || endptr == valStr || *endptr != '\0') {
+            if (!encode_canonical_integer(typeType, valStr, is_uint,
+                                          encBytes)) {
               return GENERAL_ERROR;
             }
-            if (is_uint && intVal < 0) {
-              return GENERAL_ERROR;
-            }
-            const unsigned declared_bits =
-                integer_type_width(typeType, is_uint ? "uint" : "int");
-            if (declared_bits < 64) {
-              if (is_uint) {
-                const uint64_t max_value = (UINT64_C(1) << declared_bits) - 1;
-                if ((uint64_t)intVal > max_value) return GENERAL_ERROR;
-              } else {
-                const int64_t min_value = -(INT64_C(1) << (declared_bits - 1));
-                const int64_t max_value =
-                    (INT64_C(1) << (declared_bits - 1)) - 1;
-                if (intVal < min_value || intVal > max_value)
-                  return GENERAL_ERROR;
-              }
-            }
-            for (ctr = 0; ctr < 32; ctr++) {
-              // sign extend negative values, zero pad positive ones
-              encBytes[ctr] = (intVal < 0) ? 0xFF : 0;
-            }
-            // Needs to be big endian, so add to encBytes appropriately
-            const uint64_t intBits = (uint64_t)intVal;
-            encBytes[24] = (intBits >> 56) & 0xff;
-            encBytes[25] = (intBits >> 48) & 0xff;
-            encBytes[26] = (intBits >> 40) & 0xff;
-            encBytes[27] = (intBits >> 32) & 0xff;
-            encBytes[28] = (intBits >> 24) & 0xff;
-            encBytes[29] = (intBits >> 16) & 0xff;
-            encBytes[30] = (intBits >> 8) & 0xff;
-            encBytes[31] = intBits & 0xff;
           }
 
         } else {
@@ -1031,8 +1024,8 @@ int parseVals(const json_t* eip712Types, const json_t* jType,
   return SUCCESS;
 }
 
-int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
-           uint8_t* hashRet) {
+static int encode_impl(const json_t* jsonTypes, const json_t* jsonVals,
+                       const char* typeS, uint8_t* hashRet) {
   int ctr;
   char encTypeStr[STRBUFSIZE + 1] = {0};
   uint8_t typeHash[32];
@@ -1109,4 +1102,15 @@ int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
   memzero(encTypeStr, sizeof(encTypeStr));
 
   return SUCCESS;
+}
+
+/* Domain pointers refer into the caller's JSON. No attempt may retain them. */
+int encode(const json_t* jsonTypes, const json_t* jsonVals, const char* typeS,
+           uint8_t* hashRet) {
+  clearDsVals();
+  nameForValue = NULL;
+  const int result = encode_impl(jsonTypes, jsonVals, typeS, hashRet);
+  clearDsVals();
+  nameForValue = NULL;
+  return result;
 }

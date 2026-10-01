@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="17" failures="0" disabled="0" errors="0" timestamp="2026-09-28T02:31:33" time="1.039" name="AllTests">
+  <testsuite name="AutoLockProgress" tests="17" failures="0" disabled="0" errors="0" time="1.036">
+    <testcase name="FeaturePollingCannotKeepStalledSigningUnlocked" status="run" time="0.009" classname="AutoLockProgress" />
+    <testcase name="IncompleteFrameCannotKeepStalledSigningUnlocked" status="run" time="0.001" classname="AutoLockProgress" />
+    <testcase name="ValidBitcoinStreamProgressRenewsTheIdleDeadline" status="run" time="0.009" classname="AutoLockProgress" />
+    <testcase name="FeaturePollingAtHomeDoesNotRenewTheIdleDeadline" status="run" time="0.001" classname="AutoLockProgress" />
+    <testcase name="PingCannotRenewAStalledSigningDeadline" status="run" time="0" classname="AutoLockProgress" />
+    <testcase name="ProtectedPingCannotSuspendAnOlderSigningSession" status="run" time="0" classname="AutoLockProgress" />
+    <testcase name="TopLevelConfirmationEndsAnOlderSigningSession" status="run" time="0.24" classname="AutoLockProgress" />
+    <testcase name="TopLevelBoundaryEndsSigningButIsNotALock" status="run" time="0.002" classname="AutoLockProgress" />
+    <testcase name="NewSigningRequestCannotCoexistWithRecovery" status="run" time="0.001" classname="AutoLockProgress" />
+    <testcase name="HostDrivenLayoutChangesDoNotRenewTheDeadline" status="run" time="0.001" classname="AutoLockProgress" />
+    <testcase name="InvalidBitcoinAckEndsTheStream" status="run" time="0.001" classname="AutoLockProgress" />
+    <testcase name="EmptyRecoveryCharacterAbortsWithoutRenewingDeadline" status="run" time="0.244" classname="AutoLockProgress" />
+    <testcase name="RecoveryEditsRenewButPollingAndEmptyDeleteDoNot" status="run" time="0.253" classname="AutoLockProgress" />
+    <testcase name="EthereumChunksRenewButFeaturePollingDoesNot" status="run" time="0.249" classname="AutoLockProgress" />
+    <testcase name="TypedDataProgressRenewsButPollingEventuallyLocks" status="run" time="0.011" classname="AutoLockProgress" />
+    <testcase name="EosDataProgressRenewsButEmptyChunksDoNot" status="run" time="0.002" classname="AutoLockProgress" />
+    <testcase name="MalformedMultisigAddressCannotRenewTheDeadline" status="run" time="0.007" classname="AutoLockProgress" />
+  </testsuite>
+</testsuites>

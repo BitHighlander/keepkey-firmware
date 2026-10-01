@@ -11,21 +11,22 @@
 #define ERC7730_ABI_CAPTURE_MAX 128u
 
 typedef struct {
+  size_t declared_offset;
   uint16_t node;
-  uint32_t declared_offset;
   uint8_t path_depth;
   bool target_prefix;
 } Erc7730AbiPending;
 
 typedef struct {
-  uint32_t base;
-  uint32_t payload_remaining;
   uint16_t node;
-  uint8_t child_count;
-  uint8_t item_index;
-  uint8_t pending_start;
-  uint8_t pending_count;
-  uint8_t pending_index;
+  uint16_t first_child;
+  uint16_t child_count;
+  uint16_t item_index;
+  uint16_t pending_start;
+  uint16_t pending_count;
+  uint16_t pending_index;
+  size_t base;
+  size_t payload_remaining;
   uint8_t mode;
   uint8_t utf8_remaining;
   uint8_t utf8_lower;
@@ -38,48 +39,52 @@ typedef struct {
 
 typedef struct {
   uint8_t data[ERC7730_ABI_CAPTURE_MAX];
-  uint16_t length;
+  size_t length;
   uint16_t node;
 } Erc7730AbiCapture;
 
 typedef struct {
-  /* Held by value: the top-level stream is fed by later TxAck messages, long
-   * after the caller that began it (and any Erc7730AbiProgram on its stack)
-   * has returned. The node array it points at lives in the workflow loader. */
+  /* Own the view; nodes belong to the caller for the stream's lifetime. */
   Erc7730AbiProgram program;
   Erc7730AbiStreamFrame frames[ERC7730_ABI_MAX_DEPTH];
   Erc7730AbiPending pending[ERC7730_ABI_STREAM_MAX_PENDING];
   uint8_t word[32];
-  uint32_t total_length;
-  uint32_t received;
+  size_t total_length;
+  size_t received;
   uint32_t elements;
   int32_t capture_path[ERC7730_ABI_MAX_PATH];
   Erc7730AbiCapture capture;
-  uint8_t pending_used;
+  uint16_t pending_used;
   uint8_t depth;
   uint8_t word_received;
+  /* Locate mode (embedded calldata): a captured bytes value keeps only its
+   * first four bytes in `capture`; its full length and the offset of its
+   * payload within the stream are recorded here instead of copied. */
+  size_t located_length;
+  size_t located_offset;
+  bool capture_locate;
+  /* A captured bytes/string value longer than the capture buffer: only its
+   * length is kept (located_length); nothing of it is copied. */
+  bool capture_overflow;
   uint8_t capture_path_count;
   bool capture_enabled;
-  bool capture_array_length;
   bool capture_found;
   bool complete;
   bool failed;
 } Erc7730AbiStream;
 
-Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* s,
+Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
                                           const Erc7730AbiProgram* program,
                                           size_t total_length);
-Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* s, size_t offset,
-                                         const uint8_t* data, size_t data_len);
-Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* s,
+Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream,
+                                         size_t offset, const uint8_t* data,
+                                         size_t data_len);
+Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* stream,
                                                  const int32_t* path,
                                                  size_t path_count);
-Erc7730AbiResult erc7730_abi_stream_capture_array_path(Erc7730AbiStream* s,
-                                                       const int32_t* path,
-                                                       size_t path_count);
-Erc7730AbiResult erc7730_abi_stream_finish(Erc7730AbiStream* s);
-bool erc7730_abi_stream_captured(const Erc7730AbiStream* s,
+Erc7730AbiResult erc7730_abi_stream_finish(Erc7730AbiStream* stream);
+bool erc7730_abi_stream_captured(const Erc7730AbiStream* stream,
                                  Erc7730AbiCapture* capture);
-void erc7730_abi_stream_clear(Erc7730AbiStream* s);
+void erc7730_abi_stream_clear(Erc7730AbiStream* stream);
 
 #endif

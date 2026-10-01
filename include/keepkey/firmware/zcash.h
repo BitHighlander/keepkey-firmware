@@ -426,5 +426,6 @@ bool storage_zcashSeedFingerprint(bool usePassphrase,
  * session is active.
  */
 void zcash_signing_abort(void);
+bool zcash_signing_is_active(void);
 
 #endif

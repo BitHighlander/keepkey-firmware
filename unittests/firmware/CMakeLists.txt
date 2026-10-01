@@ -5,60 +5,71 @@
 # compiled them anyway and died on ethereum_address_checksum, which is compiled
 # out of that image. recovery.cpp was also listed twice.
 set(sources
-    ctap2.cpp
-    ctap2_cbor.cpp
-    confirm_test_utils.cpp
-    dice.cpp
-    fsm.cpp
+    app_confirm.cpp
+    block13_confirmation.cpp
+    block13_entropy.cpp
+    block13_progress.cpp
     nanopb_bounds.cpp
+    authenticator.cpp
+    confirm_test_utils.cpp
+    crypto_cleanup.cpp
+    fsm.cpp
+    dice.cpp
     recovery.cpp
-    seed_display.cpp
-    test_board.cpp
+    recovery_review_probe.c
+    review_handlers.cpp
     rng_health.cpp
-    signing.cpp
     setup_ceremony.cpp
+    reset_policy_probe.c
+    signing.cpp
     storage.cpp
     storage_cipher_probe.c
     storage_passphrase.cpp
     test_board.cpp
     transaction.cpp
     usb_rx.cpp
-    u2f.cpp)
+    messages_probe.c
+    usb_callbacks.cpp
+    u2f.cpp
+    ctap2.cpp
+    ctap2_cbor.cpp
+    seed_display.cpp)
 
 # Coin/token unit tests exercise handlers/helpers that are compiled out of the
-# bitcoin-only firmware (ethereum_address_checksum, tokenByTicker, ...), so they
-# only build against a full-feature firmware. coins.cpp asserts the multi-chain
-# coin+token table.
+# bitcoin-only firmware; they only build against a full-feature firmware.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      authenticator.cpp
       coins.cpp
       cosmos.cpp
       eip712.cpp
       eos.cpp
       eos_authorization.cpp
       eos_authorization_probe.c
-      clearsign_root.cpp
       ethereum.cpp
+      hive_transfer.cpp
       eip712_stream.cpp
-      hive.cpp
+      liquidity_key_probe.c
+      review_integer.cpp
       mayachain.cpp
       nano.cpp
       osmosis.cpp
       ripple.cpp
       signed_metadata.cpp
-      contact_book.cpp
       erc7730_abi.cpp
       erc7730_abi_stream.cpp
       erc7730_catalog.cpp
       erc7730_condition.cpp
+      erc7730_field.cpp
       erc7730_format.cpp
       erc7730_program.cpp
       erc7730_tx.cpp
       erc7730_workflow.cpp
       solana.cpp
       thorchain.cpp
-      tron.cpp)
+      tron.cpp
+      clearsign_root.cpp
+      hive.cpp
+      contact_book.cpp)
 else()
   list(APPEND sources bitcoin_only.cpp)
 endif()

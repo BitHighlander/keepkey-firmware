@@ -58,6 +58,13 @@ def largest_frames(su_tar_path, top_n=15):
                 if len(parts) != 3:
                     continue
                 loc, size, qual = parts
+                qualifiers = {part.strip().lower()
+                              for part in qual.split(",")}
+                # GCC reports a reliable maximum for dynamic,bounded, but
+                # only the fixed portion for an unbounded dynamic frame.
+                if "dynamic" in qualifiers and "bounded" not in qualifiers:
+                    sys.exit(f"ERROR: unbounded dynamic stack frame in "
+                             f"{member.name}: {loc} ({qual})")
                 try:
                     frames.append((int(size), loc.split("/")[-1], qual))
                 except ValueError:

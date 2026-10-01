@@ -797,7 +797,7 @@ void layout_pin(const char* str, char pin[]) {
  *     none
  */
 void layout_cipher(const char* current_word, const char* cipher,
-                   const char* prev_word_info) {
+                   const char* prev_word_info, bool animate_cipher) {
   DrawableParams sp;
   const Font* title_font = get_body_font();
   Canvas* canvas = layout_get_canvas();
@@ -828,11 +828,15 @@ void layout_cipher(const char* current_word, const char* cipher,
   sp.color = BODY_COLOR;
   draw_string(canvas, title_font, current_word, &sp, 68,
               font_height(title_font));
+  const uint32_t duration = CIPHER_ANIMATION_FREQUENCY_MS * 30;
+  if (animate_cipher) {
+    layout_add_animation(&layout_animate_cipher, (void*)cipher, duration);
+  } else {
+    /* Restore an obscured mapping immediately. Replaying its introduction
+     * lets repeated host requests keep its last letters off the display. */
+    layout_animate_cipher((void*)cipher, duration, duration);
+  }
   display_refresh();
-
-  /* Animate cipher */
-  layout_add_animation(&layout_animate_cipher, (void*)cipher,
-                       CIPHER_ANIMATION_FREQUENCY_MS * 30);
 }
 
 /*
