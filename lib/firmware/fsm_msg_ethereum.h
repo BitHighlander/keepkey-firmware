@@ -307,13 +307,25 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
     return ERC7730_UI_INVALID;
   const bool inner = workflow->depth != 0;
   if (!workflow->identity_confirmed) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 inner ? "Inner signer" : "Runtime signer", "%s (%s)",
-                 workflow->identity.delegate_alias,
-                 workflow->identity.delegate_fingerprint) ||
-        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Unverified data", "NOT verified by KeepKey"))
+    /* Root-certified, and for an inner call its outer definition was too.
+     * Provenance only: AdvancedMode and the raw-data review are unchanged. */
+    if (erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Verified by KeepKey", "%s (%s)\ndescribes %s.",
+                   workflow->identity.delegate_alias,
+                   workflow->identity.delegate_fingerprint,
+                   inner                  ? "the inner call"
+                   : workflow->typed_data ? "this message"
+                                          : "this transaction"))
+        return ERC7730_UI_CANCELLED;
+    } else if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                        inner ? "Inner signer" : "Runtime signer", "%s (%s)",
+                        workflow->identity.delegate_alias,
+                        workflow->identity.delegate_fingerprint) ||
+               !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                        "Unverified data", "NOT verified by KeepKey")) {
       return ERC7730_UI_CANCELLED;
+    }
     workflow->identity_confirmed = true;
   }
   if (!workflow->intent_confirmed) {
@@ -1745,7 +1757,19 @@ void fsm_msgEthereumClearSignDefinitionChunk(
 
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_INITIALIZED
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+
+  /* Runtime/self-service signers remain behind AdvancedMode. A v3 envelope is
+   * let through only when it uses the reserved delegate key id and has room
+   * for a certificate plus inner payload. This shape check grants no trust:
+   * signed_metadata_process() verifies the root, certificate scope and flag,
+   * delegate signature and device-owned decode, and a claim that fails is
+   * refused at SignTx. */
+  const bool certified =
+      msg->has_signed_payload && msg->has_key_id &&
+      signed_metadata_is_certified_envelope(
+          msg->signed_payload.bytes, msg->signed_payload.size, msg->key_id);
+
+  if (!certified && !storage_isPolicyEnabled("AdvancedMode")) {
     ethereum_signing_abort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("AdvancedMode required for clearsign metadata"));
@@ -1764,12 +1788,11 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  /* Range-check before narrowing: (uint8_t)256 would alias slot 0. */
-  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
+  /* Range-check before narrowing: (uint8_t)256 would alias slot 0. The one
+   * valid value above the slots is the certified-delegate sentinel. */
+  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS ||
+                  msg->key_id == METADATA_KEYID_DELEGATE,
               _("clearsign metadata key_id out of range"));
-
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for clearsign metadata"));
 
   RESP_INIT(EthereumMetadataAck);
 

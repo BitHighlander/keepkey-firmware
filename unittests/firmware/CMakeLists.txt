@@ -48,6 +48,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       nano.cpp
       osmosis.cpp
       ripple.cpp
+      clearsign_root.cpp
       signed_metadata.cpp
       erc7730_abi.cpp
       erc7730_abi_stream.cpp

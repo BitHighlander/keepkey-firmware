@@ -25,6 +25,7 @@ extern "C" {
 #include "keepkey/firmware/osmosis.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/storage.h"
@@ -1951,6 +1952,58 @@ TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
   EXPECT_EQ(2, kkconfirm_drain())
       << "a generic-signing confirmation ran before the global refusal";
 }
+/* SRS R-1.4 at the signing path: a certified claim that cannot be honoured
+ * (here, an envelope whose certificate is garbage) is refused before any
+ * screen -- not downgraded to the raw review. The no-claim control signs the
+ * same calldata through the ordinary review, so the refusal is the claim's. */
+TEST(Fsm, FailedCertifiedClaimIsRefusedBeforeAnyScreen) {
+  kk_test_board_init();
+  fsm_init();
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 36;
+  memcpy(msg.data_initial_chunk.bytes, "\xde\xad\xbe\xef",
+         4);  // no native decoder
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+
+  for (bool claimed : {true, false}) {
+    SCOPED_TRACE(claimed ? "certified claim" : "no claim (control)");
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    if (claimed) {
+      uint8_t envelope[1 + 139 + 80] = {METADATA_VERSION_CERTIFIED};
+      EXPECT_EQ(METADATA_MALFORMED,
+                signed_metadata_process(envelope, sizeof(envelope),
+                                        METADATA_KEYID_DELEGATE));
+      ASSERT_TRUE(signed_metadata_certified_claimed());
+    }
+    EthereumSignTx tx = msg;
+    ethereum_signing_init(&tx, &node, false);
+
+    EXPECT_FALSE(ethereum_signing_isInProgress());
+    if (claimed) {
+      EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+      EXPECT_FALSE(signed_metadata_certified_claimed());
+    } else {
+      EXPECT_EQ(FailureType_Failure_ActionCancelled,
+                fsm_test_lastFailureCode());
+      EXPECT_NE(2, kkconfirm_drain()) << "the review never ran";
+    }
+  }
+}
 TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
   kk_test_board_init();
   fsm_init();
@@ -2452,7 +2505,8 @@ TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {
     fsm_test_clearLastFailure();
     receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
                    &reset);
-    // Same split as IncompatibleStorage.CreationRefusesBeforeStagingOrConfirmation:
+    // Same split as
+    // IncompatibleStorage.CreationRefusesBeforeStagingOrConfirmation:
     // bitcoin-only locks keep Failure_Other (CHECK_NOT_BTC_ONLY_LOCKED); a
     // normal-band wallet newer than this build is UnexpectedMessage
     // (CHECK_STORAGE_WRITABLE).

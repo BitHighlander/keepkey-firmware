@@ -26,6 +26,8 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+#include "trezor/crypto/sha3.h"
+#include "keepkey/firmware/clearsign_root.h"
 
 void setup(void);
 }
@@ -371,6 +373,28 @@ TEST_F(SignedMetadataTest, SignatureVerificationFails) {
   std::vector<uint8_t> blob = base_blob();
   blob[146] ^= 0x01;  // flip first signature byte (sig starts after 146B body)
   ExpectMalformed(blob, TEST_KEY_ID);
+}
+
+TEST(SignedMetadataEnvelope, OnlyReservedCompleteV3ShapeBypassesPolicyGate) {
+  std::vector<uint8_t> candidate(141, 0);
+  candidate[0] = METADATA_VERSION_CERTIFIED;
+
+  EXPECT_TRUE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), TEST_KEY_ID));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(candidate.data(),
+                                                     candidate.size(), 0x180));
+
+  candidate[0] = METADATA_VERSION_SCHEMA;
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  candidate[0] = METADATA_VERSION_CERTIFIED;
+  candidate.resize(140);
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(
+      candidate.data(), candidate.size(), METADATA_KEYID_DELEGATE));
+  EXPECT_FALSE(signed_metadata_is_certified_envelope(nullptr, 141,
+                                                     METADATA_KEYID_DELEGATE));
 }
 
 /* ===================================================================== *
@@ -1863,3 +1887,136 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
 }
 
 }  // namespace
+
+/* ---- 7.16 certified (v3) envelopes: fail closed (SRS R-1.2, R-1.4) -------
+ *
+ * The test installs its own root and mints certificates exactly as the
+ * ceremony does (root signs the EIP-712 digest of cert[0..74]). The delegate is
+ * TEST_PRIV, so sign_body() produces the inner description it vouches for. */
+namespace {
+
+const uint8_t CERT_ROOT_PRIV[32] = {
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+    0xcc, 0xdd, 0xee, 0xf0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11};
+
+std::vector<uint8_t> mint_cert(uint32_t scope, uint8_t flags,
+                               const uint8_t delegate_pub[33]) {
+  std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
+  c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
+  c[CLEARSIGN_CERT_OFF_FLAGS] = flags;
+  for (int i = 0; i < 4; i++) {
+    c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
+    c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
+  }
+  memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
+  memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, CLEARSIGN_PUBKEY_LEN);
+  const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
+  uint8_t pre[66] = {0x19, 0x01};
+  memcpy(pre + 2, ds, 32);
+  keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
+  uint8_t digest[32];
+  keccak_256(pre, sizeof(pre), digest);
+  uint8_t pby = 0;
+  EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, CERT_ROOT_PRIV, digest,
+                                 &c[CLEARSIGN_CERT_OFF_SIG], &pby, NULL));
+  return c;
+}
+
+std::vector<uint8_t> envelope(const std::vector<uint8_t>& cert,
+                              const std::vector<uint8_t>& inner) {
+  std::vector<uint8_t> e(1, METADATA_VERSION_CERTIFIED);
+  e.insert(e.end(), cert.begin(), cert.end());
+  e.insert(e.end(), inner.begin(), inner.end());
+  return e;
+}
+
+class CertifiedMetadataTest : public SignedMetadataTest {
+ protected:
+  uint8_t root_pub[33];
+  void SetUp() override {
+    SignedMetadataTest::SetUp();
+    ecdsa_get_public_key33(&secp256k1, CERT_ROOT_PRIV, root_pub);
+    clearsign_root_set_test_root(root_pub);
+  }
+  void TearDown() override {
+    clearsign_root_set_test_root(NULL);
+    SignedMetadataTest::TearDown();
+  }
+  MetadataClassification Process(const std::vector<uint8_t>& e) {
+    return signed_metadata_process(e.data(), e.size(),
+                                   METADATA_KEYID_DELEGATE);
+  }
+  void ExpectRefusedButClaimed(const std::vector<uint8_t>& e) {
+    EXPECT_EQ(METADATA_MALFORMED, Process(e));
+    EXPECT_FALSE(signed_metadata_available());
+    EXPECT_FALSE(signed_metadata_may_suppress(1));
+    EXPECT_TRUE(signed_metadata_certified_claimed())
+        << "a failed certified claim must stay visible to SignTx";
+  }
+};
+
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, VerifiedDescriptionMaySuppressOnlyOnItsChain) {
+  auto e = envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                              EXPECTED_SLOT3_PUB),
+                    v2_base_blob());
+  EXPECT_EQ(METADATA_VERIFIED, Process(e));
+  EXPECT_TRUE(signed_metadata_available());
+  EXPECT_TRUE(signed_metadata_certified_claimed());
+  EXPECT_TRUE(signed_metadata_may_suppress(1));
+  EXPECT_FALSE(signed_metadata_may_suppress(137));
+  EXPECT_STREQ("Test Delegate", signed_metadata_delegate_alias());
+}
+
+TEST_F(CertifiedMetadataTest, ScopeMustEqualTheDescribedChain) {
+  V2Spec other_chain = v2_base_spec();
+  other_chain.chain_id = 137;
+  ExpectRefusedButClaimed(envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_v2_body(other_chain))));
+}
+
+/* EVM chain ids and non-EVM scopes share one number space: a Solana-scoped
+ * certificate must not certify an EVM description on chain 501. */
+TEST_F(CertifiedMetadataTest, NonEvmScopeNeverCertifiesAnEvmChain) {
+  V2Spec chain_501 = v2_base_spec();
+  chain_501.chain_id = CLEARSIGN_SCOPE_SOLANA;
+  ExpectRefusedButClaimed(envelope(mint_cert(CLEARSIGN_SCOPE_SOLANA,
+                                             CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                             EXPECTED_SLOT3_PUB),
+                                   sign_body(build_v2_body(chain_501))));
+}
+
+TEST_F(CertifiedMetadataTest, CertificateWithoutMaySuppressIsRefused) {
+  ExpectRefusedButClaimed(
+      envelope(mint_cert(1, 0, EXPECTED_SLOT3_PUB), v2_base_blob()));
+}
+
+TEST_F(CertifiedMetadataTest, DescriptionSignedByAnotherKeyIsRefused) {
+  uint8_t other_pub[33];
+  ecdsa_get_public_key33(&secp256k1, CERT_ROOT_PRIV, other_pub);
+  ExpectRefusedButClaimed(envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, other_pub),
+      v2_base_blob()));
+}
+
+TEST_F(CertifiedMetadataTest, SignerSuppliedV1ValuesAreRefused) {
+  ExpectRefusedButClaimed(envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      base_blob()));
+}
+
+TEST_F(CertifiedMetadataTest, ClearEndsTheClaimAndRuntimeNeverMakesOne) {
+  ExpectRefusedButClaimed(
+      envelope(mint_cert(1, 0, EXPECTED_SLOT3_PUB), v2_base_blob()));
+  signed_metadata_clear();
+  EXPECT_FALSE(signed_metadata_certified_claimed());
+
+  set_advanced_mode_for_test(true);
+  std::vector<uint8_t> runtime = base_blob();
+  signed_metadata_process(runtime.data(), runtime.size(), TEST_KEY_ID);
+  EXPECT_FALSE(signed_metadata_certified_claimed());
+  set_advanced_mode_for_test(false);
+}

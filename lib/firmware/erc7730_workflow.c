@@ -756,6 +756,13 @@ const Erc7730CatalogIdentity* erc7730_workflow_identity(
   return &workflow->identity;
 }
 
+uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
+  if (!workflow) return METADATA_TIER_NONE;
+  const uint8_t own = workflow->identity.tier;
+  if (workflow->depth == 0 || own < workflow->outer_tier) return own;
+  return workflow->outer_tier;
+}
+
 bool erc7730_workflow_preserve_selected_string(Erc7730Workflow* workflow,
                                                bool intent) {
   const char* value = NULL;
@@ -843,6 +850,7 @@ bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
     workflow->outer_resume = workflow->display_index;
     workflow->outer_identity_confirmed = workflow->identity_confirmed;
     workflow->outer_intent_confirmed = workflow->intent_confirmed;
+    workflow->outer_tier = workflow->identity.tier;
   }
   workflow->fetch_depth = depth;
   workflow->fetch_offset = 0;
