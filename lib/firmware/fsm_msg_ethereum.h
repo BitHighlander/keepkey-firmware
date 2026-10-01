@@ -358,6 +358,16 @@ static void fail_erc7730_field(Erc7730Workflow* workflow, FailureType type,
   layoutHome();
 }
 
+/* A refused source/intent screen: invalid identity or a user decline. */
+static void fail_erc7730_ui(Erc7730Workflow* workflow, Erc7730UiResult ui) {
+  fail_erc7730_field(
+      workflow,
+      ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                               : FailureType_Failure_ActionCancelled,
+      ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                               : _("Signing cancelled by user"));
+}
+
 typedef enum {
   ERC7730_SIGNER_OK,
   ERC7730_SIGNER_FAILED,
@@ -398,12 +408,7 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
                                const char* formatted) {
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   bool confirmed;
@@ -583,12 +588,7 @@ static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
     memzero(formatted, sizeof(formatted));
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
@@ -609,12 +609,7 @@ static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
   char formatted[48];
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   /* Typed data: the walk that captured this value has just shown every leaf
@@ -791,12 +786,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
      * preloaded definition. */
     const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
     if (ui != ERC7730_UI_OK) {
-      fail_erc7730_field(
-          workflow,
-          ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                   : FailureType_Failure_ActionCancelled,
-          ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                   : _("Signing cancelled by user"));
+      fail_erc7730_ui(workflow, ui);
       return;
     }
     if (!erc7730_workflow_begin_fetch(workflow, 1)) {
@@ -1111,12 +1101,7 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
     return;
   }
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   EthereumSignTx tx;
