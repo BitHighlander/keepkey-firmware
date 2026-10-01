@@ -12,8 +12,6 @@
 static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count);
 
 // ── HiveGetPublicKey ──────────────────────────────────────────────────────
-// Returns a single STM-prefixed public key for the given SLIP-0048 path.
-// Path format: m/48'/13'/role'/account'/0' (all 5 components hardened).
 
 void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
   CHECK_INITIALIZED
@@ -32,8 +30,7 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  // Stage the key locally: a debug-link read during the confirm below reuses
-  // msg_resp, so the response is only built after the last confirmation.
+  // Debug-link reads during confirms reuse msg_resp: build it last.
   uint8_t raw_public_key[33];
   memcpy(raw_public_key, node->public_key, sizeof(raw_public_key));
   memzero(node, sizeof(*node));
@@ -46,9 +43,7 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
   }
 
   if (msg->has_show_display && msg->show_display) {
-    // Label the key by the role in the ACTUAL derivation path
-    // (m/48'/13'/role'/account'/0'), never the host-supplied msg->role,
-    // which could mislabel the exported key.
+    // Label from the derived path, never the host-supplied msg->role.
     const char* role_label = "Hive Public Key";
     if (msg->address_n_count >= 3) {
       switch (msg->address_n[2] & 0x7FFFFFFFu) {
@@ -68,11 +63,7 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
           break;
       }
     }
-    // NOT confirm_ethereum_address(): that layout wraps its body at 140 px and
-    // has room for two rows, so the tail of a 53-54 character STM key -- the
-    // part the user is comparing -- is silently never drawn. confirm()
-    // measures and pages the body. The QR is not needed: an STM public key is
-    // read back into a wallet, never scanned to be paid.
+    // NOT confirm_ethereum_address(): it silently clips a 53-54 char key.
     if (!confirm(ButtonRequestType_ButtonRequest_Address, role_label, "%s",
                  public_key)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
@@ -92,8 +83,6 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
 }
 
 // ── HiveGetPublicKeys ─────────────────────────────────────────────────────
-// Returns all four SLIP-0048 role keys (owner/active/memo/posting) for a
-// given account index in a single device interaction.
 
 void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
   CHECK_INITIALIZED
@@ -111,8 +100,6 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
   HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
-  // Stage the keys locally: a debug-link read during the confirm below reuses
-  // msg_resp, so the response is only built after the last confirmation.
   char keys[4][sizeof(((HivePublicKeys*)0)->owner_key)];
   bool keys_ok = hive_getPublicKeys(
       root, account_index, keys[0], sizeof(keys[0]), keys[1], sizeof(keys[1]),
@@ -150,8 +137,7 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
 
 // ── HiveSignTx (transfer) ─────────────────────────────────────────────────
 
-// Keep custom-domain support, but make the exact signing domain part of
-// consent. Mainnet (explicit or omitted) keeps the ordinary flow.
+// A non-mainnet chain id must be part of consent.
 static bool hive_confirm_chain(bool present, const uint8_t* chain) {
   const uint8_t mainnet[32] = HIVE_CHAIN_ID;
   if (!present || memcmp(chain, mainnet, sizeof(mainnet)) == 0) return true;
@@ -264,9 +250,7 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
 }
 
 // ── SLIP-0048 path validation ─────────────────────────────────────────────
-// Account create/update derive replacement role keys from address_n[3], so
-// the full path shape must be enforced before anything is derived or signed:
-// m/48'/13'/role'/account'/0' (all 5 components hardened).
+// Enforce m/48'/13'/role'/account'/0' before deriving or signing anything.
 
 static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count) {
   if (count != 5) return false;
@@ -282,10 +266,7 @@ static bool hive_slip48_path_ok(const uint32_t* address_n, uint32_t count) {
 }
 
 // ── HiveSignAccountCreate ─────────────────────────────────────────────────
-// Signs a Graphene account_create operation.
-// Device derives all four role keys internally; host-supplied key strings
-// are informational only (displayed for confirmation) and never used for
-// the actual transaction. KeepKey is the sole root of trust from genesis.
+// Role keys are device-derived; host-supplied key strings are never signed.
 
 void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   CHECK_INITIALIZED
@@ -313,9 +294,7 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
 
   uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
 
-  // Derive all four role keys from the device root.
-  // Do this BEFORE fetching the signing node so the root static buffer
-  // is not clobbered by the second fsm_getDerivedNode call.
+  // Before the signing node: it overwrites the root static buffer.
   HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
@@ -327,7 +306,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
       hive_deriveRawKey(root, HIVE_ROLE_POSTING, acc_hardened, posting_raw) &&
       hive_deriveRawKey(root, HIVE_ROLE_MEMO, acc_hardened, memo_raw);
   memzero(root, sizeof(*root));
-  // root static buffer is done with; signing node derivation may overwrite it.
 
   if (!keys_ok) {
     memzero(owner_raw, sizeof(owner_raw));
@@ -340,7 +318,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  // Now get the signing node (owner key, overwrites root static buffer).
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) {
@@ -352,7 +329,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   }
   hdnode_fill_public_key(node);
 
-  // Encode the device-derived owner key for display confirmation.
   char owner_stm[64];
   if (!hive_getPublicKey(owner_raw, owner_stm, sizeof(owner_stm))) {
     memzero(node, sizeof(*node));
@@ -366,7 +342,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  // Primary confirmation: show the new username prominently.
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                "Create Hive Account",
                "Create @%s secured by KeepKey?\n\nAll keys from your device.",
@@ -381,7 +356,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  // Secondary confirmation: show device-derived owner key so user can verify.
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Owner Key", "%s",
                owner_stm)) {
     memzero(node, sizeof(*node));
@@ -394,7 +368,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  // Tertiary confirmation: show sponsor + fee.
   char fee_str[32];
   uint64_t fee = msg->has_fee_amount ? msg->fee_amount : 3000;
   snprintf(fee_str, sizeof(fee_str), "%" PRIu64 ".%03" PRIu64 " HIVE",
@@ -411,7 +384,6 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
     return;
   }
 
-  // Debug-link reads during the confirms reuse msg_resp; init it here.
   RESP_INIT(HiveSignedAccountCreate);
   hive_signAccountCreate(node, msg, owner_raw, active_raw, posting_raw,
                          memo_raw, resp);
@@ -433,10 +405,7 @@ void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
 }
 
 // ── HiveSignAccountUpdate ─────────────────────────────────────────────────
-// Signs a Graphene account_update operation.
-// Device derives all four new role keys internally; host-supplied new_*_key
-// strings are not used for signing. The device-derived owner key is shown
-// so the user can verify it matches their device before replacing all keys.
+// New role keys are device-derived; host new_*_key strings are never signed.
 
 void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   CHECK_INITIALIZED
@@ -464,7 +433,6 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
 
   uint32_t account_index = msg->address_n[3] & 0x7FFFFFFFu;
 
-  // Derive all four role keys before fetching the signing node.
   HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;
 
@@ -488,7 +456,6 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  // Signing node (overwrites root static buffer).
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) {
@@ -500,7 +467,6 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   }
   hdnode_fill_public_key(node);
 
-  // Encode device-derived owner key for display.
   char owner_stm[64];
   if (!hive_getPublicKey(owner_raw, owner_stm, sizeof(owner_stm))) {
     memzero(node, sizeof(*node));
@@ -514,7 +480,6 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  // Warning: this replaces all existing keys.
   if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
                "Secure Hive Account",
                "Replace ALL keys for @%s with KeepKey keys?\n\nOld keys will "
@@ -530,7 +495,6 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  // Show device-derived owner key so user can verify it's their device.
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "New Owner Key", "%s",
                owner_stm)) {
     memzero(node, sizeof(*node));
@@ -543,7 +507,6 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  // Debug-link reads during the confirms reuse msg_resp; init it here.
   RESP_INIT(HiveSignedAccountUpdate);
   hive_signAccountUpdate(node, msg, owner_raw, active_raw, posting_raw,
                          memo_raw, resp);
