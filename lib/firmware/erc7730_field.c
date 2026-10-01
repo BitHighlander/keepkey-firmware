@@ -212,27 +212,24 @@ bool erc7730_format_duration(const uint8_t value[32], char* output,
 bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
                          const char* base, char* output, size_t output_size) {
   if (!value || !base || !output || output_size == 0) return false;
-  static const Erc7730AbiNode uint256 = {ERC7730_ABI_UINT, 256, 0, 0, 0};
-  const Erc7730AbiProgram program = {&uint256, 1, 0};
-  Erc7730AbiCapture capture;
-  memcpy(capture.data, value, 32);
-  capture.length = 32;
-  capture.node = 0;
-  char scaled[344], raw[80]; /* <= 78 digits, '.', 77 zeros, ' ', base */
-  bool ok = erc7730_format_amount(&program, &capture, decimals, base, scaled,
-                                  sizeof(scaled)) &&
+  bignum256 amount;
+  bn_read_be(value, &amount);
+  char scaled[344], raw[80]; /* <= 78 digits, '.', 254 zeros; then the base */
+  bool ok = bn_format(&amount, NULL, NULL, decimals, 0, false, scaled,
+                      sizeof(scaled)) != 0 &&
+            strlen(scaled) + 1u + strlen(base) < sizeof(scaled) &&
             format_integer(value, raw, sizeof(raw));
+  memzero(&amount, sizeof(amount));
   if (ok) {
     const int length =
         /* The base is the signer's word, printed where a firmware ticker
          * would be: say so first, so the mark is never on a later OLED page
          * than the value, and always give the raw integer it came from. */
-        snprintf(output, output_size, "unit set by signer\n%s\nraw %s", scaled,
-                 raw);
+        snprintf(output, output_size, "unit set by signer\n%s%s%s\nraw %s",
+                 scaled, base[0] ? " " : "", base, raw);
     ok = length > 0 && (size_t)length < output_size;
   }
   if (!ok) output[0] = '\0';
-  memzero(&capture, sizeof(capture));
   memzero(scaled, sizeof(scaled));
   memzero(raw, sizeof(raw));
   return ok;
