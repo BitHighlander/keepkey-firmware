@@ -700,6 +700,71 @@ void storage_wipeAuthData() {
   return;
 }
 
+void storage_getPasskeyData(PasskeyStorage* data) {
+  if (data == NULL) return;
+  memcpy(data, &shadow_config.storage.pub.passkeys, sizeof(*data));
+}
+
+void storage_setPasskeyData(const PasskeyStorage* data) {
+  if (data == NULL) return;
+  memcpy(&shadow_config.storage.pub.passkeys, data, sizeof(*data));
+  storage_commit();
+}
+
+bool storage_getPasskeyCredentialGeneration(
+    uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
+    bool* legacy_credentials_enabled) {
+  if (generation == NULL || legacy_credentials_enabled == NULL) return false;
+
+  PasskeyStorage* passkeys = &shadow_config.storage.pub.passkeys;
+  bool generation_is_zero = true;
+  for (size_t i = 0; i < sizeof(passkeys->credential_generation); ++i) {
+    if (passkeys->credential_generation[i] != 0) {
+      generation_is_zero = false;
+      break;
+    }
+  }
+  if (passkeys->version != PASSKEY_STORAGE_VERSION || generation_is_zero) {
+    const bool migrate_legacy = passkeys->version != PASSKEY_STORAGE_VERSION ||
+                                passkeys->legacy_credentials_enabled != 0;
+    uint8_t new_generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+    if (!random_buffer_checked(new_generation, sizeof(new_generation))) {
+      memzero(generation, PASSKEY_CREDENTIAL_GENERATION_SIZE);
+      *legacy_credentials_enabled = false;
+      return false;
+    }
+    memzero(passkeys->credential_generation,
+            sizeof(passkeys->credential_generation));
+    memcpy(passkeys->credential_generation, new_generation,
+           sizeof(new_generation));
+    passkeys->legacy_credentials_enabled = migrate_legacy ? 1 : 0;
+    passkeys->version = PASSKEY_STORAGE_VERSION;
+    storage_commit();
+    memzero(new_generation, sizeof(new_generation));
+  }
+
+  memcpy(generation, passkeys->credential_generation,
+         PASSKEY_CREDENTIAL_GENERATION_SIZE);
+  *legacy_credentials_enabled = passkeys->legacy_credentials_enabled != 0;
+  return true;
+}
+
+bool storage_resetPasskeyData(void) {
+  PasskeyStorage reset;
+  memzero(&reset, sizeof(reset));
+  if (!random_buffer_checked(reset.credential_generation,
+                             sizeof(reset.credential_generation))) {
+    memzero(&reset, sizeof(reset));
+    return false;
+  }
+  reset.version = PASSKEY_STORAGE_VERSION;
+  reset.pin_retries = PASSKEY_PIN_RETRIES;
+  reset.legacy_credentials_enabled = 0;
+  storage_setPasskeyData(&reset);
+  memzero(&reset, sizeof(reset));
+  return true;
+}
+
 bool storage_getAuthData(authType* returnData) {
   uint8_t authdataKey[64] = {0};
   uint8_t testFp[32] = {0};
@@ -1174,6 +1239,68 @@ void storage_readStorageV17(Storage* storage, const char* ptr, size_t len) {
   memcpy(storage->encrypted_sec, ptr + 1501, sizeof(storage->encrypted_sec));
 }
 
+// V20 stores passkey state inside V17's 996-byte reserved plaintext area. An
+// unshipped 7.15 RC appended clear-sign identities after encrypted_sec; those
+// unauthenticated records are retired and deliberately outside this record.
+// Readers ignore trailing bytes, and storage_commit erases the destination
+// sector before writing this bounded record, so legacy identities never carry
+// forward into the next active sector.
+#define V20_STORAGE_LEN (1501 + V17_ENCSEC_SIZE)  // 2525
+#define PASSKEY_STORAGE_OFF 501
+
+static void storage_defaultPasskeyData(PasskeyStorage* passkeys) {
+  memzero(passkeys, sizeof(*passkeys));
+  passkeys->version = 1;
+  passkeys->pin_retries = PASSKEY_PIN_RETRIES;
+}
+
+static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
+  if ((passkeys->version != 1 &&
+       passkeys->version != PASSKEY_STORAGE_VERSION) ||
+      passkeys->pin_set > 1 || passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
+    storage_defaultPasskeyData(passkeys);
+    return;
+  }
+  if (passkeys->version == 1) {
+    /* Version 1 ended immediately after credentials[]. Bytes that now hold the
+     * generation belonged to V17's randomized reserved area, so never trust
+     * them as serialized state. The first credential operation migrates this
+     * record and temporarily enables legacy-handle validation. */
+    memzero(passkeys->credential_generation,
+            sizeof(passkeys->credential_generation));
+    passkeys->legacy_credentials_enabled = 0;
+  } else if (passkeys->legacy_credentials_enabled > 1) {
+    storage_defaultPasskeyData(passkeys);
+    return;
+  }
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    PasskeyCredential* credential = &passkeys->credentials[i];
+    if (credential->occupied > 1 ||
+        credential->user_id_length > PASSKEY_USER_ID_MAX) {
+      memzero(credential, sizeof(*credential));
+      continue;
+    }
+    credential->user_name[PASSKEY_USER_NAME_MAX - 1] = 0;
+  }
+}
+
+void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage) {
+  if (len < V20_STORAGE_LEN) return;
+  storage_writeStorageV17(ptr, len, storage);
+  _Static_assert(sizeof(PasskeyStorage) <= 996,
+                 "passkey metadata exceeds the V17 reserved area");
+  memcpy(ptr + PASSKEY_STORAGE_OFF, &storage->pub.passkeys,
+         sizeof(storage->pub.passkeys));
+}
+
+void storage_readStorageV20(Storage* storage, const char* ptr, size_t len) {
+  if (len < V20_STORAGE_LEN) return;
+  storage_readStorageV17(storage, ptr, len);
+  memcpy(&storage->pub.passkeys, ptr + PASSKEY_STORAGE_OFF,
+         sizeof(storage->pub.passkeys));
+  storage_validatePasskeyData(&storage->pub.passkeys);
+}
+
 void storage_readCacheV1(Cache* cache, const char* ptr, size_t len) {
   if (len < 65 + 10) return;
   cache->root_seed_cache_status = read_u8(ptr);
@@ -1250,9 +1377,22 @@ void storage_writeV17(char* flash, size_t len, const ConfigFlash* src) {
   storage_writeStorageV17(flash + 44, len - 44, &src->storage);
 }
 
+void storage_readV20(ConfigFlash* dst, const char* flash, size_t len) {
+  if (len < STORAGE_V17_SERIALIZED_LEN) return;
+  storage_readMeta(&dst->meta, flash, 44);
+  storage_readStorageV20(&dst->storage, flash + 44, len - 44);
+}
+
+void storage_writeV20(char* flash, size_t len, const ConfigFlash* src) {
+  if (len < STORAGE_V17_SERIALIZED_LEN) return;
+  storage_writeMeta(flash, 44, &src->meta);
+  storage_writeStorageV20(flash + 44, len - 44, &src->storage);
+}
+
 StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
                                       const char* flash) {
   memzero(dst, sizeof(*dst));
+  storage_defaultPasskeyData(&dst->storage.pub.passkeys);
 
   // Load config values from active config node. The raw value is kept because
   // the bitcoin-only arm needs the exact stored number, not its classification.
@@ -1309,11 +1449,22 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       dst->storage.version = STORAGE_VERSION;
       return dst->storage.version == version ? SUS_Valid : SUS_Updated;
     case StorageVersion_17:
+      /* Migrate: the rewrite scrubs the retired clear-sign identity tail and
+       * any legacy AdvancedMode bit 12. */
       storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
+      dst->storage.version = STORAGE_VERSION;
+      return SUS_Updated;
+    /* BURNED (storage_versions.inc): alpha-only layouts, never parsed. No
+     * default arm on purpose, so the compiler names a forgotten version. */
+    case StorageVersion_18:
+    case StorageVersion_19:
+      return SUS_Invalid;
+    case StorageVersion_20:
+      storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
       // Erase legacy unauthenticated AdvancedMode bit 12 (even with no PIN).
       if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
-      return dst->storage.version == version ? SUS_Valid : SUS_Updated;
+      return SUS_Valid;
 
     case StorageVersion_BTC_ONLY:
 #if BITCOIN_ONLY
@@ -1336,8 +1487,12 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV11(dst, flash, STORAGE_SECTOR_LEN);
       } else if (underlying == 16) {
         storage_readV16(dst, flash, STORAGE_SECTOR_LEN);
-      } else {
+      } else if (underlying == 17) {
         storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
+      } else if (underlying == 18 || underlying == 19) {
+        return SUS_Invalid; /* burned, as in the multi-chain arms */
+      } else {
+        storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
       if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
@@ -1563,6 +1718,8 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
   storage_setPin_impl(ss, &cfg->storage, "");
 
   cfg->storage.version = STORAGE_VERSION;
+  cfg->storage.pub.passkeys.version = 1;
+  cfg->storage.pub.passkeys.pin_retries = PASSKEY_PIN_RETRIES;
 
   memzero(ss, sizeof(*ss));
 
@@ -1722,7 +1879,7 @@ void storage_commit(void) {
 
   /* Set before serializing, or find_active_storage() misses the commit. */
   memcpy(shadow_config.meta.magic, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-  storage_writeV17(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV20(flash_temp, sizeof(flash_temp), &shadow_config);
 
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {

@@ -30,6 +30,7 @@ extern "C" {
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/rand/rng_health.h"
 #include "storage.h"
 #include "keepkey/firmware/thorchain.h"
 #include "trezor/crypto/secp256k1.h"
@@ -2729,3 +2730,37 @@ TEST(Fsm, EthereumTransferRecipientMismatchWipesDerivedNode) {
   layoutHomeForced();
 }
 #endif
+
+TEST(Fsm, PasskeyResetRotatesGenerationAndClearsAllMetadata) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  PasskeyStorage original;
+  storage_getPasskeyData(&original);
+
+  PasskeyStorage populated;
+  memset(&populated, 0, sizeof(populated));
+  populated.version = 1;
+  populated.pin_set = 1;
+  populated.pin_retries = 3;
+  populated.credentials[0].occupied = 1;
+  populated.credentials[0].user_id_length = 1;
+  populated.credentials[0].user_id[0] = 0x42;
+  storage_setPasskeyData(&populated);
+
+  uint8_t before[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  bool legacy_enabled = false;
+  ASSERT_TRUE(storage_getPasskeyCredentialGeneration(before, &legacy_enabled));
+  EXPECT_TRUE(legacy_enabled);
+
+  ASSERT_TRUE(storage_resetPasskeyData());
+  PasskeyStorage reset;
+  storage_getPasskeyData(&reset);
+  EXPECT_EQ(reset.version, PASSKEY_STORAGE_VERSION);
+  EXPECT_EQ(reset.pin_set, 0);
+  EXPECT_EQ(reset.pin_retries, PASSKEY_PIN_RETRIES);
+  EXPECT_EQ(reset.credentials[0].occupied, 0);
+  EXPECT_EQ(reset.legacy_credentials_enabled, 0);
+  EXPECT_NE(memcmp(before, reset.credential_generation, sizeof(before)), 0);
+
+  storage_setPasskeyData(&original);
+}

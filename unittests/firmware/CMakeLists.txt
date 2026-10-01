@@ -24,7 +24,9 @@ set(sources
     usb_rx.cpp
     messages_probe.c
     usb_callbacks.cpp
-    u2f.cpp)
+    u2f.cpp
+    ctap2.cpp
+    ctap2_cbor.cpp)
 
 # Suites for the coin engines the bitcoin-only image compiles out. Building
 # them against that image fails at the first reference to an absent symbol
