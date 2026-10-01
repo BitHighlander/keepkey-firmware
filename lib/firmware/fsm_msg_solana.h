@@ -640,10 +640,7 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
 
 /* Render a schema-decoded instruction: who attested the schema, then the
  * program/instruction it describes, then every labelled arg and account with
- * values read from the transaction being signed. A runtime signer is named by
- * its slot's alias and fingerprint; a certified one by its root certificate.
- * A TOKEN_AMOUNT is scaled only by a token definition trusted in this review's
- * own tier, and is always shown with its mint. */
+ * values read from the transaction being signed. */
 static bool solana_confirm_schema(const SolanaSignTx* msg, bool certified,
                                   const char* alias, const char* fp,
                                   const SolanaInstrSchema* schema,
@@ -652,9 +649,7 @@ static bool solana_confirm_schema(const SolanaSignTx* msg, bool certified,
   const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
   SolanaSchemaTokenCache token_cache = {NULL, NULL};
 
-  /* A certified schema may sit beside static SystemProgram transfers
-   * (solana_schemaAppliesCertified); every instruction is disclosed in
-   * transaction order, the described one through the schema. */
+  /* Certified: disclose every instruction in transaction order. */
   for (uint8_t i = 0; certified && i < ix_index; i++) {
     if (!solana_confirmInstruction(&parsed->instructions[i], msg, i,
                                    parsed->num_instructions)) {
@@ -816,17 +811,15 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     return;
   }
 
-  /* Any KeepKey-certificate material makes this a certified request, which is
-   * honoured completely or refused -- never downgraded to a runtime or
-   * blind-sign review (SRS R-1.4). */
+  /* Any certificate material: honoured fully or refused, never downgraded
+   * (SRS R-1.4). */
   const bool certified_request =
       msg->has_clearsign_certificate ||
       (msg->has_lut_signer_key_id &&
        msg->lut_signer_key_id == METADATA_KEYID_DELEGATE) ||
       (msg->has_schema_signer_key_id &&
        msg->schema_signer_key_id == METADATA_KEYID_DELEGATE);
-  /* Token definitions must come from the request's own tier: a runtime-signed
-   * definition never names a token in a certified review, nor the reverse. */
+  /* Token definitions must come from the request's own tier. */
   for (pb_size_t t = 0; t < msg->token_info_count; t++) {
     const SolanaTokenInfo* ti = &msg->token_info[t];
     if (ti->has_signer_key_id &&
@@ -860,8 +853,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   char signer_fp[METADATA_FINGERPRINT_LEN] = {0};
   uint8_t lut_keys[SOL_MAX_LUT_ACCOUNTS][SOL_PUBKEY_SIZE];
   size_t lut_n = 0;
-  /* nanopb gives each repeated `bytes` element as {size, bytes[32]}; flatten
-   * once, requiring full 32-byte keys, so every hash covers real keys. */
+  /* Flatten, requiring full 32-byte keys. */
   bool lut_well_formed = msg->lut_account_count <= SOL_MAX_LUT_ACCOUNTS;
   for (size_t i = 0; lut_well_formed && i < msg->lut_account_count; i++) {
     lut_well_formed = msg->lut_account[i].size == SOL_PUBKEY_SIZE;
@@ -871,10 +863,8 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   if (certified_request) {
-    /* One certificate-authorized schema is always required; a
-     * transaction-bound LUT proof exactly when the v0 message has lookup-table
-     * entries. Partial material, runtime slots, bad scope or signature, or a
-     * shape mismatch is a hard failure. */
+    /* Requires a certified schema, plus a tx-bound LUT proof iff the message
+     * has lookups. Anything partial or invalid is a hard failure. */
     const bool has_lut_material = msg->lut_account_count > 0 ||
                                   msg->has_lut_signature ||
                                   msg->has_lut_signer_key_id;
@@ -914,8 +904,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
                         : solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size,
                                            &parsed);
         if (tx_review == SOL_TX_REVIEW_MALFORMED ||
-            /* A lookup section needs a proof; with a proof the parser has
-             * already refused a message without one. */
+            /* A lookup section needs a proof. */
             (lut_n == 0 && parsed.has_address_lookups) ||
             !solana_parseInstrSchema(msg->schema_payload.bytes,
                                      msg->schema_payload.size, &schema) ||
@@ -1039,10 +1028,8 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       return;
     }
 
-    /* KKSOLSW1: a runtime signer may describe the lookup-table accounts the
-     * device cannot derive. Annotation only (SRS R-1.3): it names its signer,
-     * says KeepKey did not verify it, and the blind-sign warning still
-     * follows. Absent or unverifiable material draws nothing extra. */
+    /* KKSOLSW1 runtime LUT description: annotation only (SRS R-1.3); the
+     * blind-sign warning still follows. */
     if (lut_well_formed && lut_n > 0 && msg->has_lut_signature &&
         msg->has_lut_signer_key_id &&
         solana_lut_accounts_trusted(

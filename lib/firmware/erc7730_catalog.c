@@ -96,11 +96,8 @@ static bool verify_runtime_delegate(
   return true;
 }
 
-/* Root-certified tier: the record is a delegate certificate the compiled-in
- * ClearSign root signed for this chain with MAY_SUPPRESS_RAW, and the envelope
- * signature verifies under its delegate (clearsign_root.c does both). This
- * changes only the provenance shown. AdvancedMode is still required, as on the
- * runtime tier, and the raw-data review is unchanged. */
+/* Root-certified tier: provenance only; AdvancedMode and the raw-data review
+ * are unchanged. */
 _Static_assert(ERC7730_DELEGATE_RECORD_LEN == CLEARSIGN_CERT_LEN &&
                    ERC7730_DELEGATE_ALIAS_LEN == CLEARSIGN_ALIAS_LEN &&
                    ERC7730_DELEGATE_OFF_PUBKEY == CLEARSIGN_CERT_OFF_PUBKEY,
@@ -1223,8 +1220,7 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
                                    Erc7730CatalogIdentity* identity) {
   uint8_t actual_id[32];
   sha256_Final(&v->envelope_hash, actual_id);
-  /* validate_header() refused a chain id above UINT32_MAX, so the scope cast
-   * below cannot truncate on either tier. */
+  /* validate_header() bounds the chain id to 32 bits: no truncation. */
   const uint32_t scope = (uint32_t)read_be64(v->header + 10);
   uint8_t tier = METADATA_TIER_NONE;
   if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) == 0 &&

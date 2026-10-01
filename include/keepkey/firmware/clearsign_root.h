@@ -24,19 +24,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ── The KeepKey delegation root ─────────────────────────────────────
- *
- * This translation unit exists so that "who can reach the root key" is a
- * one-line grep. Exactly one function VERIFIES against it
- * (clearsign_root_verify_cert); clearsign_root_is_present() only tests it for
- * all-zero. Adding another consumer is a SECURITY CHANGE, not a refactor, and
- * should be reviewed as one.
- *
- * The root key is what separates 7.16 from 7.15. In 7.15 a describer can
- * mislabel a transaction but cannot conceal it, because the raw review always
- * follows -- which is precisely why 7.15 needs no custody programme. A
- * KeepKey-signed describer MAY omit that review, so the key that vouches for
- * one is the whole trust boundary.
+/* KeepKey delegation root. Only clearsign_root_verify_cert() verifies against
+ * the root key; adding another consumer is a SECURITY CHANGE. A root-signed
+ * describer MAY omit the raw review, so this key is the whole trust boundary.
  */
 
 /* Fixed layout. No TLV, no length fields, nothing to fuzz.
@@ -66,10 +56,8 @@
 #define CLEARSIGN_CERT_OFF_SIG 75
 
 #define CLEARSIGN_ALIAS_LEN 32
-/* Scope ids of non-EVM networks (their SLIP-44 coin type). EVM chain ids
- * share the same 32-bit space, so the EVM path refuses every one of these:
- * a certificate for another network must never authorize an EVM description
- * on a chain that happens to carry the same number. */
+/* Non-EVM scope ids (SLIP-44 coin type). The EVM path refuses these: a
+ * non-EVM cert must never authorize an EVM chain with the same number. */
 #define CLEARSIGN_SCOPE_SOLANA 501u
 #define CLEARSIGN_PUBKEY_LEN 33
 
@@ -78,91 +66,49 @@
  *   keccak(keccak("EIP712Domain(string name,string version)")
  *          || keccak("KeepKey Clearsign Delegation") || keccak("1"))
  *
- * EIP-712 and not a bare sha256 tag for one concrete reason: it makes the
- * root a STOCK KeepKey. EthereumSignTypedHash takes a domain separator and a
- * message hash and signs keccak(0x19||0x01||ds||mh) -- which IS this
- * preimage -- so the ceremony needs no raw-digest signing path and no special
- * firmware on the root device. The device also low-S normalises for free.
- *
- * The domain is still ours and never transmitted, so a host can neither
- * substitute nor elide it, and a certificate preimage can never also parse as
- * a metadata payload. Versioned via the domain string. */
+ * EIP-712 so the root can be a stock KeepKey (EthereumSignTypedHash). The
+ * domain is never transmitted, so a host cannot substitute or elide it, and a
+ * cert preimage can never parse as a metadata payload. */
 #define CLEARSIGN_DOMAIN_SEPARATOR                                   \
   {0x88, 0x39, 0x40, 0x1f, 0x8d, 0x01, 0x12, 0xb4, 0x34, 0x87, 0x70, \
    0xdd, 0xac, 0xe1, 0x52, 0xe9, 0x6f, 0xc5, 0xe5, 0x08, 0x1a, 0xef, \
    0xee, 0xd6, 0xb5, 0xd8, 0xbe, 0xf0, 0xd6, 0xec, 0xdf, 0x66}
 
-/* The expiry floor, and the only revocation lever this release has.
- *
- * Set by hand at each release cut and bumped deliberately to revoke. NOT
- * derived from the build date: an auto-moving floor rots test fixtures
- * silently and cannot be reviewed in a diff, and the entire value of this
- * mechanism is that revocation is one reviewable line in a signed release.
- *
- * 1787270400 = 2026-08-21T00:00:00Z, the 7.16 cut instant. The floor IS the
- * cut, which is the only value that costs nothing and still means something:
- * it honours every certificate that had not already expired when this
- * firmware was built, and rejects every one that had. The previous value,
- * 1755000000 = 2025-08-12, predated its own cut by a year, so it passed every
- * certificate that has ever existed and the lever was decoration.
- *
- * Two bounds squeeze the next bump, and they pull opposite ways:
- *   - To revoke a delegate the floor must go ABOVE that certificate's
- *     not_after. A bump that does not clear it is not a revocation.
- *   - It must stay BELOW the not_after of every certificate meant to keep
- *     working, INCLUDING the committed unit-test fixture (1818806400 =
- *     2027-08-21T00:00:00Z). Past that the fixture has to be re-minted -- and
- *     a green test run across a bump means the boundary stopped being tested,
- *     not that nothing broke.
- *
- * Mirrored, deliberately by hand, in the ceremony signer (MIN_EXPIRY in
- * sign_delegate_cert.py) and the integration test; selfcheck.py compares the
- * signer's copy against this line and fails loudly when they drift.
- *
- * The consequence, stated plainly because it does not improve by being left
- * implicit: a device that never updates never revokes. */
+/* Expiry floor: the only revocation lever. Set by hand (never from the build
+ * date) so revocation is one reviewable line. 1787270400 = 2026-08-21Z, the
+ * 7.16 cut. To revoke, bump ABOVE that cert's not_after; stay BELOW every
+ * cert meant to keep working, incl. the unit fixture (1818806400). Mirrored
+ * in sign_delegate_cert.py (checked by selfcheck.py). A device that never
+ * updates never revokes. */
 #define KK_CLEARSIGN_MIN_EXPIRY 1787270400u
 
-/* Verify a delegate certificate against the compiled-in root.
- *
- * Checks, in order: length, version, reserved flag bits, nonzero chain id,
- * expiry against the floor, delegate pubkey prefix, then the signature.
- * Returns false on any failure. It checks neither MAY_SUPPRESS_RAW nor scope,
- * so it can never by itself authorise replacing the raw review: certified
- * describers go through clearsign_root_cert_delegate(), and a failed certified
- * claim is refused, never downgraded (SRS R-1.4).
- *
- * THE ONLY FUNCTION THAT VERIFIES AGAINST THE ROOT KEY. */
+/* Verify a cert against the compiled-in root. Checks neither MAY_SUPPRESS_RAW
+ * nor scope, so it alone never authorizes suppressing the raw review; use
+ * clearsign_root_cert_delegate(). A failed certified claim is refused, never
+ * downgraded (SRS R-1.4). THE ONLY FUNCTION THAT VERIFIES AGAINST THE ROOT. */
 bool clearsign_root_verify_cert(const uint8_t* cert, size_t cert_len);
 
-/* Verify a suppression-capable certificate and require its network scope. On
- * success copies the authenticated delegate identity. Non-EVM networks use
- * their SLIP-44 coin type; Solana is therefore scope 501. Certificates without
- * MAY_SUPPRESS_RAW are deliberately ineligible for this authority path. */
+/* Verify a cert that has MAY_SUPPRESS_RAW and exactly `expected_scope`;
+ * copy out the delegate identity. */
 bool clearsign_root_cert_delegate(const uint8_t* cert, size_t cert_len,
                                   uint32_t expected_scope,
                                   uint8_t out_pubkey[CLEARSIGN_PUBKEY_LEN],
                                   char out_alias[CLEARSIGN_ALIAS_LEN + 1]);
 
-/* Verify sha256(data) with the delegate authenticated by a root certificate
- * for `expected_scope`. This is the non-EVM equivalent of the certified v3
- * schema verification path and never consults runtime signer slots. */
+/* Verify sha256(data) by the certified delegate for `expected_scope`. Never
+ * consults runtime signer slots. */
 bool clearsign_root_verify_delegate_attestation(
     const uint8_t* cert, size_t cert_len, uint32_t expected_scope,
     const uint8_t* data, size_t data_len, const uint8_t* sig, size_t sig_len);
 
-/* Verify a catalog root under the ERC-7730-only purpose domain. `catalog_root`
- * is the result of the definition leaf's sorted Merkle proof. Keeping this
- * preimage construction here prevents callers from accidentally reusing the
- * generic attestation domain for a descriptor that may suppress raw review. */
+/* Verify a catalog Merkle root under the ERC-7730-only purpose domain, so the
+ * generic attestation domain is never reused for a suppressing descriptor. */
 bool clearsign_root_verify_erc7730_catalog(
     const uint8_t* cert, size_t cert_len, uint32_t expected_scope,
     const uint8_t catalog_root[32], const uint8_t* sig, size_t sig_len,
     char out_alias[CLEARSIGN_ALIAS_LEN + 1]);
 
-/* True when the compiled-in root is not all zero. Every 7.16 build embeds a
- * root, so this is always true; it stays as a conjunct of the suppression
- * decision and so the unit suite can tie the firmware version to the root. */
+/* Root is not all zero. Always true in 7.16; kept as a suppression conjunct. */
 bool clearsign_root_is_present(void);
 
 #if DEBUG_LINK && defined(EMULATOR)

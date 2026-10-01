@@ -568,9 +568,7 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* What an ERC-7730 review cannot clear-sign is refused from 7.16; 7.15
- * showed it under a blind-sign warning. First, an embedded call without a
- * usable inner definition. */
+/* Refused: an embedded call without a usable inner definition. */
 static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   workflow->inner_refused = false; /* consumed: the next call may fetch */
   fail_erc7730_field(workflow, FailureType_Failure_Other,
@@ -1728,12 +1726,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_INITIALIZED
 
-  /* Runtime/self-service signers remain behind AdvancedMode. A v3 envelope is
-   * let through only when it uses the reserved delegate key id and has room
-   * for a certificate plus inner payload. This shape check grants no trust:
-   * signed_metadata_process() verifies the root, certificate scope and flag,
-   * delegate signature and device-owned decode, and a claim that fails is
-   * refused at SignTx. */
+  /* Runtime signers need AdvancedMode. The v3 shape check grants no trust;
+   * signed_metadata_process() verifies and SignTx refuses a failed claim. */
   const bool certified =
       msg->has_signed_payload && msg->has_key_id &&
       signed_metadata_is_certified_envelope(

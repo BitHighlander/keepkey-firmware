@@ -599,17 +599,9 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
 
-  /* Auditor-caught defect in an earlier version of this fix: storing a
-     truncated (uint8_t)num_accounts here and returning OPAQUE let
-     solana_signerInTx()'s `i < tx->num_accounts` loop bound exceed the real
-     32-entry tx->accounts[] array (33..255 accounts: genuine OOB read past
-     accounts[31]; 256, 512, ...: wraps to 0, silently reintroducing the
-     original signer-check skip). tx->accounts[] is never populated for this
-     path either way (the account-reading loop below is never reached), so
-     there is no safe count to record short of parsing a bounded signer
-     prefix. Fail closed instead: MALFORMED refuses unconditionally (see the
-     `else` branch in fsm_msgSolanaSignTx), rather than degrading into an
-     OPAQUE blind-sign path with unverifiable signer identity. */
+  /* MALFORMED, never OPAQUE: a truncated (uint8_t) count would let
+     solana_signerInTx() read past accounts[] or wrap to 0 and skip the signer
+     check. MALFORMED refuses unconditionally; no blind-sign fallback. */
   if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_MALFORMED;
   tx->num_accounts = (uint8_t)num_accounts;
   tx->num_static_accounts = (uint8_t)num_accounts;
@@ -725,8 +717,7 @@ static SolanaTxReview solana_parseVersionedTx(
     if (pos + readonly_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
     pos += readonly_count;
     serialized_lut_count += readonly_count;
-    /* Without a trusted resolver the message is opaque anyway; keep parsing
-     * so a malformed tail is still refused below, never blind-signed. */
+    /* Untrusted: keep parsing so a malformed tail is still refused. */
     if (serialized_lut_count > SOL_MAX_LUT_ACCOUNTS && has_trusted_lut) {
       return SOL_TX_REVIEW_MALFORMED;
     }
@@ -734,10 +725,8 @@ static SolanaTxReview solana_parseVersionedTx(
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
 
-  /* The signed message commits to every lookup index but not to the account
-   * stored at that index. A certified resolver supplies exactly one key per
-   * serialized index. Missing or surplus keys are a malformed certified
-   * request, never a reason to fall back to blind signing. */
+  /* Exactly one resolved key per serialized lookup index; any mismatch is
+   * MALFORMED, never a blind-sign fallback. */
   if (has_trusted_lut &&
       (lookup_table_count == 0 || serialized_lut_count != trusted_lut_count)) {
     return SOL_TX_REVIEW_MALFORMED;
@@ -920,20 +909,10 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
   return cur == end; /* no trailing bytes */
 }
 
-/* Instructions that may ride along unscreened next to a schema-described one.
- * The schema review runs only in the SOL_TX_REVIEW_OPAQUE branch of
- * fsm_msgSolanaSignTx, and that branch never calls solana_confirmInstruction()
- * for anything -- it goes from the schema screens straight to the blind-sign
- * warning. So "firmware recognises it" is not enough: a recognised
- * SystemProgram Transfer beside the described instruction would be signed
- * without one screen naming its amount or destination. Only instructions that
- * move no value and grant no authority qualify.
- *
- * The one exception is the root-certified review, which walks every
- * instruction (solana_confirm_schema for the described one,
- * solana_confirmInstruction for the rest) and so renders a
- * SystemProgram Transfer companion in full; see schema_transferIsStatic.
- */
+/* Companions that may ride along UNSCREENED: the runtime schema review draws
+ * no screen for other instructions, so only ones moving no value and granting
+ * no authority qualify. (The certified review also renders static Transfers;
+ * see schema_transferIsStatic.) */
 static bool solana_schemaCompanionIsInert(SolanaInstrType type) {
   switch (type) {
     case SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME:
@@ -947,12 +926,9 @@ static bool solana_schemaCompanionIsInert(SolanaInstrType type) {
   }
 }
 
-/* A certified Transfer companion must name exactly two accounts, both static
- * keys of the message. A certified lookup-table proof clears `external`, but
- * the keys it resolves are the service's attestation, not bytes the user
- * signs; the SOL-send screen must never take its destination from one. The
- * count is the Vault/Worker rule (isCertifiedCompanion), so both sides certify
- * the same transactions. */
+/* Certified Transfer companion: exactly two accounts, both static keys. A
+ * SOL-send destination must never come from a LUT attestation. Matches the
+ * Vault/Worker isCertifiedCompanion rule. */
 static bool schema_transferIsStatic(const SolanaParsedTx* tx,
                                     const SolanaParsedInstruction* ix) {
   if (ix->num_acct_indices != 2) return false;
@@ -972,9 +948,7 @@ static bool schema_applies(const SolanaInstrSchema* schema,
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* ix = &tx->instructions[i];
     if (ix->external) continue; /* accounts not in the signed message */
-    /* Schemas extend the parser for one program firmware does not know. They
-     * never replace a native decoder: allowing an attested label to override a
-     * built-in transfer screen would make the display less trustworthy. */
+    /* Schemas never override a native decoder. */
     if (ix->type != SOL_INSTR_UNKNOWN) continue;
     if (memcmp(ix->program_id, schema->program_id, SOL_PUBKEY_SIZE) != 0) {
       continue;
@@ -1014,10 +988,8 @@ static bool schema_applies(const SolanaInstrSchema* schema,
   }
   if (!found) return false;
 
-  /* A schema explains ONE instruction, and nothing in the schema path draws a
-   * screen for any other, so every other instruction must be inert. Requiring
-   * only that they be RECOGNISED was not enough: a SystemProgram Transfer is
-   * recognised, and it would have been signed unscreened. */
+  /* Every other instruction must be inert (or, certified, a static
+   * Transfer): see solana_schemaCompanionIsInert. */
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     if (i == match) continue;
     const SolanaParsedInstruction* companion = &tx->instructions[i];
@@ -1266,9 +1238,7 @@ bool solana_token_info_trusted(const SolanaTokenInfo* ti) {
                                             ti->signature.size);
 }
 
-/* A symbol that can only read as a ticker: nothing (space, line break,
- * punctuation) that could continue the sentence it is shown in. Same rule the
- * certified token attestation's signer applies. */
+/* Bare ticker only: nothing that could continue the surrounding sentence. */
 static bool solana_tokenSymbolOk(const SolanaTokenInfo* ti) {
   if (!ti->has_symbol) return false;
   const size_t len = strnlen(ti->symbol, sizeof(ti->symbol));
@@ -1284,12 +1254,10 @@ static bool solana_tokenSymbolOk(const SolanaTokenInfo* ti) {
   return true;
 }
 
-/* The certified Pump token attestation, signed by the delegate of this
- * request's Solana root certificate:
+/* Certified token definition, signed by the Solana cert's delegate:
  *   "KeepKeySolanaTokenDef/2" || mint(32) || token_program(32)
  *     || decimals(le32) || symbol
- * It binds the mint's owner program. A TOKEN_AMOUNT needs only the mint's
- * scale and symbol, so a definition for either SPL token program serves. */
+ * Either SPL token program is accepted. */
 static bool solana_tokenDefCertified(const SolanaSignTx* msg,
                                      const SolanaTokenInfo* ti) {
   if (!msg->has_clearsign_certificate || !ti->has_signature ||
@@ -1328,9 +1296,8 @@ static bool solana_tokenDefCertified(const SolanaSignTx* msg,
   return false;
 }
 
-/* A symbol the firmware already binds to another mint ("USDC", in any case).
- * A signed definition proves only that its signer named this mint so; it must
- * not borrow a name the device itself assigns to a different token. */
+/* A signed definition must not borrow a symbol the firmware binds to another
+ * mint ("USDC", any case). */
 static bool solana_symbolNamesOtherKnownToken(
     const char* symbol, const uint8_t mint[SOL_PUBKEY_SIZE]) {
   for (size_t i = 0; i < sizeof(SOL_KNOWN_TOKENS) / sizeof(SOL_KNOWN_TOKENS[0]);
@@ -1359,11 +1326,9 @@ const SolanaTokenInfo* solana_schemaTrustedToken(
       solana_symbolNamesOtherKnownToken(ti->symbol, mint)) {
     return NULL;
   }
-  /* Never across tiers: a runtime-loaded signer must not scale an amount on a
-   * certified screen, and the certificate is absent from runtime reviews. */
+  /* Never across tiers. */
   if (certified) return solana_tokenDefCertified(msg, ti) ? ti : NULL;
-  /* The runtime review's first screen names the schema's signer, so no other
-   * loaded signer may supply the symbol and scale shown under that name. */
+  /* Only the schema's own signer, which the review names. */
   if (!msg->has_schema_signer_key_id ||
       ti->signer_key_id != msg->schema_signer_key_id) {
     return NULL;
@@ -1377,10 +1342,8 @@ bool solana_formatSchemaTokenAmount(char* buf, size_t len, uint64_t amount,
   char mint_str[45];
   size_t mint_len = sizeof(mint_str);
   if (!b58enc(mint_str, &mint_len, mint, SOL_PUBKEY_SIZE)) return false;
-  /* The mint is shown even beside a trusted symbol: a signed definition binds
-   * the symbol to this mint, but anyone can mint a token named "USDC". It
-   * starts its own row, because a 44-character key after other text would
-   * wrap onto the row the page footer shares, or split across pages. */
+  /* Mint always shown (anyone can mint a "USDC"), on its own row so it does
+   * not wrap into the footer. */
   if (trusted) {
     char scaled[48];
     solana_formatTokenAmount(scaled, sizeof(scaled), amount, trusted->symbol,
@@ -1420,8 +1383,7 @@ bool solana_schemaArgValue(const SolanaSignTx* msg, bool certified,
       return b58enc(buf, &enc, data, SOL_PUBKEY_SIZE);
     }
     case SOL_SCHEMA_ARG_TOKEN_AMOUNT: {
-      /* mint_account indexes THIS instruction's accounts; its entry there is
-       * the index into the message's key list. */
+      /* mint_account indexes THIS instruction's accounts. */
       if (arg->mint_account >= ix->num_acct_indices) return false;
       const uint8_t mint_index = ix->acct_indices[arg->mint_account];
       if (mint_index >= parsed->num_accounts) return false;
@@ -1457,9 +1419,7 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
     return false;
   if (num_accounts > SOL_MAX_LUT_ACCOUNTS) return false;
 
-  /* Bind to the transaction by hashing the exact bytes being signed. Solana
-     signs the message directly, so a sha256 over it is ours alone and never
-     collides with the ed25519 signature the device is about to produce. */
+  /* Bind to the transaction: sha256 of the exact bytes being signed. */
   const uint8_t* signed_message = raw_tx;
   size_t signed_message_len = raw_len;
   if (signed_message_len > 1 && signed_message[0] == 0) {
@@ -1469,11 +1429,7 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
   uint8_t msg_hash[SHA256_DIGEST_LENGTH];
   sha256_Raw(signed_message, signed_message_len, msg_hash);
 
-  /* Build the preimage in full and hand it over RAW: verify_attestation()
-     hashes what it is given, so passing a digest here would verify over
-     sha256(sha256(preimage)) and no honest signer could ever match it. Same
-     shape as solana_token_info_trusted(). Bounded by SOL_MAX_LUT_ACCOUNTS, so
-     the worst case is 25 + 32 + 4 + 8*32 = 317 bytes. */
+  /* Preimage passed RAW (the verifier hashes it). Max 317 bytes. */
   static const char kTag[] = "KeepKeySolanaTxAccounts/1";
   const size_t required = sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
                           num_accounts * SOL_PUBKEY_SIZE;
