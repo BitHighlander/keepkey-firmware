@@ -30,11 +30,6 @@
 #else
 #include <signal.h>
 #include <unistd.h>
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN /* exclude winsock.h — it declares \
-                               shutdown(SOCKET,int) */
-#include <windows.h>        /* Sleep() */
-#endif
 #endif
 #endif
 
@@ -305,13 +300,7 @@ void delay_us(uint32_t us) {
   /* Sleep has millisecond resolution. Round up without overflowing us. */
   Sleep(us / 1000u + (us % 1000u != 0u));
 #else
-#ifdef _WIN32
-  /* Windows has no POSIX usleep. Round up to the next millisecond so even a
-   * sub-millisecond USB poll delay still yields to the host. */
-  if (us != 0) Sleep(us / 1000 + (us % 1000 != 0));
-#else
   usleep(us);
-#endif
 #endif
 }
 
