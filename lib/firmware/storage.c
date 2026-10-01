@@ -1524,31 +1524,6 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
 }
 
 /// \brief Shifts sector for config storage
-static void wear_leveling_shift(void) {
-  switch (storage_location) {
-    case FLASH_STORAGE1: {
-      storage_location = FLASH_STORAGE2;
-      break;
-    }
-
-    case FLASH_STORAGE2: {
-      storage_location = FLASH_STORAGE3;
-      break;
-    }
-
-    /* wraps around */
-    case FLASH_STORAGE3: {
-      storage_location = FLASH_STORAGE1;
-      break;
-    }
-
-    default: {
-      storage_location = STORAGE_SECT_DEFAULT;
-      break;
-    }
-  }
-}
-
 /// \brief Set root session seed in storage.
 ///
 /// \param cfg[in]    The active storage sector.
@@ -1604,6 +1579,51 @@ static bool storage_getRootSeedCache(const SessionState* ss,
   return true;
 }
 
+/* Interrupted-commit safety (SRS-7.16 R-4.2), firmware only. A commit stages
+ * the whole record in the spare sector with its magic NOT written and a CRC
+ * trailer after it, then finalizes: erase the old record (it is the new
+ * record's marker sector), write the boot marker, write the magic LAST. A
+ * power cut leaves either the old active record, or no active record and one
+ * CRC-valid pending record, which storage_init() finalizes. The bootloader
+ * never sees an active record without its marker. */
+#define STORAGE_RECORD_LEN STORAGE_V17_FLASH_BUFFER_LEN
+#define STORAGE_PENDING_TAG "crc1"
+
+static uint32_t storage_recordCrc(const char* record) {
+  return calc_crc32(
+      record + STORAGE_MAGIC_LEN,
+      (STORAGE_RECORD_LEN - STORAGE_MAGIC_LEN) / sizeof(uint32_t));
+}
+
+static bool storage_finalizePending(Allocation pending) {
+  const Allocation marker = next_storage(pending);
+  flash_erase_word(marker);
+  Allocation active;
+  return flash_write(marker, 0, sizeof(STORAGE_PROTECT_OFF_MAGIC),
+                     (const uint8_t*)STORAGE_PROTECT_OFF_MAGIC) &&
+         memcmp((const void*)flash_write_helper(marker),
+                STORAGE_PROTECT_OFF_MAGIC,
+                sizeof(STORAGE_PROTECT_OFF_MAGIC)) == 0 &&
+         flash_write_word(pending, 0, STORAGE_MAGIC_LEN,
+                          (const uint8_t*)STORAGE_MAGIC_STR) &&
+         find_active_storage(&active) && active == pending;
+}
+
+/* Finish a commit that lost power after staging (no active record). */
+static bool storage_recoverPending(void) {
+  for (Allocation s = FLASH_STORAGE1; s <= FLASH_STORAGE3; s++) {
+    const char* record = (const char*)flash_write_helper(s);
+    uint32_t crc;
+    memcpy(&crc, record + STORAGE_RECORD_LEN + 4, sizeof(crc));
+    if (memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) != 0 &&
+        memcmp(record + STORAGE_RECORD_LEN, STORAGE_PENDING_TAG, 4) == 0 &&
+        storage_recordCrc(record) == crc) {
+      return storage_finalizePending(s);
+    }
+  }
+  return false;
+}
+
 void storage_init(void) {
 #if !BITCOIN_ONLY
   /* A reopened flash buffer is a new session (emulator stays loaded). */
@@ -1615,7 +1635,8 @@ void storage_init(void) {
   firmware_too_old = false;
 
   // Find storage sector with valid data and set storage_location variable.
-  if (!find_active_storage(&storage_location)) {
+  if (!find_active_storage(&storage_location) &&
+      !(storage_recoverPending() && find_active_storage(&storage_location))) {
     // Otherwise initialize it to the default sector.
     storage_location = STORAGE_SECT_DEFAULT;
   }
@@ -1881,12 +1902,14 @@ void storage_commit(void) {
   memcpy(shadow_config.meta.magic, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
   storage_writeV20(flash_temp, sizeof(flash_temp), &shadow_config);
 
+  const Allocation pending = next_storage(next_storage(storage_location));
+  const uint32_t crc = storage_recordCrc(flash_temp);
+  uint8_t trailer[8];
+  memcpy(trailer, STORAGE_PENDING_TAG, 4);
+  memcpy(trailer + 4, &crc, sizeof(crc));
+
   uint32_t retries = 0;
   for (retries = 0; retries < STORAGE_RETRIES; retries++) {
-    /* Capture CRC for verification at restore */
-    uint32_t shadow_ram_crc32 =
-        calc_crc32(flash_temp, sizeof(flash_temp) / sizeof(uint32_t));
-
     /* Make sure storage sector is valid before proceeding */
     if (storage_location < FLASH_STORAGE1 ||
         storage_location > FLASH_STORAGE3) {
@@ -1894,48 +1917,27 @@ void storage_commit(void) {
       continue;
     }
 
-    flash_erase_word(storage_location);
-    wear_leveling_shift();
-    flash_erase_word(storage_location);
-
-    /* Write storage data first before writing storage magic  */
-    if (!flash_write_word(storage_location, STORAGE_MAGIC_LEN,
+    /* Stage everything but the magic; the active record is untouched. */
+    flash_erase_word(pending);
+    if (!flash_write_word(pending, STORAGE_MAGIC_LEN,
                           sizeof(flash_temp) - STORAGE_MAGIC_LEN,
-                          (uint8_t*)flash_temp + STORAGE_MAGIC_LEN)) {
-      flash_erase_word(storage_location);
+                          (uint8_t*)flash_temp + STORAGE_MAGIC_LEN) ||
+        !flash_write_word(pending, sizeof(flash_temp), sizeof(trailer),
+                          trailer) ||
+        storage_recordCrc((const char*)flash_write_helper(pending)) != crc) {
+      flash_erase_word(pending);
       continue;  // Retry
     }
 
-    if (!flash_write_word(storage_location, 0, STORAGE_MAGIC_LEN,
-                          (uint8_t*)flash_temp)) {
-      flash_erase_word(storage_location);
-      continue;  // Retry
+    /* A verified pending record is recovered at boot if this is cut short,
+     * so never retry by erasing it and never wipe here. */
+    if (!storage_finalizePending(pending)) {
+      memzero(flash_temp, sizeof(flash_temp));
+      layout_warning_static("Storage Unsafe. Keep Powered!");
+      shutdown();
     }
-
-    /* Flash write completed successfully.  Verify CRC */
-    uint32_t shadow_flash_crc32 =
-        calc_crc32((const void*)flash_write_helper(storage_location),
-                   sizeof(flash_temp) / sizeof(uint32_t));
-
-    if (shadow_flash_crc32 == shadow_ram_crc32) {
-      /* A verified record is not bootable until its marker is durable.
-       * Do not return success, retry by erasing the wallet, or wipe on failure.
-       */
-      bool marker_verified = false;
-      for (unsigned marker_attempt = 0; marker_attempt < 3; ++marker_attempt) {
-        if (storage_protect_off()) {
-          marker_verified = true;
-          break;
-        }
-      }
-      if (!marker_verified) {
-        memzero(flash_temp, sizeof(flash_temp));
-        layout_warning_static("Storage Unsafe. Keep Powered!");
-        shutdown();
-      }
-      /* Commit successful, break to exit */
-      break;
-    }
+    storage_location = pending;
+    break;
   }
 
   memzero(flash_temp, sizeof(flash_temp));

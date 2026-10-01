@@ -2764,3 +2764,83 @@ TEST(Fsm, PasskeyResetRotatesGenerationAndClearsAllMetadata) {
 
   storage_setPasskeyData(&original);
 }
+
+/* SRS-7.16 R-4.2: a commit cut short at any point boots into the newest
+ * complete record, never a pending or corrupt one. */
+namespace {
+int ActiveSectors() {
+  int n = 0;
+  for (int s = FLASH_STORAGE1; s <= FLASH_STORAGE3; s++)
+    n += memcmp((const void*)flash_write_helper((Allocation)s),
+                STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0;
+  return n;
+}
+char* Sector(Allocation s) { return (char*)flash_write_helper(s); }
+// The state a power cut leaves after staging: the record copied to the spare
+// sector without its magic, with its trailer, and the old record erased.
+Allocation CutAfterStaging(bool corrupt) {
+  Allocation active;
+  EXPECT_TRUE(find_active_storage(&active));
+  const Allocation pending = next_storage(next_storage(active));
+  char* dst = Sector(pending);
+  memset(dst, 0xff, STORAGE_SECTOR_LEN);
+  memcpy(dst + 4, Sector(active) + 4, 2572 - 4);
+  const uint32_t crc = calc_crc32(dst + 4, (2572 - 4) / 4);
+  memcpy(dst + 2572, "crc1", 4);
+  memcpy(dst + 2576, &crc, 4);
+  if (corrupt) dst[100] ^= 1;
+  memset(Sector(active), 0xff, STORAGE_SECTOR_LEN);
+  return pending;
+}
+}  // namespace
+
+TEST(Fsm, StorageCommitLeavesOneMarkedRecord) {
+  ScopedFlash flash;
+  storage_setLabel("one");
+  storage_commit();
+  storage_setLabel("two");
+  storage_commit();
+  EXPECT_EQ(1, ActiveSectors());
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(0, memcmp(Sector(next_storage(active)), STORAGE_PROTECT_OFF_MAGIC,
+                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
+  storage_init();
+  EXPECT_STREQ("two", storage_getLabel());
+}
+
+TEST(Fsm, StorageRecoversACommitCutAfterStaging) {
+  ScopedFlash flash;
+  storage_setLabel("kept");
+  storage_commit();
+  const Allocation pending = CutAfterStaging(false);
+  EXPECT_EQ(0, ActiveSectors());
+  storage_init();
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(pending, active);
+  EXPECT_EQ(0, memcmp(Sector(next_storage(active)), STORAGE_PROTECT_OFF_MAGIC,
+                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
+  EXPECT_STREQ("kept", storage_getLabel());
+}
+
+TEST(Fsm, StorageKeepsTheOldRecordWhenStagingIsCut) {
+  ScopedFlash flash;
+  storage_setLabel("old");
+  storage_commit();
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  char* spare = Sector(next_storage(next_storage(active)));
+  memset(spare, 0x5a, 1000);  // a half-written stage, no trailer
+  storage_init();
+  EXPECT_STREQ("old", storage_getLabel());
+}
+
+TEST(Fsm, StorageNeverRecoversACorruptPendingRecord) {
+  ScopedFlash flash;
+  storage_setLabel("lost");
+  storage_commit();
+  CutAfterStaging(true);
+  storage_init();
+  EXPECT_STRNE("lost", storage_getLabel());
+}
