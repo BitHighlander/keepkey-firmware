@@ -179,26 +179,6 @@ typedef struct {
 } Erc7730ProgramFormatter;
 
 typedef struct {
-  uint8_t opcode;
-  uint16_t path;
-  uint16_t literal_set;
-  uint8_t flags;
-} Erc7730Condition;
-
-typedef struct {
-  Erc7730Condition selected;
-  uint32_t section_length;
-  uint32_t received;
-  uint16_t condition_count;
-  uint16_t condition_index;
-  uint16_t target_index;
-  uint8_t entry[8];
-  uint8_t entry_received;
-  bool complete;
-  bool failed;
-} Erc7730ProgramCondition;
-
-typedef struct {
   uint8_t kind;
   uint16_t length;
   uint8_t value[ERC7730_LITERAL_MAX_LENGTH];
@@ -283,14 +263,6 @@ bool erc7730_program_formatter_feed(Erc7730ProgramFormatter* formatter,
                                     const uint8_t* data, size_t data_len);
 bool erc7730_program_formatter_complete(
     const Erc7730ProgramFormatter* formatter, Erc7730Formatter* result);
-void erc7730_program_condition_begin(Erc7730ProgramCondition* condition,
-                                     uint32_t section_length,
-                                     uint16_t target_index);
-bool erc7730_program_condition_feed(Erc7730ProgramCondition* condition,
-                                    uint32_t section_offset,
-                                    const uint8_t* data, size_t data_len);
-bool erc7730_program_condition_complete(
-    const Erc7730ProgramCondition* condition, Erc7730Condition* result);
 void erc7730_program_literal_begin(Erc7730ProgramLiteral* literal,
                                    uint32_t section_length,
                                    uint16_t target_index);
