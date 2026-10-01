@@ -595,11 +595,6 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         suffix = " Wei";
         decimals = 0;
       }
-
-      if (!suffix) {
-        suffix = " Wei";
-        decimals = 0;
-      }
     }
   }
   /* bn_format() BLANKS the buffer on overflow; never show an empty amount
