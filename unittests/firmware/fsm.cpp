@@ -2842,6 +2842,25 @@ TEST(Fsm, StorageKeepsTheOldRecordWhenStagingIsCut) {
   EXPECT_STREQ("old", storage_getLabel());
 }
 
+// An erase of the old sector cut short can leave its magic readable over
+// damaged data; the complete staged record must still win.
+TEST(Fsm, StorageStagedRecordWinsOverAHalfErasedOldSector) {
+  ScopedFlash flash;
+  storage_setLabel("staged");
+  storage_commit();
+  Allocation old;
+  ASSERT_TRUE(find_active_storage(&old));
+  const Allocation pending = CutAfterStaging(false);
+  memset(Sector(old), 0x5a, 2000);
+  memcpy(Sector(old), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+  storage_init();
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(pending, active);
+  EXPECT_EQ(1, ActiveSectors());
+  EXPECT_STREQ("staged", storage_getLabel());
+}
+
 TEST(Fsm, StorageNeverRecoversACorruptPendingRecord) {
   ScopedFlash flash;
   storage_setLabel("lost");
@@ -3005,8 +3024,13 @@ TEST(Fsm, Ctap2ClientPinExchangesEndToEnd) {
   EXPECT_EQ(host.set_pin("\xc3\xa9\xc3\xa9"), CTAP2_ERR_PIN_POLICY_VIOLATION);
 
   ASSERT_EQ(host.set_pin("1234"), CTAP2_OK);
+  PasskeyStorage stored;
   EXPECT_EQ(host.get_token("9999", token), CTAP2_ERR_PIN_INVALID);
+  storage_getPasskeyData(&stored);
+  EXPECT_EQ(stored.pin_retries, PASSKEY_PIN_RETRIES - 1);  // spent, persisted
   ASSERT_EQ(host.get_token("1234", token), CTAP2_OK);
+  storage_getPasskeyData(&stored);
+  EXPECT_EQ(stored.pin_retries, PASSKEY_PIN_RETRIES);            // restored
   EXPECT_EQ(host.assert_with(token), CTAP2_ERR_NO_CREDENTIALS);  // auth ok
   EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
 
@@ -3015,6 +3039,36 @@ TEST(Fsm, Ctap2ClientPinExchangesEndToEnd) {
   EXPECT_EQ(host.assert_with(token), CTAP2_ERR_PIN_AUTH_INVALID);  // revoked
   ASSERT_EQ(host.get_token("5678", token), CTAP2_OK);
   EXPECT_EQ(host.assert_with(token), CTAP2_ERR_NO_CREDENTIALS);
+
+  // A resident account is never revealed to a silent, unverified probe.
+  storage_getPasskeyData(&stored);
+  stored.credentials[0].occupied = 1;
+  sha256_Raw((const uint8_t*)"a.co", 4, stored.credentials[0].rp_id_hash);
+  stored.credentials[0].credential_id[0] = 0x42;
+  stored.credentials[0].user_id_length = 1;
+  stored.credentials[1] = stored.credentials[0];  // a second account
+  stored.credentials[1].credential_id[0] = 0x43;
+  storage_setPasskeyData(&stored);
+  const std::vector<uint8_t> next = {CTAP2_CMD_GET_NEXT_ASSERTION};
+  EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
+  std::vector<uint8_t> silent = {CTAP2_CMD_GET_ASSERTION,
+                                 0xa3,
+                                 0x01,
+                                 0x64,
+                                 'a',
+                                 '.',
+                                 'c',
+                                 'o',
+                                 0x02,
+                                 0x58,
+                                 0x20};
+  silent.insert(silent.end(), 32, 0x22);
+  silent.insert(silent.end(), {0x05, 0xa1, 0x62, 'u', 'p', 0xf4});
+  EXPECT_EQ(host.call(silent), CTAP2_ERR_NO_CREDENTIALS);
+  EXPECT_EQ(host.call(next), CTAP2_ERR_NOT_ALLOWED);  // nothing was looked up
+  // Control: the verified lookup finds both accounts and arms the sequence.
+  host.assert_with(token);
+  EXPECT_NE(host.call(next), CTAP2_ERR_NOT_ALLOWED);
 
   // A wallet wipe must not leave a usable token behind.
   storage_wipe();

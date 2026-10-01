@@ -70,6 +70,11 @@ TEST(CTAP2CBOR, NestedMapsMustBeCanonicallyOrdered) {
   EXPECT_TRUE(cbor_validate(shorter_first, sizeof(shorter_first)));
   EXPECT_FALSE(cbor_validate(duplicate, sizeof(duplicate)));
   EXPECT_FALSE(cbor_validate(reversed, sizeof(reversed)));
+  // Major type first: unsigned 24 (2 bytes) sorts before negative -1.
+  const uint8_t mixed[] = {0xa2, 0x18, 0x18, 0x00, 0x20, 0x00};
+  const uint8_t mixed_reversed[] = {0xa2, 0x20, 0x00, 0x18, 0x18, 0x00};
+  EXPECT_TRUE(cbor_validate(mixed, sizeof(mixed)));
+  EXPECT_FALSE(cbor_validate(mixed_reversed, sizeof(mixed_reversed)));
 }
 
 TEST(CTAP2CBOR, CountsUtf8Codepoints) {

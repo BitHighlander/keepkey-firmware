@@ -880,7 +880,9 @@ static void get_assertion(const uint8_t* request, size_t request_length,
     }
     credential_found = credential_list_contains(allow_slice, allow_length,
                                                 rp_id_hash, credential_id);
-  } else {
+  } else if (up_requested || uv_verified) {
+    /* Discoverable lookup reveals accounts: never for a silent, unverified
+     * request. Silent probes may only name explicit allow-listed handles. */
     resident_count = find_discoverable_credential(rp_id_hash, &resident);
     credential_found = resident_count > 0;
     if (credential_found)
@@ -1114,10 +1116,12 @@ static void client_pin(const uint8_t* request, size_t request_length,
                  sizeof(supplied_hash));
       passkey_pin_digest(supplied_hash, sizeof(supplied_hash), storage.pin_salt,
                          verifier);
+      /* Spend the retry durably before comparing (as pin_sm.c does): a power
+       * cut mid-check costs an attempt instead of granting a free one. */
+      --storage.pin_retries;
+      storage_setPasskeyData(&storage);
       if (!equal16(verifier, storage.pin_hash)) {
-        --storage.pin_retries;
         ++pin_attempts_since_boot;
-        storage_setPasskeyData(&storage);
         memzero(shared_secret, sizeof(shared_secret));
         memzero(supplied_hash, sizeof(supplied_hash));
         memzero(verifier, sizeof(verifier));
@@ -1129,6 +1133,9 @@ static void client_pin(const uint8_t* request, size_t request_length,
                     response, length);
         return;
       }
+      storage.pin_retries = PASSKEY_PIN_RETRIES; /* correct PIN */
+      storage_setPasskeyData(&storage);
+      pin_attempts_since_boot = 0;
       aes256_cbc(false, shared_secret, encrypted_pin.data, plaintext,
                  sizeof(plaintext));
       size_t pin_length = 0;
@@ -1207,10 +1214,12 @@ static void client_pin(const uint8_t* request, size_t request_length,
                  sizeof(supplied_hash));
       passkey_pin_digest(supplied_hash, sizeof(supplied_hash), storage.pin_salt,
                          verifier);
+      /* Spend the retry durably before comparing (as pin_sm.c does): a power
+       * cut mid-check costs an attempt instead of granting a free one. */
+      --storage.pin_retries;
+      storage_setPasskeyData(&storage);
       if (!equal16(verifier, storage.pin_hash)) {
-        --storage.pin_retries;
         ++pin_attempts_since_boot;
-        storage_setPasskeyData(&storage);
         memzero(shared_secret, sizeof(shared_secret));
         memzero(supplied_hash, sizeof(supplied_hash));
         memzero(verifier, sizeof(verifier));
@@ -1221,6 +1230,9 @@ static void client_pin(const uint8_t* request, size_t request_length,
                     response, length);
         return;
       }
+      storage.pin_retries = PASSKEY_PIN_RETRIES; /* correct PIN */
+      storage_setPasskeyData(&storage);
+      pin_attempts_since_boot = 0;
       if (!random_buffer_checked(pin_token, sizeof(pin_token))) {
         clear_pin_token();
         memzero(shared_secret, sizeof(shared_secret));
@@ -1229,9 +1241,6 @@ static void client_pin(const uint8_t* request, size_t request_length,
         write_error(CTAP2_ERR_OTHER, response, length);
         return;
       }
-      storage.pin_retries = PASSKEY_PIN_RETRIES;
-      storage_setPasskeyData(&storage);
-      pin_attempts_since_boot = 0;
       pin_token_valid = true;
       aes256_cbc(true, shared_secret, pin_token, encrypted_token,
                  sizeof(encrypted_token));

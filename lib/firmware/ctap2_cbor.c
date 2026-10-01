@@ -216,8 +216,9 @@ static bool skip_value(CborDecoder* decoder, unsigned depth) {
   if (value.type == CBOR_TYPE_ARRAY)
     return skip_children(decoder, value.value, depth + 1);
   if (value.type == CBOR_TYPE_MAP) {
-    /* Canonical CTAP2 CBOR: keys strictly increase (length, then bytes), so
-     * no map at any depth can carry a duplicate or ambiguous key. */
+    /* Canonical CTAP2 CBOR: keys strictly increase by major type, then
+     * encoded length, then bytes, so no map at any depth can carry a
+     * duplicate or ambiguous key. */
     if (value.value > (uint64_t)(decoder->length - decoder->offset))
       return false;
     const uint8_t* previous = NULL;
@@ -227,10 +228,15 @@ static bool skip_value(CborDecoder* decoder, unsigned depth) {
       if (!skip_value(decoder, depth + 1)) return false;
       const uint8_t* key = decoder->buffer + start;
       const size_t key_length = decoder->offset - start;
-      if (previous && (key_length < previous_length ||
-                       (key_length == previous_length &&
-                        memcmp(previous, key, key_length) >= 0)))
-        return false;
+      if (previous) {
+        const int type = key[0] >> 5, previous_type = previous[0] >> 5;
+        if (type < previous_type ||
+            (type == previous_type &&
+             (key_length < previous_length ||
+              (key_length == previous_length &&
+               memcmp(previous, key, key_length) >= 0))))
+          return false;
+      }
       previous = key;
       previous_length = key_length;
       if (!skip_value(decoder, depth + 1)) return false;

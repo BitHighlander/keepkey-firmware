@@ -1612,8 +1612,18 @@ static bool storage_finalizePending(Allocation pending) {
          find_active_storage(&active) && active == pending;
 }
 
-/* Finish a commit that lost power after staging (no active record). */
-static bool storage_recoverPending(void) {
+static bool storage_finalizeWithRetries(Allocation pending) {
+  for (int attempt = 0; attempt < STORAGE_RETRIES; attempt++)
+    if (storage_finalizePending(pending)) return true;
+  return false;
+}
+
+/* Finish a commit that lost power after staging. A CRC-valid staged record is
+ * always the newest intent (every erase clears whole sectors, so nothing else
+ * leaves one), and it wins over an older magic that an interrupted erase of
+ * the old sector may have left readable. It is never discarded: if it cannot
+ * be finalized, halt rather than start fresh storage over it. */
+static void storage_recoverPending(void) {
   for (Allocation s = FLASH_STORAGE1; s <= FLASH_STORAGE3; s++) {
     const char* record = (const char*)flash_write_helper(s);
     uint32_t crc;
@@ -1621,10 +1631,13 @@ static bool storage_recoverPending(void) {
     if (memcmp(record, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) != 0 &&
         memcmp(record + STORAGE_RECORD_LEN, STORAGE_PENDING_TAG, 4) == 0 &&
         storage_recordCrc(record) == crc) {
-      return storage_finalizePending(s);
+      if (!storage_finalizeWithRetries(s)) {
+        layout_warning_static("Storage Unsafe. Keep Powered!");
+        shutdown();
+      }
+      return;
     }
   }
-  return false;
 }
 
 void storage_init(void) {
@@ -1638,8 +1651,8 @@ void storage_init(void) {
   firmware_too_old = false;
 
   // Find storage sector with valid data and set storage_location variable.
-  if (!find_active_storage(&storage_location) &&
-      !(storage_recoverPending() && find_active_storage(&storage_location))) {
+  storage_recoverPending();
+  if (!find_active_storage(&storage_location)) {
     // Otherwise initialize it to the default sector.
     storage_location = STORAGE_SECT_DEFAULT;
   }
@@ -1931,19 +1944,17 @@ void storage_commit(void) {
                           (uint8_t*)flash_temp + STORAGE_MAGIC_LEN) ||
         !flash_write_word(pending, sizeof(flash_temp), sizeof(trailer),
                           trailer) ||
+        memcmp((const char*)flash_write_helper(pending) + sizeof(flash_temp),
+               trailer, sizeof(trailer)) != 0 ||
         storage_recordCrc((const char*)flash_write_helper(pending)) != crc) {
       flash_erase_word(pending);
       continue;  // Retry
     }
 
     /* A verified pending record is recovered at boot if this is cut short,
-     * so never retry by erasing it and never wipe here. */
-    /* Finalizing rewrites the same marker word, so a transient flash error
-     * is retried; a persistent one leaves the pending record for boot. */
-    bool finalized = false;
-    for (int attempt = 0; attempt < STORAGE_RETRIES && !finalized; attempt++)
-      finalized = storage_finalizePending(pending);
-    if (!finalized) {
+     * so never erase it here. Finalizing rewrites the same marker word, so a
+     * transient flash error is retried; a persistent one halts. */
+    if (!storage_finalizeWithRetries(pending)) {
       memzero(flash_temp, sizeof(flash_temp));
       layout_warning_static("Storage Unsafe. Keep Powered!");
       shutdown();
@@ -1955,7 +1966,7 @@ void storage_commit(void) {
   memzero(flash_temp, sizeof(flash_temp));
 
   if (retries >= STORAGE_RETRIES) {
-    storage_wipe();
+    /* Staging never touches the active record: keep it, never wipe it. */
     layout_warning_static("Error Detected.  Reboot Device!");
     shutdown();
   }

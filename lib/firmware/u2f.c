@@ -155,7 +155,10 @@ void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
       cid = ctap_cid; /* a new channel allocation must not take this one */
     } else if (f->cid == ctap_cid && (f->type & TYPE_INIT) &&
                f->init.cmd == U2FHID_CANCEL) {
-      ctap_cancelled = true;
+      if (MSG_LEN(*f) == 0)
+        ctap_cancelled = true;
+      else
+        send_u2fhid_error(f->cid, ERR_INVALID_LEN);
     } else {
       send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
     }
