@@ -1088,7 +1088,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
         signed_metadata_may_suppress(chain_id))) {
     fsm_sendFailure(FailureType_Failure_Other,
-                    _("Certified description does not match this transaction"));
+                    _("Certified description invalid or not for this tx"));
     ethereum_signing_abort();  // clears metadata
     return;
   }
