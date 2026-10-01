@@ -30,7 +30,6 @@ bool tendermint_getAddress(const HDNode* node, const char* prefix,
 
 bool tendermint_isValidDenom(const char* denom);
 bool tendermint_isValidAsset(const char* asset);
-bool tendermint_isValidSigner(const char* signer, const char* hrp);
 
 /**
  * Validate non-empty host text before it is reused in both Amino JSON and a
