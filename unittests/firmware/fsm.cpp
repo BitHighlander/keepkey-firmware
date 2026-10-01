@@ -10,6 +10,12 @@ extern "C" {
 #include "trezor/crypto/bip32.h"
 #include "trezor/crypto/bip39.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/ctap2.h"
+#include "keepkey/firmware/ctap2/cbor.h"
+#include "trezor/crypto/aes/aes.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/hmac.h"
+#include "trezor/crypto/nist256p1.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
@@ -2843,4 +2849,175 @@ TEST(Fsm, StorageNeverRecoversACorruptPendingRecord) {
   CutAfterStaging(true);
   storage_init();
   EXPECT_STRNE("lost", storage_getLabel());
+}
+
+namespace {
+// A CTAP 2.0 ClientPIN host: real ECDH, AES-256-CBC (zero IV) and HMAC.
+struct PinHost {
+  uint8_t priv[32] = {0};
+  uint8_t pub[65] = {0};
+  uint8_t shared[32] = {0};
+  std::vector<uint8_t> out = std::vector<uint8_t>(1024);
+  size_t out_length = 0;
+
+  uint8_t call(const std::vector<uint8_t>& request) {
+    ctap2_handle(request.data(), request.size(), out.data(), out.size(),
+                 &out_length);
+    return out[0];
+  }
+  static void aes(const uint8_t key[32], const uint8_t* in, uint8_t* o,
+                  size_t n, bool encrypt) {
+    uint8_t iv[16] = {0};
+    if (encrypt) {
+      aes_encrypt_ctx c;
+      aes_encrypt_key256(key, &c);
+      aes_cbc_encrypt(in, o, n, iv, &c);
+    } else {
+      aes_decrypt_ctx c;
+      aes_decrypt_key256(key, &c);
+      aes_cbc_decrypt(in, o, n, iv, &c);
+    }
+  }
+  // getKeyAgreement, then derive the shared secret the device will use.
+  void agree() {
+    priv[31] = 7;
+    ecdsa_get_public_key65(&nist256p1, priv, pub);
+    ASSERT_EQ(call({CTAP2_CMD_CLIENT_PIN, 0xa2, 0x01, 0x01, 0x02, 0x02}),
+              CTAP2_OK);
+    const uint8_t* key;
+    size_t key_length;
+    ASSERT_TRUE(cbor_map_find_int_slice(out.data() + 1, out_length - 1, 1, &key,
+                                        &key_length));
+    uint8_t device[65] = {0x04};
+    CborDecoder d;
+    CborValue v, k;
+    cbor_decoder_init(&d, key, key_length);
+    ASSERT_TRUE(cbor_decode_value(&d, &v));
+    const uint64_t pairs = v.value;
+    for (uint64_t i = 0; i < pairs; ++i) {
+      ASSERT_TRUE(cbor_decode_value(&d, &k));
+      ASSERT_TRUE(cbor_decode_value(&d, &v));
+      if (k.type == CBOR_TYPE_NEGINT && (k.value == 1 || k.value == 2))
+        memcpy(device + 1 + 32 * (k.value - 1), v.data, 32);
+    }
+    uint8_t point[65];
+    ASSERT_EQ(ecdh_multiply(&nist256p1, priv, device, point), 0);
+    sha256_Raw(point + 1, 32, shared);
+  }
+  void cose(CborEncoder* e) {
+    cbor_encode_map(e, 5);
+    cbor_encode_int(e, 1), cbor_encode_int(e, 2);
+    cbor_encode_int(e, 3), cbor_encode_int(e, -25);
+    cbor_encode_int(e, -1), cbor_encode_int(e, 1);
+    cbor_encode_int(e, -2), cbor_encode_bytes(e, pub + 1, 32);
+    cbor_encode_int(e, -3), cbor_encode_bytes(e, pub + 33, 32);
+  }
+  void pin_hash_enc(const char* pin, uint8_t o[16]) {
+    uint8_t h[32];
+    sha256_Raw((const uint8_t*)pin, strlen(pin), h);
+    aes(shared, h, o, 16, true);
+  }
+  // subcommand 3 (setPIN) or 4 (changePIN, with current_pin).
+  uint8_t set_pin(const char* pin, const char* current_pin = nullptr) {
+    agree();
+    uint8_t padded[64] = {0}, enc[64], hash_enc[16], mac[32];
+    memcpy(padded, pin, strlen(pin));
+    aes(shared, padded, enc, 64, true);
+    std::vector<uint8_t> authed(enc, enc + 64);
+    if (current_pin) {
+      pin_hash_enc(current_pin, hash_enc);
+      authed.insert(authed.end(), hash_enc, hash_enc + 16);
+    }
+    hmac_sha256(shared, 32, authed.data(), authed.size(), mac);
+    std::vector<uint8_t> r(1 + 512);
+    r[0] = CTAP2_CMD_CLIENT_PIN;
+    CborEncoder e;
+    cbor_encoder_init(&e, r.data() + 1, r.size() - 1);
+    cbor_encode_map(&e, current_pin ? 6 : 5);
+    cbor_encode_uint(&e, 1), cbor_encode_uint(&e, 1);
+    cbor_encode_uint(&e, 2), cbor_encode_uint(&e, current_pin ? 4 : 3);
+    cbor_encode_uint(&e, 3), cose(&e);
+    cbor_encode_uint(&e, 4), cbor_encode_bytes(&e, mac, 16);
+    cbor_encode_uint(&e, 5), cbor_encode_bytes(&e, enc, 64);
+    if (current_pin)
+      cbor_encode_uint(&e, 6), cbor_encode_bytes(&e, hash_enc, 16);
+    r.resize(1 + cbor_encoder_size(&e));
+    return call(r);
+  }
+  uint8_t get_token(const char* pin, uint8_t token[32]) {
+    agree();
+    uint8_t hash_enc[16];
+    pin_hash_enc(pin, hash_enc);
+    std::vector<uint8_t> r(1 + 256);
+    r[0] = CTAP2_CMD_CLIENT_PIN;
+    CborEncoder e;
+    cbor_encoder_init(&e, r.data() + 1, r.size() - 1);
+    cbor_encode_map(&e, 4);
+    cbor_encode_uint(&e, 1), cbor_encode_uint(&e, 1);
+    cbor_encode_uint(&e, 2), cbor_encode_uint(&e, 5);
+    cbor_encode_uint(&e, 3), cose(&e);
+    cbor_encode_uint(&e, 6), cbor_encode_bytes(&e, hash_enc, 16);
+    r.resize(1 + cbor_encoder_size(&e));
+    const uint8_t status = call(r);
+    CborValue v;
+    if (status == CTAP2_OK &&
+        cbor_map_find_int(out.data() + 1, out_length - 1, 2, &v) &&
+        v.length == 32)
+      aes(shared, v.data, token, 32, false);
+    return status;
+  }
+  // getAssertion {rp, cdh, up:false, pinAuth, pinProtocol 1}.
+  uint8_t assert_with(const uint8_t token[32]) {
+    uint8_t cdh[32], mac[32];
+    memset(cdh, 0x22, sizeof(cdh));
+    hmac_sha256(token, 32, cdh, 32, mac);
+    std::vector<uint8_t> r = {CTAP2_CMD_GET_ASSERTION,
+                              0xa5,
+                              0x01,
+                              0x64,
+                              'a',
+                              '.',
+                              'c',
+                              'o',
+                              0x02,
+                              0x58,
+                              0x20};
+    r.insert(r.end(), cdh, cdh + 32);
+    r.insert(r.end(), {0x05, 0xa1, 0x62, 'u', 'p', 0xf4, 0x06, 0x50});
+    r.insert(r.end(), mac, mac + 16);
+    r.insert(r.end(), {0x07, 0x01});
+    return call(r);
+  }
+};
+}  // namespace
+
+TEST(Fsm, Ctap2ClientPinExchangesEndToEnd) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  ctap2_init();
+  ctap2_set_transport_channel(1);
+  PinHost host;
+  uint8_t token[32] = {0}, wrong[32] = {0};
+
+  // Control: before any PIN, a token is refused and getPINToken has no PIN.
+  EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
+  EXPECT_EQ(host.set_pin("12\xc3"), CTAP2_ERR_PIN_POLICY_VIOLATION);
+  EXPECT_EQ(host.set_pin("\xc3\xa9\xc3\xa9"), CTAP2_ERR_PIN_POLICY_VIOLATION);
+
+  ASSERT_EQ(host.set_pin("1234"), CTAP2_OK);
+  EXPECT_EQ(host.get_token("9999", token), CTAP2_ERR_PIN_INVALID);
+  ASSERT_EQ(host.get_token("1234", token), CTAP2_OK);
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_NO_CREDENTIALS);  // auth ok
+  EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
+
+  EXPECT_EQ(host.set_pin("5678", "0000"), CTAP2_ERR_PIN_INVALID);
+  ASSERT_EQ(host.set_pin("5678", "1234"), CTAP2_OK);
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_PIN_AUTH_INVALID);  // revoked
+  ASSERT_EQ(host.get_token("5678", token), CTAP2_OK);
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_NO_CREDENTIALS);
+
+  // A wallet wipe must not leave a usable token behind.
+  storage_wipe();
+  storage_init();
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_PIN_AUTH_INVALID);
 }

@@ -40,6 +40,8 @@
 
 /* Includes the one-byte CTAP status in response_length. */
 void ctap2_init(void);
+/* Drop PIN tokens, key agreement and assertion state (wallet wipe/reset). */
+void ctap2_clear_session(void);
 void ctap2_set_transport_channel(uint32_t channel);
 void ctap2_handle(const uint8_t* request, size_t request_length,
                   uint8_t* response, size_t response_capacity,

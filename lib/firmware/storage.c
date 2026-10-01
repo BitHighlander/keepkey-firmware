@@ -19,6 +19,7 @@
 
 #include "storage.h"
 
+#include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/storage.h"
 
 #include "variant.h"
@@ -706,7 +707,7 @@ void storage_getPasskeyData(PasskeyStorage* data) {
 }
 
 void storage_setPasskeyData(const PasskeyStorage* data) {
-  if (data == NULL) return;
+  if (data == NULL || btc_only_locked || firmware_too_old) return;
   memcpy(&shadow_config.storage.pub.passkeys, data, sizeof(*data));
   storage_commit();
 }
@@ -714,7 +715,9 @@ void storage_setPasskeyData(const PasskeyStorage* data) {
 bool storage_getPasskeyCredentialGeneration(
     uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
     bool* legacy_credentials_enabled) {
-  if (generation == NULL || legacy_credentials_enabled == NULL) return false;
+  if (generation == NULL || legacy_credentials_enabled == NULL ||
+      btc_only_locked || firmware_too_old)
+    return false;
 
   PasskeyStorage* passkeys = &shadow_config.storage.pub.passkeys;
   bool generation_is_zero = true;
@@ -1725,7 +1728,10 @@ void storage_resetUuid_impl(ConfigFlash* cfg) {
   data2hex(cfg->meta.uuid, sizeof(cfg->meta.uuid), cfg->meta.uuid_str);
 }
 
-void storage_reset(void) { storage_reset_impl(&session, &shadow_config); }
+void storage_reset(void) {
+  ctap2_clear_session();
+  storage_reset_impl(&session, &shadow_config);
+}
 
 void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
   memset(&cfg->storage, 0, sizeof(cfg->storage));
@@ -1749,6 +1755,7 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
 }
 
 void storage_wipe(void) {
+  ctap2_clear_session();
   fsm_abort_workflows();
   flash_erase_word(FLASH_STORAGE1);
   flash_erase_word(FLASH_STORAGE2);

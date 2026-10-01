@@ -58,3 +58,25 @@ TEST(CTAP2CBOR, EncoderReportsOverflow) {
   ASSERT_FALSE(cbor_encode_text(&encoder, "passkey", 7));
   ASSERT_EQ(cbor_encoder_size(&encoder), 0u);
 }
+
+TEST(CTAP2CBOR, NestedMapsMustBeCanonicallyOrdered) {
+  const uint8_t ordered[] = {0xa1, 0x01, 0xa2, 0x01, 0x00, 0x02, 0x00};
+  const uint8_t duplicate[] = {0xa1, 0x01, 0xa2, 0x01, 0x00, 0x01, 0x00};
+  const uint8_t reversed[] = {0xa1, 0x01, 0xa2, 0x61, 'b',
+                              0x00, 0x61, 'a',  0x00};
+  const uint8_t shorter_first[] = {0xa1, 0x01, 0xa2, 0x61, 'z',
+                                   0x00, 0x62, 'a',  'a',  0x00};
+  EXPECT_TRUE(cbor_validate(ordered, sizeof(ordered)));
+  EXPECT_TRUE(cbor_validate(shorter_first, sizeof(shorter_first)));
+  EXPECT_FALSE(cbor_validate(duplicate, sizeof(duplicate)));
+  EXPECT_FALSE(cbor_validate(reversed, sizeof(reversed)));
+}
+
+TEST(CTAP2CBOR, CountsUtf8Codepoints) {
+  const uint8_t ascii[] = {'1', '2', '3', '4'};
+  const uint8_t two_e_acute[] = {0xc3, 0xa9, 0xc3, 0xa9};
+  const uint8_t invalid[] = {'1', '2', '3', 0xff};
+  EXPECT_EQ(cbor_utf8_codepoints(ascii, sizeof(ascii)), 4u);
+  EXPECT_EQ(cbor_utf8_codepoints(two_e_acute, sizeof(two_e_acute)), 2u);
+  EXPECT_EQ(cbor_utf8_codepoints(invalid, sizeof(invalid)), SIZE_MAX);
+}

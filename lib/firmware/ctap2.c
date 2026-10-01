@@ -3,7 +3,6 @@
 #include "keepkey/firmware/ctap2/cbor.h"
 #include "keepkey/board/common.h"
 #include "keepkey/board/keepkey_flash.h"
-#include "keepkey/board/memcmp_s.h"
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f.h"
@@ -28,7 +27,7 @@ static const uint8_t KEEPKEY_AAGUID[16] = {
 typedef struct {
   uint8_t private_key[32];
   uint8_t public_key[65];
-  uint32_t deadline;
+  uint32_t started;
   uint32_t channel;
   bool valid;
 } KeyAgreement;
@@ -37,7 +36,8 @@ static CONFIDENTIAL KeyAgreement key_agreement;
 static CONFIDENTIAL uint8_t pin_token[32];
 static bool pin_token_valid;
 static uint8_t pin_attempts_since_boot;
-static uint32_t reset_deadline;
+static uint32_t reset_started; /* power-up stamp */
+static bool reset_open;
 static uint32_t transport_channel;
 
 typedef struct {
@@ -46,7 +46,7 @@ typedef struct {
   bool up_verified;
   uint8_t count;
   uint8_t next;
-  uint32_t deadline;
+  uint32_t started;
   uint32_t channel;
   uint8_t slots[PASSKEY_MAX_DISCOVERABLE_CREDENTIALS];
   uint8_t rp_id_hash[32];
@@ -87,12 +87,37 @@ bool ctap2_key_agreement_private_is_valid(const uint8_t private_key[32]) {
 }
 #endif
 
+/* Windows are start stamps compared by unsigned elapsed time, and every CTAP
+ * request latches expiry by clearing the state, so a 32-bit ms wrap cannot
+ * revive a window that was ever observed closed.
+ * ponytail: state untouched by any request for 49.7 days of uptime can still
+ * wrap back open; a 64-bit clock in the timer ISR closes that if it matters. */
+static bool still_open(uint32_t started, uint32_t window_ms) {
+  return getSysTime() - started < window_ms;
+}
+
+static void expire_windows(void) {
+  if (key_agreement.valid && !still_open(key_agreement.started, 30000))
+    clear_key_agreement();
+  if (assertion_sequence.valid &&
+      !still_open(assertion_sequence.started, 30000))
+    memzero(&assertion_sequence, sizeof(assertion_sequence));
+  if (reset_open && !still_open(reset_started, 10000)) reset_open = false;
+}
+
 void ctap2_init(void) {
-  reset_deadline = getSysTime() + 10000;
+  reset_started = getSysTime();
+  reset_open = true;
   clear_pin_token();
   clear_key_agreement();
   pin_attempts_since_boot = 0;
   transport_channel = 0;
+  memzero(&assertion_sequence, sizeof(assertion_sequence));
+}
+
+void ctap2_clear_session(void) {
+  clear_pin_token();
+  clear_key_agreement();
   memzero(&assertion_sequence, sizeof(assertion_sequence));
 }
 
@@ -199,16 +224,37 @@ static bool copy_text(const CborValue* value, char* destination,
   return true;
 }
 
+/* An RP ID is shown to the user as the identity being approved: printable
+ * ASCII only (no controls, no non-ASCII lookalikes; international domains
+ * arrive as A-labels), so distinct IDs never render identically. */
+static bool copy_rp_id(const CborValue* value, char* destination,
+                       size_t capacity) {
+  if (!copy_text(value, destination, capacity)) return false;
+  for (const char* c = destination; *c; ++c)
+    if (*c < 0x21 || *c > 0x7e) return false;
+  return true;
+}
+
+/* Constant-time equality for the 16-byte PIN values; memcmp_s aborts on
+ * anything shorter than 32 bytes. */
+static bool equal16(const uint8_t* a, const uint8_t* b) {
+  uint8_t diff = 0;
+  for (size_t i = 0; i < 16; ++i) diff |= a[i] ^ b[i];
+  return diff == 0;
+}
+
 static void write_error(uint8_t error, uint8_t* response, size_t* length) {
   response[0] = error;
   *length = 1;
 }
 
+/* alg: -7 (ES256) for credential keys, -25 (ECDH-ES+HKDF-256) for the
+ * ClientPIN key agreement. */
 static bool encode_cose_public_key(CborEncoder* encoder,
-                                   const uint8_t public_key[65]) {
+                                   const uint8_t public_key[65], int alg) {
   return cbor_encode_map(encoder, 5) && cbor_encode_int(encoder, 1) &&
          cbor_encode_int(encoder, 2) && cbor_encode_int(encoder, 3) &&
-         cbor_encode_int(encoder, -7) && cbor_encode_int(encoder, -1) &&
+         cbor_encode_int(encoder, alg) && cbor_encode_int(encoder, -1) &&
          cbor_encode_int(encoder, 1) && cbor_encode_int(encoder, -2) &&
          cbor_encode_bytes(encoder, public_key + 1, 32) &&
          cbor_encode_int(encoder, -3) &&
@@ -225,7 +271,7 @@ static bool generate_key_agreement(void) {
     }
     if (ecdsa_get_public_key65(&nist256p1, key_agreement.private_key,
                                key_agreement.public_key) == 0) {
-      key_agreement.deadline = getSysTime() + 30000;
+      key_agreement.started = getSysTime();
       key_agreement.channel = transport_channel;
       key_agreement.valid = true;
       return true;
@@ -260,7 +306,7 @@ static bool shared_secret_from_request(const uint8_t* buffer, size_t length,
   const bool consume_key = key_agreement.valid;
   const bool usable_key = consume_key &&
                           key_agreement.channel == transport_channel &&
-                          (int32_t)(key_agreement.deadline - getSysTime()) > 0;
+                          still_open(key_agreement.started, 30000);
   memzero(shared_secret, 32);
   if (usable_key &&
       map_find(buffer, length, 3, &value, &key_slice, &key_length) &&
@@ -312,7 +358,7 @@ static bool valid_pin_auth(const uint8_t shared_secret[32],
   uint8_t authentication[32];
   if (pin_auth->type != CBOR_TYPE_BYTES || pin_auth->length != 16) return false;
   hmac_sha256(shared_secret, 32, message, message_length, authentication);
-  bool valid = memcmp_s(authentication, pin_auth->data, 16) == 0;
+  bool valid = equal16(authentication, pin_auth->data);
   memzero(authentication, sizeof(authentication));
   return valid;
 }
@@ -407,9 +453,15 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
       protocol.value != 1 || auth.type != CBOR_TYPE_BYTES ||
       auth.length != 16 || !pin_token_valid)
     return CTAP2_ERR_PIN_AUTH_INVALID;
+  PasskeyStorage current;
+  storage_getPasskeyData(&current);
+  if (!current.pin_set) {
+    clear_pin_token(); /* a token never outlives the PIN that issued it */
+    return CTAP2_ERR_PIN_AUTH_INVALID;
+  }
   uint8_t expected[32];
   hmac_sha256(pin_token, sizeof(pin_token), client_data_hash, 32, expected);
-  bool matches = memcmp_s(expected, auth.data, 16) == 0;
+  bool matches = equal16(expected, auth.data);
   memzero(expected, sizeof(expected));
   if (!matches) return CTAP2_ERR_PIN_AUTH_INVALID;
   *verified = true;
@@ -566,7 +618,7 @@ static void get_next_assertion(uint8_t* response, size_t capacity,
   if (!assertion_sequence.valid ||
       assertion_sequence.next >= assertion_sequence.count ||
       assertion_sequence.channel != transport_channel ||
-      (int32_t)(assertion_sequence.deadline - getSysTime()) <= 0) {
+      !still_open(assertion_sequence.started, 30000)) {
     memzero(&assertion_sequence, sizeof(assertion_sequence));
     write_error(CTAP2_ERR_NOT_ALLOWED, response, response_length);
     return;
@@ -584,7 +636,7 @@ static void get_next_assertion(uint8_t* response, size_t capacity,
       &storage.credentials[slot], assertion_sequence.rp_id_hash,
       assertion_sequence.client_data_hash, assertion_sequence.up_verified,
       assertion_sequence.uv_verified, 0, response, capacity, response_length);
-  assertion_sequence.deadline = getSysTime() + 30000;
+  assertion_sequence.started = getSysTime();
   if (assertion_sequence.next >= assertion_sequence.count)
     assertion_sequence.valid = false;
 }
@@ -613,7 +665,7 @@ static bool encode_authenticator_data(uint8_t* output, size_t capacity,
   *length += 64;
   CborEncoder key;
   cbor_encoder_init(&key, output + *length, capacity - *length);
-  if (!encode_cose_public_key(&key, public_key)) return false;
+  if (!encode_cose_public_key(&key, public_key, -7)) return false;
   *length += cbor_encoder_size(&key);
   return true;
 }
@@ -643,7 +695,7 @@ static void make_credential(const uint8_t* request, size_t request_length,
 
   char rp_id[254], user_name[PASSKEY_USER_NAME_MAX];
   if (!map_find_text(rp_slice, rp_length, "id", &value, NULL, NULL) ||
-      !copy_text(&value, rp_id, sizeof(rp_id))) {
+      !copy_rp_id(&value, rp_id, sizeof(rp_id))) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
@@ -659,6 +711,9 @@ static void make_credential(const uint8_t* request, size_t request_length,
       value.type == CBOR_TYPE_TEXT) {
     size_t copy = value.length < sizeof(user_name) - 1 ? value.length
                                                        : sizeof(user_name) - 1;
+    /* Never split a UTF-8 character: the name is re-emitted as CBOR text. */
+    while (copy < value.length && copy > 0 && (value.data[copy] & 0xc0) == 0x80)
+      --copy;
     memcpy(user_name, value.data, copy);
     user_name[copy] = 0;
   }
@@ -776,7 +831,7 @@ static void get_assertion(const uint8_t* request, size_t request_length,
   CborValue rp_id_value, client_hash, value;
   char rp_id[254];
   if (!map_find(request, request_length, 1, &rp_id_value, NULL, NULL) ||
-      !copy_text(&rp_id_value, rp_id, sizeof(rp_id)) ||
+      !copy_rp_id(&rp_id_value, rp_id, sizeof(rp_id)) ||
       !map_find(request, request_length, 2, &client_hash, NULL, NULL) ||
       client_hash.type != CBOR_TYPE_BYTES || client_hash.length != 32) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
@@ -815,8 +870,10 @@ static void get_assertion(const uint8_t* request, size_t request_length,
   bool credential_found = false;
   const uint8_t* allow_slice;
   size_t allow_length;
+  /* An empty allowList is the same as none: look up resident credentials. */
   if (map_find(request, request_length, 3, &value, &allow_slice,
-               &allow_length)) {
+               &allow_length) &&
+      !(value.type == CBOR_TYPE_ARRAY && value.value == 0)) {
     if (value.type != CBOR_TYPE_ARRAY) {
       write_error(CTAP2_ERR_INVALID_CBOR, response, response_length);
       return;
@@ -847,7 +904,7 @@ static void get_assertion(const uint8_t* request, size_t request_length,
     assertion_sequence.uv_verified = uv_verified;
     assertion_sequence.count = (uint8_t)resident_count;
     assertion_sequence.next = 1;
-    assertion_sequence.deadline = getSysTime() + 30000;
+    assertion_sequence.started = getSysTime();
     assertion_sequence.channel = transport_channel;
     memcpy(assertion_sequence.rp_id_hash, rp_id_hash, 32);
     memcpy(assertion_sequence.client_data_hash, client_hash.data, 32);
@@ -947,7 +1004,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
       cbor_encoder_init(&encoder, response + 1, capacity - 1);
       cbor_encode_map(&encoder, 1);
       cbor_encode_uint(&encoder, 1);
-      encode_cose_public_key(&encoder, key_agreement.public_key);
+      encode_cose_public_key(&encoder, key_agreement.public_key, -25);
       *length = cbor_encoder_size(&encoder) + 1;
       return;
 
@@ -981,7 +1038,10 @@ static void client_pin(const uint8_t* request, size_t request_length,
       bool padding_ok = pin_length < sizeof(plaintext);
       for (size_t i = pin_length; i < sizeof(plaintext); ++i)
         padding_ok = padding_ok && plaintext[i] == 0;
-      if (!padding_ok || pin_length < 4 || pin_length > 63) {
+      /* CTAP minimum: four Unicode codepoints of valid UTF-8, not bytes. */
+      const size_t codepoints = cbor_utf8_codepoints(plaintext, pin_length);
+      if (!padding_ok || codepoints == SIZE_MAX || codepoints < 4 ||
+          pin_length > 63) {
         memzero(plaintext, sizeof(plaintext));
         memzero(shared_secret, sizeof(shared_secret));
         write_error(CTAP2_ERR_PIN_POLICY_VIOLATION, response, length);
@@ -1054,7 +1114,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
                  sizeof(supplied_hash));
       passkey_pin_digest(supplied_hash, sizeof(supplied_hash), storage.pin_salt,
                          verifier);
-      if (memcmp_s(verifier, storage.pin_hash, sizeof(storage.pin_hash)) != 0) {
+      if (!equal16(verifier, storage.pin_hash)) {
         --storage.pin_retries;
         ++pin_attempts_since_boot;
         storage_setPasskeyData(&storage);
@@ -1077,7 +1137,10 @@ static void client_pin(const uint8_t* request, size_t request_length,
       bool padding_ok = pin_length < sizeof(plaintext);
       for (size_t i = pin_length; i < sizeof(plaintext); ++i)
         padding_ok = padding_ok && plaintext[i] == 0;
-      if (!padding_ok || pin_length < 4 || pin_length > 63) {
+      /* CTAP minimum: four Unicode codepoints of valid UTF-8, not bytes. */
+      const size_t codepoints = cbor_utf8_codepoints(plaintext, pin_length);
+      if (!padding_ok || codepoints == SIZE_MAX || codepoints < 4 ||
+          pin_length > 63) {
         memzero(plaintext, sizeof(plaintext));
         memzero(shared_secret, sizeof(shared_secret));
         memzero(supplied_hash, sizeof(supplied_hash));
@@ -1144,7 +1207,7 @@ static void client_pin(const uint8_t* request, size_t request_length,
                  sizeof(supplied_hash));
       passkey_pin_digest(supplied_hash, sizeof(supplied_hash), storage.pin_salt,
                          verifier);
-      if (memcmp_s(verifier, storage.pin_hash, sizeof(storage.pin_hash)) != 0) {
+      if (!equal16(verifier, storage.pin_hash)) {
         --storage.pin_retries;
         ++pin_attempts_since_boot;
         storage_setPasskeyData(&storage);
@@ -1193,11 +1256,11 @@ static void client_pin(const uint8_t* request, size_t request_length,
 }
 
 static void reset_authenticator(uint8_t* response, size_t* response_length) {
-  if ((int32_t)(reset_deadline - getSysTime()) <= 0) {
+  if (!reset_open || !still_open(reset_started, 10000)) {
     write_error(CTAP2_ERR_NOT_ALLOWED, response, response_length);
     return;
   }
-  if (!ctap2_request_user_presence("all saved passkeys", false)) {
+  if (!ctap2_request_user_presence(NULL, false)) {
     write_error(ctap2_user_presence_was_cancelled()
                     ? CTAP2_ERR_KEEPALIVE_CANCEL
                     : CTAP2_ERR_OPERATION_DENIED,
@@ -1211,7 +1274,7 @@ static void reset_authenticator(uint8_t* response, size_t* response_length) {
   clear_pin_token();
   clear_key_agreement();
   pin_attempts_since_boot = 0;
-  reset_deadline = 0;
+  reset_open = false;
   write_error(CTAP2_OK, response, response_length);
 }
 
@@ -1278,6 +1341,14 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
   }
   if (request_length == 0) {
     response[0] = CTAP2_ERR_INVALID_LENGTH;
+    *response_length = 1;
+    return;
+  }
+  expire_windows();
+  /* Locked storage would accept passkey changes in RAM and silently drop
+   * them at commit; refuse before anything is touched. */
+  if (storage_isBitcoinOnlyLocked() || storage_isFirmwareTooOld()) {
+    response[0] = CTAP2_ERR_NOT_ALLOWED;
     *response_length = 1;
     return;
   }

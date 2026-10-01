@@ -190,6 +190,13 @@ bool cbor_decode_value(CborDecoder* decoder, CborValue* value) {
   return true;
 }
 
+size_t cbor_utf8_codepoints(const uint8_t* text, size_t length) {
+  if (!valid_utf8(text, length)) return SIZE_MAX;
+  size_t count = 0;
+  for (size_t i = 0; i < length; ++i) count += (text[i] & 0xc0) != 0x80;
+  return count;
+}
+
 static bool skip_value(CborDecoder* decoder, unsigned depth);
 
 static bool skip_children(CborDecoder* decoder, uint64_t count,
@@ -209,8 +216,26 @@ static bool skip_value(CborDecoder* decoder, unsigned depth) {
   if (value.type == CBOR_TYPE_ARRAY)
     return skip_children(decoder, value.value, depth + 1);
   if (value.type == CBOR_TYPE_MAP) {
-    if (value.value > UINT64_MAX / 2) return false;
-    return skip_children(decoder, value.value * 2, depth + 1);
+    /* Canonical CTAP2 CBOR: keys strictly increase (length, then bytes), so
+     * no map at any depth can carry a duplicate or ambiguous key. */
+    if (value.value > (uint64_t)(decoder->length - decoder->offset))
+      return false;
+    const uint8_t* previous = NULL;
+    size_t previous_length = 0;
+    for (uint64_t i = 0; i < value.value; ++i) {
+      const size_t start = decoder->offset;
+      if (!skip_value(decoder, depth + 1)) return false;
+      const uint8_t* key = decoder->buffer + start;
+      const size_t key_length = decoder->offset - start;
+      if (previous && (key_length < previous_length ||
+                       (key_length == previous_length &&
+                        memcmp(previous, key, key_length) >= 0)))
+        return false;
+      previous = key;
+      previous_length = key_length;
+      if (!skip_value(decoder, depth + 1)) return false;
+    }
+    return true;
   }
   return true;
 }

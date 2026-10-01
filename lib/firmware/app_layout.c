@@ -837,6 +837,9 @@ void layout_address(const char* address, QRSize qr_size) {
 bool layoutU2FDialog(bool request, const char* title, const char* body, ...) {
   char strbuf[BODY_CHAR_MAX];
 
+  /* Measure and draw at the same width: no icon column. */
+  layout_has_icon(false);
+
   va_list vl;
   va_start(vl, body);
   int written = vsnprintf(strbuf, BODY_CHAR_MAX, body, vl);

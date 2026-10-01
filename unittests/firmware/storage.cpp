@@ -646,14 +646,22 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
   SessionState session;
   ConfigFlash shadow;
 
-  // Older in-band version (underlying < STORAGE_VERSION): migrate, not refuse.
+  // The shipped in-band version (10017) migrates to V20, never refused.
   memset(flash, 0, sizeof(flash));
   memcpy(flash, "stor", 4);
-  uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION - 1);
+  uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION_LAST_SHIPPED;
   memcpy(flash + 44, &older,
          4);  // test host is little-endian, matches read_u32_le
   memset(&session, 0, sizeof(session));
-  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Updated);
+
+  // The burned alpha numbers stay invalid inside the band too.
+  for (uint32_t burned = 18; burned <= 19; ++burned) {
+    uint32_t stamped = STORAGE_VERSION_BTC_ONLY_BASE + burned;
+    memcpy(flash + 44, &stamped, 4);
+    memset(&session, 0, sizeof(session));
+    EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Invalid);
+  }
 
   // Our own current in-band version: loads (not refused).
   uint32_t current = STORAGE_VERSION_BTC_ONLY;

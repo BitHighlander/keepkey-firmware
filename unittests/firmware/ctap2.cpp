@@ -114,3 +114,54 @@ TEST(CTAP2, ClientPinConsumesAndWipesKeyAgreementOnFirstUse) {
   EXPECT_EQ(response[0], CTAP2_ERR_PIN_AUTH_INVALID);
   EXPECT_TRUE(ctap2_key_agreement_is_clear());
 }
+
+TEST(CTAP2, KeyAgreementIsEcdhCoseAndWipeClearsIt) {
+  rng_health_force_verdict(true);
+  ctap2_init();
+  const uint8_t request[] = {
+      CTAP2_CMD_CLIENT_PIN, 0xa2, 0x01, 0x01, 0x02, 0x02};
+  uint8_t response[256] = {0};
+  size_t response_length = 0;
+  ctap2_handle(request, sizeof(request), response, sizeof(response),
+               &response_length);
+  ASSERT_EQ(response[0], CTAP2_OK);
+  const uint8_t* key;
+  size_t key_length;
+  ASSERT_TRUE(cbor_map_find_int_slice(response + 1, response_length - 1, 1,
+                                      &key, &key_length));
+  CborValue alg;
+  ASSERT_TRUE(cbor_map_find_int(key, key_length, 3, &alg));
+  EXPECT_EQ(alg.type, CBOR_TYPE_NEGINT);
+  EXPECT_EQ(alg.value, 24u); /* -25: ECDH-ES+HKDF-256 */
+  ASSERT_FALSE(ctap2_key_agreement_is_clear());
+  ctap2_clear_session();
+  EXPECT_TRUE(ctap2_key_agreement_is_clear());
+}
+
+TEST(CTAP2, RejectsNonAsciiRpIdBeforeAnyPrompt) {
+  ctap2_init();
+  /* getAssertion {1: rp, 2: clientDataHash, 5: {"up": false}} */
+  auto request = [](std::vector<uint8_t> rp) {
+    std::vector<uint8_t> r = {CTAP2_CMD_GET_ASSERTION, 0xa3, 0x01};
+    r.push_back(0x60 + rp.size());
+    r.insert(r.end(), rp.begin(), rp.end());
+    r.insert(r.end(), {0x02, 0x58, 0x20});
+    r.insert(r.end(), 32, 0x11);
+    r.insert(r.end(), {0x05, 0xa1, 0x62, 'u', 'p', 0xf4});
+    return r;
+  };
+  uint8_t response[512] = {0};
+  size_t response_length = 0;
+  std::vector<uint8_t> ascii = request({'a', '.', 'c', 'o'});
+  ctap2_handle(ascii.data(), ascii.size(), response, sizeof(response),
+               &response_length);
+  EXPECT_EQ(response[0], CTAP2_ERR_NO_CREDENTIALS); /* control: accepted */
+  std::vector<uint8_t> lookalike = request({'a', 0xc3, 0xa9, 'o'}); /* aéo */
+  ctap2_handle(lookalike.data(), lookalike.size(), response, sizeof(response),
+               &response_length);
+  EXPECT_EQ(response[0], CTAP2_ERR_MISSING_PARAMETER);
+  std::vector<uint8_t> space = request({'a', ' ', 'c', 'o'});
+  ctap2_handle(space.data(), space.size(), response, sizeof(response),
+               &response_length);
+  EXPECT_EQ(response[0], CTAP2_ERR_MISSING_PARAMETER);
+}

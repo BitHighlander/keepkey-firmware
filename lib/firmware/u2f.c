@@ -139,7 +139,29 @@ typedef struct {
 
 U2F_ReadBuffer* reader;
 
+/* The CTAP2 request being handled, which may wait for a button press while
+ * USB keeps polling. Until it answers, nothing may touch the request buffer
+ * or move its channel: other frames get CHANNEL_BUSY, and CANCEL or INIT on
+ * its channel only flag the cancel. */
+static bool ctap_active;
+static uint32_t ctap_cid;
+static bool ctap_cancelled;
+
 void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
+  if (ctap_active) {
+    if (f->init.cmd == U2FHID_INIT) {
+      if (f->cid == ctap_cid) ctap_cancelled = true;
+      u2fhid_init(f);
+      cid = ctap_cid; /* a new channel allocation must not take this one */
+    } else if (f->cid == ctap_cid && (f->type & TYPE_INIT) &&
+               f->init.cmd == U2FHID_CANCEL) {
+      ctap_cancelled = true;
+    } else {
+      send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
+    }
+    return;
+  }
+
   // Always handle init packets directly
   if (f->init.cmd == U2FHID_INIT) {
     u2fhid_init(f);
@@ -432,9 +454,14 @@ void u2fhid_msg(const APDU* a, uint32_t len) {
 void u2fhid_cbor(const uint8_t* buf, uint32_t len) {
   static uint8_t response[CTAP2_MAX_RESPONSE_SIZE];
   size_t response_len = 0;
+  ctap_active = true;
+  ctap_cid = cid;
+  ctap_cancelled = false;
   ctap2_set_transport_channel(cid);
   ctap2_handle(buf, len, response, sizeof(response), &response_len);
+  cid = ctap_cid;
   send_u2fhid_msg(U2FHID_CBOR, response, response_len);
+  ctap_active = false;
 }
 
 void send_u2fhid_msg(const uint8_t cmd, const uint8_t* data,
@@ -704,10 +731,19 @@ bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
   return true;
 }
 
+/* rp_id == NULL is the authenticator reset, which is destructive. */
 bool ctap2_request_user_presence(const char* rp_id, bool registration) {
-  bool fits = layoutU2FDialog(
-      true, registration ? "Create Passkey" : "Use Passkey",
-      registration ? "Create a passkey for %s?" : "Sign in to %s?", rp_id);
+  const char* title = !rp_id
+                          ? "Reset Passkeys"
+                          : (registration ? "Create Passkey" : "Use Passkey");
+  bool fits =
+      !rp_id ? layoutU2FDialog(true, title,
+                               "Delete all passkeys, the passkey PIN and U2F "
+                               "logins?")
+             : layoutU2FDialog(
+                   true, title,
+                   registration ? "Create a passkey for %s?" : "Sign in to %s?",
+                   rp_id);
   if (!fits) {
     // rp_id is host-controlled and can run up to 253 chars; the credential
     // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
@@ -717,14 +753,13 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
   }
   bool saw_button_up = false;
   for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
-    if (reader != NULL && reader->cmd == U2FHID_CANCEL) {
+    if (ctap_cancelled) {
       layoutHome();
       return false;
     }
     saw_button_up = saw_button_up || keepkey_button_up();
     if (saw_button_up && keepkey_button_down()) {
-      layoutU2FDialog(false, registration ? "Create Passkey" : "Use Passkey",
-                      "%s", rp_id);
+      layoutU2FDialog(false, title, "%s", rp_id ? rp_id : "Reset");
       return true;
     }
     if ((remaining % (U2F_TIMEOUT / 4)) == 0) {
@@ -737,9 +772,7 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
   return false;
 }
 
-bool ctap2_user_presence_was_cancelled(void) {
-  return reader != NULL && reader->cmd == U2FHID_CANCEL;
-}
+bool ctap2_user_presence_was_cancelled(void) { return ctap_cancelled; }
 
 static void promptRegister(bool request, const U2F_REGISTER_REQ* req) {
 #if 0

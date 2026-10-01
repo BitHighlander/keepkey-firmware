@@ -58,6 +58,8 @@ void cbor_decoder_init(CborDecoder* decoder, const uint8_t* buffer,
 bool cbor_decode_value(CborDecoder* decoder, CborValue* value);
 bool cbor_skip_value(CborDecoder* decoder);
 bool cbor_validate(const uint8_t* buffer, size_t length);
+/* Unicode codepoints in valid UTF-8 text, or SIZE_MAX if it is invalid. */
+size_t cbor_utf8_codepoints(const uint8_t* text, size_t length);
 bool cbor_map_find_int(const uint8_t* buffer, size_t length, uint64_t key,
                        CborValue* value);
 bool cbor_map_find_int_slice(const uint8_t* buffer, size_t length, uint64_t key,
