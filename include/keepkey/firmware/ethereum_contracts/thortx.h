@@ -26,9 +26,6 @@
 #define ETH_ADDRESS                                                          \
   "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" \
   "\x00\x00"
-#define ETH_NATIVE                                                           \
-  "\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee" \
-  "\xee\xee"
 
 /* THORChain ETH router (mainnet), current v4.1.1.
  * NOTE: THORChain migrates this router periodically (v1 42a5ed.. -> v3
