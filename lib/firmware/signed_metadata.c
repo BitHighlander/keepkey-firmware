@@ -31,6 +31,8 @@ static char delegate_alias[CLEARSIGN_ALIAS_LEN + 1];
 static char delegate_fp[METADATA_FINGERPRINT_LEN];
 static uint32_t delegate_chain_id;
 static bool delegate_may_suppress;
+/* A certified envelope arrived this message, whether or not it verified. */
+static bool certified_claimed;
 /* v2 only: set true once decode_v2_args() has decoded this metadata's args from
  * the tx calldata. The v2 enforce path REQUIRES it — v2 has no committed
  * tx_hash, so this is the explicit proof (not an implicit call-order
@@ -592,6 +594,7 @@ void signed_metadata_clear(void) {
   memzero(delegate_fp, sizeof(delegate_fp));
   delegate_chain_id = 0;
   delegate_may_suppress = false;
+  certified_claimed = false;
   metadata_schema_decoded = false;
   metadata_schema_moves_value = false;
 }
@@ -925,6 +928,9 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   if (signed_metadata_is_certified_envelope(payload, payload_len, key_id)) {
     MetadataClassification c = process_certified(payload, payload_len);
     if (c == METADATA_MALFORMED) signed_metadata_clear();
+    /* Set after any clear: a certified claim that failed verification must
+     * still be refused at SignTx, never silently downgraded (SRS R-1.4). */
+    certified_claimed = true;
     return c;
   }
 
@@ -971,64 +977,47 @@ static MetadataClassification process_certified(const uint8_t* payload,
   if (payload_len <= 1 + CLEARSIGN_CERT_LEN) return METADATA_MALFORMED;
 
   const uint8_t* cert = payload + 1;
-  if (!clearsign_root_verify_cert(cert, CLEARSIGN_CERT_LEN)) {
-    /* Unverifiable, expired, or wrong chain shape. The CALLER degrades to
-     * the additive path -- this is not a refusal. */
-    return METADATA_MALFORMED;
-  }
-
-  /* The inner payload is verified against the DELEGATE's key, which the
-   * certificate carries. The root vouches for the delegate; the delegate signs
-   * the description. Two signatures, two distinct keys, one message. */
-  const uint8_t* delegate_pub = cert + CLEARSIGN_CERT_OFF_PUBKEY;
   const uint8_t* inner = payload + 1 + CLEARSIGN_CERT_LEN;
   size_t inner_len = payload_len - 1 - CLEARSIGN_CERT_LEN;
 
   if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
     return METADATA_MALFORMED;
 
-  /* The inner payload MUST be a device-decoded schema. This is the load-bearing
-   * check of the whole
-   * tier, not a format nicety.
-   *
-   * The reason a KeepKey-certified describer is allowed to suppress the raw
-   * review is structural: under v2 the DEVICE decodes the argument values out
-   * of the exact calldata it is about to sign, so what the screen says is
-   * bound to the signature by construction and the signer cannot lie about it.
-   *
-   * A v1 blob has no such property -- it carries argument values supplied
-   * WHOLESALE BY THE SIGNER, and v1 exists precisely because 7.15 tolerates a
-   * hot per-transaction key: mislabelling is survivable there only because the
-   * raw review always follows. Grant that same blob the suppression tier and
-   * the one thing that made it safe is gone. The delegate could then show
-   * "Amount: 0.1 ETH" over calldata doing something else entirely, with
-   * nothing behind it.
-   *
-   * Rejecting degrades to the additive 7.15 path, which is exactly where a v1
-   * describer belongs. */
+  /* The inner payload MUST be a device-decoded schema (v2, or the v4
+   * firmware-owned decoder). A KeepKey-certified describer may replace the raw
+   * review only because the DEVICE decodes the values out of the exact
+   * calldata it is about to sign; a v1 blob carries signer-supplied values. */
   if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
       stored_metadata.version != METADATA_VERSION_DYNAMIC_SCHEMA) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
 
+  /* SRS R-1.2: root-signed, unexpired, MAY_SUPPRESS_RAW, and scoped to exactly
+   * the chain this description is for -- all checked together by
+   * clearsign_root_cert_delegate(). Anything less is not a certified
+   * describer, and the claim is refused at SignTx (R-1.4). */
+  uint8_t delegate_pub[CLEARSIGN_PUBKEY_LEN];
+  if (!clearsign_root_cert_delegate(cert, CLEARSIGN_CERT_LEN,
+                                    stored_metadata.chain_id, delegate_pub,
+                                    delegate_alias)) {
+    signed_metadata_clear();
+    return METADATA_MALFORMED;
+  }
+
+  /* The root vouches for the delegate; the delegate signs the description. */
   size_t signed_len = inner_len - sizeof(stored_metadata.signature) - 1;
   uint8_t digest[32];
   sha256_Raw(inner, signed_len, digest);
   if (ecdsa_verify_digest(&secp256k1, delegate_pub, stored_metadata.signature,
                           digest) != 0) {
+    signed_metadata_clear();
     return METADATA_MALFORMED;
   }
 
-  memcpy(delegate_alias, cert + CLEARSIGN_CERT_OFF_ALIAS, CLEARSIGN_ALIAS_LEN);
-  delegate_alias[CLEARSIGN_ALIAS_LEN] = '\0';
   signed_metadata_pubkey_fingerprint(delegate_pub, delegate_fp);
-  delegate_chain_id = ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE] << 24) |
-                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE + 1] << 16) |
-                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE + 2] << 8) |
-                      ((uint32_t)cert[CLEARSIGN_CERT_OFF_SCOPE + 3]);
-  delegate_may_suppress =
-      (cert[CLEARSIGN_CERT_OFF_FLAGS] & CLEARSIGN_USAGE_MAY_SUPPRESS_RAW) != 0;
+  delegate_chain_id = stored_metadata.chain_id;
+  delegate_may_suppress = true; /* required by clearsign_root_cert_delegate */
 
   metadata_available = true;
   metadata_tier = METADATA_TIER_KEEPKEY;
@@ -1054,6 +1043,8 @@ bool signed_metadata_may_suppress(uint32_t tx_chain_id) {
   if (!clearsign_root_is_present()) return false;
   return true;
 }
+
+bool signed_metadata_certified_claimed(void) { return certified_claimed; }
 
 const char* signed_metadata_delegate_alias(void) {
   return (metadata_tier == METADATA_TIER_KEEPKEY) ? delegate_alias : "";

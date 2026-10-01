@@ -1077,6 +1077,22 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  /* SRS R-1.4: a certified (v3) claim for calldata the device does not decode
+   * natively is honoured completely or refused -- never silently downgraded to
+   * the additive review. "Completely" means the proof verified, describes this
+   * exact transaction, and may replace the raw review on this chain. Checked
+   * before any screen, so a failed claim can never show "Verified by KeepKey".
+   * Natively decoded calls and plain transfers do not need the description. */
+  if (data_needs_confirm && data_total > 0 &&
+      signed_metadata_certified_claimed() &&
+      !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
+        signed_metadata_may_suppress(chain_id))) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Certified description invalid or not for this tx"));
+    ethereum_signing_abort();  // clears metadata
+    return;
+  }
+
   // Signed metadata clear signing (backwards compatible).
   // Only fires if host sent EthereumTxMetadata before this EthereumSignTx.
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
@@ -1102,16 +1118,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
           needs_confirm = signed_metadata_schema_moves_value();
           data_needs_confirm = false;
         } else {
-          /* Everything else -- no metadata, a self-service signer, an expired
-           * or unverifiable certificate, a certificate for another chain -- is
-           * ANNOTATION ONLY. The decoded screens are followed by the same
-           * amount and raw-calldata review the transaction would have received
-           * without metadata, so a lying describer cannot conceal bytes.
-           *
-           * Note this is also the DEGRADE path: a certificate that fails to
-           * verify lands here rather than refusing the transaction. A stale
-           * describer is one we no longer trust; an undescribed transaction is
-           * what 7.15 already handles safely. */
+          /* A runtime (self-service) signer is ANNOTATION ONLY: the decoded
+           * screens are followed by the same amount and raw-calldata review
+           * the transaction would have received without metadata, so a lying
+           * describer cannot conceal bytes. A certified claim never reaches
+           * here: the check above refuses one that cannot be honoured. */
           needs_confirm = true;
           data_needs_confirm = true;
         }

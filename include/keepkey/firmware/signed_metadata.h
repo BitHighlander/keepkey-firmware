@@ -96,6 +96,11 @@ typedef enum {
  * later cannot silently widen it. */
 bool signed_metadata_may_suppress(uint32_t tx_chain_id);
 
+/* True when this message carried a certified (v3) envelope, verified or not.
+ * A claimed certified render that cannot be honoured must be refused, never
+ * silently downgraded to the additive review (SRS R-1.4). */
+bool signed_metadata_certified_claimed(void);
+
 /* Display for the KeepKey tier. Empty unless the current message carried a
  * verified certificate. */
 const char* signed_metadata_delegate_alias(void);
