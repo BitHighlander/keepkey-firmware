@@ -30,34 +30,6 @@ static bool word_size(const uint8_t word[32], size_t* value) {
   return true;
 }
 
-static bool node_dynamic(const Erc7730AbiProgram* p, uint16_t node,
-                         uint8_t depth, bool* dynamic) {
-  if (depth > ERC7730_ABI_MAX_DEPTH || node >= p->node_count) return false;
-  const Erc7730AbiNode* n = &p->nodes[node];
-  if (n->kind == ERC7730_ABI_BYTES || n->kind == ERC7730_ABI_STRING ||
-      (n->kind == ERC7730_ABI_ARRAY &&
-       n->array_length == ERC7730_ABI_DYNAMIC_ARRAY)) {
-    *dynamic = true;
-    return true;
-  }
-  if (n->kind == ERC7730_ABI_ARRAY)
-    return node_dynamic(p, n->first_child, depth + 1, dynamic);
-  if (n->kind == ERC7730_ABI_TUPLE) {
-    for (uint16_t i = 0; i < n->child_count; i++) {
-      bool child_dynamic = false;
-      if (!node_dynamic(p, (uint16_t)(n->first_child + i), depth + 1,
-                        &child_dynamic))
-        return false;
-      if (child_dynamic) {
-        *dynamic = true;
-        return true;
-      }
-    }
-  }
-  *dynamic = false;
-  return true;
-}
-
 static Erc7730AbiResult push_value(Erc7730AbiStream* s, uint16_t node,
                                    uint8_t path_depth, bool target_prefix) {
   if (s->depth >= ERC7730_ABI_MAX_DEPTH) return ERC7730_ABI_RESOURCE_LIMIT;
@@ -120,8 +92,9 @@ static Erc7730AbiResult make_sequence(Erc7730AbiStream* s,
   uint16_t dynamic_count = 0;
   for (uint16_t i = 0; i < child_count; i++) {
     bool dynamic = false;
-    if (!node_dynamic(&s->program, (uint16_t)(first_child + (repeated ? 0 : i)),
-                      0, &dynamic))
+    if (!erc7730_abi_node_dynamic(&s->program,
+                                  (uint16_t)(first_child + (repeated ? 0 : i)),
+                                  0, &dynamic))
       return ERC7730_ABI_BAD_PROGRAM;
     if (dynamic) dynamic_count++;
   }
@@ -188,7 +161,7 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
       bool target_prefix = false;
       child_target(s, f, n, item_index, &path_depth, &target_prefix);
       bool dynamic = false;
-      if (!node_dynamic(&s->program, child, 0, &dynamic))
+      if (!erc7730_abi_node_dynamic(&s->program, child, 0, &dynamic))
         return ERC7730_ABI_BAD_PROGRAM;
       if (dynamic) return ERC7730_ABI_OK;
       Erc7730AbiResult r = push_value(s, child, path_depth, target_prefix);
