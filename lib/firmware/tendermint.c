@@ -90,10 +90,6 @@ bool tendermint_isValidAsset(const char* asset) {
   return true;
 }
 
-bool tendermint_isValidSigner(const char* signer, const char* hrp) {
-  return tendermint_validateBech32Address(signer, hrp);
-}
-
 bool tendermint_validateSafeText(const char* value) {
   if (!value || value[0] == '\0') return false;
 

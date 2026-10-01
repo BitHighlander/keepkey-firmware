@@ -40,15 +40,7 @@ bool thorchain_confirm_full_memo(const char* title, const char* memo,
 }
 
 bool thorchain_isValidDenom(const char* denom) {
-  if (!denom || !denom[0]) return false;
-  for (size_t i = 0; denom[i]; i++) {
-    const char c = denom[i];
-    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
-          c == '/' || c == '-')) {
-      return false;
-    }
-  }
-  return true;
+  return tendermint_isValidDenom(denom);
 }
 
 bool thorchain_isValidAsset(const char* asset) {
