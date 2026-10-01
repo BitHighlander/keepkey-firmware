@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 extern "C" {
+#include "keepkey/firmware/erc7730_field.h"
 #include "keepkey/firmware/erc7730_format.h"
 }
 
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -22,6 +24,19 @@ bool format(uint8_t kind, uint16_t size, const uint8_t* value, size_t length,
   return erc7730_format_raw(&program, &capture, output, output_size);
 }
 
+}  // namespace
+
+namespace {
+/* erc7730_format_unit's scaled line: the value at `decimals`, then the base. */
+void ExpectUnit(const uint8_t value[32], uint8_t decimals, const char* base,
+                const char* scaled) {
+  char output[512];
+  ASSERT_TRUE(
+      erc7730_format_unit(value, decimals, base, output, sizeof(output)));
+  const std::string text(output);
+  EXPECT_EQ(text.substr(0, text.find("\nraw ")),
+            std::string("unit set by signer\n") + scaled);
+}
 }  // namespace
 
 TEST(Erc7730Format, FormatsUnsignedAndSigned256BitIntegers) {
@@ -189,20 +204,14 @@ TEST(Erc7730Format, FormatsDecimalAmountsWithoutFloatingPoint) {
   capture.data[29] = 0x64;
   capture.data[30] = 0x00;
   capture.data[31] = 0x00;  // 1e18
-  ASSERT_TRUE(erc7730_format_amount(&program, &capture, 18, "ETH", output,
-                                    sizeof(output)));
-  EXPECT_STREQ(output, "1 ETH");
+  ExpectUnit(capture.data, 18, "ETH", "1 ETH");
 
   memset(capture.data, 0, sizeof(capture.data));
   capture.data[31] = 1;
-  ASSERT_TRUE(erc7730_format_amount(&program, &capture, 6, "USDC", output,
-                                    sizeof(output)));
-  EXPECT_STREQ(output, "0.000001 USDC");
+  ExpectUnit(capture.data, 6, "USDC", "0.000001 USDC");
 
   memset(capture.data, 0, sizeof(capture.data));
-  ASSERT_TRUE(erc7730_format_amount(&program, &capture, 18, nullptr, output,
-                                    sizeof(output)));
-  EXPECT_STREQ(output, "0");
+  ExpectUnit(capture.data, 18, "", "0");
 }
 
 TEST(Erc7730Format, TrimsOnlyFractionalTrailingZeroes) {
@@ -217,12 +226,8 @@ TEST(Erc7730Format, TrimsOnlyFractionalTrailingZeroes) {
   capture.data[30] = 0x30;
   capture.data[31] = 0x39;  // 12345
   char output[32];
-  ASSERT_TRUE(erc7730_format_amount(&program, &capture, 3, nullptr, output,
-                                    sizeof(output)));
-  EXPECT_STREQ(output, "12.345");
+  ExpectUnit(capture.data, 3, "", "12.345");
   capture.data[30] = 0x2e;
   capture.data[31] = 0xe0;  // 12000
-  ASSERT_TRUE(erc7730_format_amount(&program, &capture, 3, nullptr, output,
-                                    sizeof(output)));
-  EXPECT_STREQ(output, "12");
+  ExpectUnit(capture.data, 3, "", "12");
 }
