@@ -163,23 +163,32 @@ bool clearsign_root_cert_delegate(const uint8_t* cert, size_t cert_len,
   return true;
 }
 
+/* `digest` signed by the certified delegate for `expected_scope`. */
+static bool verify_delegate_digest(const uint8_t* cert, size_t cert_len,
+                                   uint32_t expected_scope,
+                                   uint8_t digest[SHA256_DIGEST_LENGTH],
+                                   const uint8_t* sig,
+                                   char out_alias[CLEARSIGN_ALIAS_LEN + 1]) {
+  uint8_t delegate[CLEARSIGN_PUBKEY_LEN];
+  const bool ok = clearsign_root_cert_delegate(cert, cert_len, expected_scope,
+                                               delegate, out_alias) &&
+                  ecdsa_verify_digest(&secp256k1, delegate, sig, digest) == 0;
+  memzero(delegate, sizeof(delegate));
+  memzero(digest, SHA256_DIGEST_LENGTH);
+  if (!ok) memzero(out_alias, CLEARSIGN_ALIAS_LEN + 1);
+  return ok;
+}
+
 bool clearsign_root_verify_delegate_attestation(
     const uint8_t* cert, size_t cert_len, uint32_t expected_scope,
     const uint8_t* data, size_t data_len, const uint8_t* sig, size_t sig_len) {
   if (!data || data_len == 0 || !sig || sig_len != 64) return false;
-  uint8_t delegate[CLEARSIGN_PUBKEY_LEN];
-  char alias[CLEARSIGN_ALIAS_LEN + 1];
-  if (!clearsign_root_cert_delegate(cert, cert_len, expected_scope, delegate,
-                                    alias)) {
-    return false;
-  }
   uint8_t digest[SHA256_DIGEST_LENGTH];
+  char alias[CLEARSIGN_ALIAS_LEN + 1];
   sha256_Raw(data, data_len, digest);
-  const bool ok = ecdsa_verify_digest(&secp256k1, delegate, sig, digest) == 0;
-  memset(delegate, 0, sizeof(delegate));
-  memset(digest, 0, sizeof(digest));
-  memset(alias, 0, sizeof(alias));
-  return ok;
+  /* The alias is public certificate text; the helper wipes it on failure. */
+  return verify_delegate_digest(cert, cert_len, expected_scope, digest, sig,
+                                alias);
 }
 
 bool clearsign_root_verify_erc7730_catalog(
@@ -189,12 +198,6 @@ bool clearsign_root_verify_erc7730_catalog(
   static const uint8_t purpose[] = "KEEPKEY:ERC7730:CATALOG\0";
   if (!catalog_root || !sig || sig_len != 64 || !out_alias) return false;
 
-  uint8_t delegate[CLEARSIGN_PUBKEY_LEN];
-  if (!clearsign_root_cert_delegate(cert, cert_len, expected_scope, delegate,
-                                    out_alias)) {
-    return false;
-  }
-
   SHA256_CTX ctx;
   uint8_t digest[SHA256_DIGEST_LENGTH];
   sha256_Init(&ctx);
@@ -202,9 +205,6 @@ bool clearsign_root_verify_erc7730_catalog(
   sha256_Update(&ctx, purpose, sizeof(purpose) - 1);
   sha256_Update(&ctx, catalog_root, 32);
   sha256_Final(&ctx, digest);
-  const bool ok = ecdsa_verify_digest(&secp256k1, delegate, sig, digest) == 0;
-  memzero(delegate, sizeof(delegate));
-  memzero(digest, sizeof(digest));
-  if (!ok) memzero(out_alias, CLEARSIGN_ALIAS_LEN + 1);
-  return ok;
+  return verify_delegate_digest(cert, cert_len, expected_scope, digest, sig,
+                                out_alias);
 }

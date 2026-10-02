@@ -26,12 +26,12 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
-#include "trezor/crypto/sha3.h"
 #include "keepkey/firmware/clearsign_root.h"
 
 void setup(void);
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 #include "kkconfirm_driver.h"
 
@@ -1864,25 +1864,8 @@ const uint8_t CERT_ROOT_PRIV[32] = {
 
 std::vector<uint8_t> mint_cert(uint32_t scope, uint8_t flags,
                                const uint8_t delegate_pub[33]) {
-  std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
-  c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
-  c[CLEARSIGN_CERT_OFF_FLAGS] = flags;
-  for (int i = 0; i < 4; i++) {
-    c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
-    c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
-  }
-  memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
-  memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, CLEARSIGN_PUBKEY_LEN);
-  const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
-  uint8_t pre[66] = {0x19, 0x01};
-  memcpy(pre + 2, ds, 32);
-  keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
-  uint8_t digest[32];
-  keccak_256(pre, sizeof(pre), digest);
-  uint8_t pby = 0;
-  EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, CERT_ROOT_PRIV, digest,
-                                 &c[CLEARSIGN_CERT_OFF_SIG], &pby, NULL));
-  return c;
+  return rootCert(CERT_ROOT_PRIV, delegate_pub, flags, scope, 1818806400u,
+                  "Test Delegate");
 }
 
 std::vector<uint8_t> envelope(const std::vector<uint8_t>& cert,
