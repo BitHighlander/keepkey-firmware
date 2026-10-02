@@ -22,6 +22,7 @@
 
 #include "trezor/crypto/bip32.h"
 #include "messages-solana.pb.h"
+#include "keepkey/firmware/signed_metadata.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -239,16 +240,6 @@ typedef struct {
 /* Widest filled summary; templates that could exceed it are rejected. */
 #define SOL_INTENT_TEXT_MAX 280
 
-/* v3 argument roles: the device words the limits screen from these. */
-typedef enum {
-  SOL_ROLE_NONE = 0,
-  SOL_ROLE_SPEND_MAX = 1,
-  SOL_ROLE_RECEIVE_MIN = 2,
-  SOL_ROLE_SPEND_EXACT = 3,
-  SOL_ROLE_RECEIVE_EXACT = 4,
-  SOL_ROLE_CAP = 5, /* a per-use maximum (e.g. each bet), not an outflow */
-} SolanaSchemaRole;
-
 typedef enum {
   SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
   SOL_SCHEMA_ARG_U8 = 2,       /* 1 byte */
@@ -265,7 +256,7 @@ typedef struct {
   SolanaSchemaArgType type;
   char label[SOL_SCHEMA_LABEL_MAX + 1];
   uint8_t mint_account; /* TOKEN_AMOUNT only */
-  uint8_t role;         /* SolanaSchemaRole; v3 only, else SOL_ROLE_NONE */
+  uint8_t role;         /* METADATA_ROLE_*; v3 only, else NONE */
 } SolanaSchemaArg;
 
 typedef struct {
@@ -289,9 +280,6 @@ typedef struct {
 
 /* Bytes one arg consumes; 0 = unknown type (rejected). */
 uint16_t solana_schemaArgWidth(SolanaSchemaArgType t);
-/* LAMPORTS or TOKEN_AMOUNT: must carry a role in v3 and appear in the intent.
- */
-bool solana_schemaArgIsAmount(SolanaSchemaArgType t);
 /* Placeholders well-formed and in range, and every amount covered. */
 bool solana_intentTemplateValid(const SolanaInstrSchema* s);
 
@@ -300,16 +288,11 @@ bool solana_intentTemplateValid(const SolanaInstrSchema* s);
  * certified: summary, limits, side effects, details, provenance. Runtime: an
  * "NOT verified by KeepKey" heading plus limits only; the caller's raw review
  * must follow. Screen text: docs/security/clearsign-intent-template.md. */
-typedef bool (*SolanaReviewEmit)(void* ctx, const char* title, const char* body,
-                                 const uint8_t* bytes, uint16_t bytes_len);
-bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
-                       const SolanaInstrSchema* s, uint8_t ix_index,
-                       bool certified, char* out, size_t len);
 bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                               const SolanaInstrSchema* s, uint8_t ix_index,
                               const uint8_t signer[SOL_PUBKEY_SIZE],
                               const char* alias, const char* fp, bool certified,
-                              SolanaReviewEmit emit, void* ctx);
+                              ReviewEmit emit, void* ctx);
 
 bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
                              SolanaInstrSchema* out);

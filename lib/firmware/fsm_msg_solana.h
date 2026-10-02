@@ -514,9 +514,6 @@ static bool solana_pathIsStandard(const uint32_t* path, size_t count) {
   return true;
 }
 
-/* Render a schema-decoded instruction: who attested the schema, then the
- * program/instruction it describes, then every labelled arg and account with
- * values read from the transaction being signed. */
 /* One review screen on the device: text, or a byte range to page. */
 static bool solana_review_emit(void* ctx, const char* title, const char* body,
                                const uint8_t* bytes, uint16_t bytes_len) {
@@ -529,8 +526,9 @@ static bool solana_review_emit(void* ctx, const char* title, const char* body,
                  body);
 }
 
-/* Runtime (additive) schema review; the certified review is
- * solana_buildIntentReview. */
+/* Runtime (additive) schema review: who attested the schema, then every
+ * labelled arg and account with values read from the transaction being
+ * signed. The certified review is solana_buildIntentReview. */
 static bool solana_confirm_schema(const SolanaSignTx* msg, const char* alias,
                                   const char* fp,
                                   const SolanaInstrSchema* schema,

@@ -3487,9 +3487,9 @@ std::vector<uint8_t> pump_sell_v3(const char* intent) {
   return v3_schema(
       kPumpAmmProgram, {0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad},
       "Pump.fun", "Sell tokens",
-      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
+      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
        {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive at least", 4,
-        SOL_ROLE_RECEIVE_MIN}},
+        METADATA_ROLE_RECEIVE_MIN}},
       intent);
 }
 
@@ -3654,11 +3654,11 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
       {{SOL_SCHEMA_ARG_U64, "Round", -1, 0},
        {SOL_SCHEMA_ARG_U64, "Revision", -1, 0},
        {SOL_SCHEMA_ARG_U8, "Seat", -1, 0},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, SOL_ROLE_SPEND_EXACT},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, METADATA_ROLE_SPEND_EXACT},
        {SOL_SCHEMA_ARG_PUBKEY, "Session key", -1, 0},
        {SOL_SCHEMA_ARG_DURATION, "Expires in", -1, 0},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, SOL_ROLE_SPEND_MAX},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, SOL_ROLE_CAP}},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, METADATA_ROLE_SPEND_MAX},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, METADATA_ROLE_CAP}},
       "Join blackjack seat {2} for {3}; key {4} may bet {7} each, {6} total, "
       "for {5}");
   SolanaInstrSchema s;
@@ -3715,8 +3715,8 @@ TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
     return got;
   };
   const std::vector<V3Arg> args = {
-      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
-      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive", 4, SOL_ROLE_RECEIVE_EXACT}};
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive", 4, METADATA_ROLE_RECEIVE_EXACT}};
   const std::vector<uint8_t> disc = {0x33, 0xe6, 0x85, 0xa4,
                                      0x01, 0x7f, 0x83, 0xad};
 
