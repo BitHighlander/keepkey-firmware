@@ -551,10 +551,6 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_reset();
   storage_resetUuid();
   storage_commit();
-  /* Loaded clearsign signers must not survive a wipe. */
-#if !BITCOIN_ONLY
-  signed_metadata_clear_signers();
-#endif
 
   entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
 

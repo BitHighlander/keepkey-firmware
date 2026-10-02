@@ -310,10 +310,6 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 2);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
           pi->extra_u8 = instr_data[9];
-          /* Token-2022: possible undisclosed hook/fee. */
-          if (is_token2022) {
-            *force_opaque = true;
-          }
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_APPROVE;
@@ -945,6 +941,7 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   /* ceil(price * limit / 1e6), every step overflow-checked; false (never
    * saturate) if the result exceeds UINT64_MAX. */
   const uint64_t D = 1000000u;
+  if (limit > SOL_MAX_COMPUTE_UNITS) limit = SOL_MAX_COMPUTE_UNITS;
   uint64_t q = price / D;
   uint64_t r = price % D;
   if (limit != 0 && r > UINT64_MAX / limit) {
@@ -1139,6 +1136,25 @@ bool solana_token_info_trusted(const SolanaTokenInfo* ti) {
   return signed_metadata_verify_attestation((uint8_t)ti->signer_key_id, blob, n,
                                             ti->signature.bytes,
                                             ti->signature.size);
+}
+
+/* Never the bare SolanaSignTx.token_info.symbol: matching the host's decimals
+ * to the signed ones authenticates the exponent, not the identity -- an
+ * attacker picks a mint whose decimals already match and the label rides
+ * through as fact, and a caveat cannot help when the host writes the 12
+ * characters beside it. Unattested => base units beside the full mint. */
+const char* solana_displaySymbol(const SolanaTokenInfo* ti,
+                                 const SolanaKnownToken* known,
+                                 uint8_t signed_decimals) {
+  if (known) return known->symbol;
+  if (!solana_token_info_trusted(ti) || ti->decimals != signed_decimals) {
+    return NULL;
+  }
+  /* Printable ASCII only, so a signed label cannot push the mint off-view. */
+  for (const char* p = ti->symbol; *p; p++) {
+    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return NULL;
+  }
+  return ti->symbol;
 }
 
 /* ------------------------------------------------------------------ */

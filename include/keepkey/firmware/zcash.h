@@ -100,9 +100,6 @@ typedef struct {
 ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
     const ZcashPCZTSigningRequestMeta* meta);
 
-bool zcash_pczt_signing_request_is_clear(
-    const ZcashPCZTSigningRequestMeta* meta);
-
 /* ZIP-32 Orchard keys at m_orchard/32'/133'/account'. account must be
  * < 0x80000000; returns false (keys untouched) on NULL args or bad account. */
 bool zcash_derive_orchard_keys(const uint8_t* seed, uint32_t seed_len,
@@ -141,6 +138,9 @@ bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id);
 bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
                                             const uint8_t* digest);
 
+/* True when script has the P2PKH shape (OP_DUP OP_HASH160 <20> ...). */
+bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size);
+
 /* True when script is P2PKH paying HASH160(public_key). */
 bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,
                                        size_t script_size,
@@ -178,23 +178,16 @@ bool zcash_orchard_receiver_to_unified_address(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], const char* hrp,
     char* address_out, size_t address_out_len);
 
-/* cmx = Extract_P(NoteCommit(g_d, pk_d, v, rho, psi)); rho is the action
- * nullifier. Binds displayed receiver/value to the action before signing. */
-bool zcash_orchard_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
-
 /** ZIP-2005 V3 note commitment used by the Ironwood pool. */
-bool zcash_ironwood_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]);
-
 bool zcash_ironwood_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
     ZcashOrchardProgressCallback progress, void* progress_context);
 
-/* Callback exposes only the public Sinsemilla word index and count. */
+/* cmx = Extract_P(NoteCommit(g_d, pk_d, v, rho, psi)); rho is the action
+ * nullifier. Binds displayed receiver/value to the action before signing.
+ * Callback (may be NULL) exposes only the public Sinsemilla word index and
+ * count. */
 bool zcash_orchard_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],

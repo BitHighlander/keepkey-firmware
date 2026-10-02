@@ -18,13 +18,6 @@
 typedef struct _ThorchainSignTx ThorchainSignTx;
 typedef struct _ThorchainMsgDeposit ThorchainMsgDeposit;
 
-// Returns true iff denom contains only chars safe in JSON without escaping.
-// Valid: [a-z0-9./\-]. Rejects empty string, quotes, backslashes, whitespace.
-bool thorchain_isValidDenom(const char* denom);
-
-// Deposit asset grammar: as above but uppercase alpha also allowed.
-bool thorchain_isValidAsset(const char* asset);
-
 bool thorchain_signTxInit(const HDNode* _node, const ThorchainSignTx* _msg);
 bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
                                    const char* to_address, const char* denom);
