@@ -171,9 +171,6 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
               _("clearsign metadata key_id out of range"));
 
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for clearsign metadata"));
-
   RESP_INIT(EthereumMetadataAck);
 
   MetadataClassification result = signed_metadata_process(
