@@ -3838,11 +3838,12 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
   auto has = [&](const std::string& line) {
     return std::find(bodies.begin(), bodies.end(), line) != bodies.end();
   };
-  EXPECT_TRUE(has("SoltoshiDICE|Join blackjack seat 1 for 1000 SDICE; key "
-                  "BqtZ...cGjX may bet 1000 SDICE each, 1000 SDICE total, "
-                  "for 1 h"))
+  // alpha prints token amounts at full precision.
+  EXPECT_TRUE(has("SoltoshiDICE|Join blackjack seat 1 for 1000.000000 SDICE; "
+                  "key BqtZ...cGjX may bet 1000.000000 SDICE each, "
+                  "1000.000000 SDICE total, for 1 h"))
       << bodies[0];
-  EXPECT_TRUE(has("Limits|Each use at most\n1000 SDICE\n"
+  EXPECT_TRUE(has("Limits|Each use at most\n1000.000000 SDICE\n"
                   "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
   // Not in the sentence, so on details screens; the short key in full.
   EXPECT_TRUE(has("Round|86"));
