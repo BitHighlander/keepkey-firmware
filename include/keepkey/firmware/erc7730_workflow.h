@@ -141,7 +141,7 @@ typedef struct {
   bool outer_identity_confirmed;
   bool outer_intent_confirmed;
   bool resuming; /* the outer program restarts after its inner call */
-  /* Inner definition refused: the embedded field takes the blind path. */
+  /* Inner definition refused: the embedded field is refused. */
   bool inner_refused;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;

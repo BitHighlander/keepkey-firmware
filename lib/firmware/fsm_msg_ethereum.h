@@ -733,7 +733,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   }
   if (field->kind == 13) {
     /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
-     * words; otherwise it is shown blind (7.15). */
+     * words; otherwise it is refused. */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
                            !workflow->inner_refused && field->has_address &&
                            field->inner_selector_length == 4 &&
@@ -1295,7 +1295,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     if (none) {
-      show_erc7730_embedded(workflow); /* no inner definition: blind */
+      show_erc7730_embedded(workflow); /* no inner definition: refused */
       return;
     }
     if (!complete) {
