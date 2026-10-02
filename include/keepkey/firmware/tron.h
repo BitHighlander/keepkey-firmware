@@ -37,14 +37,8 @@
 // Raw 21-byte TRON address: 0x41 prefix + 20-byte keccak hash tail
 #define TRON_RAW_ADDRESS_SIZE 21
 
-/**
- * On-device classification of a TronSignTx raw_data payload.
- *
- * The device signs sha256(raw_data), so anything shown to the user MUST be
- * decoded from raw_data itself — never from side-channel proto fields.
- * Unless every field of the payload is understood, the transaction is
- * TRON_TX_UNVERIFIED and only the blind-sign path may be offered.
- */
+/* The device signs sha256(raw_data): display MUST be decoded from raw_data,
+ * never side-channel fields. Anything not fully understood is UNVERIFIED. */
 typedef enum {
   TRON_TX_UNVERIFIED = 0,  // not fully understood — blind-sign only
   TRON_TX_TRANSFER,        // single TransferContract (native TRX send)
@@ -65,24 +59,14 @@ typedef struct {
   uint16_t memo_len;
 } TronParsedTx;
 
-/**
- * Parse a TRON raw_data protobuf for on-device display.
- * Fail-closed: any unrecognized top-level field, contract type, extra
- * contract, or unexpected parameter field yields TRON_TX_UNVERIFIED.
- * out->memo points into raw — valid only while raw is alive.
- */
+/* Fail-closed: any unrecognized field or contract yields UNVERIFIED.
+ * out->memo points into raw. */
 TronTxType tron_parseRawTx(const uint8_t* raw, size_t len, TronParsedTx* out);
 
-/**
- * Base58Check-encode a raw 21-byte TRON address for display.
- */
 bool tron_addressFromBytes(const uint8_t addr[TRON_RAW_ADDRESS_SIZE], char* out,
                            size_t out_len);
 
-/**
- * Format a TRC-20 uint256 amount (big-endian) as a decimal string of token
- * base units. Token decimals are unknown on-device, so no scaling is done.
- */
+/* TRC-20 amount in raw base units (decimals unknown on-device). */
 bool tron_formatTrc20Amount(const uint8_t amount_be[32], char* buf, size_t len);
 
 /**

@@ -151,9 +151,7 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
 
   const MayachainSignTx* sign_tx = mayachain_getMayachainSignTx();
 
-  // Default to "cacao" for backward compatibility; validate all non-default
-  // denoms before any display so untrusted strings never reach the UI or
-  // the signing JSON.
+  // Validated before any display or signing JSON (default "cacao").
   const char* coin_denom =
       (msg->has_send && msg->send.has_denom && msg->send.denom[0])
           ? msg->send.denom
