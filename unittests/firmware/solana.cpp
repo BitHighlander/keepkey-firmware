@@ -11,6 +11,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -3454,4 +3455,51 @@ TEST(Solana, IntentTemplateRejectsBadRolesCoverageAndPlaceholders) {
                                 {{SOL_SCHEMA_ARG_U8, "Seat", -1, 1}}, "Seat {0}")));
   EXPECT_TRUE(parses(v3_schema(kPumpAmmProgram, disc, "P", "I",
                                {{SOL_SCHEMA_ARG_U8, "Seat", -1, 0}}, "Seat {0}")));
+}
+
+TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
+  const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx), SOL_TX_REVIEW_OPAQUE);
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  SolanaInstrSchema v2;
+  ASSERT_TRUE(solana_parseInstrSchema(msg.schema_payload.bytes,
+                                      msg.schema_payload.size, &v2));
+  const std::vector<uint8_t> blob = v3_schema(
+      v2.program_id, {0x51}, "SoltoshiDICE", "Blackjack join",
+      {{SOL_SCHEMA_ARG_U64, "Round", -1, 0},
+       {SOL_SCHEMA_ARG_U64, "Revision", -1, 0},
+       {SOL_SCHEMA_ARG_U8, "Seat", -1, 0},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, SOL_ROLE_SPEND_EXACT},
+       {SOL_SCHEMA_ARG_PUBKEY, "Session key", -1, 0},
+       {SOL_SCHEMA_ARG_DURATION, "Expires in", -1, 0},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, SOL_ROLE_SPEND_MAX},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, SOL_ROLE_CAP}},
+      "Join blackjack seat {2} for {3}; key {4} may bet {7} each, {6} total, "
+      "for {5}");
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  std::vector<Screen> got;
+  ASSERT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
+                                       "KeepKey Vault", "a9531b9d", true,
+                                       collect, &got));
+  std::vector<std::string> bodies;
+  for (const Screen& sc : got) bodies.push_back(sc.title + "|" + sc.body);
+  auto has = [&](const std::string& line) {
+    return std::find(bodies.begin(), bodies.end(), line) != bodies.end();
+  };
+  EXPECT_TRUE(has("SoltoshiDICE|Join blackjack seat 1 for 1000 SDICE; key "
+                  "BqtZ...cGjX may bet 1000 SDICE each, 1000 SDICE total, "
+                  "for 1 h"))
+      << bodies[0];
+  EXPECT_TRUE(has("Limits|Each use at most\n1000 SDICE\n"
+                  "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
+  // Not in the sentence, so on details screens; the short key in full.
+  EXPECT_TRUE(has("Round|86"));
+  EXPECT_TRUE(has("Revision|980"));
+  EXPECT_TRUE(has("Session key|BqtZ8PRQywD9Z5xXeB5112wtPG3xtj7TqF56hroicGjX"));
+  EXPECT_FALSE(has("Seat|1"));  // stated in full in the sentence
 }

@@ -220,7 +220,7 @@ typedef struct {
  *   n_args         1   0..4 (v1), 0..SOL_SCHEMA_MAX_ARGS (v2)
  *     per arg:     type(1) label_len(1) label
  *     TOKEN_AMOUNT (v2) appends mint_account(1)
- *     v3 appends role(1): amount types 1..4, all others 0
+ *     v3 appends role(1): amount types 1..5, all others 0
  *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
  *     per account: index(1) label_len(1) label
  *   v3: template   1 + 0..SOL_SCHEMA_TEMPLATE_MAX (0 = none); "{n}" is arg n,
@@ -244,6 +244,7 @@ typedef enum {
   SOL_ROLE_RECEIVE_MIN = 2,
   SOL_ROLE_SPEND_EXACT = 3,
   SOL_ROLE_RECEIVE_EXACT = 4,
+  SOL_ROLE_CAP = 5, /* a per-use maximum (e.g. each bet), not an outflow */
 } SolanaSchemaRole;
 
 typedef enum {

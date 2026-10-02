@@ -956,7 +956,7 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
       if (cur >= end) return false;
       const uint8_t role = *cur++;
       const bool amount = solana_schemaArgIsAmount(out->args[i].type);
-      if (amount ? (role < SOL_ROLE_SPEND_MAX || role > SOL_ROLE_RECEIVE_EXACT)
+      if (amount ? (role < SOL_ROLE_SPEND_MAX || role > SOL_ROLE_CAP)
                  : role != SOL_ROLE_NONE) {
         return false;
       }
@@ -1882,6 +1882,7 @@ static const char* review_role_text(uint8_t role) {
     case SOL_ROLE_RECEIVE_MIN: return "You receive at least";
     case SOL_ROLE_SPEND_EXACT: return "You spend";
     case SOL_ROLE_RECEIVE_EXACT: return "You receive";
+    case SOL_ROLE_CAP: return "Each use at most";
     default: return NULL;
   }
 }
@@ -2020,10 +2021,16 @@ static bool review_details(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                            bool certified, SolanaReviewEmit emit, void* ctx) {
   const SolanaParsedInstruction* ix = &tx->instructions[ix_index];
   char body[REVIEW_BODY];
+  /* Nothing is hidden: a value the sentence does not state, or states only
+   * in short form (an address), gets its own screen. */
+  uint8_t in_sentence[SOL_SCHEMA_MAX_ARGS] = {0};
+  if (s->intent[0] != '\0' && !intent_walk(s, intent_mark, in_sentence)) {
+    return false;
+  }
   for (uint8_t a = 0; a < s->num_args; a++) {
     const SolanaSchemaArg* arg = &s->args[a];
-    if (s->intent[0] != '\0' && arg->type != SOL_SCHEMA_ARG_PUBKEY) continue;
     if (arg->role != SOL_ROLE_NONE) continue; /* on the limits screen */
+    if (in_sentence[a] && arg->type != SOL_SCHEMA_ARG_PUBKEY) continue;
     if (arg->type == SOL_SCHEMA_ARG_OPAQUE32) {
       if (!emit(ctx, arg->label, NULL, review_arg_data(s, ix, a), 32)) {
         return false;
