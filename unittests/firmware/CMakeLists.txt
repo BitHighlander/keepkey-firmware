@@ -87,8 +87,8 @@ target_link_libraries(firmware-unit
     kkemulator
     kktransport)
 
-# Compile and exercise the dormant Zcash address display without enabling
-# Zcash signing handlers in the foundation firmware.
+# Exercise the Zcash address display (paged address + QR) on its own,
+# independent of KK_ZCASH_PRIVACY and the Zcash signing handlers.
 if(NOT KK_BITCOIN_ONLY)
   add_executable(zcash-display-unit
       zcash_display.cpp zcash_display_confirm_probe.c zcash_display_layout_probe.c
