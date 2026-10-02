@@ -39,7 +39,7 @@
  * chain but mainnet can never match THOR_ROUTER and would fall to the
  * blind-sign gate. Avalanche C-Chain router, verified live against THORChain
  * /inbound_addresses via a Pioneer quote (2026-07). Lowercase, no 0x, to match
- * thor_format_to_addr's output. Same migration caveat as THOR_ROUTER. */
+ * the hex this decoder formats. Same migration caveat as THOR_ROUTER. */
 #define THOR_ROUTER_AVAX "00dc6100103bc402d490aee3f9a5560cbd91f1d4"
 
 /* BNB Smart Chain (56) and Base (8453) routers, from THORChain
@@ -49,9 +49,8 @@
 #define THOR_ROUTER_BSC "b30ec53f98ff5947ede720d32ac2da7e52a5f56b"
 #define THOR_ROUTER_BASE "00dc6100103bc402d490aee3f9a5560cbd91f1d4"
 
-/* Maya Protocol ETH router v4 (mainnet), verified on Etherscan
- * (0xe3985e6b61b814f7cdb188766562ba71b446b46d). The prior pin
- * d89dce57.. has never held contract code on mainnet. */
+/* Maya Protocol deposits through its OWN router, with the same calldata shape,
+ * and this decoder narrates both. Same migration caveat as THOR_ROUTER. */
 #define MAYA_ROUTER "e3985e6b61b814f7cdb188766562ba71b446b46d"
 /* Maya's Arbitrum One (42161) router, from Mayanode /inbound_addresses
  * (2026-10-07), verified source checked: same deposit ABI and native-value

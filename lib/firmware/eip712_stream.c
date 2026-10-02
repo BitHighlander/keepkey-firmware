@@ -66,13 +66,8 @@ bool eip712_identifier_ok(const char* name) {
   return true;
 }
 
-/* ── encodeType spelling ─────────────────────────────────────────────
- *
- * The type string is hashed into typeHash, so getting a character wrong here
- * is not a display bug -- it silently produces a signature over a different
- * document. Spellings are canonical: "uint256", never "uint0256"; "bytes"
- * for the dynamic form, "bytes32" for the fixed one.
- */
+/* encodeType spelling. Hashed into typeHash: a wrong character signs a
+ * different document. Canonical only ("uint256", "bytes", "bytes32"). */
 bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
   if (!field || !out || out_len == 0) return false;
   if (field->array_levels_count >
@@ -85,9 +80,7 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
   switch (field->data_type) {
     case EthereumTypedDataStructAck_EthereumDataType_UINT:
     case EthereumTypedDataStructAck_EthereumDataType_INT: {
-      /* size is carried in BYTES on the wire and spelled in BITS. Anything
-       * outside 1..32 bytes has no canonical spelling, so refuse rather than
-       * invent one. */
+      /* size is BYTES on the wire, spelled in BITS; only 1..32 is canonical. */
       if (!field->has_size || field->size < 1 || field->size > 32) return false;
       const char* stem =
           field->data_type == EthereumTypedDataStructAck_EthereumDataType_UINT
@@ -122,9 +115,7 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
       base = field->struct_name;
       break;
     default:
-      /* ARRAY is reserved on this wire: dimensions live in array_levels, and a
-       * field whose data_type IS an array means the host is speaking a
-       * protocol we did not agree to. */
+      /* ARRAY is reserved: dimensions live in array_levels. */
       return false;
   }
 
@@ -150,12 +141,8 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
   return true;
 }
 
-/* ── encodeData ──────────────────────────────────────────────────────
- *
- * Every member encodes to exactly 32 bytes. Atomics pad, dynamics hash.
- * Structs and arrays never reach here: the walker folds them first and hands
- * the parent their 32-byte digest.
- */
+/* encodeData: every member is 32 bytes; atomics pad, dynamics hash. Structs
+ * and arrays are folded by the walker before reaching here. */
 static void write_rightpad32(const uint8_t* value, uint16_t value_len,
                              uint8_t out[32]) {
   memset(out, 0, 32);
@@ -164,8 +151,7 @@ static void write_rightpad32(const uint8_t* value, uint16_t value_len,
 
 static void write_leftpad32(const uint8_t* value, uint16_t value_len,
                             bool is_signed, uint8_t out[32]) {
-  /* Sign-extend a negative intN to 256 bits. An unsigned value, and a
-   * zero-length one, extend with zeroes. */
+  /* Sign-extend a negative intN; everything else zero-extends. */
   if (is_signed && value_len > 0 && (value[0] & 0x80)) {
     memset(out, 0xFF, 32);
   } else {
@@ -181,8 +167,7 @@ bool eip712_encode_leaf(const Eip712FieldType* field, const uint8_t* value,
       field->data_type != EthereumTypedDataStructAck_EthereumDataType_STRING &&
       !(field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
         !field->has_size)) {
-    /* Only the dynamic forms may exceed a word; everything else would be
-     * silently truncated by the padders. */
+    /* Only dynamic forms may exceed a word; padders would truncate. */
     return false;
   }
   if (value_len > 0 && !value) return false;
@@ -211,18 +196,12 @@ bool eip712_encode_leaf(const Eip712FieldType* field, const uint8_t* value,
   }
 }
 
-/* ── leaf validation ─────────────────────────────────────────────────
- *
- * Runs before encoding AND before display, so nothing unvalidated ever
- * reaches the screen or the hash.
- */
+/* Leaf validation: runs before display AND encoding. */
 static bool is_valid_utf8_printable(const uint8_t* s, uint16_t len) {
   uint16_t i = 0;
   while (i < len) {
     uint8_t c = s[i];
-    /* Control bytes are rejected outright. The renderer's injectivity -- that
-     * two different strings cannot draw the same screen -- is what the user's
-     * consent rests on, and a bare newline or NUL breaks it. */
+    /* Control bytes break display injectivity (two strings, one screen). */
     if (c < 0x20 || c == 0x7F) return false;
     uint8_t extra;
     uint32_t cp;
@@ -247,8 +226,7 @@ static bool is_valid_utf8_printable(const uint8_t* s, uint16_t len) {
       if ((cc & 0xC0) != 0x80) return false;
       cp = (cp << 6) | (cc & 0x3F);
     }
-    /* Overlong encodings and surrogates are two spellings of one character,
-     * which would break injectivity the same way a control byte does. */
+    /* Overlongs and surrogates also break injectivity. */
     if (extra == 1 && cp < 0x80) return false;
     if (extra == 2 && cp < 0x800) return false;
     if (extra == 3 && cp < 0x10000) return false;
@@ -272,21 +250,16 @@ bool eip712_validate_leaf(const Eip712FieldType* field, const uint8_t* value,
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
       return is_valid_utf8_printable(value, value_len);
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
-      /* bytesN is exactly N, N in [1,32] (bytes0 doesn't exist; >32 doesn't
-       * fit a word) -- same bound UINT/INT already enforce below. Without
-       * it, an out-of-spec size only failed later inside eip712_type_name(),
-       * whose failure gets reported to the host as a user Cancel instead of
-       * a validation error. Dynamic bytes (no declared size) is any length
-       * we can hold. */
+      /* bytesN is exactly N, N in [1,32], rejected here as a validation error
+       * rather than later as a Cancel. Dynamic bytes: any length we hold. */
       if (field->has_size)
         return field->size >= 1 && field->size <= 32 &&
                value_len == field->size;
       return value_len <= EIP712_MAX_LEAF;
     case EthereumTypedDataStructAck_EthereumDataType_UINT:
     case EthereumTypedDataStructAck_EthereumDataType_INT:
-      /* The host sends the declared width, big endian, no padding games. A
-       * short value would left-pad into a different number than the host
-       * meant, and a long one would not fit the word. */
+      /* Exactly the declared width, big endian: a short value would pad into
+       * a different number. */
       if (!field->has_size || field->size < 1 || field->size > 32) return false;
       return value_len == field->size;
     default:
@@ -348,22 +321,9 @@ bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
   return true;
 }
 
-/* ── encodeType ──────────────────────────────────────────────────────
- *
- *   encodeType(S) = seg(S) || seg(D1) || seg(D2) || ...
- *
- * where D1..Dn are every struct S transitively references, SORTED BY NAME,
- * and seg(T) = "T(type1 name1,type2 name2,...)".
- *
- * The sort is what eip712.c never did. It appended referenced definitions in
- * discovery order -- there is no sort call anywhere in that file -- so a
- * document naming two structs out of alphabetical order hashed a type string
- * no compliant verifier reproduces. The device would have been internally
- * consistent and still signing something nobody else agrees the document says.
- *
- * Nothing is stored: each segment is streamed into a keccak context as it is
- * fetched, so only the closure's NAMES are held.
- */
+/* encodeType(S) = seg(S) || seg(D1) || ... with D1..Dn every struct S
+ * transitively references, SORTED BY NAME (unsorted hashes a type string no
+ * verifier reproduces). Segments stream into keccak; only names are held. */
 
 typedef struct {
   char names[EIP712_MAX_STRUCTS][EIP712_MAX_STRUCT_NAME];
@@ -387,10 +347,7 @@ static bool closure_add(Eip712Closure* c, const char* name) {
   return true;
 }
 
-/* Insertion sort names[start..count) by name. n <= EIP712_MAX_STRUCTS, so this
- * is cheaper and far easier to audit than pulling in qsort -- and one copy of
- * the ordering rule means the walk and the offline closure cannot disagree
- * about it. */
+/* Insertion sort names[start..count); the one ordering rule for both paths. */
 static void sort_closure_tail(Eip712Closure* c, uint8_t start) {
   for (uint8_t i = start + 1; i < c->count; i++) {
     char key[EIP712_MAX_STRUCT_NAME];
@@ -404,10 +361,8 @@ static void sort_closure_tail(Eip712Closure* c, uint8_t start) {
   }
 }
 
-/* Collect every struct `name` transitively references, excluding itself.
- * Iterative: the worklist is the closure itself, walked as it grows, so a
- * cyclical schema terminates on the already-present check rather than
- * recursing. EIP-712 leaves cyclical data undefined; we simply do not loop. */
+/* Every struct `name` transitively references, excluding itself. Iterative
+ * over the growing closure, so a cyclical schema terminates. */
 static bool closure_collect(const char* name, Eip712StructLookup lookup,
                             void* ctx, Eip712Closure* out) {
   Eip712Closure seen;
@@ -423,7 +378,6 @@ static bool closure_collect(const char* name, Eip712StructLookup lookup,
         continue;
       if (!ft->has_struct_name) return false;
       if (!closure_add(&seen, ft->struct_name)) return false;
-      /* `seen` grows while we iterate it, which is the traversal. */
     }
   }
 
@@ -491,24 +445,12 @@ bool eip712_type_hash(const char* name, Eip712StructLookup lookup, void* ctx,
   return true;
 }
 
-/* ── Session state ───────────────────────────────────────────────────
- *
- * Every byte here is .bss, and .bss is the only thing that counts against the
- * linker gap -- that gap IS the stack, so transients on it are free.
- *
- * Measured budget: _stack - _ebss is 17,716 B against a 16,384 B floor, so
- * there are 1,332 B to spend. The sizes in eip712_stream.h are chosen to fit
- * with margin, not chosen first and hoped for.
- *
- * The single SHA3_CTX is shared. Only one hash is ever in progress: either an
- * encodeType stream (which spans round trips, so it must live here) or a frame
- * fold (which completes inside one handler and could have been a local). One
- * context serves both because they never overlap.
- */
+/* Session state, all .bss: counts against the stack gap (_stack - _ebss must
+ * stay >= 16,384 B). One SHA3_CTX: encodeType streams and frame folds never
+ * overlap. */
 typedef struct {
   char name[EIP712_MAX_STRUCT_NAME];
-  /* The parent member this frame was pushed for; empty for an array element,
-   * which is labelled by its index. Only used to spell review paths. */
+  /* Parent member name for review paths; empty for array elements. */
   char label[EIP712_MAX_STRUCT_NAME];
   uint8_t slot_base;    /* first slot in the pool belonging to this frame */
   uint8_t member_count; /* members declared by the struct */
@@ -538,8 +480,7 @@ static struct {
   bool definition_accepted;
   Eip712DomainFacts domain_facts;
 
-  /* Root 0 is the domain, root 1 the message; the domain separator is kept
-   * while the message is walked. */
+  /* 0 = domain, 1 = message. */
   uint8_t root;
   uint8_t domain_separator[32];
   bool have_domain_separator;
@@ -553,23 +494,14 @@ static struct {
 
   SHA3_CTX hash;
 
-  /* Only one value request is ever outstanding, so one pending field serves
-   * the whole walk rather than one per frame.
-   *
-   * Stored COMPACTLY rather than as the wire type: a wire FieldType carries
-   * struct_name[80] and array_levels[4], and by the time a value is in flight
-   * the struct name has already been copied into the child frame and arrays
-   * are refused. Keeping the wire type here cost ~100 bytes of .bss that the
-   * linker gate does not have to spare. */
+  /* The one outstanding value request, stored compactly (not the wire
+   * FieldType) to save .bss. */
   uint8_t pending_data_type;
   bool pending_has_size;
   uint32_t pending_size;
   char pending_name[EIP712_MAX_STRUCT_NAME];
 
-  /* typeHash sub-machine */
-  /* True while an array's LENGTH is the value in flight. The frame is not
-   * pushed until the length arrives, so the member_path the device sees still
-   * points AT the array rather than into it. */
+  /* An array's LENGTH is in flight; its frame is not pushed yet. */
   bool want_array_len;
   uint32_t pending_declared_dim;
 
@@ -629,23 +561,11 @@ Eip712Wait eip712_stream_waiting(void) {
 
 void eip712_stream_abort(void) { memzero(&e712, sizeof(e712)); }
 
-/* ── Display ─────────────────────────────────────────────────────────
- *
- * One review per leaf, drawn from the SAME bytes that are about to be
- * absorbed. The title names what is being signed -- the domain, or the
- * primary type -- and the body opens with the member's full path from that
- * root, so from.wallet, to.wallet and the elements of an array never draw
- * the same screen. Member names are the same text hashed into encodeType, so
- * the label and the commitment cannot disagree either.
- *
- * Integers render in decimal (signed for intN), addresses with their EIP-55
- * checksum, bytes as 0x hex and strings through erc7730_format_text(), which
- * escapes every byte the OLED font or pager cannot show one-to-one.
- *
- * confirm() refuses a body longer than BODY_CHAR_MAX rather than truncate it,
- * so a value that does not fit one body is shown in numbered parts, each a
- * required confirmation of its own.
- */
+/* Display: one review per leaf, from the SAME bytes about to be absorbed. The
+ * body opens with the member's full path (the hashed names), so distinct
+ * leaves never draw the same screen. Strings go through
+ * erc7730_format_text(). An over-long value is shown in numbered parts, each
+ * a required confirmation; confirm() never truncates. */
 #define EIP712_BODY_MAX (BODY_CHAR_MAX - 1)
 
 typedef enum {
@@ -694,10 +614,8 @@ static bool render_part(Eip712Render how, const uint8_t* value, size_t len,
     *consumed = n;
     return true;
   }
-  /* An escaped prefix is never shorter than its source, and one byte escapes
-   * to at most four characters, so a budget of four always makes progress.
-   * Longer prefixes are not monotonic in length (an edge space escapes), so
-   * this finds a fitting prefix, not necessarily the longest one. */
+  /* One byte escapes to <= 4 chars, so budget 4 always progresses. Finds a
+   * fitting prefix, not necessarily the longest (not monotonic). */
   if (budget < 4) return false;
   size_t lo = 1, hi = left < budget ? left : budget;
   while (lo < hi) {
@@ -834,9 +752,7 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                        (const uint8_t*)text, strlen(text));
 }
 
-/* Unlimited token authority is refused in typed data exactly as it is in an
- * EthereumSignTx approve(): EIP-2612 and DAI permits, and Permit2's
- * allowance and transfer permits. */
+/* Unlimited permits (EIP-2612, DAI, Permit2) are refused, as in approve(). */
 static bool is_unlimited_permit(const Eip712FieldType* field,
                                 const uint8_t* value, uint16_t len) {
   if (e712.root != 1) return false;
@@ -857,12 +773,8 @@ static bool is_unlimited_permit(const Eip712FieldType* field,
   return len > 0;
 }
 
-/* ── The walk ────────────────────────────────────────────────────────
- *
- * Every function below either emits exactly one request and returns, or
- * finishes the signature. Nothing blocks: KeepKey has no full-message
- * request/response primitive, so the machine is resumed by the next Ack.
- */
+/* The walk: each function emits one request and returns, or finishes; the
+ * next Ack resumes the machine. */
 
 static Eip712Next next_step;
 
@@ -884,8 +796,7 @@ static void request_struct(const char* name) {
   e712.waiting = EIP712_WANT_STRUCT;
 }
 
-/* The path is the cursor, and it is rebuilt from the frame stack rather than
- * maintained alongside it -- one source of truth, so they cannot drift. */
+/* The path is rebuilt from the frame stack, so they cannot drift. */
 static void request_value(void) {
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_VALUE;
@@ -897,8 +808,7 @@ static void request_value(void) {
   e712.waiting = EIP712_WANT_VALUE;
 }
 
-/* Start computing typeHash for the top frame's struct. A struct that appears
- * twice is hashed twice -- round trips are cheap here and .bss is not. */
+/* typeHash for the top frame's struct; recomputed per use to save .bss. */
 static void begin_type_hash(void) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   memzero(&e712.closure, sizeof(e712.closure));
@@ -911,11 +821,7 @@ static void begin_type_hash(void) {
   request_struct(f->name);
 }
 
-/* Fold a completed container into 32 bytes and hand it to its parent.
- *
- *   struct: keccak(typeHash || enc(m1) || ... || enc(mn))
- *   array:  keccak(enc(e1) || ... || enc(en))   -- no typeHash, per EIP-712
- */
+/* struct: keccak(typeHash || enc(m1..mn)); array: keccak(enc(e1..en)). */
 static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   keccak_256_Init(&e712.hash);
@@ -966,9 +872,7 @@ static void complete_frame(void) {
     return;
   }
 
-  /* Both halves are in hand. The FSM derives the key, shows the final signing
-   * screen and signs: the response buffer and the node live there, and keeping
-   * key material out of this translation unit keeps it unit-testable. */
+  /* The FSM derives the key and signs; no key material in this unit. */
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_DONE;
   memcpy(next_step.domain_separator, e712.domain_separator, 32);
@@ -992,11 +896,8 @@ static void complete_frame(void) {
   }
 }
 
-/* Point the machine at element member_index of the array frame on top.
- *
- * An element is one of three things, and which one is fixed by the TYPE rather
- * than by anything the host sends alongside the value: another array while
- * dimensions remain, a struct if the leaf type is one, otherwise a leaf. */
+/* An element's kind (array, struct, leaf) is fixed by the TYPE, never by the
+ * host. */
 static void drive_array_element(void) {
   Eip712Frame* arr = &e712.stack[e712.depth - 1];
 
@@ -1083,8 +984,7 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
     fail("EIP-712 primary type missing or too long");
     return false;
   }
-  /* MetaMask v3 hashes arrays of structs differently from v4. We implement v4
-   * only, and refusing v3 is better than signing it under v4 rules. */
+  /* v4 only: never sign a v3 document under v4 rules. */
   if (msg->has_metamask_v4_compat && !msg->metamask_v4_compat) {
     fail("Only MetaMask v4 array hashing is supported");
     return false;
@@ -1141,10 +1041,8 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
     return false;
   }
 
-  /* Names are both encodeType bytes and screen titles. Restrict them to the
-   * canonical ASCII identifier subset that fits pending_name exactly; a host
-   * cannot smuggle controls, Unicode lookalikes or a truncated label onto the
-   * review screen. Duplicate members are not a canonical struct definition. */
+  /* Names are hashed and displayed: ASCII identifiers only (no controls,
+   * lookalikes or truncation); no duplicate members. */
   for (size_t i = 0; i < ack->members_count; i++) {
     const char* member_name = ack->members[i].name;
     char type_name[EIP712_MAX_TYPE_NAME];
@@ -1193,9 +1091,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
 
   switch (e712.phase) {
     case PH_DISCOVER: {
-      /* Note every struct this one references, then move to the next unvisited
-       * name. The closure grows while we walk it, which IS the traversal, and
-       * the already-present check is what terminates a cyclical schema. */
+      /* Grow the closure; the already-present check terminates cycles. */
       for (size_t m = 0; m < ack->members_count; m++) {
         const Eip712FieldType* ft = &ack->members[m].type;
         if (ft->data_type != EthereumTypedDataStructAck_EthereumDataType_STRUCT)
@@ -1211,8 +1107,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         request_struct(e712.closure.names[e712.closure_index]);
         return true;
       }
-      /* Discovery done. Sort everything after the primary segment, which
-       * always leads. This is the ordering eip712.c never applied. */
+      /* Sort everything after the primary segment, which leads. */
       sort_closure_tail(&e712.closure, 1);
       e712.closure_index = 0;
       e712.phase = PH_STREAM;
@@ -1274,10 +1169,8 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
           fail("EIP-712 array nests too deeply for this device");
           return false;
         }
-        /* Stage the element descriptor in the frame we are ABOUT to push, then
-         * ask for the array's length. The frame is not pushed yet, so the
-         * member_path the device sends still points AT the array rather than
-         * into it -- which is exactly the path whose value is the length. */
+        /* Stage the frame without pushing it, so member_path points AT the
+         * array while its length is requested. */
         Eip712Frame* arr = &e712.stack[e712.depth];
         memzero(arr, sizeof(*arr));
         arr->is_array = true;
@@ -1347,9 +1240,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     uint16_t len = (uint16_t)((ack->value.bytes[0] << 8) | ack->value.bytes[1]);
     Eip712Frame* arr = &e712.stack[e712.depth];
 
-    /* A FIXED dimension is part of the type string and therefore of typeHash.
-     * Accepting a different count would sign a document whose type declares
-     * another, and nothing downstream could notice. */
+    /* A fixed dimension is in typeHash; any other count signs another type. */
     if (e712.pending_declared_dim != 0 && len != e712.pending_declared_dim) {
       fail("EIP-712 array length does not match its declared size");
       return false;
@@ -1382,9 +1273,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   const uint8_t* bytes = ack->value.bytes;
   uint16_t len = ack->value.size;
 
-  /* Validate BEFORE anything is drawn, so no unvalidated byte reaches the
-   * screen, and before anything is absorbed, so nothing unshown reaches the
-   * hash. */
+  /* Validate before drawing and before absorbing. */
   if (!eip712_validate_leaf(field, bytes, len)) {
     fail("EIP-712 value does not match its declared type");
     return false;
@@ -1401,9 +1290,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     return false;
   }
 
-  /* Display and absorb from the SAME buffer in the same call. This is the
-   * property the old JSON parser could not offer and the reason it was
-   * withdrawn: there is no second read that could return something else. */
+  /* Display and absorb from the SAME buffer: no second read can differ. */
   const Eip712LeafResult shown = eip712_confirm_leaf(field, bytes, len);
   if (shown == EIP712_LEAF_INVALID) {
     fail("EIP-712 value cannot be displayed");
