@@ -21,35 +21,20 @@
 #define ERC7730_DELEGATE_OFF_SCOPE 2u
 #define ERC7730_DELEGATE_OFF_ALIAS 10u
 #define ERC7730_DELEGATE_OFF_PUBKEY 42u
-/* Limits shared by the preload verifier and the replay readers. The verifier
- * enforces the readers' limits so a definition that preloads cannot fail a
- * later replay. */
+/* Enforced at preload so a preloaded definition cannot fail replay. */
 #define ERC7730_PROGRAM_MAX_DISPLAY_INSTRUCTIONS 64u
 #define ERC7730_LITERAL_MAX_LENGTH 258u
 
-/* Revocation lever. The device keeps no revocation state and never writes
- * flash for it: a firmware update that raises this floor refuses every
- * definition whose signed issuance epoch is below it. Enforced facts are
- * exactly: issuance_epoch >= ERC7730_MIN_ISSUANCE_EPOCH and
- * issuance_epoch >= revocation_epoch (both from the signed header). The
- * header's revocation_epoch and provider_id are otherwise NOT enforced; they
- * are retained in Erc7730CatalogIdentity for hosts and audit only. The floor
- * is 0 because the reference compiler (python-keepkey erc7730_compiler)
- * emits issuance epoch 0 by default. */
+/* Revocation floor, raised only by firmware update (no flash state).
+ * Enforced: issuance_epoch >= this AND >= revocation_epoch. provider_id and
+ * revocation_epoch are otherwise NOT enforced (kept for audit only). */
 #define ERC7730_MIN_ISSUANCE_EPOCH 0u
 
-/* Delegate certificate record (139 bytes), as authenticated today:
- *   [0]        version, must be 1 (checked, not signed);
- *   [2..5]     scope, must equal the header chain id (checked, not signed);
- *   [10..41]   alias, format-checked only; the alias shown to the user is the
- *              one the user approved when loading the runtime signer;
- *   [42..74]   delegate pubkey. It must equal a runtime signer the user
- *              loaded, and the envelope signature must verify under it.
- * Bytes 1, 6..9 and 75..138 are ignored. Real certificates carry a root
- * signature and validity data there that this firmware (which embeds no
- * ClearSign root) cannot check, so they carry no meaning on the device. The
- * envelope signature covers only the purpose tag and the Merkle root, which
- * commits to the program; it does not cover any certificate byte. */
+/* Delegate record: [0] version 1, [2..5] scope == chain id (both checked,
+ * NOT signed); [10..41] alias (format only; the user-approved alias is
+ * shown); [42..74] pubkey, must equal a loaded runtime signer. All other
+ * bytes are ignored (no ClearSign root to check them). The envelope signature
+ * covers only the purpose tag and Merkle root, no certificate byte. */
 
 typedef enum {
   ERC7730_DEFINITION_CALLDATA = 1,
@@ -67,9 +52,7 @@ typedef enum {
   ERC7730_CATALOG_UNTRUSTED,
 } Erc7730CatalogResult;
 
-/* Authenticated lookup facts retained after a streamed envelope is accepted.
- * No pointer refers into a transport message and no descriptor bytes survive.
- */
+/* Authenticated facts; no pointer into a transport message. */
 typedef struct {
   uint8_t definition_id[32];
   uint64_t chain_id;
@@ -86,8 +69,7 @@ typedef struct {
   bool reads_value; /* a path reads @.value */
 } Erc7730CatalogIdentity;
 
-/* Incremental verifier. Its size is bounded independently of descriptor size;
- * callers may place it in a workflow union shared with EIP-712 state. */
+/* Incremental verifier; size independent of descriptor size. */
 typedef struct {
   SHA256_CTX envelope_hash;
   SHA256_CTX leaf_hash;
@@ -186,8 +168,7 @@ Erc7730CatalogResult erc7730_catalog_feed(Erc7730CatalogVerifier* v,
 
 void erc7730_catalog_abort(Erc7730CatalogVerifier* v);
 
-/* Single offline-preload slot. Verifier storage is overlaid with the accepted
- * identity after authentication, so both never add together in .bss. */
+/* Single preload slot; verifier and identity share storage. */
 Erc7730CatalogResult erc7730_catalog_preload_chunk(
     const uint8_t definition_id[32], uint32_t offset, uint32_t total_length,
     const uint8_t* data, size_t data_len, uint32_t* next_offset,

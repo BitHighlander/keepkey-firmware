@@ -42,8 +42,7 @@ static bool begin_replay(Erc7730Workflow* workflow,
     return false;
   }
   workflow->phase = ERC7730_WORKFLOW_REPLAY;
-  /* A replay loads a whole program; no selection is pending (after an
-   * embedded call's fetch the last one belonged to the other program). */
+  /* A replay loads a whole program: clear any pending selection. */
   workflow->selection_kind = ERC7730_SELECTION_NONE;
   return true;
 }
@@ -564,10 +563,8 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
       !workflow->calldata.capture_enabled || member_path_count < 2 ||
       member_path[0] != 1)
     return false;
-  /* Array lengths are streamed at the array's own path before its elements.
-   * Resolve a signed negative component from that device-validated length,
-   * then compare subsequent element paths using the resulting absolute index.
-   */
+  /* Resolve a negative index from the device-validated array length, which
+   * is streamed before the elements. */
   for (size_t i = 0; i < workflow->calldata.capture_path_count; i++) {
     const int32_t wanted = workflow->calldata.capture_path[i];
     if (wanted >= 0 || member_path_count != i + 1u) continue;
@@ -869,8 +866,7 @@ Erc7730CatalogResult erc7730_workflow_fetch_feed(
   }
   if (chunk->offset == 0 && chunk->total_length == 0 && chunk->data.size == 0 &&
       workflow->fetch_depth == 1) {
-    /* No inner definition. Nothing was streamed, so the outer definition is
-     * still the preloaded one. */
+    /* Nothing streamed: the outer definition is still loaded. */
     *none = true;
     workflow->phase = ERC7730_WORKFLOW_READY;
     return ERC7730_CATALOG_COMPLETE;
@@ -934,10 +930,6 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
     if (bound) {
       workflow->inner_offset = workflow->field.inner_offset;
       workflow->inner_length = workflow->field.inner_length;
-      /* ERC-7730: inside the inner call @.to is the callee, @.value the value
-       * it moves (without one, an inner definition that shows it was refused
-       * in erc7730_workflow_fetch_feed) and @.from whose authority it runs
-       * with (none: the outer contract). */
       memcpy(workflow->inner_to, workflow->field.address, 20);
       memzero(workflow->inner_value, sizeof(workflow->inner_value));
       if (workflow->field.has_value)

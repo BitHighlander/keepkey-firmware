@@ -186,10 +186,8 @@ static bool validate_abi_node(Erc7730CatalogVerifier* v, const uint8_t* node) {
   } else if (first_child != 0 || child_count != 0 || array_length != 0) {
     return false;
   }
-  /* Keep what the path walk needs. The delegate record arrives only after the
-   * program and no section from the ABI up to the bindings uses cert[], so it
-   * holds the table: kind (10 = dynamic array) << 12 | first_child << 6 |
-   * (child count or fixed array length) - 1. */
+  /* cert[] is unused until the delegate record, so it holds the table:
+   * kind (10 = dyn array) << 12 | first_child << 6 | (count or length) - 1. */
   const uint8_t stored_kind =
       kind == 9 && array_length == UINT16_MAX ? 10 : kind;
   const uint16_t extent = kind == 8   ? child_count
@@ -409,8 +407,7 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
           (v->path_source == 3 && source_index == UINT16_MAX))
         return false;
       if (v->path_source == 2) {
-        /* @.from and @.to are addresses; containers exist for calldata only.
-         */
+        /* @.from and @.to are addresses; containers are calldata only. */
         if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
             v->header[7] != ERC7730_DEFINITION_CALLDATA)
           return false;
@@ -765,10 +762,8 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->formatter_kind == 7 && role == 4 &&
       (index >= 64 || ((v->literal_decimals_mask >> index) & 1u) == 0))
     return false;
-  /* Formatters show values the device decodes from the signed data. Only
-   * raw may show a signer constant, as the signer's own field. An embedded
-   * call's callee, value and authority are read from calldata or a
-   * transaction container, never from a signer constant. */
+  /* Only raw may show a signer constant; an embedded call's callee, value and
+   * authority always come from calldata or a tx container. */
   if (source == 1 && (v->signature[index] & 0x40u) != 0 &&
       ((role == 1 && v->formatter_kind != 1) ||
        (v->formatter_kind == 13 && (role == 15 || role == 17 || role == 18))))
@@ -821,9 +816,7 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
     const uint16_t formatter = opcode == 3 ? a : b;
     if (formatter >= 64) return false;
     const uint8_t value_array = v->cert[formatter];
-    /* An embedded call is its own screens, never a part of the intent. */
-    /* "Intent value" names what the device decodes: never an embedded
-     * call, never a signer constant (which is intent text). */
+    /* Intent value: never an embedded call or a signer constant. */
     if (opcode == 3 && (v->cert[64u + formatter] & 12u) != 0) return false;
     /* A field label is signer text shown with its value. */
     if (opcode == 4 && !short_string(v, a)) return false;
@@ -1516,9 +1509,8 @@ bool erc7730_catalog_matches_calldata(const Erc7730CatalogIdentity* identity,
                                       uint64_t chain_id,
                                       const uint8_t contract_address[20],
                                       const uint8_t selector[4]) {
-  /* A zero header contract would defer to the deployment records, but no
-   * deployment may name the zero address, so such a definition can never
-   * describe a transaction. */
+  /* No deployment may name the zero address, so a zero header contract can
+   * never describe a transaction. */
   static const uint8_t zero_address[20] = {0};
   if (!identity || !contract_address || !selector ||
       identity->kind != ERC7730_DEFINITION_CALLDATA ||
@@ -1529,9 +1521,7 @@ bool erc7730_catalog_matches_calldata(const Erc7730CatalogIdentity* identity,
     return false;
   }
 
-  /* Calldata selectors occupy exactly four bytes in the canonical header.
-   * Recheck the zero tail here so a future parser relaxation cannot make two
-   * distinct lookup keys compare as the same selector. */
+  /* Recheck the zero tail so two distinct keys never compare equal. */
   static const uint8_t zero_tail[28] = {0};
   return memcmp(identity->selector_or_type_hash + 4, zero_tail,
                 sizeof(zero_tail)) == 0;
@@ -1548,13 +1538,8 @@ bool erc7730_catalog_matches_eip712(const Erc7730CatalogIdentity* identity,
       memcmp(identity->selector_or_type_hash, primary_type_hash, 32) != 0)
     return false;
 
-  /* Every accepted EIP-712 definition carries at least one kind-1 deployment
-   * for its chain, and typed data may only use it at a listed deployment. A
-   * missing verifyingContract can therefore never match. A zero header
-   * contract ("domain-wide") defers the exact check to the replay loader,
-   * which requires the verifyingContract to be one of the signed deployments
-   * (erc7730_program_loader_require_deployment). A nonzero header contract
-   * must equal it here as well. */
+  /* EIP-712 needs a verifyingContract at a signed deployment; a zero header
+   * contract defers that check to the loader, a nonzero one must equal it. */
   if (!has_verifying_contract || !verifying_contract) return false;
   static const uint8_t zero_address[20] = {0};
   return memcmp(identity->contract_address, zero_address,
