@@ -24,12 +24,9 @@
 #include "keepkey/board/layout.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
-#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/bip32.h"
-#include "trezor/crypto/curves.h"
-#include "trezor/crypto/memzero.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -57,14 +54,6 @@ static bool abi_address_is_canonical(const uint8_t* word) {
 static bool uint256_fits_u64(const uint8_t* word) {
   for (size_t i = 0; i < 24; i++) {
     if (word[i] != 0) return false;
-  }
-  return true;
-}
-
-static bool tx_value_is_zero(const EthereumSignTx* msg) {
-  if (!msg->has_value && msg->value.size != 0) return false;
-  for (size_t i = 0; i < msg->value.size; i++) {
-    if (msg->value.bytes[i] != 0) return false;
   }
   return true;
 }
@@ -99,7 +88,7 @@ static bool liquidity_shape_is_clear_signable(const EthereumSignTx* msg) {
       !uint256_fits_u64(abi_word(msg, UNISWAP_DEADLINE_WORD)))
     return false;
   if (liquidity_token(msg) == NULL) return false;
-  if (isRemoveLiquidityEthCall(msg) && !tx_value_is_zero(msg)) return false;
+  if (isRemoveLiquidityEthCall(msg) && !ethereum_valueIsZero(msg)) return false;
   return true;
 }
 
@@ -124,39 +113,13 @@ bool zx_formatZxLiquidityPrimaryAmount(const EthereumSignTx* msg, char* out,
   return format_amount(&amount, " LP", 18, out, out_len);
 }
 
-static HDNode* zx_getDerivedNode(const char* curve, const uint32_t* address_n,
-                                 size_t address_n_count,
-                                 uint32_t* fingerprint) {
-  static HDNode CONFIDENTIAL node;
-  /* A prior call may have left a derived key in this long-lived buffer. */
-  memzero(&node, sizeof(node));
-  if (fingerprint) *fingerprint = 0;
-  if (!get_curve_by_name(curve)) return NULL;
-  if (!storage_getRootNode(curve, true, &node)) {
-    memzero(&node, sizeof(node));
-    return NULL;
-  }
-  if (!address_n || address_n_count == 0) return &node;
-  if (hdnode_private_ckd_cached(&node, address_n, address_n_count,
-                                fingerprint) == 0) {
-    memzero(&node, sizeof(node));
-    return NULL;
-  }
-  return &node;
-}
-
-static bool confirmFromAccountMatch(const EthereumSignTx* msg) {
+static bool confirmFromAccountMatch(const EthereumSignTx* msg,
+                                    const HDNode* node) {
   char address_str[43] = {'0', 'x', '\0'};
   uint8_t address_bytes[20];
 
-  HDNode* node = zx_getDerivedNode(SECP256K1_NAME, msg->address_n,
-                                   msg->address_n_count, NULL);
   if (!node) return false;
-  if (!hdnode_get_ethereum_pubkeyhash(node, address_bytes)) {
-    memzero(node, sizeof(*node));
-    return false;
-  }
-  memzero(node, sizeof(*node));
+  if (!hdnode_get_ethereum_pubkeyhash(node, address_bytes)) return false;
 
   const uint8_t* recipient = abi_word(msg, UNISWAP_RECIPIENT_WORD) + 12;
   bool is_self = memcmp(recipient, address_bytes, 20) == 0;
@@ -177,7 +140,8 @@ bool zx_isZxLiquidTx(const EthereumSignTx* msg) {
   return liquidity_shape_is_clear_signable(msg);
 }
 
-bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg) {
+bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg,
+                          const HDNode* node) {
   if (data_total != UNISWAP_LIQUIDITY_CALL_SIZE ||
       !liquidity_shape_is_clear_signable(msg))
     return false;
@@ -200,7 +164,7 @@ bool zx_confirmZxLiquidTx(uint32_t data_total, const EthereumSignTx* msg) {
                "Uniswap Token Min", "%s", amount_text))
     return false;
 
-  if (!confirmFromAccountMatch(msg)) return false;
+  if (!confirmFromAccountMatch(msg, node)) return false;
 
   if (isAddLiquidityEthCall(msg)) {
     bn_from_bytes(msg->value.bytes, msg->value.size, &amount);

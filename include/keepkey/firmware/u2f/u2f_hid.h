@@ -92,7 +92,6 @@ typedef struct __attribute__((packed)) {
 #define CAPFLAG_WINK 0x01  // Device supports WINK command
 #define CAPFLAG_LOCK 0x02  // Device supports LOCK command
 #define CAPFLAG_CBOR 0x04  // Device supports CTAP2 CBOR commands
-#define CAPFLAG_NMSG 0x08  // Device does not support legacy U2FHID_MSG
 
 typedef struct __attribute__((packed)) {
   uint8_t nonce[INIT_NONCE_SIZE];  // Client application nonce

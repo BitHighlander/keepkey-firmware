@@ -21,16 +21,12 @@ class TestAuthenticatorSlotIntegration(common.KeepKeyTest):
         valid = '\x17getAccount:0'
         self.assertEqual(self.client.call(proto.Ping(message=valid)).message,
                          'example:alice')
-        for slot in ('', '256', '0junk', '+0', '-256', ' 0', '0 ', '1:0',
-                     '10', '4294967296', '18446744073709551616'):
-            with self.subTest(slot=slot):
-                response = self.client.call_raw(proto.Ping(
-                    message='\x17getAccount:' + slot))
-                self.assertIsInstance(response, proto.Failure)
-                self.assertEqual(response.code, types.Failure_ActionCancelled)
-                self.assertEqual(response.message, 'Slot request out of range')
-                self.assertEqual(self.client.call(proto.Ping(message=valid)).message,
-                                 'example:alice')
+        # Slot parsing is unit-tested (Authenticator.AccountSlotRejects...);
+        # this pins the wire mapping of a rejected slot.
+        response = self.client.call_raw(proto.Ping(message='\x17getAccount:256'))
+        self.assertIsInstance(response, proto.Failure)
+        self.assertEqual(response.code, types.Failure_ActionCancelled)
+        self.assertEqual(response.message, 'Slot request out of range')
         last = self.client.call_raw(proto.Ping(message='\x17getAccount:9'))
         self.assertIsInstance(last, proto.Failure)
         self.assertEqual(last.message, 'Account not found')

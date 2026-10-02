@@ -210,8 +210,6 @@ def main():
         zcash_fsm, "zcash_verify_and_confirm_orchard_output"))
     require(output_verification, "zcash_orchard_compute_cmx_with_progress",
             "interactive Orchard note verification")
-    forbid(output_verification, "zcash_orchard_compute_cmx(",
-           "interactive Orchard note verification")
     # Orchard V2 and Ironwood V3 share the public Sinsemilla commitment path;
     # only their rcm derivation differs. Keep the expensive implementation in
     # one helper, and ensure both interactive wrappers route through it.

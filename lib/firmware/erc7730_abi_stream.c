@@ -98,7 +98,7 @@ static Erc7730AbiResult make_sequence(Erc7730AbiStream* s,
       return ERC7730_ABI_BAD_PROGRAM;
     if (dynamic) dynamic_count++;
   }
-  if (dynamic_count > ERC7730_ABI_STREAM_MAX_PENDING - s->pending_used)
+  if (dynamic_count > ERC7730_ABI_MAX_PENDING - s->pending_used)
     return ERC7730_ABI_RESOURCE_LIMIT;
   f->first_child = first_child;
   f->child_count = child_count;
@@ -183,42 +183,6 @@ static Erc7730AbiResult prepare(Erc7730AbiStream* s) {
       continue;
     }
     return ERC7730_ABI_OK;
-  }
-  return ERC7730_ABI_OK;
-}
-
-static Erc7730AbiResult consume_utf8(Erc7730AbiStreamFrame* f, uint8_t byte) {
-  if (f->utf8_remaining != 0) {
-    if (byte < f->utf8_lower || byte > f->utf8_upper)
-      return ERC7730_ABI_NON_CANONICAL;
-    f->utf8_lower = 0x80;
-    f->utf8_upper = 0xbf;
-    f->utf8_remaining--;
-    return ERC7730_ABI_OK;
-  }
-  if (byte < 0x80) return ERC7730_ABI_OK;
-  if (byte >= 0xc2 && byte <= 0xdf) {
-    f->utf8_remaining = 1;
-  } else if (byte == 0xe0) {
-    f->utf8_remaining = 2;
-    f->utf8_lower = 0xa0;
-  } else if (byte >= 0xe1 && byte <= 0xec) {
-    f->utf8_remaining = 2;
-  } else if (byte == 0xed) {
-    f->utf8_remaining = 2;
-    f->utf8_upper = 0x9f;
-  } else if (byte >= 0xee && byte <= 0xef) {
-    f->utf8_remaining = 2;
-  } else if (byte == 0xf0) {
-    f->utf8_remaining = 3;
-    f->utf8_lower = 0x90;
-  } else if (byte >= 0xf1 && byte <= 0xf3) {
-    f->utf8_remaining = 3;
-  } else if (byte == 0xf4) {
-    f->utf8_remaining = 3;
-    f->utf8_upper = 0x8f;
-  } else {
-    return ERC7730_ABI_NON_CANONICAL;
   }
   return ERC7730_ABI_OK;
 }
@@ -315,8 +279,9 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
     const size_t used = f->payload_remaining < 32 ? f->payload_remaining : 32;
     if (n->kind == ERC7730_ABI_STRING) {
       for (size_t i = 0; i < used; i++) {
-        r = consume_utf8(f, s->word[i]);
-        if (r != ERC7730_ABI_OK) return r;
+        if (!erc7730_utf8_consume(&f->utf8_remaining, &f->utf8_lower,
+                                  &f->utf8_upper, s->word[i], false))
+          return ERC7730_ABI_NON_CANONICAL;
       }
     }
     if (f->capture && s->capture_locate) {

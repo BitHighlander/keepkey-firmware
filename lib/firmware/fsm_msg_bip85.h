@@ -57,10 +57,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
 
   /* Display scratch shared with the backup flow — see reset.h. Zero the whole
    * set at entry per the sharing contract (a prior user may have aborted). */
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  mnemonic_scratch_wipe();
 
   strlcpy(mnemonic_scratch_tokened, mnemonic_buf, TOKENED_MNEMONIC_BUF);
   memzero(mnemonic_buf, sizeof(mnemonic_buf));
@@ -80,10 +77,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
       page_count++;
 
       if (MAX_PAGES <= page_count) {
-        memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-        memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-        memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-        memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+        mnemonic_scratch_wipe();
         fsm_sendFailure(FailureType_Failure_Other,
                         "Too many pages of mnemonic words");
         bip85_finish_private_display();
@@ -120,10 +114,7 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
     if (!confirm_constant_power_paged(
             ButtonRequestType_ButtonRequest_ConfirmWord, title,
             mnemonic_scratch_formatted[current_page])) {
-      memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-      memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-      memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-      memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+      mnemonic_scratch_wipe();
       display_constant_power(false);
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "BIP-85 display cancelled");
@@ -134,10 +125,8 @@ void fsm_msgGetBip85Mnemonic(const GetBip85Mnemonic *msg) {
 
   display_constant_power(false);
 
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  /* Wipe all sensitive buffers */
+  mnemonic_scratch_wipe();
 
   /* Send success — mnemonic is NOT sent over the wire */
   fsm_sendSuccess("BIP-85 seed displayed on device");

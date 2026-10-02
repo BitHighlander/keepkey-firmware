@@ -24,10 +24,6 @@
 
 #include "messages-tron.pb.h"
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
 // TRON address length (Base58Check, typically 34 chars starting with 'T')
 #define TRON_ADDRESS_MAX_LEN 64
 
