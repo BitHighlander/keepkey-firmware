@@ -280,6 +280,7 @@ typedef enum {
   SOL_ROLE_RECEIVE_MIN = 2,
   SOL_ROLE_SPEND_EXACT = 3,
   SOL_ROLE_RECEIVE_EXACT = 4,
+  SOL_ROLE_CAP = 5, /* a per-use maximum (e.g. each bet), not an outflow */
 } SolanaSchemaRole;
 
 typedef enum {
