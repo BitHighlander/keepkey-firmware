@@ -571,6 +571,18 @@ static bool solana_confirmSchemaInstruction(
   return true;
 }
 
+/* One review screen on the device: text, or a byte range to page. */
+static bool solana_review_emit(void* ctx, const char* title, const char* body,
+                               const uint8_t* bytes, uint16_t bytes_len) {
+  (void)ctx;
+  if (bytes) {
+    return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                         bytes, bytes_len);
+  }
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
+                 body);
+}
+
 static bool solana_confirmSchemaTransaction(
     const SolanaSignTx* msg, bool certified, const SolanaInstrSchema* schema,
     const SolanaParsedTx* parsed, uint8_t schema_ix, const char* alias,
@@ -1085,8 +1097,10 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   if (certified) {
-    if (!solana_confirmSchemaTransaction(msg, true, &schema, &parsed, schema_ix,
-                                         signer_alias, signer_fp)) {
+    /* Summary, limits, side effects, details, provenance (SRS-7.16 §3.7). */
+    if (!solana_buildIntentReview(msg, &parsed, &schema, schema_ix,
+                                  node->public_key + 1, signer_alias, signer_fp,
+                                  true, solana_review_emit, NULL)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1123,6 +1137,11 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   } else if (runtime_schema) {
     if (!storage_isPolicyEnabled("AdvancedMode") ||
+        /* A runtime template is a heading only (SRS-7.15 R-1.5). */
+        (schema.intent[0] != '\0' &&
+         !solana_buildIntentReview(
+             msg, &parsed, &schema, schema_ix, node->public_key + 1,
+             signer_alias, signer_fp, false, solana_review_emit, NULL)) ||
         !solana_confirmSchemaTransaction(msg, false, &schema, &parsed,
                                          schema_ix, signer_alias, signer_fp) ||
         !confirm(ButtonRequestType_ButtonRequest_SignTx, "Advanced Mode",
@@ -1235,8 +1254,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   /* Bind the raw compute-budget fields above to the actual SOL at risk, on
-   * every fully verified review and every certified one. */
-  if (review_binds_fee && !solana_confirmPriorityFee(&parsed)) {
+   * every fully verified review. The certified review already showed it on
+   * its Limits screen (SRS-7.16 R-7.3); validation above still ran. */
+  if (review_binds_fee && !certified && !solana_confirmPriorityFee(&parsed)) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,

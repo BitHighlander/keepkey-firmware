@@ -242,7 +242,7 @@ typedef struct {
  *
  * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
  *   magic          8   "KKSOLSC1"
- *   version        1   1 or 2
+ *   version        1   1, 2 or 3
  *   program_id    32
  *   disc_len       1   1..8
  *   discriminator  disc_len
@@ -253,8 +253,12 @@ typedef struct {
  *     per arg:     type(1) label_len(1) label
  *     TOKEN_AMOUNT (v2) then appends mint_account(1): the index, in THIS
  *     instruction's account list, of the token's mint
+ *     v3 appends role(1): amount types 1..5, all others 0
  *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
  *     per account: index(1) label_len(1) label
+ *   v3: template   1 + 0..SOL_SCHEMA_TEMPLATE_MAX (0 = none); "{n}" is arg n,
+ *                  "{aN}" schema account N; every amount arg must appear
+ *                  (docs/security/clearsign-intent-template.md)
  * No bytes may follow, and the whole payload fits SolanaSignTx.schema_payload
  * (256 bytes). Version 1 accepts arg types 1..5 only, so every v1 payload
  * parses exactly as before v2 existed; version 2 adds types 6..7. Args are
@@ -267,6 +271,19 @@ typedef struct {
 #define SOL_SCHEMA_MAX_ARGS 8
 #define SOL_SCHEMA_MAX_ACCOUNTS 4
 #define SOL_SCHEMA_DISC_MAX 8
+#define SOL_SCHEMA_TEMPLATE_MAX 96
+/* Widest filled summary; templates that could exceed it are rejected. */
+#define SOL_INTENT_TEXT_MAX 280
+
+/* v3 argument roles: the device words the limits screen from these. */
+typedef enum {
+  SOL_ROLE_NONE = 0,
+  SOL_ROLE_SPEND_MAX = 1,
+  SOL_ROLE_RECEIVE_MIN = 2,
+  SOL_ROLE_SPEND_EXACT = 3,
+  SOL_ROLE_RECEIVE_EXACT = 4,
+  SOL_ROLE_CAP = 5, /* a per-use maximum (e.g. each bet), not an outflow */
+} SolanaSchemaRole;
 
 typedef enum {
   SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
@@ -285,6 +302,7 @@ typedef struct {
   SolanaSchemaArgType type;
   char label[SOL_SCHEMA_LABEL_MAX + 1];
   uint8_t mint_account; /* TOKEN_AMOUNT only; fits the struct's padding */
+  uint8_t role;         /* SolanaSchemaRole; v3 only, else SOL_ROLE_NONE */
 } SolanaSchemaArg;
 
 typedef struct {
@@ -302,6 +320,8 @@ typedef struct {
   uint8_t num_args;
   SolanaSchemaAccount accounts[SOL_SCHEMA_MAX_ACCOUNTS];
   uint8_t num_accounts;
+  uint8_t version;
+  char intent[SOL_SCHEMA_TEMPLATE_MAX + 1]; /* v3; "" = none */
 } SolanaInstrSchema;
 
 /* Parse a KKSOLSC1 payload. Validates every length and text field and
@@ -309,6 +329,27 @@ typedef struct {
 /* Byte width one schema arg consumes in the instruction data. 0 = unknown
  * type, which the parser rejects. */
 uint16_t solana_schemaArgWidth(SolanaSchemaArgType t);
+/* LAMPORTS or TOKEN_AMOUNT: must carry a role in v3 and appear in the intent.
+ */
+bool solana_schemaArgIsAmount(SolanaSchemaArgType t);
+/* Placeholders well-formed and in range, and every amount covered. */
+bool solana_intentTemplateValid(const SolanaInstrSchema* s);
+
+/* The human review (SRS-7.16 §3.7). Each screen goes to emit: body text, or
+ * (memo / opaque bytes) a byte range to page; emit returns false to cancel.
+ * certified: summary, limits, side effects, details, provenance. Runtime: an
+ * "NOT verified by KeepKey" heading plus limits only; the caller's raw review
+ * must follow. Screen text: docs/security/clearsign-intent-template.md. */
+typedef bool (*SolanaReviewEmit)(void* ctx, const char* title, const char* body,
+                                 const uint8_t* bytes, uint16_t bytes_len);
+bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
+                       const SolanaInstrSchema* s, uint8_t ix_index,
+                       bool certified, char* out, size_t len);
+bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
+                              const SolanaInstrSchema* s, uint8_t ix_index,
+                              const uint8_t signer[SOL_PUBKEY_SIZE],
+                              const char* alias, const char* fp, bool certified,
+                              SolanaReviewEmit emit, void* ctx);
 
 bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
                              SolanaInstrSchema* out);
