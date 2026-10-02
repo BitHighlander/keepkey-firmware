@@ -186,11 +186,19 @@ typedef bool (*MetadataReviewEmit)(void* ctx, const char* title,
 /* Placeholders "{n}" (arg) / "{v}" (msg.value) well-formed and in range,
  * every amount covered, {v} present iff the value has a role. */
 bool signed_metadata_intent_valid(const SignedMetadata* md);
-/* The KeepKey-certified name for `address` on `chain_id`, or false. alias and
- * fp8 (8 chars) name the vouching delegate. */
-bool signed_metadata_vouched_name(uint32_t chain_id, const uint8_t address[20],
-                                  const char** name, const char** alias,
-                                  char fp8[9]);
+/* A KeepKey-certified name record, taken by the request it rides ahead of. */
+typedef struct {
+  bool valid;
+  uint32_t chain_id;
+  uint8_t address[20];
+  char name[METADATA_NAME_MAX + 1];
+  char alias[METADATA_ALIAS_MAX_LEN + 2]; /* certificate alias, <= 32 */
+  char fp8[9];
+} MetadataNameRecord;
+
+/* Copies out the loaded certified name record (if any) and clears all
+ * metadata, so a record can only ever name the one request that follows it. */
+void signed_metadata_take_name(MetadataNameRecord* out);
 /* The v0x05 review. certified: summary, limits, details, who. Runtime: a
  * NOT-verified heading plus limits; the caller's raw review follows. */
 bool signed_metadata_build_intent_review(const SignedMetadata* md,

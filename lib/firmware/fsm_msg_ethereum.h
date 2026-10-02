@@ -2296,6 +2296,11 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
   layoutHome();
 }
 
+/* The name record sent ahead of THIS typed-data request; taken (and the
+ * metadata cleared) when the request begins, so no exit path can leave it
+ * to name a later one. */
+static MetadataNameRecord typed_data_name;
+
 static bool eip712_review_confirm(void* ctx, const char* title,
                                   const char* body) {
   (void)ctx;
@@ -2389,18 +2394,15 @@ static void eip712_pump(void) {
       /* Permit2 in words: who may take what, until when (SRS-7.16 §3.7).
        * A certified name record for this spender on this chain names it. */
       if (done.permit2.valid) {
-        const char* name = NULL;
-        const char* alias = NULL;
-        char fp8[9] = {0};
-        if (done.permit2.chain_id > UINT32_MAX ||
-            !signed_metadata_vouched_name((uint32_t)done.permit2.chain_id,
-                                          done.permit2.spender, &name, &alias,
-                                          fp8)) {
-          name = NULL;
-        }
-        const bool ok = eip712_permit2_review(&done.permit2, name, alias, fp8,
-                                              eip712_review_confirm, NULL);
-        signed_metadata_clear(); /* one review per record */
+        const bool named =
+            typed_data_name.valid &&
+            typed_data_name.chain_id == done.permit2.chain_id &&
+            memcmp(typed_data_name.address, done.permit2.spender, 20) == 0;
+        const bool ok = eip712_permit2_review(
+            &done.permit2, named ? typed_data_name.name : NULL,
+            typed_data_name.alias, typed_data_name.fp8, eip712_review_confirm,
+            NULL);
+        memzero(&typed_data_name, sizeof(typed_data_name));
         if (!ok) {
           fsm_sendFailure(FailureType_Failure_ActionCancelled,
                           _("Signing cancelled by user"));
@@ -2408,7 +2410,6 @@ static void eip712_pump(void) {
           return;
         }
       }
-      signed_metadata_clear();
       /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))),
        * or keccak(0x19 || 0x01 || domainSeparator) for a domain-only type. */
       uint8_t preimage[66];
@@ -2486,7 +2487,6 @@ static void eip712_pump(void) {
       return;
     }
     case EIP712_REQ_CANCELLED:
-      signed_metadata_clear();
       erc7730_workflow_abort(erc7730_workflow_state());
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -2494,7 +2494,6 @@ static void eip712_pump(void) {
       layout_home();
       return;
     case EIP712_REQ_FAIL:
-      signed_metadata_clear();
       erc7730_workflow_abort(erc7730_workflow_state());
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -2509,6 +2508,8 @@ static void eip712_pump(void) {
 }
 
 void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
+  /* First, before any exit: this request owns the record sent ahead of it. */
+  signed_metadata_take_name(&typed_data_name);
   CHECK_INITIALIZED
   CHECK_PIN
 

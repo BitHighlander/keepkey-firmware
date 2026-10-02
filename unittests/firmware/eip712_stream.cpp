@@ -1168,6 +1168,18 @@ TEST(Eip712Stream, Permit2ReviewStatesWhoWhatUntilWhen) {
       g_review[8].second,
       "Spender named by KeepKey Alpha 716 A9531B9D\ncertified by KeepKey");
 
+  // A far-future deadline is shown as its full number, never "never": two
+  // distinct signed values must read differently.
+  Eip712Permit2 far = uniswap_usdc(false);
+  memset(far.sig_deadline, 0, 32);
+  far.sig_deadline[0] = 0x01;  // 2^248
+  g_review.clear();
+  ASSERT_TRUE(
+      eip712_permit2_review(&far, NULL, NULL, NULL, collect_review, NULL));
+  EXPECT_EQ(g_review[3].second,
+            "Signature valid until\nUnix time 452312848583266388373324160190"
+            "187140051835877600158453279131187530910662656");
+
   // A token outside the table is never given a symbol or decimals.
   p.token[0] ^= 1;
   g_review.clear();

@@ -1089,14 +1089,21 @@ bool eip712_permit2_review(const Eip712Permit2* p, const char* spender_name,
                            const char* alias, const char* fp,
                            Eip712ReviewEmit emit, void* ctx) {
   if (!p || !p->valid || !emit) return false;
-  char amount[100], expires[32], deadline[40], spender[44], body[BODY_CHAR_MAX];
+  char amount[100], expires[32], deadline[96], spender[44], body[BODY_CHAR_MAX];
   if (!permit2_amount(p, amount, sizeof(amount))) return false;
   eip712_format_utc(p->expiration, expires, sizeof(expires));
   bool huge = false;
   for (int i = 0; i < 24; i++)
     if (p->sig_deadline[i]) huge = true;
   if (huge) {
-    strlcpy(deadline, "never (past year 9999)", sizeof(deadline));
+    /* Every distinct signed value reads differently: the full number. */
+    bignum256 v;
+    bn_read_be(p->sig_deadline, &v);
+    char n[80];
+    const size_t ok = bn_format(&v, NULL, NULL, 0, 0, false, n, sizeof(n));
+    memzero(&v, sizeof(v));
+    if (!ok) return false;
+    snprintf(deadline, sizeof(deadline), "Unix time %s", n);
   } else {
     eip712_format_utc(be_u64(p->sig_deadline + 24, 8), deadline,
                       sizeof(deadline));
