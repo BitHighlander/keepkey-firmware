@@ -16,7 +16,6 @@
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
 #define ERC7730_DELEGATE_RECORD_LEN 139u
 #define ERC7730_DELEGATE_ALIAS_LEN 32u
-#define ERC7730_DELEGATE_PUBKEY_LEN 33u
 #define ERC7730_DELEGATE_OFF_VERSION 0u
 #define ERC7730_DELEGATE_OFF_SCOPE 2u
 #define ERC7730_DELEGATE_OFF_ALIAS 10u
@@ -26,8 +25,8 @@
 #define ERC7730_LITERAL_MAX_LENGTH 258u
 
 /* Revocation floor, raised only by firmware update (no flash state).
- * Enforced: issuance_epoch >= this AND >= revocation_epoch. provider_id and
- * revocation_epoch are otherwise NOT enforced (kept for audit only). */
+ * Enforced on the header: issuance_epoch >= this AND >= revocation_epoch.
+ * provider_id and revocation_epoch are otherwise NOT enforced. */
 #define ERC7730_MIN_ISSUANCE_EPOCH 0u
 
 /* Delegate record = the 139-byte certificate of clearsign_root.h. Tiers, in
@@ -42,6 +41,15 @@
  * and bytes 1, 6..9 and 75..138 are ignored.
  * Both tiers require AdvancedMode; the tier selects only the provenance
  * screen, never the raw-data review. */
+
+static inline uint16_t read_be16(const uint8_t* p) {
+  return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
+}
+
+static inline uint32_t read_be32(const uint8_t* p) {
+  return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+         ((uint32_t)p[2] << 8) | p[3];
+}
 
 typedef enum {
   ERC7730_DEFINITION_CALLDATA = 1,
@@ -65,9 +73,6 @@ typedef struct {
   uint64_t chain_id;
   uint8_t contract_address[20];
   uint8_t selector_or_type_hash[32];
-  uint32_t provider_id;
-  uint32_t issuance_epoch;
-  uint32_t revocation_epoch;
   uint32_t program_length;
   uint32_t envelope_length;
   char delegate_alias[ERC7730_DELEGATE_ALIAS_LEN + 1];
@@ -95,7 +100,6 @@ typedef struct {
   uint32_t section_remaining;
   uint32_t section_offset;
   uint64_t abi_child_mask;
-  uint64_t literal_set_mask;
   uint8_t literal_classes[32]; /* ERC7730_CLASS_* per literal, 4 bits each */
   uint8_t date_strings[12];    /* strings "timestamp"/"blockheight", 1 bit */
   uint8_t short_strings[12];   /* strings of at most SIGNER_TEXT_MAX, 1 bit */
@@ -138,7 +142,6 @@ typedef struct {
   uint8_t path_step_index;
   uint8_t path_step_opcode;
   uint8_t path_step_remaining;
-  uint8_t path_slice_flags;
   bool path_full_seen;
   uint8_t path_node;
   uint8_t literal_kind;
@@ -161,7 +164,6 @@ typedef struct {
   uint16_t binding_previous_length;
   uint8_t binding_domain_fields;
   bool binding_header_match;
-  bool leaf_finalized;
   bool failed;
 } Erc7730CatalogVerifier;
 

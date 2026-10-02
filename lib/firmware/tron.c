@@ -27,7 +27,6 @@
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha3.h"
 
-#include <stdint.h>
 #include <string.h>
 
 #define TRON_ADDRESS_PREFIX 0x41  // Mainnet addresses start with 'T'
@@ -188,8 +187,18 @@ static bool pb_skip(const uint8_t* buf, size_t len, size_t* pos, uint8_t wire) {
   }
 }
 
-static bool tron_isRawAddress(const uint8_t* p, size_t len) {
-  return len == TRON_RAW_ADDRESS_SIZE && p[0] == TRON_ADDRESS_PREFIX;
+/* One raw 0x41-prefixed address field; a repeat or a bad address refuses. */
+static bool tron_readAddress(const uint8_t* buf, size_t len, size_t* pos,
+                             uint8_t out[TRON_RAW_ADDRESS_SIZE], bool* seen) {
+  const uint8_t* bp;
+  size_t bl;
+  if (*seen || !pb_read_bytes(buf, len, pos, &bp, &bl) ||
+      bl != TRON_RAW_ADDRESS_SIZE || bp[0] != TRON_ADDRESS_PREFIX) {
+    return false;
+  }
+  memcpy(out, bp, TRON_RAW_ADDRESS_SIZE);
+  *seen = true;
+  return true;
 }
 
 /* Parse protocol.TransferContract { owner_address=1, to_address=2, amount=3 }
@@ -202,19 +211,12 @@ static bool tron_parseTransferContract(const uint8_t* buf, size_t len,
     uint32_t field;
     uint8_t wire;
     if (!pb_read_key(buf, len, &pos, &field, &wire)) return false;
-    const uint8_t* bp;
-    size_t bl;
     uint64_t v;
     if (field == 1 && wire == 2) {
-      if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return false;
-      if (!tron_isRawAddress(bp, bl) || has_owner) return false;
-      memcpy(out->owner, bp, TRON_RAW_ADDRESS_SIZE);
-      has_owner = true;
+      if (!tron_readAddress(buf, len, &pos, out->owner, &has_owner))
+        return false;
     } else if (field == 2 && wire == 2) {
-      if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return false;
-      if (!tron_isRawAddress(bp, bl) || has_to) return false;
-      memcpy(out->to, bp, TRON_RAW_ADDRESS_SIZE);
-      has_to = true;
+      if (!tron_readAddress(buf, len, &pos, out->to, &has_to)) return false;
     } else if (field == 3 && wire == 0) {
       if (!pb_read_varint(buf, len, &pos, &v) || has_amount) return false;
       if (v > INT64_MAX) return false;
@@ -240,19 +242,13 @@ static bool tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
     uint32_t field;
     uint8_t wire;
     if (!pb_read_key(buf, len, &pos, &field, &wire)) return false;
-    const uint8_t* bp;
-    size_t bl;
     uint64_t v;
     if (field == 1 && wire == 2) {
-      if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return false;
-      if (!tron_isRawAddress(bp, bl) || has_owner) return false;
-      memcpy(out->owner, bp, TRON_RAW_ADDRESS_SIZE);
-      has_owner = true;
+      if (!tron_readAddress(buf, len, &pos, out->owner, &has_owner))
+        return false;
     } else if (field == 2 && wire == 2) {
-      if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return false;
-      if (!tron_isRawAddress(bp, bl) || has_contract) return false;
-      memcpy(out->contract, bp, TRON_RAW_ADDRESS_SIZE);
-      has_contract = true;
+      if (!tron_readAddress(buf, len, &pos, out->contract, &has_contract))
+        return false;
     } else if (field == 3 && wire == 0) {
       /* call_value: transfer() is non-payable; attached TRX is refused. */
       if (!pb_read_varint(buf, len, &pos, &v)) return false;

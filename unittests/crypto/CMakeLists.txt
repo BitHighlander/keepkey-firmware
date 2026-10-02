@@ -23,6 +23,3 @@ target_link_libraries(crypto-unit
     kkemulator
     trezorcrypto
     kktransport)
-
-# Zcash coverage belongs to firmware-unit when KK_ZCASH_PRIVACY is enabled.
-# Its normal xunit/CTest registration runs the shared firmware/zcash.cpp suite.

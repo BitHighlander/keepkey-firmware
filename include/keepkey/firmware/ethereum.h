@@ -44,6 +44,7 @@ void format_ethereum_address(const uint8_t* to, char* destination_str,
                              uint32_t destination_str_len);
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg);
 bool ethereum_chainIdIsValid(const EthereumSignTx* msg);
+bool ethereum_valueIsZero(const EthereumSignTx* msg);
 bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
                                   int buflen)
     __attribute__((warn_unused_result));
@@ -86,7 +87,6 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
                               const HDNode* node,
                               EthereumTypedDataSignature* resp);
 bool ethereum_typed_hash_policy_allows(bool advanced_mode);
-bool ethereum_eip712_is_domain_primary_type(const char* primary_type);
 bool ethereum_structured_eip712_enabled(void);
 bool ethereum_path_check(uint32_t address_n_count, const uint32_t* address_n,
                          bool pubkey_export, uint64_t chain);
