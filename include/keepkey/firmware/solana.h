@@ -337,6 +337,8 @@ bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
 
 /* Parse a raw Solana transaction */
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
+/* pubkey is one of the tx's required signers. */
+bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx);
 
 /* Format SOL amount */
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports);

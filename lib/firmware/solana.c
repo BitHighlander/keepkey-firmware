@@ -934,9 +934,9 @@ static bool schema_transferIsStatic(const SolanaParsedTx* tx,
   return true;
 }
 
-static bool schema_isTxSigner(const SolanaParsedTx* tx, const uint8_t* key) {
+bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
   for (uint8_t i = 0; i < tx->num_required_sigs && i < tx->num_accounts; i++)
-    if (memcmp(tx->accounts[i], key, SOL_PUBKEY_SIZE) == 0) return true;
+    if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0) return true;
   return false;
 }
 
@@ -949,13 +949,13 @@ static bool schema_signerAccountCompanion(const SolanaParsedTx* tx,
                                           const SolanaParsedInstruction* ix) {
   switch (ix->type) {
     case SOL_INSTR_ATA_CREATE:
-      return schema_isTxSigner(tx, ix->from) &&
-             schema_isTxSigner(tx, ix->authority);
+      return solana_signerInTx(ix->from, tx) &&
+             solana_signerInTx(ix->authority, tx);
     case SOL_INSTR_TOKEN_SYNC_NATIVE:
       return true;
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
-      return schema_isTxSigner(tx, ix->to) &&
-             schema_isTxSigner(tx, ix->authority);
+      return solana_signerInTx(ix->to, tx) &&
+             solana_signerInTx(ix->authority, tx);
     default:
       return false;
   }
