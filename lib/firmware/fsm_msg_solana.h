@@ -48,16 +48,6 @@ static bool solana_confirm_account(const char* title, const char* label,
                  label, s);
 }
 
-/* Host symbol is untrusted: printable ASCII only, so newlines or control bytes
- * cannot push the mint or recipient off the confirm screen. */
-static bool solana_symbol_is_safe(const char* sym) {
-  if (!sym || sym[0] == '\0') return false;
-  for (const char* p = sym; *p; p++) {
-    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return false;
-  }
-  return true;
-}
-
 static bool solana_confirm_memo(const char* title, const uint8_t* s,
                                 uint16_t len) {
   return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, title, s,
@@ -208,13 +198,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
 
-      const SolanaTokenInfo* ti = NULL;
-      if (pi->has_mint && msg) {
-        ti = solana_findTokenInfo(msg, pi->mint);
-      }
-
-      /* The mint is the only authenticated token identity: own screen, so a
-       * host symbol cannot push it off-view. */
+      /* The mint is the only authenticated token identity. */
       if (pi->has_mint) {
         char mint_str[45];
         solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
@@ -224,15 +208,6 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         }
       }
 
-      /* Unsafe symbol => raw count; the mint still identifies the token. */
-      if (ti && ti->has_symbol && ti->has_decimals &&
-          solana_symbol_is_safe(ti->symbol)) {
-        char amount_str[48];
-        solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
-                                 ti->symbol, (uint8_t)ti->decimals);
-        return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                       "Send %s to %s?", amount_str, to_str);
-      }
       char amount_str[32];
       snprintf(amount_str, sizeof(amount_str), "%llu tokens",
                (unsigned long long)pi->amount);
@@ -263,25 +238,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       }
 
-      /* Symbol trust: attestation verifies -> trusted; present but INVALID ->
-       * drop the symbol (never fall back to the claim); absent -> show it
-       * beside the authenticated mint. */
-      const char* symbol = NULL;
-      bool symbol_verified = false;
-      if (known) {
-        symbol = known->symbol;
-      } else if (ti && ti->has_symbol && solana_symbol_is_safe(ti->symbol)) {
-        if (ti->has_signature) {
-          /* Attested decimals must equal the signed decimals, or the attested
-           * tuple does not describe this tx and must not earn "verified". */
-          if (solana_token_info_trusted(ti) && ti->decimals == pi->extra_u8) {
-            symbol = ti->symbol;
-            symbol_verified = true;
-          }
-        } else {
-          symbol = ti->symbol;
-        }
-      }
+      /* Firmware table or valid attestation only; NULL -> base units. */
+      const char* symbol = solana_displaySymbol(ti, known, pi->extra_u8);
+      const bool symbol_verified = symbol && !known;
 
       if (pi->has_mint) {
         char mint_str[45];
@@ -331,7 +290,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
 
       if (symbol) {
-        char amount_str[48];
+        char amount_str[64];
         solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
                                  symbol, pi->extra_u8);
         if (recipient_verified) {
@@ -343,7 +302,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                        "Send %s to %s?", amount_str, to_str);
       }
-      char amount_str[48];
+      char amount_str[64];
       solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
                                "tokens", pi->extra_u8);
       if (recipient_verified) {
