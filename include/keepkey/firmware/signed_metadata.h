@@ -54,6 +54,21 @@ typedef enum {
  * The certificate is verified and DISCARDED inside one message -- nothing about
  * a delegation survives into the next transaction. */
 #define METADATA_VERSION_CERTIFIED 0x03
+/* v2 plus roles, a native-value role, a title and a signed intent template
+ * (SRS-7.16 §3.7, docs/security/clearsign-intent-template.md). Values are
+ * still decoded from the calldata being signed. */
+#define METADATA_VERSION_SCHEMA_INTENT 0x05
+#define METADATA_INTENT_MAX 96
+/* Widest filled summary; templates that could exceed it are rejected. */
+#define METADATA_INTENT_TEXT_MAX 280
+#define METADATA_TITLE_MAX 20
+/* Roles (shared numbering with Solana KKSOLSC1 v3). */
+#define METADATA_ROLE_NONE 0
+#define METADATA_ROLE_SPEND_MAX 1
+#define METADATA_ROLE_RECEIVE_MIN 2
+#define METADATA_ROLE_SPEND_EXACT 3
+#define METADATA_ROLE_RECEIVE_EXACT 4
+#define METADATA_ROLE_CAP 5
 
 /* DYNAMIC_SCHEMA (v4): a certified, firmware-owned decoder selected by a
  * signed one-byte decoder id.  Unlike v1, the signer supplies no displayed
@@ -133,6 +148,7 @@ typedef struct {
   ArgFormat format;
   uint8_t value[METADATA_MAX_ARG_VALUE_LEN];
   uint16_t value_len;
+  uint8_t role; /* v0x05: METADATA_ROLE_* on amounts, else NONE */
 } MetadataArg;
 
 typedef struct {
@@ -150,7 +166,27 @@ typedef struct {
   uint8_t key_id;
   uint8_t signature[64];
   uint8_t recovery;
+  /* v0x05 */
+  uint8_t value_role; /* NONE, SPEND_MAX or SPEND_EXACT for msg.value */
+  char title[METADATA_TITLE_MAX + 1];
+  char intent[METADATA_INTENT_MAX + 1];
+  uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
+  uint8_t tx_value_len;
 } SignedMetadata;
+
+/* One review screen: text, or (BYTES) a byte range to page. */
+typedef bool (*MetadataReviewEmit)(void* ctx, const char* title,
+                                   const char* body, const uint8_t* bytes,
+                                   uint16_t bytes_len);
+/* Placeholders "{n}" (arg) / "{v}" (msg.value) well-formed and in range,
+ * every amount covered, {v} present iff the value has a role. */
+bool signed_metadata_intent_valid(const SignedMetadata* md);
+/* The v0x05 review. certified: summary, limits, details, who. Runtime: a
+ * NOT-verified heading plus limits; the caller's raw review follows. */
+bool signed_metadata_build_intent_review(const SignedMetadata* md,
+                                         bool certified, const char* alias,
+                                         const char* fp,
+                                         MetadataReviewEmit emit, void* ctx);
 
 bool signed_metadata_available(void);
 
