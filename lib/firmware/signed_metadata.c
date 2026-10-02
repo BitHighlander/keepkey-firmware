@@ -305,6 +305,8 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
   return true;
 }
 
+static bool signed_metadata_intent_valid(const SignedMetadata* md);
+
 static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
                                   SignedMetadata* out) {
   const uint8_t* cursor = payload;
@@ -547,9 +549,10 @@ static bool icon_renderable(const uint8_t* icon, uint16_t icon_len,
 }
 #endif
 
-bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
-                                 uint8_t* w_out, uint8_t* h_out,
-                                 uint16_t* len_out) {
+static bool signed_metadata_signer_icon(uint8_t key_id,
+                                        const uint8_t** icon_out,
+                                        uint8_t* w_out, uint8_t* h_out,
+                                        uint16_t* len_out) {
   if (key_id >= METADATA_MAX_KEYS) return false;
   if (loaded_pubkeys[key_id][0] != 0x00) {
 #if ZCASH_PRIVACY
@@ -625,10 +628,6 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
   sha256_Raw(pubkey, 33, digest);
   data2hex(digest, (METADATA_FINGERPRINT_LEN - 1u) / 2u, out);
   memzero(digest, sizeof(digest));
-}
-
-bool signed_metadata_from_loaded_signer(void) {
-  return metadata_available && metadata_tier == METADATA_TIER_RUNTIME;
 }
 
 /* Resolve the verification key for a slot. */
@@ -1020,11 +1019,7 @@ static bool intent_width(void* ctx, bool placeholder, bool value, uint8_t index,
                          const char* lit, size_t lit_len) {
   IntentWidth* w = (IntentWidth*)ctx;
   if (!placeholder) {
-    /* No values of its own: every digit shown is formatted from signed
-     * bytes, never server text. */
-    for (size_t i = 0; i < lit_len; i++) {
-      if (lit[i] >= '0' && lit[i] <= '9') return false;
-    }
+    if (!intent_literal_ok(lit, lit_len)) return false;
     w->width += lit_len;
   } else if (!value && w->md->args[index].format == ARG_FORMAT_ADDRESS) {
     w->width += 13;
@@ -1049,7 +1044,9 @@ void signed_metadata_take_name(MetadataNameRecord* out) {
   signed_metadata_clear();
 }
 
-bool signed_metadata_intent_valid(const SignedMetadata* md) {
+/* Placeholders "{n}" (arg) / "{v}" (msg.value) well-formed and in range,
+ * every amount covered, {v} present iff the value has a role. */
+static bool signed_metadata_intent_valid(const SignedMetadata* md) {
   if (!md || md->intent[0] == '\0') return false;
   IntentUse u;
   memset(&u, 0, sizeof(u));
@@ -1077,69 +1074,34 @@ static bool metadata_value_text(const SignedMetadata* md, char* out,
   return ethereumFormatAmount(&value, NULL, md->chain_id, out, len);
 }
 
-typedef struct {
-  const SignedMetadata* md;
-  char* out;
-  size_t len;
-  size_t used;
-  bool ok;
-} IntentFill;
-
-static void fill_append(IntentFill* f, const char* str, size_t n) {
-  if (f->used + n >= f->len) {
-    f->ok = false;
-    return;
-  }
-  memcpy(f->out + f->used, str, n);
-  f->used += n;
-  f->out[f->used] = '\0';
-}
-
 static bool intent_fill(void* ctx, bool placeholder, bool value, uint8_t index,
                         const char* lit, size_t lit_len) {
   IntentFill* f = (IntentFill*)ctx;
+  const SignedMetadata* md = (const SignedMetadata*)f->src;
   if (!placeholder) {
-    fill_append(f, lit, lit_len);
+    intent_fill_append(f, lit, lit_len);
     return f->ok;
   }
   char v[100];
-  if (value ? !metadata_value_text(f->md, v, sizeof(v))
-            : !metadata_arg_text(&f->md->args[index], f->md->chain_id, true, v,
+  if (value ? !metadata_value_text(md, v, sizeof(v))
+            : !metadata_arg_text(&md->args[index], md->chain_id, true, v,
                                  sizeof(v))) {
     return false;
   }
-  fill_append(f, v, strlen(v));
+  intent_fill_append(f, v, strlen(v));
   return f->ok;
 }
 
-static const char* metadata_role_text(uint8_t role) {
-  switch (role) {
-    case METADATA_ROLE_SPEND_MAX:
-      return "You spend at most";
-    case METADATA_ROLE_RECEIVE_MIN:
-      return "You receive at least";
-    case METADATA_ROLE_SPEND_EXACT:
-      return "You spend";
-    case METADATA_ROLE_RECEIVE_EXACT:
-      return "You receive";
-    case METADATA_ROLE_CAP:
-      return "Each use at most";
-    default:
-      return NULL;
-  }
-}
-
-static bool metadata_limits(const SignedMetadata* md, MetadataReviewEmit emit,
+static bool metadata_limits(const SignedMetadata* md, ReviewEmit emit,
                             void* ctx) {
   char body[160], v[100];
   if (md->value_role != METADATA_ROLE_NONE) {
     if (!metadata_value_text(md, v, sizeof(v))) return false;
-    snprintf(body, sizeof(body), "%s\n%s", metadata_role_text(md->value_role),
-             v);
+    snprintf(body, sizeof(body), "%s\n%s", intent_role_text(md->value_role), v);
     if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   }
   for (uint8_t i = 0; i < md->num_args; i++) {
-    const char* role = metadata_role_text(md->args[i].role);
+    const char* role = intent_role_text(md->args[i].role);
     if (!role) continue;
     if (!metadata_arg_text(&md->args[i], md->chain_id, false, v, sizeof(v))) {
       return false;
@@ -1152,22 +1114,17 @@ static bool metadata_limits(const SignedMetadata* md, MetadataReviewEmit emit,
 
 bool signed_metadata_build_intent_review(const SignedMetadata* md,
                                          bool certified, const char* alias,
-                                         const char* fp,
-                                         MetadataReviewEmit emit, void* ctx) {
+                                         const char* fp, ReviewEmit emit,
+                                         void* ctx) {
   if (!md || !emit || md->version != METADATA_VERSION_SCHEMA_INTENT) {
     return false;
   }
-  char intent[METADATA_INTENT_TEXT_MAX + 1], body[352];
+  char intent[METADATA_INTENT_TEXT_MAX + 1], body[BODY_CHAR_MAX];
   IntentFill f = {md, intent, sizeof(intent), 0, true};
   intent[0] = '\0';
   if (!intent_walk(md, intent_fill, &f) || !f.ok) return false;
   if (!certified) {
-    if (snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
-                 alias ? alias : "Unknown signer",
-                 intent) >= (int)sizeof(body)) {
-      return false;
-    }
-    return emit(ctx, "Unverified", body, NULL, 0) &&
+    return intent_emit_unverified(emit, ctx, alias, intent) &&
            metadata_limits(md, emit, ctx);
   }
   if (!emit(ctx, md->title, intent, NULL, 0) ||
@@ -1198,9 +1155,7 @@ bool signed_metadata_build_intent_review(const SignedMetadata* md,
       return false;
     }
   }
-  snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
-           alias ? alias : "", fp ? fp : "");
-  return emit(ctx, "KeepKey ClearSign", body, NULL, 0);
+  return intent_emit_provenance(emit, ctx, alias, fp);
 }
 
 static bool metadata_review_emit(void* ctx, const char* title, const char* body,
@@ -1428,4 +1383,56 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
 
 const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
+}
+
+void intent_fill_append(IntentFill* f, const char* str, size_t n) {
+  if (f->used + n >= f->len) {
+    f->ok = false;
+    return;
+  }
+  memcpy(f->out + f->used, str, n);
+  f->used += n;
+  f->out[f->used] = '\0';
+}
+
+bool intent_literal_ok(const char* lit, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    if (lit[i] >= '0' && lit[i] <= '9') return false;
+  }
+  return true;
+}
+
+const char* intent_role_text(uint8_t role) {
+  switch (role) {
+    case METADATA_ROLE_SPEND_MAX:
+      return "You spend at most";
+    case METADATA_ROLE_RECEIVE_MIN:
+      return "You receive at least";
+    case METADATA_ROLE_SPEND_EXACT:
+      return "You spend";
+    case METADATA_ROLE_RECEIVE_EXACT:
+      return "You receive";
+    case METADATA_ROLE_CAP:
+      return "Each use at most";
+    default:
+      return NULL;
+  }
+}
+
+bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* intent) {
+  char body[BODY_CHAR_MAX];
+  if (snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
+               alias ? alias : "Unknown signer", intent) >= (int)sizeof(body)) {
+    return false;
+  }
+  return emit(ctx, "Unverified", body, NULL, 0);
+}
+
+bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* fp) {
+  char body[BODY_CHAR_MAX];
+  snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
+           alias ? alias : "", fp ? fp : "");
+  return emit(ctx, "KeepKey ClearSign", body, NULL, 0);
 }

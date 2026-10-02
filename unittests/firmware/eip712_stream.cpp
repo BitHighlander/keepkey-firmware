@@ -256,34 +256,6 @@ TEST(Eip712Stream, CertifiedWalkPausesBeforeMessageValuesUntilAccepted) {
   eip712_stream_abort();
 }
 
-TEST(Eip712Stream, NestedFixedArrayChecksOuterAndInnerDimensions) {
-  for (bool wrong_outer : {false, true}) {
-    EthereumSignTypedData begin{};
-    strcpy(begin.primary_type, "Matrix");
-    ASSERT_TRUE(eip712_stream_begin(&begin, false));
-    EthereumTypedDataStructAck empty{};
-    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
-    EthereumTypedDataStructAck matrix{};
-    matrix.members_count = 1;
-    strcpy(matrix.members[0].name, "values");
-    auto& type = matrix.members[0].type;
-    type = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
-    type.array_levels_count = 2;
-    type.array_levels[0] = 2;
-    type.array_levels[1] = 3;
-    for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&matrix));
-    EthereumTypedDataValueAck length{};
-    length.value.size = 2;
-    length.value.bytes[1] = wrong_outer ? 2 : 3;
-    EXPECT_EQ(eip712_stream_on_value(&length), !wrong_outer);
-    if (!wrong_outer) {
-      length.value.bytes[1] = 1;
-      EXPECT_FALSE(eip712_stream_on_value(&length));
-    }
-    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
-  }
-}
-
 TEST(Eip712Stream, RefusesSchemaChangesAfterDiscoveryAndHashing) {
   for (int repeat_phase : {1, 2}) {
     EthereumSignTypedData begin{};

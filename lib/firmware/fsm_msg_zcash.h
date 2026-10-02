@@ -18,11 +18,7 @@
  */
 
 /* Included here: this file is #include'd inside fsm.c. */
-#include <limits.h>
-
-#include "keepkey/firmware/zcash.h"
 #include "trezor/crypto/blake2b.h"
-#include "trezor/crypto/pallas.h"
 #include "trezor/crypto/redpallas.h"
 #include "trezor/crypto/memzero.h"
 
@@ -79,7 +75,6 @@ static CONFIDENTIAL struct {
   uint32_t account;
   uint32_t n_actions;
   uint32_t current_action;
-  uint64_t total_amount;
   uint64_t fee;
   uint32_t branch_id;
   ZcashOrchardKeys keys;
@@ -128,10 +123,11 @@ void zcash_signing_abort(void) {
 
 bool zcash_signing_is_active(void) { return zcash_signing.active; }
 
-static bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size) {
-  return script && script_size == 25 && script[0] == 0x76 &&
-         script[1] == 0xa9 && script[2] == 0x14 && script[23] == 0x88 &&
-         script[24] == 0xac;
+/* Every mid-session failure reports, wipes the session, then returns home. */
+static void zcash_fail(FailureType code, const char* text) {
+  fsm_sendFailure(code, text);
+  zcash_signing_abort();
+  layoutHome();
 }
 
 static bool zcash_script_is_p2sh(const uint8_t* script, size_t script_size) {
@@ -402,21 +398,17 @@ static void zcash_send_action_ack(uint32_t next_index) {
   }
 }
 
-static void zcash_send_transparent_output_ack(uint32_t next_index) {
+static void zcash_send_transparent_ack(bool output, uint32_t next_index) {
   note_workflow_progress();
   ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
   memset(resp, 0, sizeof(ZcashTransparentAck));
-  resp->has_next_output_index = true;
-  resp->next_output_index = next_index;
-  msg_write(MessageType_MessageType_ZcashTransparentAck, resp);
-}
-
-static void zcash_send_transparent_input_ack(uint32_t next_index) {
-  note_workflow_progress();
-  ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
-  memset(resp, 0, sizeof(ZcashTransparentAck));
-  resp->has_next_input_index = true;
-  resp->next_input_index = next_index;
+  if (output) {
+    resp->has_next_output_index = true;
+    resp->next_output_index = next_index;
+  } else {
+    resp->has_next_input_index = true;
+    resp->next_input_index = next_index;
+  }
   msg_write(MessageType_MessageType_ZcashTransparentAck, resp);
 }
 
@@ -811,7 +803,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   zcash_signing.account = account;
   zcash_signing.n_actions = msg->n_actions;
   zcash_signing.current_action = 0;
-  zcash_signing.total_amount = total;
   zcash_signing.fee = fee;
   zcash_signing.branch_id = branch_id;
   zcash_signing.transaction_v6 = msg->tx_version == 6;
@@ -880,9 +871,9 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
 
   /* Transparent outputs are reviewed before any signature is emitted. */
   if (zcash_signing.n_transparent_outputs > 0) {
-    zcash_send_transparent_output_ack(0);
+    zcash_send_transparent_ack(true, 0);
   } else if (zcash_signing.n_transparent_inputs > 0) {
-    zcash_send_transparent_input_ack(0);
+    zcash_send_transparent_ack(false, 0);
   } else {
     zcash_send_action_ack(0);
   }
@@ -1045,35 +1036,26 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       ((zcash_signing.n_transparent_outputs > 0 ||
         zcash_signing.n_transparent_inputs > 0) &&
        !zcash_signing.transparent_digest_verified)) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Transparent data not yet complete"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("Transparent data not yet complete"));
     return;
   }
 
   if (!msg->has_index || msg->index != zcash_signing.current_action) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unexpected action index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError, _("Unexpected action index"));
     return;
   }
 
   if (!msg->has_alpha || msg->alpha.size != 32) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing or invalid alpha randomizer"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Missing or invalid alpha randomizer"));
     return;
   }
 
   /* Phase 2a: a device-computed sighash is mandatory. */
   if (!zcash_signing.has_device_sighash) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing transaction digests"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Missing transaction digests"));
     return;
   }
 
@@ -1090,10 +1072,8 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       msg->has_out_ciphertext && msg->out_ciphertext.size == 80;
 
   if (!has_orchard_action_data) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing Orchard action data"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Missing Orchard action data"));
     return;
   }
 
@@ -1145,10 +1125,8 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     if (!rng_health_check() ||
         !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
       memzero(zcash_T, sizeof(zcash_T));
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("RNG health check failed; refusing to sign"));
-      zcash_signing_abort();
-      layoutHome();
+      zcash_fail(FailureType_Failure_Other,
+                 _("RNG health check failed; refusing to sign"));
       return;
     }
 
@@ -1165,10 +1143,8 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
         zcash_action_progress, &signing_progress);
     memzero(zcash_T, sizeof(zcash_T));
     if (sign_rc != 0) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Orchard spend authorization failed"));
-      zcash_signing_abort();
-      layoutHome();
+      zcash_fail(FailureType_Failure_Other,
+                 _("Orchard spend authorization failed"));
       return;
     }
     zcash_signing.signature_count++;
@@ -1213,11 +1189,9 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
       if (memcmp(computed_orchard_digest, zcash_signing.expected_orchard_digest,
                  32) != 0) {
-        fsm_sendFailure(FailureType_Failure_Other,
-                        _("Shielded digest mismatch: transaction data "
-                          "does not match sighash"));
-        zcash_signing_abort();
-        layoutHome();
+        zcash_fail(FailureType_Failure_Other,
+                   _("Shielded digest mismatch: transaction data "
+                     "does not match sighash"));
         return;
       }
     }
@@ -1263,18 +1237,14 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
   }
 
   if (zcash_signing.n_transparent_outputs == 0) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("No transparent outputs expected"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("No transparent outputs expected"));
     return;
   }
 
   if (zcash_signing.current_transparent_input != 0) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Transparent outputs must come first"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("Transparent outputs must come first"));
     return;
   }
 
@@ -1284,28 +1254,22 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
       msg->index >= ZCASH_MAX_TRANSPARENT_OUTPUTS ||
       zcash_signing.current_transparent_output >=
           zcash_signing.n_transparent_outputs) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent output index out of range"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent output index out of range"));
     return;
   }
 
   if (msg->index != zcash_signing.current_transparent_output) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unexpected transparent output index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Unexpected transparent output index"));
     return;
   }
 
   if (!msg->has_amount || !msg->has_script_pubkey ||
       msg->script_pubkey.size == 0 ||
       msg->script_pubkey.size > ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid transparent output script"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Invalid transparent output script"));
     return;
   }
 
@@ -1313,10 +1277,8 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
   if (!zcash_transparent_script_to_address(msg->script_pubkey.bytes,
                                            msg->script_pubkey.size, address,
                                            sizeof(address))) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unsupported transparent output script"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Unsupported transparent output script"));
     return;
   }
 
@@ -1324,10 +1286,7 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
   zcash_format_amount(msg->amount, amount_str, sizeof(amount_str));
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Zcash Output",
                "Send transparent ZEC?\n%s\nAmount: %s", address, amount_str)) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Signing cancelled"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_ActionCancelled, _("Signing cancelled"));
     return;
   }
 
@@ -1346,15 +1305,12 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
 
   if (zcash_signing.current_transparent_output <
       zcash_signing.n_transparent_outputs) {
-    zcash_send_transparent_output_ack(zcash_signing.current_transparent_output);
+    zcash_send_transparent_ack(true, zcash_signing.current_transparent_output);
   } else if (zcash_signing.n_transparent_inputs > 0) {
-    zcash_send_transparent_input_ack(0);
+    zcash_send_transparent_ack(false, 0);
   } else {
     if (!zcash_finalize_transparent_digest()) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Transparent digest mismatch"));
-      zcash_signing_abort();
-      layoutHome();
+      zcash_fail(FailureType_Failure_Other, _("Transparent digest mismatch"));
       return;
     }
     zcash_send_action_ack(0);
@@ -1372,19 +1328,15 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
   }
 
   if (zcash_signing.n_transparent_inputs == 0) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("No transparent inputs expected"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("No transparent inputs expected"));
     return;
   }
 
   if (zcash_signing.current_transparent_output <
       zcash_signing.n_transparent_outputs) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Transparent outputs not yet complete"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("Transparent outputs not yet complete"));
     return;
   }
 
@@ -1394,26 +1346,20 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
       msg->index >= ZCASH_MAX_TRANSPARENT_INPUTS ||
       zcash_signing.current_transparent_input >=
           zcash_signing.n_transparent_inputs) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent input index out of range"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent input index out of range"));
     return;
   }
 
   if (msg->index != zcash_signing.current_transparent_input) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unexpected transparent input index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Unexpected transparent input index"));
     return;
   }
 
   if (msg->has_sighash) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Host transparent sighash rejected"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Host transparent sighash rejected"));
     return;
   }
 
@@ -1422,10 +1368,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
       !msg->has_sequence || !msg->has_script_pubkey ||
       msg->script_pubkey.size == 0 ||
       msg->script_pubkey.size > ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid transparent input data"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Invalid transparent input data"));
     return;
   }
 
@@ -1433,65 +1377,49 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
    * wrong for P2SH (outputs may still be P2SH). */
   if (!zcash_script_is_p2pkh(msg->script_pubkey.bytes,
                              msg->script_pubkey.size)) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent inputs must be P2PKH"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent inputs must be P2PKH"));
     return;
   }
 
   /* Inputs must be m/44'/133'/account'/{0,1}/index with the session account,
    * so a shielding approval cannot sign with arbitrary secp256k1 keys. */
   if (msg->address_n_count != 5) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Path must be m/44'/133'/account'/change/index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Path must be m/44'/133'/account'/change/index"));
     return;
   }
 
   if (msg->address_n[0] != (0x80000000 | 44) ||
       msg->address_n[1] != (0x80000000 | 133)) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Path must start with m/44'/133'"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Path must start with m/44'/133'"));
     return;
   }
 
   /* Account must be hardened and match the approved session */
   if (!(msg->address_n[2] & 0x80000000)) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Account must be hardened"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError, _("Account must be hardened"));
     return;
   }
 
   uint32_t path_account = msg->address_n[2] & 0x7FFFFFFF;
   if (path_account != zcash_signing.account) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Account does not match approved session"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Account does not match approved session"));
     return;
   }
 
   /* Change must be 0 (external) or 1 (internal), unhardened */
   if (msg->address_n[3] > 1) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Change must be 0 or 1"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError, _("Change must be 0 or 1"));
     return;
   }
 
   /* Index must be unhardened */
   if (msg->address_n[4] & 0x80000000) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Index must not be hardened"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Index must not be hardened"));
     return;
   }
 
@@ -1513,10 +1441,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
       msg->script_pubkey.bytes, msg->script_pubkey.size, node->public_key);
   memzero(node, sizeof(*node));
   if (!script_matches) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent input script does not match path"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent input script does not match path"));
     return;
   }
 
@@ -1538,27 +1464,22 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
 
   if (zcash_signing.current_transparent_input <
       zcash_signing.n_transparent_inputs) {
-    zcash_send_transparent_input_ack(zcash_signing.current_transparent_input);
+    zcash_send_transparent_ack(false, zcash_signing.current_transparent_input);
     layoutProgress(_("Signing Zcash"), 0);
     return;
   }
 
   if (!zcash_finalize_transparent_digest()) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Transparent digest mismatch"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_Other, _("Transparent digest mismatch"));
     return;
   }
 
   bool cancelled = false;
   if (!zcash_sign_transparent_inputs(&cancelled)) {
-    fsm_sendFailure(cancelled ? FailureType_Failure_ActionCancelled
-                              : FailureType_Failure_Other,
-                    cancelled ? _("Signing cancelled")
-                              : _("Transparent input signing failed"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(cancelled ? FailureType_Failure_ActionCancelled
+                         : FailureType_Failure_Other,
+               cancelled ? _("Signing cancelled")
+                         : _("Transparent input signing failed"));
     return;
   }
 

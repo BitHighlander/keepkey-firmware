@@ -6,11 +6,12 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
-#include "trezor/crypto/sha3.h"
 #include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
+#include "trezor/crypto/ed25519-donna/ed25519.h"
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <cstring>
@@ -433,6 +434,19 @@ TEST(Solana, PriorityFeeOverflowSafe) {
   EXPECT_FALSE(solana_priority_fee_lamports(UINT64_MAX, UINT64_MAX, &fee));
 }
 
+TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
+  uint64_t fee = 0;
+  ASSERT_TRUE(solana_priority_fee_lamports(50000000, 1400000, &fee));
+  EXPECT_EQ(fee, 70000000ULL);
+
+  /* Solana caps even an explicit request above 1.4M CU; the raw UINT32_MAX
+   * request must not be multiplied by the price. */
+  ASSERT_TRUE(solana_priority_fee_lamports(2000000, UINT32_MAX, &fee));
+  EXPECT_EQ(fee, 2800000ULL);
+  ASSERT_TRUE(solana_priority_fee_lamports(1, UINT64_MAX, &fee));
+  EXPECT_EQ(fee, 2ULL); /* ceil(1.4) */
+}
+
 TEST(Solana, ParseAssociatedTokenAccountCreate) {
   uint8_t raw[512];
   size_t pos = 0;
@@ -564,44 +578,19 @@ TEST(Solana, ParseTxTooShort) {
  * past accounts[31] as a uint16_t loop bound) or a value that silently wraps
  * to a small/zero uint8_t (256, 512, ...), which would have reintroduced the
  * original signer-check bypass this fix closed. */
-TEST(Solana, RejectsThirtyThreeAccounts) {
-  uint8_t raw[4];
-  size_t pos = 0;
-  raw[pos++] = 1;  /* num_required_sigs */
-  raw[pos++] = 0;  /* num_readonly_signed */
-  raw[pos++] = 1;  /* num_readonly_unsigned */
-  raw[pos++] = 33; /* compact-u16 num_accounts: 33 > SOL_MAX_ACCOUNTS(32) */
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-}
-
-TEST(Solana, RejectsAccountCountWrapAt256) {
-  uint8_t raw[5];
-  size_t pos = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  /* compact-u16 for 256: byte0 = (256 & 0x7F) | 0x80, byte1 = 256 >> 7 */
-  raw[pos++] = 0x80;
-  raw[pos++] = 0x02;
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-}
-
-TEST(Solana, RejectsAccountCountWrapAt512) {
-  uint8_t raw[5];
-  size_t pos = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  /* compact-u16 for 512: byte0 = (512 & 0x7F) | 0x80, byte1 = 512 >> 7 */
-  raw[pos++] = 0x80;
-  raw[pos++] = 0x04;
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+TEST(Solana, RejectsAccountCountsAboveTheLimitOrWrapping) {
+  /* Header (1 signer, 0 readonly signed, 1 readonly unsigned), then the
+   * compact-u16 account count: 33, 256 (0x80 0x02) and 512 (0x80 0x04). */
+  const std::vector<std::vector<uint8_t>> counts = {
+      {33}, {0x80, 0x02}, {0x80, 0x04}};
+  for (const auto& count : counts) {
+    std::vector<uint8_t> raw = {1, 0, 1};
+    raw.insert(raw.end(), count.begin(), count.end());
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+              SOL_TX_REVIEW_MALFORMED)
+        << (int)count.back();
+  }
 }
 
 TEST(Solana, RejectsTrailingBytes) {
@@ -975,24 +964,8 @@ TEST(Solana, CertifiedLookupProofBindsMessageKeysOrderAndScope) {
   clearsign_root_set_test_root(root_pub);
 
   auto mint = [&](uint32_t scope) {
-    std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
-    c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
-    c[CLEARSIGN_CERT_OFF_FLAGS] = CLEARSIGN_USAGE_MAY_SUPPRESS_RAW;
-    for (int i = 0; i < 4; i++) {
-      c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
-      c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
-    }
-    memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
-    memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, 33);
-    const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
-    uint8_t pre[66] = {0x19, 0x01};
-    memcpy(pre + 2, ds, 32);
-    keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
-    uint8_t digest[32];
-    keccak_256(pre, sizeof(pre), digest);
-    EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, root_priv, digest,
-                                   &c[CLEARSIGN_CERT_OFF_SIG], NULL, NULL));
-    return c;
+    return rootCert(root_priv, delegate_pub, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                    scope, 1818806400u, "Test Delegate");
   };
   const std::vector<uint8_t> cert = mint(CLEARSIGN_SCOPE_SOLANA);
 
@@ -1204,6 +1177,130 @@ TEST(Solana, MemoBodyCaptured) {
   EXPECT_EQ(tx.instructions[1].type, SOL_INSTR_MEMO);
   ASSERT_EQ(tx.instructions[1].data_len, strlen(memo));
   EXPECT_EQ(memcmp(tx.instructions[1].data, memo, strlen(memo)), 0);
+}
+
+static size_t BuildMemoTx(uint8_t* raw, const uint8_t* memo, size_t memo_len) {
+  size_t pos = 0;
+  raw[pos++] = 1; /* one required signer */
+  raw[pos++] = 0;
+  raw[pos++] = 1; /* memo program is readonly */
+  raw[pos++] = 2; /* signer + memo program */
+  memset(raw + pos, 0x11, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  memcpy(raw + pos, SOL_MEMO_PROGRAM, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  memset(raw + pos, 0xbb, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  raw[pos++] = 1; /* one instruction */
+  raw[pos++] = 1; /* memo program */
+  raw[pos++] = 0; /* no account indices */
+  raw[pos++] = (uint8_t)memo_len;
+  memcpy(raw + pos, memo, memo_len);
+  pos += memo_len;
+  return pos;
+}
+
+TEST(Solana, MemoRetainsEverySignedByteForReview) {
+  uint8_t memo_a[80];
+  uint8_t memo_b[80];
+  memset(memo_a, 'A', sizeof(memo_a));
+  memcpy(memo_b, memo_a, sizeof(memo_b));
+  memo_b[64] = 'B'; /* same length and first 32 bytes, different signed tail */
+
+  uint8_t raw_a[256];
+  uint8_t raw_b[256];
+  const size_t len_a = BuildMemoTx(raw_a, memo_a, sizeof(memo_a));
+  const size_t len_b = BuildMemoTx(raw_b, memo_b, sizeof(memo_b));
+  ASSERT_EQ(len_a, len_b);
+
+  SolanaParsedTx tx_a;
+  SolanaParsedTx tx_b;
+  ASSERT_EQ(solana_inspectTx(raw_a, len_a, &tx_a), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(solana_inspectTx(raw_b, len_b, &tx_b), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx_a.instructions[0].type, SOL_INSTR_MEMO);
+  ASSERT_EQ(tx_b.instructions[0].type, SOL_INSTR_MEMO);
+  ASSERT_EQ(tx_a.instructions[0].data_len, sizeof(memo_a));
+  ASSERT_EQ(tx_b.instructions[0].data_len, sizeof(memo_b));
+  EXPECT_EQ(0, memcmp(tx_a.instructions[0].data, memo_a, sizeof(memo_a)));
+  EXPECT_EQ(0, memcmp(tx_b.instructions[0].data, memo_b, sizeof(memo_b)));
+  EXPECT_NE(0, memcmp(tx_a.instructions[0].data, tx_b.instructions[0].data,
+                      sizeof(memo_a)));
+}
+
+TEST(Solana, CreateAccountRetainsEveryDisplayedSecurityField) {
+  uint8_t raw[256];
+  size_t pos = 0;
+
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 3;
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memset(raw + pos, 0, 32);
+  pos += 32;
+  memset(raw + pos, 0xbb, 32);
+  pos += 32;
+
+  raw[pos++] = 1;
+  raw[pos++] = 2;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 52;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0xca;
+  raw[pos++] = 0x9a;
+  raw[pos++] = 0x3b;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0x02;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  memset(raw + pos, 0x33, 32);
+  pos += 32;
+
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_CREATE_ACCOUNT);
+  EXPECT_EQ(tx.instructions[0].lamports, 1000000000ULL);
+  EXPECT_EQ(tx.instructions[0].extra_value, 512ULL);
+  EXPECT_EQ(0, memcmp(tx.instructions[0].to, raw + 4 + 32, 32));
+  uint8_t owner[32];
+  memset(owner, 0x33, sizeof(owner));
+  EXPECT_EQ(0, memcmp(tx.instructions[0].extra, owner, sizeof(owner)));
+
+  uint8_t prefixed[257];
+  prefixed[0] = 0;
+  memcpy(prefixed + 1, raw, pos);
+  EXPECT_EQ(solana_inspectTx(prefixed, pos + 1, &tx), SOL_TX_REVIEW_VERIFIED);
+
+  HDNode node = {};
+  node.private_key[0] = 1;
+  ed25519_publickey(node.private_key, node.public_key + 1);
+  SolanaSignTx msg = {};
+  msg.has_raw_tx = true;
+  msg.raw_tx.size = pos + 1;
+  memcpy(msg.raw_tx.bytes, prefixed, msg.raw_tx.size);
+  SolanaSignedTx resp = {};
+  ASSERT_TRUE(solana_signTx(&node, &msg, &resp));
+  EXPECT_EQ(0, ed25519_sign_open(raw, pos, node.public_key + 1,
+                                 resp.signature.bytes));
+  EXPECT_NE(0, ed25519_sign_open(prefixed, pos + 1, node.public_key + 1,
+                                 resp.signature.bytes));
 }
 
 TEST(Solana, MalformedVersionedLookupTableRejects) {
@@ -1473,6 +1570,37 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
 
 /* A recognised instruction with fewer accounts than its layout needs would
  * display a zeroed address: it must be UNKNOWN and force opaque. */
+TEST(Solana, TokenMintAndBurnRemainOpaqueWithoutOpcodeBoundDisplay) {
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+
+  static const uint8_t kMintUnchecked[9] = {7, 1, 0, 0, 0, 0, 0, 0, 0};
+  size_t len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kMintUnchecked,
+                                     sizeof(kMintUnchecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_MINT_TO);
+
+  static const uint8_t kMintChecked[10] = {14, 1, 0, 0, 0, 0, 0, 0, 0, 6};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kMintChecked,
+                              sizeof(kMintChecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_MINT_TO);
+  EXPECT_EQ(tx.instructions[0].extra_u8, 6);
+
+  static const uint8_t kBurnUnchecked[9] = {8, 1, 0, 0, 0, 0, 0, 0, 0};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kBurnUnchecked,
+                              sizeof(kBurnUnchecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_BURN);
+
+  static const uint8_t kBurnChecked[10] = {15, 1, 0, 0, 0, 0, 0, 0, 0, 6};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kBurnChecked,
+                              sizeof(kBurnChecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_BURN);
+  EXPECT_EQ(tx.instructions[0].extra_u8, 6);
+}
+
 TEST(Solana, RecognizedInstructionMissingAccountsIsOpaque) {
   SolanaParsedTx tx;
   uint8_t raw[512];
@@ -3359,9 +3487,9 @@ std::vector<uint8_t> pump_sell_v3(const char* intent) {
   return v3_schema(
       kPumpAmmProgram, {0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad},
       "Pump.fun", "Sell tokens",
-      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
+      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
        {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive at least", 4,
-        SOL_ROLE_RECEIVE_MIN}},
+        METADATA_ROLE_RECEIVE_MIN}},
       intent);
 }
 
@@ -3526,11 +3654,11 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
       {{SOL_SCHEMA_ARG_U64, "Round", -1, 0},
        {SOL_SCHEMA_ARG_U64, "Revision", -1, 0},
        {SOL_SCHEMA_ARG_U8, "Seat", -1, 0},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, SOL_ROLE_SPEND_EXACT},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, METADATA_ROLE_SPEND_EXACT},
        {SOL_SCHEMA_ARG_PUBKEY, "Session key", -1, 0},
        {SOL_SCHEMA_ARG_DURATION, "Expires in", -1, 0},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, SOL_ROLE_SPEND_MAX},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, SOL_ROLE_CAP}},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, METADATA_ROLE_SPEND_MAX},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, METADATA_ROLE_CAP}},
       "Join blackjack seat {2} for {3}; key {4} may bet {7} each, {6} total, "
       "for {5}");
   SolanaInstrSchema s;
@@ -3587,8 +3715,8 @@ TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
     return got;
   };
   const std::vector<V3Arg> args = {
-      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
-      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive", 4, SOL_ROLE_RECEIVE_EXACT}};
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive", 4, METADATA_ROLE_RECEIVE_EXACT}};
   const std::vector<uint8_t> disc = {0x33, 0xe6, 0x85, 0xa4,
                                      0x01, 0x7f, 0x83, 0xad};
 
