@@ -25,9 +25,8 @@
 
 static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg,
                                  bool* needs_confirm) {
-  /* Account routing accepts only a complete canonical ERC20 transfer. Check
-   * the declared total too, so streaming a suffix cannot change the signing
-   * classifier after the account confirmation has replaced output review. */
+  /* Only a complete canonical ERC20 transfer; check the declared total so a
+   * streamed suffix cannot change the classification after review. */
   if ((msg->data_length != 0 || msg->data_initial_chunk.size != 0) &&
       (msg->data_length != 68 || !ethereum_isStandardERC20Transfer(msg)))
     return TXOUT_COMPILE_ERROR;
@@ -145,9 +144,8 @@ static void send_erc7730_definition_request(void) {
   msg_write(MessageType_MessageType_EthereumClearSignDefinitionRequest, resp);
 }
 
-/* Phase E2: ask for the inner definition by what the signed calldata says
- * (chain, callee, selector, depth 1), or for the outer definition again by
- * its id. The host answers with chunks, or with an empty chunk for "none". */
+/* Request the inner definition by the signed calldata's (chain, callee,
+ * selector), or the outer one by id. An empty chunk means "none". */
 static void send_erc7730_fetch_request(void) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
   if (workflow->phase != ERC7730_WORKFLOW_FETCH ||
@@ -256,10 +254,8 @@ static size_t erc7730_part_end(const char* value, size_t offset,
   return end;
 }
 
-/* Show escaped `text` under a device-owned title, led by `label` when one is
- * given. confirm() refuses a body longer than BODY_CHAR_MAX, so text that does
- * not fit is split across numbered screens; each repeats the label and each
- * must be confirmed. */
+/* Escaped `text` under a device-owned title; over-long text is split across
+ * numbered screens, each repeating the label and each confirmed. */
 static bool confirm_erc7730_text(const char* title, const char* label,
                                  const char* text) {
   const size_t label_length = label ? strlen(label) + 2u : 0u; /* ":\n" */
@@ -290,9 +286,8 @@ static bool confirm_erc7730_text(const char* title, const char* label,
   return true;
 }
 
-/* Signer-authored program strings reach the screen escaped, exactly like
- * captured values: the OLED font draws every non-ASCII byte as one glyph and
- * the pager drops edge spaces, so raw text is not shown one-to-one. */
+/* Signer-authored strings are escaped like captured values: raw text is not
+ * shown one-to-one (non-ASCII glyphs, dropped edge spaces). */
 static bool confirm_erc7730_escaped(const char* title, const char* label,
                                     const char* raw) {
   char text[ERC7730_FORMATTED_VALUE_MAX + 1u];
@@ -330,9 +325,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
   return ERC7730_UI_OK;
 }
 
-/* The per-field title is device-owned: a signer-chosen label in the title
- * line could imitate a firmware screen such as "Ethereum Data Hash", so the
- * escaped label leads the body instead. `value` is already escaped. */
+/* Device-owned title: a signer label there could imitate a firmware screen,
+ * so the escaped label leads the body. `value` is already escaped. */
 static bool confirm_erc7730_field(const char* title, const char* label,
                                   const char* value) {
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
@@ -413,12 +407,9 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
   }
   bool confirmed;
   if (workflow->intent_part != 0) {
-    /* A part of the interpolated intent: a device-owned numbered title and
-     * no label. */
+    /* Interpolated intent part: device-owned "i of n" title (never the
+     * pager's "i/n"), no label. */
     char title[TITLE_CHAR_MAX];
-    /* "i of n", never the pager's "i/n"; the signer's text and the device's
-     * values are titled apart. Inner parts drop "intent" so the title still
-     * fits the OLED with the pager's page suffix. */
     snprintf(title, sizeof(title), "%s%s %u of %u",
              workflow->depth ? "Inner" : "Intent",
              workflow->intent_value ? " value" : " text",
@@ -498,9 +489,8 @@ static bool format_erc7730_word(const Erc7730Field* field, char* output,
   return ok;
 }
 
-/* A multi-argument field, once every argument is in hand. `text` is the one
- * program string an argument named (tokenAmount message, date encoding, unit
- * base, enum label), unescaped, or NULL. */
+/* A multi-argument field; `text` is its one named program string
+ * (unescaped) or NULL. */
 static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   const Erc7730Field* field = &workflow->field;
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
@@ -566,10 +556,8 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* An embedded call the device cannot clear-sign. 7.15 shows it under a
- * blind-sign warning (AdvancedMode is already required for ERC-7730).
- * 7.16: AdvancedMode is a hard gate; reject here instead (owner rule,
- * docs/security/HANDOFF-ERC7730-PHASE-E.md section 9a). */
+/* An embedded call that cannot be clear-signed: 7.15 shows it under a
+ * blind-sign warning. 7.16 must reject here (AdvancedMode hard gate). */
 static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   workflow->inner_refused = false; /* consumed: the next call may fetch */
   const Erc7730Field* field = &workflow->field;
@@ -602,9 +590,8 @@ static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* A raw bytes/string value longer than the device captures. 7.15 shows its
- * length under a blind-sign warning. 7.16: AdvancedMode is a hard gate;
- * reject here instead (owner rule, HANDOFF-ERC7730-PHASE-E.md section 9a). */
+/* A value longer than the device captures: 7.15 shows its length under a
+ * blind-sign warning. 7.16 must reject here (AdvancedMode hard gate). */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
   char formatted[48];
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
@@ -738,10 +725,8 @@ static void fetch_erc7730_text(Erc7730Workflow* workflow, uint16_t index) {
   send_erc7730_definition_request();
 }
 
-/* Fetch the field's next argument. Arguments arrive in ascending role order,
- * so the value comes first. The one string argument (a tokenAmount message,
- * a date encoding or a unit base) is fetched last; a tokenAmount message only
- * when the threshold is met. */
+/* Fetch the next argument in role order (value first, string last; a
+ * tokenAmount message only when the threshold is met). */
 static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   Erc7730Field* field = &workflow->field;
   while (field->next_argument < field->argument_count) {
@@ -770,9 +755,8 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
-    /* Clear-sign the inner call when its definition exists: one level, not
-     * inside an iteration, and only for inner bytes that hold a selector and
-     * whole ABI words. Otherwise it is shown blind (7.15). */
+    /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
+     * words; otherwise it is shown blind (7.15). */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
                            !workflow->inner_refused && field->has_address &&
                            field->inner_selector_length == 4 &&
@@ -1009,9 +993,7 @@ static void follow_erc7730_literal(Erc7730Workflow* workflow) {
   memzero(&literal, sizeof(literal));
 }
 
-/* The word an enum key literal stands for: unsigned integers zero-extend,
- * signed ones sign-extend, booleans are 0 or 1. Anything else matches no
- * value. */
+/* An enum key's word: uint zero-extends, int sign-extends, bool is 0/1. */
 static bool erc7730_enum_key_word(const Erc7730Literal* key, uint8_t word[32]) {
   if (key->length == 0 || key->length > 32 ||
       (key->kind != 1 && key->kind != 2 && key->kind != 6))
@@ -1164,10 +1146,8 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
     return;
   }
 
-  /* A host that explicitly supplied a certified definition has selected the
-   * clear-sign path. Bind it to the exact transaction before any review UI or
-   * key derivation. A mismatch is an error, never permission to silently fall
-   * back to blind signing. */
+  /* A supplied definition binds to this exact tx before any UI or key
+   * derivation; a mismatch is an error, never a fallback to blind signing. */
   Erc7730CatalogIdentity definition;
   if (erc7730_catalog_preloaded(&definition)) {
     if (!storage_isPolicyEnabled("AdvancedMode")) {
@@ -1196,9 +1176,8 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       layoutHome();
       return;
     }
-    /* Certified calldata starts with a selector only. The ordinary allowance
-     * guard requires the complete 68-byte approval prefix before review, so
-     * this bounded certified path cannot safely annotate approve calls. */
+    /* approve() needs the full 68-byte prefix for the allowance guard, which
+     * this path does not have. */
     if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
       memzero(&definition, sizeof(definition));
       erc7730_catalog_clear_preload();
@@ -1440,9 +1419,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       send_erc7730_definition_request();
       return;
     }
-    /* Validate the whole calldata against the ABI (at depth 1: the inner
-     * call's bytes against the inner ABI) before the program's first screen:
-     * a field may show a constant before any value is captured. */
+    /* Validate all calldata against the ABI before the first screen. */
     start_erc7730_calldata(workflow, NULL);
     return;
   }
@@ -1777,12 +1754,8 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   }
   CHECK_PIN
 
-  /* Metadata must arrive before signing starts. signed_metadata_process()
-   * clears the binding on entry, so accepting metadata mid-signing would
-   * drop the tx<->metadata binding without aborting: a host could approve a
-   * benign decode (suppressing the blind-sign gate), then inject metadata to
-   * clear the binding and stream attacker-chosen calldata for the rest.
-   * Refuse and abort any in-progress signing session. */
+  /* Never mid-signing: processing clears the tx<->metadata binding, letting a
+   * host approve a benign decode then stream other calldata. Abort instead. */
   if (ethereum_signing_isInProgress()) {
     ethereum_signing_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -1791,10 +1764,7 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  /* Range-check the uint32 wire value against the slot count BEFORE it is
-   * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
-   * A slot that cannot exist is a malformed request, not an "Invalid"
-   * classification. */
+  /* Range-check before narrowing: (uint8_t)256 would alias slot 0. */
   CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
               _("clearsign metadata key_id out of range"));
 
@@ -1831,13 +1801,7 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* Same reasoning as fsm_msgEthereumTxMetadata above, and the same fix.
-   * Storing a signer ends in signed_metadata_clear(), which drops the
-   * tx<->metadata binding along with relied_on_metadata -- so loading a
-   * signer mid-signing let a host approve a benign decode and then stream
-   * different calldata, with signed_metadata_enforce() seeing relied=false
-   * and passing. The guard was on the metadata message but not on its
-   * sibling. */
+  /* As in fsm_msgEthereumTxMetadata: storing a signer clears the binding. */
   if (ethereum_signing_isInProgress()) {
     ethereum_signing_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -1858,35 +1822,22 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
                                    msg->pubkey.size, msg->alias),
       _("Invalid clearsign signer"));
 
-  /* Optional identity icon (1bpp mono RLE). The proto caps icon at 384 bytes;
-   * bound the dims too so the render path never scans a bogus geometry. An icon
-   * with zero/oversized dims is rejected rather than silently dropped so a
-   * malformed upload is visible, not a mystery text-only identity. */
+  /* Optional 1bpp mono RLE icon; bad dims are rejected, not dropped. */
   const uint8_t* icon = NULL;
   uint16_t icon_len = 0;
   uint8_t icon_w = 0, icon_h = 0;
   if (msg->has_icon && msg->icon.size > 0) {
     CHECK_PARAM(msg->icon.size <= METADATA_ICON_MAX, _("icon too large"));
-    /* Width is capped at the confirm screen's icon column
-     * (LEFT_MARGIN_WITH_ICON = 40), NOT at the 64px height. Title/body text
-     * begins at x=40 and the icon is drawn AFTER the text, so a wider
-     * host-supplied icon would paint over the alias, fingerprint and the
-     * "NOT verified by KeepKey" warning — on the very screen that exists to
-     * carry that warning. This is the trust boundary for icons arriving on the
-     * wire; signed_metadata_signer_icon() rechecks the session copy at use. */
+    /* Trust boundary: width <= the icon column, or the icon (drawn after the
+     * text) would paint over the alias, fingerprint and "NOT verified"
+     * warning. */
     CHECK_PARAM(msg->has_icon_width && msg->has_icon_height &&
                     msg->icon_width > 0 &&
                     msg->icon_width <= LEFT_MARGIN_WITH_ICON &&
                     msg->icon_height > 0 && msg->icon_height <= 64,
                 _("icon dimensions out of range"));
-    /* Reject a malformed RLE stream HERE rather than discovering it at draw
-     * time. The render path returns a bool that layout_add_icon() discards, so
-     * an undecodable icon would otherwise show no logo while still returning
-     * Success — the user would consent to an identity
-     * whose logo silently does not exist. Validation is exact (every packet
-     * well-formed, no run straddling the image, whole input consumed) and
-     * side-effect-free.
-     */
+    /* Validate RLE here: the draw path's failure is discarded, so the user
+     * would consent to an identity whose logo silently does not exist. */
     CHECK_PARAM(draw_bitmap_mono_rle_valid(
                     msg->icon.bytes, (uint32_t)msg->icon.size,
                     (uint16_t)msg->icon_width, (uint16_t)msg->icon_height),
@@ -1899,9 +1850,7 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   bool persist = msg->has_persist && msg->persist;
   CHECK_PARAM(!persist, _("Persistent clearsign signers are disabled"));
 
-  /* Mandatory on-device consent — leads with the identity's logo (if any) +
-   * alias + fingerprint. The whole trust model hangs on this confirm; the same
-   * fingerprint reappears on every per-tx identity screen. */
+  /* Mandatory consent: the trust model hangs on this screen. */
   char fingerprint[METADATA_FINGERPRINT_LEN];
   signed_metadata_pubkey_fingerprint(msg->pubkey.bytes, fingerprint);
   if (!signed_metadata_confirm_load(msg->alias, fingerprint, icon, icon_w,
@@ -2231,13 +2180,8 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
   layoutHome();
 }
 
-/* ── Structured EIP-712 ──────────────────────────────────────────────
- *
- * The walk in eip712_stream.c never writes a message. It describes what it
- * wants next and these three handlers emit it, because msg_resp and the HD
- * node live here. One pump serves all three so the wire behaviour has exactly
- * one definition.
- */
+/* Structured EIP-712: eip712_stream.c describes the next request; this one
+ * pump emits it for all three handlers. */
 static void eip712_pump(void) {
   const Eip712Next* next = eip712_stream_next();
 
@@ -2324,13 +2268,8 @@ static void eip712_pump(void) {
       uint8_t sighash[32];
       keccak_256(preimage, done.domain_only ? 34 : sizeof(preimage), sighash);
 
-      /* Not const: node is the shared fsm_derived_node scratch and holds a
-       * private key, so every exit below scrubs it (same rule as
-       * process_ethereum_xfer(); 7.15 audit F059). Neither the node nor the
-       * msg_resp arena is held across the confirmation below: a DebugLink
-       * request answered during it reuses the arena, and dispatch clears the
-       * derived node. The address is kept in a local and the key is derived
-       * again only after approval. */
+      /* Holds a private key: every exit scrubs it (F059). Neither node nor
+       * msg_resp survives the confirm; the key is re-derived after approval. */
       HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, done.address_n,
                                         done.address_n_count, NULL);
       if (!node) return;
@@ -2415,10 +2354,8 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* This is the canonical device-driven stream, not the withdrawn whole-JSON
-   * parser and not the blind typed-hash endpoint. Every leaf is validated,
-   * rendered and hashed from the same bytes, so AdvancedMode is neither needed
-   * nor consulted. */
+  /* Every leaf is validated, shown and hashed from the same bytes, so
+   * AdvancedMode is not consulted. */
   if (!ethereum_streamed_eip712_enabled()) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Structured EIP-712 is unavailable"));

@@ -7,60 +7,41 @@
 
 #include "keepkey/firmware/erc7730_program.h"
 
-/* What this firmware's ERC-7730 runtime executes. The preload verifier
- * (erc7730_catalog.c) refuses every program outside this table and the
- * runtime (fsm_msg_ethereum.h, erc7730_workflow.c) checks the same
- * predicates, so a definition that preloads cannot fail part-way through its
- * review because of its program shape. Widen the table only together with the
- * runtime that executes the new shape, and keep python-keepkey's
- * erc7730_compiler.DEVICE_CAPABILITIES in step. */
+/* The preload verifier and the runtime check these same predicates, so a
+ * preloaded definition cannot fail mid-review. Widen only with the runtime,
+ * and keep python-keepkey's DEVICE_CAPABILITIES in step. */
 
 #define ERC7730_CAP_BIT(n) (UINT32_C(1) << (n))
 
-/* Display opcodes: 1 intent, 2 intent text, 3 intent value, 4 field, 5/6 a
- * group, 7/8 an iteration over one array, 10 end. Opcodes 2 and 3 form one
- * run directly after the intent; each is shown as a numbered part of the
- * interpolated intent. Groups only group; an iteration shows its fields once
- * per element, numbered. */
+/* 1 intent, 2/3 intent text/value (numbered parts right after the intent),
+ * 4 field, 5/6 group, 7/8 iteration over one array, 10 end. */
 #define ERC7730_CAP_DISPLAY_OPCODES                               \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) | \
    ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) | \
    ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10))
-/* Formatter kinds: 1 raw, 2 amount (native), 3 tokenAmount, 4 nftName,
- * 5 date, 6 duration, 7 unit, 8 enum, 10 addressName, 13 embedded calldata.
- * Embedded calldata is executed for calldata definitions only; its roles are
- * 1 the inner calldata (bytes), 15 the callee, 17 the value it moves and
- * 18 whose authority it runs with (16, the selector, is not executed: the
- * device reads the selector from the inner bytes). */
+/* 1 raw, 2 amount, 3 tokenAmount, 4 nftName, 5 date, 6 duration, 7 unit,
+ * 8 enum, 10 addressName, 13 embedded calldata (calldata definitions only;
+ * selector role 16 unused, the device reads it from the inner bytes). */
 #define ERC7730_CAP_FORMATTER_KINDS                                \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) |  \
    ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) |  \
    ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10) | \
    ERC7730_CAP_BIT(13))
-/* Path sources: 1 value, 2 container, 3 literal. Path step opcodes: 1 index.
- */
+/* Path sources: 1 value, 2 container, 3 literal. */
 #define ERC7730_CAP_PATH_SOURCES \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
-/* Path step opcodes: 1 index, 2 every element (bound to the iteration's
- * current element). Slices (3) are not executed. */
+/* Step opcodes: 1 index, 2 every element. Slices (3) are not executed. */
 #define ERC7730_CAP_PATH_STEP_OPCODES (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2))
-/* Containers the runtime reads, for calldata definitions only: 1 @.from (the
- * signing account, derived on device), 2 @.to (the transaction target) and
- * 3 @.value (the transaction's native value). */
+/* Calldata only: 1 @.from (derived on device), 2 @.to, 3 @.value. */
 #define ERC7730_CAP_CONTAINERS \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
-/* Display conditions (program section 5): only opcode 3, "optional", which
- * the runtime always shows, so a field, group or iteration that references
- * a condition is shown exactly as one that does not. Nothing is hidden. */
+/* Only "optional" (3), which is always shown: conditions hide nothing. */
 #define ERC7730_CAP_CONDITION_OPCODES ERC7730_CAP_BIT(3)
 #define ERC7730_CAP_CONDITIONS true
 /* A tokenAmount native-currency alias set may name at most this many
  * addresses, so the runtime can hold their literal indices. */
 #define ERC7730_CAP_ALIAS_SET_MAX 4u
-/* Signer text shown inside a value's screen (field labels, a tokenAmount
- * threshold message, a unit base, enum labels) may be at most this many
- * bytes, so that escaped (at most four characters a byte) it always fits the
- * screen and the device's value buffers; the registry's longest is 44. */
+/* Escaped (<=4 chars a byte) signer text must fit the screen and buffers. */
 #define ERC7730_CAP_SIGNER_TEXT_MAX 64u
 /* unit decimals at most this: a uint256 has at most 78 digits, so larger
  * scalings only prepend zeros. */
@@ -69,9 +50,7 @@
  * ten), so the runtime can hold their key and label indices. */
 #define ERC7730_CAP_ENUM_MAX 16u
 
-/* The type of a formatter argument's value, as the verifier knows it at
- * preload and the runtime knows it when the value arrives. 1-7 are the ABI
- * leaf kinds (erc7730_abi.h); literals map to the class of what they hold. */
+/* Value class: 1-7 are ABI leaf kinds; literals map to what they hold. */
 enum {
   ERC7730_CLASS_NONE = 0,
   ERC7730_CLASS_UINT = 1,

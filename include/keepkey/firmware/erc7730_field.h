@@ -14,13 +14,9 @@
 bool erc7730_format_address(const uint8_t address[20], bool this_wallet,
                             char* output, size_t output_size);
 
-/* A token amount. `native` means the signer's program named `token` as the
- * chain's native asset. When the firmware table does not know the token,
- * disclose that signer-supplied mapping and the original token address before
- * the native amount. A listed token always uses firmware ticker and decimals.
- * Other unknown tokens show their exact integer and address.
- * `message`, already escaped, is shown above the amount, never instead of it.
- */
+/* Listed tokens use firmware ticker/decimals; unknown ones show the exact
+ * integer and address. A signer `native` mapping of an unknown token is
+ * disclosed with its address. `message` (escaped) never replaces the amount. */
 bool erc7730_format_token_amount(const uint8_t amount[32],
                                  const uint8_t token[20], bool native,
                                  uint64_t chain_id, const char* message,
@@ -37,9 +33,8 @@ bool erc7730_format_nft(const uint8_t token_id[32],
                         const uint8_t collection[20], char* output,
                         size_t output_size);
 
-/* date: "YYYY-MM-DD HH:MM:SS UTC" and the raw seconds for a timestamp, or
- * "Block N" for a block height. A value outside the years 1970-9999 is shown
- * as its raw integer, marked "not a date"; it is never refused. */
+/* date: UTC time plus raw seconds, or "Block N". Outside 1970-9999 it is
+ * shown raw, marked "not a date". */
 bool erc7730_format_date(const uint8_t value[32], bool block_height,
                          char* output, size_t output_size);
 
@@ -57,9 +52,8 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
 bool erc7730_format_enum(const char* value, const char* label, char* output,
                          size_t output_size);
 
-/* embedded calldata, not clear-signed: the callee, the inner function's
- * selector (when the inner bytes hold one), their length, and when given the
- * native value it moves and whose authority it runs with. */
+/* embedded calldata, not clear-signed: callee, selector, length, and when
+ * given its native value and authority. */
 bool erc7730_format_embedded(const uint8_t callee[20], const uint8_t* selector,
                              size_t selector_length, uint32_t data_length,
                              const uint8_t* amount, uint64_t chain_id,
