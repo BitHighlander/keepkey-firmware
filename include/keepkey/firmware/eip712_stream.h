@@ -28,6 +28,7 @@
 #define KEEPKEY_FIRMWARE_EIP712_STREAM_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "messages-ethereum.pb.h"
@@ -140,6 +141,34 @@ typedef enum {
   EIP712_REQ_CANCELLED,  /* the user declined a screen */
 } Eip712ReqKind;
 
+/* A canonical Uniswap Permit2 PermitSingle (domain = the Permit2 contract,
+ * type hash = the published one), captured from the hashed bytes so the
+ * device can describe it in words before signing (SRS-7.16 §3.7). */
+typedef struct {
+  bool valid;
+  uint64_t chain_id;
+  uint8_t token[20];
+  uint8_t amount[20];  /* uint160, big-endian */
+  uint64_t expiration; /* uint48 */
+  uint64_t nonce;      /* uint48 */
+  uint8_t spender[20];
+  uint8_t sig_deadline[32]; /* uint256, big-endian */
+} Eip712Permit2;
+
+extern const uint8_t EIP712_PERMIT2_ADDRESS[20];
+
+typedef bool (*Eip712ReviewEmit)(void* ctx, const char* title,
+                                 const char* body);
+
+/* Summary, limits, details, who. spender_name is a ClearSign-vouched name
+ * for the spender (NULL if none); alias/fp name the vouching delegate. */
+bool eip712_permit2_review(const Eip712Permit2* p, const char* spender_name,
+                           const char* alias, const char* fp,
+                           Eip712ReviewEmit emit, void* ctx);
+
+/* "2026-05-10 06:19 UTC"; Unix time past year 9999 is shown as a number. */
+void eip712_format_utc(uint64_t t, char* out, size_t len);
+
 typedef struct {
   Eip712ReqKind kind;
   char struct_name[EIP712_MAX_STRUCT_NAME];
@@ -154,6 +183,7 @@ typedef struct {
   char primary_type[EIP712_MAX_STRUCT_NAME];
   bool message_empty;
   bool domain_only; /* primaryType EIP712Domain: sign keccak(0x1901 || ds) */
+  Eip712Permit2 permit2; /* valid: review it in words before signing */
 } Eip712Next;
 
 const Eip712Next* eip712_stream_next(void);

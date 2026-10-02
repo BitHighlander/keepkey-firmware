@@ -39,10 +39,19 @@
 #include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/erc7730_format.h"
+#include "keepkey/firmware/ethereum_tokens.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/sha3.h"
+
+#define EIP712_QUEUE_BODY 96
+
+/* Uniswap Permit2: one immutable deployment, the same address on every EVM
+ * chain that uses the canonical CREATE2 factory. */
+const uint8_t EIP712_PERMIT2_ADDRESS[20] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4, 0x73, 0x03, 0x0f,
+    0x11, 0x6d, 0xde, 0xe9, 0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
 
 typedef EthereumTypedDataStructAck_EthereumFieldType Eip712FieldType;
 typedef EthereumTypedDataStructAck_EthereumDataType Eip712DataType;
@@ -513,6 +522,15 @@ static struct {
     uint8_t digest[32];
   } schemas[EIP712_MAX_STRUCTS + 1];
   uint8_t schema_count;
+
+  /* Permit2: 0 off, 1 PermitSingle whose domain screens are queued until the
+   * domain and type hash prove it canonical, 2 recognised (values captured,
+   * reviewed in words at the end). Queued screens are shown, in order, the
+   * moment that proof fails, so nothing is ever hidden. */
+  uint8_t permit2;
+  uint8_t queued;
+  char queue[5][EIP712_QUEUE_BODY];
+  Eip712Permit2 p2;
 } e712;
 
 bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
@@ -789,6 +807,253 @@ static void fail(const char* why) {
   next_step.error = why;
 }
 
+/* ---- Permit2: described in words (SRS-7.16 §3.7) ---------------------- */
+
+static void cancel_walk(void) {
+  eip712_stream_abort();
+  memzero(&next_step, sizeof(next_step));
+  next_step.kind = EIP712_REQ_CANCELLED;
+}
+
+/* Show the queued domain screens, in order, and leave Permit2 mode. False =
+ * the user declined one; the walk is cancelled. */
+static bool permit2_flush(void) {
+  const uint8_t n = e712.queued;
+  e712.permit2 = 0;
+  e712.queued = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    if (!confirm(ButtonRequestType_ButtonRequest_Other, "EIP-712 Domain", "%s",
+                 e712.queue[i])) {
+      cancel_walk();
+      return false;
+    }
+  }
+  memzero(e712.queue, sizeof(e712.queue));
+  return true;
+}
+
+/* Queue the exact one-screen body eip712_confirm_leaf() would show. False if
+ * it does not fit a slot; the caller then flushes and shows it normally. */
+static bool permit2_queue_leaf(const Eip712FieldType* field,
+                               const uint8_t* value, uint16_t len) {
+  char type_name[EIP712_MAX_TYPE_NAME];
+  char path[160];
+  char text[EIP712_QUEUE_BODY];
+  if (e712.queued >= 5 ||
+      !eip712_type_name(field, type_name, sizeof(type_name)) ||
+      !leaf_path(path, sizeof(path)))
+    return false;
+  switch (field->data_type) {
+    case EthereumTypedDataStructAck_EthereumDataType_STRING:
+      if (!erc7730_format_text(value, len, text, sizeof(text))) return false;
+      break;
+    case EthereumTypedDataStructAck_EthereumDataType_BOOL:
+      strlcpy(text, value[0] ? "true" : "false", sizeof(text));
+      break;
+    case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
+      text[0] = '0';
+      text[1] = 'x';
+      ethereum_address_checksum(value, text + 2, false, 0);
+      break;
+    case EthereumTypedDataStructAck_EthereumDataType_UINT:
+    case EthereumTypedDataStructAck_EthereumDataType_INT:
+      if (!eip712_render_integer(field, value, len, text, sizeof(text)))
+        return false;
+      break;
+    default:
+      return false;
+  }
+  const int n = snprintf(e712.queue[e712.queued], EIP712_QUEUE_BODY,
+                         "%s\n%s: %s", path, type_name, text);
+  if (n < 0 || n >= EIP712_QUEUE_BODY) return false;
+  e712.queued++;
+  return true;
+}
+
+static bool hash_is(const uint8_t hash[32], const char* text) {
+  uint8_t h[32];
+  keccak_256((const uint8_t*)text, strlen(text), h);
+  return memcmp(h, hash, 32) == 0;
+}
+
+/* The domain Permit2 itself verifies against: name "Permit2", the chain, the
+ * Permit2 contract, and nothing else. */
+static bool permit2_domain_ok(const uint8_t domain_type_hash[32]) {
+  const Eip712DomainFacts* f = &e712.domain_facts;
+  return f->has_chain_id && f->has_verifying_contract &&
+         memcmp(f->verifying_contract, EIP712_PERMIT2_ADDRESS, 20) == 0 &&
+         f->domain_present == 1 && hash_is(f->domain_hashes[0], "Permit2") &&
+         hash_is(domain_type_hash,
+                 "EIP712Domain(string name,uint256 chainId,"
+                 "address verifyingContract)");
+}
+
+static bool permit2_type_ok(void) {
+  return e712.domain_facts.has_primary_type_hash &&
+         hash_is(e712.domain_facts.primary_type_hash,
+                 "PermitSingle(PermitDetails details,address spender,"
+                 "uint256 sigDeadline)PermitDetails(address token,"
+                 "uint160 amount,uint48 expiration,uint48 nonce)");
+}
+
+static uint64_t be_u64(const uint8_t* v, uint16_t len) {
+  uint64_t out = 0;
+  for (uint16_t i = 0; i < len; i++) out = (out << 8) | v[i];
+  return out;
+}
+
+/* The canonical type hash fixes every member and width, so each leaf lands
+ * in exactly one field. */
+static void permit2_capture(const uint8_t* v, uint16_t len) {
+  const char* s = e712.stack[e712.depth - 1].name;
+  const char* m = e712.pending_name;
+  Eip712Permit2* p = &e712.p2;
+  if (strcmp(s, "PermitDetails") == 0) {
+    if (strcmp(m, "token") == 0) memcpy(p->token, v, 20);
+    if (strcmp(m, "amount") == 0) memcpy(p->amount + 20 - len, v, len);
+    if (strcmp(m, "expiration") == 0) p->expiration = be_u64(v, len);
+    if (strcmp(m, "nonce") == 0) p->nonce = be_u64(v, len);
+  } else {
+    if (strcmp(m, "spender") == 0) memcpy(p->spender, v, 20);
+    if (strcmp(m, "sigDeadline") == 0)
+      memcpy(p->sig_deadline + 32 - len, v, len);
+  }
+}
+
+static void u64_decimal(uint64_t v, char* out, size_t len) {
+  char tmp[21];
+  size_t i = sizeof(tmp) - 1;
+  tmp[i] = '\0';
+  do {
+    tmp[--i] = (char)('0' + v % 10);
+    v /= 10;
+  } while (v && i);
+  strlcpy(out, tmp + i, len);
+}
+
+void eip712_format_utc(uint64_t t, char* out, size_t len) {
+  if (t > 253402300799ULL) { /* past 9999-12-31 */
+    char n[21];
+    u64_decimal(t, n, sizeof(n));
+    snprintf(out, len, "Unix time %s", n);
+    return;
+  }
+  /* Civil date from days since 1970-01-01 (proleptic Gregorian). */
+  const uint64_t z = t / 86400 + 719468;
+  const uint32_t rem = (uint32_t)(t % 86400);
+  const uint64_t era = z / 146097;
+  const uint32_t doe = (uint32_t)(z - era * 146097);
+  const uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const uint32_t mp = (5 * doy + 2) / 153;
+  const uint32_t d = doy - (153 * mp + 2) / 5 + 1;
+  const uint32_t m = mp < 10 ? mp + 3 : mp - 9;
+  const uint32_t y = (uint32_t)(yoe + era * 400) + (m <= 2 ? 1 : 0);
+  snprintf(out, len, "%04u-%02u-%02u %02u:%02u UTC", (unsigned)y, (unsigned)m,
+           (unsigned)d, (unsigned)(rem / 3600), (unsigned)(rem % 3600 / 60));
+}
+
+static const TokenType* permit2_token(const Eip712Permit2* p) {
+  if (p->chain_id > UINT32_MAX) return NULL;
+  const TokenType* t = tokenByChainAddress((uint32_t)p->chain_id, p->token);
+  return t == UnknownToken ? NULL : t;
+}
+
+static const char* ticker_of(const TokenType* t) {
+  return t->ticker[0] == ' ' ? t->ticker + 1 : t->ticker;
+}
+
+/* Exact, never rounded. A max uint160 is the unlimited allowance. */
+static bool permit2_amount(const Eip712Permit2* p, char* out, size_t len) {
+  const TokenType* t = permit2_token(p);
+  bool unlimited = true;
+  for (int i = 0; i < 20; i++)
+    if (p->amount[i] != 0xff) unlimited = false;
+  if (unlimited) {
+    snprintf(out, len, "UNLIMITED %s", t ? ticker_of(t) : "of this token");
+    return true;
+  }
+  uint8_t word[32] = {0};
+  memcpy(word + 12, p->amount, 20);
+  bignum256 amount;
+  bn_read_be(word, &amount);
+  char suffix[16] = "";
+  if (t) snprintf(suffix, sizeof(suffix), " %s", ticker_of(t));
+  const size_t n = bn_format(&amount, NULL, t ? suffix : " base units",
+                             t ? t->decimals : 0, 0, false, out, len);
+  memzero(&amount, sizeof(amount));
+  return n > 0;
+}
+
+static void address_text(const uint8_t a[20], uint64_t chain_id, bool shorten,
+                         char* out, size_t len) {
+  char full[43] = "0x";
+  ethereum_address_checksum(a, full + 2, false, 0);
+  (void)chain_id;
+  if (shorten) {
+    snprintf(out, len, "%.6s...%s", full, full + 38);
+  } else {
+    strlcpy(out, full, len);
+  }
+}
+
+bool eip712_permit2_review(const Eip712Permit2* p, const char* spender_name,
+                           const char* alias, const char* fp,
+                           Eip712ReviewEmit emit, void* ctx) {
+  if (!p || !p->valid || !emit) return false;
+  char amount[100], expires[32], deadline[40], spender[44], body[BODY_CHAR_MAX];
+  if (!permit2_amount(p, amount, sizeof(amount))) return false;
+  eip712_format_utc(p->expiration, expires, sizeof(expires));
+  bool huge = false;
+  for (int i = 0; i < 24; i++)
+    if (p->sig_deadline[i]) huge = true;
+  if (huge) {
+    strlcpy(deadline, "never (past year 9999)", sizeof(deadline));
+  } else {
+    eip712_format_utc(be_u64(p->sig_deadline + 24, 8), deadline,
+                      sizeof(deadline));
+  }
+  if (spender_name) {
+    strlcpy(spender, spender_name, sizeof(spender));
+  } else {
+    address_text(p->spender, p->chain_id, true, spender, sizeof(spender));
+  }
+  /* Summary: who may take what, until when. */
+  snprintf(body, sizeof(body), "Allow %s to spend %s from this wallet until %s",
+           spender, amount, expires);
+  if (!emit(ctx, "Permit2", body)) return false;
+  /* Limits: firmware wording, exact values. */
+  snprintf(body, sizeof(body), "Spender may take\n%s", amount);
+  if (!emit(ctx, "Limits", body)) return false;
+  snprintf(body, sizeof(body), "Allowance expires\n%s", expires);
+  if (!emit(ctx, "Limits", body)) return false;
+  snprintf(body, sizeof(body), "Signature valid until\n%s", deadline);
+  if (!emit(ctx, "Limits", body)) return false;
+  /* Details: every value, every address in full. */
+  char full[44], n[21];
+  const TokenType* t = permit2_token(p);
+  address_text(p->token, p->chain_id, false, full, sizeof(full));
+  snprintf(body, sizeof(body), "%s%s%s", t ? ticker_of(t) : "Unknown token",
+           "\n", full);
+  if (!emit(ctx, "Token", body)) return false;
+  address_text(p->spender, p->chain_id, false, full, sizeof(full));
+  snprintf(body, sizeof(body), "%s\n%s",
+           spender_name ? spender_name : "Not identified", full);
+  if (!emit(ctx, "Spender", body)) return false;
+  u64_decimal(p->nonce, n, sizeof(n));
+  snprintf(body, sizeof(body), "Nonce %s", n);
+  if (!emit(ctx, "Details", body)) return false;
+  u64_decimal(p->chain_id, n, sizeof(n));
+  snprintf(body, sizeof(body), "Permit2 contract on chain %s", n);
+  if (!emit(ctx, "Details", body)) return false;
+  if (spender_name) {
+    snprintf(body, sizeof(body), "Spender named by %s %s\ncertified by KeepKey",
+             alias ? alias : "", fp ? fp : "");
+    if (!emit(ctx, "KeepKey ClearSign", body)) return false;
+  }
+  return true;
+}
+
 static void request_struct(const char* name) {
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_STRUCT;
@@ -861,6 +1126,10 @@ static void complete_frame(void) {
     memcpy(e712.domain_separator, digest, 32);
     e712.have_domain_separator = true;
   }
+  if (e712.root == 0 && e712.permit2 == 1 &&
+      !permit2_domain_ok(e712.stack[0].type_hash) && !permit2_flush()) {
+    return;
+  }
   if (e712.root == 0 && !domain_only) {
     /* The domain is hashed. Now the message, under the same session. */
     e712.root = 1;
@@ -880,6 +1149,11 @@ static void complete_frame(void) {
    * primary type is the domain itself: there is no message hash. */
   next_step.domain_only = domain_only;
   next_step.message_empty = domain_only || !e712.message_value_confirmed;
+  if (e712.permit2 == 2) {
+    next_step.permit2 = e712.p2;
+    next_step.permit2.valid = true;
+    next_step.permit2.chain_id = e712.domain_facts.chain_id;
+  }
   if (!domain_only) memcpy(next_step.message_hash, digest, 32);
   strlcpy(next_step.primary_type, e712.primary_type,
           sizeof(next_step.primary_type));
@@ -997,6 +1271,8 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
   e712.active = true;
   e712.metamask_v4_compat = true;
   e712.require_definition = require_definition;
+  e712.permit2 =
+      !require_definition && strcmp(msg->primary_type, "PermitSingle") == 0;
   e712.address_n_count = (uint8_t)msg->address_n_count;
   memcpy(e712.address_n, msg->address_n,
          msg->address_n_count * sizeof(uint32_t));
@@ -1133,6 +1409,15 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       if (e712.root == 1 && e712.depth == 1) {
         memcpy(e712.domain_facts.primary_type_hash, tf->type_hash, 32);
         e712.domain_facts.has_primary_type_hash = true;
+        if (e712.permit2 == 1) {
+          if (permit2_type_ok()) {
+            e712.permit2 = 2; /* the review replaces the queued screens */
+            e712.queued = 0;
+            memzero(e712.queue, sizeof(e712.queue));
+          } else if (!permit2_flush()) {
+            return false;
+          }
+        }
         if (e712.require_definition && !e712.definition_accepted) {
           memzero(&next_step, sizeof(next_step));
           next_step.kind = EIP712_REQ_DEFINITION;
@@ -1285,13 +1570,22 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     return false;
   }
 
-  if (is_unlimited_permit(field, bytes, len)) {
+  Eip712LeafResult shown = EIP712_LEAF_OK;
+  if (e712.permit2 == 2 && e712.root == 1) {
+    /* Canonical Permit2: captured from these bytes, described in words before
+     * signing; an unlimited allowance is allowed and stated there. */
+    permit2_capture(bytes, len);
+  } else if (is_unlimited_permit(field, bytes, len)) {
     fail("Unlimited ERC20 approval is disabled");
     return false;
+  } else if (e712.permit2 == 1 && e712.root == 0 &&
+             permit2_queue_leaf(field, bytes, len)) {
+    /* Queued; shown in order if this does not prove to be Permit2. */
+  } else {
+    if (e712.permit2 == 1 && !permit2_flush()) return false;
+    /* Display and absorb from the SAME buffer: no second read can differ. */
+    shown = eip712_confirm_leaf(field, bytes, len);
   }
-
-  /* Display and absorb from the SAME buffer: no second read can differ. */
-  const Eip712LeafResult shown = eip712_confirm_leaf(field, bytes, len);
   if (shown == EIP712_LEAF_INVALID) {
     fail("EIP-712 value cannot be displayed");
     return false;
