@@ -945,6 +945,7 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   /* ceil(price * limit / 1e6), every step overflow-checked; false (never
    * saturate) if the result exceeds UINT64_MAX. */
   const uint64_t D = 1000000u;
+  if (limit > SOL_MAX_COMPUTE_UNITS) limit = SOL_MAX_COMPUTE_UNITS;
   uint64_t q = price / D;
   uint64_t r = price % D;
   if (limit != 0 && r > UINT64_MAX / limit) {
