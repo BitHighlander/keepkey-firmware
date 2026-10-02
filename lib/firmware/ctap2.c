@@ -125,39 +125,6 @@ void ctap2_set_transport_channel(uint32_t channel) {
   transport_channel = channel;
 }
 
-static bool map_find(const uint8_t* buffer, size_t length, int64_t wanted,
-                     CborValue* value, const uint8_t** slice,
-                     size_t* slice_length) {
-  CborDecoder decoder;
-  CborValue map;
-  cbor_decoder_init(&decoder, buffer, length);
-  if (!cbor_decode_value(&decoder, &map) || map.type != CBOR_TYPE_MAP)
-    return false;
-  for (uint64_t i = 0; i < map.value; ++i) {
-    CborValue key;
-    if (!cbor_decode_value(&decoder, &key)) return false;
-    int64_t decoded_key;
-    if (key.type == CBOR_TYPE_UINT && key.value <= INT64_MAX)
-      decoded_key = (int64_t)key.value;
-    else if (key.type == CBOR_TYPE_NEGINT && key.value <= INT64_MAX)
-      decoded_key = -1 - (int64_t)key.value;
-    else
-      return false;
-
-    size_t start = decoder.offset;
-    if (!cbor_skip_value(&decoder)) return false;
-    if (decoded_key == wanted) {
-      CborDecoder item;
-      cbor_decoder_init(&item, buffer + start, decoder.offset - start);
-      if (!cbor_decode_value(&item, value)) return false;
-      if (slice != NULL) *slice = buffer + start;
-      if (slice_length != NULL) *slice_length = decoder.offset - start;
-      return true;
-    }
-  }
-  return false;
-}
-
 static bool valid_request_map(const uint8_t* buffer, size_t length) {
   CborDecoder decoder;
   CborValue map;
@@ -175,34 +142,6 @@ static bool valid_request_map(const uint8_t* buffer, size_t length) {
     have_previous = true;
   }
   return decoder.offset == decoder.length;
-}
-
-static bool map_find_text(const uint8_t* buffer, size_t length,
-                          const char* wanted, CborValue* value,
-                          const uint8_t** slice, size_t* slice_length) {
-  CborDecoder decoder;
-  CborValue map;
-  const size_t wanted_length = strlen(wanted);
-  cbor_decoder_init(&decoder, buffer, length);
-  if (!cbor_decode_value(&decoder, &map) || map.type != CBOR_TYPE_MAP)
-    return false;
-  for (uint64_t i = 0; i < map.value; ++i) {
-    CborValue key;
-    if (!cbor_decode_value(&decoder, &key) || key.type != CBOR_TYPE_TEXT)
-      return false;
-    size_t start = decoder.offset;
-    if (!cbor_skip_value(&decoder)) return false;
-    if (key.length == wanted_length &&
-        memcmp(key.data, wanted, wanted_length) == 0) {
-      CborDecoder item;
-      cbor_decoder_init(&item, buffer + start, decoder.offset - start);
-      if (!cbor_decode_value(&item, value)) return false;
-      if (slice != NULL) *slice = buffer + start;
-      if (slice_length != NULL) *slice_length = decoder.offset - start;
-      return true;
-    }
-  }
-  return false;
 }
 
 static bool cbor_bool(const CborValue* value, bool* result) {
@@ -284,8 +223,8 @@ static bool generate_key_agreement(void) {
 static bool decode_cose_public_key(const uint8_t* buffer, size_t length,
                                    uint8_t public_key[65]) {
   CborValue x, y;
-  if (!map_find(buffer, length, -2, &x, NULL, NULL) ||
-      !map_find(buffer, length, -3, &y, NULL, NULL) ||
+  if (!cbor_map_find(buffer, length, NULL, -2, &x, NULL, NULL) ||
+      !cbor_map_find(buffer, length, NULL, -3, &y, NULL, NULL) ||
       x.type != CBOR_TYPE_BYTES || y.type != CBOR_TYPE_BYTES ||
       x.length != 32 || y.length != 32)
     return false;
@@ -309,7 +248,7 @@ static bool shared_secret_from_request(const uint8_t* buffer, size_t length,
                           still_open(key_agreement.started, 30000);
   memzero(shared_secret, 32);
   if (usable_key &&
-      map_find(buffer, length, 3, &value, &key_slice, &key_length) &&
+      cbor_map_find(buffer, length, NULL, 3, &value, &key_slice, &key_length) &&
       value.type == CBOR_TYPE_MAP &&
       decode_cose_public_key(key_slice, key_length, peer_key) &&
       ecdh_multiply(&nist256p1, key_agreement.private_key, peer_key,
@@ -373,9 +312,9 @@ static bool request_has_es256(const uint8_t* buffer, size_t length) {
     const size_t start = decoder.offset;
     if (!cbor_skip_value(&decoder)) return false;
     CborValue alg, type;
-    if (map_find_text(buffer + start, decoder.offset - start, "alg", &alg, NULL,
-                      NULL) &&
-        map_find_text(buffer + start, decoder.offset - start, "type", &type,
+    if (cbor_map_find(buffer + start, decoder.offset - start, "alg", 0, &alg,
+                      NULL, NULL) &&
+        cbor_map_find(buffer + start, decoder.offset - start, "type", 0, &type,
                       NULL, NULL) &&
         alg.type == CBOR_TYPE_NEGINT && alg.value == 6 &&
         type.type == CBOR_TYPE_TEXT && type.length == 10 &&
@@ -438,9 +377,9 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
   CborValue auth, protocol;
   *verified = false;
   bool have_auth =
-      map_find(request, request_length, auth_key, &auth, NULL, NULL);
-  bool have_protocol =
-      map_find(request, request_length, protocol_key, &protocol, NULL, NULL);
+      cbor_map_find(request, request_length, NULL, auth_key, &auth, NULL, NULL);
+  bool have_protocol = cbor_map_find(request, request_length, NULL,
+                                     protocol_key, &protocol, NULL, NULL);
   if (!have_auth && !have_protocol) {
     PasskeyStorage storage;
     storage_getPasskeyData(&storage);
@@ -480,9 +419,9 @@ static bool credential_list_contains(const uint8_t* buffer, size_t length,
     size_t start = decoder.offset;
     if (!cbor_skip_value(&decoder)) return false;
     CborValue id, type;
-    if (map_find_text(buffer + start, decoder.offset - start, "id", &id, NULL,
-                      NULL) &&
-        map_find_text(buffer + start, decoder.offset - start, "type", &type,
+    if (cbor_map_find(buffer + start, decoder.offset - start, "id", 0, &id,
+                      NULL, NULL) &&
+        cbor_map_find(buffer + start, decoder.offset - start, "type", 0, &type,
                       NULL, NULL) &&
         id.type == CBOR_TYPE_BYTES && id.length == 64 &&
         type.type == CBOR_TYPE_TEXT && type.length == 10 &&
@@ -676,14 +615,17 @@ static void make_credential(const uint8_t* request, size_t request_length,
   CborValue client_hash, rp, user, algorithms, value;
   const uint8_t *rp_slice, *user_slice, *algorithm_slice;
   size_t rp_length, user_length, algorithm_length;
-  if (!map_find(request, request_length, 1, &client_hash, NULL, NULL) ||
+  if (!cbor_map_find(request, request_length, NULL, 1, &client_hash, NULL,
+                     NULL) ||
       client_hash.type != CBOR_TYPE_BYTES || client_hash.length != 32 ||
-      !map_find(request, request_length, 2, &rp, &rp_slice, &rp_length) ||
+      !cbor_map_find(request, request_length, NULL, 2, &rp, &rp_slice,
+                     &rp_length) ||
       rp.type != CBOR_TYPE_MAP ||
-      !map_find(request, request_length, 3, &user, &user_slice, &user_length) ||
+      !cbor_map_find(request, request_length, NULL, 3, &user, &user_slice,
+                     &user_length) ||
       user.type != CBOR_TYPE_MAP ||
-      !map_find(request, request_length, 4, &algorithms, &algorithm_slice,
-                &algorithm_length) ||
+      !cbor_map_find(request, request_length, NULL, 4, &algorithms,
+                     &algorithm_slice, &algorithm_length) ||
       algorithms.type != CBOR_TYPE_ARRAY) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
@@ -694,20 +636,20 @@ static void make_credential(const uint8_t* request, size_t request_length,
   }
 
   char rp_id[254], user_name[PASSKEY_USER_NAME_MAX];
-  if (!map_find_text(rp_slice, rp_length, "id", &value, NULL, NULL) ||
+  if (!cbor_map_find(rp_slice, rp_length, "id", 0, &value, NULL, NULL) ||
       !copy_rp_id(&value, rp_id, sizeof(rp_id))) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
   CborValue user_id;
-  if (!map_find_text(user_slice, user_length, "id", &user_id, NULL, NULL) ||
+  if (!cbor_map_find(user_slice, user_length, "id", 0, &user_id, NULL, NULL) ||
       user_id.type != CBOR_TYPE_BYTES || user_id.length == 0 ||
       user_id.length > PASSKEY_USER_ID_MAX) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
   user_name[0] = 0;
-  if (map_find_text(user_slice, user_length, "name", &value, NULL, NULL) &&
+  if (cbor_map_find(user_slice, user_length, "name", 0, &value, NULL, NULL) &&
       value.type == CBOR_TYPE_TEXT) {
     size_t copy = value.length < sizeof(user_name) - 1 ? value.length
                                                        : sizeof(user_name) - 1;
@@ -721,8 +663,8 @@ static void make_credential(const uint8_t* request, size_t request_length,
   bool resident = false, uv_requested = false, ignored_up;
   const uint8_t* options_slice;
   size_t options_length;
-  if (map_find(request, request_length, 7, &value, &options_slice,
-               &options_length)) {
+  if (cbor_map_find(request, request_length, NULL, 7, &value, &options_slice,
+                    &options_length)) {
     uint8_t options_status =
         value.type == CBOR_TYPE_MAP
             ? parse_options(options_slice, options_length, true, &resident,
@@ -746,8 +688,8 @@ static void make_credential(const uint8_t* request, size_t request_length,
   sha256_Raw((const uint8_t*)rp_id, strlen(rp_id), rp_id_hash);
   const uint8_t* exclude_slice;
   size_t exclude_length;
-  if (map_find(request, request_length, 5, &value, &exclude_slice,
-               &exclude_length)) {
+  if (cbor_map_find(request, request_length, NULL, 5, &value, &exclude_slice,
+                    &exclude_length)) {
     if (value.type != CBOR_TYPE_ARRAY) {
       write_error(CTAP2_ERR_INVALID_CBOR, response, response_length);
       return;
@@ -830,9 +772,11 @@ static void get_assertion(const uint8_t* request, size_t request_length,
                           size_t* response_length) {
   CborValue rp_id_value, client_hash, value;
   char rp_id[254];
-  if (!map_find(request, request_length, 1, &rp_id_value, NULL, NULL) ||
+  if (!cbor_map_find(request, request_length, NULL, 1, &rp_id_value, NULL,
+                     NULL) ||
       !copy_rp_id(&rp_id_value, rp_id, sizeof(rp_id)) ||
-      !map_find(request, request_length, 2, &client_hash, NULL, NULL) ||
+      !cbor_map_find(request, request_length, NULL, 2, &client_hash, NULL,
+                     NULL) ||
       client_hash.type != CBOR_TYPE_BYTES || client_hash.length != 32) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
@@ -840,8 +784,8 @@ static void get_assertion(const uint8_t* request, size_t request_length,
   bool ignored_rk, uv_requested = false, up_requested = true;
   const uint8_t* options_slice;
   size_t options_length;
-  if (map_find(request, request_length, 5, &value, &options_slice,
-               &options_length)) {
+  if (cbor_map_find(request, request_length, NULL, 5, &value, &options_slice,
+                    &options_length)) {
     uint8_t options_status =
         value.type == CBOR_TYPE_MAP
             ? parse_options(options_slice, options_length, false, &ignored_rk,
@@ -871,8 +815,8 @@ static void get_assertion(const uint8_t* request, size_t request_length,
   const uint8_t* allow_slice;
   size_t allow_length;
   /* An empty allowList is the same as none: look up resident credentials. */
-  if (map_find(request, request_length, 3, &value, &allow_slice,
-               &allow_length) &&
+  if (cbor_map_find(request, request_length, NULL, 3, &value, &allow_slice,
+                    &allow_length) &&
       !(value.type == CBOR_TYPE_ARRAY && value.value == 0)) {
     if (value.type != CBOR_TYPE_ARRAY) {
       write_error(CTAP2_ERR_INVALID_CBOR, response, response_length);
@@ -976,8 +920,9 @@ static void get_assertion(const uint8_t* request, size_t request_length,
 static void client_pin(const uint8_t* request, size_t request_length,
                        uint8_t* response, size_t capacity, size_t* length) {
   CborValue protocol, subcommand;
-  if (!map_find(request, request_length, 1, &protocol, NULL, NULL) ||
-      !map_find(request, request_length, 2, &subcommand, NULL, NULL) ||
+  if (!cbor_map_find(request, request_length, NULL, 1, &protocol, NULL, NULL) ||
+      !cbor_map_find(request, request_length, NULL, 2, &subcommand, NULL,
+                     NULL) ||
       protocol.type != CBOR_TYPE_UINT || protocol.value != 1 ||
       subcommand.type != CBOR_TYPE_UINT) {
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, length);
@@ -1019,8 +964,10 @@ static void client_pin(const uint8_t* request, size_t request_length,
         write_error(CTAP2_ERR_NOT_ALLOWED, response, length);
         return;
       }
-      if (!map_find(request, request_length, 4, &pin_auth, NULL, NULL) ||
-          !map_find(request, request_length, 5, &encrypted_pin, NULL, NULL) ||
+      if (!cbor_map_find(request, request_length, NULL, 4, &pin_auth, NULL,
+                         NULL) ||
+          !cbor_map_find(request, request_length, NULL, 5, &encrypted_pin, NULL,
+                         NULL) ||
           encrypted_pin.type != CBOR_TYPE_BYTES || encrypted_pin.length != 64) {
         write_error(CTAP2_ERR_PIN_AUTH_INVALID, response, length);
         return;
@@ -1092,9 +1039,12 @@ static void client_pin(const uint8_t* request, size_t request_length,
         write_error(CTAP2_ERR_PIN_AUTH_BLOCKED, response, length);
         return;
       }
-      if (!map_find(request, request_length, 4, &pin_auth, NULL, NULL) ||
-          !map_find(request, request_length, 5, &encrypted_pin, NULL, NULL) ||
-          !map_find(request, request_length, 6, &encrypted_hash, NULL, NULL) ||
+      if (!cbor_map_find(request, request_length, NULL, 4, &pin_auth, NULL,
+                         NULL) ||
+          !cbor_map_find(request, request_length, NULL, 5, &encrypted_pin, NULL,
+                         NULL) ||
+          !cbor_map_find(request, request_length, NULL, 6, &encrypted_hash,
+                         NULL, NULL) ||
           encrypted_pin.type != CBOR_TYPE_BYTES || encrypted_pin.length != 64 ||
           encrypted_hash.type != CBOR_TYPE_BYTES ||
           encrypted_hash.length != 16 ||
@@ -1202,7 +1152,8 @@ static void client_pin(const uint8_t* request, size_t request_length,
         write_error(CTAP2_ERR_PIN_AUTH_BLOCKED, response, length);
         return;
       }
-      if (!map_find(request, request_length, 6, &encrypted_hash, NULL, NULL) ||
+      if (!cbor_map_find(request, request_length, NULL, 6, &encrypted_hash,
+                         NULL, NULL) ||
           encrypted_hash.type != CBOR_TYPE_BYTES ||
           encrypted_hash.length != 16 ||
           !shared_secret_from_request(request, request_length, shared_secret)) {
@@ -1289,10 +1240,6 @@ static void reset_authenticator(uint8_t* response, size_t* response_length) {
 
 static void get_info(uint8_t* response, size_t capacity, size_t* length) {
   CborEncoder encoder;
-  if (capacity == 0) {
-    *length = 0;
-    return;
-  }
   response[0] = CTAP2_OK;
   cbor_encoder_init(&encoder, response + 1, capacity - 1);
 
@@ -1349,79 +1296,58 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
     return;
   }
   if (request_length == 0) {
-    response[0] = CTAP2_ERR_INVALID_LENGTH;
-    *response_length = 1;
+    write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
     return;
   }
   expire_windows();
   /* Locked storage would accept passkey changes in RAM and silently drop
    * them at commit; refuse before anything is touched. */
   if (storage_isBitcoinOnlyLocked() || storage_isFirmwareTooOld()) {
-    response[0] = CTAP2_ERR_NOT_ALLOWED;
-    *response_length = 1;
+    write_error(CTAP2_ERR_NOT_ALLOWED, response, response_length);
     return;
   }
-  if ((request[0] == CTAP2_CMD_MAKE_CREDENTIAL ||
-       request[0] == CTAP2_CMD_GET_ASSERTION ||
-       request[0] == CTAP2_CMD_CLIENT_PIN) &&
-      request_length > 1 &&
+  const uint8_t command = request[0];
+  const bool has_body = command == CTAP2_CMD_MAKE_CREDENTIAL ||
+                        command == CTAP2_CMD_GET_ASSERTION ||
+                        command == CTAP2_CMD_CLIENT_PIN;
+  if (has_body && request_length > 1 &&
       !valid_request_map(request + 1, request_length - 1)) {
     write_error(CTAP2_ERR_INVALID_CBOR, response, response_length);
     return;
   }
-  if (request[0] != CTAP2_CMD_GET_NEXT_ASSERTION)
-    assertion_sequence.valid = false;
+  if (command != CTAP2_CMD_GET_NEXT_ASSERTION) assertion_sequence.valid = false;
+  /* Body commands carry a CBOR map; the others are the command byte alone. */
+  if ((has_body || command == CTAP2_CMD_GET_NEXT_ASSERTION ||
+       command == CTAP2_CMD_GET_INFO || command == CTAP2_CMD_RESET) &&
+      has_body != (request_length > 1)) {
+    write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
+    return;
+  }
 
-  switch (request[0]) {
+  switch (command) {
     case CTAP2_CMD_MAKE_CREDENTIAL:
-      if (request_length == 1) {
-        write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
-        return;
-      }
       make_credential(request + 1, request_length - 1, response,
                       response_capacity, response_length);
       return;
     case CTAP2_CMD_GET_ASSERTION:
-      if (request_length == 1) {
-        write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
-        return;
-      }
       get_assertion(request + 1, request_length - 1, response,
                     response_capacity, response_length);
       return;
     case CTAP2_CMD_GET_NEXT_ASSERTION:
-      if (request_length != 1) {
-        write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
-        return;
-      }
       get_next_assertion(response, response_capacity, response_length);
       return;
     case CTAP2_CMD_GET_INFO:
-      if (request_length != 1) {
-        response[0] = CTAP2_ERR_INVALID_LENGTH;
-        *response_length = 1;
-        return;
-      }
       get_info(response, response_capacity, response_length);
       return;
     case CTAP2_CMD_CLIENT_PIN:
-      if (request_length == 1) {
-        write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
-        return;
-      }
       client_pin(request + 1, request_length - 1, response, response_capacity,
                  response_length);
       return;
     case CTAP2_CMD_RESET:
-      if (request_length != 1) {
-        write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
-        return;
-      }
       reset_authenticator(response, response_length);
       return;
     default:
-      response[0] = CTAP2_ERR_INVALID_COMMAND;
-      *response_length = 1;
+      write_error(CTAP2_ERR_INVALID_COMMAND, response, response_length);
       return;
   }
 }

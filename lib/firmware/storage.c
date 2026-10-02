@@ -736,8 +736,6 @@ bool storage_getPasskeyCredentialGeneration(
       *legacy_credentials_enabled = false;
       return false;
     }
-    memzero(passkeys->credential_generation,
-            sizeof(passkeys->credential_generation));
     memcpy(passkeys->credential_generation, new_generation,
            sizeof(new_generation));
     passkeys->legacy_credentials_enabled = migrate_legacy ? 1 : 0;
@@ -762,7 +760,6 @@ bool storage_resetPasskeyData(void) {
   }
   reset.version = PASSKEY_STORAGE_VERSION;
   reset.pin_retries = PASSKEY_PIN_RETRIES;
-  reset.legacy_credentials_enabled = 0;
   storage_setPasskeyData(&reset);
   memzero(&reset, sizeof(reset));
   return true;
@@ -1798,8 +1795,7 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
   storage_setPin_impl(ss, &cfg->storage, "");
 
   cfg->storage.version = STORAGE_VERSION;
-  cfg->storage.pub.passkeys.version = 1;
-  cfg->storage.pub.passkeys.pin_retries = PASSKEY_PIN_RETRIES;
+  storage_defaultPasskeyData(&cfg->storage.pub.passkeys);
 
   memzero(ss, sizeof(*ss));
 

@@ -2738,11 +2738,11 @@ struct PinHost {
               CTAP2_OK);
     const uint8_t* key;
     size_t key_length;
-    ASSERT_TRUE(cbor_map_find_int_slice(out.data() + 1, out_length - 1, 1, &key,
-                                        &key_length));
+    CborValue v, k;
+    ASSERT_TRUE(cbor_map_find(out.data() + 1, out_length - 1, NULL, 1, &v, &key,
+                              &key_length));
     uint8_t device[65] = {0x04};
     CborDecoder d;
-    CborValue v, k;
     cbor_decoder_init(&d, key, key_length);
     ASSERT_TRUE(cbor_decode_value(&d, &v));
     const uint64_t pairs = v.value;
@@ -2813,7 +2813,8 @@ struct PinHost {
     const uint8_t status = call(r);
     CborValue v;
     if (status == CTAP2_OK &&
-        cbor_map_find_int(out.data() + 1, out_length - 1, 2, &v) &&
+        cbor_map_find(out.data() + 1, out_length - 1, NULL, 2, &v, NULL,
+                      NULL) &&
         v.length == 32)
       aes(shared, v.data, token, 32, false);
     return status;
