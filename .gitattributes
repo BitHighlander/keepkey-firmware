@@ -25,4 +25,5 @@
 *.exe -text
 *.bin -text
 *.out -text
-*.pdf binary
+*.pdf -text
+
