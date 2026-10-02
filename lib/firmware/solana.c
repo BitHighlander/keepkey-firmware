@@ -2080,12 +2080,13 @@ static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* pi = &tx->instructions[i];
     if (i == ix_index || pi->type != SOL_INSTR_SYSTEM_TRANSFER) continue;
-    char amount[40], to[48], from[48];
+    char amount[40], to[48];
     solana_formatAmount(amount, sizeof(amount), pi->lamports);
     review_b58(pi->to, to, sizeof(to));
     if (memcmp(pi->from, signer, SOL_PUBKEY_SIZE) == 0) {
       snprintf(body, sizeof(body), "Also sends %s to\n%s", amount, to);
     } else {
+      char from[48];
       review_b58(pi->from, from, sizeof(from));
       snprintf(body, sizeof(body), "%s\nsends %s to\n%s", from, amount, to);
     }
