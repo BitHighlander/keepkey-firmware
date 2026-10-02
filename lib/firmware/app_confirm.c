@@ -324,15 +324,7 @@ bool confirm_nano_address(const char* desc, const char* address) {
 }
 
 /*
- * confirm_zcash_address() - Show zcash address confirmation
- *
- * INPUT
- *      - desc: description (title) shown on both screens
- *      - address: zcash unified address — full text on the first screen,
- *        QR on the second
- * OUTPUT
- *     true/false of confirmation
- *
+ * confirm_zcash_address() - Full address text, then its QR.
  */
 #if ZCASH_PRIVACY
 bool confirm_zcash_address(const char* desc, const char* address) {
