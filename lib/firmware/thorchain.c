@@ -39,14 +39,6 @@ bool thorchain_confirm_full_memo(const char* title, const char* memo,
                        (const uint8_t*)memo, len);
 }
 
-bool thorchain_isValidDenom(const char* denom) {
-  return tendermint_isValidDenom(denom);
-}
-
-bool thorchain_isValidAsset(const char* asset) {
-  return tendermint_isValidAsset(asset);
-}
-
 static CONFIDENTIAL HDNode node;
 static SHA256_CTX ctx;
 static bool initialized;
@@ -165,7 +157,7 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   }
 
   const char* coin_denom = (denom && denom[0]) ? denom : "rune";
-  if (!thorchain_isValidDenom(coin_denom)) return false;
+  if (!tendermint_isValidDenom(coin_denom)) return false;
 
   if (has_message) {
     sha256_Update(&ctx, (uint8_t*)",", 1);
@@ -200,8 +192,8 @@ bool thorchain_signTxUpdateMsgDeposit(const ThorchainMsgDeposit* depmsg) {
   if (!initialized || msgs_remaining == 0) return false;
 
   const char* const signer_prefix = testnet ? "tthor" : "thor";
-  if (!depmsg || !depmsg->has_asset || !thorchain_isValidAsset(depmsg->asset) ||
-      !depmsg->has_signer ||
+  if (!depmsg || !depmsg->has_asset ||
+      !tendermint_isValidAsset(depmsg->asset) || !depmsg->has_signer ||
       !tendermint_validateBech32Address(depmsg->signer, signer_prefix)) {
     return false;
   }

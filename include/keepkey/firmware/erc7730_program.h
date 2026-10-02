@@ -68,9 +68,7 @@ typedef struct {
 
 typedef struct {
   uint8_t opcode;
-  uint8_t flags;
   int32_t first;
-  int32_t second;
 } Erc7730PathStep;
 
 typedef struct {
@@ -92,7 +90,6 @@ typedef struct {
   uint8_t current_step_count;
   uint8_t step_index;
   uint8_t step_opcode;
-  uint8_t step_flags;
   uint8_t step_value_received;
   uint8_t step_value_length;
   bool full_array_seen;
