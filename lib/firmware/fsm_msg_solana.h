@@ -655,8 +655,8 @@ static bool solana_review_emit(void* ctx, const char* title, const char* body,
 
 /* Runtime (additive) schema review; the certified review is
  * solana_buildIntentReview. */
-static bool solana_confirm_schema(const SolanaSignTx* msg,
-                                  const char* alias, const char* fp,
+static bool solana_confirm_schema(const SolanaSignTx* msg, const char* alias,
+                                  const char* fp,
                                   const SolanaInstrSchema* schema,
                                   const SolanaParsedTx* parsed,
                                   uint8_t ix_index) {
@@ -686,9 +686,8 @@ static bool solana_confirm_schema(const SolanaSignTx* msg,
       }
     } else {
       char value[96] = {0};
-      if (!solana_schemaArgValue(msg, false, parsed, ix, arg,
-                                 ix->data + off, &token_cache, value,
-                                 sizeof(value)) ||
+      if (!solana_schemaArgValue(msg, false, parsed, ix, arg, ix->data + off,
+                                 &token_cache, value, sizeof(value)) ||
           !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
                    "%s", value)) {
         return false;
@@ -1001,8 +1000,8 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
          !solana_buildIntentReview(msg, &parsed, &schema, schema_ix,
                                    node->public_key + 1, alias, signer_fp,
                                    false, solana_review_emit, NULL)) ||
-        !solana_confirm_schema(msg, alias ? alias : "", signer_fp,
-                               &schema, &parsed, schema_ix)) {
+        !solana_confirm_schema(msg, alias ? alias : "", signer_fp, &schema,
+                               &parsed, schema_ix)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,

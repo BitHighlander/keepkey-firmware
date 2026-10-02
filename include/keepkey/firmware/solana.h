@@ -287,7 +287,8 @@ typedef struct {
 
 /* Bytes one arg consumes; 0 = unknown type (rejected). */
 uint16_t solana_schemaArgWidth(SolanaSchemaArgType t);
-/* LAMPORTS or TOKEN_AMOUNT: must carry a role in v3 and appear in the intent. */
+/* LAMPORTS or TOKEN_AMOUNT: must carry a role in v3 and appear in the intent.
+ */
 bool solana_schemaArgIsAmount(SolanaSchemaArgType t);
 /* Placeholders well-formed and in range, and every amount covered. */
 bool solana_intentTemplateValid(const SolanaInstrSchema* s);
@@ -299,11 +300,10 @@ bool solana_intentTemplateValid(const SolanaInstrSchema* s);
  * must follow. Screen text: docs/security/clearsign-intent-template.md. */
 typedef bool (*SolanaReviewEmit)(void* ctx, const char* title, const char* body,
                                  const uint8_t* bytes, uint16_t bytes_len);
-bool solana_fillIntent(const SolanaSignTx* msg,
-                       const SolanaParsedTx* tx, const SolanaInstrSchema* s,
-                       uint8_t ix_index, bool certified, char* out, size_t len);
-bool solana_buildIntentReview(const SolanaSignTx* msg,
-                              const SolanaParsedTx* tx,
+bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
+                       const SolanaInstrSchema* s, uint8_t ix_index,
+                       bool certified, char* out, size_t len);
+bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                               const SolanaInstrSchema* s, uint8_t ix_index,
                               const uint8_t signer[SOL_PUBKEY_SIZE],
                               const char* alias, const char* fp, bool certified,

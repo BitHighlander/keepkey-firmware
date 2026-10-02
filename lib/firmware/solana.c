@@ -1774,8 +1774,7 @@ static bool review_amount(const SolanaSignTx* msg, const SolanaParsedTx* tx,
     solana_formatTokenAmount(scaled, sizeof(scaled), v, ti->symbol,
                              (uint8_t)ti->decimals);
   } else {
-    snprintf(scaled, sizeof(scaled), "%llu base units",
-             (unsigned long long)v);
+    snprintf(scaled, sizeof(scaled), "%llu base units", (unsigned long long)v);
   }
   if (in_sentence) {
     snprintf(out, len, "%s", scaled);
@@ -1791,7 +1790,8 @@ static const uint8_t* review_arg_data(const SolanaInstrSchema* s,
                                       const SolanaParsedInstruction* ix,
                                       uint8_t arg) {
   uint16_t off = s->disc_len;
-  for (uint8_t a = 0; a < arg; a++) off += solana_schemaArgWidth(s->args[a].type);
+  for (uint8_t a = 0; a < arg; a++)
+    off += solana_schemaArgWidth(s->args[a].type);
   return ix->data + off;
 }
 
@@ -1826,7 +1826,8 @@ static bool intent_fill_visit(void* ctx, bool placeholder, bool account,
   }
   char v[96] = {0};
   if (account) {
-    const uint8_t* key = review_ix_account(f->tx, f->ix, f->s->accounts[index].index);
+    const uint8_t* key =
+        review_ix_account(f->tx, f->ix, f->s->accounts[index].index);
     if (!key) return false;
     review_short(key, v, sizeof(v));
   } else {
@@ -1871,26 +1872,32 @@ bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
     snprintf(out, len, "%s", s->instruction_name);
     return true;
   }
-  IntentFill f = {msg, tx, s, &tx->instructions[ix_index], certified,
-                  out, len, 0, true};
+  IntentFill f = {msg, tx, s,   &tx->instructions[ix_index], certified, out,
+                  len, 0,  true};
   return intent_walk(s, intent_fill_visit, &f) && f.ok;
 }
 
 static const char* review_role_text(uint8_t role) {
   switch (role) {
-    case SOL_ROLE_SPEND_MAX: return "You spend at most";
-    case SOL_ROLE_RECEIVE_MIN: return "You receive at least";
-    case SOL_ROLE_SPEND_EXACT: return "You spend";
-    case SOL_ROLE_RECEIVE_EXACT: return "You receive";
-    case SOL_ROLE_CAP: return "Each use at most";
-    default: return NULL;
+    case SOL_ROLE_SPEND_MAX:
+      return "You spend at most";
+    case SOL_ROLE_RECEIVE_MIN:
+      return "You receive at least";
+    case SOL_ROLE_SPEND_EXACT:
+      return "You spend";
+    case SOL_ROLE_RECEIVE_EXACT:
+      return "You receive";
+    case SOL_ROLE_CAP:
+      return "Each use at most";
+    default:
+      return NULL;
   }
 }
 
 static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                           const SolanaInstrSchema* s, uint8_t ix_index,
-                          const uint8_t signer[SOL_PUBKEY_SIZE],
-                          bool certified, SolanaReviewEmit emit, void* ctx) {
+                          const uint8_t signer[SOL_PUBKEY_SIZE], bool certified,
+                          SolanaReviewEmit emit, void* ctx) {
   const SolanaParsedInstruction* ix = &tx->instructions[ix_index];
   char body[REVIEW_BODY];
   for (uint8_t a = 0; a < s->num_args; a++) {
@@ -1924,8 +1931,10 @@ static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
   uint64_t price = 0, limit = 1400000u;
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* pi = &tx->instructions[i];
-    if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE) price = pi->extra_value;
-    if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT && pi->extra_value < limit) {
+    if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE)
+      price = pi->extra_value;
+    if (pi->type == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT &&
+        pi->extra_value < limit) {
       limit = pi->extra_value;
     }
   }
@@ -1940,7 +1949,8 @@ static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
       memcmp(tx->accounts[0], signer, SOL_PUBKEY_SIZE) != 0) {
     char payer[48];
     review_b58(tx->accounts[0], payer, sizeof(payer));
-    snprintf(body, sizeof(body), "Network fee up to %s\npaid by\n%s", fee, payer);
+    snprintf(body, sizeof(body), "Network fee up to %s\npaid by\n%s", fee,
+             payer);
   } else {
     snprintf(body, sizeof(body), "Network fee up to %s", fee);
   }
@@ -1958,7 +1968,8 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
       case SOL_INSTR_ATA_CREATE: {
         char acct[48];
         review_b58(pi->to, acct, sizeof(acct));
-        if (pi->has_mint && memcmp(pi->mint, SOL_NATIVE_MINT, SOL_PUBKEY_SIZE) == 0) {
+        if (pi->has_mint &&
+            memcmp(pi->mint, SOL_NATIVE_MINT, SOL_PUBKEY_SIZE) == 0) {
           int8_t closed = -1;
           for (uint8_t j = 0; j < tx->num_instructions; j++) {
             const SolanaParsedInstruction* c = &tx->instructions[j];
@@ -1977,8 +1988,8 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
         } else {
           char mint[48];
           review_b58(pi->mint, mint, sizeof(mint));
-          snprintf(body, sizeof(body), "Creates your token account for mint\n%s",
-                   mint);
+          snprintf(body, sizeof(body),
+                   "Creates your token account for mint\n%s", mint);
         }
         if (!emit(ctx, "Side effects", body, NULL, 0)) return false;
         break;
@@ -1988,8 +1999,8 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
       case SOL_INSTR_MEMO:
         if (!emit(ctx, "Memo", NULL, pi->data, pi->data_len)) return false;
         break;
-      case SOL_INSTR_SYSTEM_TRANSFER:        /* on the limits screen */
-      case SOL_INSTR_TOKEN_SYNC_NATIVE:      /* moves nothing */
+      case SOL_INSTR_SYSTEM_TRANSFER:   /* on the limits screen */
+      case SOL_INSTR_TOKEN_SYNC_NATIVE: /* moves nothing */
       case SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME:
       case SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT:
       case SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE:
@@ -2007,8 +2018,8 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
     }
     char acct[48];
     review_b58(pi->from, acct, sizeof(acct));
-    snprintf(body, sizeof(body), "Closes your token account\n%s\nrent back to you",
-             acct);
+    snprintf(body, sizeof(body),
+             "Closes your token account\n%s\nrent back to you", acct);
     if (!emit(ctx, "Side effects", body, NULL, 0)) return false;
   }
   return true;

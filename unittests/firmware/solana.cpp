@@ -3351,12 +3351,13 @@ std::vector<uint8_t> v3_schema(const uint8_t program[32],
 }
 
 std::vector<uint8_t> pump_sell_v3(const char* intent) {
-  return v3_schema(kPumpAmmProgram, {0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad},
-                   "Pump.fun", "Sell tokens",
-                   {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
-                    {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive at least", 4,
-                     SOL_ROLE_RECEIVE_MIN}},
-                   intent);
+  return v3_schema(
+      kPumpAmmProgram, {0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad},
+      "Pump.fun", "Sell tokens",
+      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive at least", 4,
+        SOL_ROLE_RECEIVE_MIN}},
+      intent);
 }
 
 struct Screen {
@@ -3375,7 +3376,8 @@ bool collect(void* ctx, const char* title, const char* body,
 TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
   const std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
   SolanaParsedTx tx;
-  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
   const std::vector<uint8_t> blob = pump_sell_v3("Sell {0} for at least {1}");
   SolanaInstrSchema s;
   ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
@@ -3393,15 +3395,18 @@ TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
                                        collect, &got));
   const Screen want[] = {
       {"Pump.fun", "Sell 7738120.185405 SDICE for at least 8.509507889 SOL"},
-      {"Limits", "You spend\n7738120.185405 SDICE\n"
-                 "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"},
+      {"Limits",
+       "You spend\n7738120.185405 SDICE\n"
+       "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"},
       {"Limits", "You receive at least\n8.509507889 SOL"},
-      {"Limits", "Also sends 0.001000000 SOL to\n"
-                 "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh"},
+      {"Limits",
+       "Also sends 0.001000000 SOL to\n"
+       "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh"},
       {"Limits", "Network fee up to 0.001005000 SOL"},
       {"Side effects", "Creates a temporary wSOL account, closed back to you"},
-      {"KeepKey ClearSign", "Described by KeepKey Vault a9531b9d\n"
-                            "certified by KeepKey"},
+      {"KeepKey ClearSign",
+       "Described by KeepKey Vault a9531b9d\n"
+       "certified by KeepKey"},
   };
   ASSERT_EQ(got.size(), sizeof(want) / sizeof(want[0]));
   for (size_t i = 0; i < got.size(); i++) {
@@ -3418,18 +3423,21 @@ TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
                                        collect, &got));
   EXPECT_EQ(got[0].body,
             "Sell 7738120185405 base units for at least 8.509507889 SOL");
-  EXPECT_EQ(got[1].body, "You spend\n7738120185405 base units\nof mint "
-                         "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
+  EXPECT_EQ(got[1].body,
+            "You spend\n7738120185405 base units\nof mint "
+            "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
 
   // Runtime tier: a NOT-verified heading plus limits; the raw review follows.
   got.clear();
   ASSERT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
-                                       "Acme", "0011aabb", false, collect, &got));
+                                       "Acme", "0011aabb", false, collect,
+                                       &got));
   ASSERT_GE(got.size(), 2u);
   EXPECT_EQ(got[0].title, "Unverified");
-  EXPECT_EQ(got[0].body, "Acme (NOT verified by KeepKey) says:\n"
-                         "Sell 7738120185405 base units for at least "
-                         "8.509507889 SOL");
+  EXPECT_EQ(got[0].body,
+            "Acme (NOT verified by KeepKey) says:\n"
+            "Sell 7738120185405 base units for at least "
+            "8.509507889 SOL");
   for (const Screen& sc : got) EXPECT_NE(sc.title, "KeepKey ClearSign");
 }
 
@@ -3440,10 +3448,10 @@ TEST(Solana, IntentTemplateRejectsBadRolesCoverageAndPlaceholders) {
   };
   EXPECT_TRUE(parses(pump_sell_v3("Sell {0} for at least {1}")));
   EXPECT_TRUE(parses(pump_sell_v3(nullptr)));  // no template: generated summary
-  EXPECT_FALSE(parses(pump_sell_v3("Sell {0}")));            // {1} uncovered
-  EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {2}")));    // out of range
-  EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {1} }")));  // stray brace
-  EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {1x}")));   // malformed
+  EXPECT_FALSE(parses(pump_sell_v3("Sell {0}")));               // {1} uncovered
+  EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {2}")));       // out of range
+  EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {1} }")));     // stray brace
+  EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {1x}")));      // malformed
   EXPECT_FALSE(parses(pump_sell_v3("Sell {0} for {a0} {1}")));  // no accounts
   EXPECT_FALSE(parses(pump_sell_v3("Sell {0} at 100% {1}")));   // '%'
   // An amount without a role, and a role on a non-amount, are rejected.
@@ -3451,16 +3459,19 @@ TEST(Solana, IntentTemplateRejectsBadRolesCoverageAndPlaceholders) {
   EXPECT_FALSE(parses(v3_schema(kPumpAmmProgram, disc, "P", "I",
                                 {{SOL_SCHEMA_ARG_LAMPORTS, "Amount", -1, 0}},
                                 "Pay {0}")));
-  EXPECT_FALSE(parses(v3_schema(kPumpAmmProgram, disc, "P", "I",
-                                {{SOL_SCHEMA_ARG_U8, "Seat", -1, 1}}, "Seat {0}")));
-  EXPECT_TRUE(parses(v3_schema(kPumpAmmProgram, disc, "P", "I",
-                               {{SOL_SCHEMA_ARG_U8, "Seat", -1, 0}}, "Seat {0}")));
+  EXPECT_FALSE(
+      parses(v3_schema(kPumpAmmProgram, disc, "P", "I",
+                       {{SOL_SCHEMA_ARG_U8, "Seat", -1, 1}}, "Seat {0}")));
+  EXPECT_TRUE(
+      parses(v3_schema(kPumpAmmProgram, disc, "P", "I",
+                       {{SOL_SCHEMA_ARG_U8, "Seat", -1, 0}}, "Seat {0}")));
 }
 
 TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
   const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
   SolanaParsedTx tx;
-  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx), SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
   static SolanaSignTx msg;
   ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
   SolanaInstrSchema v2;
@@ -3491,12 +3502,14 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
   auto has = [&](const std::string& line) {
     return std::find(bodies.begin(), bodies.end(), line) != bodies.end();
   };
-  EXPECT_TRUE(has("SoltoshiDICE|Join blackjack seat 1 for 1000 SDICE; key "
-                  "BqtZ...cGjX may bet 1000 SDICE each, 1000 SDICE total, "
-                  "for 1 h"))
+  EXPECT_TRUE(
+      has("SoltoshiDICE|Join blackjack seat 1 for 1000 SDICE; key "
+          "BqtZ...cGjX may bet 1000 SDICE each, 1000 SDICE total, "
+          "for 1 h"))
       << bodies[0];
-  EXPECT_TRUE(has("Limits|Each use at most\n1000 SDICE\n"
-                  "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
+  EXPECT_TRUE(
+      has("Limits|Each use at most\n1000 SDICE\n"
+          "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
   // Not in the sentence, so on details screens; the short key in full.
   EXPECT_TRUE(has("Round|86"));
   EXPECT_TRUE(has("Revision|980"));
