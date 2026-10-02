@@ -641,7 +641,21 @@ static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
 /* Render a schema-decoded instruction: who attested the schema, then the
  * program/instruction it describes, then every labelled arg and account with
  * values read from the transaction being signed. */
-static bool solana_confirm_schema(const SolanaSignTx* msg, bool certified,
+/* One review screen on the device: text, or a byte range to page. */
+static bool solana_review_emit(void* ctx, const char* title, const char* body,
+                               const uint8_t* bytes, uint16_t bytes_len) {
+  (void)ctx;
+  if (bytes) {
+    return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                         bytes, bytes_len);
+  }
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
+                 body);
+}
+
+/* Runtime (additive) schema review; the certified review is
+ * solana_buildIntentReview. */
+static bool solana_confirm_schema(const SolanaSignTx* msg,
                                   const char* alias, const char* fp,
                                   const SolanaInstrSchema* schema,
                                   const SolanaParsedTx* parsed,
@@ -649,20 +663,10 @@ static bool solana_confirm_schema(const SolanaSignTx* msg, bool certified,
   const SolanaParsedInstruction* ix = &parsed->instructions[ix_index];
   SolanaSchemaTokenCache token_cache = {NULL, NULL};
 
-  /* Certified: disclose every instruction in transaction order. */
-  for (uint8_t i = 0; certified && i < ix_index; i++) {
-    if (!solana_confirmInstruction(&parsed->instructions[i], msg, i,
-                                   parsed->num_instructions)) {
-      return false;
-    }
-  }
-
   /* Aliases are host-chosen and not unique; the fingerprint identifies the
    * key that actually vouched for this decode. */
-  if (!(certified ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                            "KeepKey ClearSign", "%s\nSigner %s", alias, fp)
-                  : confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                            "Schema Signer", "%s\n%s", alias, fp))) {
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Schema Signer",
+               "%s\n%s", alias, fp)) {
     return false;
   }
 
@@ -682,7 +686,7 @@ static bool solana_confirm_schema(const SolanaSignTx* msg, bool certified,
       }
     } else {
       char value[96] = {0};
-      if (!solana_schemaArgValue(msg, certified, parsed, ix, arg,
+      if (!solana_schemaArgValue(msg, false, parsed, ix, arg,
                                  ix->data + off, &token_cache, value,
                                  sizeof(value)) ||
           !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, arg->label,
@@ -703,14 +707,6 @@ static bool solana_confirm_schema(const SolanaSignTx* msg, bool certified,
                               addr, &enc) ||
         !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, sa->label, "%s",
                  addr)) {
-      return false;
-    }
-  }
-
-  for (uint8_t i = ix_index + 1; certified && i < parsed->num_instructions;
-       i++) {
-    if (!solana_confirmInstruction(&parsed->instructions[i], msg, i,
-                                   parsed->num_instructions)) {
       return false;
     }
   }
@@ -973,8 +969,10 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
 
   if (certified_request) {
     /* Root-certified describer: its decode replaces the blind-sign warning. */
-    if (!solana_confirm_schema(msg, true, signer_alias, signer_fp, &schema,
-                               &parsed, schema_ix)) {
+    /* Summary, limits, side effects, details, provenance (SRS-7.16 §3.7). */
+    if (!solana_buildIntentReview(msg, &parsed, &schema, schema_ix,
+                                  node->public_key + 1, signer_alias, signer_fp,
+                                  true, solana_review_emit, NULL)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -998,7 +996,12 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
         signed_metadata_signer_alias((uint8_t)msg->schema_signer_key_id);
     if (!signed_metadata_signer_fingerprint((uint8_t)msg->schema_signer_key_id,
                                             signer_fp) ||
-        !solana_confirm_schema(msg, false, alias ? alias : "", signer_fp,
+        /* A runtime template is a heading only (SRS-7.15 R-1.5). */
+        (schema.intent[0] != '\0' &&
+         !solana_buildIntentReview(msg, &parsed, &schema, schema_ix,
+                                   node->public_key + 1, alias, signer_fp,
+                                   false, solana_review_emit, NULL)) ||
+        !solana_confirm_schema(msg, alias ? alias : "", signer_fp,
                                &schema, &parsed, schema_ix)) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
