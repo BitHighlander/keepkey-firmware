@@ -200,9 +200,7 @@ static void run_runnables(void) {
   }
 }
 
-/* A second board/emulator session must not relink nodes that are still in a
- * queue from the first one. Reset both queues and the node contents before
- * rebuilding the free list, including callbacks and their contexts. */
+/* A second session must not relink nodes still queued from the first. */
 static void reset_runnable_queues(void) {
 #ifndef EMULATOR
   svc_disable_interrupts();
@@ -316,12 +314,8 @@ void delay_ms(uint32_t ms) {
   remaining_delay = ms;
 
 #ifdef _WIN32
-  /* No async SIGALRM timer on Windows, and kkemu_poll() drives timerisr_usr()
-   * only once per poll — so a plain spin here would never make progress when
-   * delay_ms() is reached from inside usbPoll() (e.g. PIN/U2F/authenticator
-   * flows). Advance the tick ourselves from wall-clock Sleep instead. Keeps
-   * timeSinceWakeup + the runnable queue moving exactly like the SIGALRM path,
-   * and stays single-threaded (no data races). */
+  /* No SIGALRM on Windows: a spin inside usbPoll() would never progress, so
+   * advance the tick from wall-clock Sleep (single-threaded). */
   while (remaining_delay > 0) {
     Sleep(1);
     timerisr_usr();

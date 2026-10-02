@@ -33,8 +33,7 @@
   MAX_WORDS*(MAX_WORD_LEN + ADDITIONAL_WORD_PAD) + 1
 #define MNEMONIC_BY_SCREEN_BUF WORDS_PER_SCREEN*(MAX_WORD_LEN + 1) + 1
 
-/* Shared sensitive display scratch for reset backup and BIP-85. Both flows
- * clear the complete arrays before formatting and after the last page. */
+/* Sensitive scratch; cleared before formatting and after the last page. */
 extern char mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
 extern char mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 extern char mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
@@ -91,13 +90,9 @@ void setup_arm(SetupKind kind);
 /// ceremony before modifying storage, reports Failure, and returns false.
 bool setup_commit(SetupKind kind, const char* mnemonic, bool imported);
 
-/* No display_random parameter: ResetDevice.display_random remains on the wire
- * for host compatibility but is ignored, because internal entropy is seed
- * pre-image material and must never be rendered. \a dice_entropy runs the
- * on-device dice ceremony -- MIXED: the device draw is shown as 24 words, then
- * seed = SHA256d(tag || draw || SHA256(tag || rolls)); with \a dice_only the
- * seed is SHA256(rolls) alone. Both are confirmed on-device before anything
- * runs, complete before setup_arm(), and drop the host's EntropyAck bytes. */
+/* ResetDevice.display_random is ignored: internal entropy is seed pre-image
+ * and must never be rendered. Dice modes (see dice_input.h) complete before
+ * setup_arm(). */
 void reset_init(uint32_t _strength, bool passphrase_protection,
                 bool pin_protection, const char* language, const char* label,
                 bool _no_backup, uint32_t _auto_lock_delay_ms,

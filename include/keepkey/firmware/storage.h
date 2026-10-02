@@ -25,9 +25,8 @@
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/authenticator.h"
 
-/* 7.15 is the bridge release: it teaches deployed firmware to refuse rather
- * than erase storage written by a newer version. It must not migrate the
- * format itself, because every already-shipped release only understands V17. */
+/* 7.15 refuses (never erases) newer storage but must NOT bump the format:
+ * every shipped release only understands V17. */
 #define STORAGE_VERSION \
   17 /* Must add case fallthrough in storage_fromFlash after increment*/
 
@@ -83,15 +82,11 @@ void storage_wipe(void);
 /// write, so a ceremony allowed to run would report success while persisting
 /// nothing -- and a seed the user funded would vanish on the next boot.
 ///
-/// Cleared by storage_wipe(), and recomputed from the image found by every
-/// storage_init(), so a re-initialized emulator loading a valid image is not
-/// left locked by an earlier one.
+/// Cleared by storage_wipe(); recomputed by every storage_init().
 bool storage_isBitcoinOnlyLocked(void);
 
-/// \brief True when the lock reported by storage_isBitcoinOnlyLocked() is a
-/// bitcoin-only format NEWER than this build understands. Unlike a foreign
-/// (older) bitcoin-only wallet, that wallet is recovered by upgrading firmware,
-/// so callers must not advise wiping. Implies storage_isBitcoinOnlyLocked().
+/// \brief Locked by a NEWER bitcoin-only format: fixed by a firmware upgrade,
+/// so callers must not advise wiping.
 bool storage_isBitcoinOnlyTooNew(void);
 
 /// \brief True iff flash contains a newer storage format than this firmware.

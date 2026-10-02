@@ -8,19 +8,9 @@
 
 #include <string.h>
 
-/*
- * BIP-85: Deterministic Entropy From BIP32 Keychains
- *
- * For BIP-39 mnemonic derivation:
- *   path = m / 83696968' / 39' / 0' / <word_count>' / <index>'
- *   k    = derived_node.private_key  (32 bytes)
- *   hmac = HMAC-SHA512(key="bip-entropy-from-k", msg=k)
- *   entropy = hmac[0 : entropy_bytes]
- *     12 words -> 16 bytes, 18 words -> 24 bytes, 24 words -> 32 bytes
- *   mnemonic = bip39_from_entropy(entropy)
- */
+/* BIP-85: k = key at m/83696968'/39'/0'/<words>'/<index>',
+ * entropy = HMAC-SHA512("bip-entropy-from-k", k)[0 : 16|24|32]. */
 
-/* BIP-85 application number for deriving entropy from a key */
 static const uint8_t BIP85_HMAC_KEY[] = "bip-entropy-from-k";
 #define BIP85_HMAC_KEY_LEN 18
 
@@ -34,7 +24,6 @@ static int bip85_entropy_bytes(uint32_t word_count, uint32_t index) {
   /* Reject index >= 0x80000000 to avoid hardened-bit collision */
   if (index & 0x80000000) return 0;
 
-  /* Validate word count and compute entropy length */
   switch (word_count) {
     case 12:
       return 16;
@@ -50,7 +39,6 @@ static int bip85_entropy_bytes(uint32_t word_count, uint32_t index) {
 static bool bip85_derive_from_root(HDNode *node, int entropy_bytes,
                                    uint32_t word_count, uint32_t index,
                                    char *mnemonic, size_t mnemonic_len) {
-  /* BIP-85 derivation path: m/83696968'/39'/0'/<word_count>'/<index>' */
   uint32_t address_n[5];
   address_n[0] = 0x80000000 | 83696968;   /* purpose (hardened) */
   address_n[1] = 0x80000000 | 39;         /* BIP-39 app (hardened) */
@@ -58,7 +46,6 @@ static bool bip85_derive_from_root(HDNode *node, int entropy_bytes,
   address_n[3] = 0x80000000 | word_count; /* word count (hardened) */
   address_n[4] = 0x80000000 | index;      /* child index (hardened) */
 
-  /* Derive to the BIP-85 path */
   for (int i = 0; i < 5; i++) {
     if (hdnode_private_ckd(node, address_n[i]) == 0) {
       memzero(node, sizeof(*node));
@@ -66,20 +53,16 @@ static bool bip85_derive_from_root(HDNode *node, int entropy_bytes,
     }
   }
 
-  /* HMAC-SHA512(key="bip-entropy-from-k", msg=private_key) */
   static CONFIDENTIAL uint8_t hmac_out[64];
   hmac_sha512(BIP85_HMAC_KEY, BIP85_HMAC_KEY_LEN, node->private_key, 32,
               hmac_out);
 
-  /* We no longer need the derived node */
   memzero(node, sizeof(*node));
 
-  /* Truncate HMAC output to the required entropy length */
   static CONFIDENTIAL uint8_t entropy[32];
   memcpy(entropy, hmac_out, entropy_bytes);
   memzero(hmac_out, sizeof(hmac_out));
 
-  /* Convert entropy to BIP-39 mnemonic */
   const char *words = mnemonic_from_data(entropy, entropy_bytes);
   memzero(entropy, sizeof(entropy));
 
@@ -87,7 +70,6 @@ static bool bip85_derive_from_root(HDNode *node, int entropy_bytes,
     return false;
   }
 
-  /* Copy to output buffer */
   size_t words_len = strlen(words);
   if (words_len >= mnemonic_len) {
     mnemonic_clear();

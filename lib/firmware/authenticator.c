@@ -223,9 +223,7 @@ unsigned addAuthAccount(char* accountWithSeed) {
     goto cleanup;
   }
 
-  // Keep the secret on its own screen. A 32-character base32 secret appended
-  // after domain/account can wrap past the OLED's three body rows, leaving the
-  // tail signed into storage but invisible to the user.
+  // Secret on its own screen: appended, its tail could be stored unseen.
   if (!confirm(ButtonRequestType_ButtonRequest_Other, "Add Auth Account",
                "Domain: %.*s\nAccount: %.*s", DOMAIN_SIZE, domain, ACCOUNT_SIZE,
                account) ||
@@ -417,8 +415,7 @@ unsigned removeAuthAccount(char* domAcc) {
     return BADPASS;  // fingerprint did not match, passphrase incorrect
   }
 
-  // Find every matching slot. Older firmware allowed duplicate identities, so
-  // a confirmed deletion must remove all copies atomically.
+  // Older firmware allowed duplicates: a deletion removes every copy.
   for (unsigned slot = 0; slot < AUTHDATA_SIZE; slot++) {
     if (authData[slot].secretSize != 0 &&
         strncmp(authData[slot].domain, domain, DOMAIN_SIZE) == 0 &&

@@ -347,22 +347,15 @@ void flash_collectHWEntropy(bool privileged) {
       uint8_t entropy[FLASH_OTP_BLOCK_SIZE] = {0};
       /* Written once and then locked forever, and it feeds the PIN KDF salt
        * via flash_readHWEntropy(). A block filled from a dead generator can
-       * never be corrected. Leave it unlocked on a failed draw and stop this
-       * boot before DRBG/storage initialization can consume erased OTP bytes.
-       * The raw shutdown routine is safe before kk_board_init(): it clears
-       * SRAM and halts without using the display or timer. */
+       * never be corrected: on a failed draw leave it unlocked and halt
+       * (shutdown() is safe before kk_board_init()). */
       if (!random_buffer_checked(entropy, FLASH_OTP_BLOCK_SIZE)) {
         memzero(entropy, sizeof(entropy));
         memzero(HW_ENTROPY_DATA, sizeof(HW_ENTROPY_DATA));
         shutdown();
       }
-      /* An earlier boot may have programmed some or all bytes and then lost
-       * power or failed to lock. OTP bits only clear, so programming a new
-       * draw over those bytes could never verify and every later boot would
-       * halt here. Keep bytes already programmed and program only erased
-       * ones. The OTP wrappers validate bounds but cannot establish that
-       * every programming pulse succeeded, so verify the bytes before making
-       * the block permanent, then verify that the lock itself took effect. */
+      /* A prior boot may have partly programmed it (OTP bits only clear):
+       * keep programmed bytes, fill erased ones, verify, lock, verify lock. */
       bool written = flash_otp_read(FLASH_OTP_BLOCK_RANDOMNESS, 0,
                                     HW_ENTROPY_DATA + 12, FLASH_OTP_BLOCK_SIZE);
       for (uint8_t i = 0; written && i < FLASH_OTP_BLOCK_SIZE; i++) {
