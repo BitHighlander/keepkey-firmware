@@ -272,6 +272,8 @@ typedef struct {
 #define SOL_SCHEMA_MAX_ACCOUNTS 4
 #define SOL_SCHEMA_DISC_MAX 8
 #define SOL_SCHEMA_TEMPLATE_MAX 96
+/* Widest filled summary; templates that could exceed it are rejected. */
+#define SOL_INTENT_TEXT_MAX 280
 
 /* v3 argument roles: the device words the limits screen from these. */
 typedef enum {
