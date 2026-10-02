@@ -370,6 +370,13 @@ static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
         out->decoder_id != METADATA_DECODER_PORTALS_NATIVE_ORDER_V1) {
       return false;
     }
+  } else if (out->version == METADATA_VERSION_NAME) {
+    if (!read_be_u32(&cursor, end, &out->chain_id) ||
+        !read_bytes(&cursor, end, out->contract_address,
+                    sizeof(out->contract_address)) ||
+        !read_short_text(&cursor, end, out->vouched_name, METADATA_NAME_MAX)) {
+      return false;
+    }
   } else if (out->version == METADATA_VERSION_SCHEMA_INTENT) {
     if (!parse_common_head(&cursor, end, out) ||
         !read_string(&cursor, end, out->method_name, METADATA_MAX_METHOD_LEN) ||
@@ -967,9 +974,10 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   if (signed_metadata_is_certified_envelope(payload, payload_len, key_id)) {
     MetadataClassification c = process_certified(payload, payload_len);
     if (c == METADATA_MALFORMED) signed_metadata_clear();
-    /* Set after any clear: a certified claim that failed verification must
-     * still be refused at SignTx, never silently downgraded (SRS R-1.4). */
-    certified_claimed = true;
+    /* After any clear: a failed claim is refused, not downgraded (R-1.4). A
+     * verified name record claims no transaction, so SignTx ignores it. */
+    certified_claimed = !(c == METADATA_VERIFIED &&
+                          stored_metadata.version == METADATA_VERSION_NAME);
     return c;
   }
 
@@ -1028,7 +1036,8 @@ static MetadataClassification process_certified(const uint8_t* payload,
    * calldata it is about to sign; a v1 blob carries signer-supplied values. */
   if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
       stored_metadata.version != METADATA_VERSION_DYNAMIC_SCHEMA &&
-      stored_metadata.version != METADATA_VERSION_SCHEMA_INTENT) {
+      stored_metadata.version != METADATA_VERSION_SCHEMA_INTENT &&
+      stored_metadata.version != METADATA_VERSION_NAME) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
@@ -1106,6 +1115,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   metadata_schema_moves_value = false;
 
   if (!metadata_available || !msg ||
+      stored_metadata.version == METADATA_VERSION_NAME ||
       stored_metadata.classification != METADATA_VERIFIED ||
       msg->to.size != sizeof(stored_metadata.contract_address) ||
       msg->data_initial_chunk.size < sizeof(stored_metadata.selector)) {
@@ -1320,6 +1330,22 @@ static bool intent_width(void* ctx, bool placeholder, bool value, uint8_t index,
   } else {
     w->width += 90;
   }
+  return true;
+}
+
+bool signed_metadata_vouched_name(uint32_t chain_id, const uint8_t address[20],
+                                  const char** name, const char** alias,
+                                  char fp8[9]) {
+  if (!metadata_available || metadata_tier != METADATA_TIER_KEEPKEY ||
+      stored_metadata.version != METADATA_VERSION_NAME ||
+      stored_metadata.classification != METADATA_VERIFIED ||
+      stored_metadata.chain_id != chain_id || !address ||
+      memcmp(stored_metadata.contract_address, address, 20) != 0) {
+    return false;
+  }
+  *name = stored_metadata.vouched_name;
+  *alias = delegate_alias;
+  strlcpy(fp8, delegate_fp, 9);
   return true;
 }
 

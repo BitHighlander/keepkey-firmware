@@ -2386,15 +2386,29 @@ static void eip712_pump(void) {
       /* The walk has finished; keep only its result. */
       const Eip712Next done = *next;
       eip712_stream_abort();
-      /* Permit2 in words: who may take what, until when (SRS-7.16 §3.7). */
-      if (done.permit2.valid &&
-          !eip712_permit2_review(&done.permit2, NULL, NULL, NULL,
-                                 eip712_review_confirm, NULL)) {
-        fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                        _("Signing cancelled by user"));
-        layout_home();
-        return;
+      /* Permit2 in words: who may take what, until when (SRS-7.16 §3.7).
+       * A certified name record for this spender on this chain names it. */
+      if (done.permit2.valid) {
+        const char* name = NULL;
+        const char* alias = NULL;
+        char fp8[9] = {0};
+        if (done.permit2.chain_id > UINT32_MAX ||
+            !signed_metadata_vouched_name((uint32_t)done.permit2.chain_id,
+                                          done.permit2.spender, &name, &alias,
+                                          fp8)) {
+          name = NULL;
+        }
+        const bool ok = eip712_permit2_review(&done.permit2, name, alias, fp8,
+                                              eip712_review_confirm, NULL);
+        signed_metadata_clear(); /* one review per record */
+        if (!ok) {
+          fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                          _("Signing cancelled by user"));
+          layout_home();
+          return;
+        }
       }
+      signed_metadata_clear();
       /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))),
        * or keccak(0x19 || 0x01 || domainSeparator) for a domain-only type. */
       uint8_t preimage[66];
@@ -2472,6 +2486,7 @@ static void eip712_pump(void) {
       return;
     }
     case EIP712_REQ_CANCELLED:
+      signed_metadata_clear();
       erc7730_workflow_abort(erc7730_workflow_state());
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -2479,6 +2494,7 @@ static void eip712_pump(void) {
       layout_home();
       return;
     case EIP712_REQ_FAIL:
+      signed_metadata_clear();
       erc7730_workflow_abort(erc7730_workflow_state());
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
