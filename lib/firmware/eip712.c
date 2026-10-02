@@ -127,9 +127,7 @@ static bool type_is_integer(const char* type, const char* prefix) {
   if (strncmp(type, prefix, prefix_len) != 0) return false;
   const char* p = type + prefix_len;
   size_t bits = 0;
-  /* EIP-712 only defines uint8..uint256 / int8..int256. A bare "int"/"uint"
-   * or a width with a leading zero ("int08") is not a canonical type name and
-   * would hash to a different typehash than the canonical spelling. */
+  /* Only canonical uint8..uint256: "int08" or bare "int" hash differently. */
   if (*p < '1' || *p > '9') return false;
   if (!parse_bounded_decimal(&p, 256, &bits)) return false;
   if (bits < 8 || bits > 256 || (bits % 8) != 0) return false;
@@ -231,11 +229,8 @@ static bool encode_canonical_integer(const char* type, const char* text,
   return true;
 }
 
-/* A name that has the shape of an elementary integer/bytes type (int, uintN,
- * bytesN with digits directly after the prefix, or a bare int/uint) but was
- * not accepted as one (bytes0, bytes33, int7, int08, bare int, ...) must not
- * silently become a user-defined struct name. Callers test the valid forms
- * first. Names such as "intent" or "bytesLike" are ordinary struct names. */
+/* bytes0, bytes33, int7, int08, bare int... must not silently become struct
+ * names ("intent" and "bytesLike" still are). Test valid forms first. */
 static bool type_has_reserved_shape(const char* type) {
   static const char* const prefixes[] = {"uint", "int", "bytes"};
   for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
@@ -601,11 +596,8 @@ int dsConfirm(void) {
   return confirmed ? SUCCESS : USER_CANCELLED;
 }
 
-/* Refuse a value whose JSON shape or address/bytes encoding is already known
- * to be invalid, before any screen is shown: the user must never be asked to
- * approve a value the encoder is going to reject, and a queued refusal must not
- * be spent on it. Integer range/canonical-form errors are still reported after
- * the field and value screens (see the EIP712 integer tests). */
+/* Refuse known-invalid values before any screen, so the user never approves
+ * a value the encoder will reject. Integer range errors come after. */
 static int precheck_value(const char* typeType, const json_t* value,
                           jsonType_t value_type, const char* valStr) {
   const bool array = typeType[strlen(typeType) - 1] == ']';

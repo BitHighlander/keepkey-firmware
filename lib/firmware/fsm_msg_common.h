@@ -42,10 +42,8 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_supports_taproot = true;
   resp->supports_taproot = true;
 
-  /* Verifiable dice modes: the on-device consent screen, ResetDevice.dice_only
-     and the tagged MIXED derivation. Reported as a capability because older
-     firmware skips the unknown dice_only field and would derive a different
-     wallet without complaint; a host must fail closed on this bit. */
+  /* Verifiable dice modes. Old firmware silently skips dice_only, so a host
+     must fail closed on this bit. */
   resp->has_supports_dice_modes = true;
   resp->supports_dice_modes = true;
 
@@ -150,8 +148,7 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   _Static_assert(_Alignof(CoinTable) <= 8,
                  "CoinTable requires stronger scratch alignment");
 
-  /* The incoming GetCoinTable is held in decode_buffer. Copy its fields and
-   * validate them before reclaiming that storage for the large response. */
+  /* Copy and validate the request before reusing its buffer. */
   const bool has_start = msg->has_start;
   const bool has_end = msg->has_end;
   const uint32_t start = msg->start;
@@ -513,8 +510,7 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
 #endif
 }
 
-/* Budget returned bytes, not requests. A confirmed factory wipe starts a new
- * uninitialized audit; Initialize and session changes must not replenish it. */
+/* Byte budget; only a confirmed wipe replenishes it. */
 #define ENTROPY_AUDIT_BUDGET (64u * 1024u)
 static uint32_t entropy_audit_remaining = ENTROPY_AUDIT_BUDGET;
 
@@ -547,8 +543,7 @@ void fsm_msgWipeDevice(WipeDevice* msg) {
   storage_reset();
   storage_resetUuid();
   storage_commit();
-  /* Factory reset drops runtime trust anchors too: loaded clearsign
-   * signers (and any metadata they verified) must not survive a wipe. */
+  /* Loaded clearsign signers must not survive a wipe. */
 #if !BITCOIN_ONLY
   signed_metadata_clear_signers();
 #endif
@@ -573,8 +568,7 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
 
 // cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgGetEntropy(GetEntropy* msg) {
-  /* Uninitialized storage does not mean there is no secret: reset/recovery
-   * may already hold one in RAM. Preserve that ceremony and its screen. */
+  /* Reset/recovery may hold a secret in RAM: preserve that ceremony. */
   if (setup_isArmed()) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     "Entropy unavailable during setup");

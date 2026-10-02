@@ -36,26 +36,13 @@
  * friends, plus a struct name at EthereumTypedDataStructRequest.name's 80. */
 #define EIP712_MAX_TYPE_NAME 112
 
-/* How deep the value walk may nest: message -> struct -> array -> struct ...
- * Every level costs one frame on the C stack, so this is the recursion bound
- * as well as the semantic one. EIP712_MAX_DEPTH is checked BEFORE descending,
- * never after. */
+/* Nesting bound and C-stack recursion bound; checked BEFORE descending. */
 #define EIP712_MAX_DEPTH 3
 
-/* Slots in the shared encoding pool. Each open container holds one 32-byte
- * slot per member encoded so far; when it completes, those collapse to a
- * single 32-byte digest written into the parent's next slot.
- *
- * This is the whole memory argument. A SHA3_CTX is ~400 bytes, so keeping one
- * open per container costs 2,000 bytes at depth 5 -- more than the entire SRAM
- * reserve above the linker floor. Buffering 32-byte encodings instead costs
- * EIP712_MAX_SLOTS * 32, and only ONE SHA3_CTX is ever live: the one folding a
- * finished container.
- *
- * Slots along one path add up: a child starts after all of its parent's
- * members. Seaport's OrderComponents (11 members) holding an offer or
- * consideration array of n items (6-member ConsiderationItem) needs
- * 11 + n + 6, so 24 slots take up to seven items. */
+/* Shared pool of 32-byte member encodings; a completed container collapses to
+ * one digest in its parent's slot. Only ONE SHA3_CTX (~400 B) is ever live,
+ * which is what fits SRAM. Slots along a path add up: Seaport needs
+ * 11 + n + 6, so 24 slots take seven items. */
 #define EIP712_MAX_SLOTS 24
 
 /* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
@@ -66,8 +53,7 @@
  * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3. */
 #define EIP712_MAX_STRUCTS 3
 
-/* Longest struct name we will hold. The wire allows 80; names this long do
- * not occur in practice and every one costs EIP712_MAX_STRUCTS bytes. */
+/* The wire allows 80; each byte costs EIP712_MAX_STRUCTS of SRAM. */
 #define EIP712_MAX_STRUCT_NAME 32
 
 typedef struct {
@@ -81,37 +67,22 @@ typedef struct {
   uint8_t domain_present;
 } Eip712DomainFacts;
 
-/* Canonical ASCII Solidity identifier. Besides being part of encodeType, a
- * member name is also the review-screen title, so this guarantees the exact
- * bytes hashed are the exact bytes rendered (no truncation/control glyphs). */
+/* Canonical ASCII identifier: the bytes hashed are the bytes rendered. */
 bool eip712_identifier_ok(const char* name);
 
-/* Fetch one struct's member list by name. Returns NULL if the host has not
- * supplied it. Firmware backs this with the streaming state machine; the unit
- * tests back it with a fixture table, which is what makes encodeType testable
- * without a device. */
+/* Member list by struct name, NULL if not supplied. Unit tests back it with
+ * a fixture table. */
 typedef const EthereumTypedDataStructAck* (*Eip712StructLookup)(
     const char* name, void* ctx);
 
-/* Assemble encodeType(name) and hash it, per EIP-712:
- *
- *   encodeType = <primary segment> || <each referenced struct, SORTED BY NAME>
- *
- * The sort is the part the old parser got wrong: eip712.c appended referenced
- * definitions in DISCOVERY order and there is no sort call anywhere in it, so
- * two structs named out of alphabetical order produced a typeHash no compliant
- * verifier reproduces -- an internally consistent device signing something
- * nobody else agrees the document says.
- *
- * Returns false if a referenced struct is missing, the closure exceeds
- * EIP712_MAX_STRUCTS, or any member type cannot be spelled. */
+/* typeHash of encodeType = primary || referenced structs SORTED BY NAME.
+ * False if a struct is missing, the closure exceeds EIP712_MAX_STRUCTS, or a
+ * member type cannot be spelled. */
 bool eip712_type_hash(const char* name, Eip712StructLookup lookup, void* ctx,
                       uint8_t out[32]);
 
-/* Render a field's Solidity type exactly as encodeType must spell it --
- * "uint256", "bytes32", "Person[3]", "int16[2][][4]". This string is part of
- * typeHash, so a divergence here is a divergence in the signature.
- * Returns false if the type is not expressible or would overflow `out`. */
+/* Solidity type spelled exactly as encodeType needs (part of typeHash).
+ * False if inexpressible or `out` would overflow. */
 bool eip712_type_name(const EthereumTypedDataStructAck_EthereumFieldType* field,
                       char* out, size_t out_len);
 
@@ -121,8 +92,7 @@ bool eip712_encode_leaf(
     const EthereumTypedDataStructAck_EthereumFieldType* field,
     const uint8_t* value, uint16_t value_len, uint8_t out[32]);
 
-/* A validated uintN/intN leaf (exactly N big-endian bytes) in decimal, signed
- * for intN. This is the text the review screen shows. */
+/* Validated uintN/intN leaf (N big-endian bytes) as review-screen decimal. */
 bool eip712_render_integer(
     const EthereumTypedDataStructAck_EthereumFieldType* field,
     const uint8_t* value, uint16_t len, char* out, size_t out_size);
@@ -133,8 +103,7 @@ bool eip712_validate_leaf(
     const EthereumTypedDataStructAck_EthereumFieldType* field,
     const uint8_t* value, uint16_t value_len);
 
-/* Retain only lookup facts that the canonical domain stream itself proves.
- * Unknown domain fields are ignored; duplicate binding fields fail closed. */
+/* Keep only facts the domain stream proves; duplicates fail closed. */
 bool eip712_domain_facts_observe(
     Eip712DomainFacts* facts, const char* member_name,
     const EthereumTypedDataStructAck_EthereumFieldType* field,
@@ -148,22 +117,10 @@ bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
                                   const uint8_t* value, size_t length,
                                   bool require_absent);
 
-/* ── The walk ────────────────────────────────────────────────────────
- *
- * KeepKey has no blocking request/response primitive. wait_for_tiny_msg is a
- * 64-byte channel for ButtonAck and PinAck; a StructAck is 6 KB. OneKey drives
- * its walk from a re-entrant call() that pumps usbPoll() from inside a handler,
- * and that cannot be transplanted here.
- *
- * So the walk is a RESUMABLE state machine. Each handler runs to completion,
- * emits at most one request, and returns; the next Ack resumes it. State lives
- * in one static block, and the member_path is the cursor.
- *
- * Two sequential machines:
- *   A. typeHash -- for the struct a frame is about to hash, stream its
- *      encodeType closure and cache the digest.
- *   B. values   -- walk members, absorbing each leaf as it is displayed.
- */
+/* ── The walk: a RESUMABLE state machine (no blocking request/response
+ * primitive exists). Each handler emits at most one request and returns; the
+ * next Ack resumes at member_path. Phase A streams each struct's encodeType
+ * closure; phase B absorbs each leaf as it is displayed. */
 
 typedef enum {
   EIP712_IDLE = 0,
@@ -172,9 +129,7 @@ typedef enum {
   EIP712_FAILED,
 } Eip712Wait;
 
-/* What the machine wants next. The walk never writes a message: RESP_INIT uses
- * msg_resp, which is private to fsm.c, and keeping key material and the wire
- * out of the walk is what lets the whole thing be unit-tested. */
+/* The walk never writes a message itself, keeping it unit-testable. */
 typedef enum {
   EIP712_REQ_NONE = 0,
   EIP712_REQ_STRUCT,     /* send EthereumTypedDataStructRequest */
@@ -207,21 +162,17 @@ const Eip712Next* eip712_stream_next(void);
 bool eip712_stream_begin(const EthereumSignTypedData* msg,
                          bool require_definition);
 bool eip712_stream_definition_accepted(void);
-/* Resume the first certified field or replay message values for the next.
- * The reviewed domain and signing path remain fixed across these passes. */
+/* Next certified pass; the reviewed domain and path stay fixed. */
 bool eip712_stream_resume_for_field(void);
 
-/* Feed the machine. Each returns false and tears the session down on any
- * protocol or validation error, having already sent a Failure. */
+/* False = session torn down and Failure already sent. */
 bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack);
 bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack);
 
 /* True while a session is live, so the FSM can reject an out-of-order Ack. */
 Eip712Wait eip712_stream_waiting(void);
 
-/* Drop all session state. Called on completion, failure, Initialize and
- * ClearSession -- a half-walked document must never survive into the next one.
- */
+/* A half-walked document must never survive into the next session. */
 void eip712_stream_abort(void);
 
 #endif /* KEEPKEY_FIRMWARE_EIP712_STREAM_H */
