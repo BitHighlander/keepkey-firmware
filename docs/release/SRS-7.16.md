@@ -48,6 +48,20 @@ and named in the final manifest.
   structured review.
 - **Exact candidate** — the commit and submodule graph from which the signed
   release artifact is reproducibly built.
+- **Fact** — a value the device derives from the signed bytes itself (an
+  amount, a recipient, a mint) or from material it verifies (a certified token
+  identity).
+- **Vouched wording** — text authored and signed by a certified delegate that
+  names or explains facts but carries no value of its own. The device shows it
+  attributed to that delegate.
+- **Claimed context** — anything not derivable from the signed bytes
+  (simulation results, counterparty names, cross-chain outcomes). Out of scope
+  for 7.16 (§5); SRS-7.17 R-2 covers it as a visibly distinct class.
+- **Intent template** — vouched wording for one schema: a sentence whose
+  placeholders the device fills only with facts it formats itself.
+- **Argument role** — a tag on an amount argument (`spend-max`,
+  `receive-min`, `spend-exact`, `receive-exact`) from which the device builds
+  its own risk-limit screen.
 
 ---
 
@@ -89,6 +103,13 @@ certificate, matching purpose/scope, valid time bounds, and a valid provider
 signature over the exact schema bytes. Partial, mixed-tier, expired, malformed,
 or scope-mismatched material SHALL be rejected.
 
+*Expiry (owner decision 2026-10-02).* The device has no clock: "expired" means
+`not_after` below the build's `KK_CLEARSIGN_MIN_EXPIRY`. Such a request fails
+closed. This is not a remote kill switch (the concern in
+`../ClearsignRootCeremony.md` §3): the refusal covers that one request, and the
+host may resend the same transaction without certified material on the ordinary
+path. The device never shows an expiry date.
+
 **R-1.3** Runtime/self-service providers SHALL remain additive. They SHALL show
 their runtime identity and SHALL NOT suppress the opaque/raw review. Certified
 and runtime tiers SHALL be visibly distinguishable.
@@ -96,7 +117,9 @@ and runtime tiers SHALL be visibly distinguishable.
 **R-1.4** A certified render may replace the opaque review only when every
 signed byte and every displayed account/value required by that schema is bound
 by native parsing or the verified schema. Otherwise signing SHALL fail closed;
-it SHALL NOT silently downgrade from a claimed certified request.
+it SHALL NOT silently downgrade from a claimed certified request. Vouched
+wording (§3.7) is permitted because it carries no value: every number, address
+or token it presents is a fact filled in by the device.
 
 **R-1.5** The release record SHALL state the accepted revocation model and the
 blast radius of a compromised delegate. Root provisioning and certificate
@@ -214,6 +237,62 @@ published ZIP-229/244 digest vectors, constant-time Pallas path, progress
 contract, T randomness checks, and no-Sapling policy. Release requires
 exact-candidate device testing, not emulator vectors alone.
 
+### 3.7 Human-readable certified review: who, what, why, risk limits
+
+Owner objective 2026-10-02: the ClearSign server authors the human description
+of a complex transaction; the device proves it against the signed bytes. The
+first 7.16 hardware test (a PumpSwap sell) showed twenty screens of raw
+instructions, base units and full addresses, with no statement of the action or
+its limits. These requirements replace that layout on the certified path.
+
+**R-7.1 Intent template.** A certified schema MAY carry an intent template:
+printable ASCII, at most 96 characters, signed by the delegate together with
+the schema bytes (one signature, one preimage, versioned domain tag).
+Placeholders `{n}` refer to schema arguments; the device substitutes values it
+formats itself (token amounts scaled only by a certified token identity, SOL
+amounts, shortened addresses with the full form on the detail screen). A
+template that references an unknown argument, or a literal `{`/`}` outside a
+placeholder, SHALL be rejected.
+
+**R-7.2 Coverage.** Every amount-typed argument (token amount, lamports,
+EVM amount/token amount) SHALL appear in the template, so wording can never
+omit a limit. A template failing coverage SHALL be rejected.
+
+**R-7.3 Roles and the limits screen.** Every amount-typed argument SHALL carry
+exactly one role. The device composes a **Limits** screen in firmware-owned
+wording from the roles ("You spend at most", "You receive at least", "You
+spend", "You receive"), followed by every native SOL/ETH outflow it decodes
+itself (for example a companion transfer to a third party) and the network
+fee bound. The server never authors limit wording.
+
+**R-7.4 Screen order.** A certified review SHALL present, in order:
+1. **Summary** — the filled intent template, titled by the schema's program name;
+2. **Limits** — R-7.3;
+3. **Side effects** — each certified companion in firmware-owned plain words
+   (for example "Creates a temporary wSOL account, closed back to you"),
+   compute budget folded into the fee line, omitted when absent;
+4. **Who** — "Described by <alias> <fingerprint>, certified by KeepKey"
+   (no date, R-1.2), then the hold-to-sign confirm.
+
+Every mint SHALL still be shown in full under its amount (owner decision
+2026-10-02: a certified symbol never replaces the mint). Accounts a schema
+lists only for identification MAY move to the detail screens.
+
+**R-7.5 Without a template.** A certified schema without a template SHALL use
+the same order with a firmware-generated summary ("<program>: <instruction>")
+and SHALL still meet R-7.3. Pre-template schemas therefore keep working.
+
+**R-7.6 EVM parity.** Certified EVM v3 and the KEEPKEY-tier ERC-7730 render
+SHALL follow R-7.1–R-7.5: ERC-7730 `intent` plus interpolated fields map to
+the template, and amount fields require a role.
+
+**R-7.7 Who is asking.** The requesting application cannot be verified by the
+device; its origin stays on the host in 7.16 (owner decision 2026-10-02).
+
+**R-7.8 Server parity.** The ClearSign service SHALL certify a transaction
+only when the firmware rules (instruction cap, companions, coverage, roles)
+hold, and SHALL publish for each catalog entry the expected screen text.
+
 ---
 
 ## 4. Verification and release gates
@@ -251,6 +330,11 @@ candidate. These cannot be waived by green unit tests:
    expired, wrong-scope, tampered and incomplete proofs.
 8. Solana legacy, zero-LUT v0, certified-LUT and malformed-proof hardware
    vectors generated by the production host SDK.
+8a. §3.7 review evidence: the owner's real transaction history replayed through
+   the exact candidate's parser and the service matcher, with the expected
+   Summary/Limits/Side-effects/Who text per certified transaction, and
+   on-device captures matching it for at least one transaction per catalog
+   entry.
 9. Exact-candidate Orchard/PCZT hardware signing and signature verification.
 10. Final artifact signature verification, hashes, size/stack measurements,
     changelog, recovery warning, support sign-off and named release approval.
@@ -263,5 +347,10 @@ candidate. These cannot be waived by green unit tests:
 - CTAP 2.1 credential management and extensions listed in §3.3.
 - Enabling the dormant V19 PIN-KDF rewrap.
 - Quorum/multi-root delegation, provider reputation, fiat values, or context
-  not cryptographically derivable from the signed bytes.
+  not cryptographically derivable from the signed bytes (claimed context).
+  Vouched wording (§3.7) is not context: it presents facts and carries no
+  value of its own.
+- Transaction-bound (per-request) templates; 7.16 templates bind to the schema
+  (owner decision 2026-10-02). Per-request wording arrives with claimed
+  context in 7.17.
 - Treating emulator, CI, or draft-PR success as a substitute for §4.2.

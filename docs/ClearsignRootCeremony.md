@@ -127,10 +127,11 @@ Field notes that matter when you choose values in §4.5:
   is a capability it never agreed to.
 - **`not_after` is compared against `KK_CLEARSIGN_MIN_EXPIRY`, not against a
   clock.** The device has none. See §6.
-- **Failure degrades, it does not refuse.** An unverifiable, expired,
-  wrong-chain or malformed certificate lands on the 7.15 additive path, where
-  the raw review still runs. Refusing would hand anyone able to age out a
-  certificate a remote kill switch.
+- **A failed certified request is refused; the transaction is not.** An
+  unverifiable, expired, wrong-chain or malformed certificate fails that
+  request closed (SRS-7.16 R-1.2, owner decision 2026-10-02). The host may
+  resend the same transaction without certified material on the ordinary path,
+  so an aged-out certificate cannot act as a remote kill switch.
 
 ---
 
