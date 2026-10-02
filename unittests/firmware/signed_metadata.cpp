@@ -2766,3 +2766,86 @@ TEST_F(CertifiedMetadataTest, IntentSchemaCertifiedReviewReplacesRawAndValue) {
   EXPECT_EQ(0, kkconfirm_drain());
   EXPECT_TRUE(signed_metadata_relied());
 }
+
+/* v0x06: a vouched address name (Permit2 spender). It names, never describes
+ * a transaction, and only the KeepKey-certified tier can supply it. */
+namespace {
+std::vector<uint8_t> name_body(uint32_t chain, const uint8_t addr[20],
+                               const std::string& name, uint8_t key_id) {
+  std::vector<uint8_t> b;
+  put_u8(b, METADATA_VERSION_NAME);
+  put_be32(b, chain);
+  put_bytes(b, addr, 20);
+  put_u8(b, (uint8_t)name.size());
+  put_bytes(b, (const uint8_t*)name.data(), name.size());
+  put_u8(b, METADATA_VERIFIED);
+  put_be32(b, 0);
+  put_u8(b, key_id);
+  return b;
+}
+const uint8_t UR_V2[20] = {0x66, 0xa9, 0x89, 0x3c, 0xc0, 0x7d, 0x91,
+                           0xd9, 0x56, 0x44, 0xae, 0xdd, 0x05, 0xd0,
+                           0x3f, 0x95, 0xe1, 0xdb, 0xa8, 0xaf};
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, NameRecordNamesOnlyItsAddressOnItsChain) {
+  auto e = envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(name_body(1, UR_V2, "Uniswap Universal Router",
+                          METADATA_KEYID_DELEGATE)));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+  // A name claims no transaction: SignTx must not refuse because of it.
+  EXPECT_FALSE(signed_metadata_certified_claimed());
+
+  // It can never describe calldata, even to the named address.
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  EthereumSignTx msg;
+  make_v2_msg(&msg, UR_V2, data, true, (uint32_t)data.size());
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+
+  MetadataNameRecord r;
+  signed_metadata_take_name(&r);
+  ASSERT_TRUE(r.valid);
+  EXPECT_EQ(r.chain_id, 1u);
+  EXPECT_EQ(memcmp(r.address, UR_V2, 20), 0);
+  EXPECT_STREQ(r.name, "Uniswap Universal Router");
+  EXPECT_STREQ(r.alias, "Test Delegate");
+  EXPECT_EQ(strlen(r.fp8), 8u);
+  // Taken once: the next request finds nothing.
+  EXPECT_FALSE(signed_metadata_available());
+  signed_metadata_take_name(&r);
+  EXPECT_FALSE(r.valid);
+}
+
+TEST_F(CertifiedMetadataTest, NameRecordScopedToAnotherChainIsRefused) {
+  ExpectRefusedButClaimed(envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(name_body(42161, UR_V2, "Uniswap Universal Router",
+                          METADATA_KEYID_DELEGATE))));
+}
+
+TEST_F(SignedMetadataTest, RuntimeSignerCannotNameAnAddress) {
+  std::vector<uint8_t> blob =
+      sign_body(name_body(1, UR_V2, "Uniswap Universal Router", TEST_KEY_ID));
+  signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID);
+  MetadataNameRecord r;
+  signed_metadata_take_name(&r);
+  EXPECT_FALSE(r.valid);
+}
+
+/* The exact bytes the ClearSign server serializes for Uniswap's mainnet
+ * UniversalRouterV2 (Vault evm-certified-schema.test.ts pins the same hex). */
+TEST_F(CertifiedMetadataTest, NameRecordParsesTheServerSerializedBody) {
+  const std::vector<uint8_t> body = {
+      0x06, 0x00, 0x00, 0x00, 0x01, 0x66, 0xa9, 0x89, 0x3c, 0xc0, 0x7d, 0x91,
+      0xd9, 0x56, 0x44, 0xae, 0xdd, 0x05, 0xd0, 0x3f, 0x95, 0xe1, 0xdb, 0xa8,
+      0xaf, 0x18, 0x55, 0x6e, 0x69, 0x73, 0x77, 0x61, 0x70, 0x20, 0x55, 0x6e,
+      0x69, 0x76, 0x65, 0x72, 0x73, 0x61, 0x6c, 0x20, 0x52, 0x6f, 0x75, 0x74,
+      0x65, 0x72, 0x01, 0x00, 0x00, 0x00, 0x00, 0x80};
+  ASSERT_EQ(body, name_body(1, UR_V2, "Uniswap Universal Router",
+                            METADATA_KEYID_DELEGATE));
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(body))));
+}
