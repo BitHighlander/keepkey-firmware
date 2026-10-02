@@ -310,10 +310,6 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 2);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
           pi->extra_u8 = instr_data[9];
-          /* Token-2022: possible undisclosed hook/fee. */
-          if (is_token2022) {
-            *force_opaque = true;
-          }
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_APPROVE;
