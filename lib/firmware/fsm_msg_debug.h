@@ -5,11 +5,7 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   (void)msg;
   RESP_INIT(DebugLinkState);
 
-  /* The canvas can encode dice entropy or a BIP-85 child mnemonic. Return an
-   * empty state throughout either private ceremony so no alternate field or
-   * screen capture bypasses the on-device disclosure boundary. Button
-   * decisions remain available; diagnostics resume after private pages clear.
-   */
+  /* Empty state during dice/BIP-85 ceremonies: the canvas shows secrets. */
   if (reset_debug_is_private() || bip85_debug_is_private()) {
     msg_debug_write(MessageType_MessageType_DebugLinkState, resp);
     return;

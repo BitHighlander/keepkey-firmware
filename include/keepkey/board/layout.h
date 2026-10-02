@@ -86,9 +86,7 @@ typedef enum {
   NO_ICON = 0,
   ETHEREUM_ICON,
   VERIFIED_ICON,
-  /* A runtime-supplied 1bpp mono RLE bitmap (e.g. a loaded clear-sign identity
-   * logo). The frame is set via layout_set_runtime_icon() before the confirm;
-   * drawn by layout_add_icon(). */
+  /* Runtime 1bpp RLE bitmap set via layout_set_runtime_icon(). */
   RUNTIME_ICON,
 } IconType;
 
@@ -125,9 +123,7 @@ void layout_constant_power_notification(const char* str1, const char* str2,
 void layout_notification_icon(NotificationType type, DrawableParams* sp);
 void layout_add_icon(IconType type);
 
-/// \brief Set the frame drawn for RUNTIME_ICON on the next confirm. Pass NULL
-///        to clear. The AnimationFrame + its Image must outlive the confirm
-///        (typically file-static in the caller).
+/// \brief Set the RUNTIME_ICON frame (NULL clears); must outlive the confirm.
 struct AnimationFrame_;
 void layout_set_runtime_icon(const struct AnimationFrame_* frame);
 void layout_warning(const char* str);
