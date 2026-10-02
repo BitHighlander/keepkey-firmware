@@ -2296,6 +2296,13 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
   layoutHome();
 }
 
+static bool eip712_review_confirm(void* ctx, const char* title,
+                                  const char* body) {
+  (void)ctx;
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
+                 body);
+}
+
 /* ── Structured EIP-712 ──────────────────────────────────────────────
  *
  * The walk in eip712_stream.c never writes a message. It describes what it
@@ -2379,6 +2386,15 @@ static void eip712_pump(void) {
       /* The walk has finished; keep only its result. */
       const Eip712Next done = *next;
       eip712_stream_abort();
+      /* Permit2 in words: who may take what, until when (SRS-7.16 §3.7). */
+      if (done.permit2.valid &&
+          !eip712_permit2_review(&done.permit2, NULL, NULL, NULL,
+                                 eip712_review_confirm, NULL)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        _("Signing cancelled by user"));
+        layout_home();
+        return;
+      }
       /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))),
        * or keccak(0x19 || 0x01 || domainSeparator) for a domain-only type. */
       uint8_t preimage[66];
