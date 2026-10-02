@@ -27,8 +27,6 @@ bool kkconfirm_preload(int, int);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 int kkconfirm_drain(void);
-void kkconfirm_capture_start(void);
-std::vector<std::string> kkconfirm_capture_finish(void);
 
 class ReviewHandlers : public ::testing::Test {
  protected:
@@ -57,64 +55,6 @@ class ReviewHandlers : public ::testing::Test {
     emulator_flash_base = previous;
   }
 };
-
-TEST_F(ReviewHandlers, NewerWalletRefusesEveryMutationBeforeConsent) {
-  char record[STORAGE_SECTOR_LEN] = {};
-  memcpy(record, "stor", 4);
-  record[44] = STORAGE_VERSION + 1;
-  SessionState session = {};
-  ConfigFlash shadow = {};
-  ASSERT_EQ(SUS_TooNew, storage_fromFlash(&session, &shadow, record));
-  std::fill(flash.begin(), flash.end(), 0xff);
-  memcpy(flash.data() + 0x4000, record, sizeof(record));
-  storage_init();
-  ASSERT_TRUE(storage_isFirmwareTooOld());
-  // A normal-band wallet newer than this build is refused with
-  // UnexpectedMessage (CHECK_STORAGE_WRITABLE, pinned by
-  // Fsm IncompatibleStorage.*); Failure_Other is reserved for bitcoin-only
-  // locks (CHECK_NOT_BTC_ONLY_LOCKED).
-  const auto unchanged = flash;
-  ChangePin pin = {};
-  ChangeWipeCode wipe_code = {};
-  LoadDevice load = {};
-  ResetDevice reset = {};
-  ApplySettings settings = {};
-  ApplyPolicies policies = {};
-  RecoveryDevice recovery = {};
-#define REFUSED(call)                                               \
-  fsm_test_clearLastFailure();                                      \
-  call;                                                             \
-  EXPECT_EQ(FailureType_Failure_UnexpectedMessage,                  \
-            fsm_test_lastFailureCode());                            \
-  EXPECT_EQ(unchanged, flash);                                      \
-  EXPECT_FALSE(setup_isArmed())
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
-  REFUSED(fsm_msgChangePin(&pin));
-  REFUSED(fsm_msgChangeWipeCode(&wipe_code));
-  REFUSED(fsm_msgLoadDevice(&load));
-  REFUSED(fsm_msgResetDevice(&reset));
-  REFUSED(fsm_msgApplySettings(&settings));
-  REFUSED(fsm_msgApplyPolicies(&policies));
-  REFUSED(fsm_msgRecoveryDevice(&recovery));
-  EXPECT_EQ(2, kkconfirm_drain());
-#undef REFUSED
-  // Wipe still requires consent, including when firmware cannot read the
-  // wallet.
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
-  WipeDevice wipe = {};
-  fsm_test_clearLastFailure();
-  fsm_msgWipeDevice(&wipe);
-  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(unchanged, flash);
-  EXPECT_EQ(0, kkconfirm_drain());
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
-  fsm_test_clearLastFailure();
-  fsm_msgWipeDevice(&wipe);
-  EXPECT_EQ(0, fsm_test_lastFailureCode());
-  EXPECT_FALSE(storage_isFirmwareTooOld());
-  EXPECT_NE(unchanged, flash);
-  EXPECT_EQ(0, kkconfirm_drain());
-}
 
 TEST_F(ReviewHandlers, StorageReinitializationRecomputesFirmwareLock) {
   storage_commit();

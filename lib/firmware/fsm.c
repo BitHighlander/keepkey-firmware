@@ -99,7 +99,6 @@
 #include "messages-ton.pb.h"
 #include "messages-solana.pb.h"
 #include "messages-zcash.pb.h"
-#include "messages-hive.pb.h"
 
 #include <stdio.h>
 /* strnlen: the THORChain memo paths measure fixed arrays rather than
