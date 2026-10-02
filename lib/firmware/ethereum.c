@@ -55,9 +55,8 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
   return advanced_mode;
 }
 
-/* The device-driven stream validates, renders and hashes each leaf from the
- * same byte buffer. It is not blind signing and therefore does not inherit the
- * AdvancedMode requirement of the precomputed-hash endpoint. */
+/* The stream renders and hashes each leaf from the same buffer: not blind
+ * signing, so no AdvancedMode requirement. */
 bool ethereum_streamed_eip712_enabled(void) { return true; }
 
 /* The legacy JSON parser cannot guarantee that every displayed value is the
@@ -358,10 +357,7 @@ static void hash_rlp_number(uint32_t number) {
   hash_rlp_field(data + offset, 4 - offset);
 }
 
-/* Strip leading zero bytes before RLP-encoding an integer field.
- * Per the Ethereum yellow paper, integer fields (nonce, gas, value, etc.)
- * must not have leading zeros. Addresses are NOT integers and must not use
- * this function. */
+/* RLP integers carry no leading zeros. Never use for addresses. */
 static void hash_rlp_bytes_stripped(const uint8_t* buf, size_t size) {
   size_t offset = 0;
   while (offset < size && buf[offset] == 0) offset++;
@@ -391,12 +387,8 @@ static int rlp_calculate_length(int length, uint8_t firstbyte) {
   }
 }
 
-/* Length of an RLP-encoded integer field AFTER stripping leading zero bytes.
- * MUST mirror hash_rlp_bytes_stripped(): the Stage-1 list-length header
- * (hash_rlp_list_length) and the Stage-2 bytes actually hashed have to agree,
- * or the keccak pre-image is malformed and the signature recovers to a garbage
- * address (looks like a "random signer" / dropped tx). Any integer field whose
- * big-endian form has a leading zero byte hits this. */
+/* MUST mirror hash_rlp_bytes_stripped(): Stage-1 length and Stage-2 bytes
+ * must agree or the signature recovers to a wrong address. */
 static int rlp_calculate_length_stripped(const uint8_t* buf, size_t size) {
   size_t offset = 0;
   while (offset < size && buf[offset] == 0) offset++;
@@ -633,16 +625,8 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
       }
     }
   }
-  /* bn_format() BLANKS the buffer and returns 0 when the value does not fit:
-   * BN_FORMAT_ADD_OUTPUT_CHAR does memset(output, 0, output_length) on
-   * overflow. Ignoring the return therefore renders an EMPTY amount on the
-   * confirmation screen, and an empty string is the one rendering a user
-   * cannot read as wrong -- they approve a transfer whose value was never
-   * shown. A 256-bit value at 18 decimals needs ~80 characters, so this is
-   * reachable with an ordinary large-amount transfer, not a corner case.
-   *
-   * Never leave the caller a blank amount. Say the value could not be shown,
-   * so the screen is refusable rather than silently empty. */
+  /* bn_format() BLANKS the buffer on overflow; never show an empty amount
+   * the user could approve unseen. */
   if (bn_format(amnt, NULL, suffix, decimals, 0, false, buf, buflen) == 0) {
     strlcpy(buf, _("AMOUNT TOO LARGE TO DISPLAY"), buflen);
     return false;
@@ -652,9 +636,7 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
 
 bool ethereumFormatNativeAmount(const bignum256* amnt, uint32_t cid, char* buf,
                                 int buflen) {
-  /* ERC-7730 values name the chain's own asset. ethereumFormatAmount() keys
-   * " WAN" off the module's wanchain_tx_type, which may still hold a previous
-   * Wanchain transaction's type; never let that name this amount. */
+  /* Stale wanchain_tx_type must never label this amount " WAN". */
   const uint32_t saved = wanchain_tx_type;
   wanchain_tx_type = 0;
   const bool ok = ethereumFormatAmount(amnt, NULL, cid, buf, buflen);
@@ -672,10 +654,7 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   memcpy(pad_val + (32 - value_len), value, value_len);
   bn_read_be(pad_val, &val);
 
-  /* 256-bit at 18 decimals is 60 integer digits + '.' + 18 fractional + a
-   * suffix, so 32 bytes silently blanked the amount for ordinary large
-   * transfers. Size it so the formatter cannot overflow at all; the guard in
-   * ethereumFormatAmount() remains as the backstop. */
+  /* 256-bit at 18 decimals: 60 digits + '.' + 18 + suffix; cannot overflow. */
   char amount[96];
   if (token == NULL) {
     if (bn_is_zero(&val)) {
@@ -851,10 +830,7 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
     return false;
   }
 
-  // Sanity-bound the fee field that this tx type actually uses, so the
-  // on-screen fee (fee_per_gas * gas_limit) cannot overflow into the modular
-  // bn_multiply and display a wrong value. EIP-1559 uses max_fee_per_gas;
-  // legacy uses gas_price (which is 0 for EIP-1559 and vice versa).
+  // Bound the active fee field so the displayed fee cannot overflow.
   size_t fee_per_gas_size = msg->has_max_fee_per_gas ? msg->max_fee_per_gas.size
                                                      : msg->gas_price.size;
   if (fee_per_gas_size + msg->gas_limit.size > 30) {
@@ -895,8 +871,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (!msg->has_to) msg->to.size = 0;
   if (!msg->has_nonce) msg->nonce.size = 0;
 
-  // RLP treats an all-zero integer as zero regardless of its wire length.
-  // Canonicalize before contract and generic classifiers inspect this value.
+  // Canonicalize all-zero RLP integers before classification.
   if (msg->value.size > 0) {
     bool all_zero = true;
     for (size_t i = 0; i < msg->value.size; ++i) {
@@ -965,16 +940,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_tx_type = ETHEREUM_TX_TYPE_LEGACY;
   }
 
-  /* The typed prefix (0x02) and access list are emitted based on
-   * ethereum_tx_type, while the fee fields are selected by has_max_fee_per_gas.
-   * If those two disagree, Stage 1 (rlp_length) and Stage 2 (hashed bytes)
-   * describe different field lists and the signature recovers to a wrong
-   * address. Enforce a consistent shape up front. */
+  /* tx_type and has_max_fee_per_gas must agree, or Stage 1 and Stage 2 hash
+   * different field lists (wrong-signer signature). */
   if (ethereum_tx_type == ETHEREUM_TX_TYPE_EIP_1559) {
     if (chain_id == 0) {
-      /* chain_id is the mandatory first RLP field of an EIP-1559 tx; absent
-       * chain_id is counted (1 byte) in Stage 1 but hash_rlp_number(0) hashes
-       * nothing in Stage 2. */
+      /* Mandatory for EIP-1559: absent, Stage 1 and Stage 2 disagree. */
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       _("EIP-1559 transactions require chain_id"));
       ethereum_signing_abort();
@@ -1036,8 +1006,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
-  // Keep the selector and both ABI words available to the allowance policy.
-  // Otherwise a host could split an approval prefix across streamed chunks.
+  // Approval prefix must not be splittable across streamed chunks.
   const size_t selector_bytes =
       msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
   if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
@@ -1099,9 +1068,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        /* 7.15 has no firmware-trusted signer. Runtime metadata is always an
-         * additive annotation: the ordinary amount and raw-calldata review
-         * remains mandatory after the decoded screens. */
+        /* 7.15: metadata is additive; raw review stays mandatory. */
         needs_confirm = true;
         data_needs_confirm = true;
       } else {
@@ -1112,9 +1079,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  // Keep metadata only when its decoded screens were approved, so their
-  // attestation remains bound to the signature. Otherwise prevent stale reuse
-  // when contractHandled / ERC-20 paths bypassed metadata review.
+  // Keep metadata only if its screens were approved; else no stale reuse.
   if (!signed_metadata_relied()) {
     signed_metadata_clear();
   }
@@ -1312,12 +1277,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   hash_rlp_bytes_stripped(msg->nonce.bytes, msg->nonce.size);
 
   if (msg->has_max_fee_per_gas) {
-    /* max_priority_fee_per_gas is a mandatory EIP-1559 field; when absent it
-     * encodes as the empty integer (0x80). Stage 1 always counts it
-     * (unconditionally, above), so Stage 2 must always hash it too -- guarding
-     * on has_max_priority_fee_per_gas here would under-hash and leave the list
-     * header over-declared (the same wrong-signer class this commit fixes).
-     * .size is 0 when unset, which hash_rlp_bytes_stripped emits as 0x80. */
+    /* Mandatory field: always hashed (0x80 when unset) to match Stage 1. */
     hash_rlp_bytes_stripped(msg->max_priority_fee_per_gas.bytes,
                             msg->max_priority_fee_per_gas.size);
     hash_rlp_bytes_stripped(msg->max_fee_per_gas.bytes,
@@ -1429,8 +1389,7 @@ void ethereum_signing_abort(void) {
     erc7730_workflow_abort(erc7730_workflow_state());
 }
 
-/* Whether a signing flow is mid-flight. The clearsign metadata handlers
- * refuse to accept metadata once signing has started. */
+/* Metadata is refused once signing has started. */
 bool ethereum_signing_isInProgress(void) { return ethereum_signing; }
 
 static void ethereum_message_hash(const uint8_t* message, size_t message_len,

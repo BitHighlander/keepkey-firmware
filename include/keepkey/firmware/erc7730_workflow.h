@@ -50,13 +50,10 @@ typedef enum {
   ERC7730_DISPLAY_ITERATION,    /* the array an iteration walks */
 } Erc7730DisplayStage;
 
-/* The most arguments an executable formatter carries (tokenAmount: value,
- * token, threshold, message, aliases). */
+/* Max formatter arguments (tokenAmount). */
 #define ERC7730_FIELD_MAX_ARGUMENTS 5u
 
-/* One field's formatter arguments, resolved one at a time: each may need its
- * own definition replay or calldata pass. Only what a later argument or the
- * final screen needs is kept. */
+/* One field's formatter arguments, resolved one pass at a time. */
 typedef struct {
   Erc7730FormatterArgument arguments[ERC7730_FIELD_MAX_ARGUMENTS];
   uint8_t kind;
@@ -70,8 +67,7 @@ typedef struct {
     uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */
   } list;
   uint16_t text; /* the one string an argument names, fetched last */
-  /* embedded calldata: the inner bytes as located (never copied), and whose
-   * authority the inner call runs with */
+  /* embedded calldata: located, never copied */
   uint32_t inner_length;
   uint32_t inner_offset; /* of the payload within the outer arguments */
   uint8_t inner_selector[4];
@@ -103,9 +99,7 @@ typedef struct {
     Erc7730ProgramPath path;
     Erc7730ProgramLiteral literal;
   } selection;
-  /* Display materialization precedes calldata streaming, so the two pieces of
-   * state never coexist. Overlay the two-byte formatter cursor with the much
-   * larger stream state instead of spending permanent SRAM on both. */
+  /* Never live at the same time; overlaid to save SRAM. */
   union {
     Erc7730AbiStream calldata;
     uint16_t current_formatter;
@@ -116,23 +110,19 @@ typedef struct {
   uint8_t domain_field;
   uint8_t phase;
   Erc7730Field field;
-  /* Nonzero while showing part intent_part of intent_parts of the
-   * interpolated intent; such a part has no label. */
+  /* Nonzero while showing an interpolated-intent part (no label). */
   uint8_t intent_part;
   uint8_t intent_parts;
   bool intent_value; /* the part is a device-formatted value, not text */
-  /* An iteration (display opcodes 7..8) in progress: its instructions, and
-   * the element its "every element" path steps are bound to. */
+  /* Iteration (display opcodes 7..8) in progress. */
   uint16_t iteration_begin;
   uint16_t iteration_end;
   uint8_t iteration_index;
   uint8_t iteration_count;
   bool iterating;
-  /* Embedded call (Phase E2). One level: while depth is 1 the inner
-   * definition occupies the preload slot and the loader, and every calldata
-   * pass still replays the whole outer calldata against the reviewed digest,
-   * feeding only the inner call's bytes to the ABI stream. The outer program
-   * is restored afterwards from its definition id. */
+  /* Embedded call, one level. At depth 1 every pass still replays the whole
+   * outer calldata against the reviewed digest; only inner bytes are decoded.
+   */
   uint32_t inner_offset; /* inner call payload within the outer arguments */
   uint32_t inner_length;
   uint32_t outer_total;    /* outer argument bytes per pass */
@@ -150,9 +140,7 @@ typedef struct {
   bool outer_identity_confirmed;
   bool outer_intent_confirmed;
   bool resuming; /* the outer program restarts after its inner call */
-  /* The inner definition was refused (a shape this firmware does not run, or
-   * an unknown signer): the outer program is restored and re-runs the
-   * embedded field on the 7.15 blind path. */
+  /* Inner definition refused: the embedded field takes the blind path. */
   bool inner_refused;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
@@ -166,9 +154,7 @@ typedef struct {
   bool signing_pass;
 } Erc7730Workflow;
 
-/* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM
- * definition replies and ethereum.c calldata chunks operate on the same state.
- */
+/* The single workflow shared by the FSM and ethereum.c. */
 Erc7730Workflow* erc7730_workflow_state(void);
 
 bool erc7730_workflow_begin(Erc7730Workflow* workflow,
@@ -209,8 +195,7 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
 bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
                                                 EthereumSignTx* tx,
                                                 const Erc7730Path* path);
-/* Capture the element count of the array an iteration path walks (the path
- * without its final "every element" step). */
+/* Capture the length of the array an iteration path walks. */
 bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
                                                EthereumSignTx* tx,
                                                const Erc7730Path* path);
@@ -246,29 +231,22 @@ bool erc7730_workflow_advance_display(Erc7730Workflow* workflow);
 /* Begin resolving the arguments of a selected, executable formatter. */
 bool erc7730_workflow_field_begin(Erc7730Workflow* workflow,
                                   const Erc7730Formatter* formatter);
-/* The class and bytes of the value just captured from calldata or typed data.
- */
+/* The class and bytes of the value just captured. */
 bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
                                Erc7730AbiCapture* capture, uint8_t* cls);
-/* Record the value of the pending argument of a multi-argument formatter.
- * Values of the wrong class are refused, as the preload verifier already
- * refused them. */
+/* Record the pending argument's value; a wrong class is refused. */
 bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len);
-/* Phase E2. Begin fetching the inner definition of the located embedded
- * call (depth 1), or the outer definition again after it (depth 0). */
+/* Fetch the inner definition (depth 1) or re-fetch the outer (depth 0). */
 bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth);
 /* Feed one fetched chunk. `none` is the host's "no such definition" reply. */
 Erc7730CatalogResult erc7730_workflow_fetch_feed(
     Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,
     bool* complete, bool* none);
-/* The fetch completed: bind the inner definition to the embedded call and
- * start its program, or restore the outer one. */
 bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow);
 /* Record the embedded calldata a completed locate pass found. */
 bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow);
-/* Return from a completed capture pass to program selection within the same
- * field, discarding the calldata stream. */
+/* Back to program selection within the field; drops the calldata stream. */
 bool erc7730_workflow_resume_field(Erc7730Workflow* workflow);
 /* Interpolated-intent parts counted by the last display selection. */
 uint16_t erc7730_workflow_intent_parts(const Erc7730Workflow* workflow);

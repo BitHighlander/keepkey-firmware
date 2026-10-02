@@ -48,8 +48,7 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
     known = tokenByChainAddress((uint32_t)chain_id, token);
     if (known == UnknownToken) known = NULL;
   }
-  /* A signer's native-currency alias never overrides the firmware's token
-   * table: a listed token keeps its own ticker and decimals. */
+  /* A signer alias never overrides the firmware token table. */
   if (known) native = false;
 
   char value[160]; /* 78 digits + "\nunknown token\n0x" + 40 */
@@ -57,8 +56,7 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
   if (native || known) {
     bignum256 amnt;
     bn_read_be(amount, &amnt);
-    /* The ordinary Ethereum review's own rendering: exact, with the ticker
-     * from the token table or the chain's native symbol. */
+    /* Same rendering as the ordinary Ethereum review. */
     ok = chain_id <= UINT32_MAX &&
          (native ? ethereumFormatNativeAmount(&amnt, (uint32_t)chain_id, value,
                                               sizeof(value))
@@ -149,8 +147,7 @@ bool erc7730_format_date(const uint8_t value[32], bool block_height,
   } else if (!word_u64(value, &seconds) || seconds > UINT64_C(253402300799)) {
     length = snprintf(output, output_size, "%s\n(not a date)", raw);
   } else {
-    /* Days since 1970-01-01 to a civil date (H. Hinnant, days_from_civil
-     * inverse), exact for the whole range above. */
+    /* Hinnant civil_from_days, exact over this range. */
     const uint64_t days = seconds / 86400u, rest = seconds % 86400u;
     const uint64_t z = days + 719468u, era = z / 146097u;
     const uint64_t doe = z - era * 146097u;
@@ -222,9 +219,8 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
   memzero(&amount, sizeof(amount));
   if (ok) {
     const int length =
-        /* The base is the signer's word, printed where a firmware ticker
-         * would be: say so first, so the mark is never on a later OLED page
-         * than the value, and always give the raw integer it came from. */
+        /* Signer-supplied unit: mark it first (same page as the value) and
+         * show the raw integer. */
         snprintf(output, output_size, "unit set by signer\n%s%s%s\nraw %s",
                  scaled, base[0] ? " " : "", base, raw);
     ok = length > 0 && (size_t)length < output_size;
@@ -239,8 +235,7 @@ bool erc7730_format_enum(const char* value, const char* label, char* output,
                          size_t output_size) {
   if (!value || !output || output_size == 0) return false;
   const int length =
-      /* The label is the signer's claim, marked as such first, like a
-       * unit. */
+      /* Signer's label: marked first, like a unit. */
       label ? snprintf(output, output_size, "label set by signer\n%s (%s)",
                        label, value)
             : snprintf(output, output_size, "%s (unmapped)", value);

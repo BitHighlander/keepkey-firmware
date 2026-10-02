@@ -38,9 +38,7 @@ typedef struct {
   bool failed;
 } Erc7730ProgramAbi;
 
-/* Sections are canonical and ascending. The ABI is section 2, allowing a
- * single authenticated replay to index the program and retain its bounded
- * type tree even when a transport chunk spans the section header. */
+/* Sections are canonical and ascending; the ABI is section 2. */
 #define ERC7730_PROGRAM_SECTION_ABI 2u
 
 typedef struct {
@@ -137,8 +135,7 @@ typedef struct {
   uint16_t instruction_count;
   uint16_t target_index;
   uint16_t instruction_index;
-  /* Interpolated-intent instructions (opcodes 2 and 3) in the run that
-   * directly follows the intent at index 0. */
+  /* Intent parts (opcodes 2, 3) directly following the intent. */
   uint16_t intent_parts;
   uint8_t entry[8];
   uint8_t entry_received;
@@ -221,10 +218,8 @@ void erc7730_program_loader_begin(Erc7730ProgramLoader* loader,
 bool erc7730_program_loader_feed(Erc7730ProgramLoader* loader,
                                  uint32_t program_offset, const uint8_t* data,
                                  size_t data_len);
-/* Typed data may only use a definition at one of its signed kind-1
- * deployments. Call after erc7730_program_loader_begin() and before the first
- * feed; loader_complete() then fails unless a deployment record equals
- * (chain_id, contract) exactly. */
+/* Typed data: loader_complete() fails unless a signed deployment equals
+ * (chain_id, contract) exactly. Call after begin(), before the first feed. */
 bool erc7730_program_loader_require_deployment(Erc7730ProgramLoader* loader,
                                                uint64_t chain_id,
                                                const uint8_t contract[20]);
