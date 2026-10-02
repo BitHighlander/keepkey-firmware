@@ -7,7 +7,6 @@
 
 #include "keepkey/firmware/erc7730_abi.h"
 
-#define ERC7730_ABI_STREAM_MAX_PENDING ERC7730_ABI_MAX_PENDING
 #define ERC7730_ABI_CAPTURE_MAX 128u
 
 typedef struct {
@@ -47,7 +46,7 @@ typedef struct {
   /* Own the view; nodes belong to the caller for the stream's lifetime. */
   Erc7730AbiProgram program;
   Erc7730AbiStreamFrame frames[ERC7730_ABI_MAX_DEPTH];
-  Erc7730AbiPending pending[ERC7730_ABI_STREAM_MAX_PENDING];
+  Erc7730AbiPending pending[ERC7730_ABI_MAX_PENDING];
   uint8_t word[32];
   size_t total_length;
   size_t received;

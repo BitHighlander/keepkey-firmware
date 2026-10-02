@@ -28,7 +28,9 @@ bool tendermint_pathMismatched(const CoinType* coin, const uint32_t* address_n,
 bool tendermint_getAddress(const HDNode* node, const char* prefix,
                            char* address);
 
+// Denom: non-empty [a-z0-9./-] only, so it is safe in JSON without escaping.
 bool tendermint_isValidDenom(const char* denom);
+// Deposit asset: as above, uppercase also allowed.
 bool tendermint_isValidAsset(const char* asset);
 
 /**

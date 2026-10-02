@@ -309,7 +309,17 @@ const SolanaTokenInfo* solana_findTokenInfo(
  * caller must still match decimals to the signed instruction. */
 bool solana_token_info_trusted(const SolanaTokenInfo* ti);
 
-/* ceil(price * limit / 1e6) lamports; false on > UINT64_MAX (refuse). */
+/* Label for a signed TransferChecked amount: the firmware-table symbol, or an
+ * attested symbol whose decimals equal the signed ones; NULL otherwise. */
+const char* solana_displaySymbol(const SolanaTokenInfo* ti,
+                                 const SolanaKnownToken* known,
+                                 uint8_t signed_decimals);
+
+/* Solana per-transaction compute-unit cap; also bounds an explicit limit. */
+#define SOL_MAX_COMPUTE_UNITS 1400000u
+
+/* ceil(price * min(limit, SOL_MAX_COMPUTE_UNITS) / 1e6) lamports; false on
+ * > UINT64_MAX (refuse). */
 bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
                                   uint64_t* out);
 
