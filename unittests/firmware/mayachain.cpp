@@ -460,10 +460,10 @@ TEST(Mayachain, DepositAssetAndSignerFailClosed) {
 
 TEST(Mayachain, AssetGrammarRejectsSafeTextOutsideContract) {
   for (const char* value : {"MAYA.CACAO", "ETH.USDT-0x123", "BTC/BTC"})
-    EXPECT_TRUE(mayachain_isValidAsset(value));
+    EXPECT_TRUE(tendermint_isValidAsset(value));
   for (const char* value : {"MAYA:CACAO", "MAYA_CACAO", "MAYA+CACAO", ""})
-    EXPECT_FALSE(mayachain_isValidAsset(value));
-  EXPECT_FALSE(mayachain_isValidAsset(nullptr));
+    EXPECT_FALSE(tendermint_isValidAsset(value));
+  EXPECT_FALSE(tendermint_isValidAsset(nullptr));
 }
 
 TEST(Mayachain, SendSerializerRefusesInvalidDenomWithoutConsumingMessage) {

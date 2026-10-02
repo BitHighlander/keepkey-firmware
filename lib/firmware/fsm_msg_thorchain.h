@@ -146,7 +146,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   if (msg->has_send) {
     const char* coin_denom =
         (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
-    if (!thorchain_isValidDenom(coin_denom)) {
+    if (!tendermint_isValidDenom(coin_denom)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
       layoutHome();
@@ -219,7 +219,7 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
        document the device's key cannot authorize -- and the confirmation below
        labels that address as though it were a destination, so the screen would
        not have given it away. */
-    if (!thorchain_isValidAsset(msg->deposit.asset) ||
+    if (!tendermint_isValidAsset(msg->deposit.asset) ||
         !tendermint_validateBech32Address(msg->deposit.signer, signer_prefix) ||
         !thorchain_addressIsSigner(msg->deposit.signer)) {
       thorchain_signAbort();
