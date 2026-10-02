@@ -36,7 +36,8 @@
    linear in it, and because a provider that needs to name more than eight
    accounts is describing something the user cannot meaningfully review. */
 #define SOL_MAX_LUT_ACCOUNTS 8
-#define SOL_MAX_INSTRUCTIONS 8
+/* 12: a DEX trade that wraps and unwraps SOL runs to 9 (PumpSwap buy). */
+#define SOL_MAX_INSTRUCTIONS 12
 #define SOL_LAMPORTS_DIVISOR 1000000000ULL
 #define SOL_MAX_TOKEN_DECIMALS 18
 #define SOL_MAX_DISPLAY_DECIMALS 9
