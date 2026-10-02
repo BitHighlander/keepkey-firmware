@@ -27,12 +27,8 @@
  * convention of 50 rolls per 128-bit seed and 99 per 256-bit. */
 #define DICE_MAX_ROLLS 99
 
-/// How a dice ceremony derives the seed. The host selects the mode in
-/// ResetDevice (dice_entropy alone = MIXED, with dice_only = ONLY) and the
-/// device shows a consent screen naming it before anything happens. Both
-/// opt-in modes are verifiable offline: nothing enters the derivation that
-/// the user does not hold, and the host's EntropyAck bytes are consumed and
-/// dropped.
+/// dice_entropy alone = MIXED, with dice_only = ONLY; confirmed on-device.
+/// Both are verifiable offline; host EntropyAck bytes are dropped.
 typedef enum {
   DICE_MODE_NONE = 0, /* no dice: the legacy device+host derivation */
   DICE_MODE_MIXED,    /* device draw (shown as 24 words) + rolls */
@@ -58,8 +54,7 @@ bool dice_input_collect(char *rolls, uint32_t target);
 /// fair die (or not a real one). Also true for any non-'1'..'6' byte.
 bool dice_rolls_look_biased(const char *rolls, uint32_t count);
 
-/// ONLY mode: out = SHA256(rolls). Byte-identical to Coldcard's
-/// Dice-Rolls-Only derivation, so its published verifier applies unchanged.
+/// ONLY mode: out = SHA256(rolls), byte-identical to Coldcard's.
 void dice_derive_only(const char *rolls, uint32_t count, uint8_t out[32]);
 
 /// MIXED mode, domain-separated after Coldcard's mixed derivation:

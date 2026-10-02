@@ -98,9 +98,8 @@ void fsm_msgSignIdentity(SignIdentity* msg) {
     return;
   }
 
-  /* SSH/GPG sign only challenge_hidden. Generic identity signatures bind both
-   * challenges, so review both there; SSH/GPG review only the actual signed
-   * payload and never present the unsigned visual field as authoritative. */
+  /* SSH/GPG sign only challenge_hidden, so review only that; generic identity
+   * signatures bind both challenges. */
   if (!confirm_sign_identity(&msg->identity, NULL, curve) ||
       ((!sign_ssh && !sign_gpg) &&
        !confirm_bytes(

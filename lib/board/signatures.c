@@ -83,9 +83,8 @@ int signatures_ok(void) {
   }
   memzero(firmware_fingerprint2, sizeof(firmware_fingerprint2));
 
-  /* F3 hardening: infective aggregation — accumulate all three ECDSA
-   * results instead of early-returning on each. Forces attacker to
-   * corrupt all three verify calls, not just skip one branch. */
+  /* F3: aggregate all three results (no early return), so a glitch must
+   * corrupt all three verifies. */
   volatile int verify_acc = 0;
   volatile int verify_sentinel = 0;
 

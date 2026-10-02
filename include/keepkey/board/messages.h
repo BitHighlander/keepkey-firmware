@@ -40,10 +40,8 @@ void msg_reject_unexpected_tiny(void);
 /* Short main/debug USB packets terminate a tiny wait; normal mode is inert. */
 void msg_reject_short_tiny_packet(void);
 
-/* Dense table entries, looked up by linear scan (message_map_entry). The
- * previous [ID]-designated form sized the table by the highest message ID:
- * 1,713 x 16 B slots for 162 messages, 24.8 KB of zero flash. Field order
- * must match MessagesMap_t. fsm.c keeps a compile-time duplicate-ID guard. */
+/* Dense entries, linear lookup. Field order must match MessagesMap_t;
+ * fsm.c guards duplicate IDs at compile time. */
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC) \
   {(STRUCT_NAME##_fields),                    \
    (void (*)(void*))(PROCESS_FUNC),           \
@@ -131,15 +129,12 @@ typedef void (*raw_msg_handler_t)(RawMessage* msg, uint32_t frame_length);
 const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
                                  MessageMapDirection dir);
 
-/* Shared frame arena (defined in messages.c). Acquiring the arena for TX or
- * scratch drops any partially reassembled inbound frame — see the FrameArena
- * contract in messages.c. Single-threaded transport only. */
+/* Acquiring the frame arena drops any partial inbound frame (see
+ * messages.c). Single-threaded transport only. */
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
-/* A handler may reuse its decoded request storage for a large response after
- * copying every request field it still needs. The transport does not dispatch
- * another normal message until the handler returns. */
+/* Request storage reused as response scratch: copy needed fields first. */
 void* msg_decoded_request_response_scratch(void);
 
 bool msg_write(MessageType msg_id, const void* msg);

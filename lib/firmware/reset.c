@@ -69,15 +69,12 @@ static uint32_t strength;
 static uint8_t CONFIDENTIAL int_entropy[32];
 static char CONFIDENTIAL current_words[MNEMONIC_BY_SCREEN_BUF];
 
-/* SHA-256 of the ASCII rolls, shown only on-device. In ONLY mode this is
- * the seed material itself. Clear it when the ceremony ends. */
+/* SHA-256 of the ASCII rolls; in ONLY mode it IS the seed material. */
 static uint8_t CONFIDENTIAL dice_digest[32];
 static bool has_dice_digest = false;
 
-/* Which dice derivation this ceremony uses. Selected by the host in
- * ResetDevice (dice_entropy / dice_only) and confirmed on the device by the
- * consent screen in reset_init() before anything runs. Cleared with the
- * digest by setup_abort(), so an abandoned ceremony cannot leave it armed. */
+/* Host-selected, device-confirmed. setup_abort() clears it so an abandoned
+ * ceremony cannot leave it armed. */
 static DiceMode dice_mode = DICE_MODE_NONE;
 
 static void dice_digest_clear(void) {
@@ -96,12 +93,10 @@ bool setup_isArmedAs(SetupKind kind) {
 }
 
 void setup_abort(void) {
-  /* Do not reopen screenshots with the last secret page still in the canvas
-   * or queued animations after cancellation/commit. */
+  /* Never leave the last secret page in the canvas or debug state. */
   if (dice_mode != DICE_MODE_NONE) {
     layout_clear();
 #if DEBUG_LINK
-    /* The retained confirm text is the last dice or seed page shown. */
     confirm_debug_clear();
 #endif
   }
@@ -193,8 +188,7 @@ void setup_arm(SetupKind kind) {
 
 bool setup_commit(SetupKind kind, const char* mnemonic, bool imported) {
   if (!setup_require(kind, "Setup ceremony was aborted")) return false;
-  /* storage_commit() declines both downgrade states without writing. Reject
-   * before staging the seed so a host can never receive a false Success. */
+  /* storage_commit() would decline these: never report a false Success. */
   if (storage_isBitcoinOnlyLocked() || storage_isFirmwareTooOld()) {
     setup_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -243,10 +237,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
-  /* The dice modes exist to be checked against the backup words. A reset that
-   * never shows them has nothing to verify, and would put seed material (the
-   * digest, the entropy words) on the screen under a WARNING that recovery is
-   * impossible. Refused, as display_random with no_backup was. */
+  /* Dice output is only meaningful checked against the backup words. */
   if (dice_entropy && _no_backup) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Dice entropy cannot be combined with no_backup"));
@@ -275,9 +266,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   }
 
   strength = _strength;
-  /* Mark dice ceremonies before the entropy draw. DebugLink must never
-   * expose either the draw or its later dice-derived replacement as raw bytes.
-   */
+  /* Set before the draw: DebugLink must never expose dice entropy. */
   dice_mode = dice_entropy ? (dice_only ? DICE_MODE_ONLY : DICE_MODE_MIXED)
                            : DICE_MODE_NONE;
 
@@ -330,38 +319,19 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
-  /* Dice ceremony. The host selects the mode in ResetDevice so a wallet can
-   * explain what is coming before anything starts; the device then shows a
-   * consent screen naming the mode it was asked for, so a host cannot pick
-   * one silently. (It is a confirm, not a selector: on a one-button device a
-   * confirm() ends only by hold or by the host's Cancel, and "cancel the
-   * reset" is exactly the right answer to a mode the user did not want.)
-   * Both modes are verifiable offline: nothing enters the derivation that
-   * the user does not hold, and the host's EntropyAck bytes are consumed and
-   * dropped in reset_entropy().
+  /* Dice ceremony; the device names the host-selected mode for consent.
+   * Verifiable offline: host EntropyAck bytes never enter the derivation.
    *
-   *   MIXED: seed = SHA256d(tag || device_draw || SHA256(tag2 || rolls)).
-   *          The device draw is shown as 24 BIP-39 words BEFORE the rolls
-   *          are entered, so it is committed before the device has seen them
-   *          and cannot be chosen to steer the result. The user copies the
-   *          words down; with those and the rolls they recompute the seed.
-   *   ONLY:  seed = SHA256(rolls). The device draw is discarded. Coldcard's
-   *          Dice-Rolls-Only, byte for byte.
+   *   MIXED: seed = SHA256d(tag || device_draw || SHA256(tag2 || rolls)); the
+   *          draw is shown as 24 words BEFORE the rolls, so it cannot steer.
+   *   ONLY:  seed = SHA256(rolls) (Coldcard Dice-Rolls-Only).
    *
-   * Showing the device draw here is safe for the reason it was unsafe under
-   * the old ResetDevice.display_random screen. That screen revealed the same
-   * 32 bytes while the OTHER half was still host-supplied and uncommitted,
-   * so anyone who read it and knew ext_entropy held the seed pre-image. Here
-   * the other half is dice the user rolls after the words are shown and that
-   * never cross a wire; the host contributes nothing. display_random stays on
-   * the wire and is ignored. Trezor removed the same inherited feature for the
-   * same reason (PR #4119).
+   * Showing the draw is safe only because the other half is offline dice;
+   * display_random (host half uncommitted) stays ignored.
    *
-   * The roll digest is shown in full. In ONLY mode it is the seed material
-   * itself; in both it is the commitment the offline verifier checks.
+   * The roll digest is shown in full; in ONLY mode it IS the seed material.
    *
-   * The digest and mode need no clear here -- setup_stage() above ran
-   * setup_abort(), which zeroes them. */
+   * No clear needed: setup_stage() above ran setup_abort(). */
   if (dice_entropy) {
     static char CONFIDENTIAL dice_rolls[DICE_MAX_ROLLS];
     uint32_t rolls_needed = dice_rolls_for_strength(strength);
@@ -378,8 +348,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
                         "them, then roll %lu dice."),
                       (unsigned long)rolls_needed);
     if (!consented) {
-      /* setup_abort() is the whole rollback -- staged settings, int_entropy,
-       * strength, roll digest, mode. */
       setup_abort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
@@ -388,10 +356,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     }
 
     if (dice_mode == DICE_MODE_MIXED) {
-      /* All 32 bytes, always 24 words, whatever strength was requested: the
-       * verifier needs the whole draw. mnemonic_from_data() returns bip39.c's
-       * static buffer; the pager copies it before anything else runs, and
-       * mnemonic_clear() zeroes it afterwards on every path. */
+      /* Always the full 32-byte draw; mnemonic_clear() on every path. */
       bool shown =
           show_mnemonic_pages(mnemonic_from_data(int_entropy, 32), _("Entropy"),
                               ButtonRequestType_ButtonRequest_DiceRoll);
@@ -403,14 +368,10 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
       }
     }
 
-    /* Empty for the duration of roll entry, so a DebugLink reader can tell
-     * the roll screen apart from the word pages that may precede it. */
     memzero(current_words, sizeof(current_words));
     if (!dice_input_collect(dice_rolls, rolls_needed)) {
       memzero(dice_rolls, sizeof(dice_rolls));
-      /* Load-bearing: the tiny-message pump that accepted the
-       * Cancel/Initialize does not dispatch fsm_msgCancel, so nothing else
-       * has aborted the ceremony at this point. */
+      /* Load-bearing: the tiny-message pump never ran fsm_msgCancel. */
       setup_abort();
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
@@ -431,11 +392,7 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     sha256_Raw((const uint8_t*)dice_rolls, rolls_needed, dice_digest);
     has_dice_digest = true;
 
-    /* The digest page is formatted into current_words: 265 bytes, already
-     * CONFIDENTIAL, and idle between roll entry and the backup pager. A new
-     * static buffer here cost the full 7.15 image its 16 KiB SRAM reserve,
-     * which sits within a few dozen bytes of the linker floor. DebugLink
-     * getters and canvas output are gated for the whole dice ceremony. */
+    /* Reuses CONFIDENTIAL current_words (idle here) to save SRAM. */
     {
       char hex[4][17];
       data2hex(dice_digest, 8, hex[0]);
@@ -486,21 +443,14 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   msg_write(MessageType_MessageType_EntropyRequest, &resp);
 }
 
-/* Shared paginated-mnemonic display scratch — see reset.h for the contract
- * (also used by the BIP-85 flow; each user zeroes at entry and exit). */
+/* Shared mnemonic display scratch; contract in reset.h. */
 char CONFIDENTIAL mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
-/* Page \a mnemonic under one ButtonRequest per screen, retaining each screen's
- * words for ordinary reset diagnostics. Dice pages remain device-only. Used for
- * the backup words and, in the dice MIXED mode, for the device-entropy words
- * the user copies down to verify the seed offline. Sends its own Failure and
- * returns false when the user cancels or the sentence does not fit; the caller
- * owns the ceremony rollback. Its scratch is zeroed at entry, because the
- * format loop depends on empty page strings and a prior caller may have
- * aborted, and on every exit. */
+/* One ButtonRequest per page. On cancel/overflow sends Failure and returns
+ * false; the caller owns rollback. Scratch zeroed at entry and every exit. */
 static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
                                 ButtonRequestType type) {
   uint32_t word_count = 0, page_count = 0;
@@ -571,7 +521,6 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
     char title[MEDIUM_STR_BUF];
     strlcpy(title, title_base, MEDIUM_STR_BUF);
 
-    /* Retain the current logical page; dice diagnostics are gated below. */
     strlcpy(current_words, mnemonic_by_screen[current_page],
             MNEMONIC_BY_SCREEN_BUF);
 
@@ -606,20 +555,12 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
     return;
   }
 
-  /* Even absent host entropy is an accepted, one-shot phase transition. In
-   * dice mode the bytes are intentionally ignored, but the ACK still advances
-   * the ceremony. Stale replies never pass setup_require(). */
   note_workflow_progress();
 
   SHA256_CTX ctx;
   memzero(&ctx, sizeof(ctx));
-  /* In either dice mode int_entropy is ALREADY the whole derivation, set in
-   * reset_init(), and is used verbatim. The host's EntropyAck is still
-   * consumed, so the wire flow and every host stay unchanged, but its bytes
-   * are dropped: folding them in would put a value the user does not hold
-   * back into the derivation and destroy the offline check that is the
-   * entire point of opting in. Not re-hashed either, so the published
-   * derivations are exactly what the verifier computes. */
+  /* Dice: int_entropy is already the full derivation. Host bytes must NOT
+   * be mixed in (would break the offline check); not re-hashed. */
   if (dice_mode == DICE_MODE_NONE) {
     sha256_Init(&ctx);
     sha256_Update(&ctx, int_entropy, 32);
@@ -632,8 +573,6 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
   memzero(int_entropy, sizeof(int_entropy));
 
   if (setup.no_backup) {
-    /* Consent for this path is the two WARNING holds taken during the same
-     * ceremony, in reset_init(). */
     if (!setup_commit(SETUP_RESET, temp_mnemonic, /*imported=*/false))
       goto exit;
     fsm_sendSuccess(_("Device reset"));
@@ -646,8 +585,7 @@ void reset_entropy(const uint8_t* ext_entropy, uint32_t len) {
                  "and DO NOT share it with anyone. ")) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Reset cancelled"));
-      /* storage_reset() used to run here. Nothing was written, so there is
-       * nothing to reset -- and a host-reachable wipe is not a rollback. */
+      /* Nothing was written; a host-reachable wipe is not a rollback. */
       setup_abort();
       layoutHome();
       goto exit;

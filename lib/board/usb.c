@@ -379,10 +379,7 @@ void usbInit(const char* origin_url) {
 void usbPoll(void) {
   // poll read buffer
   usbd_poll(usbd_dev);
-  // Keep a queued progress animation moving while we block on host I/O (e.g.
-  // Zcash proof generation on the host), so the screen never looks frozen.
-  // No-op unless a trickle animation is active, so all other flows are
-  // unaffected.
+  // Keep an active progress animation moving while blocked on host I/O.
   layout_animate_poll();
 }
 
@@ -406,9 +403,7 @@ bool msg_write(MessageType msg_id, const void* msg) {
 
   if (!fields) return false;
 
-  /* Encode into the shared frame arena instead of a 12 KB automatic — that
-   * stack frame overflowed the zcash-privacy variant's SRAM gap. Safe on the
-   * single-threaded transport; see the FrameArena contract in messages.c. */
+  /* Shared arena: a 12 KB stack frame overflowed SRAM (see messages.c). */
   TrezorFrameBuffer* framebuf = frame_arena_tx();
   memset(framebuf, 0, sizeof(*framebuf));
   framebuf->frame.usb_header.hid_type = '?';
@@ -450,7 +445,6 @@ bool msg_debug_write(MessageType msg_id, const void* msg) {
 
   if (!fields) return false;
 
-  /* Same shared-arena encode as msg_write — see the FrameArena contract. */
   TrezorFrameBuffer* framebuf = frame_arena_tx();
   memset(framebuf, 0, sizeof(*framebuf));
   framebuf->frame.usb_header.hid_type = '?';

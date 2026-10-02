@@ -346,9 +346,7 @@ void layout_set_runtime_icon(const struct AnimationFrame_* frame) {
 void layout_add_icon(IconType type) {
   switch (type) {
     case ETHEREUM_ICON:
-    /* Note: reuse the ETH glyph as the "verified" mark — it's an ETH tx.
-     * Swap in a dedicated checkmark bitmap if the trust mark needs to differ.
-     */
+    /* The ETH glyph doubles as the "verified" mark. */
     case VERIFIED_ICON:
       draw_bitmap_mono_rle(canvas, get_ethereum_icon_frame(), false);
       break;
@@ -737,13 +735,8 @@ static const char* _otpStr = "";
  * OTP in large font desc - text to display permil - progress in units of 1 to
  * 1000 OUTPUT none
  */
-/* Render the progress bar into the framebuffer WITHOUT clearing the animation
- * queue, so an animation callback (trickle_progress_callback) can redraw itself
- * every frame without removing itself from the queue.
- *
- * marker_phase: 0..999 breathes a glint on the fill's leading segment (a
- * perpetual "working" cue that keeps the display visibly moving even after
- * the eased fill has pixel-saturated); pass -1 for no glint. */
+/* Render WITHOUT clearing the animation queue, so a callback can redraw itself.
+ * marker_phase: 0..999 glint on the fill's leading edge; -1 for none. */
 static void progress_render_ex(const char* desc, int permil, int marker_phase) {
   if (!canvas) return;
 
@@ -815,11 +808,7 @@ static void progress_render_ex(const char* desc, int permil, int marker_phase) {
     draw_box(canvas, &bp);
   }
 
-  // Front glint: the fill's leading segment breathes (dim <-> bright) while
-  // the trickle is active. Activity always shows exactly at the progress
-  // front — unlike a marker sweeping the track, it cannot detach from the
-  // fill and open a gap, and it cannot run out of travel as the unfilled
-  // span shrinks near 100% (long final-action proofs).
+  // Front glint: the fill's leading segment breathes while the trickle runs.
   if (marker_phase >= 0 && finished_width > 4) {
     const uint32_t glint_max = 10;
     uint32_t glint_w =
@@ -842,9 +831,7 @@ static void progress_render(const char* desc, int permil) {
   progress_render_ex(desc, permil, -1);
 }
 
-/* One-shot progress draw: clears any queued animation (historical behaviour, so
- * a stray animation cannot redraw over a static progress screen) then renders.
- */
+/* Clears queued animations first, so none can redraw over this screen. */
 void animating_progress_handler(const char* desc, int permil) {
   if (!canvas) return;
   call_leaving_handler();
@@ -892,14 +879,9 @@ void layout_add_animation(AnimateCallback callback, void* data,
   animation_queue_push(&active_queue, animation);
 }
 
-/* --- Trickle progress for long host-driven operations -----------------------
- * Shielded Zcash signing blocks on the host generating zk-proofs, so the device
- * would otherwise sit on a frozen progress bar and look like it has failed.
- * This ramps a "trickle" smoothly through most of the gap to the next real
- * milestone over the expected host-proof duration, holding short of it (so it
- * never falsely shows work done). It is driven off the animation timer, which
- * layout_animate_poll() pumps from usbPoll() while the device blocks on host
- * I/O. A dedicated flag gates that pump so no other flow is affected. */
+/* Trickle progress while the host generates Zcash zk-proofs: ramps toward,
+ * never reaching, the next real milestone. Pumped from usbPoll() only while
+ * trickle_active. */
 static volatile bool trickle_active = false;
 static struct {
   const char* desc;
@@ -911,13 +893,8 @@ static void trickle_progress_callback(void* data, uint32_t duration,
                                       uint32_t elapsed) {
   (void)data;
   (void)duration;
-  /* Host proof windows between milestones run ~40-50s. Ramp linearly through
-   * 90% of the milestone span over that guessed duration, then hold — the
-   * last 10% is only crossed by the next REAL milestone, so the bar never
-   * claims work that hasn't happened. The breathing glint keeps signalling
-   * activity while the ramp holds.
-   * Note: EXPECTED_MS is a guess, not a measurement — retune if host
-   * proof times change materially. */
+  /* Ramp to 90% of the span over a guessed ~45s, then hold: only a REAL
+   * milestone crosses the last 10%. EXPECTED_MS is a guess, not measured. */
   const uint32_t EXPECTED_MS = 45000;
   int span = trickle.target - trickle.base;
   int cap = (span * 9) / 10;
@@ -927,18 +904,12 @@ static void trickle_progress_callback(void* data, uint32_t duration,
               ? cap
               : (int)(((uint64_t)cap * elapsed) / EXPECTED_MS);
   }
-  /* Glint phase loops forever, so the display keeps changing even after the
-   * eased fill has stopped producing new pixels (long zk-proof waits). */
   const uint32_t BREATH_PERIOD = 1600; /* ms per dim<->bright breath cycle */
   int phase = (int)(((elapsed % BREATH_PERIOD) * 1000) / BREATH_PERIOD);
-  /* Draw via progress_render_ex (not animating_progress_handler) so redrawing
-   * the frame does not clear the animation queue and remove this callback. */
   progress_render_ex(trickle.desc, trickle.base + add, phase);
 }
 
-/* (Re-)arm the trickle to ease from base_permil toward target_permil. Re-adding
- * the callback resets its elapsed to 0 so the ease restarts from base_permil.
- */
+/* (Re-)arm the trickle from base_permil toward target_permil. */
 void layoutProgressTrickle(const char* desc, int base_permil,
                            int target_permil) {
   trickle.desc = desc;
@@ -947,9 +918,7 @@ void layoutProgressTrickle(const char* desc, int base_permil,
   trickle_active = true;
   layout_add_animation(&trickle_progress_callback, NULL, 0 /* loop forever */);
   force_animation_start();
-  /* Draw the first frame now (at base, glint at its dimmest) so the bar
-   * appears immediately, before the animation timer next fires.
-   * progress_render_ex keeps the animation queue intact. */
+  /* First frame now, before the timer fires. */
   progress_render_ex(desc, base_permil, 0);
 }
 
@@ -962,10 +931,7 @@ void layoutProgressTrickleStop(void) {
   }
 }
 
-/* Advance a queued progress animation one step if the timer has ticked. Called
- * from usbPoll() so the trickle keeps moving while we block on host I/O. Gated
- * on trickle_active so it is a no-op for every other flow (confirm dialogs,
- * PIN entry, etc. are untouched). */
+/* Called from usbPoll(); a no-op unless trickle_active. */
 void layout_animate_poll(void) {
   if (trickle_active && is_animating()) {
     animate();

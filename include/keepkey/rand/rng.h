@@ -37,10 +37,8 @@ void reset_rng(void);
 /// cleared and is never cleared itself: recovery is a power cycle.
 bool rng_seed_error_latched(void);
 
-/// Account for one poll where the RNG's seed/clock error is still active.
-/// Returns true after the bounded retry budget is exhausted, resets \p samples,
-/// and latches the fault before the caller clears hardware evidence.
-/// Exposed so the register-independent recovery policy is unit-testable.
+/// One poll with the seed/clock error active. Returns true (and latches the
+/// fault, resetting \p samples) once the bounded retry budget is exhausted.
 bool rng_persistent_error_step(uint32_t* samples);
 
 #ifdef EMULATOR

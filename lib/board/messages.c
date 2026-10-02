@@ -63,31 +63,12 @@ static msg_debug_link_get_state_t msg_debug_link_get_state;
  */
 bool reset_msg_stack = false;
 
-/* ── Shared frame arena ──────────────────────────────────────────────────
- * One MAX_FRAME_SIZE-class buffer shared by three mutually-exclusive users:
- *
- *   1. Inbound frame reassembly (usb_rx_helper writes frame_arena.rx).
- *   2. Outbound wire encode (msg_write / msg_debug_write encode into
- *      frame_arena.tx via frame_arena_tx()) — previously a 12 KB automatic
- *      TrezorFrameBuffer on the msg_write stack, which is what overflowed
- *      the zcash-privacy variant's 11 KB stack gap on the STM32F205.
- *   3. Large transient in-handler scratch (frame_arena_scratch2049 for the
- *      recovery-cipher wordlist permutation).
- *
- * Why this is safe: the transport is strictly cooperative/single-threaded.
- * usbd_poll() runs only from explicit usbPoll() call sites (main loop, the
- *  tiny-message pump, u2f) — there is no USB ISR — so RX can never preempt
- * a TX encode or an executing handler. Tiny-mode RX (button/pin/cancel
- * during a handler wait) goes through msg_read_tiny's own 64-byte buffer
- * and never touches this arena. RAW dispatch hands handlers the 64-byte
- * packet buffer, not the arena.
- *
- * Contract: acquiring the arena for TX or scratch DROPS any partially
- * reassembled inbound frame. Only a host that pipelines a second request
- * before reading the first response can hit this; it gets a Failure on its
- * next continuation frame instead of silent corruption (the protocol is
- * strict request-response).
- */
+/* One buffer shared by RX reassembly, TX encode (keeps the 12 KB frame off
+ * the msg_write stack) and transient scratch. Safe because there is no USB
+ * ISR: usbd_poll() runs only from explicit usbPoll() sites, and tiny/RAW
+ * reads use their own 64-byte buffers. Acquiring it for TX or scratch DROPS a
+ * partial inbound frame; only a pipelining host can hit that, and it gets a
+ * Failure instead of silent corruption. */
 typedef union {
   uint8_t rx[MAX_FRAME_SIZE];
   TrezorFrameBuffer tx;
@@ -290,9 +271,7 @@ static void raw_dispatch(const MessagesMap_t* entry, const uint8_t* msg,
 
 /// Common helper that handles USB messages from host
 void usb_rx_helper(const uint8_t* buf, size_t length, MessageMapType type) {
-  /* Reassembly state + buffer live at file scope (frame_arena.rx) so that
-   * frame_arena_tx()/frame_arena_scratch2049() can invalidate a partial
-   * inbound frame — see the FrameArena contract above. */
+  /* File-scope so arena acquisition can drop a partial frame (see above). */
   if (rxFirstFrame) {
     rxMsgId = 0xffff;
     rxMsgSize = 0;

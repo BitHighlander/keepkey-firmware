@@ -243,9 +243,7 @@ static void dice_draw_screen(uint32_t count, uint32_t target, uint8_t position,
   display_refresh();
 }
 
-/* Arm the button ISRs, reset the shared press state, and announce the screen.
- * Factored out of the roll collector so any later dice screen shares its
- * exact treatment of the host ack and of a stale press. */
+/* Arm the button ISRs, reset press state, and announce the screen. */
 static void dice_session_begin(void) {
   reset_msg_stack = false;
 
@@ -280,9 +278,8 @@ static void dice_session_end(void) {
 #endif
 }
 
-/* One critical section performs the whole read-classify-drain step, so the
- * in-flight hold below cannot also be classified by the release ISR (and
- * vice versa): whoever gets there first sets dice_committed. */
+/* One critical section, so a hold is classified once: by this poll or by the
+ * release ISR, whichever sets dice_committed first. */
 static void dice_poll(bool *pressed, uint32_t *held, uint8_t *shorts,
                       uint8_t *holds) {
   *held = 0;
@@ -302,13 +299,9 @@ static void dice_poll(bool *pressed, uint32_t *held, uint8_t *shorts,
         }
       }
     }
-    /* Queued short presses stay queued until a debounce window has passed
-     * since the release that produced them, giving dice_on_press the
-     * chance to retract a bounce-generated one before it is acted on.
-     * Deliberately NOT conditioned on the button being up: a retraction
-     * can only happen inside that window, so once it closes the count is
-     * final. Waiting for the button to be released instead would let a
-     * tap-then-hold commit the digit the tap was meant to move off of. */
+    /* Release shorts only after the debounce window (a bounce may be
+     * retracted inside it), NOT on button-up: tap-then-hold would commit the
+     * digit the tap meant to leave. */
     if (dice_have_release && now - dice_release_time >= DICE_DEBOUNCE_MS) {
       *shorts = dice_short_events;
       dice_short_events = 0;

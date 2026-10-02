@@ -355,13 +355,8 @@ void draw_box_simple(Canvas* canvas, uint8_t color, uint16_t x, uint16_t y,
  * OUTPUT
  *     true/false whether image was drawn
  */
-/*
- * draw_bitmap_mono_rle_valid() - see draw.h. Pure walk of the RLE grammar;
- * writes nothing. The drawing path below stops as soon as the canvas is full,
- * so it cannot tell a well-formed stream from one whose last run straddles the
- * image or that carries trailing packets. Host-supplied icons must be checked
- * here, at the trust boundary, before they are shown or cached for a session.
- */
+/* draw_bitmap_mono_rle_valid() - see draw.h. Trust-boundary check for
+ * host-supplied icons: the stream must fill the image exactly. */
 bool draw_bitmap_mono_rle_valid(const uint8_t* data, uint32_t length,
                                 uint16_t w, uint16_t h) {
   if (!data || w == 0 || h == 0) {
@@ -422,12 +417,8 @@ bool draw_bitmap_mono_rle(Canvas* canvas, const AnimationFrame* frame,
     return false;
   }
 
-  /* Validate the whole stream up front. The loop below fills the canvas and
-   * stops, so on its own it cannot reject a final run that straddles the image
-   * or trailing packets past the last pixel — it would draw and report success.
-   * Checking first makes the return value mean "this stream is well-formed AND
-   * was drawn", which is what callers gating on host-supplied icons need.
-   * (Verified: every bundled image stream terminates exactly.) */
+  /* The loop below cannot detect a straddling run or trailing packets; true
+   * must mean well-formed AND drawn. */
   if (!draw_bitmap_mono_rle_valid(img->data, img->length, img->w, img->h)) {
     return false;
   }
@@ -445,23 +436,15 @@ bool draw_bitmap_mono_rle(Canvas* canvas, const AnimationFrame* frame,
       // sequence > 0 implies the next x pixels are the same
       // sequence < 0 implies the next -x pixels are all different
       if ((sequence == 0) && (nonsequence == 0)) {
-        /* Read the packet count. 0x80 (-128) is rejected: `nonsequence` below
-         * is int8_t, so -(-128) = 128 does not fit and wraps back to -128,
-         * breaking the `nonsequence > 0` invariant. Under NDEBUG the assert is
-         * compiled out and we would decode with a negative counter
-         * (signed-overflow UB). 0 is likewise not a valid packet: it leaves
-         * both counters at zero and breaks the same invariant. A host-supplied
-         * icon reaches here, so fail closed rather than trust the encoder. */
+        /* 0x80 cannot be negated in int8_t and 0 is no packet: both break
+         * the counter invariant. Host icons reach here; fail closed. */
         const uint8_t raw = img->data[pixel_index];
         if (raw == 0x80u || raw == 0u) {
           return false;
         }
         pixel_index++;
 
-        /* Explicit two's-complement read. Narrowing a uint8_t > 127 straight
-         * into an int8_t is implementation-defined, so spell the conversion
-         * out: 1..127 stay positive (RUN), 129..255 become -127..-1 (LITERAL).
-         */
+        /* Explicit conversion: uint8_t > 127 to int8_t is impl-defined. */
         if (raw > 127u) {
           nonsequence = (int8_t)((int)raw - 256); /* -127..-1 */
           nonsequence = (int8_t)(-nonsequence);   /* 1..127, fits int8_t */
