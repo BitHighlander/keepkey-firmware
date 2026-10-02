@@ -48,12 +48,6 @@ static bool solana_confirm_account(const char* title, const char* label,
                  label, s);
 }
 
-static bool solana_confirm_memo(const char* title, const uint8_t* s,
-                                uint16_t len) {
-  return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, title, s,
-                       len);
-}
-
 /* Priority fee (ceil(cu_price * cu_limit / 1e6) lamports) is charged even on
  * failure, and CU fields show no units, so disclose the MAXIMUM fee in SOL
  * (1.4M-CU cap when no limit is set; never an understatement). */
@@ -450,7 +444,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     case SOL_INSTR_MEMO:
       /* Page the FULL memo: swap intents (THORChain '=:ETH.ETH:...') ride in
        * it, so a byte-count summary would hide where funds go. */
-      return solana_confirm_memo(title, pi->data, pi->data_len);
+      return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, title,
+                           pi->data, pi->data_len);
 
     case SOL_INSTR_UNKNOWN:
     default: {
@@ -618,13 +613,10 @@ static bool solana_confirm_schema(const SolanaSignTx* msg,
     const SolanaSchemaArg* arg = &schema->args[a];
     char value[96] = {0};
     switch (arg->type) {
-      case SOL_SCHEMA_ARG_U64: {
-        uint64_t v = 0;
-        for (int b = 0; b < 8; b++)
-          v |= ((uint64_t)ix->data[off + b]) << (8 * b);
-        snprintf(value, sizeof(value), "%" PRIu64, v);
+      case SOL_SCHEMA_ARG_U64:
+        snprintf(value, sizeof(value), "%" PRIu64,
+                 solana_schema_read_le64(ix->data + off));
         break;
-      }
       case SOL_SCHEMA_ARG_U8:
         snprintf(value, sizeof(value), "%u", (unsigned)ix->data[off]);
         break;
