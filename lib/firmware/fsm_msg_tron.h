@@ -302,6 +302,21 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
     return;
   }
 
+  /* Only hashes arrive, so this is blind: gate before any key derivation. */
+  if (!tron_typed_hash_policy_allows(storage_isPolicyEnabled("AdvancedMode"))) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Enable AdvancedMode to blind-sign typed hashes"));
+    layoutHome();
+    return;
+  }
+
+  if (!confirm(ButtonRequestType_ButtonRequest_Other, "TIP-712 Blind Sign",
+               "Cannot verify these hashes. Trust the host?")) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
   HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
                                     msg->address_n_count, NULL);
   if (!node) return;
@@ -312,29 +327,6 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
   if (!tron_getAddress(node->public_key, address, sizeof(address))) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_Other, _("Address derivation failed"));
-    layoutHome();
-    return;
-  }
-
-  /* Only hashes arrive, so this is blind; gate it like TronSignTx so it cannot
-   * route around the AdvancedMode kill-switch. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
-    memzero(node, sizeof(*node));
-    (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
-                 "TIP-712 blind signing is disabled. "
-                 "Enable AdvancedMode in device settings.");
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("Blind signing disabled by policy"));
-    layoutHome();
-    return;
-  }
-
-  /* The user must explicitly acknowledge blind signing before the hashes. */
-  if (!confirm(ButtonRequestType_ButtonRequest_Other, "TIP-712 Blind Sign",
-               "Device cannot verify typed-data contents. "
-               "Only proceed if you trust the host application.")) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
   }

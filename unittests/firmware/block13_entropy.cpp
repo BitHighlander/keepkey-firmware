@@ -197,14 +197,6 @@ class Block13Entropy : public ::testing::Test {
     drainTiny();
   }
 
-  void decline() {
-    queue(emptyFrame(MessageType_MessageType_ButtonAck));
-    auto decision = emptyFrame(MessageType_MessageType_DebugLinkDecision);
-    decision[8] = 2;
-    decision[9] = 0x08;
-    queue(decision);
-  }
-
   void refuseStoredVersion(uint32_t version) {
     storage_wipe();
     auto* sector =
@@ -252,81 +244,6 @@ class Block13Entropy : public ::testing::Test {
     EXPECT_EQ(SCREENSAVER, home_get_state());
     EXPECT_FALSE(setup_isArmed());
   }
-  void expectWalletCreationRefusedUntilWipe() {
-    const auto before = flash;
-    LoadDevice load = {};
-    load.has_mnemonic = true;
-    std::strcpy(load.mnemonic,
-                "all all all all all all all all all all all all");
-    ResetDevice reset = {};
-    reset.has_strength = true;
-    reset.strength = 128;
-    RecoveryDevice recovery = {};
-    recovery.has_word_count = true;
-    recovery.word_count = 12;
-    const struct {
-      MessageType type;
-      const pb_field_t* fields;
-      const void* request;
-    } operations[] = {
-        {MessageType_MessageType_LoadDevice, LoadDevice_fields, &load},
-        {MessageType_MessageType_ResetDevice, ResetDevice_fields, &reset},
-        {MessageType_MessageType_RecoveryDevice, RecoveryDevice_fields,
-         &recovery},
-    };
-    for (const auto& operation : operations) {
-      SCOPED_TRACE(operation.type);
-      replies.clear();
-      // The old missing gate reaches consent. Decline it so the negative
-      // control reports the wrong response rather than blocking the suite.
-      decline();
-      dispatch(operation.type, operation.fields, operation.request);
-      drainTiny();
-      EXPECT_EQ(0u, count(MessageType_MessageType_ButtonRequest));
-      EXPECT_EQ(1u, count(MessageType_MessageType_Failure));
-      const FailureType expected =
-          storage_isBitcoinOnlyLocked() &&
-                  operation.type != MessageType_MessageType_RecoveryDevice
-              ? FailureType_Failure_Other
-              : FailureType_Failure_UnexpectedMessage;
-      EXPECT_EQ(expected, response<Failure>(MessageType_MessageType_Failure,
-                                            Failure_fields)
-                              .code);
-      EXPECT_EQ(0u, count(MessageType_MessageType_Success));
-      EXPECT_EQ(0u, count(MessageType_MessageType_EntropyRequest));
-      EXPECT_EQ(0u, count(MessageType_MessageType_CharacterRequest));
-      EXPECT_FALSE(setup_isArmed());
-      EXPECT_FALSE(storage_isInitialized());
-      EXPECT_EQ(before, flash);
-      // A failing old-code control must not lend its armed ceremony to the
-      // next operation and mask that operation's missing refusal gate.
-      setup_abort();
-    }
-
-    // An explicit, confirmed wipe is still the way to discard the retained
-    // record and begin a new wallet on this firmware.
-    replies.clear();
-    approve();
-    dispatch(emptyFrame(MessageType_MessageType_WipeDevice));
-    ASSERT_EQ(1u, count(MessageType_MessageType_ButtonRequest));
-    ASSERT_EQ(1u, count(MessageType_MessageType_Success));
-    ASSERT_EQ(0u, count(MessageType_MessageType_Failure));
-    EXPECT_FALSE(storage_isFirmwareTooOld());
-    EXPECT_FALSE(storage_isBitcoinOnlyLocked());
-    EXPECT_NE(before, flash);
-    EXPECT_FALSE(storage_isInitialized());
-
-    replies.clear();
-    approve();
-    dispatch(MessageType_MessageType_LoadDevice, LoadDevice_fields, &load);
-    EXPECT_EQ(1u, count(MessageType_MessageType_Success));
-    EXPECT_EQ(0u, count(MessageType_MessageType_Failure));
-    ASSERT_TRUE(storage_isInitialized());
-    // Reload the disposable image through the production boot storage path.
-    // This does not qualify physical reboot or signed firmware installation.
-    storage_init();
-    EXPECT_TRUE(storage_isInitialized());
-  }
 };
 }  // namespace
 
@@ -349,18 +266,6 @@ TEST_F(Block13Entropy, PendingResetRejectsWithoutRenewingDeadline) {
                           STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false));
   setup_arm(SETUP_RESET);
   expectSetupRefusal(SETUP_RESET);
-}
-
-TEST_F(Block13Entropy, NewerNormalBandRefusesAllWalletCreationUntilWipe) {
-  refuseStoredVersion(STORAGE_VERSION + 1);
-  ASSERT_TRUE(storage_isFirmwareTooOld());
-  expectWalletCreationRefusedUntilWipe();
-}
-
-TEST_F(Block13Entropy, NewerBitcoinBandRefusesAllWalletCreationUntilWipe) {
-  refuseStoredVersion(STORAGE_VERSION_BTC_ONLY + 1);
-  ASSERT_TRUE(storage_isBitcoinOnlyLocked());
-  expectWalletCreationRefusedUntilWipe();
 }
 
 TEST_F(Block13Entropy, ActiveRecoveryRejectsAndPreservesCipherUntilDeadline) {

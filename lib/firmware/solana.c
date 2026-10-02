@@ -312,10 +312,6 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 2);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
           pi->extra_u8 = instr_data[9];
-          /* Token-2022: possible undisclosed hook/fee. */
-          if (is_token2022) {
-            *force_opaque = true;
-          }
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_APPROVE;
@@ -1067,9 +1063,9 @@ static bool schema_transferIsStatic(const SolanaParsedTx* tx,
   return true;
 }
 
-static bool schema_isTxSigner(const SolanaParsedTx* tx, const uint8_t* key) {
+bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
   for (uint8_t i = 0; i < tx->num_required_sigs && i < tx->num_accounts; i++)
-    if (memcmp(tx->accounts[i], key, SOL_PUBKEY_SIZE) == 0) return true;
+    if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0) return true;
   return false;
 }
 
@@ -1082,13 +1078,13 @@ static bool schema_signerAccountCompanion(const SolanaParsedTx* tx,
                                           const SolanaParsedInstruction* ix) {
   switch (ix->type) {
     case SOL_INSTR_ATA_CREATE:
-      return schema_isTxSigner(tx, ix->from) &&
-             schema_isTxSigner(tx, ix->authority);
+      return solana_signerInTx(ix->from, tx) &&
+             solana_signerInTx(ix->authority, tx);
     case SOL_INSTR_TOKEN_SYNC_NATIVE:
       return true;
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
-      return schema_isTxSigner(tx, ix->to) &&
-             schema_isTxSigner(tx, ix->authority);
+      return solana_signerInTx(ix->to, tx) &&
+             solana_signerInTx(ix->authority, tx);
     default:
       return false;
   }
@@ -1199,6 +1195,7 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   /* ceil(price * limit / 1e6), every step overflow-checked; false (never
    * saturate) if the result exceeds UINT64_MAX. */
   const uint64_t D = 1000000u;
+  if (limit > SOL_MAX_COMPUTE_UNITS) limit = SOL_MAX_COMPUTE_UNITS;
   uint64_t q = price / D;
   uint64_t r = price % D;
   if (limit != 0 && r > UINT64_MAX / limit) {
@@ -1395,6 +1392,25 @@ bool solana_token_info_trusted(const SolanaTokenInfo* ti) {
                                             ti->signature.size);
 }
 
+/* Never the bare SolanaSignTx.token_info.symbol: matching the host's decimals
+ * to the signed ones authenticates the exponent, not the identity -- an
+ * attacker picks a mint whose decimals already match and the label rides
+ * through as fact, and a caveat cannot help when the host writes the 12
+ * characters beside it. Unattested => base units beside the full mint. */
+const char* solana_displaySymbol(const SolanaTokenInfo* ti,
+                                 const SolanaKnownToken* known,
+                                 uint8_t signed_decimals) {
+  if (known) return known->symbol;
+  if (!solana_token_info_trusted(ti) || ti->decimals != signed_decimals) {
+    return NULL;
+  }
+  /* Printable ASCII only, so a signed label cannot push the mint off-view. */
+  for (const char* p = ti->symbol; *p; p++) {
+    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return NULL;
+  }
+  return ti->symbol;
+}
+
 /* Bare ticker only: nothing that could continue the surrounding sentence. */
 static bool solana_tokenSymbolOk(const SolanaTokenInfo* ti) {
   if (!ti->has_symbol) return false;
@@ -1567,13 +1583,14 @@ void solana_formatDuration(char* buf, size_t len, uint64_t seconds) {
            kUnits[i]);
 }
 
-static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
-                                         const uint8_t (*accounts)[32],
-                                         size_t num_accounts, uint8_t* blob,
-                                         size_t blob_capacity,
-                                         size_t* blob_len) {
-  if (!raw_tx || !accounts || !blob || !blob_len || num_accounts == 0)
-    return false;
+/* Verify `sig` over the lookup-account preimage: under the root-certified
+ * delegate when `certificate` is set, else under runtime signer slot
+ * `signer_key_id`. */
+static bool solana_lut_accounts_verify(
+    const uint8_t* raw_tx, size_t raw_len, const uint8_t (*accounts)[32],
+    size_t num_accounts, uint32_t signer_key_id, const uint8_t* certificate,
+    size_t certificate_len, const uint8_t* sig, size_t sig_len) {
+  if (!raw_tx || !accounts || !sig || num_accounts == 0) return false;
   if (num_accounts > SOL_MAX_LUT_ACCOUNTS) return false;
 
   /* Bind to the transaction: sha256 of the exact bytes being signed. */
@@ -1588,9 +1605,8 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
 
   /* Preimage passed RAW (the verifier hashes it). Max 317 bytes. */
   static const char kTag[] = "KeepKeySolanaTxAccounts/1";
-  const size_t required = sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
-                          num_accounts * SOL_PUBKEY_SIZE;
-  if (blob_capacity < required) return false;
+  uint8_t blob[sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
+               SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
   size_t n = 0;
   memcpy(blob + n, kTag, sizeof(kTag) - 1);
   n += sizeof(kTag) - 1;
@@ -1606,25 +1622,22 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
     n += SOL_PUBKEY_SIZE;
   }
 
-  *blob_len = n;
-  return true;
+  if (certificate) {
+    return clearsign_root_verify_delegate_attestation(
+        certificate, certificate_len, CLEARSIGN_SCOPE_SOLANA, blob, n, sig,
+        sig_len);
+  }
+  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
+                                            sig, sig_len);
 }
 
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,
                                  const uint8_t* sig, size_t sig_len) {
-  if (!sig || signer_key_id >= METADATA_MAX_KEYS) return false;
-  uint8_t blob[sizeof("KeepKeySolanaTxAccounts/1") - 1 + SHA256_DIGEST_LENGTH +
-               4 + SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
-  size_t n = 0;
-  if (!solana_lut_accounts_preimage(raw_tx, raw_len, accounts, num_accounts,
-                                    blob, sizeof(blob), &n)) {
-    return false;
-  }
-
-  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
-                                            sig, sig_len);
+  return signer_key_id < METADATA_MAX_KEYS &&
+         solana_lut_accounts_verify(raw_tx, raw_len, accounts, num_accounts,
+                                    signer_key_id, NULL, 0, sig, sig_len);
 }
 
 bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
@@ -1633,17 +1646,9 @@ bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
                                    const uint8_t* certificate,
                                    size_t certificate_len, const uint8_t* sig,
                                    size_t sig_len) {
-  if (!certificate || !sig) return false;
-  uint8_t blob[sizeof("KeepKeySolanaTxAccounts/1") - 1 + SHA256_DIGEST_LENGTH +
-               4 + SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
-  size_t n = 0;
-  if (!solana_lut_accounts_preimage(raw_tx, raw_len, accounts, num_accounts,
-                                    blob, sizeof(blob), &n)) {
-    return false;
-  }
-  return clearsign_root_verify_delegate_attestation(
-      certificate, certificate_len, CLEARSIGN_SCOPE_SOLANA, blob, n, sig,
-      sig_len);
+  return certificate &&
+         solana_lut_accounts_verify(raw_tx, raw_len, accounts, num_accounts, 0,
+                                    certificate, certificate_len, sig, sig_len);
 }
 
 /* ------------------------------------------------------------------ */

@@ -38,6 +38,7 @@ extern char mnemonic_scratch_tokened[TOKENED_MNEMONIC_BUF];
 extern char mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 extern char mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 extern char mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
+void mnemonic_scratch_wipe(void);
 
 /* ---- setup ceremony -------------------------------------------------
  *

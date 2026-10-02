@@ -57,12 +57,12 @@ void cbor_decoder_init(CborDecoder* decoder, const uint8_t* buffer,
                        size_t length);
 bool cbor_decode_value(CborDecoder* decoder, CborValue* value);
 bool cbor_skip_value(CborDecoder* decoder);
-bool cbor_validate(const uint8_t* buffer, size_t length);
 /* Unicode codepoints in valid UTF-8 text, or SIZE_MAX if it is invalid. */
 size_t cbor_utf8_codepoints(const uint8_t* text, size_t length);
-bool cbor_map_find_int(const uint8_t* buffer, size_t length, uint64_t key,
-                       CborValue* value);
-bool cbor_map_find_int_slice(const uint8_t* buffer, size_t length, uint64_t key,
-                             const uint8_t** value, size_t* value_length);
+/* Finds text key `text`, or integer key `wanted` when `text` is NULL, in a
+ * CBOR map; any key of the other kind fails the lookup. */
+bool cbor_map_find(const uint8_t* buffer, size_t length, const char* text,
+                   int64_t wanted, CborValue* value, const uint8_t** slice,
+                   size_t* slice_length);
 
 #endif
