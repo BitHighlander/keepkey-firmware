@@ -19,9 +19,9 @@
 
 #include "keepkey/firmware/zcash.h"
 
-#include <stdlib.h>
 #include <string.h>
 
+#include "keepkey/firmware/crypto.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/blake2b.h"
@@ -524,26 +524,12 @@ bool zcash_orchard_compute_cmx_with_progress(
       receiver, value, rho, rseed, cmx_out, false, progress, progress_context);
 }
 
-bool zcash_orchard_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
-  return zcash_orchard_compute_cmx_with_progress(receiver, value, rho, rseed,
-                                                 cmx_out, NULL, NULL);
-}
-
 bool zcash_ironwood_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
     ZcashOrchardProgressCallback progress, void* progress_context) {
   return zcash_orchard_family_compute_cmx_with_progress(
       receiver, value, rho, rseed, cmx_out, true, progress, progress_context);
-}
-
-bool zcash_ironwood_compute_cmx(
-    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
-    const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32]) {
-  return zcash_ironwood_compute_cmx_with_progress(receiver, value, rho, rseed,
-                                                  cmx_out, NULL, NULL);
 }
 
 bool zcash_derive_orchard_keys_with_progress(
@@ -718,36 +704,6 @@ static void zcash_write_u64_le(uint64_t value, uint8_t out[8]) {
   }
 }
 
-static size_t zcash_write_compact_size(size_t value, uint8_t out[9]) {
-  if (value < 253) {
-    out[0] = (uint8_t)value;
-    return 1;
-  }
-
-  if (value <= 0xffff) {
-    out[0] = 0xfd;
-    out[1] = (uint8_t)(value & 0xff);
-    out[2] = (uint8_t)((value >> 8) & 0xff);
-    return 3;
-  }
-
-  if (value <= 0xffffffff) {
-    out[0] = 0xfe;
-    out[1] = (uint8_t)(value & 0xff);
-    out[2] = (uint8_t)((value >> 8) & 0xff);
-    out[3] = (uint8_t)((value >> 16) & 0xff);
-    out[4] = (uint8_t)((value >> 24) & 0xff);
-    return 5;
-  }
-
-  out[0] = 0xff;
-  uint64_t v = (uint64_t)value;
-  for (size_t i = 0; i < 8; i++) {
-    out[i + 1] = (uint8_t)((v >> (8 * i)) & 0xff);
-  }
-  return 9;
-}
-
 static void zcash_blake2b_personal_256(const char personal[16],
                                        const uint8_t* data, size_t data_len,
                                        uint8_t digest_out[32]) {
@@ -773,12 +729,16 @@ bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
   return memcmp(digest, empty, 32) == 0;
 }
 
+bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size) {
+  return script && script_size == 25 && script[0] == 0x76 &&
+         script[1] == 0xa9 && script[2] == 0x14 && script[23] == 0x88 &&
+         script[24] == 0xac;
+}
+
 bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,
                                        size_t script_size,
                                        const uint8_t public_key[33]) {
-  if (!script || !public_key || script_size != 25 || script[0] != 0x76 ||
-      script[1] != 0xa9 || script[2] != 0x14 || script[23] != 0x88 ||
-      script[24] != 0xac) {
+  if (!public_key || !zcash_script_is_p2pkh(script, script_size)) {
     return false;
   }
   uint8_t hash160[20];
@@ -880,7 +840,7 @@ static void zcash_hash_transparent_scripts(
   blake2b_InitPersonal(&ctx, 32, "ZTxTrScriptsHash", 16);
   for (size_t i = 0; i < n_inputs; i++) {
     size_t compact_size_len =
-        zcash_write_compact_size(inputs[i].script_pubkey_size, compact_size);
+        ser_length(inputs[i].script_pubkey_size, compact_size);
     blake2b_Update(&ctx, compact_size, compact_size_len);
     if (inputs[i].script_pubkey_size > 0) {
       blake2b_Update(&ctx, inputs[i].script_pubkey,
@@ -902,7 +862,7 @@ static void zcash_hash_transparent_outputs(
     zcash_write_u64_le(outputs[i].value, le);
     blake2b_Update(&ctx, le, sizeof(le));
     size_t compact_size_len =
-        zcash_write_compact_size(outputs[i].script_pubkey_size, compact_size);
+        ser_length(outputs[i].script_pubkey_size, compact_size);
     blake2b_Update(&ctx, compact_size, compact_size_len);
     if (outputs[i].script_pubkey_size > 0) {
       blake2b_Update(&ctx, outputs[i].script_pubkey,
@@ -928,8 +888,7 @@ static bool zcash_hash_transparent_input(
   blake2b_Update(&ctx, le4, sizeof(le4));
   zcash_write_u64_le(input->value, le8);
   blake2b_Update(&ctx, le8, sizeof(le8));
-  size_t compact_size_len =
-      zcash_write_compact_size(input->script_pubkey_size, compact_size);
+  size_t compact_size_len = ser_length(input->script_pubkey_size, compact_size);
   blake2b_Update(&ctx, compact_size, compact_size_len);
   if (input->script_pubkey_size > 0) {
     blake2b_Update(&ctx, input->script_pubkey, input->script_pubkey_size);
@@ -1107,12 +1066,6 @@ ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
   }
 
   return ZCASH_PCZT_SIGNING_REQUEST_OK;
-}
-
-bool zcash_pczt_signing_request_is_clear(
-    const ZcashPCZTSigningRequestMeta* meta) {
-  return zcash_pczt_signing_request_status(meta) ==
-         ZCASH_PCZT_SIGNING_REQUEST_OK;
 }
 
 /* ZIP-32 6.1 seed fingerprint. Rejects trivial (all-0x00/0xFF) seeds and

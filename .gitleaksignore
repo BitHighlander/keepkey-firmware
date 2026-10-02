@@ -13,24 +13,3 @@ ae5c38605cc548dcce0c9d83e796eabe834956f4:bootloader/local/baremetal/bootloader_m
 
 # Test wallet data from 2014
 e257a3ad1745bc2dffb38eae0f40dc52ba7de4a6:keepkey_app/test/keepkey_wallet.dat:generic-api-key:7
-
-# Block09 audit dependency gitlinks, verified with git ls-tree 2c37cce7f.
-# These exact historical lines contain public Git commit IDs, not credentials.
-ca3b2d8d684b3bf977974042441ce366d83efd69:docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:134
-ca3b2d8d684b3bf977974042441ce366d83efd69:docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:138
-
-# Manual/no-git counterparts of the two reviewed public dependency gitlinks.
-docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:134
-docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:138
-
-# Block12 audit evidence. Exact lines only, verified with sed -n on the file:
-# a SHA-256 of tools/check_pallas_api_boundary.py and two public dependency
-# gitlink commit IDs (code-signing-keys, deps/python-keepkey). Not credentials.
-9b7779df49be44f5e9ac1593671c028a446da613:docs/release/audit-units/715-12-first-checks-20260927.json:generic-api-key:37
-904f4c3e1a0122561def46095ed023bc7146131c:docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:7
-904f4c3e1a0122561def46095ed023bc7146131c:docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:11
-
-# Manual/no-git counterparts of the three Block12 lines above.
-docs/release/audit-units/715-12-first-checks-20260927.json:generic-api-key:37
-docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:7
-docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:11

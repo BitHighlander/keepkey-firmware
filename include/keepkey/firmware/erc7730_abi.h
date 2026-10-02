@@ -59,4 +59,11 @@ Erc7730AbiResult erc7730_abi_validate_program(const Erc7730AbiProgram* p);
 bool erc7730_abi_node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
                               uint8_t depth, bool* dynamic);
 
+/* One byte of strict UTF-8 (no overlongs, surrogates or > U+10FFFF). State
+ * starts at remaining 0, lower 0x80, upper 0xbf; the text is complete only
+ * when remaining is 0 again. `printable_ascii_only` refuses ASCII controls
+ * and DEL. */
+bool erc7730_utf8_consume(uint8_t* remaining, uint8_t* lower, uint8_t* upper,
+                          uint8_t byte, bool printable_ascii_only);
+
 #endif

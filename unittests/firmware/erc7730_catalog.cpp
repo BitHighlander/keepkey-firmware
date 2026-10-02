@@ -827,6 +827,10 @@ TEST(Erc7730Catalog, ValidatesCanonicalUtf8StringTableIncrementally) {
 
   p = programWithStrings({{'A', 0x0a, 'B'}});  // display control character
   EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithStrings({{'A', 0x7f}});  // DEL
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithStrings({{0xf4, 0x90, 0x80, 0x80}});  // above U+10FFFF
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
@@ -1274,10 +1278,10 @@ TEST(Erc7730Catalog, VerifierRejectsDuplicateDomainFieldLikeLoader) {
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
-// Phase 0 of the ERC-7730 formatter plan: the preload verifier and the
-// runtime consult one capability table, so every shape the runtime cannot
-// execute is refused before the first screen. Each refusal below is paired
-// with the runtime predicate that would have refused it mid-review.
+// The preload verifier and the runtime consult one capability table, so
+// every shape the runtime cannot execute is refused before the first screen.
+// Each refusal below is paired with the runtime predicate that would have
+// refused it mid-review.
 TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
   const std::vector<uint8_t> path = {1, 1, 0xff, 0xff, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(rawFieldProgram(path)), 7),
@@ -1497,7 +1501,7 @@ std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
-// Phase A: tokenAmount, addressName, container and literal values. Every
+// tokenAmount, addressName, container and literal values. Every
 // argument is type-checked at preload against the class the runtime needs, so
 // a mistyped program is refused before the first screen. Each refusal below
 // has an accepted neighbour differing only in the offending byte.
@@ -1658,7 +1662,7 @@ Erc7730CatalogResult phaseC(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
-// Phase C: every argument of amount, nftName, date, duration, unit and enum
+// Every argument of amount, nftName, date, duration, unit and enum
 // is type-checked at preload, including the values the runtime interprets:
 // a date encoding must be "timestamp" or "blockheight", unit decimals must
 // fit a byte, and an enum map is bounded.
@@ -1741,9 +1745,31 @@ std::vector<uint8_t> displays(
   return out;
 }
 
+// Opening a frame (the second display instruction) must leave the path
+// classes in signature[] untouched.
+void expectFrameKeepsPathClasses(const std::vector<uint8_t>& program) {
+  const auto signed_envelope = envelope(program);
+  const auto id = digest(signed_envelope);
+  Erc7730CatalogVerifier verifier;
+  Erc7730CatalogIdentity identity = {};
+  erc7730_catalog_begin(&verifier, id.data(), signed_envelope.size());
+  const size_t before_begin = 10u + sectionOffset(program, 7) + 5u + 2u + 8u;
+  ASSERT_EQ(erc7730_catalog_feed(&verifier, 0, signed_envelope.data(),
+                                 before_begin, &identity),
+            ERC7730_CATALOG_MORE);
+  uint8_t classes[5];
+  memcpy(classes, verifier.signature, sizeof(classes));
+  ASSERT_EQ(
+      erc7730_catalog_feed(&verifier, before_begin,
+                           signed_envelope.data() + before_begin, 8, &identity),
+      ERC7730_CATALOG_MORE);
+  EXPECT_EQ(memcmp(classes, verifier.signature, sizeof(classes)), 0);
+  erc7730_catalog_abort(&verifier);
+}
+
 }  // namespace
 
-// Phase D: an iteration walks one array, reached through tuples only, in a
+// An iteration walks one array, reached through tuples only, in a
 // calldata definition; every field inside reads that array, and a field that
 // iterates appears only inside an iteration.
 TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
@@ -1786,25 +1812,8 @@ TEST(Erc7730Catalog, DisplayFramesPreservePathClasses) {
   const std::vector<uint8_t> begin_a = {7, 0, 0, 0, 0xff, 0xff, 0, 3};
   const std::vector<uint8_t> field_a = {4, 0, 0, 0, 0, 0, 0xff, 0xff};
   const std::vector<uint8_t> end = {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff};
-  const auto program =
-      iterationProgram(displays({begin_a, field_a, end}), 5, 1);
-  const auto signed_envelope = envelope(program);
-  const auto id = digest(signed_envelope);
-  Erc7730CatalogVerifier verifier;
-  Erc7730CatalogIdentity identity = {};
-  erc7730_catalog_begin(&verifier, id.data(), signed_envelope.size());
-  const size_t before_begin = 10u + sectionOffset(program, 7) + 5u + 2u + 8u;
-  ASSERT_EQ(erc7730_catalog_feed(&verifier, 0, signed_envelope.data(),
-                                 before_begin, &identity),
-            ERC7730_CATALOG_MORE);
-  uint8_t classes[5];
-  memcpy(classes, verifier.signature, sizeof(classes));
-  ASSERT_EQ(erc7730_catalog_feed(&verifier, before_begin,
-                                 signed_envelope.data() + before_begin,
-                                 begin_a.size(), &identity),
-            ERC7730_CATALOG_MORE);
-  EXPECT_EQ(memcmp(classes, verifier.signature, sizeof(classes)), 0);
-  erc7730_catalog_abort(&verifier);
+  expectFrameKeepsPathClasses(
+      iterationProgram(displays({begin_a, field_a, end}), 5, 1));
 }
 
 TEST(Erc7730Catalog, IterationPathsReachTheirArrayThroughTuplesOnly) {
@@ -1828,9 +1837,8 @@ TEST(Erc7730Catalog, IterationPathsReachTheirArrayThroughTuplesOnly) {
   EXPECT_EQ(feedAll(envelope(outer), 11), ERC7730_CATALOG_UNTRUSTED);
 }
 
-// Audit remediation (Phases 0-E): shapes that preloaded and then failed
-// mid-review, or took a fact from the wrong source, are now decided at
-// preload. Each refusal sits next to its accepted neighbour.
+// Shapes that would fail mid-review, or take a fact from the wrong source,
+// are decided at preload. Each refusal sits next to its accepted neighbour.
 TEST(Erc7730Catalog, OnlyARawFieldShowsASignerConstant) {
   // A formatter shows a value the device decodes. amount(literal) of one or
   // two bytes is refused; amount(the uint256 argument) and raw(literal) run.
@@ -2022,21 +2030,5 @@ TEST(Erc7730Catalog, GroupFramesPreservePathClasses) {
   auto program = replaceTable(
       rawFieldProgram({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}), 7, group, 5);
   program[sectionOffset(program, 9) + 5 + 18] = 1;
-  const auto signed_envelope = envelope(program);
-  const auto id = digest(signed_envelope);
-  Erc7730CatalogVerifier verifier;
-  Erc7730CatalogIdentity identity = {};
-  erc7730_catalog_begin(&verifier, id.data(), signed_envelope.size());
-  const size_t before_begin = 10u + sectionOffset(program, 7) + 5u + 2u + 8u;
-  ASSERT_EQ(erc7730_catalog_feed(&verifier, 0, signed_envelope.data(),
-                                 before_begin, &identity),
-            ERC7730_CATALOG_MORE);
-  uint8_t classes[5];
-  memcpy(classes, verifier.signature, sizeof(classes));
-  ASSERT_EQ(
-      erc7730_catalog_feed(&verifier, before_begin,
-                           signed_envelope.data() + before_begin, 8, &identity),
-      ERC7730_CATALOG_MORE);
-  EXPECT_EQ(memcmp(classes, verifier.signature, sizeof(classes)), 0);
-  erc7730_catalog_abort(&verifier);
+  expectFrameKeepsPathClasses(program);
 }
