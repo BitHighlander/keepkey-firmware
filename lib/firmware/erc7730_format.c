@@ -25,10 +25,8 @@ static bool format_hex(const uint8_t* data, size_t length, char* output,
   return true;
 }
 
-/* Exact decimal of a 256-bit big-endian value; two's complement when
- * `negative` (the caller has seen the sign bit of a signed integer). */
-static bool format_integer(const uint8_t value[32], bool negative, char* output,
-                           size_t output_size) {
+bool erc7730_format_integer(const uint8_t value[32], bool negative,
+                            char* output, size_t output_size) {
   uint8_t magnitude[32];
   memcpy(magnitude, value, sizeof(magnitude));
   if (negative) {
@@ -96,7 +94,7 @@ bool erc7730_format_raw(const Erc7730AbiProgram* program,
   const Erc7730AbiNode* node = &program->nodes[capture->node];
   if (node->kind == ERC7730_ABI_UINT || node->kind == ERC7730_ABI_INT) {
     if (capture->length != 32) return false;
-    return format_integer(
+    return erc7730_format_integer(
         capture->data,
         node->kind == ERC7730_ABI_INT && (capture->data[0] & 0x80u) != 0,
         output, output_size);

@@ -27,12 +27,12 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
-#include "trezor/crypto/sha3.h"
 #include "keepkey/firmware/clearsign_root.h"
 
 void setup(void);
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 #include "kkconfirm_driver.h"
 
@@ -792,16 +792,6 @@ TEST_F(SignedMetadataTest, NoCompiledSignerSlots) {
   EXPECT_EQ(signed_metadata_signer_alias(METADATA_MAX_KEYS), nullptr);
 }
 
-TEST_F(SignedMetadataTest, FromLoadedSignerTracksMetadata) {
-  EXPECT_FALSE(signed_metadata_from_loaded_signer());  // nothing processed
-  std::vector<uint8_t> blob = base_blob();
-  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
-            METADATA_VERIFIED);
-  EXPECT_TRUE(signed_metadata_from_loaded_signer());
-  signed_metadata_clear();
-  EXPECT_FALSE(signed_metadata_from_loaded_signer());
-}
-
 TEST_F(SignedMetadataTest, ClearSignersDropsKeyAndMetadata) {
   std::vector<uint8_t> blob = base_blob();
   ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
@@ -1075,15 +1065,6 @@ TEST(SignedMetadataSignerStore, RejectsPersistenceBeforeSessionMutation) {
 
 /* ---- signed_metadata_pubkey_fingerprint -------------------------------- */
 
-TEST(SignedMetadataFingerprint, Is64BitSha256Prefix) {
-  char fp[METADATA_FINGERPRINT_LEN];
-  signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
-  // First 8 bytes of sha256(EXPECTED_SLOT3_PUB), computed off-device.
-  EXPECT_STREQ(fp, "0C2CB8B9F467F147");
-  EXPECT_EQ(strlen(fp), 16u);
-  EXPECT_EQ(sizeof(fp), 17u);
-}
-
 TEST(SignedMetadataFingerprint, IsSha256Prefix) {
   char fp[METADATA_FINGERPRINT_LEN];
   signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
@@ -1304,43 +1285,6 @@ TEST_F(SignedMetadataTest, V2SchemaDecodesTransferArgs) {
   EXPECT_EQ(md->args[1].value[1], 4);  // symlen
   EXPECT_EQ(memcmp(md->args[1].value + 2, "USDC", 4), 0);
   EXPECT_EQ(memcmp(md->args[1].value + 6, AMOUNT32, 32), 0);
-}
-
-/* THE v2 drain preventer, restated.
- *
- * A v2 schema commits to calldata only — never to msg->value — so it cannot
- * bind a payable call's amount. The original guard refused any nonzero value,
- * which meant every value-bearing route (a Relay ETH->SOL bridge deposit, for
- * one) was forced to blind-sign: precisely the transactions most worth
- * reviewing. Refusing was not what kept funds safe; SHOWING the amount is.
- *
- * So the match now succeeds and the schema reports that the tx moves value.
- * ethereum.c consumes that to keep the native amount/recipient screen instead
- * of suppressing it, so the user sees the decoded call AND the ETH leaving.
- * The amount is read from the transaction being signed, so nothing unattested
- * reaches the screen and the schema stays transaction-independent. */
-TEST_F(SignedMetadataTest, V2SchemaPayableKeepsValueScreen) {
-  std::vector<uint8_t> blob = v2_base_blob();
-  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
-            METADATA_VERIFIED);
-
-  EthereumSignTx msg;
-  std::vector<uint8_t> data = v2_transfer_calldata();
-  make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true, (uint32_t)data.size());
-  msg.has_value = true;
-  msg.value.size = 1;
-  msg.value.bytes[0] = 0x01;  // 1 wei — any nonzero value is "payable"
-
-  /* Clear-signs, AND flags that the amount screen must still run. */
-  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
-  EXPECT_TRUE(signed_metadata_schema_moves_value());
-
-  /* Zero value: same match, but no extra screen is demanded — proving the
-   * flag tracks the value rather than being always-on. */
-  msg.value.size = 0;
-  msg.has_value = false;
-  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
-  EXPECT_FALSE(signed_metadata_schema_moves_value());
 }
 
 /* A large, realistic value must set the flag too — not just a 1-wei probe. */
@@ -1803,6 +1747,10 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
 
   EXPECT_TRUE(solana_token_info_trusted(&ti));
 
+  // Display: attested symbol only when the signed decimals match.
+  EXPECT_STREQ(solana_displaySymbol(&ti, nullptr, 6), "USDC");
+  EXPECT_EQ(solana_displaySymbol(&ti, nullptr, 9), nullptr);
+
   // Attested-tuple disagreement: a different decimals no longer matches the
   // sig.
   ti.decimals = 9;
@@ -1820,9 +1768,23 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   EXPECT_FALSE(solana_token_info_trusted(&ti));
   ti.signer_key_id = TEST_KEY_ID;
 
-  // No attestation -> not trusted (the caller falls back to unsigned display).
+  // No attestation -> not trusted, and the host's symbol is never displayed,
+  // even when its claimed decimals match the signed ones.
   ti.has_signature = false;
   EXPECT_FALSE(solana_token_info_trusted(&ti));
+  EXPECT_EQ(solana_displaySymbol(&ti, nullptr, 6), nullptr);
+  EXPECT_EQ(solana_displaySymbol(nullptr, nullptr, 6), nullptr);
+
+  // A firmware-known mint shows the table symbol whatever the host sent.
+  static const uint8_t usdc_mint[32] = {
+      0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
+      0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
+      0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61};
+  const SolanaKnownToken* known = solana_findKnownToken(usdc_mint);
+  ASSERT_NE(known, nullptr);
+  strcpy(ti.symbol, "FAKE");
+  EXPECT_STREQ(solana_displaySymbol(&ti, known, 6), "USDC");
+  EXPECT_STREQ(solana_displaySymbol(nullptr, known, 6), "USDC");
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
@@ -1903,25 +1865,8 @@ const uint8_t CERT_ROOT_PRIV[32] = {
 
 std::vector<uint8_t> mint_cert(uint32_t scope, uint8_t flags,
                                const uint8_t delegate_pub[33]) {
-  std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
-  c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
-  c[CLEARSIGN_CERT_OFF_FLAGS] = flags;
-  for (int i = 0; i < 4; i++) {
-    c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
-    c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
-  }
-  memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
-  memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, CLEARSIGN_PUBKEY_LEN);
-  const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
-  uint8_t pre[66] = {0x19, 0x01};
-  memcpy(pre + 2, ds, 32);
-  keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
-  uint8_t digest[32];
-  keccak_256(pre, sizeof(pre), digest);
-  uint8_t pby = 0;
-  EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, CERT_ROOT_PRIV, digest,
-                                 &c[CLEARSIGN_CERT_OFF_SIG], &pby, NULL));
-  return c;
+  return rootCert(CERT_ROOT_PRIV, delegate_pub, flags, scope, 1818806400u,
+                  "Test Delegate");
 }
 
 std::vector<uint8_t> envelope(const std::vector<uint8_t>& cert,

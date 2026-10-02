@@ -19,10 +19,12 @@ TEST(CTAP2, GetInfoAdvertisesSafeInitialCapabilities) {
   ASSERT_EQ(response[0], CTAP2_OK);
 
   CborValue value;
-  ASSERT_TRUE(cbor_map_find_int(response + 1, response_length - 1, 3, &value));
+  ASSERT_TRUE(cbor_map_find(response + 1, response_length - 1, NULL, 3, &value,
+                            NULL, NULL));
   ASSERT_EQ(value.type, CBOR_TYPE_BYTES);
   ASSERT_EQ(value.length, 16u);
-  ASSERT_TRUE(cbor_map_find_int(response + 1, response_length - 1, 5, &value));
+  ASSERT_TRUE(cbor_map_find(response + 1, response_length - 1, NULL, 5, &value,
+                            NULL, NULL));
   ASSERT_EQ(value.type, CBOR_TYPE_UINT);
   ASSERT_EQ(value.value, 7609u);
 }
@@ -41,27 +43,6 @@ TEST(CTAP2, RejectsUnknownAndMalformedCommands) {
   ctap2_handle(trailing_cbor, sizeof(trailing_cbor), response, sizeof(response),
                &response_length);
   ASSERT_EQ(response[0], CTAP2_ERR_INVALID_CBOR);
-}
-
-TEST(CTAP2, ClientPinReturnsP256KeyAgreement) {
-  const uint8_t request[] = {
-      CTAP2_CMD_CLIENT_PIN, 0xa2, 0x01, 0x01, 0x02, 0x02};
-  uint8_t response[256];
-  size_t response_length = 0;
-  ctap2_handle(request, sizeof(request), response, sizeof(response),
-               &response_length);
-  ASSERT_GT(response_length, 1u);
-  ASSERT_EQ(response[0], CTAP2_OK);
-  const uint8_t* key;
-  size_t key_length;
-  ASSERT_TRUE(cbor_map_find_int_slice(response + 1, response_length - 1, 1,
-                                      &key, &key_length));
-  CborDecoder decoder;
-  CborValue value;
-  cbor_decoder_init(&decoder, key, key_length);
-  ASSERT_TRUE(cbor_decode_value(&decoder, &value));
-  ASSERT_EQ(value.type, CBOR_TYPE_MAP);
-  ASSERT_EQ(value.value, 5u);
 }
 
 TEST(CTAP2, ClientPinKeyAgreementFailsClosedWithoutCheckedEntropy) {
@@ -127,10 +108,13 @@ TEST(CTAP2, KeyAgreementIsEcdhCoseAndWipeClearsIt) {
   ASSERT_EQ(response[0], CTAP2_OK);
   const uint8_t* key;
   size_t key_length;
-  ASSERT_TRUE(cbor_map_find_int_slice(response + 1, response_length - 1, 1,
-                                      &key, &key_length));
+  CborValue value;
+  ASSERT_TRUE(cbor_map_find(response + 1, response_length - 1, NULL, 1, &value,
+                            &key, &key_length));
+  ASSERT_EQ(value.type, CBOR_TYPE_MAP);
+  ASSERT_EQ(value.value, 5u);
   CborValue alg;
-  ASSERT_TRUE(cbor_map_find_int(key, key_length, 3, &alg));
+  ASSERT_TRUE(cbor_map_find(key, key_length, NULL, 3, &alg, NULL, NULL));
   EXPECT_EQ(alg.type, CBOR_TYPE_NEGINT);
   EXPECT_EQ(alg.value, 24u); /* -25: ECDH-ES+HKDF-256 */
   ASSERT_FALSE(ctap2_key_agreement_is_clear());

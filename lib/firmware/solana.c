@@ -19,6 +19,8 @@
 
 #include "keepkey/firmware/solana.h"
 
+#include "keepkey/board/layout.h"
+
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "trezor/crypto/base58.h"
@@ -312,10 +314,6 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 2);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
           pi->extra_u8 = instr_data[9];
-          /* Token-2022: possible undisclosed hook/fee. */
-          if (is_token2022) {
-            *force_opaque = true;
-          }
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_APPROVE;
@@ -819,7 +817,9 @@ static bool schema_read_text(const uint8_t** cur, const uint8_t* end, char* out,
   return true;
 }
 
-bool solana_schemaArgIsAmount(SolanaSchemaArgType t) {
+/* LAMPORTS or TOKEN_AMOUNT: must carry a role in v3 and appear in the intent.
+ */
+static bool solana_schemaArgIsAmount(SolanaSchemaArgType t) {
   return t == SOL_SCHEMA_ARG_LAMPORTS || t == SOL_SCHEMA_ARG_TOKEN_AMOUNT;
 }
 
@@ -878,11 +878,7 @@ static bool intent_width(void* ctx, bool placeholder, bool account,
                          uint8_t index, const char* lit, size_t lit_len) {
   IntentWidth* w = (IntentWidth*)ctx;
   if (!placeholder) {
-    /* The template carries no values of its own: every digit on screen is
-     * the device's formatting of signed bytes, never server text. */
-    for (size_t i = 0; i < lit_len; i++) {
-      if (lit[i] >= '0' && lit[i] <= '9') return false;
-    }
+    if (!intent_literal_ok(lit, lit_len)) return false;
     w->width += lit_len;
   } else if (account) {
     w->width += 11;
@@ -1005,8 +1001,8 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
       if (cur >= end) return false;
       const uint8_t role = *cur++;
       const bool amount = solana_schemaArgIsAmount(out->args[i].type);
-      if (amount ? (role < SOL_ROLE_SPEND_MAX || role > SOL_ROLE_CAP)
-                 : role != SOL_ROLE_NONE) {
+      if (amount ? (role < METADATA_ROLE_SPEND_MAX || role > METADATA_ROLE_CAP)
+                 : role != METADATA_ROLE_NONE) {
         return false;
       }
       out->args[i].role = role;
@@ -1067,9 +1063,9 @@ static bool schema_transferIsStatic(const SolanaParsedTx* tx,
   return true;
 }
 
-static bool schema_isTxSigner(const SolanaParsedTx* tx, const uint8_t* key) {
+bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
   for (uint8_t i = 0; i < tx->num_required_sigs && i < tx->num_accounts; i++)
-    if (memcmp(tx->accounts[i], key, SOL_PUBKEY_SIZE) == 0) return true;
+    if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0) return true;
   return false;
 }
 
@@ -1082,13 +1078,13 @@ static bool schema_signerAccountCompanion(const SolanaParsedTx* tx,
                                           const SolanaParsedInstruction* ix) {
   switch (ix->type) {
     case SOL_INSTR_ATA_CREATE:
-      return schema_isTxSigner(tx, ix->from) &&
-             schema_isTxSigner(tx, ix->authority);
+      return solana_signerInTx(ix->from, tx) &&
+             solana_signerInTx(ix->authority, tx);
     case SOL_INSTR_TOKEN_SYNC_NATIVE:
       return true;
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
-      return schema_isTxSigner(tx, ix->to) &&
-             schema_isTxSigner(tx, ix->authority);
+      return solana_signerInTx(ix->to, tx) &&
+             solana_signerInTx(ix->authority, tx);
     default:
       return false;
   }
@@ -1199,6 +1195,7 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
   /* ceil(price * limit / 1e6), every step overflow-checked; false (never
    * saturate) if the result exceeds UINT64_MAX. */
   const uint64_t D = 1000000u;
+  if (limit > SOL_MAX_COMPUTE_UNITS) limit = SOL_MAX_COMPUTE_UNITS;
   uint64_t q = price / D;
   uint64_t r = price % D;
   if (limit != 0 && r > UINT64_MAX / limit) {
@@ -1395,6 +1392,25 @@ bool solana_token_info_trusted(const SolanaTokenInfo* ti) {
                                             ti->signature.size);
 }
 
+/* Never the bare SolanaSignTx.token_info.symbol: matching the host's decimals
+ * to the signed ones authenticates the exponent, not the identity -- an
+ * attacker picks a mint whose decimals already match and the label rides
+ * through as fact, and a caveat cannot help when the host writes the 12
+ * characters beside it. Unattested => base units beside the full mint. */
+const char* solana_displaySymbol(const SolanaTokenInfo* ti,
+                                 const SolanaKnownToken* known,
+                                 uint8_t signed_decimals) {
+  if (known) return known->symbol;
+  if (!solana_token_info_trusted(ti) || ti->decimals != signed_decimals) {
+    return NULL;
+  }
+  /* Printable ASCII only, so a signed label cannot push the mint off-view. */
+  for (const char* p = ti->symbol; *p; p++) {
+    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return NULL;
+  }
+  return ti->symbol;
+}
+
 /* Bare ticker only: nothing that could continue the surrounding sentence. */
 static bool solana_tokenSymbolOk(const SolanaTokenInfo* ti) {
   if (!ti->has_symbol) return false;
@@ -1567,13 +1583,14 @@ void solana_formatDuration(char* buf, size_t len, uint64_t seconds) {
            kUnits[i]);
 }
 
-static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
-                                         const uint8_t (*accounts)[32],
-                                         size_t num_accounts, uint8_t* blob,
-                                         size_t blob_capacity,
-                                         size_t* blob_len) {
-  if (!raw_tx || !accounts || !blob || !blob_len || num_accounts == 0)
-    return false;
+/* Verify `sig` over the lookup-account preimage: under the root-certified
+ * delegate when `certificate` is set, else under runtime signer slot
+ * `signer_key_id`. */
+static bool solana_lut_accounts_verify(
+    const uint8_t* raw_tx, size_t raw_len, const uint8_t (*accounts)[32],
+    size_t num_accounts, uint32_t signer_key_id, const uint8_t* certificate,
+    size_t certificate_len, const uint8_t* sig, size_t sig_len) {
+  if (!raw_tx || !accounts || !sig || num_accounts == 0) return false;
   if (num_accounts > SOL_MAX_LUT_ACCOUNTS) return false;
 
   /* Bind to the transaction: sha256 of the exact bytes being signed. */
@@ -1588,9 +1605,8 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
 
   /* Preimage passed RAW (the verifier hashes it). Max 317 bytes. */
   static const char kTag[] = "KeepKeySolanaTxAccounts/1";
-  const size_t required = sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
-                          num_accounts * SOL_PUBKEY_SIZE;
-  if (blob_capacity < required) return false;
+  uint8_t blob[sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
+               SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
   size_t n = 0;
   memcpy(blob + n, kTag, sizeof(kTag) - 1);
   n += sizeof(kTag) - 1;
@@ -1606,25 +1622,22 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
     n += SOL_PUBKEY_SIZE;
   }
 
-  *blob_len = n;
-  return true;
+  if (certificate) {
+    return clearsign_root_verify_delegate_attestation(
+        certificate, certificate_len, CLEARSIGN_SCOPE_SOLANA, blob, n, sig,
+        sig_len);
+  }
+  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
+                                            sig, sig_len);
 }
 
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,
                                  const uint8_t* sig, size_t sig_len) {
-  if (!sig || signer_key_id >= METADATA_MAX_KEYS) return false;
-  uint8_t blob[sizeof("KeepKeySolanaTxAccounts/1") - 1 + SHA256_DIGEST_LENGTH +
-               4 + SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
-  size_t n = 0;
-  if (!solana_lut_accounts_preimage(raw_tx, raw_len, accounts, num_accounts,
-                                    blob, sizeof(blob), &n)) {
-    return false;
-  }
-
-  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
-                                            sig, sig_len);
+  return signer_key_id < METADATA_MAX_KEYS &&
+         solana_lut_accounts_verify(raw_tx, raw_len, accounts, num_accounts,
+                                    signer_key_id, NULL, 0, sig, sig_len);
 }
 
 bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
@@ -1633,17 +1646,9 @@ bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
                                    const uint8_t* certificate,
                                    size_t certificate_len, const uint8_t* sig,
                                    size_t sig_len) {
-  if (!certificate || !sig) return false;
-  uint8_t blob[sizeof("KeepKeySolanaTxAccounts/1") - 1 + SHA256_DIGEST_LENGTH +
-               4 + SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
-  size_t n = 0;
-  if (!solana_lut_accounts_preimage(raw_tx, raw_len, accounts, num_accounts,
-                                    blob, sizeof(blob), &n)) {
-    return false;
-  }
-  return clearsign_root_verify_delegate_attestation(
-      certificate, certificate_len, CLEARSIGN_SCOPE_SOLANA, blob, n, sig,
-      sig_len);
+  return certificate &&
+         solana_lut_accounts_verify(raw_tx, raw_len, accounts, num_accounts, 0,
+                                    certificate, certificate_len, sig, sig_len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1769,8 +1774,6 @@ static const uint8_t SOL_NATIVE_MINT[SOL_PUBKEY_SIZE] = {
     0x63, 0x46, 0x18, 0xc0, 0x35, 0xda, 0xc4, 0x39, 0xdc, 0x1a, 0xeb,
     0x3b, 0x55, 0x98, 0xa0, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x01};
 
-#define REVIEW_BODY 352 /* BODY_CHAR_MAX: the confirm pager's limit */
-
 static void review_b58(const uint8_t key[SOL_PUBKEY_SIZE], char* out,
                        size_t len) {
   size_t enc = len;
@@ -1850,42 +1853,29 @@ typedef struct {
   const SolanaInstrSchema* s;
   const SolanaParsedInstruction* ix;
   bool certified;
-  char* out;
-  size_t len;
-  size_t used;
-  bool ok;
-} IntentFill;
-
-static void fill_append(IntentFill* f, const char* str, size_t n) {
-  if (f->used + n >= f->len) {
-    f->ok = false;
-    return;
-  }
-  memcpy(f->out + f->used, str, n);
-  f->used += n;
-  f->out[f->used] = '\0';
-}
+} IntentSrc;
 
 static bool intent_fill_visit(void* ctx, bool placeholder, bool account,
                               uint8_t index, const char* lit, size_t lit_len) {
   IntentFill* f = (IntentFill*)ctx;
+  const IntentSrc* c = (const IntentSrc*)f->src;
   if (!placeholder) {
-    fill_append(f, lit, lit_len);
+    intent_fill_append(f, lit, lit_len);
     return f->ok;
   }
   char v[96] = {0};
   if (account) {
     const uint8_t* key =
-        review_ix_account(f->tx, f->ix, f->s->accounts[index].index);
+        review_ix_account(c->tx, c->ix, c->s->accounts[index].index);
     if (!key) return false;
     review_short(key, v, sizeof(v));
   } else {
-    const SolanaSchemaArg* arg = &f->s->args[index];
-    const uint8_t* data = review_arg_data(f->s, f->ix, index);
+    const SolanaSchemaArg* arg = &c->s->args[index];
+    const uint8_t* data = review_arg_data(c->s, c->ix, index);
     switch (arg->type) {
       case SOL_SCHEMA_ARG_LAMPORTS:
       case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
-        if (!review_amount(f->msg, f->tx, f->ix, arg, data, f->certified, true,
+        if (!review_amount(c->msg, c->tx, c->ix, arg, data, c->certified, true,
                            v, sizeof(v))) {
           return false;
         }
@@ -1906,13 +1896,13 @@ static bool intent_fill_visit(void* ctx, bool placeholder, bool account,
         return false;
     }
   }
-  fill_append(f, v, strlen(v));
+  intent_fill_append(f, v, strlen(v));
   return f->ok;
 }
 
-bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
-                       const SolanaInstrSchema* s, uint8_t ix_index,
-                       bool certified, char* out, size_t len) {
+static bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
+                              const SolanaInstrSchema* s, uint8_t ix_index,
+                              bool certified, char* out, size_t len) {
   if (!tx || !s || !out || len == 0 || ix_index >= tx->num_instructions) {
     return false;
   }
@@ -1921,36 +1911,19 @@ bool solana_fillIntent(const SolanaSignTx* msg, const SolanaParsedTx* tx,
     snprintf(out, len, "%s", s->instruction_name);
     return true;
   }
-  IntentFill f = {msg, tx, s,   &tx->instructions[ix_index], certified, out,
-                  len, 0,  true};
+  const IntentSrc src = {msg, tx, s, &tx->instructions[ix_index], certified};
+  IntentFill f = {&src, out, len, 0, true};
   return intent_walk(s, intent_fill_visit, &f) && f.ok;
-}
-
-static const char* review_role_text(uint8_t role) {
-  switch (role) {
-    case SOL_ROLE_SPEND_MAX:
-      return "You spend at most";
-    case SOL_ROLE_RECEIVE_MIN:
-      return "You receive at least";
-    case SOL_ROLE_SPEND_EXACT:
-      return "You spend";
-    case SOL_ROLE_RECEIVE_EXACT:
-      return "You receive";
-    case SOL_ROLE_CAP:
-      return "Each use at most";
-    default:
-      return NULL;
-  }
 }
 
 static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                           const SolanaInstrSchema* s, uint8_t ix_index,
                           const uint8_t signer[SOL_PUBKEY_SIZE], bool certified,
-                          SolanaReviewEmit emit, void* ctx) {
+                          ReviewEmit emit, void* ctx) {
   const SolanaParsedInstruction* ix = &tx->instructions[ix_index];
-  char body[REVIEW_BODY];
+  char body[BODY_CHAR_MAX];
   for (uint8_t a = 0; a < s->num_args; a++) {
-    const char* role = review_role_text(s->args[a].role);
+    const char* role = intent_role_text(s->args[a].role);
     if (!role) continue;
     char v[160];
     if (!review_amount(msg, tx, ix, &s->args[a], review_arg_data(s, ix, a),
@@ -2010,8 +1983,8 @@ static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
 
 static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
                                 const uint8_t signer[SOL_PUBKEY_SIZE],
-                                SolanaReviewEmit emit, void* ctx) {
-  char body[REVIEW_BODY];
+                                ReviewEmit emit, void* ctx) {
+  char body[BODY_CHAR_MAX];
   bool close_shown[SOL_MAX_INSTRUCTIONS] = {false};
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* pi = &tx->instructions[i];
@@ -2104,9 +2077,9 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
  * schemas) every labelled value as before. */
 static bool review_details(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                            const SolanaInstrSchema* s, uint8_t ix_index,
-                           bool certified, SolanaReviewEmit emit, void* ctx) {
+                           bool certified, ReviewEmit emit, void* ctx) {
   const SolanaParsedInstruction* ix = &tx->instructions[ix_index];
-  char body[REVIEW_BODY];
+  char body[BODY_CHAR_MAX];
   /* Nothing is hidden: a value the sentence does not state, or states only
    * in short form (an address), gets its own screen. */
   uint8_t in_sentence[SOL_SCHEMA_MAX_ARGS] = {0};
@@ -2115,7 +2088,7 @@ static bool review_details(const SolanaSignTx* msg, const SolanaParsedTx* tx,
   }
   for (uint8_t a = 0; a < s->num_args; a++) {
     const SolanaSchemaArg* arg = &s->args[a];
-    if (arg->role != SOL_ROLE_NONE) continue; /* on the limits screen */
+    if (arg->role != METADATA_ROLE_NONE) continue; /* on the limits screen */
     if (in_sentence[a] && arg->type != SOL_SCHEMA_ARG_PUBKEY) continue;
     if (arg->type == SOL_SCHEMA_ARG_OPAQUE32) {
       if (!emit(ctx, arg->label, NULL, review_arg_data(s, ix, a), 32)) {
@@ -2145,11 +2118,10 @@ bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
                               const SolanaInstrSchema* s, uint8_t ix_index,
                               const uint8_t signer[SOL_PUBKEY_SIZE],
                               const char* alias, const char* fp, bool certified,
-                              SolanaReviewEmit emit, void* ctx) {
+                              ReviewEmit emit, void* ctx) {
   if (!tx || !s || !signer || !emit || ix_index >= tx->num_instructions) {
     return false;
   }
-  char body[REVIEW_BODY];
   char intent[SOL_INTENT_TEXT_MAX + 1];
   if (!solana_fillIntent(msg, tx, s, ix_index, certified, intent,
                          sizeof(intent))) {
@@ -2158,12 +2130,7 @@ bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
   if (!certified) {
     /* Runtime (SRS-7.15 R-1.5): a heading plus limits; the caller's full raw
      * review follows unchanged. */
-    if (snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
-                 alias ? alias : "Unknown signer",
-                 intent) >= (int)sizeof(body)) {
-      return false;
-    }
-    return emit(ctx, "Unverified", body, NULL, 0) &&
+    return intent_emit_unverified(emit, ctx, alias, intent) &&
            review_limits(msg, tx, s, ix_index, signer, false, emit, ctx);
   }
   if (!emit(ctx, s->program_name, intent, NULL, 0) ||
@@ -2172,7 +2139,5 @@ bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
       !review_details(msg, tx, s, ix_index, true, emit, ctx)) {
     return false;
   }
-  snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
-           alias ? alias : "", fp ? fp : "");
-  return emit(ctx, "KeepKey ClearSign", body, NULL, 0);
+  return intent_emit_provenance(emit, ctx, alias, fp);
 }

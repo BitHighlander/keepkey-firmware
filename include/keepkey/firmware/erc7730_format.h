@@ -17,6 +17,11 @@
 bool erc7730_format_text(const uint8_t* bytes, size_t length, char* output,
                          size_t output_size);
 
+/* Exact decimal of a 256-bit big-endian value; two's complement when
+ * `negative` (the caller has seen the sign bit of a signed integer). */
+bool erc7730_format_integer(const uint8_t value[32], bool negative,
+                            char* output, size_t output_size);
+
 bool erc7730_format_raw(const Erc7730AbiProgram* program,
                         const Erc7730AbiCapture* capture, char* output,
                         size_t output_size);

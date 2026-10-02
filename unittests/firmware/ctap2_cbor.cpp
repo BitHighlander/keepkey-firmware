@@ -6,6 +6,12 @@ extern "C" {
 
 #include <cstring>
 
+static bool cbor_validate(const uint8_t* buffer, size_t length) {
+  CborDecoder decoder;
+  cbor_decoder_init(&decoder, buffer, length);
+  return cbor_skip_value(&decoder) && decoder.offset == length;
+}
+
 TEST(CTAP2CBOR, CanonicalRoundTrip) {
   uint8_t buffer[64];
   CborEncoder encoder;
@@ -18,13 +24,13 @@ TEST(CTAP2CBOR, CanonicalRoundTrip) {
       cbor_encode_bytes(&encoder, reinterpret_cast<const uint8_t*>("abc"), 3));
 
   CborValue value;
-  ASSERT_TRUE(
-      cbor_map_find_int(buffer, cbor_encoder_size(&encoder), 1, &value));
+  ASSERT_TRUE(cbor_map_find(buffer, cbor_encoder_size(&encoder), NULL, 1,
+                            &value, NULL, NULL));
   ASSERT_EQ(value.type, CBOR_TYPE_TEXT);
   ASSERT_EQ(value.length, 2u);
   ASSERT_EQ(0, memcmp(value.data, "ok", 2));
-  ASSERT_TRUE(
-      cbor_map_find_int(buffer, cbor_encoder_size(&encoder), 2, &value));
+  ASSERT_TRUE(cbor_map_find(buffer, cbor_encoder_size(&encoder), NULL, 2,
+                            &value, NULL, NULL));
   ASSERT_EQ(value.type, CBOR_TYPE_BYTES);
   ASSERT_EQ(value.length, 3u);
 }

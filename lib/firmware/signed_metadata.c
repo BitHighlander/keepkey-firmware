@@ -540,9 +540,10 @@ static bool icon_renderable(const uint8_t* icon, uint16_t icon_len,
 }
 #endif
 
-bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
-                                 uint8_t* w_out, uint8_t* h_out,
-                                 uint16_t* len_out) {
+static bool signed_metadata_signer_icon(uint8_t key_id,
+                                        const uint8_t** icon_out,
+                                        uint8_t* w_out, uint8_t* h_out,
+                                        uint16_t* len_out) {
   if (key_id >= METADATA_MAX_KEYS) return false;
   if (loaded_pubkeys[key_id][0] != 0x00) {
 #if ZCASH_PRIVACY
@@ -618,10 +619,6 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
   sha256_Raw(pubkey, 33, digest);
   data2hex(digest, (METADATA_FINGERPRINT_LEN - 1u) / 2u, out);
   memzero(digest, sizeof(digest));
-}
-
-bool signed_metadata_from_loaded_signer(void) {
-  return metadata_available && metadata_tier == METADATA_TIER_RUNTIME;
 }
 
 /* Resolve the verification key for a slot. */
@@ -1402,4 +1399,56 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
 
 const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
+}
+
+void intent_fill_append(IntentFill* f, const char* str, size_t n) {
+  if (f->used + n >= f->len) {
+    f->ok = false;
+    return;
+  }
+  memcpy(f->out + f->used, str, n);
+  f->used += n;
+  f->out[f->used] = '\0';
+}
+
+bool intent_literal_ok(const char* lit, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    if (lit[i] >= '0' && lit[i] <= '9') return false;
+  }
+  return true;
+}
+
+const char* intent_role_text(uint8_t role) {
+  switch (role) {
+    case METADATA_ROLE_SPEND_MAX:
+      return "You spend at most";
+    case METADATA_ROLE_RECEIVE_MIN:
+      return "You receive at least";
+    case METADATA_ROLE_SPEND_EXACT:
+      return "You spend";
+    case METADATA_ROLE_RECEIVE_EXACT:
+      return "You receive";
+    case METADATA_ROLE_CAP:
+      return "Each use at most";
+    default:
+      return NULL;
+  }
+}
+
+bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* intent) {
+  char body[BODY_CHAR_MAX];
+  if (snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
+               alias ? alias : "Unknown signer", intent) >= (int)sizeof(body)) {
+    return false;
+  }
+  return emit(ctx, "Unverified", body, NULL, 0);
+}
+
+bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* fp) {
+  char body[BODY_CHAR_MAX];
+  snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
+           alias ? alias : "", fp ? fp : "");
+  return emit(ctx, "KeepKey ClearSign", body, NULL, 0);
 }

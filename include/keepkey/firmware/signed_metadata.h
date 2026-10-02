@@ -46,7 +46,9 @@ typedef enum {
 /* Widest filled summary; templates that could exceed it are rejected. */
 #define METADATA_INTENT_TEXT_MAX 280
 #define METADATA_TITLE_MAX 20
-/* Roles (shared numbering with Solana KKSOLSC1 v3). */
+/* Intent roles, shared by the EVM and Solana (KKSOLSC1 v3) schemas: the
+ * device words the limits screen from these. CAP is a per-use maximum (e.g.
+ * each bet), not an outflow. */
 #define METADATA_ROLE_NONE 0
 #define METADATA_ROLE_SPEND_MAX 1
 #define METADATA_ROLE_RECEIVE_MIN 2
@@ -164,11 +166,8 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
                                   uint8_t icon_w, uint8_t icon_h,
                                   uint16_t icon_len, bool persist);
 
-/* NULL / false when the slot has no signer or no icon. */
+/* NULL when the slot has no signer. */
 const char* signed_metadata_signer_alias(uint8_t key_id);
-bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
-                                 uint8_t* w_out, uint8_t* h_out,
-                                 uint16_t* len_out);
 
 /* LoadClearsignSigner consent: icon + alias + fingerprint. */
 bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
@@ -182,8 +181,6 @@ void signed_metadata_clear_signers(void);
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]);
 
-/* => warning-first confirm flow, never "Insight Verified". */
-bool signed_metadata_from_loaded_signer(void);
 /* Lets non-EVM callers keep their Advanced-mode review after a decode. */
 bool signed_metadata_signer_is_runtime(uint8_t key_id);
 MetadataClassification signed_metadata_process(const uint8_t* payload,
@@ -232,5 +229,31 @@ bool signed_metadata_enforce_schema_decision(bool relied, bool available,
                                              bool decoded, int classification);
 
 const SignedMetadata* signed_metadata_get(void);
+
+/* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
+ * docs/security/clearsign-intent-template.md). One screen: body text, or a
+ * byte range to page; false cancels. */
+typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
+                           const uint8_t* bytes, uint16_t bytes_len);
+/* A filled template; src is the walker's schema context. */
+typedef struct {
+  const void* src;
+  char* out;
+  size_t len;
+  size_t used;
+  bool ok;
+} IntentFill;
+void intent_fill_append(IntentFill* f, const char* str, size_t n);
+/* Template literals carry no digits: every digit shown is the device's
+ * formatting of signed bytes, never server text. */
+bool intent_literal_ok(const char* lit, size_t len);
+/* "You spend at most" etc.; NULL for METADATA_ROLE_NONE. */
+const char* intent_role_text(uint8_t role);
+/* Runtime: "<alias> (NOT verified by KeepKey) says:" over the summary. */
+bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* intent);
+/* Certified: "Described by <alias> <fp>, certified by KeepKey". */
+bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* fp);
 
 #endif

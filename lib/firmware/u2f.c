@@ -307,9 +307,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
         u2fhid_cbor(reader->buf, reader->len);
         break;
       case U2FHID_CANCEL:
-        /* Commands are currently synchronous. Accepting CANCEL is still
-         * required at the transport boundary and becomes meaningful when the
-         * CTAP user-presence state machine is active. */
+        /* Nothing in flight; u2fhid_read() flags in-flight cancels. */
         break;
       case U2FHID_WINK:
         u2fhid_wink(reader->buf, reader->len);
