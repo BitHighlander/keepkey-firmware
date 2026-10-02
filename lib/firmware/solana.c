@@ -876,9 +876,13 @@ typedef struct {
  * a short address "ABCD...WXYZ" = 11. */
 static bool intent_width(void* ctx, bool placeholder, bool account,
                          uint8_t index, const char* lit, size_t lit_len) {
-  (void)lit;
   IntentWidth* w = (IntentWidth*)ctx;
   if (!placeholder) {
+    /* The template carries no values of its own: every digit on screen is
+     * the device's formatting of signed bytes, never server text. */
+    for (size_t i = 0; i < lit_len; i++) {
+      if (lit[i] >= '0' && lit[i] <= '9') return false;
+    }
     w->width += lit_len;
   } else if (account) {
     w->width += 11;

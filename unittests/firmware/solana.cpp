@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/solana.h"
+#include "trezor/crypto/base58.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
@@ -3438,6 +3439,25 @@ TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
     EXPECT_EQ(sc.body.find("back to you"), std::string::npos) << sc.body;
     EXPECT_EQ(sc.body.find("your "), std::string::npos) << sc.body;
   }
+  // ...and the fee is shown with the full address of the account paying it.
+  char payer[64];
+  size_t payer_len = sizeof(payer);
+  ASSERT_TRUE(b58enc(payer, &payer_len, tx.accounts[0], 32));
+  EXPECT_NE(std::find_if(got.begin(), got.end(),
+                         [&](const Screen& sc) {
+                           return sc.body ==
+                                  std::string(
+                                      "Network fee up to 0.001005000 "
+                                      "SOL\npaid by\n") +
+                                      payer;
+                         }),
+            got.end());
+
+  // Literal digits would be server-written values: refused.
+  SolanaInstrSchema digits = s;
+  strlcpy(digits.intent, "Sell {0} for at least {1}, about 100 SOL",
+          sizeof(digits.intent));
+  EXPECT_FALSE(solana_intentTemplateValid(&digits));
 
   // A template whose widest expansion overflows the summary (280) is refused at
   // parse, never truncated on screen (9 amounts x 34 > 280).

@@ -21,7 +21,8 @@ Every other argument must carry 0. Any other value rejects the schema.
 - Width: the widest possible expansion must fit the summary (280 characters).
   An amount counts as 34 characters, a short address as 11. A template that
   could overflow is rejected when parsed, never cut off on screen.
-- The template carries no values of its own.
+- No digits outside placeholders: every number on screen is the device's
+  formatting of signed bytes, never text the server wrote.
 
 The delegate signature covers the whole payload: wording, roles and layout.
 
@@ -29,7 +30,9 @@ The delegate signature covers the whole payload: wording, roles and layout.
 
 **Solana KKSOLSC1 version 3** is version 2 plus a role byte after each argument
 and a `template` field (1 + 0..96) after the accounts. The payload limit is
-256 bytes. Versions 1 and 2 still parse and use the older review.
+256 bytes. Versions 1 and 2 still parse. A certified v1/v2 schema gets the
+same review with the instruction name as its summary. A runtime v1/v2 schema
+keeps the older raw review.
 
 ## 3. How values are shown
 
@@ -80,9 +83,15 @@ template `Sell {0} for at least {1}`:
 | Side effects | Creates a temporary wSOL account, closed back to you |
 | KeepKey ClearSign | Described by KeepKey Vault a9531b9d / certified by KeepKey |
 
-**SoltoshiDICE poker join**: the buy-in comes from table state, not from the
-instruction, so the template says it is "set by the table". Stating the buy-in
-needs a program-checked argument, or claimed context in 7.17.
+**SoltoshiDICE blackjack join** (solana.cpp `IntentReviewCapRoleAndUnstated…`),
+template `Join blackjack seat {2} for {3}; key {4} may bet {7} each, {6} total,
+for {5}`: the buy-in is spend-exact, the allowance spend-max and the per-bet
+limit a cap. Each one gets its own Limits line.
+
+**SoltoshiDICE poker join** (catalog only, not pinned by a unit test): the
+buy-in comes from table state, not from the instruction, so the template says
+it is "set by the table". Stating the buy-in needs a program-checked argument,
+or claimed context in 7.17.
 
 ## 6. Server obligations (R-7.8)
 
