@@ -109,6 +109,15 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
     layoutHome();
     return;
   }
+  /* Roles and intent templates (v3) are not on these review screens, so the
+   * attestor never signs wording or limit semantics it did not show. */
+  if (schema.version >= 3) {
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Attestor cannot review this schema version");
+    layoutHome();
+    return;
+  }
 
   char program_id[45] = {0};
   char disc_hex[2 * SOL_SCHEMA_DISC_MAX + 1] = {0};

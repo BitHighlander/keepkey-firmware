@@ -3320,11 +3320,11 @@ struct V3Arg {
   uint8_t role;
 };
 
-std::vector<uint8_t> v3_schema(const uint8_t program[32],
-                               const std::vector<uint8_t>& disc,
-                               const char* program_name, const char* instr,
-                               const std::vector<V3Arg>& args,
-                               const char* intent) {
+std::vector<uint8_t> v3_schema(
+    const uint8_t program[32], const std::vector<uint8_t>& disc,
+    const char* program_name, const char* instr, const std::vector<V3Arg>& args,
+    const char* intent,
+    const std::vector<std::pair<uint8_t, const char*>>& accounts = {}) {
   std::vector<uint8_t> p = {'K', 'K', 'S', 'O', 'L', 'S', 'C', '1', 3};
   p.insert(p.end(), program, program + 32);
   p.push_back((uint8_t)disc.size());
@@ -3342,7 +3342,11 @@ std::vector<uint8_t> v3_schema(const uint8_t program[32],
     if (a.mint >= 0) p.push_back((uint8_t)a.mint);
     p.push_back(a.role);
   }
-  p.push_back(0);  // accounts
+  p.push_back((uint8_t)accounts.size());
+  for (const auto& a : accounts) {
+    p.push_back(a.first);
+    text(a.second);
+  }
   if (intent) {
     text(intent);
   } else {
@@ -3550,9 +3554,69 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
   EXPECT_TRUE(
       has("Limits|Each use at most\n1000 SDICE\n"
           "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
+  EXPECT_TRUE(
+      has("Limits|You spend\n1000 SDICE\n"
+          "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
+  EXPECT_TRUE(
+      has("Limits|You spend at most\n1000 SDICE\n"
+          "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
   // Not in the sentence, so on details screens; the short key in full.
   EXPECT_TRUE(has("Round|86"));
   EXPECT_TRUE(has("Revision|980"));
   EXPECT_TRUE(has("Session key|BqtZ8PRQywD9Z5xXeB5112wtPG3xtj7TqF56hroicGjX"));
   EXPECT_FALSE(has("Seat|1"));  // stated in full in the sentence
+}
+
+/* Exact-text contract for the remaining review branches, on the real sell. */
+TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
+  const std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  auto review = [&](const std::vector<uint8_t>& blob) {
+    SolanaInstrSchema s;
+    std::vector<Screen> got;
+    uint8_t idx = 0xFF;
+    EXPECT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+    EXPECT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+    EXPECT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
+                                         "KeepKey Vault", "a9531b9d", true,
+                                         collect, &got));
+    return got;
+  };
+  const std::vector<V3Arg> args = {
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive", 4, SOL_ROLE_RECEIVE_EXACT}};
+  const std::vector<uint8_t> disc = {0x33, 0xe6, 0x85, 0xa4,
+                                     0x01, 0x7f, 0x83, 0xad};
+
+  // {aN}: shortened in the sentence, then in full on its own screen.
+  std::vector<Screen> got =
+      review(v3_schema(kPumpAmmProgram, disc, "Pump.fun", "Sell tokens", args,
+                       "Sell {0} of {a0} for {1}", {{3, "Token"}}));
+  EXPECT_EQ(got[0].body,
+            "Sell 7738120.185405 SDICE of 4nCm...pump for 8.509507889 SOL");
+  // RECEIVE_EXACT reads "You receive" with no "at least".
+  EXPECT_EQ(got[2].title, "Limits");
+  EXPECT_EQ(got[2].body, "You receive\n8.509507889 SOL");
+  EXPECT_NE(
+      std::find_if(got.begin(), got.end(),
+                   [](const Screen& sc) {
+                     return sc.title == "Token" &&
+                            sc.body ==
+                                "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+                   }),
+      got.end());
+
+  // No template (every certified v1/v2 schema): the instruction name is the
+  // summary and nothing the roles do not state is hidden.
+  got = review(v3_schema(kPumpAmmProgram, disc, "Pump.fun", "Sell tokens", args,
+                         nullptr));
+  EXPECT_EQ(got[0].title, "Pump.fun");
+  EXPECT_EQ(got[0].body, "Sell tokens");
+  EXPECT_EQ(got[1].body,
+            "You spend\n7738120.185405 SDICE\n"
+            "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
 }
