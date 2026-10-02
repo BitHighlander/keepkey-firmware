@@ -37,7 +37,6 @@
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
 /* Only "optional" (3), which is always shown: conditions hide nothing. */
 #define ERC7730_CAP_CONDITION_OPCODES ERC7730_CAP_BIT(3)
-#define ERC7730_CAP_CONDITIONS true
 /* A tokenAmount native-currency alias set may name at most this many
  * addresses, so the runtime can hold their literal indices. */
 #define ERC7730_CAP_ALIAS_SET_MAX 4u

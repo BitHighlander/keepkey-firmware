@@ -105,6 +105,15 @@ TEST(Erc7730AbiStream, RejectsInvalidUtf8PaddingAndTruncation) {
   EXPECT_EQ(stream(&program, dirty, 11), ERC7730_ABI_NON_CANONICAL);
   encoded.pop_back();
   EXPECT_EQ(stream(&program, encoded, 3), ERC7730_ABI_NON_CANONICAL);
+
+  // A surrogate is refused; calldata may carry ASCII controls (escaped later).
+  std::vector<uint8_t> surrogate, control;
+  word(surrogate, 32);
+  dynamicBytes(surrogate, {0xed, 0xa0, 0x80});
+  EXPECT_EQ(stream(&program, surrogate, 5), ERC7730_ABI_NON_CANONICAL);
+  word(control, 32);
+  dynamicBytes(control, {0x0a});
+  EXPECT_EQ(stream(&program, control, 5), ERC7730_ABI_OK);
 }
 
 TEST(Erc7730AbiStream, RejectsResourceExhaustionAndDiscontinuousInput) {

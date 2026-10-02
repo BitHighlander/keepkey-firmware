@@ -25,17 +25,6 @@ bool erc7730_format_address(const uint8_t address[20], bool this_wallet,
   return true;
 }
 
-/* The exact unsigned decimal of a 256-bit big-endian value. */
-static bool format_integer(const uint8_t amount[32], char* output,
-                           size_t output_size) {
-  bignum256 value;
-  bn_read_be(amount, &value);
-  const size_t written =
-      bn_format(&value, NULL, NULL, 0, 0, false, output, output_size);
-  memzero(&value, sizeof(value));
-  return written != 0;
-}
-
 bool erc7730_format_token_amount(const uint8_t amount[32],
                                  const uint8_t token[20], bool native,
                                  uint64_t chain_id, const char* message,
@@ -76,7 +65,7 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
   } else {
     char digits[80], checksummed[41];
     ethereum_address_checksum(token, checksummed, false, 0);
-    ok = format_integer(amount, digits, sizeof(digits)) &&
+    ok = erc7730_format_integer(amount, false, digits, sizeof(digits)) &&
          (size_t)snprintf(value, sizeof(value), "%s\nunknown token\n0x%s",
                           digits, checksummed) < sizeof(value);
     memzero(digits, sizeof(digits));
@@ -114,7 +103,7 @@ bool erc7730_format_nft(const uint8_t token_id[32],
   char id[80], address[43];
   const bool ok =
       token_id && collection && output && output_size &&
-      format_integer(token_id, id, sizeof(id)) &&
+      erc7730_format_integer(token_id, false, id, sizeof(id)) &&
       erc7730_format_address(collection, false, address, sizeof(address)) &&
       (size_t)snprintf(output, output_size, "Token ID %s\nCollection\n%s", id,
                        address) < output_size;
@@ -137,7 +126,7 @@ bool erc7730_format_date(const uint8_t value[32], bool block_height,
                          char* output, size_t output_size) {
   char raw[80];
   if (!value || !output || output_size == 0 ||
-      !format_integer(value, raw, sizeof(raw)))
+      !erc7730_format_integer(value, false, raw, sizeof(raw)))
     return false;
   int length;
   uint64_t seconds;
@@ -176,7 +165,7 @@ bool erc7730_format_duration(const uint8_t value[32], char* output,
                              size_t output_size) {
   char raw[80];
   if (!value || !output || output_size == 0 ||
-      !format_integer(value, raw, sizeof(raw)))
+      !erc7730_format_integer(value, false, raw, sizeof(raw)))
     return false;
   int length;
   uint64_t seconds;
@@ -215,7 +204,7 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
   bool ok = bn_format(&amount, NULL, NULL, decimals, 0, false, scaled,
                       sizeof(scaled)) != 0 &&
             strlen(scaled) + 1u + strlen(base) < sizeof(scaled) &&
-            format_integer(value, raw, sizeof(raw));
+            erc7730_format_integer(value, false, raw, sizeof(raw));
   memzero(&amount, sizeof(amount));
   if (ok) {
     const int length =
