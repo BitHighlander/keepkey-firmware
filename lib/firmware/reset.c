@@ -107,10 +107,7 @@ void setup_abort(void) {
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
   memzero(current_words, sizeof(current_words));
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  mnemonic_scratch_wipe();
   /* reset_entropy() receives its generated sentence from bip39.c's static
    * `mnemo` buffer.  A cancelled/error ceremony has no owner for that secret,
    * so the common abort path must clear it along with the setup scratch. */
@@ -324,10 +321,9 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
    *
    *   MIXED: seed = SHA256d(tag || device_draw || SHA256(tag2 || rolls)); the
    *          draw is shown as 24 words BEFORE the rolls, so it cannot steer.
-   *   ONLY:  seed = SHA256(rolls) (Coldcard Dice-Rolls-Only).
+   *   ONLY:  seed = SHA256(rolls).
    *
-   * Showing the draw is safe only because the other half is offline dice;
-   * display_random (host half uncommitted) stays ignored.
+   * Showing the draw is safe only because the other half is offline dice.
    *
    * The roll digest is shown in full; in ONLY mode it IS the seed material.
    *
@@ -449,6 +445,13 @@ char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
+void mnemonic_scratch_wipe(void) {
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+}
+
 /* One ButtonRequest per page. On cancel/overflow sends Failure and returns
  * false; the caller owns rollback. Scratch zeroed at entry and every exit. */
 static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
@@ -458,10 +461,7 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
       mnemonic_by_screen[MAX_PAGES][MNEMONIC_BY_SCREEN_BUF];
   bool ok = false;
 
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  mnemonic_scratch_wipe();
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
 
   if (mnemonic == NULL) {
@@ -542,11 +542,8 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
   ok = true;
 
 done:
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  mnemonic_scratch_wipe();
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   return ok;
 }
 

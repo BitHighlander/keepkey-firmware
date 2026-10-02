@@ -403,7 +403,7 @@ bool msg_write(MessageType msg_id, const void* msg) {
 
   if (!fields) return false;
 
-  /* Shared arena: a 12 KB stack frame overflowed SRAM (see messages.c). */
+  /* Shared arena, not a stack frame (see messages.c). */
   TrezorFrameBuffer* framebuf = frame_arena_tx();
   memset(framebuf, 0, sizeof(*framebuf));
   framebuf->frame.usb_header.hid_type = '?';
