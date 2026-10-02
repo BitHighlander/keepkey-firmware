@@ -601,16 +601,8 @@ void layout_nano_address_notification(const char* desc, const char* address,
 
 #if ZCASH_PRIVACY
 /*
- * layout_zcash_address_notification() - Display zcash unified address QR
- * with title; the second confirm step in the view-on-device flow.
- *
- * INPUT
- *     - desc: title text (e.g. "Zcash #0 Orchard")
- *     - address: zcash unified address (rendered as QR only — full text is
- *       shown on the preceding confirm step)
- *     - type: notification type
- * OUTPUT
- *      none
+ * layout_zcash_address_notification() - Unified address as QR only; the full
+ * text is shown on the preceding confirm step.
  */
 void layout_zcash_address_notification(const char* desc, const char* address,
                                        NotificationType type) {
@@ -798,8 +790,7 @@ void layout_cipher(const char* current_word, const char* cipher,
   call_leaving_handler();
   layout_clear();
 
-  /* Draw previous word info at top-left -- must be x < 76 to avoid
-   * being wiped by cipher animation which clears x >= CIPHER_START_X */
+  /* x < 76: the cipher animation clears x >= CIPHER_START_X. */
   if (prev_word_info && prev_word_info[0]) {
     sp.y = 2;
     sp.x = 4;
@@ -825,8 +816,7 @@ void layout_cipher(const char* current_word, const char* cipher,
   if (animate_cipher) {
     layout_add_animation(&layout_animate_cipher, (void*)cipher, duration);
   } else {
-    /* Restore an obscured mapping immediately. Replaying its introduction
-     * lets repeated host requests keep its last letters off the display. */
+    /* No replay: repeated requests could keep letters off the display. */
     layout_animate_cipher((void*)cipher, duration, duration);
   }
   display_refresh();

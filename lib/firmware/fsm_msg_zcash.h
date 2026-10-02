@@ -17,8 +17,7 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* Zcash-specific headers — included here because fsm_msg_zcash.h
- * is #include'd inside fsm.c, not compiled separately. */
+/* Included here: this file is #include'd inside fsm.c. */
 #include <limits.h>
 
 #include "keepkey/firmware/zcash.h"
@@ -27,9 +26,8 @@
 #include "trezor/crypto/redpallas.h"
 #include "trezor/crypto/memzero.h"
 
-/* Precomputed empty digest constants for shielded-only transactions.
- * These are BLAKE2b-256 with the respective personalizations over empty input.
- * Verified against Keystone3 test vectors. */
+/* Empty-component digests: BLAKE2b-256 of empty input under each
+ * personalization (verified against Keystone3 vectors). */
 static const uint8_t EMPTY_TRANSPARENT_DIGEST[32] = {
     0xc3, 0x3f, 0x2e, 0x95, 0x70, 0x5f, 0xaa, 0xb3, 0x5f, 0x8d, 0x53,
     0x3f, 0xa6, 0x1e, 0x95, 0xc3, 0xb7, 0xaa, 0xba, 0x07, 0x76, 0xb8,
@@ -40,9 +38,7 @@ static const uint8_t EMPTY_SAPLING_DIGEST[32] = {
     0xf4, 0xbe, 0xd7, 0x43, 0x91, 0xee, 0x0b, 0x5a, 0x69, 0x94, 0x5e,
     0x4c, 0xed, 0x8c, 0xa8, 0xa0, 0x95, 0x20, 0x6f, 0x00, 0xae};
 
-/* ZIP-229 v6 adds/changes the Orchard-protocol component
- * personalizations. Sapling's top-level personalization is unchanged from
- * v5, so the empty Sapling component continues to use the value above. */
+/* ZIP-229 v6 Orchard-protocol personalizations; Sapling's is unchanged. */
 static const uint8_t EMPTY_ORCHARD_DIGEST_V6[32] = {
     0xa3, 0x36, 0x7d, 0x2f, 0xde, 0xa2, 0x91, 0x01, 0x59, 0xfc, 0x50,
     0x26, 0xe9, 0xbf, 0x1f, 0xcc, 0xd3, 0xe2, 0x8c, 0xe5, 0xe6, 0xde,
@@ -104,9 +100,7 @@ static CONFIDENTIAL struct {
   uint8_t orchard_flags;
   int64_t orchard_value_balance;
   uint8_t orchard_anchor[32];
-  /* Compact signatures buffer: one 64-byte sig per real Orchard spend.
-   * Dummy spends are signed by the PCZT finalizer and must not be signed with
-   * the device's Orchard key. */
+  /* One 64-byte sig per REAL spend; dummies are never signed here. */
   uint8_t signatures[ZCASH_MAX_ACTIONS][64];
   uint32_t signature_count;
   /* Phase 3: transparent shielding state */
@@ -127,9 +121,7 @@ static CONFIDENTIAL struct {
 
 /* Public API; declared in keepkey/firmware/zcash.h. */
 void zcash_signing_abort(void) {
-  /* Centralized cleanup: stop the trickle progress animation here so every
-   * abort path (Cancel, ClearSession, failures) kills it even when the caller
-   * does not go through layoutHome()/layout_clear_animations(). */
+  /* Every abort path must stop the trickle animation. */
   layoutProgressTrickleStop();
   memzero(&zcash_signing, sizeof(zcash_signing));
 }
@@ -184,10 +176,8 @@ static void zcash_format_amount(uint64_t amount, char* out, size_t out_size) {
            (unsigned long long)(amount % 100000000ULL));
 }
 
-/* Determine account — require explicit account or strict ZIP-32 path
- * m/32'/133'/account' (all hardened, exactly 3 elements). Shared by
- * ZcashSignPCZT / ZcashGetOrchardFVK / ZcashDisplayAddress so a malformed
- * host path cannot silently resolve to an unintended account. */
+/* Account from an explicit field or strict m/32'/133'/account' (all
+ * hardened), so a malformed path cannot resolve to an unintended account. */
 static bool zcash_resolve_account(bool has_account, uint32_t account_field,
                                   const uint32_t* address_n,
                                   uint32_t address_n_count,
@@ -214,10 +204,8 @@ static bool zcash_resolve_account(bool has_account, uint32_t account_field,
   return false;
 }
 
-/* Optional seed_fingerprint binding (ZIP-32 §6.1). If the host asserts a
- * seed identity, verify it matches this device's seed before proceeding.
- * Catches "wrong device" attacks where the host accidentally targets a
- * different seed than the one it built the request against. */
+/* Optional seed_fingerprint (ZIP-32 §6.1): refuse a request built for a
+ * different seed. */
 static bool zcash_check_seed_fingerprint(bool has_expected,
                                          const uint8_t* expected,
                                          size_t expected_size) {
@@ -247,10 +235,8 @@ static bool zcash_check_seed_fingerprint(bool has_expected,
 static bool zcash_verify_and_confirm_orchard_output(
     const ZcashPCZTAction* msg, ZcashOrchardProgressCallback progress,
     void* progress_context) {
-  /* Every one of these is read as a fixed 32 bytes below. nanopb leaves an
-   * omitted or short `bytes` field zeroed rather than absent, so checking only
-   * three of the five let a host drop `nullifier` and have the device verify a
-   * commitment over an implicit rho of zero. */
+  /* All five are read as fixed 32 bytes; nanopb zero-fills an omitted field,
+   * so e.g. a dropped nullifier would mean an implicit rho of zero. */
   if (!msg->has_value || !msg->has_recipient ||
       msg->recipient.size != ZCASH_ORCHARD_RAW_RECEIVER_SIZE ||
       !msg->has_rseed || msg->rseed.size != 32 || !msg->has_nullifier ||
@@ -260,10 +246,8 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
-  /* rho is I2LEBSP_255-encoded into the commitment message, so bit 255 is
-   * dropped. Masking it silently would map two distinct wire values onto one
-   * commitment; a value that does not fit 255 bits is malformed, not something
-   * to round off. */
+  /* rho is I2LEBSP_255: reject bit 255 rather than mask it, or two wire
+   * values would map to one commitment. */
   if (msg->nullifier.bytes[31] & 0x80) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Orchard nullifier is not canonical"));
@@ -298,29 +282,10 @@ static bool zcash_verify_and_confirm_orchard_output(
   char amount_str[32];
   zcash_format_amount(msg->value, amount_str, sizeof(amount_str));
 
-  /* Two screens, deliberately.
-   *
-   * A unified address is 106 characters, which is three full body rows on its
-   * own, and what the display-address flow already shows. The standard
-   * notification body is three rows and draw_string simply stops emitting
-   * once a character will not fit: there is no scroll and no pagination, so
-   * surplus text is dropped without any indication.
-   *
-   * Putting the question, the address and the amount in one body therefore
-   * rendered the question plus the first 76 characters of the address and
-   * silently discarded the rest of it along with the entire amount line.
-   * That is not a cosmetic screen: total_amount on the summary prompt is
-   * taken from the host message, and the contract documented in
-   * zcash_pczt_sign() delegates verification of Orchard output values to this
-   * confirm -- so dropping the amount removed the only place the user could
-   * see the value being committed to.
-   *
-   * Amount first, on a body that cannot overflow, then the full address
-   * through confirm(), which pages a body that does not fit.
-   *
-   * test_msg_zcash_sign_pczt_device.py asserts both screens are emitted; it
-   * fails with "expected 2 ConfirmOutput screens, got 1" against the packed
-   * single-screen version. */
+  /* Two screens: a 106-char UA fills the 3-row body and draw_string silently
+   * truncates, which would drop the amount -- the only place the user verifies
+   * the Orchard output value. Amount first, then the address via confirm(),
+   * which paginates. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Zcash Output",
                "Send shielded ZEC?\nAmount: %s", amount_str)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -411,11 +376,8 @@ static void zcash_action_progress(uint32_t completed, uint32_t total,
   ZcashActionProgress* progress = (ZcashActionProgress*)context;
   if (!progress || total == 0) return;
 
-  /* completed/total is a public loop schedule: either the fixed scalar round
-   * count or the fixed-size PCZT note-commitment word count. It never depends
-   * on ask, the nonce, or a secret message bit. Update only when the visible
-   * permil changes to avoid redundant OLED transfers while preserving a smooth
-   * bar. */
+  /* completed/total is a public schedule, never dependent on ask, the nonce
+   * or secret bits (no timing side channel). Redraw only on permil change. */
   uint32_t permil = progress->base + (progress->span * completed) / total;
   if (permil != progress->last) {
     progress->last = permil;
@@ -431,11 +393,7 @@ static void zcash_send_action_ack(uint32_t next_index) {
   resp_ack->next_index = next_index;
   msg_write(MessageType_MessageType_ZcashPCZTActionAck, resp_ack);
 
-  /* The device now blocks until the host generates the (slow) Orchard proof for
-   * this action. Ease the progress bar from the milestone already reached
-   * toward the one this action will complete, so the screen keeps moving
-   * instead of looking stuck at a frozen value. Stopped again when the action
-   * arrives. */
+  /* Trickle the bar while the host builds the slow Orchard proof. */
   uint32_t n = zcash_signing.n_actions;
   if (n > 0) {
     int base = (int)((next_index * 1000) / n);
@@ -629,7 +587,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
 
   CHECK_PIN
 
-  /* Validate parameters */
   if (!msg->has_n_actions || msg->n_actions == 0) {
     fsm_sendFailure(FailureType_Failure_SyntaxError, _("No actions specified"));
     layoutHome();
@@ -680,9 +637,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     layoutHome();
     return;
   }
-  /* transaction_v6 and every digest personalization key off tx_version, so
-   * an unknown version / versionGroupId pair must not reach them. Missing
-   * fields are refused by the header-field check below. */
+  /* Every personalization keys off tx_version: reject unknown pairs. */
   if (msg->has_tx_version && msg->has_version_group_id &&
       !zcash_tx_version_supported(msg->tx_version, msg->version_group_id)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -700,14 +655,9 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
-  /* The device verifies only the ACTIVE pool's actions, so the inactive pool
-   * must be provably empty rather than host-attested. Without this, a v6
-   * request could carry any orchard_digest and the device would fold it into
-   * the sighash it signs having never seen the bundle it commits to. Refusing
-   * also fails closed on an Orchard->Ironwood migration transaction, which this
-   * signer cannot verify anyway: is_ironwood selects one set of personalization
-   * strings for every streamed action, so a transaction spanning both pools
-   * cannot be expressed here. */
+  /* Only the ACTIVE pool is verified, so the inactive pool's digest must be
+   * the empty one, never host-attested; otherwise the device would sign over
+   * an unseen bundle. Also fails closed on cross-pool migrations. */
   if (is_ironwood &&
       memcmp(msg->orchard_digest.bytes, EMPTY_ORCHARD_DIGEST_V6, 32) != 0) {
     fsm_sendFailure(
@@ -716,8 +666,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     layoutHome();
     return;
   }
-  /* The reciprocal: an Orchard v6 request binds the empty Ironwood digest
-   * below, so a supplied non-empty one must be refused, not replaced. */
+  /* Reciprocal: refuse, not replace, a supplied Ironwood digest. */
   if (!is_ironwood && msg->tx_version == 6 &&
       !zcash_v6_orchard_ironwood_digest_valid(msg->has_ironwood_digest,
                                               msg->ironwood_digest.size,
@@ -789,17 +738,15 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
-  /* Confirm with user */
   char amount_str[32];
   char fee_str[32];
   uint64_t total = msg->has_total_amount ? msg->total_amount : 0;
   uint64_t fee = msg->has_fee ? msg->fee : 0;
 
-  /* Format amounts (1 ZEC = 100,000,000 zatoshis) */
+  /* 1 ZEC = 100,000,000 zatoshis */
   zcash_format_amount(total, amount_str, sizeof(amount_str));
   zcash_format_amount(fee, fee_str, sizeof(fee_str));
 
-  /* Display confirmation — different text for shielded-only vs hybrid */
   if (n_tinputs > 0) {
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Zcash Shield",
                  "Shield transparent ZEC?\n"
@@ -834,8 +781,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     }
   }
 
-  /* Approved — show the signing screen before Orchard key derivation, which
-   * is seconds of Pallas math with nothing else drawing. */
+  /* Draw before seconds of Orchard key derivation. */
   layoutProgress(_("Signing Zcash"), 0);
 
   if (!zcash_check_seed_fingerprint(msg->has_expected_seed_fingerprint,
@@ -845,9 +791,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
-  /* Clear any stale state from a prior (possibly abandoned) session before
-   * starting a new one, so buffered transparent signatures or Orchard state
-   * from an earlier PCZT can never leak into this transaction. */
+  /* No state from an abandoned session may leak into this one. */
   zcash_signing_abort();
 
   /* Derive Orchard keys via storage; the seed never leaves storage.c. */
@@ -863,7 +807,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   memzero(zcash_signing.keys.rivk, sizeof(zcash_signing.keys.rivk));
   memzero(zcash_signing.keys.dk, sizeof(zcash_signing.keys.dk));
 
-  /* Initialize signing state */
   zcash_signing.active = true;
   zcash_signing.account = account;
   zcash_signing.n_actions = msg->n_actions;
@@ -879,8 +822,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     memcpy(zcash_signing.ironwood_component_digest, msg->ironwood_digest.bytes,
            32);
   } else if (zcash_signing.transaction_v6) {
-    /* An Orchard-v6 request does not stream an Ironwood bundle. Bind the
-     * canonical empty component rather than zero-filled state or host data. */
+    /* Orchard-v6: bind the canonical empty Ironwood component. */
     memcpy(zcash_signing.ironwood_component_digest, EMPTY_IRONWOOD_DIGEST_V6,
            32);
   }
@@ -895,41 +837,11 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   zcash_signing.has_expected_transparent_digest = false;
   zcash_signing.transparent_digest_verified = false;
 
-  /* Phase 2a: Compute sighash on-device from validated sub-digests.
-   *
-   * TRUST MODEL:
-   *
-   * What the device verifies:
-   *   - Active shielded-pool digest: recomputed from streamed action data
-   *     (Phase 2b)
-   *     covering nullifiers, commitments, ephemeral keys, ciphertexts,
-   *     value commitments, randomized keys, flags, value balance, anchor.
-   *   - Orchard outputs: each displayed receiver/value is bound to cmx by
-   *     recomputing the note commitment from recipient/value/rseed/rho before
-   *     any authorization signature is emitted.
-   *   - Transaction fee: computed from streamed transparent totals plus
-   *     orchard_value_balance and compared to the requested fee before final
-   *     user confirmation.
-   *   - Sighash: assembled on-device from all v5 or v6 sub-digests.
-   *   - transparent_digest: recomputed from streamed transparent outputs and
-   *     inputs before any transparent or Orchard signature is emitted.
-   *   - header_digest: recomputed from plaintext transaction header fields
-   *     and compared to the supplied component digest.
-   *   - Sapling: explicitly unsupported in this signing path. The device
-   *     always uses the ZIP-244 empty Sapling digest and rejects any
-   *     host-provided Sapling component.
-   *
-   * total_amount is a summary prompt. Transparent recipients, Orchard output
-   * recipients, Orchard output values, and the transaction fee all have their
-   * own verification gates before signatures are released.
-   *
-   * For shielded-only transactions (no transparent inputs):
-   *   transparent_digest defaults to the well-known empty hash,
-   *   so no trust assumption is needed for that component.
-   *
-   * For mixed transactions:
-   *   transparent_digest is mandatory and verified against plaintext
-   *   transparent metadata before local sighash derivation. */
+  /* Phase 2a: sighash assembled on-device. TRUST MODEL -- before any
+   * signature is released the device recomputes: the active-pool digest
+   * (Phase 2b), each Orchard output's cmx from recipient/value/rseed/rho,
+   * the fee, transparent_digest (empty hash when shielded-only) and
+   * header_digest. Sapling is unsupported: always the empty digest. */
   uint8_t t_digest[32];
 
   if (n_tinputs == 0 && n_toutputs == 0) {
@@ -944,9 +856,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   }
   memzero(t_digest, sizeof(t_digest));
 
-  /* Phase 2b: the active shielded-pool digest is mandatory for signing.
-   * The device incrementally hashes each action's data and verifies the
-   * computed digest matches the one used for sighash. */
+  /* Phase 2b: the active-pool digest is mandatory and recomputed. */
   memcpy(zcash_signing.expected_orchard_digest,
          is_ironwood ? msg->ironwood_digest.bytes : msg->orchard_digest.bytes,
          32);
@@ -965,13 +875,10 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
                        16);
   zcash_signing.verify_orchard_digest = true;
 
-  /* Draw the initial static progress BEFORE requesting the first component:
-   * for the actions-only path zcash_send_action_ack() arms the trickle, and a
-   * layoutProgress() after it would clear the animation queue and freeze it. */
+  /* Static draw first: layoutProgress() after arming freezes the trickle. */
   layoutProgress(_("Signing Zcash"), 0);
 
-  /* Request the first plaintext component. Transparent outputs are reviewed
-   * before any transparent input or Orchard signature can be emitted. */
+  /* Transparent outputs are reviewed before any signature is emitted. */
   if (zcash_signing.n_transparent_outputs > 0) {
     zcash_send_transparent_output_ack(0);
   } else if (zcash_signing.n_transparent_inputs > 0) {
@@ -1016,7 +923,6 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
     return;
   }
 
-  /* Build response */
   resp->has_ak = true;
   resp->ak.size = 32;
   memcpy(resp->ak.bytes, keys.ak, 32);
@@ -1029,8 +935,7 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
   resp->rivk.size = 32;
   memcpy(resp->rivk.bytes, keys.rivk, 32);
 
-  /* Seed identity (ZIP-32 §6.1). Lets the host pin this FVK to a
-   * specific device-seed identity for later signing/display flows. */
+  /* Seed identity (ZIP-32 §6.1) for later host pinning. */
   uint8_t fp[32];
   if (storage_zcashSeedFingerprint(true, fp)) {
     resp->has_seed_fingerprint = true;
@@ -1104,7 +1009,6 @@ void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg) {
     return;
   }
 
-  /* User confirmed — return the address bound to this device's seed. */
   resp->has_address = true;
   strlcpy(resp->address, derived_address, sizeof(resp->address));
 
@@ -1129,16 +1033,11 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
-  /* An action arrived: stop the trickle so the exact per-action milestone (and
-   * the fee confirm reached at completion) draws cleanly. Re-armed by the next
-   * zcash_send_action_ack() if more actions remain. */
+  /* Stop the trickle; the next ack re-arms it. */
   layoutProgressTrickleStop();
 
-  /* Enforce transparent phase completion: if the session declared any
-   * transparent data, all plaintext must be streamed and verified before
-   * Orchard actions.
-   * This prevents a malicious host from skipping transparent-input
-   * confirmations and jumping straight to Orchard signing. */
+  /* Declared transparent data must be fully streamed and verified first, so a
+   * host cannot skip transparent confirmations. */
   if (zcash_signing.current_transparent_output <
           zcash_signing.n_transparent_outputs ||
       zcash_signing.current_transparent_input <
@@ -1153,7 +1052,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
-  /* Validate action index */
   if (!msg->has_index || msg->index != zcash_signing.current_action) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Unexpected action index"));
@@ -1162,7 +1060,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
-  /* Validate required fields */
   if (!msg->has_alpha || msg->alpha.size != 32) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Missing or invalid alpha randomizer"));
@@ -1187,9 +1084,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       msg->has_enc_compact && msg->enc_compact.size == 52 &&
       msg->has_enc_memo && msg->enc_memo.size == 512 &&
       msg->has_enc_noncompact &&
-      /* 580-byte enc_ciphertext = compact(52) + memo(512) + noncompact(16);
-       * pin the exact size like every sibling field so a host serializer bug
-       * fails fast per-action instead of as an end-of-flow digest mismatch. */
+      /* 580 = compact(52) + memo(512) + noncompact(16). */
       msg->enc_noncompact.size == 16 && msg->has_cv_net &&
       msg->cv_net.size == 32 && msg->has_rk && msg->rk.size == 32 &&
       msg->has_out_ciphertext && msg->out_ciphertext.size == 80;
@@ -1212,8 +1107,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   ZcashActionProgress verification_progress = {
       action_base, verification_target - action_base, action_base};
 
-  /* The 1086-bit Orchard note commitment takes 109 public Sinsemilla rounds.
-   * Draw their real progress instead of freezing the prior trickle at 0%. */
+  /* 1086-bit note commitment = 109 public Sinsemilla rounds. */
   layoutProgress(_("Signing Zcash"), action_base);
   if (!zcash_verify_and_confirm_orchard_output(msg, zcash_action_progress,
                                                &verification_progress)) {
@@ -1222,9 +1116,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
-  /* The user just approved — restore the progress screen at the verified
-   * milestone. Real spends continue through RedPallas below; dummy spends
-   * complete without an authorization signature. */
   layoutProgress(_("Signing Zcash"), verification_target);
 
   /* Phase 2b: feed action data into incremental BLAKE2b contexts */
@@ -1243,37 +1134,13 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   const uint8_t* sighash = zcash_signing.sighash;
 
-  /* Orchard actions always contain a spend and an output, but the spend can be
-   * a dummy. finalize_io() has already signed dummy spends with their ephemeral
-   * key; replacing that signature with one from the device key is invalid and
-   * can never satisfy the action's rk. Stream and verify every action above,
-   * but return compact signatures only for real spends, in action order. */
+  /* Dummy spends are already signed by finalize_io() with their ephemeral
+   * key; sign only real spends, in action order. Every action is verified. */
   if (msg->is_spend) {
-    /* Draw the spend-authorization randomness T here, from the CHECKED source,
-     * and hand it to the signer.
-     *
-     * The signer takes T from the caller precisely so this decision is
-     * visible. The signer derives the nonce as r = H*(T || rk || M)
-     * rather than reducing T directly, so a repeat of T alone is survivable --
-     * but a REPEATED NONCE discloses the spend authorization key from any two
-     * signatures, so the entropy must still come from a source that has been
-     * health-checked, and a degraded source must yield NO signature rather than
-     * a predictable one.
-     *
-     * random_buffer_checked() folds the drawn bytes into the continuous
-     * SP 800-90B state and returns false if the RCT or APT trips;
-     * rng_health_check() is the latched boot verdict. Both must hold, and the
-     * signer independently refuses an all-zero T.
-     *
-     * 80 bytes, not 32: T is the randomness input to the RedDSA nonce
-     * derivation r = H*(T || rk || M), and the Zcash protocol specification
-     * sizes it at 80 so that H*'s output is statistically uniform over the
-     * scalar field. The signer hashes T with the verification key and the
-     * message rather than reducing it directly, so a repeated T across two
-     * DIFFERENT messages still yields different nonces.
-     *
-     * Refusing to sign is always safe. Signing with a repeated nonce is not.
-     */
+    /* T comes from the CHECKED RNG: a repeated nonce r = H*(T || rk || M)
+     * discloses ask, so a degraded source (boot verdict or SP 800-90B RCT/APT
+     * trip) yields NO signature. 80 bytes per the Zcash spec so H* is uniform
+     * over the scalar field. The signer also refuses an all-zero T. */
     uint8_t zcash_T[80];
     if (!rng_health_check() ||
         !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
@@ -1288,13 +1155,9 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     ZcashActionProgress signing_progress = {verification_target,
                                             action_target - verification_target,
                                             verification_target};
-    /* _with_ak, not _for_rk: it derives rk from the device's OWN ak and alpha
-     * and refuses when the host's rk does not match, then signs with the
-     * derived value. _for_rk feeds the host's rk straight into the nonce and
-     * challenge hashes without ever checking it describes this device's key,
-     * so the device would happily authorize under a verification key that is
-     * not its own. The validating variant already existed and production was
-     * calling the other one. */
+    /* _with_ak, never _for_rk: rk is derived from the device's OWN ak and
+     * alpha and a mismatching host rk is refused, so the device cannot sign
+     * under a verification key that is not its own. */
     int sign_rc = redpallas_sign_digest_with_ak(
         zcash_signing.keys.ask, zcash_signing.keys.ak, msg->alpha.bytes,
         msg->rk.bytes, sighash, zcash_T,
@@ -1313,12 +1176,10 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   zcash_signing.current_action++;
 
-  /* Update progress */
   uint32_t progress =
       (zcash_signing.current_action * 1000) / zcash_signing.n_actions;
   layoutProgress(_("Signing Zcash"), progress);
 
-  /* Check if all actions are signed */
   if (zcash_signing.current_action >= zcash_signing.n_actions) {
     /* Phase 2b: verify orchard digest before returning signatures */
     if (zcash_signing.verify_orchard_digest) {
@@ -1328,9 +1189,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       blake2b_Final(&zcash_signing.memos_ctx, memos_hash, 32);
       blake2b_Final(&zcash_signing.noncompact_ctx, noncompact_hash, 32);
 
-      /* V5 Orchard commits the anchor in the txid component. Transaction-v6
-       * Ironwood moves the anchor to the authorizing-data digest (ZIP-229),
-       * so the device deliberately omits it here. */
+      /* v6 Ironwood moves the anchor to the auth digest (ZIP-229). */
       BLAKE2B_CTX orchard_ctx;
       blake2b_InitPersonal(
           &orchard_ctx, 32,
@@ -1352,7 +1211,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       uint8_t computed_orchard_digest[32];
       blake2b_Final(&orchard_ctx, computed_orchard_digest, 32);
 
-      /* Verify computed matches expected */
       if (memcmp(computed_orchard_digest, zcash_signing.expected_orchard_digest,
                  32) != 0) {
         fsm_sendFailure(FailureType_Failure_Other,
@@ -1370,9 +1228,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       return;
     }
 
-    /* Release deferred transparent ECDSA sigs at the same gate as Orchard sigs
-     * — both are sent only after Orchard digest verification and fee
-     * confirmation. */
+    /* Transparent sigs are released only at this final gate. */
     if (zcash_signing.has_pending_transparent) {
       ZcashTransparentSigned* t_resp = (ZcashTransparentSigned*)msg_resp;
       memcpy(t_resp, &zcash_signing.pending_transparent,
@@ -1380,7 +1236,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       msg_write(MessageType_MessageType_ZcashTransparentSigned, t_resp);
     }
 
-    /* All done - send the collected Orchard signatures */
     ZcashSignedPCZT* resp_signed = (ZcashSignedPCZT*)msg_resp;
     memset(resp_signed, 0, sizeof(ZcashSignedPCZT));
 
@@ -1390,13 +1245,11 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       memcpy(resp_signed->signatures[i].bytes, zcash_signing.signatures[i], 64);
     }
 
-    /* Clean up */
     zcash_signing_abort();
 
     msg_write(MessageType_MessageType_ZcashSignedPCZT, resp_signed);
     layoutHome();
   } else {
-    /* Request next action */
     zcash_send_action_ack(zcash_signing.current_action);
   }
 }
@@ -1425,17 +1278,8 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
     return;
   }
 
-  /* Same invariant as the transparent input handler, and it has to be stated
-   * separately: this is a different array with its own free-running counter.
-   *
-   * After the declared outputs are stored, the dispatch below moves on to
-   * transparent inputs without incrementing current_transparent_input, which
-   * leaves this handler re-armed. A host that ignores the ack and keeps
-   * sending outputs walks current_transparent_output past
-   * n_transparent_outputs, and each extra message wrote a host-controlled
-   * amount and a 128-byte script_pubkey past the end of
-   * transparent_outputs[8] -- landing first on transparent_inputs[0] and then
-   * outside the struct entirely. */
+  /* Bound the free-running counter: a host can keep sending outputs past the
+   * declared count, which would write past transparent_outputs[8]. */
   if (msg->index >= zcash_signing.n_transparent_outputs ||
       msg->index >= ZCASH_MAX_TRANSPARENT_OUTPUTS ||
       zcash_signing.current_transparent_output >=
@@ -1497,8 +1341,7 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
 
   zcash_signing.current_transparent_output++;
 
-  /* Static draw before the dispatch: the actions transition below arms the
-   * trickle, and a layoutProgress() after it would clear and freeze it. */
+  /* Static draw before the dispatch arms the trickle. */
   layoutProgress(_("Signing Zcash"), 0);
 
   if (zcash_signing.current_transparent_output <
@@ -1518,10 +1361,8 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
   }
 }
 
-/* Phase 3: Transparent plaintext streaming for hybrid shielding
- * transactions. The host streams all outputs first, then all inputs. Only after
- * the firmware verifies transparent_digest from the streamed plaintext does it
- * derive per-input ZIP-244 sighashes and emit ECDSA signatures. */
+/* Phase 3: transparent outputs then inputs are streamed; ECDSA sigs only
+ * after transparent_digest verifies against the plaintext. */
 void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
   if (!zcash_signing.active) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -1547,15 +1388,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
     return;
   }
 
-  /* Bound the index against the array before it is used to address it.
-   *
-   * Matching current_transparent_input is not sufficient on its own. Nothing
-   * stops a host sending further ZcashTransparentInput messages after the
-   * declared count has been consumed: the ack loop simply stops asking, while
-   * current_transparent_input keeps incrementing past n_transparent_inputs on
-   * every extra message. Each one then wrote a fully host-controlled
-   * ZcashTransparentInputState -- amount, 32-byte txid, script_pubkey, the
-   * whole address_n array -- past the end of an 8-element static array. */
+  /* Bound the index before use: a host can keep sending inputs past the
+   * declared count, which would write past the 8-element array. */
   if (msg->index >= zcash_signing.n_transparent_inputs ||
       msg->index >= ZCASH_MAX_TRANSPARENT_INPUTS ||
       zcash_signing.current_transparent_input >=
@@ -1595,13 +1429,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
     return;
   }
 
-  /* P2PKH only. The path enforcement below derives a BIP-44 secp256k1 key and
-   * the sighash uses this scriptPubKey as the scriptCode, which is right for
-   * P2PKH and wrong for P2SH -- a P2SH input needs the redeem script as the
-   * scriptCode and a key that satisfies it. Accepting P2SH here produced a
-   * signature no node would accept, after showing the user a P2SH address the
-   * device cannot actually spend. zcash_transparent_script_to_address() still
-   * renders P2SH, which is what OUTPUTS legitimately need. */
+  /* Inputs are P2PKH only: the scriptPubKey is used as scriptCode, which is
+   * wrong for P2SH (outputs may still be P2SH). */
   if (!zcash_script_is_p2pkh(msg->script_pubkey.bytes,
                              msg->script_pubkey.size)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1611,14 +1440,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
     return;
   }
 
-  /* PATH ENFORCEMENT: transparent inputs must use exactly
-   * m/44'/133'/account'/change/index where:
-   *   - account' is hardened and matches the session account
-   *   - change is 0 (external) or 1 (internal)
-   *   - index is unhardened
-   *
-   * This prevents a compromised host from pivoting a shielding approval
-   * into signing with arbitrary secp256k1 keys on the device. */
+  /* Inputs must be m/44'/133'/account'/{0,1}/index with the session account,
+   * so a shielding approval cannot sign with arbitrary secp256k1 keys. */
   if (msg->address_n_count != 5) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Path must be m/44'/133'/account'/change/index"));
@@ -1739,11 +1562,7 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
     return;
   }
 
-  /* Transparent ECDSA sigs are buffered in zcash_signing.pending_transparent.
-   * They are released at the same final gate as Orchard sigs, after Orchard
-   * digest verification and fee confirmation. */
-  /* Static draw before arming: zcash_send_action_ack() arms the trickle, so a
-   * layoutProgress() after it would clear the animation queue and freeze it. */
+  /* Sigs stay buffered until the final gate. Static draw before arming. */
   layoutProgress(_("Signing Zcash"), 0);
   zcash_send_action_ack(0);
 }
