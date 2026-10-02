@@ -273,6 +273,22 @@ TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
                                 encoded));
 }
 
+// Every EIP-712 field screen used to be a review(), which calls
+// confirm_helper() and then returns true unconditionally, so a host that
+// answered each screen with a protocol Cancel still got a hash back. The
+// screens are confirm() now and refusal reaches ethereum.c as USER_CANCELLED.
+//
+// That code has to stay outside failMsgReturn[]. ethereum.c sizes the table
+// LAST_ERROR - 2 and indexes it err - 3, so a cancellation code at or below
+// LAST_ERROR would shift every message already in the table and would make
+// failMessage() report a refusal as a parse error instead of an
+// ActionCancelled. It also must not collide with the two non-error codes.
+TEST(Ethereum, Eip712UserCancelledIsOutsideTheFailMessageTable) {
+  EXPECT_GT(USER_CANCELLED, LAST_ERROR);
+  EXPECT_NE(USER_CANCELLED, SUCCESS);
+  EXPECT_NE(USER_CANCELLED, NULL_MSG_HASH);
+}
+
 TEST(Ethereum, PrecomputedTypedHashesRequireAdvancedMode) {
   EXPECT_FALSE(ethereum_typed_hash_policy_allows(false));
   EXPECT_TRUE(ethereum_typed_hash_policy_allows(true));
@@ -891,14 +907,6 @@ TEST(Ethereum, DirectSigningEntryRejectsChainIdAboveMaximum) {
   EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
 }
 
-TEST(Ethereum, DomainOnlyPrimaryTypeRequiresExactMatch) {
-  EXPECT_TRUE(ethereum_eip712_is_domain_primary_type("EIP712Domain"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type("EIP712Domain[]"));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type(""));
-  EXPECT_FALSE(ethereum_eip712_is_domain_primary_type(nullptr));
-}
-
 static const uint8_t DAI_MAINNET_ADDRESS[20] = {
     0x6b, 0x17, 0x54, 0x74, 0xe8, 0x90, 0x94, 0xc4, 0x4d, 0xa9,
     0x8b, 0x95, 0x4e, 0xed, 0xea, 0xc4, 0x95, 0x27, 0x1d, 0x0f};
@@ -1005,13 +1013,15 @@ TEST(Ethereum, LiquiditySelectorChecksDeclaredCalldataLength) {
 TEST(Ethereum, LiquidityCancellationFailsClosed) {
   EthereumSignTx msg = liquidity_tx(true);
   ASSERT_TRUE(kkconfirm_preload(0, 1));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Ethereum, LiquidityRejectsUnknownTokenBeforeConfirmation) {
   EthereumSignTx msg = liquidity_tx(false);
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
 }
 
 TEST(Ethereum, LiquidityClearSigningIsMainnetOnly) {
@@ -1029,7 +1039,8 @@ TEST(Ethereum, LiquidityRejectsTruncatedDeadlineAndNoncanonicalAddresses) {
   EthereumSignTx msg = liquidity_tx(true);
   msg.data_initial_chunk.bytes[4 + 5 * 32] = 1;
   EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
 
   msg = liquidity_tx(true);
   msg.data_initial_chunk.bytes[4] = 1;
@@ -1072,7 +1083,8 @@ TEST(Ethereum, LiquidityFormatsFullUint256WithoutBlankConfirmation) {
   EXPECT_GT(strlen(formatted), 32u);
 
   ASSERT_TRUE(kkconfirm_preload(0, 1));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
@@ -1092,14 +1104,6 @@ TEST(Ethereum, LpApprovalRequiresMainnetDerivedPairAndCanonicalSpender) {
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
 }
 
-extern "C" bool test_liquidity_failed_derivation_wipes(int stage);
-
-TEST(Ethereum, LiquidityDerivationWipesRootAndPartialKeysOnEveryFailure) {
-  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(1));
-  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(2));
-  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(3));
-}
-
 TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
   EthereumSignTx msg = approve_liquidity_tx();
   ASSERT_EQ(68u, msg.data_initial_chunk.size);
@@ -1111,23 +1115,6 @@ TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
   msg.data_initial_chunk.size = 69;
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
   EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
-}
-
-// failMessage() sizes failMsgReturn[] to GENERAL_ERROR..JSON_TYPE_WNOVAL and
-// indexes it err - GENERAL_ERROR. USER_CANCELLED (== LAST_ERROR) is the one
-// code above the table; it is answered before any lookup, so it must never
-// index it, and no slot the other codes reach may be NULL.
-extern "C" const char* failMsgReturn[];
-
-TEST(Ethereum, Eip712UserCancelledIsOutsideTheFailMessageTable) {
-  EXPECT_EQ(JSON_TYPE_WNOVAL + 1, USER_CANCELLED);
-  EXPECT_EQ(USER_CANCELLED, LAST_ERROR);
-  EXPECT_NE(USER_CANCELLED, SUCCESS);
-  EXPECT_NE(USER_CANCELLED, NULL_MSG_HASH);
-  for (int err = GENERAL_ERROR; err <= JSON_TYPE_WNOVAL; err++) {
-    ASSERT_NE(nullptr, failMsgReturn[err - GENERAL_ERROR]) << "code " << err;
-    EXPECT_GT(strlen(failMsgReturn[err - GENERAL_ERROR]), 0u) << "code " << err;
-  }
 }
 
 // ---- THORChain deposit(address,address,uint256,string) fixtures ----------

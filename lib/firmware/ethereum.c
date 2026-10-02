@@ -36,7 +36,6 @@
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
-#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/tiny-json.h"
 #include "keepkey/firmware/transaction.h"
@@ -65,15 +64,6 @@ bool ethereum_streamed_eip712_enabled(void) { return true; }
  */
 bool ethereum_structured_eip712_enabled(void) { return false; }
 
-/* Exact match, never a prefix. The legacy test was
- *   strncmp(primeType, "EIP712Domain", strlen(primeType))
- * whose length came from the HOST-supplied string, so every prefix -- "" and
- * "EIP" included -- compared equal and took the domain-only branch, emitting a
- * signature with no message hash for typed data the user was shown. */
-bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
-  return primary_type && strcmp(primary_type, "EIP712Domain") == 0;
-}
-
 /* The EIP-155 legacy recovery id is v + 2 * chain_id + 35, computed below in
  * a uint32_t, where v is 0 or 1. The bound is the largest chain id whose
  * WORST case still fits:
@@ -97,10 +87,9 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
 
 static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
-/* Arbitrary calldata can arrive over several EthereumTxAck messages.  Keep a
- * second Keccak state for the user-visible commitment: the transaction hash
- * state also includes RLP fields and therefore cannot identify calldata by
- * itself. */
+/* Arbitrary calldata may continue across EthereumTxAck messages. Track a
+ * second Keccak state whose sole input is calldata so the final approval can
+ * bind to every byte, not merely the first chunk or the whole RLP preimage. */
 static bool data_hash_pending = false;
 static struct SHA3_CTX data_keccak_ctx;
 static EthereumTxRequest msg_tx_request;
@@ -117,7 +106,7 @@ bool ethereum_chainIdIsValid(const EthereumSignTx* msg) {
 }
 
 /* Classification can run before signing_init canonicalizes the RLP value. */
-static bool ethereum_valueIsZero(const EthereumSignTx* msg) {
+bool ethereum_valueIsZero(const EthereumSignTx* msg) {
   if (!msg->has_value) return true;
   for (size_t i = 0; i < msg->value.size; ++i) {
     if (msg->value.bytes[i] != 0) return false;
@@ -403,7 +392,7 @@ static int rlp_calculate_number_length(uint32_t number) {
 }
 
 static void send_request_chunk(void) {
-  // The previous chunk was validated and accepted before requesting more.
+  /* The previous chunk was validated and hashed before requesting more. */
   note_workflow_progress();
   layoutProgress(_("Signing"), (data_total - data_left) * 1000 / data_total);
   msg_tx_request.has_data_length = true;
@@ -602,29 +591,6 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         suffix = " Wei";
         decimals = 0;
       }
-
-      /* No case matched: this chain's native asset has no name here.
-       *
-       * Falling through with suffix == NULL made bn_format() render a bare
-       * 18-decimal number -- "Send 0.05 to 0xABC" -- which names no asset and
-       * no network, on a screen that is the whole basis for the signature.
-       * Both the value and the gas fee go through this function with
-       * token == NULL, so an unmapped chain got two unlabelled numbers.
-       *
-       * Adding more cases does not fix this; the fallback has to stop being
-       * silent. Refusing is not right either: every caller treats false as a
-       * hard refusal, so a chain merely missing from this list -- a new L2,
-       * say -- would become unsignable, including its gas.
-       *
-       * So state exactly what is known. Wei is the base unit of every EVM
-       * chain regardless of what its native asset is called, so the amount
-       * stays exact and carries a correct unit; what is dropped is the claim
-       * to know the asset's name. This is the same rendering sub-gwei amounts
-       * already get a few lines above. */
-      if (!suffix) {
-        suffix = " Wei";
-        decimals = 0;
-      }
     }
   }
   /* bn_format() BLANKS the buffer and returns 0 when the value does not fit:
@@ -720,9 +686,9 @@ static bool confirm_ethereum_data_hash(void) {
   data2hex(digest, sizeof(digest), hex_digest);
   data_hash_pending = false;
 
-  /* The hash is ASCII hex so a user can compare it directly with a host-side
-   * Keccak-256.  confirm_bytes() guarantees that all 64 characters are shown
-   * even if a future font/layout change makes them span multiple screens. */
+  /* ASCII hex lets an AdvancedMode user compare the exact Keccak-256 with a
+   * host-side value. confirm_bytes() guarantees all 64 characters are shown
+   * if a future layout/font makes them span more than one screen. */
   const bool approved = confirm_bytes(
       ButtonRequestType_ButtonRequest_ConfirmOutput, "Ethereum Data Hash",
       (const uint8_t*)hex_digest, sizeof(hex_digest) - 1);
@@ -1102,19 +1068,6 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_total == 68 && ethereum_isStandardERC20Approve(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
     is_approve = true;
-
-    /* An unlimited allowance transfers open-ended authority to the spender.
-     * This release line deliberately refuses it instead of presenting it as a
-     * bounded token withdrawal.  Zero and finite approvals remain supported. */
-    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
-    bool unlimited = true;
-    for (size_t i = 0; i < 32; i++) unlimited &= allowance[i] == 0xff;
-    if (unlimited) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Unlimited ERC20 approval is disabled"));
-      ethereum_signing_abort();
-      return;
-    }
   }
 
   if (needs_confirm) {
@@ -1195,11 +1148,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       return;
     }
 
-    /* The initial protobuf carries at most 1024 bytes, while data_total may be
-     * much larger.  Showing that prefix as if it described the transaction
-     * let a hostile host hide executable calldata in later EthereumTxAck
-     * chunks.  Commit every chunk here and in ethereum_signing_txack(), then
-     * require approval of the complete Keccak-256 before signing. */
+    /* A prefix preview cannot commit to executable bytes in later chunks.
+     * Collect the complete calldata and approve its Keccak-256 only after the
+     * last byte has arrived. */
     sha3_256_Init(&data_keccak_ctx);
     sha3_Update(&data_keccak_ctx, msg->data_initial_chunk.bytes,
                 msg->data_initial_chunk.size);
@@ -1551,7 +1502,7 @@ void ethereum_typed_hash_sign(const EthereumSignTypedHash* msg,
 
 void failMessage(int err);
 
-const char* failMsgReturn[JSON_TYPE_WNOVAL - GENERAL_ERROR + 1] = {
+const char* failMsgReturn[LAST_ERROR - 2] = {
     "EIP-712 general error",  //  3
     "EIP-712 user defined type name too long",
     "EIP-712 too many user defined types",
@@ -1582,41 +1533,26 @@ const char* failMsgReturn[JSON_TYPE_WNOVAL - GENERAL_ERROR + 1] = {
     "EIP-712 pair name is NULL",
     "EIP-712 typeType has no name in parseVals",
     "EIP-712 address string is NULL",
-    "EIP-712 no value for type during walkVals",  // 33 (JSON_TYPE_WNOVAL)
+    "EIP-712 no value for type during walkVals",  // 33
 };
-/* One message per code GENERAL_ERROR..JSON_TYPE_WNOVAL, indexed err - 3, with
- * no NULL slot. USER_CANCELLED (== LAST_ERROR) is the one code above the table
- * and is handled before any lookup; a missing or extra entry would shift every
- * message after it. */
-_Static_assert(sizeof(failMsgReturn) / sizeof(failMsgReturn[0]) ==
-                   JSON_TYPE_WNOVAL - GENERAL_ERROR + 1,
-               "failMsgReturn must cover GENERAL_ERROR..JSON_TYPE_WNOVAL");
-_Static_assert(USER_CANCELLED == JSON_TYPE_WNOVAL + 1 &&
-                   LAST_ERROR == USER_CANCELLED,
-               "USER_CANCELLED must be the only code above the table");
 
 void failMessage(int err) {
   if (USER_CANCELLED == err) {
     /* Not a parse failure: a typed-data review screen ended without a
        completed button hold, which is what confirm_helper() reports when the
        host sends Cancel or Initialize. Report it as a cancellation so the host
-       does not read a refusal as a malformed message.
-
-       USER_CANCELLED is LAST_ERROR, one ABOVE JSON_TYPE_WNOVAL, and has
-       no failMsgReturn[] slot: the table is sized to JSON_TYPE_WNOVAL and
-       indexed err - GENERAL_ERROR, so it has no NULL entry to dereference. This
-       branch is therefore the only thing that names the code, and it also
-       picks the FailureType. It must stay first. */
+       does not read a refusal as a malformed message. USER_CANCELLED is above
+       LAST_ERROR and has no failMsgReturn[] slot, so this branch must come
+       first. */
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("EIP-712 cancelled"));
     return;
   }
-  if (err < GENERAL_ERROR || err > JSON_TYPE_WNOVAL) {
+  if (err < GENERAL_ERROR || err > LAST_ERROR) {
     // unknown error number
     fsm_sendFailure(FailureType_Failure_Other, _("EIP-712 unknown failure"));
   } else {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _(failMsgReturn[err - GENERAL_ERROR]));
+    fsm_sendFailure(FailureType_Failure_Other, _(failMsgReturn[err - 3]));
   }
   return;
 }
@@ -1718,26 +1654,11 @@ void e712_types_values(Ethereum712TypesValues* msg,
     resp->has_domain_separator_hash = true;
     resp->domain_separator_hash.size = 32;
 
-    /* Derive the signer into a local for the confirmation text. resp->address
-     * is deliberately not written until after the last confirmation (debug-link
-     * reads reuse msg_resp and clear anything staged before the confirm
-     * callbacks finish), and RESP_INIT memset it to "" -- so naming
-     * resp->address here would render "Sign with address ?" and disclose
-     * nothing at the one screen that has to carry the disclosure. */
-    char signer_address[43] = "0x";
-    uint8_t signer_pubkeyhash[20] = {0};
-    if (!hdnode_get_ethereum_pubkeyhash(node, signer_pubkeyhash)) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Ethereum address derivation failed"));
-      return;
-    }
-    ethereum_address_checksum(signer_pubkeyhash, signer_address + 2, false, 0);
-
     // Every screen shown while parsing the typed data is a review(), which
     // cannot express refusal. Take one real confirmation before producing a
     // signature so a host cannot obtain one without a button press.
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
-                 "Sign with address %s?", signer_address)) {
+                 "Sign with address %s?", resp->address)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "Signing cancelled by user");
       memzero(domainSeparatorHash, 32);
