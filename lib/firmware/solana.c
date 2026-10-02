@@ -866,10 +866,55 @@ static bool intent_mark(void* ctx, bool placeholder, bool account,
   return true;
 }
 
+typedef struct {
+  const SolanaInstrSchema* s;
+  size_t width;
+} IntentWidth;
+
+/* Widest text each placeholder can expand to (see intent_fill_visit):
+ * u64 token amount "18446744073709551615. " + a 12-char symbol = 34,
+ * a short address "ABCD...WXYZ" = 11. */
+static bool intent_width(void* ctx, bool placeholder, bool account,
+                         uint8_t index, const char* lit, size_t lit_len) {
+  (void)lit;
+  IntentWidth* w = (IntentWidth*)ctx;
+  if (!placeholder) {
+    w->width += lit_len;
+  } else if (account) {
+    w->width += 11;
+  } else {
+    switch (w->s->args[index].type) {
+      case SOL_SCHEMA_ARG_LAMPORTS:
+      case SOL_SCHEMA_ARG_TOKEN_AMOUNT:
+        w->width += 34;
+        break;
+      case SOL_SCHEMA_ARG_U64:
+        w->width += 20;
+        break;
+      case SOL_SCHEMA_ARG_DURATION:
+        w->width += 24;
+        break;
+      case SOL_SCHEMA_ARG_U8:
+        w->width += 3;
+        break;
+      default:
+        w->width += 11; /* PUBKEY, shortened */
+        break;
+    }
+  }
+  return true;
+}
+
 bool solana_intentTemplateValid(const SolanaInstrSchema* s) {
   if (!s || s->intent[0] == '\0') return false;
   uint8_t used[SOL_SCHEMA_MAX_ARGS] = {0};
   if (!intent_walk(s, intent_mark, used)) return false;
+  /* A valid template must always render: refuse one whose widest expansion
+   * would not fit the summary (SOL_INTENT_TEXT_MAX). */
+  IntentWidth w = {s, 0};
+  if (!intent_walk(s, intent_width, &w) || w.width > SOL_INTENT_TEXT_MAX) {
+    return false;
+  }
   for (uint8_t i = 0; i < s->num_args; i++) {
     if (solana_schemaArgIsAmount(s->args[i].type) && !used[i]) {
       return false; /* coverage: every amount is in the sentence */
@@ -1720,7 +1765,7 @@ static const uint8_t SOL_NATIVE_MINT[SOL_PUBKEY_SIZE] = {
     0x63, 0x46, 0x18, 0xc0, 0x35, 0xda, 0xc4, 0x39, 0xdc, 0x1a, 0xeb,
     0x3b, 0x55, 0x98, 0xa0, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x01};
 
-#define REVIEW_BODY 224
+#define REVIEW_BODY 352 /* BODY_CHAR_MAX: the confirm pager's limit */
 
 static void review_b58(const uint8_t key[SOL_PUBKEY_SIZE], char* out,
                        size_t len) {
@@ -1943,6 +1988,7 @@ static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
     return false; /* would wrap: refuse, never show a wrong bound */
   }
   const uint64_t base = 5000ULL * tx->num_required_sigs;
+  if (priority > UINT64_MAX - base) return false; /* bound would wrap */
   char fee[40];
   solana_formatAmount(fee, sizeof(fee), base + priority);
   if (tx->num_accounts > 0 &&
@@ -1958,6 +2004,7 @@ static bool review_limits(const SolanaSignTx* msg, const SolanaParsedTx* tx,
 }
 
 static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
+                                const uint8_t signer[SOL_PUBKEY_SIZE],
                                 SolanaReviewEmit emit, void* ctx) {
   char body[REVIEW_BODY];
   bool close_shown[SOL_MAX_INSTRUCTIONS] = {false};
@@ -1966,30 +2013,45 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
     if (i == ix_index) continue;
     switch (pi->type) {
       case SOL_INSTR_ATA_CREATE: {
-        char acct[48];
+        if (!pi->has_mint) return false; /* never render a zeroed mint */
+        /* "your" only when the device key owns it; a co-signer's account
+         * is named by its owner. */
+        const bool mine = memcmp(pi->authority, signer, SOL_PUBKEY_SIZE) == 0;
+        char acct[48], owner[48];
         review_b58(pi->to, acct, sizeof(acct));
-        if (pi->has_mint &&
-            memcmp(pi->mint, SOL_NATIVE_MINT, SOL_PUBKEY_SIZE) == 0) {
+        review_b58(pi->authority, owner, sizeof(owner));
+        if (memcmp(pi->mint, SOL_NATIVE_MINT, SOL_PUBKEY_SIZE) == 0) {
           int8_t closed = -1;
           for (uint8_t j = 0; j < tx->num_instructions; j++) {
             const SolanaParsedInstruction* c = &tx->instructions[j];
             if (c->type == SOL_INSTR_TOKEN_CLOSE_ACCOUNT &&
-                memcmp(c->from, pi->to, SOL_PUBKEY_SIZE) == 0) {
+                memcmp(c->from, pi->to, SOL_PUBKEY_SIZE) == 0 &&
+                memcmp(c->to, signer, SOL_PUBKEY_SIZE) == 0) {
               closed = (int8_t)j;
             }
           }
-          if (closed >= 0) {
+          if (closed >= 0 && mine) {
             close_shown[closed] = true;
             snprintf(body, sizeof(body),
                      "Creates a temporary wSOL account, closed back to you");
-          } else {
+          } else if (mine) {
             snprintf(body, sizeof(body), "Creates your wSOL account\n%s", acct);
+          } else {
+            snprintf(body, sizeof(body), "Creates a wSOL account\n%s\nfor\n%s",
+                     acct, owner);
           }
         } else {
           char mint[48];
           review_b58(pi->mint, mint, sizeof(mint));
-          snprintf(body, sizeof(body),
-                   "Creates your token account for mint\n%s", mint);
+          if (mine) {
+            snprintf(body, sizeof(body),
+                     "Creates your token account for mint\n%s", mint);
+          } else {
+            snprintf(body, sizeof(body),
+                     "Creates a token account for mint\n%s"
+                     "\nfor\n%s",
+                     mint, owner);
+          }
         }
         if (!emit(ctx, "Side effects", body, NULL, 0)) return false;
         break;
@@ -2018,8 +2080,16 @@ static bool review_side_effects(const SolanaParsedTx* tx, uint8_t ix_index,
     }
     char acct[48];
     review_b58(pi->from, acct, sizeof(acct));
-    snprintf(body, sizeof(body),
-             "Closes your token account\n%s\nrent back to you", acct);
+    if (memcmp(pi->authority, signer, SOL_PUBKEY_SIZE) == 0 &&
+        memcmp(pi->to, signer, SOL_PUBKEY_SIZE) == 0) {
+      snprintf(body, sizeof(body),
+               "Closes your token account\n%s\nrent back to you", acct);
+    } else {
+      char to[48];
+      review_b58(pi->to, to, sizeof(to));
+      snprintf(body, sizeof(body), "Closes token account\n%s\nrent to\n%s",
+               acct, to);
+    }
     if (!emit(ctx, "Side effects", body, NULL, 0)) return false;
   }
   return true;
@@ -2075,7 +2145,7 @@ bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
     return false;
   }
   char body[REVIEW_BODY];
-  char intent[160];
+  char intent[SOL_INTENT_TEXT_MAX + 1];
   if (!solana_fillIntent(msg, tx, s, ix_index, certified, intent,
                          sizeof(intent))) {
     return false;
@@ -2083,14 +2153,17 @@ bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
   if (!certified) {
     /* Runtime (SRS-7.15 R-1.5): a heading plus limits; the caller's full raw
      * review follows unchanged. */
-    snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
-             alias ? alias : "Unknown signer", intent);
+    if (snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
+                 alias ? alias : "Unknown signer",
+                 intent) >= (int)sizeof(body)) {
+      return false;
+    }
     return emit(ctx, "Unverified", body, NULL, 0) &&
            review_limits(msg, tx, s, ix_index, signer, false, emit, ctx);
   }
   if (!emit(ctx, s->program_name, intent, NULL, 0) ||
       !review_limits(msg, tx, s, ix_index, signer, true, emit, ctx) ||
-      !review_side_effects(tx, ix_index, emit, ctx) ||
+      !review_side_effects(tx, ix_index, signer, emit, ctx) ||
       !review_details(msg, tx, s, ix_index, true, emit, ctx)) {
     return false;
   }

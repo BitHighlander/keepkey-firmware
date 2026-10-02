@@ -3427,6 +3427,26 @@ TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
             "You spend\n7738120185405 base units\nof mint "
             "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
 
+  // Reviewed as another key (a co-signer's view): the device must not call
+  // the wSOL account "yours" or say rent comes "back to you".
+  static const uint8_t other[32] = {7};
+  got.clear();
+  ASSERT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, other,
+                                       "KeepKey Vault", "a9531b9d", true,
+                                       collect, &got));
+  for (const Screen& sc : got) {
+    EXPECT_EQ(sc.body.find("back to you"), std::string::npos) << sc.body;
+    EXPECT_EQ(sc.body.find("your "), std::string::npos) << sc.body;
+  }
+
+  // A template whose widest expansion overflows the summary (280) is refused at
+  // parse, never truncated on screen (9 amounts x 34 > 280).
+  SolanaInstrSchema wide = s;
+  strlcpy(wide.intent, "{0}{1}{0}{1}{0}{1}{0}{1}{0}", sizeof(wide.intent));
+  EXPECT_FALSE(solana_intentTemplateValid(&wide));
+  strlcpy(wide.intent, "{0}{1}{0}{1}{0}{1}{0}{1}", sizeof(wide.intent));  // 272
+  EXPECT_TRUE(solana_intentTemplateValid(&wide));
+
   // Runtime tier: a NOT-verified heading plus limits; the raw review follows.
   got.clear();
   ASSERT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
