@@ -130,6 +130,9 @@ typedef struct {
  * byte range to page; false cancels. */
 typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
                            const uint8_t* bytes, uint16_t bytes_len);
+/* ReviewEmit on the device: text as one screen, bytes as hex pages. */
+bool signed_metadata_review_emit(void* ctx, const char* title, const char* body,
+                                 const uint8_t* bytes, uint16_t bytes_len);
 /* A KeepKey-certified name record, taken by the request it rides ahead of. */
 typedef struct {
   bool valid;

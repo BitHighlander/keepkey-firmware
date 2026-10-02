@@ -1158,7 +1158,7 @@ bool signed_metadata_build_intent_review(const SignedMetadata* md,
   return intent_emit_provenance(emit, ctx, alias, fp);
 }
 
-static bool metadata_review_emit(void* ctx, const char* title, const char* body,
+bool signed_metadata_review_emit(void* ctx, const char* title, const char* body,
                                  const uint8_t* bytes, uint16_t bytes_len) {
   (void)ctx;
   if (bytes) {
@@ -1202,9 +1202,9 @@ static bool signed_metadata_confirm_screens(void) {
      * the short id suffices, as on Solana. */
     char fp8[9];
     strlcpy(fp8, delegate_fp, sizeof(fp8));
-    if (!signed_metadata_build_intent_review(&stored_metadata, true,
-                                             delegate_alias, fp8,
-                                             metadata_review_emit, NULL)) {
+    if (!signed_metadata_build_intent_review(
+            &stored_metadata, true, delegate_alias, fp8,
+            signed_metadata_review_emit, NULL)) {
       return false;
     }
     relied_on_metadata = true;
@@ -1242,9 +1242,9 @@ static bool signed_metadata_confirm_screens(void) {
 
     /* A runtime template is a heading only (SRS-7.15 R-1.5). */
     if (stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
-        !signed_metadata_build_intent_review(&stored_metadata, false, alias,
-                                             fingerprint, metadata_review_emit,
-                                             NULL)) {
+        !signed_metadata_build_intent_review(
+            &stored_metadata, false, alias, fingerprint,
+            signed_metadata_review_emit, NULL)) {
       return false;
     }
     memset(body, 0, sizeof(body));

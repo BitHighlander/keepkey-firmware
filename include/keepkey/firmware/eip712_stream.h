@@ -31,6 +31,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "keepkey/firmware/signed_metadata.h"
 #include "messages-ethereum.pb.h"
 
 /* Longest Solidity type string we will render: "uint256[10][10][10][10]" and
@@ -154,16 +155,11 @@ typedef struct {
   uint8_t sig_deadline[32]; /* uint256, big-endian */
 } Eip712Permit2;
 
-extern const uint8_t EIP712_PERMIT2_ADDRESS[20];
-
-typedef bool (*Eip712ReviewEmit)(void* ctx, const char* title,
-                                 const char* body);
-
 /* Summary, limits, details, who. spender_name is a ClearSign-vouched name
  * for the spender (NULL if none); alias/fp name the vouching delegate. */
 bool eip712_permit2_review(const Eip712Permit2* p, const char* spender_name,
-                           const char* alias, const char* fp,
-                           Eip712ReviewEmit emit, void* ctx);
+                           const char* alias, const char* fp, ReviewEmit emit,
+                           void* ctx);
 
 /* "2026-05-10 06:19 UTC"; Unix time past year 9999 is shown as a number. */
 void eip712_format_utc(uint64_t t, char* out, size_t len);

@@ -2124,13 +2124,6 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
  * to name a later one. */
 static MetadataNameRecord typed_data_name;
 
-static bool eip712_review_confirm(void* ctx, const char* title,
-                                  const char* body) {
-  (void)ctx;
-  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
-                 body);
-}
-
 /* Structured EIP-712: eip712_stream.c describes the next request; this one
  * pump emits it for all three handlers. */
 static void eip712_pump(void) {
@@ -2218,8 +2211,8 @@ static void eip712_pump(void) {
             memcmp(typed_data_name.address, done.permit2.spender, 20) == 0;
         const bool ok = eip712_permit2_review(
             &done.permit2, named ? typed_data_name.name : NULL,
-            typed_data_name.alias, typed_data_name.fp8, eip712_review_confirm,
-            NULL);
+            typed_data_name.alias, typed_data_name.fp8,
+            signed_metadata_review_emit, NULL);
         memzero(&typed_data_name, sizeof(typed_data_name));
         if (!ok) {
           fsm_sendFailure(FailureType_Failure_ActionCancelled,

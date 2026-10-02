@@ -1065,7 +1065,8 @@ TEST(Eip712Stream, Permit2DatesAreUtcFromTheSignedTimestamp) {
 
 namespace {
 std::vector<std::pair<std::string, std::string>> g_review;
-bool collect_review(void*, const char* title, const char* body) {
+bool collect_review(void*, const char* title, const char* body, const uint8_t*,
+                    uint16_t) {
   g_review.emplace_back(title, body);
   return true;
 }
@@ -1154,4 +1155,56 @@ TEST(Eip712Stream, Permit2ReviewStatesWhoWhatUntilWhen) {
   EXPECT_EQ(g_review[1].second, "Spender may take\n250000000 base units");
   EXPECT_EQ(g_review[4].first, "Token");
   EXPECT_EQ(g_review[4].second.rfind("Unknown token\n0x", 0), 0u);
+}
+
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+
+// A PermitSingle walk queues its domain screens until the domain and the type
+// hash prove it canonical Permit2. When either proof fails, every queued
+// screen is shown, in order, before anything else: nothing is hidden.
+TEST(Eip712Stream, NonCanonicalPermit2ShowsQueuedDomainScreensInOrder) {
+  static const char* name;
+  for (bool canonical_domain : {true, false}) {
+    name = canonical_domain ? "Permit2" : "App";
+    std::map<std::string, Struct> types;
+    addMember(types["EIP712Domain"], "name",
+              mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+    addMember(types["EIP712Domain"], "chainId",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    addMember(types["EIP712Domain"], "verifyingContract",
+              mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+    addMember(types["PermitSingle"], "spender",
+              mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+    // Neither PermitSingle has Permit2's type hash (no details); with the
+    // Permit2 domain that check fails, with "App" the domain check does.
+    if (!canonical_domain)
+      addMember(types["PermitSingle"], "sigDeadline",
+                mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    kkconfirm_capture_start();
+    const int used = walk(
+        "PermitSingle", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          if (path[0] == 1) return path.back() == 0 ? Bytes(20, 0x33) : word(9);
+          if (path.back() == 0) return Bytes(name, name + strlen(name));
+          if (path.back() == 1) return word(1);
+          return Bytes{0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4,
+                       0x73, 0x03, 0x0f, 0x11, 0x6d, 0xde, 0xe9,
+                       0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
+        },
+        8);
+    const std::vector<std::string> screens = kkconfirm_capture_finish();
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE) << name;
+    EXPECT_FALSE(eip712_stream_next()->permit2.valid) << name;
+    // Each address takes two pages; then the message: spender, sigDeadline.
+    ASSERT_EQ(used, canonical_domain ? 6 : 7) << name;
+    ASSERT_EQ(screens.size(), (size_t)used) << name;
+    EXPECT_EQ(screens[0], std::string("name\nstring: ") + name);
+    EXPECT_EQ(screens[1], "chainId\nuint256: 1");
+    EXPECT_EQ(screens[2] + screens[3],
+              "verifyingContract\naddress: "
+              "0x000000000022D473030F116dDEE9F6B43aC78BA3");
+    EXPECT_EQ(screens[4].rfind("spender\naddress: 0x3333", 0), 0u) << name;
+    eip712_stream_abort();
+  }
 }
