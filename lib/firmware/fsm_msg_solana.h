@@ -188,31 +188,6 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      (unsigned long long)pi->extra_value);
     }
 
-    case SOL_INSTR_TOKEN_TRANSFER: {
-      if (!solana_confirm_account(title, "Transfer from token account",
-                                  pi->from)) {
-        return false;
-      }
-      char to_str[45];
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-
-      /* The mint is the only authenticated token identity. */
-      if (pi->has_mint) {
-        char mint_str[45];
-        solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Token mint\n%s", mint_str)) {
-          return false;
-        }
-      }
-
-      char amount_str[32];
-      snprintf(amount_str, sizeof(amount_str), "%llu tokens",
-               (unsigned long long)pi->amount);
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Send %s to %s?", amount_str, to_str);
-    }
-
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
       if (!solana_confirm_account(title, "Transfer from token account",
                                   pi->from)) {
@@ -313,52 +288,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Send %s to %s?", amount_str, to_str);
     }
 
-    case SOL_INSTR_TOKEN_APPROVE: {
-      char to_str[45];
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Approve %llu tokens to %s?",
-                     (unsigned long long)pi->amount, to_str);
-    }
-
     case SOL_INSTR_TOKEN_REVOKE:
       return solana_confirm_account(title, "Revoke approval on account",
                                     pi->from);
-
-    case SOL_INSTR_TOKEN_SET_AUTHORITY: {
-      char auth_str[45];
-      solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Set token authority to %s?", auth_str);
-    }
-
-    case SOL_INSTR_TOKEN_MINT_TO: {
-      char mint_str[45];
-      char to_str[45];
-      solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                   "Mint token\n%s", mint_str)) {
-        return false;
-      }
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Mint %llu\nto %s?", (unsigned long long)pi->amount,
-                     to_str);
-    }
-
-    case SOL_INSTR_TOKEN_BURN: {
-      char mint_str[45];
-      char from_str[45];
-      solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-      solana_pubkeyToStr(pi->from, from_str, sizeof(from_str));
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                   "Burn token\n%s", mint_str)) {
-        return false;
-      }
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Burn %llu\nfrom %s?", (unsigned long long)pi->amount,
-                     from_str);
-    }
 
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT: {
       /* Closing sweeps the ENTIRE lamport balance (invisible to the device). */
