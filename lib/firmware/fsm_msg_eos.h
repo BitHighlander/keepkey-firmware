@@ -195,7 +195,7 @@ void fsm_msgEosTxActionAck(const EosTxActionAck* msg) {
 
   if (!eos_signingIsFinished()) {
     RESP_INIT(EosTxActionRequest);
-    // An empty chunk with data still outstanding did not advance the action.
+    /* Empty chunks with bytes still outstanding do not advance the action. */
     if (!msg->has_unknown || msg->unknown.data_chunk.size > 0 ||
         msg->unknown.data_size == 0) {
       note_workflow_progress();
