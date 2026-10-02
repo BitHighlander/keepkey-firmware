@@ -76,9 +76,7 @@ static bool solana_confirm_priority_fee(const SolanaParsedTx* tx,
   if (!have_price || price == 0) {
     return true; /* no priority fee to disclose */
   }
-  const uint64_t kMaxCuLimit = 1400000u; /* Solana per-tx CU cap */
-  uint64_t limit = have_limit ? cu_limit : kMaxCuLimit;
-  if (limit > kMaxCuLimit) limit = kMaxCuLimit;
+  const uint64_t limit = have_limit ? cu_limit : SOL_MAX_COMPUTE_UNITS;
 
   /* false => fee exceeds u64 lamports: refuse, never show a wrapped value */
   uint64_t lamports = 0;
