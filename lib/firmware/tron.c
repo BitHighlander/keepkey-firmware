@@ -97,13 +97,8 @@ bool tron_formatTrc20Amount(const uint8_t amount_be[32], char* buf,
   return bn_format(&val, NULL, NULL, 0, 0, false, buf, len);
 }
 
-/* ------------------------------------------------------------------ */
-/*  raw_data protobuf parser                                           */
-/*                                                                     */
-/*  The device signs sha256(raw_data), so display decisions are made   */
-/*  from these exact bytes. Minimal protobuf wire-format reader —      */
-/*  fail-closed: anything not fully understood ends TRON_TX_UNVERIFIED */
-/* ------------------------------------------------------------------ */
+/* raw_data parser: the device signs sha256(raw_data), so display comes from
+ * these bytes. Fail-closed: anything not understood is TRON_TX_UNVERIFIED. */
 
 /* TRON protocol.Transaction.raw field numbers */
 #define TRON_RAW_REF_BLOCK_BYTES 1
@@ -138,12 +133,7 @@ static bool pb_read_varint(const uint8_t* buf, size_t len, size_t* pos,
     uint8_t b = buf[(*pos)++];
     uint8_t payload = b & 0x7f;
     if (shift == 63 && payload > 1) {
-      /* The 10th byte can only contribute bit 63 to a 64-bit value
-       * (63 + 7 > 64); any payload bit above bit 0 here claims more
-       * precision than 64 bits hold. The shift below would silently
-       * drop those bits rather than reject them, letting a malformed
-       * key/length/amount/fee varint parse as if it were well-formed
-       * — reject instead of truncating. */
+      /* 10th byte may only set bit 63; reject rather than truncate. */
       return false;
     }
     val |= (uint64_t)payload << shift;
@@ -238,11 +228,8 @@ static bool tron_parseTransferContract(const uint8_t* buf, size_t len,
   return has_owner && has_to && has_amount;
 }
 
-/* Parse protocol.TriggerSmartContract:
- *   owner_address=1, contract_address=2, call_value=3, data=4,
- *   call_token_value=5, token_id=6
- * Only a plain TRC-20 transfer(address,uint256) with zero call_value and
- * no TRC-10 tokens attached is considered verified. */
+/* TriggerSmartContract: verified only as a plain TRC-20 transfer with zero
+ * call_value and no TRC-10 tokens attached. */
 static bool tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
                                            TronParsedTx* out) {
   size_t pos = 0;
@@ -267,8 +254,7 @@ static bool tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
       memcpy(out->contract, bp, TRON_RAW_ADDRESS_SIZE);
       has_contract = true;
     } else if (field == 3 && wire == 0) {
-      /* call_value: transfer(address,uint256) is non-payable — any TRX
-       * attached to the call is something we can't explain to the user. */
+      /* call_value: transfer() is non-payable; attached TRX is refused. */
       if (!pb_read_varint(buf, len, &pos, &v)) return false;
       if (v != 0) return false;
     } else if (field == 4 && wire == 2) {
@@ -286,9 +272,7 @@ static bool tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
   if (data_len != 4 + 32 + 32) return false;
   if (memcmp(data, TRC20_TRANSFER_SELECTOR, 4) != 0) return false;
 
-  /* Address word: 12 zero bytes then the 20-byte address. TRON tooling
-   * sometimes writes the 0x41 network prefix at byte 11; the TVM decodes
-   * only the low 160 bits, so accept 0x41 there and nothing else. */
+  /* TVM reads the low 160 bits; tooling may put 0x41 at byte 11. */
   const uint8_t* word = data + 4;
   for (int i = 0; i < 11; i++) {
     if (word[i] != 0) return false;

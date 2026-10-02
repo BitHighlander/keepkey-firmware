@@ -432,9 +432,7 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   */
 
   char* fields[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
-  /* Memos are documented/accepted up to 256 bytes; memoBuf reserves one
-   * extra byte so a full 256-byte memo still leaves a guaranteed NUL
-   * terminator, instead of the copy silently dropping its last byte. */
+  /* +1 so a full 256-byte memo keeps its last byte and a NUL. */
   enum { MEMO_MAX = 256 };
   char memoBuf[MEMO_MAX + 1];
   size_t nfields, i;
