@@ -100,6 +100,8 @@ static int process_ethereum_msg(EthereumSignTx* msg, bool* needs_confirm) {
 }
 
 static void eip712_pump(void);
+static void fail_erc7730_field(Erc7730Workflow* workflow, FailureType type,
+                               const char* message);
 
 static void send_erc7730_definition_request(void) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
@@ -111,10 +113,8 @@ static void send_erc7730_definition_request(void) {
                                 &total_length) ||
       offset >= total_length) {
     memzero(definition_id, sizeof(definition_id));
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 replay state"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 replay state"));
     return;
   }
   RESP_INIT(EthereumClearSignDefinitionRequest);
@@ -151,10 +151,8 @@ static void send_erc7730_fetch_request(void) {
   if (workflow->phase != ERC7730_WORKFLOW_FETCH ||
       (workflow->fetch_total != 0 &&
        workflow->fetch_offset >= workflow->fetch_total)) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 replay state"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 replay state"));
     return;
   }
   RESP_INIT(EthereumClearSignDefinitionRequest);
@@ -190,10 +188,9 @@ static void send_erc7730_calldata_request(void) {
   size_t remaining = 0;
   if (!erc7730_workflow_calldata_waiting(erc7730_workflow_state(),
                                          &remaining)) {
-    erc7730_workflow_abort(erc7730_workflow_state());
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 calldata state"));
-    layoutHome();
+    fail_erc7730_field(erc7730_workflow_state(),
+                       FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 calldata state"));
     return;
   }
   RESP_INIT(EthereumTxRequest);
@@ -736,7 +733,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   }
   if (field->kind == 13) {
     /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
-     * words; otherwise it is shown blind (7.15). */
+     * words; otherwise it is refused. */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
                            !workflow->inner_refused && field->has_address &&
                            field->inner_selector_length == 4 &&
@@ -1001,13 +998,7 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
   }
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
-    layoutHome();
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
@@ -1086,10 +1077,8 @@ static void start_erc7730_calldata(Erc7730Workflow* workflow,
           ? erc7730_workflow_restore_and_start_length(workflow, &tx, path)
           : erc7730_workflow_restore_and_start_capture(workflow, &tx, path);
   if (!started) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 execution program"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 execution program"));
     return;
   }
   size_t remaining = 0;
@@ -1098,10 +1087,8 @@ static void start_erc7730_calldata(Erc7730Workflow* workflow,
   } else if (erc7730_workflow_calldata_finish(workflow) == ERC7730_ABI_OK) {
     confirm_erc7730_intent_and_continue(&tx);
   } else {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("ERC-7730 calldata does not match definition"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("ERC-7730 calldata does not match definition"));
   }
   memzero(&tx, sizeof(tx));
 }
@@ -1193,10 +1180,8 @@ void fsm_msgEthereumTxAck(EthereumTxAck* msg) {
       msg->data_chunk.size > remaining ||
       erc7730_workflow_calldata_feed(workflow, msg->data_chunk.bytes,
                                      msg->data_chunk.size) != ERC7730_ABI_OK) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("ERC-7730 calldata does not match definition"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("ERC-7730 calldata does not match definition"));
     return;
   }
   if (erc7730_workflow_calldata_waiting(workflow, &remaining)) {
@@ -1204,18 +1189,14 @@ void fsm_msgEthereumTxAck(EthereumTxAck* msg) {
     return;
   }
   if (erc7730_workflow_calldata_finish(workflow) != ERC7730_ABI_OK) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("ERC-7730 calldata does not match definition"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("ERC-7730 calldata does not match definition"));
     return;
   }
   EthereumSignTx tx;
   if (!erc7730_workflow_restore_complete(workflow, &tx)) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unable to resume ERC-7730 transaction"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Unable to resume ERC-7730 transaction"));
     return;
   }
   confirm_erc7730_intent_and_continue(&tx);
@@ -1309,14 +1290,12 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         erc7730_workflow_fetch_feed(workflow, msg, &complete, &none);
     if (fetched != ERC7730_CATALOG_MORE &&
         fetched != ERC7730_CATALOG_COMPLETE) {
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid certified ERC-7730 definition"));
-      layoutHome();
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid certified ERC-7730 definition"));
       return;
     }
     if (none) {
-      show_erc7730_embedded(workflow); /* no inner definition: blind */
+      show_erc7730_embedded(workflow); /* no inner definition: refused */
       return;
     }
     if (!complete) {
@@ -1372,10 +1351,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
   if (result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) {
     ethereum_signing_abort();
     eip712_stream_abort();
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid certified ERC-7730 replay"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid certified ERC-7730 replay"));
     return;
   }
   if (!complete) {
@@ -1482,19 +1459,15 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     if (!erc7730_workflow_selected_display(workflow, &instruction,
                                            &instruction_count) ||
         instruction_count == 0) {
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid ERC-7730 display instruction"));
-      layoutHome();
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 display instruction"));
       return;
     }
     if (workflow->display_stage == ERC7730_DISPLAY_NONE) {
       if (instruction.opcode != 1 || !erc7730_cap_display(&instruction, 0) ||
           !erc7730_workflow_select_string(workflow, instruction.a)) {
-        erc7730_workflow_abort(workflow);
-        fsm_sendFailure(FailureType_Failure_SyntaxError,
-                        _("Invalid ERC-7730 intent instruction"));
-        layoutHome();
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 intent instruction"));
         return;
       }
       workflow->display_stage = ERC7730_DISPLAY_INTENT_STRING;
@@ -1508,14 +1481,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       if (workflow->typed_data) {
         const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
         if (ui != ERC7730_UI_OK) {
-          erc7730_workflow_abort(workflow);
-          eip712_stream_abort();
-          fsm_sendFailure(
-              ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                       : FailureType_Failure_ActionCancelled,
-              ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                       : _("Signing cancelled by user"));
-          layoutHome();
+          fail_erc7730_ui(workflow, ui);
           return;
         }
         erc7730_workflow_abort(workflow);
@@ -1594,18 +1560,14 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     }
     if (workflow->display_stage != ERC7730_DISPLAY_INSTRUCTION ||
         instruction.opcode != 4 || !executable) {
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Unsupported ERC-7730 field instruction"));
-      layoutHome();
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Unsupported ERC-7730 field instruction"));
       return;
     }
     workflow->current_formatter = instruction.b;
     if (!erc7730_workflow_select_string(workflow, instruction.a)) {
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid ERC-7730 field label"));
-      layoutHome();
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 field label"));
       return;
     }
     workflow->display_stage = ERC7730_DISPLAY_LABEL;
@@ -1615,19 +1577,15 @@ void fsm_msgEthereumClearSignDefinitionChunk(
   if (selection_kind == ERC7730_SELECTION_STRING) {
     if (workflow->display_stage == ERC7730_DISPLAY_INTENT_STRING) {
       if (!erc7730_workflow_preserve_selected_string(workflow, true)) {
-        erc7730_workflow_abort(workflow);
-        fsm_sendFailure(FailureType_Failure_SyntaxError,
-                        _("Invalid ERC-7730 intent"));
-        layoutHome();
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 intent"));
         return;
       }
       workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;
       workflow->display_index = 1;
       if (!erc7730_workflow_select_display(workflow, 1)) {
-        erc7730_workflow_abort(workflow);
-        fsm_sendFailure(FailureType_Failure_SyntaxError,
-                        _("Missing ERC-7730 display instruction"));
-        layoutHome();
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Missing ERC-7730 display instruction"));
         return;
       }
       send_erc7730_definition_request();
@@ -1666,10 +1624,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         !erc7730_workflow_preserve_selected_string(workflow, false) ||
         !erc7730_workflow_select_formatter(workflow,
                                            workflow->current_formatter)) {
-      erc7730_workflow_abort(workflow);
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("Invalid ERC-7730 field formatter"));
-      layoutHome();
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid ERC-7730 field formatter"));
       return;
     }
     workflow->display_stage = ERC7730_DISPLAY_FORMATTER;
@@ -1692,10 +1648,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     return;
   }
   if (selection_kind != ERC7730_SELECTION_PATH) {
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 selection state"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 selection state"));
     return;
   }
   Erc7730Path path;
@@ -1703,10 +1657,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
        workflow->display_stage != ERC7730_DISPLAY_ITERATION) ||
       !erc7730_workflow_selected_path(workflow, &path)) {
     memzero(&path, sizeof(path));
-    erc7730_workflow_abort(workflow);
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 value path"));
-    layoutHome();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 value path"));
     return;
   }
   if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {

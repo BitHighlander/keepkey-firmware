@@ -48,22 +48,6 @@ static bool solana_confirm_account(const char* title, const char* label,
                  label, s);
 }
 
-/* Host symbol is untrusted: printable ASCII only, so newlines or control bytes
- * cannot push the mint or recipient off the confirm screen. */
-static bool solana_symbol_is_safe(const char* sym) {
-  if (!sym || sym[0] == '\0') return false;
-  for (const char* p = sym; *p; p++) {
-    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return false;
-  }
-  return true;
-}
-
-static bool solana_confirm_memo(const char* title, const uint8_t* s,
-                                uint16_t len) {
-  return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, title, s,
-                       len);
-}
-
 /* Priority fee (ceil(cu_price * cu_limit / 1e6) lamports) is charged even on
  * failure, and CU fields show no units, so disclose the MAXIMUM fee in SOL
  * (1.4M-CU cap when no limit is set; never an understatement). */
@@ -86,9 +70,7 @@ static bool solana_confirm_priority_fee(const SolanaParsedTx* tx,
   if (!have_price || price == 0) {
     return true; /* no priority fee to disclose */
   }
-  const uint64_t kMaxCuLimit = 1400000u; /* Solana per-tx CU cap */
-  uint64_t limit = have_limit ? cu_limit : kMaxCuLimit;
-  if (limit > kMaxCuLimit) limit = kMaxCuLimit;
+  const uint64_t limit = have_limit ? cu_limit : SOL_MAX_COMPUTE_UNITS;
 
   /* false => fee exceeds u64 lamports: refuse, never show a wrapped value */
   uint64_t lamports = 0;
@@ -200,46 +182,6 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      (unsigned long long)pi->extra_value);
     }
 
-    case SOL_INSTR_TOKEN_TRANSFER: {
-      if (!solana_confirm_account(title, "Transfer from token account",
-                                  pi->from)) {
-        return false;
-      }
-      char to_str[45];
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-
-      const SolanaTokenInfo* ti = NULL;
-      if (pi->has_mint && msg) {
-        ti = solana_findTokenInfo(msg, pi->mint);
-      }
-
-      /* The mint is the only authenticated token identity: own screen, so a
-       * host symbol cannot push it off-view. */
-      if (pi->has_mint) {
-        char mint_str[45];
-        solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Token mint\n%s", mint_str)) {
-          return false;
-        }
-      }
-
-      /* Unsafe symbol => raw count; the mint still identifies the token. */
-      if (ti && ti->has_symbol && ti->has_decimals &&
-          solana_symbol_is_safe(ti->symbol)) {
-        char amount_str[48];
-        solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
-                                 ti->symbol, (uint8_t)ti->decimals);
-        return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                       "Send %s to %s?", amount_str, to_str);
-      }
-      char amount_str[32];
-      snprintf(amount_str, sizeof(amount_str), "%llu tokens",
-               (unsigned long long)pi->amount);
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Send %s to %s?", amount_str, to_str);
-    }
-
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
       if (!solana_confirm_account(title, "Transfer from token account",
                                   pi->from)) {
@@ -263,25 +205,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       }
 
-      /* Symbol trust: attestation verifies -> trusted; present but INVALID ->
-       * drop the symbol (never fall back to the claim); absent -> show it
-       * beside the authenticated mint. */
-      const char* symbol = NULL;
-      bool symbol_verified = false;
-      if (known) {
-        symbol = known->symbol;
-      } else if (ti && ti->has_symbol && solana_symbol_is_safe(ti->symbol)) {
-        if (ti->has_signature) {
-          /* Attested decimals must equal the signed decimals, or the attested
-           * tuple does not describe this tx and must not earn "verified". */
-          if (solana_token_info_trusted(ti) && ti->decimals == pi->extra_u8) {
-            symbol = ti->symbol;
-            symbol_verified = true;
-          }
-        } else {
-          symbol = ti->symbol;
-        }
-      }
+      /* Firmware table or valid attestation only; NULL -> base units. */
+      const char* symbol = solana_displaySymbol(ti, known, pi->extra_u8);
+      const bool symbol_verified = symbol && !known;
 
       if (pi->has_mint) {
         char mint_str[45];
@@ -331,7 +257,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
 
       if (symbol) {
-        char amount_str[48];
+        char amount_str[64];
         solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
                                  symbol, pi->extra_u8);
         if (recipient_verified) {
@@ -343,7 +269,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                        "Send %s to %s?", amount_str, to_str);
       }
-      char amount_str[48];
+      char amount_str[64];
       solana_formatTokenAmount(amount_str, sizeof(amount_str), pi->amount,
                                "tokens", pi->extra_u8);
       if (recipient_verified) {
@@ -356,52 +282,9 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                      "Send %s to %s?", amount_str, to_str);
     }
 
-    case SOL_INSTR_TOKEN_APPROVE: {
-      char to_str[45];
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Approve %llu tokens to %s?",
-                     (unsigned long long)pi->amount, to_str);
-    }
-
     case SOL_INSTR_TOKEN_REVOKE:
       return solana_confirm_account(title, "Revoke approval on account",
                                     pi->from);
-
-    case SOL_INSTR_TOKEN_SET_AUTHORITY: {
-      char auth_str[45];
-      solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Set token authority to %s?", auth_str);
-    }
-
-    case SOL_INSTR_TOKEN_MINT_TO: {
-      char mint_str[45];
-      char to_str[45];
-      solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-      solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                   "Mint token\n%s", mint_str)) {
-        return false;
-      }
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Mint %llu\nto %s?", (unsigned long long)pi->amount,
-                     to_str);
-    }
-
-    case SOL_INSTR_TOKEN_BURN: {
-      char mint_str[45];
-      char from_str[45];
-      solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
-      solana_pubkeyToStr(pi->from, from_str, sizeof(from_str));
-      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                   "Burn token\n%s", mint_str)) {
-        return false;
-      }
-      return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Burn %llu\nfrom %s?", (unsigned long long)pi->amount,
-                     from_str);
-    }
 
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT: {
       /* Closing sweeps the ENTIRE lamport balance (invisible to the device). */
@@ -561,7 +444,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     case SOL_INSTR_MEMO:
       /* Page the FULL memo: swap intents (THORChain '=:ETH.ETH:...') ride in
        * it, so a byte-count summary would hide where funds go. */
-      return solana_confirm_memo(title, pi->data, pi->data_len);
+      return confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo, title,
+                           pi->data, pi->data_len);
 
     case SOL_INSTR_UNKNOWN:
     default: {

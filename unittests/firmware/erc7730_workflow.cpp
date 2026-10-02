@@ -80,8 +80,7 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 }
 
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
-  // Host (64-bit) layout. Phase E2 added the inner call's context (184 B on
-  // ARM, where tools/check_sram_budget.py is the real gate).
+  // Host (64-bit) layout; tools/check_sram_budget.py is the real (ARM) gate.
   EXPECT_LE(sizeof(Erc7730Workflow), 4352u);
 }
 
