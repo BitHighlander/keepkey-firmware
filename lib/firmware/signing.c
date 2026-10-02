@@ -280,7 +280,8 @@ scriptSig Compute hash_witness
     Return witness
 */
 
-/* A validated signing stage renews the idle deadline before its response. */
+/* Reached only after accepting a signing stage (or initializing one).
+ * Fragments and rejected TxAck payloads never reach this continuation. */
 static void send_signing_request(void) {
   note_workflow_progress();
   msg_write(MessageType_MessageType_TxRequest, &resp);
