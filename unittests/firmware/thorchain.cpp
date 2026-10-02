@@ -11,15 +11,9 @@ extern "C" {
 #include "gtest/gtest.h"
 #include <cstring>
 #include <string>
-#include <vector>
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
-
-// Vectors computed with the trezor-crypto library directly (see
-// unittests/firmware/thorchain.cpp notes). The test file was previously
-// absent from CMakeLists.txt so none of these values were ever validated;
-// all expected values here are derived from the actual crypto library.
 
 // Mirrors THORCHAIN_MEMO_MAX inside thorchain_parseConfirmMemo().
 static const size_t THORCHAIN_MEMO_MAX_FOR_TEST = 256;
@@ -41,18 +35,6 @@ TEST(Thorchain, AmountFormattingCoversProtocolMaximumAndFailsClosed) {
       thorchain_formatAmount(1, "ETH.ETH\n", rendered, sizeof(rendered)));
   EXPECT_FALSE(
       thorchain_formatAmount(1, "ETH.\"ETH", rendered, sizeof(rendered)));
-}
-
-TEST(Thorchain, DenomValidationRejectsJsonAndDisplayAmbiguity) {
-  EXPECT_TRUE(thorchain_isValidDenom("rune"));
-  EXPECT_TRUE(thorchain_isValidDenom("eth.eth"));
-  EXPECT_TRUE(thorchain_isValidDenom("btc/btc"));
-  EXPECT_TRUE(thorchain_isValidDenom("cross-chain"));
-  EXPECT_FALSE(thorchain_isValidDenom(""));
-  EXPECT_FALSE(thorchain_isValidDenom("RUNE"));
-  EXPECT_FALSE(thorchain_isValidDenom("rune\""));
-  EXPECT_FALSE(thorchain_isValidDenom("rune\\n"));
-  EXPECT_FALSE(thorchain_isValidDenom("ru ne"));
 }
 
 TEST(Thorchain, MemoWithEmbeddedNulIsNotParsed) {
@@ -214,33 +196,21 @@ static const HDNode kSignNode = {
      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
     &secp256k1_info};
 
-static const ThorchainSignTx kSignTx = {
-    5,    {0x80000000 | 44, 0x80000000 | 931, 0x80000000, 0, 0},
-    true, 0,
-    true, "thorchain",
-    true, 5000,
-    true, 200000,
-    true, "",
-    true, 0,
-    true, 1};
-
-static const char* kToAddr = "thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v";
-
 // Denom validation: only [a-z0-9./\-] is allowed; anything else is rejected
 TEST(Thorchain, ThorchainDenomValidation) {
-  EXPECT_TRUE(thorchain_isValidDenom("rune"));
-  EXPECT_TRUE(thorchain_isValidDenom("tcy"));
-  EXPECT_TRUE(thorchain_isValidDenom("rujira"));
-  EXPECT_TRUE(thorchain_isValidDenom("eth.eth"));
-  EXPECT_TRUE(thorchain_isValidDenom("btc/btc"));
-  EXPECT_TRUE(thorchain_isValidDenom("cross-chain"));
+  EXPECT_TRUE(tendermint_isValidDenom("rune"));
+  EXPECT_TRUE(tendermint_isValidDenom("tcy"));
+  EXPECT_TRUE(tendermint_isValidDenom("rujira"));
+  EXPECT_TRUE(tendermint_isValidDenom("eth.eth"));
+  EXPECT_TRUE(tendermint_isValidDenom("btc/btc"));
+  EXPECT_TRUE(tendermint_isValidDenom("cross-chain"));
 
-  EXPECT_FALSE(thorchain_isValidDenom(""));        // empty → caller uses "rune"
-  EXPECT_FALSE(thorchain_isValidDenom("RUNE"));    // uppercase rejected
-  EXPECT_FALSE(thorchain_isValidDenom("rune\""));  // quote injection
-  EXPECT_FALSE(thorchain_isValidDenom("rune\\n"));  // backslash injection
-  EXPECT_FALSE(thorchain_isValidDenom(" rune"));    // leading space
-  EXPECT_FALSE(thorchain_isValidDenom("ru ne"));    // embedded space
+  EXPECT_FALSE(tendermint_isValidDenom(""));      // empty → caller uses "rune"
+  EXPECT_FALSE(tendermint_isValidDenom("RUNE"));  // uppercase rejected
+  EXPECT_FALSE(tendermint_isValidDenom("rune\""));   // quote injection
+  EXPECT_FALSE(tendermint_isValidDenom("rune\\n"));  // backslash injection
+  EXPECT_FALSE(tendermint_isValidDenom(" rune"));    // leading space
+  EXPECT_FALSE(tendermint_isValidDenom("ru ne"));    // embedded space
 }
 
 // Invalid denom must cause thorchain_signTxUpdateMsgSend to return false
@@ -403,9 +373,9 @@ TEST(Thorchain, DepositAssetAndSignerFailClosed) {
 }
 
 TEST(Thorchain, DeclaredDepositAssetValidatorEnforcesGrammar) {
-  EXPECT_TRUE(thorchain_isValidAsset("THOR.RUNE"));
-  EXPECT_TRUE(thorchain_isValidAsset("BTC/BTC"));
-  EXPECT_FALSE(thorchain_isValidAsset("THOR:RUNE"));
-  EXPECT_FALSE(thorchain_isValidAsset("THOR_RUNE"));
-  EXPECT_FALSE(thorchain_isValidAsset(nullptr));
+  EXPECT_TRUE(tendermint_isValidAsset("THOR.RUNE"));
+  EXPECT_TRUE(tendermint_isValidAsset("BTC/BTC"));
+  EXPECT_FALSE(tendermint_isValidAsset("THOR:RUNE"));
+  EXPECT_FALSE(tendermint_isValidAsset("THOR_RUNE"));
+  EXPECT_FALSE(tendermint_isValidAsset(nullptr));
 }
