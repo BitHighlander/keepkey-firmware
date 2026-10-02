@@ -1722,6 +1722,10 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
 
   EXPECT_TRUE(solana_token_info_trusted(&ti));
 
+  // Display: attested symbol only when the signed decimals match.
+  EXPECT_STREQ(solana_displaySymbol(&ti, nullptr, 6), "USDC");
+  EXPECT_EQ(solana_displaySymbol(&ti, nullptr, 9), nullptr);
+
   // Attested-tuple disagreement: a different decimals no longer matches the
   // sig.
   ti.decimals = 9;
@@ -1739,9 +1743,23 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   EXPECT_FALSE(solana_token_info_trusted(&ti));
   ti.signer_key_id = TEST_KEY_ID;
 
-  // No attestation -> not trusted (the caller falls back to unsigned display).
+  // No attestation -> not trusted, and the host's symbol is never displayed,
+  // even when its claimed decimals match the signed ones.
   ti.has_signature = false;
   EXPECT_FALSE(solana_token_info_trusted(&ti));
+  EXPECT_EQ(solana_displaySymbol(&ti, nullptr, 6), nullptr);
+  EXPECT_EQ(solana_displaySymbol(nullptr, nullptr, 6), nullptr);
+
+  // A firmware-known mint shows the table symbol whatever the host sent.
+  static const uint8_t usdc_mint[32] = {
+      0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
+      0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
+      0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61};
+  const SolanaKnownToken* known = solana_findKnownToken(usdc_mint);
+  ASSERT_NE(known, nullptr);
+  strcpy(ti.symbol, "FAKE");
+  EXPECT_STREQ(solana_displaySymbol(&ti, known, 6), "USDC");
+  EXPECT_STREQ(solana_displaySymbol(nullptr, known, 6), "USDC");
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
