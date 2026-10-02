@@ -5,12 +5,12 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
-#include "trezor/crypto/sha3.h"
 #include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/ed25519-donna/ed25519.h"
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 #include <cstring>
 #include <string>
@@ -576,44 +576,19 @@ TEST(Solana, ParseTxTooShort) {
  * past accounts[31] as a uint16_t loop bound) or a value that silently wraps
  * to a small/zero uint8_t (256, 512, ...), which would have reintroduced the
  * original signer-check bypass this fix closed. */
-TEST(Solana, RejectsThirtyThreeAccounts) {
-  uint8_t raw[4];
-  size_t pos = 0;
-  raw[pos++] = 1;  /* num_required_sigs */
-  raw[pos++] = 0;  /* num_readonly_signed */
-  raw[pos++] = 1;  /* num_readonly_unsigned */
-  raw[pos++] = 33; /* compact-u16 num_accounts: 33 > SOL_MAX_ACCOUNTS(32) */
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-}
-
-TEST(Solana, RejectsAccountCountWrapAt256) {
-  uint8_t raw[5];
-  size_t pos = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  /* compact-u16 for 256: byte0 = (256 & 0x7F) | 0x80, byte1 = 256 >> 7 */
-  raw[pos++] = 0x80;
-  raw[pos++] = 0x02;
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
-}
-
-TEST(Solana, RejectsAccountCountWrapAt512) {
-  uint8_t raw[5];
-  size_t pos = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  /* compact-u16 for 512: byte0 = (512 & 0x7F) | 0x80, byte1 = 512 >> 7 */
-  raw[pos++] = 0x80;
-  raw[pos++] = 0x04;
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+TEST(Solana, RejectsAccountCountsAboveTheLimitOrWrapping) {
+  /* Header (1 signer, 0 readonly signed, 1 readonly unsigned), then the
+   * compact-u16 account count: 33, 256 (0x80 0x02) and 512 (0x80 0x04). */
+  const std::vector<std::vector<uint8_t>> counts = {
+      {33}, {0x80, 0x02}, {0x80, 0x04}};
+  for (const auto& count : counts) {
+    std::vector<uint8_t> raw = {1, 0, 1};
+    raw.insert(raw.end(), count.begin(), count.end());
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+              SOL_TX_REVIEW_MALFORMED)
+        << (int)count.back();
+  }
 }
 
 TEST(Solana, RejectsTrailingBytes) {
@@ -987,24 +962,8 @@ TEST(Solana, CertifiedLookupProofBindsMessageKeysOrderAndScope) {
   clearsign_root_set_test_root(root_pub);
 
   auto mint = [&](uint32_t scope) {
-    std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
-    c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
-    c[CLEARSIGN_CERT_OFF_FLAGS] = CLEARSIGN_USAGE_MAY_SUPPRESS_RAW;
-    for (int i = 0; i < 4; i++) {
-      c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
-      c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
-    }
-    memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
-    memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, 33);
-    const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
-    uint8_t pre[66] = {0x19, 0x01};
-    memcpy(pre + 2, ds, 32);
-    keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
-    uint8_t digest[32];
-    keccak_256(pre, sizeof(pre), digest);
-    EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, root_priv, digest,
-                                   &c[CLEARSIGN_CERT_OFF_SIG], NULL, NULL));
-    return c;
+    return rootCert(root_priv, delegate_pub, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                    scope, 1818806400u, "Test Delegate");
   };
   const std::vector<uint8_t> cert = mint(CLEARSIGN_SCOPE_SOLANA);
 

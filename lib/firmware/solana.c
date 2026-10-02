@@ -1464,13 +1464,14 @@ void solana_formatDuration(char* buf, size_t len, uint64_t seconds) {
            kUnits[i]);
 }
 
-static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
-                                         const uint8_t (*accounts)[32],
-                                         size_t num_accounts, uint8_t* blob,
-                                         size_t blob_capacity,
-                                         size_t* blob_len) {
-  if (!raw_tx || !accounts || !blob || !blob_len || num_accounts == 0)
-    return false;
+/* Verify `sig` over the lookup-account preimage: under the root-certified
+ * delegate when `certificate` is set, else under runtime signer slot
+ * `signer_key_id`. */
+static bool solana_lut_accounts_verify(
+    const uint8_t* raw_tx, size_t raw_len, const uint8_t (*accounts)[32],
+    size_t num_accounts, uint32_t signer_key_id, const uint8_t* certificate,
+    size_t certificate_len, const uint8_t* sig, size_t sig_len) {
+  if (!raw_tx || !accounts || !sig || num_accounts == 0) return false;
   if (num_accounts > SOL_MAX_LUT_ACCOUNTS) return false;
 
   /* Bind to the transaction by hashing the exact bytes being signed. Solana
@@ -1491,9 +1492,8 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
      shape as solana_token_info_trusted(). Bounded by SOL_MAX_LUT_ACCOUNTS, so
      the worst case is 25 + 32 + 4 + 8*32 = 317 bytes. */
   static const char kTag[] = "KeepKeySolanaTxAccounts/1";
-  const size_t required = sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
-                          num_accounts * SOL_PUBKEY_SIZE;
-  if (blob_capacity < required) return false;
+  uint8_t blob[sizeof(kTag) - 1 + SHA256_DIGEST_LENGTH + 4 +
+               SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
   size_t n = 0;
   memcpy(blob + n, kTag, sizeof(kTag) - 1);
   n += sizeof(kTag) - 1;
@@ -1509,25 +1509,22 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
     n += SOL_PUBKEY_SIZE;
   }
 
-  *blob_len = n;
-  return true;
+  if (certificate) {
+    return clearsign_root_verify_delegate_attestation(
+        certificate, certificate_len, CLEARSIGN_SCOPE_SOLANA, blob, n, sig,
+        sig_len);
+  }
+  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
+                                            sig, sig_len);
 }
 
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,
                                  const uint8_t* sig, size_t sig_len) {
-  if (!sig || signer_key_id >= METADATA_MAX_KEYS) return false;
-  uint8_t blob[sizeof("KeepKeySolanaTxAccounts/1") - 1 + SHA256_DIGEST_LENGTH +
-               4 + SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
-  size_t n = 0;
-  if (!solana_lut_accounts_preimage(raw_tx, raw_len, accounts, num_accounts,
-                                    blob, sizeof(blob), &n)) {
-    return false;
-  }
-
-  return signed_metadata_verify_attestation((uint8_t)signer_key_id, blob, n,
-                                            sig, sig_len);
+  return signer_key_id < METADATA_MAX_KEYS &&
+         solana_lut_accounts_verify(raw_tx, raw_len, accounts, num_accounts,
+                                    signer_key_id, NULL, 0, sig, sig_len);
 }
 
 bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
@@ -1536,17 +1533,9 @@ bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
                                    const uint8_t* certificate,
                                    size_t certificate_len, const uint8_t* sig,
                                    size_t sig_len) {
-  if (!certificate || !sig) return false;
-  uint8_t blob[sizeof("KeepKeySolanaTxAccounts/1") - 1 + SHA256_DIGEST_LENGTH +
-               4 + SOL_MAX_LUT_ACCOUNTS * SOL_PUBKEY_SIZE];
-  size_t n = 0;
-  if (!solana_lut_accounts_preimage(raw_tx, raw_len, accounts, num_accounts,
-                                    blob, sizeof(blob), &n)) {
-    return false;
-  }
-  return clearsign_root_verify_delegate_attestation(
-      certificate, certificate_len, CLEARSIGN_SCOPE_SOLANA, blob, n, sig,
-      sig_len);
+  return certificate &&
+         solana_lut_accounts_verify(raw_tx, raw_len, accounts, num_accounts, 0,
+                                    certificate, certificate_len, sig, sig_len);
 }
 
 /* ------------------------------------------------------------------ */

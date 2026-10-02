@@ -119,11 +119,6 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
   SolanaInstrSchema schema;
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
               _("AdvancedMode required for schema attestation"));
-  if (msg->payload.size < 8 || memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported descriptor");
-    layoutHome();
-    return;
-  }
   if (!solana_parseInstrSchema(msg->payload.bytes, msg->payload.size,
                                &schema)) {
     memzero(&schema, sizeof(schema));
