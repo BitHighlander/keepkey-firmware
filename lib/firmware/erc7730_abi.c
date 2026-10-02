@@ -108,3 +108,42 @@ Erc7730AbiResult erc7730_abi_validate_program(const Erc7730AbiProgram* p) {
     return ERC7730_ABI_RESOURCE_LIMIT;
   return ERC7730_ABI_OK;
 }
+
+bool erc7730_utf8_consume(uint8_t* remaining, uint8_t* lower, uint8_t* upper,
+                          uint8_t byte, bool printable_ascii_only) {
+  if (*remaining != 0) {
+    if (byte < *lower || byte > *upper) return false;
+    *lower = 0x80;
+    *upper = 0xbf;
+    (*remaining)--;
+    return true;
+  }
+  if (byte < 0x80)
+    return !printable_ascii_only || (byte >= 0x20 && byte <= 0x7e);
+  if (byte >= 0xc2 && byte <= 0xdf) {
+    *remaining = 1;
+  } else if (byte == 0xe0) {
+    *remaining = 2;
+    *lower = 0xa0;
+    *upper = 0xbf;
+  } else if (byte >= 0xe1 && byte <= 0xec) {
+    *remaining = 2;
+  } else if (byte == 0xed) {
+    *remaining = 2;
+    *upper = 0x9f;
+  } else if (byte >= 0xee && byte <= 0xef) {
+    *remaining = 2;
+  } else if (byte == 0xf0) {
+    *remaining = 3;
+    *lower = 0x90;
+    *upper = 0xbf;
+  } else if (byte >= 0xf1 && byte <= 0xf3) {
+    *remaining = 3;
+  } else if (byte == 0xf4) {
+    *remaining = 3;
+    *upper = 0x8f;
+  } else {
+    return false;
+  }
+  return true;
+}
