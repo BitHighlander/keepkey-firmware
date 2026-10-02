@@ -1034,20 +1034,19 @@ static bool intent_width(void* ctx, bool placeholder, bool value, uint8_t index,
   return true;
 }
 
-bool signed_metadata_vouched_name(uint32_t chain_id, const uint8_t address[20],
-                                  const char** name, const char** alias,
-                                  char fp8[9]) {
-  if (!metadata_available || metadata_tier != METADATA_TIER_KEEPKEY ||
-      stored_metadata.version != METADATA_VERSION_NAME ||
-      stored_metadata.classification != METADATA_VERIFIED ||
-      stored_metadata.chain_id != chain_id || !address ||
-      memcmp(stored_metadata.contract_address, address, 20) != 0) {
-    return false;
+void signed_metadata_take_name(MetadataNameRecord* out) {
+  memzero(out, sizeof(*out));
+  if (metadata_available && metadata_tier == METADATA_TIER_KEEPKEY &&
+      stored_metadata.version == METADATA_VERSION_NAME &&
+      stored_metadata.classification == METADATA_VERIFIED) {
+    out->valid = true;
+    out->chain_id = stored_metadata.chain_id;
+    memcpy(out->address, stored_metadata.contract_address, 20);
+    strlcpy(out->name, stored_metadata.vouched_name, sizeof(out->name));
+    strlcpy(out->alias, delegate_alias, sizeof(out->alias));
+    strlcpy(out->fp8, delegate_fp, sizeof(out->fp8));
   }
-  *name = stored_metadata.vouched_name;
-  *alias = delegate_alias;
-  strlcpy(fp8, delegate_fp, 9);
-  return true;
+  signed_metadata_clear();
 }
 
 bool signed_metadata_intent_valid(const SignedMetadata* md) {

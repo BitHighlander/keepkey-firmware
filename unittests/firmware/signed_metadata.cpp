@@ -2308,25 +2308,24 @@ TEST_F(CertifiedMetadataTest, NameRecordNamesOnlyItsAddressOnItsChain) {
   // A name claims no transaction: SignTx must not refuse because of it.
   EXPECT_FALSE(signed_metadata_certified_claimed());
 
-  const char* name = nullptr;
-  const char* alias = nullptr;
-  char fp8[9];
-  ASSERT_TRUE(signed_metadata_vouched_name(1, UR_V2, &name, &alias, fp8));
-  EXPECT_STREQ(name, "Uniswap Universal Router");
-  EXPECT_STREQ(alias, "Test Delegate");
-  EXPECT_EQ(strlen(fp8), 8u);
-
-  uint8_t other[20];
-  memcpy(other, UR_V2, 20);
-  other[19] ^= 1;
-  EXPECT_FALSE(signed_metadata_vouched_name(1, other, &name, &alias, fp8));
-  EXPECT_FALSE(signed_metadata_vouched_name(42161, UR_V2, &name, &alias, fp8));
-
   // It can never describe calldata, even to the named address.
   std::vector<uint8_t> data = v2_transfer_calldata();
   EthereumSignTx msg;
   make_v2_msg(&msg, UR_V2, data, true, (uint32_t)data.size());
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+
+  MetadataNameRecord r;
+  signed_metadata_take_name(&r);
+  ASSERT_TRUE(r.valid);
+  EXPECT_EQ(r.chain_id, 1u);
+  EXPECT_EQ(memcmp(r.address, UR_V2, 20), 0);
+  EXPECT_STREQ(r.name, "Uniswap Universal Router");
+  EXPECT_STREQ(r.alias, "Test Delegate");
+  EXPECT_EQ(strlen(r.fp8), 8u);
+  // Taken once: the next request finds nothing.
+  EXPECT_FALSE(signed_metadata_available());
+  signed_metadata_take_name(&r);
+  EXPECT_FALSE(r.valid);
 }
 
 TEST_F(CertifiedMetadataTest, NameRecordScopedToAnotherChainIsRefused) {
@@ -2340,10 +2339,9 @@ TEST_F(SignedMetadataTest, RuntimeSignerCannotNameAnAddress) {
   std::vector<uint8_t> blob =
       sign_body(name_body(1, UR_V2, "Uniswap Universal Router", TEST_KEY_ID));
   signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID);
-  const char* name = nullptr;
-  const char* alias = nullptr;
-  char fp8[9];
-  EXPECT_FALSE(signed_metadata_vouched_name(1, UR_V2, &name, &alias, fp8));
+  MetadataNameRecord r;
+  signed_metadata_take_name(&r);
+  EXPECT_FALSE(r.valid);
 }
 
 /* The exact bytes the ClearSign server serializes for Uniswap's mainnet
