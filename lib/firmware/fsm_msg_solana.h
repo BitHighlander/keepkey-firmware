@@ -1139,10 +1139,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     if (!storage_isPolicyEnabled("AdvancedMode") ||
         /* A runtime template is a heading only (SRS-7.15 R-1.5). */
         (schema.intent[0] != '\0' &&
-         !solana_buildIntentReview(msg, &parsed, &schema, schema_ix,
-                                   node->public_key + 1, signer_alias,
-                                   signer_fp, false, solana_review_emit,
-                                   NULL)) ||
+         !solana_buildIntentReview(
+             msg, &parsed, &schema, schema_ix, node->public_key + 1,
+             signer_alias, signer_fp, false, solana_review_emit, NULL)) ||
         !solana_confirmSchemaTransaction(msg, false, &schema, &parsed,
                                          schema_ix, signer_alias, signer_fp) ||
         !confirm(ButtonRequestType_ButtonRequest_SignTx, "Advanced Mode",
@@ -1255,8 +1254,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   /* Bind the raw compute-budget fields above to the actual SOL at risk, on
-   * every fully verified review and every certified one. */
-  if (review_binds_fee && !solana_confirmPriorityFee(&parsed)) {
+   * every fully verified review. The certified review already showed it on
+   * its Limits screen (SRS-7.16 R-7.3); validation above still ran. */
+  if (review_binds_fee && !certified && !solana_confirmPriorityFee(&parsed)) {
     memzero(node, sizeof(*node));
     memzero(&schema, sizeof(schema));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
