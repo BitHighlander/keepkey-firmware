@@ -103,6 +103,13 @@ separates 7.15 from 7.16.**
 > protocol, amounts and recipient — and then *the same raw-data review they
 > would have seen with no provider at all*. Nothing is taken away.
 
+**R-1.5 Runtime intent annotation (owner decision 2026-10-02).** Behind
+AdvancedMode, a runtime schema MAY carry an intent template with argument roles
+in the same format as SRS-7.16 R-7.1–R-7.3. The device renders it only as a
+heading, "<alias> (NOT verified by KeepKey) says:", followed by the firmware's
+limits screen and then the complete raw review of R-1.1, unchanged. It never
+shortens, reorders or replaces that review; R-1.3 and R-2.4 apply unchanged.
+
 ### 3.2 Provider trust is opt-in and dies on its own
 
 **R-2.1** AdvancedMode SHALL be session state, never a flash bit.
