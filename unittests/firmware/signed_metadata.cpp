@@ -2252,3 +2252,28 @@ TEST_F(CertifiedMetadataTest, IntentSchemaCertifiedReviewReplacesRawAndValue) {
   EXPECT_EQ(0, kkconfirm_drain());
   EXPECT_TRUE(signed_metadata_relied());
 }
+
+/* The ETH amount screen is skipped ONLY when Limits states msg.value: a
+ * certified 0x05 schema whose value has no role keeps it for a payable call. */
+TEST_F(CertifiedMetadataTest, IntentSchemaWithoutValueRoleKeepsTheValueScreen) {
+  IntentSpec s = relay_intent();
+  s.value_role = METADATA_ROLE_NONE;
+  s.intent = "Bridge through Relay for {0}; delivery is by Relay";
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_intent_body(s)))));
+  static const uint8_t DEPOSITOR[20] = {
+      0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1, 0x2c, 0xa8, 0x6a,
+      0xa7, 0x10, 0xb5, 0x4c, 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  std::vector<uint8_t> data(s.v2.selector.begin(), s.v2.selector.end());
+  put_addr_word(data, DEPOSITOR);
+  for (int i = 0; i < 32; i++) data.push_back((uint8_t)i);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
+}

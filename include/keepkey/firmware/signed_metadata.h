@@ -116,7 +116,6 @@ typedef struct {
   char title[METADATA_TITLE_MAX + 1];
   char intent[METADATA_INTENT_MAX + 1];
   uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
-  uint8_t tx_value_len;
 } SignedMetadata;
 
 /* One review screen: text, or (BYTES) a byte range to page. */

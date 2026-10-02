@@ -767,9 +767,10 @@ static MetadataClassification process_certified(const uint8_t* payload,
   if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
     return METADATA_MALFORMED;
 
-  /* LOAD-BEARING: inner MUST be v2, whose values the device decodes from the
-   * calldata it signs. v1 values are signer-supplied and could show any
-   * amount over calldata doing something else. */
+  /* LOAD-BEARING: inner MUST be a device-decoded schema (v2 or the 0x05
+   * intent schema), whose values the device decodes from the calldata it
+   * signs. v1 values are signer-supplied and could show any amount over
+   * calldata doing something else. */
   if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
       stored_metadata.version != METADATA_VERSION_SCHEMA_INTENT) {
     signed_metadata_clear();
@@ -863,7 +864,6 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     if (msg->value.size > sizeof(stored_metadata.tx_value)) return false;
     memcpy(stored_metadata.tx_value + 32 - msg->value.size, msg->value.bytes,
            msg->value.size);
-    stored_metadata.tx_value_len = 32;
     if (stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
         stored_metadata.value_role != METADATA_ROLE_NONE) {
       metadata_schema_moves_value = false;
@@ -1381,8 +1381,8 @@ bool signed_metadata_enforce_decision(bool relied, bool available,
 
 bool signed_metadata_enforce_schema_decision(bool relied, bool available,
                                              bool decoded, int classification) {
-  /* v2 binding is structural (see decode_v2_args); `decoded` is the explicit
-   * proof, never inferred from call order. */
+  /* v2/0x05 binding is structural (see decode_v2_args); `decoded` is the
+   * explicit proof, never inferred from call order. */
   return !relied ||
          (available && decoded && classification == METADATA_VERIFIED);
 }
