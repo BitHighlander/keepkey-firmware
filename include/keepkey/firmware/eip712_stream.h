@@ -126,7 +126,6 @@ typedef enum {
   EIP712_IDLE = 0,
   EIP712_WANT_STRUCT, /* a StructAck will arrive next */
   EIP712_WANT_VALUE,  /* a ValueAck will arrive next */
-  EIP712_FAILED,
 } Eip712Wait;
 
 /* The walk never writes a message itself, keeping it unit-testable. */

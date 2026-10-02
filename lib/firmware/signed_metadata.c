@@ -491,9 +491,10 @@ static bool icon_renderable(const uint8_t* icon, uint16_t icon_len,
 }
 #endif
 
-bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
-                                 uint8_t* w_out, uint8_t* h_out,
-                                 uint16_t* len_out) {
+static bool signed_metadata_signer_icon(uint8_t key_id,
+                                        const uint8_t** icon_out,
+                                        uint8_t* w_out, uint8_t* h_out,
+                                        uint16_t* len_out) {
   if (key_id >= METADATA_MAX_KEYS) return false;
   if (loaded_pubkeys[key_id][0] != 0x00) {
 #if ZCASH_PRIVACY
@@ -569,10 +570,6 @@ void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
   sha256_Raw(pubkey, 33, digest);
   data2hex(digest, (METADATA_FINGERPRINT_LEN - 1u) / 2u, out);
   memzero(digest, sizeof(digest));
-}
-
-bool signed_metadata_from_loaded_signer(void) {
-  return metadata_available && metadata_signer_loaded;
 }
 
 /* Resolve the verification key for a slot. */

@@ -96,11 +96,8 @@ bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
                                   uint8_t icon_w, uint8_t icon_h,
                                   uint16_t icon_len, bool persist);
 
-/* NULL / false when the slot has no signer or no icon. */
+/* NULL when the slot has no signer. */
 const char* signed_metadata_signer_alias(uint8_t key_id);
-bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
-                                 uint8_t* w_out, uint8_t* h_out,
-                                 uint16_t* len_out);
 
 /* LoadClearsignSigner consent: icon + alias + fingerprint. */
 bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
@@ -114,8 +111,6 @@ void signed_metadata_clear_signers(void);
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]);
 
-/* => warning-first confirm flow, never "Insight Verified". */
-bool signed_metadata_from_loaded_signer(void);
 /* Lets non-EVM callers keep their Advanced-mode review after a decode. */
 bool signed_metadata_signer_is_runtime(uint8_t key_id);
 MetadataClassification signed_metadata_process(const uint8_t* payload,
