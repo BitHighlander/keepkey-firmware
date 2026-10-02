@@ -44,13 +44,9 @@ static void osmosis_format_amount(char* out, size_t out_len,
   snprintf(out, out_len, "%s OSMO", decimal_buf);
 }
 
-/* The audited MsgSend policy bounds the NATIVE amount to uint64 despite the
- * decimal-string wire field. Other denominations (IBC hashes, factory denoms)
- * have an exponent the firmware cannot know: an 18-decimal asset would be
- * capped at about 18.4 tokens by the same bound. They keep the wire limit of
- * 32 digits, and the exact integer is displayed and signed, so the bound is not
- * applied to them. Pool shares and swap amounts use wider decimal strings, so
- * this bound must not change their validator. */
+/* uint64 bound for native uosmo only: other denoms have unknown exponents
+ * and keep the 32-digit wire limit (exact integer shown and signed). Must not
+ * be applied to pool/swap amounts. */
 static bool osmosis_validate_send_amount(bool has_value, const char* value,
                                          const char* denom) {
   static const char maximum[] = "18446744073709551615";

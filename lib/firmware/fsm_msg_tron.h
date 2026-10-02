@@ -103,16 +103,13 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     return;
   }
 
-  /* Clear-sign from raw_data itself — the exact bytes being signed.
-   * (The proto's side-channel to_address/amount fields are never trusted:
-   * they are not part of what is signed.) */
+  /* Clear-sign raw_data only; proto to_address/amount are never signed. */
   TronParsedTx parsed;
   TronTxType tx_type =
       tron_parseRawTx(msg->raw_data.bytes, msg->raw_data.size, &parsed);
 
   if (tx_type == TRON_TX_UNVERIFIED) {
-    /* Unrecognized contract or payload: explicit blind-sign only,
-     * same policy gate as Solana opaque transactions. */
+    /* Unrecognized payload: explicit blind-sign only, as for Solana. */
     if (!storage_isPolicyEnabled("AdvancedMode")) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_Other,
@@ -182,9 +179,7 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     }
 
     if (confirmed && parsed.memo_len > 0) {
-      /* raw_data.data is signed verbatim. A byte count or one unpaged screen
-       * hides a long memo's tail; confirm_bytes pages and escapes every byte.
-       */
+      /* raw_data.data is signed verbatim: page and escape every byte. */
       confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmMemo,
                                 "Memo", parsed.memo, parsed.memo_len);
     }
@@ -321,10 +316,8 @@ void fsm_msgTronSignTypedHash(const TronSignTypedHash* msg) {
     return;
   }
 
-  /* Blind-sign gate: device only receives pre-computed hashes — it cannot
-   * reconstruct or verify the original typed-data struct. Require the same
-   * AdvancedMode policy as TronSignTx blind-signing so this message type
-   * can't be used to route around the kill-switch. */
+  /* Only hashes arrive, so this is blind; gate it like TronSignTx so it cannot
+   * route around the AdvancedMode kill-switch. */
   if (!storage_isPolicyEnabled("AdvancedMode")) {
     memzero(node, sizeof(*node));
     (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",

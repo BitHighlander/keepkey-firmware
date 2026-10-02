@@ -31,9 +31,7 @@ bool hive_getPublicKey(const uint8_t public_key[33], char* out,
                              out_len - prefix_len);
 }
 
-// ── Single-role key derivation to raw 33 bytes ────────────────────────────
 // Path: m/48'/13'/role_hardened/account_index_hardened/0'
-// hdnode_private_ckd() returns 1 on success, 0 on failure.
 
 bool hive_deriveRawKey(const HDNode* root, uint32_t role_hardened,
                        uint32_t account_index_hardened, uint8_t out[33]) {
@@ -52,8 +50,6 @@ fail:
   memzero(&node, sizeof(node));
   return false;
 }
-
-// ── SLIP-0048 multi-role key derivation ───────────────────────────────────
 
 bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
                         char* owner_out, size_t owner_len, char* active_out,
@@ -128,9 +124,7 @@ static void append_string(uint8_t** buf, const uint8_t* end, const char* s) {
     append_u8(buf, end, (uint8_t)s[i]);
 }
 
-/*
- * Graphene asset encoding: int64 LE amount + uint8 precision + 7-byte symbol
- */
+/* Graphene asset: int64 LE amount + uint8 precision + 7-byte symbol */
 static void append_asset(uint8_t** buf, const uint8_t* end, uint64_t amount,
                          uint8_t precision, const char* symbol) {
   append_u64_le(buf, end, amount);
@@ -141,16 +135,8 @@ static void append_asset(uint8_t** buf, const uint8_t* end, uint64_t amount,
     append_u8(buf, end, (uint8_t)sym[i]);
 }
 
-/*
- * Graphene authority structure (Hive wire format):
- *   weight_threshold (uint32 LE) = 1
- *   num_account_auths (varint)   = 0
- *   num_key_auths (varint)       = 1
- *     compressed public key      (33 bytes, no type prefix)
- *     weight (uint16 LE)         = 1
- *
- * Note: Hive does NOT use a key-type prefix byte before the 33 raw bytes.
- */
+/* Graphene authority: threshold u32=1, account_auths varint=0, key_auths
+ * varint=1, 33-byte key (NO type prefix), weight u16=1. */
 static void append_authority(uint8_t** buf, const uint8_t* end,
                              const uint8_t pubkey[33]) {
   append_u32_le(buf, end, 1);  // weight_threshold = 1
@@ -160,10 +146,7 @@ static void append_authority(uint8_t** buf, const uint8_t* end,
   append_u16_le(buf, end, 1);  // weight = 1
 }
 
-/*
- * Common transaction header: ref_block_num, ref_block_prefix, expiration,
- * then a varint op count = 1, then the op type varint.
- */
+/* ref_block_num, ref_block_prefix, expiration, op count 1, op type. */
 static void append_tx_header(uint8_t** buf, const uint8_t* end,
                              uint16_t ref_block_num, uint32_t ref_block_prefix,
                              uint32_t expiration, uint32_t op_type) {
@@ -178,11 +161,7 @@ static void append_tx_footer(uint8_t** buf, const uint8_t* end) {
   append_varint(buf, end, 0);  // 0 extensions
 }
 
-/*
- * Graphene canonical-signature rule (identical to EOS/Steem): high bit of
- * both r and s must be clear. hived rejects non-canonical compact sigs, so
- * signing must retry until canonical — same predicate as eos_is_canonic.
- */
+/* hived rejects non-canonical sigs (as EOS): retry until canonical. */
 static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
   (void)v;
   return !(signature[0] & 0x80) &&
@@ -191,10 +170,7 @@ static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
          !(signature[32] == 0 && !(signature[33] & 0x80));
 }
 
-/*
- * Sign helper: SHA256(chain_id || serialized_tx) → secp256k1 recoverable sig.
- * Writes 65 bytes into sig[]. Returns true on success.
- */
+/* 65-byte recoverable sig over SHA256(chain_id || serialized_tx). */
 static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
                              const uint8_t* tx_buf, size_t tx_len,
                              uint8_t sig[65]) {
@@ -355,11 +331,8 @@ void hive_signTx(const HDNode* node, const HiveSignTx* msg,
   memzero(tx_buf, tx_len);
 }
 
-// ── Account create (op type 9) ────────────────────────────────────────────
-//
-// All four role keys are device-derived by the caller (FSM handler) and
-// passed as raw 33-byte compressed public keys. The firmware never uses
-// host-supplied key strings for the actual transaction.
+// Account create (op 9): all role keys are device-derived; host-supplied key
+// strings are never signed.
 
 static size_t hive_serialize_account_create(const HiveSignAccountCreate* msg,
                                             const uint8_t owner_raw[33],
@@ -374,19 +347,14 @@ static size_t hive_serialize_account_create(const HiveSignAccountCreate* msg,
                    msg->ref_block_prefix, msg->expiration,
                    HIVE_OP_ACCOUNT_CREATE);
 
-  // fee (asset)
   uint64_t fee = msg->has_fee_amount ? msg->fee_amount : 3000;
   append_asset(&p, end, fee, HIVE_DECIMALS, HIVE_WIRE_SYMBOL_HIVE);
 
-  // creator
   append_string(&p, end, msg->has_creator ? msg->creator : "");
 
-  // new_account_name
   append_string(&p, end,
                 msg->has_new_account_name ? msg->new_account_name : "");
 
-  // authority fields use device-derived raw bytes (no host trust, no type
-  // prefix)
   append_authority(&p, end, owner_raw);
   append_authority(&p, end, active_raw);
   append_authority(&p, end, posting_raw);
@@ -394,7 +362,6 @@ static size_t hive_serialize_account_create(const HiveSignAccountCreate* msg,
   // memo_key: 33 raw bytes, no authority wrapper, no type prefix byte
   for (int i = 0; i < 33 && p < end; i++) append_u8(&p, end, memo_raw[i]);
 
-  // json_metadata (empty)
   append_string(&p, end, "");
   append_tx_footer(&p, end);
 
@@ -438,10 +405,7 @@ void hive_signAccountCreate(const HDNode* signing_node,
   memzero(tx_buf, tx_len);
 }
 
-// ── Account update (op type 10) ───────────────────────────────────────────
-//
-// All four new role keys are device-derived by the caller (FSM handler).
-// The host-supplied new_*_key fields in the message are not used for signing.
+// Account update (op 10): device-derived keys; new_*_key fields are ignored.
 
 static size_t hive_serialize_account_update(const HiveSignAccountUpdate* msg,
                                             const uint8_t owner_raw[33],
@@ -456,15 +420,9 @@ static size_t hive_serialize_account_update(const HiveSignAccountUpdate* msg,
                    msg->ref_block_prefix, msg->expiration,
                    HIVE_OP_ACCOUNT_UPDATE);
 
-  // account name
   append_string(&p, end, msg->has_account ? msg->account : "");
 
-  /*
-   * account_update optional authority fields use a Graphene "optional" wrapper:
-   *   present: 0x01 + authority bytes
-   *   absent:  0x00
-   * We always include all four — this replaces all authorities.
-   */
+  /* Optional wrapper (0x01 + authority); all are present and replaced. */
   append_u8(&p, end, 0x01);  // owner present
   append_authority(&p, end, owner_raw);
   append_u8(&p, end, 0x01);  // active present
@@ -475,7 +433,6 @@ static size_t hive_serialize_account_update(const HiveSignAccountUpdate* msg,
   // memo_key: 33 raw bytes, always present, no type prefix byte
   for (int i = 0; i < 33 && p < end; i++) append_u8(&p, end, memo_raw[i]);
 
-  // json_metadata (empty)
   append_string(&p, end, "");
   append_tx_footer(&p, end);
 
