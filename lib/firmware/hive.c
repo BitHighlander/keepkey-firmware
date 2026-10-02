@@ -10,6 +10,7 @@
  */
 
 #include "keepkey/firmware/hive.h"
+#include "keepkey/firmware/eos.h"
 
 #include "trezor/crypto/base58.h"
 #include "trezor/crypto/memzero.h"
@@ -161,16 +162,8 @@ static void append_tx_footer(uint8_t** buf, const uint8_t* end) {
   append_varint(buf, end, 0);  // 0 extensions
 }
 
-/* hived rejects non-canonical sigs (as EOS): retry until canonical. */
-static int hive_is_canonic(uint8_t v, uint8_t signature[64]) {
-  (void)v;
-  return !(signature[0] & 0x80) &&
-         !(signature[0] == 0 && !(signature[1] & 0x80)) &&
-         !(signature[32] & 0x80) &&
-         !(signature[32] == 0 && !(signature[33] & 0x80));
-}
-
-/* 65-byte recoverable sig over SHA256(chain_id || serialized_tx). */
+/* 65-byte recoverable sig over SHA256(chain_id || serialized_tx); hived
+ * rejects non-canonical sigs as EOS does, so retry until canonical. */
 static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
                              const uint8_t* tx_buf, size_t tx_len,
                              uint8_t sig[65]) {
@@ -183,7 +176,7 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
 
   uint8_t pby;
   if (ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig + 1, &pby,
-                        hive_is_canonic) != 0) {
+                        eos_is_canonic) != 0) {
     memzero(digest, sizeof(digest));
     return false;
   }
@@ -191,6 +184,29 @@ static bool hive_sign_digest(const HDNode* node, const uint8_t* chain_id,
   sig[0] = 27 + pby + 4;
   memzero(digest, sizeof(digest));
   return true;
+}
+
+/* Shared tail of every Hive signer: sign chain_id (mainnet when absent) ||
+ * tx, fill the response's signature + serialized tx, wipe the buffers. */
+static void hive_sign_finish(const HDNode* node, bool has_chain_id,
+                             const uint8_t* chain_id_in, uint8_t tx_buf[512],
+                             size_t tx_len, bool* has_sig, pb_size_t* sig_size,
+                             uint8_t sig_out[65], bool* has_tx,
+                             pb_size_t* tx_size, uint8_t* tx_out) {
+  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
+  const uint8_t* chain_id = has_chain_id ? chain_id_in : default_chain_id;
+
+  uint8_t sig[65];
+  if (hive_sign_digest(node, chain_id, tx_buf, tx_len, sig)) {
+    *has_sig = true;
+    *sig_size = 65;
+    memcpy(sig_out, sig, 65);
+    *has_tx = true;
+    *tx_size = (pb_size_t)tx_len;
+    memcpy(tx_out, tx_buf, tx_len);
+  }
+  memzero(sig, sizeof(sig));
+  memzero(tx_buf, 512);
 }
 
 // ── Transfer (op type 2) ──────────────────────────────────────────────────
@@ -302,33 +318,14 @@ void hive_signTx(const HDNode* node, const HiveSignTx* msg,
                  HiveSignedTx* resp) {
   if (!hive_validateTransfer(msg)) return;
 
-  // Reject memos that would overflow the fixed-size tx_buf.
-  if (msg->has_memo && strlen(msg->memo) > HIVE_MAX_MEMO_LEN) return;
-
   uint8_t tx_buf[512];
   size_t tx_len = hive_serialize_transfer(msg, tx_buf, sizeof(tx_buf));
   if (tx_len == 0) return;
 
-  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
-  const uint8_t* chain_id =
-      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
-
-  uint8_t sig[65];
-  if (!hive_sign_digest(node, chain_id, tx_buf, tx_len, sig)) {
-    memzero(sig, sizeof(sig));
-    return;
-  }
-
-  resp->has_signature = true;
-  resp->signature.size = 65;
-  memcpy(resp->signature.bytes, sig, 65);
-
-  resp->has_serialized_tx = true;
-  resp->serialized_tx.size = tx_len;
-  memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
-
-  memzero(sig, sizeof(sig));
-  memzero(tx_buf, tx_len);
+  hive_sign_finish(node, msg->has_chain_id, msg->chain_id.bytes, tx_buf, tx_len,
+                   &resp->has_signature, &resp->signature.size,
+                   resp->signature.bytes, &resp->has_serialized_tx,
+                   &resp->serialized_tx.size, resp->serialized_tx.bytes);
 }
 
 // Account create (op 9): all role keys are device-derived; host-supplied key
@@ -382,27 +379,10 @@ void hive_signAccountCreate(const HDNode* signing_node,
       hive_serialize_account_create(msg, owner_raw, active_raw, posting_raw,
                                     memo_raw, tx_buf, sizeof(tx_buf));
 
-  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
-  const uint8_t* chain_id =
-      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
-
-  uint8_t sig[65];
-  if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
-    memzero(sig, sizeof(sig));
-    memzero(tx_buf, sizeof(tx_buf));
-    return;
-  }
-
-  resp->has_signature = true;
-  resp->signature.size = 65;
-  memcpy(resp->signature.bytes, sig, 65);
-
-  resp->has_serialized_tx = true;
-  resp->serialized_tx.size = tx_len;
-  memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
-
-  memzero(sig, sizeof(sig));
-  memzero(tx_buf, tx_len);
+  hive_sign_finish(signing_node, msg->has_chain_id, msg->chain_id.bytes, tx_buf,
+                   tx_len, &resp->has_signature, &resp->signature.size,
+                   resp->signature.bytes, &resp->has_serialized_tx,
+                   &resp->serialized_tx.size, resp->serialized_tx.bytes);
 }
 
 // Account update (op 10): device-derived keys; new_*_key fields are ignored.
@@ -453,25 +433,8 @@ void hive_signAccountUpdate(const HDNode* signing_node,
       hive_serialize_account_update(msg, owner_raw, active_raw, posting_raw,
                                     memo_raw, tx_buf, sizeof(tx_buf));
 
-  const uint8_t default_chain_id[32] = HIVE_CHAIN_ID;
-  const uint8_t* chain_id =
-      msg->has_chain_id ? msg->chain_id.bytes : default_chain_id;
-
-  uint8_t sig[65];
-  if (!hive_sign_digest(signing_node, chain_id, tx_buf, tx_len, sig)) {
-    memzero(sig, sizeof(sig));
-    memzero(tx_buf, sizeof(tx_buf));
-    return;
-  }
-
-  resp->has_signature = true;
-  resp->signature.size = 65;
-  memcpy(resp->signature.bytes, sig, 65);
-
-  resp->has_serialized_tx = true;
-  resp->serialized_tx.size = tx_len;
-  memcpy(resp->serialized_tx.bytes, tx_buf, tx_len);
-
-  memzero(sig, sizeof(sig));
-  memzero(tx_buf, tx_len);
+  hive_sign_finish(signing_node, msg->has_chain_id, msg->chain_id.bytes, tx_buf,
+                   tx_len, &resp->has_signature, &resp->signature.size,
+                   resp->signature.bytes, &resp->has_serialized_tx,
+                   &resp->serialized_tx.size, resp->serialized_tx.bytes);
 }
