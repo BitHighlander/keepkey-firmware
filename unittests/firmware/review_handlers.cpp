@@ -27,8 +27,6 @@ bool kkconfirm_preload(int, int);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 int kkconfirm_drain(void);
-void kkconfirm_capture_start(void);
-std::vector<std::string> kkconfirm_capture_finish(void);
 
 class ReviewHandlers : public ::testing::Test {
  protected:
