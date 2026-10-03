@@ -1080,7 +1080,7 @@ const SignedMetadata* signed_metadata_get(void) {
 }
 
 void intent_fill_append(IntentFill* f, const char* str, size_t n) {
-  if (f->used + n >= f->len) {
+  if (f->used >= f->len || n >= f->len - f->used) {
     f->ok = false;
     return;
   }
@@ -1126,7 +1126,9 @@ bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
 bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
                             const char* fp) {
   char body[BODY_CHAR_MAX];
-  snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
-           alias ? alias : "", fp ? fp : "");
+  int n =
+      snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
+               alias ? alias : "", fp ? fp : "");
+  if (n < 0 || n >= (int)sizeof(body)) return false;
   return emit(ctx, "KeepKey ClearSign", body, NULL, 0);
 }
