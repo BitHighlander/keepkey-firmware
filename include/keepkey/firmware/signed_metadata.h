@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "keepkey/firmware/uniswap_ur.h"
+
 typedef struct _EthereumSignTx EthereumSignTx;
 
 #define METADATA_MAX_ARGS 8
@@ -46,6 +48,12 @@ typedef enum {
 /* 0x06: a vouched name for one address on one chain (certified only). It
  * describes no transaction; typed-data reviews show it beside the address. */
 #define METADATA_VERSION_NAME 0x06
+/* Certified only: selects a reviewed firmware decoder for one contract on one
+ * chain and carries the token identities the review needs. The device decodes
+ * every value from the calldata it signs. */
+#define METADATA_VERSION_DECODER 0x07
+#define METADATA_DECODER_UNISWAP_UR 1
+#define METADATA_MAX_TOKENS 4
 #define METADATA_NAME_MAX 24
 /* Widest filled summary; templates that could exceed it are rejected. */
 #define METADATA_INTENT_TEXT_MAX 280
@@ -59,6 +67,8 @@ typedef enum {
 #define METADATA_ROLE_SPEND_EXACT 3
 #define METADATA_ROLE_RECEIVE_EXACT 4
 #define METADATA_ROLE_CAP 5
+/* EVM only: a token allowance someone else may draw on (approve). */
+#define METADATA_ROLE_ALLOWANCE 6
 
 /* Delegate sentinel, >= METADATA_MAX_KEYS so it can never name a runtime slot.
  * The only key writer (signed_metadata_store_signer) rejects such ids, so a
@@ -93,6 +103,9 @@ typedef enum {
   /* decimals(1) + symbol_len(1) + symbol(<=10, [A-Za-z0-9]) + amount(1..32
    * BE); all-0xFF 32-byte amount renders "UNLIMITED <symbol>". */
   ARG_FORMAT_TOKEN_AMOUNT = 5,
+  /* v2/0x05 only: an address that must equal the 20 bytes the schema pins
+   * (e.g. a spender), so the template may name that party in words. */
+  ARG_FORMAT_ADDRESS_PINNED = 6,
 } ArgFormat;
 
 typedef struct {
@@ -104,6 +117,12 @@ typedef struct {
 } MetadataArg;
 
 typedef struct {
+  uint8_t address[20];
+  uint8_t decimals;
+  char symbol[METADATA_MAX_TOKEN_SYMBOL_LEN + 1];
+} MetadataToken;
+
+typedef struct {
   uint8_t version;
   uint32_t chain_id;
   uint8_t contract_address[20];
@@ -111,7 +130,19 @@ typedef struct {
   uint8_t tx_hash[32];
   char method_name[METADATA_MAX_METHOD_LEN + 1];
   uint8_t num_args;
-  MetadataArg args[METADATA_MAX_ARGS];
+  /* A decoder entry (v0x07) has no schema arguments or intent: it shares
+   * their RAM with its plan, token identities and summary. */
+  union {
+    struct {
+      MetadataArg args[METADATA_MAX_ARGS];
+      char intent[METADATA_INTENT_MAX + 1];
+    };
+    struct {
+      UrPlan ur_plan; /* scratch while matching */
+      MetadataToken tokens[METADATA_MAX_TOKENS];
+      UrSummary ur; /* filled when the tx matches */
+    };
+  };
   MetadataClassification classification;
   uint32_t timestamp;
   uint8_t key_id;
@@ -120,9 +151,11 @@ typedef struct {
   /* v0x05 */
   uint8_t value_role; /* NONE, SPEND_MAX or SPEND_EXACT for msg.value */
   char title[METADATA_TITLE_MAX + 1];
-  char intent[METADATA_INTENT_MAX + 1];
   char vouched_name[METADATA_NAME_MAX + 1]; /* v0x06 */
   uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
+  /* v0x07 */
+  uint8_t decoder;
+  uint8_t num_tokens;
 } SignedMetadata;
 
 /* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
@@ -148,6 +181,11 @@ typedef struct {
 void signed_metadata_take_name(MetadataNameRecord* out);
 /* The v0x05 review. certified: summary, limits, details, who. Runtime: a
  * NOT-verified heading plus limits; the caller's raw review follows. */
+/* v0x07 Uniswap review: summary, limits, recipient, permit, fee, contract,
+ * provenance. Emits nothing partial: false if any line cannot be built. */
+bool signed_metadata_build_ur_review(const SignedMetadata* md,
+                                     const char* alias, const char* fp,
+                                     ReviewEmit emit, void* ctx);
 bool signed_metadata_build_intent_review(const SignedMetadata* md,
                                          bool certified, const char* alias,
                                          const char* fp, ReviewEmit emit,

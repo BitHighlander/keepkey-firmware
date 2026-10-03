@@ -1781,7 +1781,7 @@ TEST(Fsm, DirtySpenderWordCannotBypassApprovalPolicy) {
   }
 }
 
-TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
+TEST(Fsm, PaddedZeroUnlimitedApprovalIsReviewedNotSigned) {
   kk_test_board_init();
   fsm_init();
   fsm_test_clearLastFailure();
@@ -1812,11 +1812,12 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(0u, msg.value.size)
       << "the global ERC-20 classifier never saw canonical zero";
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
 }
-TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
+TEST(Fsm, NativeValueUnlimitedApprovalIsReviewedNotSigned) {
   kk_test_board_init();
   fsm_init();
   fsm_test_clearLastFailure();
@@ -1847,9 +1848,10 @@ TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
 
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(1u, msg.value.size);
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
 }
 /* SRS R-1.4 at the signing path: a certified claim that cannot be honoured
  * (here, an envelope whose certificate is garbage) is refused before any
@@ -1903,7 +1905,7 @@ TEST(Fsm, FailedCertifiedClaimIsRefusedBeforeAnyScreen) {
     }
   }
 }
-TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
+TEST(Fsm, TrailingCalldataUnlimitedApprovalIsReviewedNotSigned) {
   kk_test_board_init();
   fsm_init();
   fsm_test_clearLastFailure();
@@ -1934,9 +1936,10 @@ TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
 
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(1u, msg.value.size);
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
 }
 TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
   for (size_t initial : {1u, 2u, 3u, 4u, 16u, 67u}) {

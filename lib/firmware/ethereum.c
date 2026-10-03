@@ -225,13 +225,18 @@ bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
 
   bignum256 raw_value;
   bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
+  const bool approve = ethereum_isStandardERC20Approve(msg);
+  bool unlimited = approve;
+  for (size_t i = 0; i < 32; ++i)
+    unlimited &= msg->data_initial_chunk.bytes[36 + i] == 0xff;
   char amount[96];
-  if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
-                sizeof(amount)) == 0) {
+  if (unlimited) {
+    strlcpy(amount, "an UNLIMITED amount", sizeof(amount));
+  } else if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
+                       sizeof(amount)) == 0) {
     return false;
   }
 
-  const bool approve = ethereum_isStandardERC20Approve(msg);
   const int written =
       approve
           ? snprintf(buf, buflen,
@@ -996,16 +1001,8 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       ethereum_signing_abort();
       return;
     }
-    // Unlimited approval is refused regardless of native value.
-    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
-    bool unlimited = true;
-    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
-    if (unlimited) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Unlimited ERC20 approval is disabled"));
-      ethereum_signing_abort();
-      return;
-    }
+    /* An unlimited allowance is confirmed, not refused: dapps (Uniswap's
+     * Permit2 approve) offer no cap, and the approve screen states it. */
   }
 
   bool data_needs_confirm = true;
