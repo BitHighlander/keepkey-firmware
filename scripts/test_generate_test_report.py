@@ -313,7 +313,7 @@ class CapabilityWaivers(unittest.TestCase):
 
 
 class RequiredCaseMatching(unittest.TestCase):
-    REQUIRED = "Eip712.MalformedHexNeverPublishesEncodedOutput"
+    REQUIRED = "Ethereum.StructuredEip712IsDisabledForPointRelease"
 
     def gate(self, passed_name):
         # Only the base set is required when every staged capability is
