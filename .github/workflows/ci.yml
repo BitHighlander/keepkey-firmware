@@ -698,6 +698,7 @@ jobs:
         working-directory: scripts/emulator
         env:
           KK_FIRMWARE_VARIANT: ${{ matrix.variant }}
+          KK_CI_REHEARSAL: ${{ vars.KK_CI_REHEARSAL }}
         run: |
           COMPOSE_ARGS=(-f docker-compose.yml)
           if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
@@ -784,7 +785,7 @@ jobs:
           name: ${{ matrix.oled_artifact }}
           path: test-reports/${{ matrix.variant }}/screenshots/
           retention-days: 90
-          if-no-files-found: error
+          if-no-files-found: ${{ vars.KK_CI_REHEARSAL == '1' && 'ignore' || 'error' }}
 
       - name: Tear down
         if: always()
@@ -1020,7 +1021,8 @@ jobs:
 
   generate-test-report:
     needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware]
-    if: always()
+    # Rehearsal runs carry no OLED evidence, so they cannot produce the report.
+    if: always() && vars.KK_CI_REHEARSAL != '1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -1119,7 +1121,7 @@ jobs:
 
   release-evidence-gate:
     needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware, generate-test-report]
-    if: always()
+    if: always() && vars.KK_CI_REHEARSAL != '1'
     runs-on: ubuntu-latest
     steps:
       - name: Require every release job
@@ -1164,12 +1166,21 @@ jobs:
       - name: Assert every required job succeeded
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          KK_CI_REHEARSAL: ${{ vars.KK_CI_REHEARSAL }}
         run: |
           set -euo pipefail
           echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' | sort
           echo
-          NOT_SUCCESS=$(echo "$NEEDS_JSON" \
-            | jq -r 'to_entries[] | select(.value.result != "success") | .key')
+          # Rehearsal skips only the two evidence jobs; everything else must pass.
+          WAIVED='[]'
+          if [ "${KK_CI_REHEARSAL:-}" = 1 ]; then
+            echo "::warning::REHEARSAL run (KK_CI_REHEARSAL=1): no release evidence produced"
+            WAIVED='["generate-test-report","release-evidence-gate"]'
+          fi
+          NOT_SUCCESS=$(echo "$NEEDS_JSON" | jq -r --argjson waived "$WAIVED" \
+            'to_entries[] | select(.value.result != "success")
+             | select((.value.result == "skipped" and (.key as $k | $waived | index($k))) | not)
+             | .key')
           if [ -n "$NOT_SUCCESS" ]; then
             NOT_SUCCESS_INLINE=$(printf '%s\n' "$NOT_SUCCESS" | tr '\n' ' ')
             echo "::error::Required jobs did not succeed: ${NOT_SUCCESS_INLINE}"
