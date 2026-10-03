@@ -241,6 +241,55 @@ TEST(Tron, RejectingFinalMemoPageCancelsSignHandler) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+// TIP-712 typed hashes are blind: without AdvancedMode the handler refuses
+// before any screen or key derivation; with it, the blind-sign prompt is the
+// first thing that runs (control).
+TEST(Tron, TypedHashIsRefusedBeforeAnyScreenWithoutAdvancedMode) {
+  struct ScopedFlash {
+    std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+    uint8_t* previous = emulator_flash_base;
+    ScopedFlash() {
+      emulator_flash_base = bytes.data();
+      storage_init();
+    }
+    ~ScopedFlash() {
+      storage_reset();
+      emulator_flash_base = previous;
+    }
+  } flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+
+  TronSignTypedHash msg = {};
+  const uint32_t path[] = {0x80000000 | 44, 0x80000000 | 195, 0x80000000};
+  msg.address_n_count = 3;
+  std::memcpy(msg.address_n, path, sizeof(path));
+  msg.domain_separator_hash.size = 32;
+  std::memset(msg.domain_separator_hash.bytes, 0x11, 32);
+
+  for (bool advanced : {false, true}) {
+    SCOPED_TRACE(advanced ? "AdvancedMode on (control)" : "AdvancedMode off");
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", advanced));
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    fsm_test_clearLastFailure();
+    fsm_msgTronSignTypedHash(&msg);
+    if (advanced) {
+      EXPECT_EQ(FailureType_Failure_ActionCancelled,
+                fsm_test_lastFailureCode());
+      EXPECT_EQ(0, kkconfirm_drain()) << "the blind-sign prompt did not run";
+    } else {
+      EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      EXPECT_STREQ("Enable AdvancedMode to blind-sign typed hashes",
+                   fsm_test_lastFailureMessage());
+      EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+    }
+    EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
 TEST(Tron, ParseNativeTransfer) {
   auto owner = tronAddr(0x11);
   auto to = tronAddr(0x22);
