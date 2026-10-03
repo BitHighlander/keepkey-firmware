@@ -2,7 +2,9 @@
 
 #include <string.h>
 
+#include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
+#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/memzero.h"
 
 #define ERC7730_ENVELOPE_FIXED_SIZE (4u + 1u + 1u + 4u + 1u + 2u + 64u + 1u)
@@ -82,6 +84,30 @@ static bool verify_runtime_delegate(
   strlcpy(out_alias, runtime_alias, ERC7730_DELEGATE_ALIAS_LEN + 1);
   signed_metadata_pubkey_fingerprint(pubkey, out_fingerprint);
   memzero(runtime_alias, sizeof(runtime_alias));
+  return true;
+}
+
+/* Root-certified tier: the record is a delegate certificate the compiled-in
+ * ClearSign root signed for this chain with MAY_SUPPRESS_RAW, and the envelope
+ * signature verifies under its delegate (clearsign_root.c does both). This
+ * changes only the provenance shown. AdvancedMode is still required, as on the
+ * runtime tier, and the raw-data review is unchanged. */
+_Static_assert(ERC7730_DELEGATE_RECORD_LEN == CLEARSIGN_CERT_LEN &&
+                   ERC7730_DELEGATE_ALIAS_LEN == CLEARSIGN_ALIAS_LEN &&
+                   ERC7730_DELEGATE_OFF_PUBKEY == CLEARSIGN_CERT_OFF_PUBKEY,
+               "ERC-7730 delegate record is the ClearSign certificate");
+
+static bool verify_certified_delegate(
+    const Erc7730CatalogVerifier* v, uint32_t expected_scope,
+    char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1],
+    char out_fingerprint[METADATA_FINGERPRINT_LEN]) {
+  if (!storage_isPolicyEnabled("AdvancedMode") ||
+      !clearsign_root_verify_erc7730_catalog(
+          v->cert, sizeof(v->cert), expected_scope, v->merkle, v->signature,
+          sizeof(v->signature), out_alias))
+    return false;
+  signed_metadata_pubkey_fingerprint(v->cert + ERC7730_DELEGATE_OFF_PUBKEY,
+                                     out_fingerprint);
   return true;
 }
 
@@ -1080,15 +1106,26 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
                                    Erc7730CatalogIdentity* identity) {
   uint8_t actual_id[32];
   sha256_Final(&v->envelope_hash, actual_id);
-  if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) != 0 ||
-      v->cert_length != ERC7730_DELEGATE_RECORD_LEN || v->recovery > 1 ||
-      !verify_runtime_delegate(v, (uint32_t)read_be64(v->header + 10),
-                               identity->delegate_alias,
-                               identity->delegate_fingerprint)) {
+  /* validate_header() refused a chain id above UINT32_MAX, so the scope cast
+   * below cannot truncate on either tier. */
+  const uint32_t scope = (uint32_t)read_be64(v->header + 10);
+  uint8_t tier = METADATA_TIER_NONE;
+  if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) == 0 &&
+      v->cert_length == ERC7730_DELEGATE_RECORD_LEN && v->recovery <= 1) {
+    if (verify_certified_delegate(v, scope, identity->delegate_alias,
+                                  identity->delegate_fingerprint)) {
+      tier = METADATA_TIER_KEEPKEY;
+    } else if (verify_runtime_delegate(v, scope, identity->delegate_alias,
+                                       identity->delegate_fingerprint)) {
+      tier = METADATA_TIER_RUNTIME;
+    }
+  }
+  if (tier == METADATA_TIER_NONE) {
     memzero(actual_id, sizeof(actual_id));
     v->failed = true;
     return ERC7730_CATALOG_UNTRUSTED;
   }
+  identity->tier = tier;
   memcpy(identity->definition_id, actual_id, sizeof(actual_id));
   identity->kind = v->header[7];
   identity->chain_id = read_be64(v->header + 10);

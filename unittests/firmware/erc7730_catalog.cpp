@@ -1,4 +1,5 @@
 extern "C" {
+#include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_catalog.h"
 #include "keepkey/firmware/erc7730_program.h"
@@ -9,6 +10,7 @@ extern "C" {
 void setup(void);
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>
@@ -512,6 +514,155 @@ TEST(Erc7730Catalog, RejectsWrongPurposeRecoveryCertLengthAndClearedSigner) {
   // Replaying an accepted envelope after the signers are cleared fails.
   signed_metadata_clear_signers();
   EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+TEST(Erc7730Catalog, RuntimeSignedDefinitionIsRuntimeTier) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(signedEnvelope(fixture, minimalProgram()), &identity),
+            ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_RUNTIME);
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+namespace {
+
+// The compiled-in root's private key exists only on the root KeepKey, so the
+// certified fixtures are signed here under a test root that the emulator-only
+// hook substitutes for it (clearsign_root_set_test_root).
+struct CertifiedFixture {
+  uint8_t root_key[32];
+  uint8_t root_pubkey[33];
+  SignedFixture delegate;
+};
+
+// Restores the compiled-in root however the test ends.
+struct TestRoot {
+  explicit TestRoot(const uint8_t* pubkey) {
+    clearsign_root_set_test_root(pubkey);
+  }
+  ~TestRoot() { clearsign_root_set_test_root(nullptr); }
+};
+
+void makeCertifiedFixture(CertifiedFixture* fixture) {
+  if (storage_getLocation() == FLASH_INVALID) {
+    setup();
+    storage_init();
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  signed_metadata_clear_signers();  // no runtime signer is loaded
+  memset(fixture, 0, sizeof(*fixture));
+  fixture->root_key[31] = 0x52;
+  fixture->delegate.key[31] = 0x44;
+  ecdsa_get_public_key33(&secp256k1, fixture->root_key, fixture->root_pubkey);
+  ecdsa_get_public_key33(&secp256k1, fixture->delegate.key,
+                         fixture->delegate.pubkey);
+}
+
+// The delegate signs the catalog root exactly as on the runtime tier; the
+// record carries its root certificate.
+std::vector<uint8_t> certifiedEnvelope(
+    const CertifiedFixture& fixture, const std::vector<uint8_t>& program,
+    const std::vector<uint8_t>& cert,
+    const std::vector<uint8_t>& purpose =
+        std::vector<uint8_t>(kPurpose, kPurpose + sizeof(kPurpose) - 1)) {
+  auto e = signedEnvelope(fixture.delegate, program, {}, purpose);
+  std::copy(cert.begin(), cert.end(), e.begin() + certOffset(program, 0));
+  return e;
+}
+
+}  // namespace
+
+TEST(Erc7730Catalog, RootCertifiedDefinitionVerifiesWithoutRuntimeSigner) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  auto program = minimalProgram();
+  auto e = certifiedEnvelope(
+      fixture, program, rootCert(fixture.root_key, fixture.delegate.pubkey));
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(e, &identity), ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_KEEPKEY);
+  // The alias shown is the one the root signed.
+  EXPECT_STREQ(identity.delegate_alias, "KeepKey Test");
+  char fingerprint[METADATA_FINGERPRINT_LEN];
+  signed_metadata_pubkey_fingerprint(fixture.delegate.pubkey, fingerprint);
+  EXPECT_STREQ(identity.delegate_fingerprint, fingerprint);
+  EXPECT_EQ(feedAll(e, 1), ERC7730_CATALOG_COMPLETE);
+
+  // Certification does not lift AdvancedMode.
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+}
+
+TEST(Erc7730Catalog, RootCertificateDefectsAreRefused) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  const uint8_t* delegate = fixture.delegate.pubkey;
+  auto program = minimalProgram();
+  const char other[] = "KEEPKEY:ERC7730:CATALOH\0";
+  const std::vector<std::vector<uint8_t>> refused = {
+      // Signed by a key that is not the root.
+      certifiedEnvelope(fixture, program,
+                        rootCert(fixture.delegate.key, delegate)),
+      // Delegate signature under another purpose.
+      certifiedEnvelope(fixture, program, rootCert(fixture.root_key, delegate),
+                        std::vector<uint8_t>(other, other + sizeof(other) - 1)),
+      // Scope is not the definition's chain id.
+      certifiedEnvelope(fixture, program,
+                        rootCert(fixture.root_key, delegate,
+                                 CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, 2)),
+      // No MAY_SUPPRESS_RAW.
+      certifiedEnvelope(fixture, program,
+                        rootCert(fixture.root_key, delegate, 0)),
+      // Expired: not_after at the firmware's floor.
+      certifiedEnvelope(
+          fixture, program,
+          rootCert(fixture.root_key, delegate, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                   1, KK_CLEARSIGN_MIN_EXPIRY)),
+      // Alias with a control byte.
+      certifiedEnvelope(
+          fixture, program,
+          rootCert(fixture.root_key, delegate, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                   1, KK_CLEARSIGN_MIN_EXPIRY + 1, "KeepKey\nTest")),
+  };
+  // With no runtime signer loaded there is nothing to fall back to.
+  for (size_t i = 0; i < refused.size(); i++)
+    EXPECT_EQ(feedAll(refused[i], 64), ERC7730_CATALOG_UNTRUSTED) << i;
+
+  // The same defect with the delegate loaded as a runtime signer falls back
+  // to the runtime tier, under the alias the user approved.
+  ASSERT_TRUE(signed_metadata_store_signer(3, delegate, "Approved signer",
+                                           nullptr, 0, 0, 0, false));
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(refused[0], &identity), ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_RUNTIME);
+  EXPECT_STREQ(identity.delegate_alias, "Approved signer");
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+TEST(Erc7730Catalog, ChainIdAboveUint32IsRefusedNotTruncated) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  // Chain id 2^32 + 1 truncates to the certificate's scope 1. It is refused
+  // with the header, before any signature is checked, on either tier.
+  auto program = minimalProgram();
+  program[13] = 1;
+  program[sectionOffset(program, 8) + 5 + 5 + 3] = 1;  // deployment chain id
+  auto e = certifiedEnvelope(
+      fixture, program, rootCert(fixture.root_key, fixture.delegate.pubkey));
+  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_BAD_PROGRAM);
+  ASSERT_TRUE(signed_metadata_store_signer(
+      3, fixture.delegate.pubkey, "Approved signer", nullptr, 0, 0, 0, false));
+  EXPECT_EQ(feedAll(signedEnvelope(fixture.delegate, program), 64),
+            ERC7730_CATALOG_BAD_PROGRAM);
+  signed_metadata_clear_signers();
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
 }
 

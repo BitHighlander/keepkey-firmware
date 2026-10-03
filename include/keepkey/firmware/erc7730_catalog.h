@@ -29,11 +29,27 @@
  * provider_id and revocation_epoch are otherwise NOT enforced. */
 #define ERC7730_MIN_ISSUANCE_EPOCH 0u
 
-/* Delegate record: [0] version 1, [2..5] scope == chain id (both checked,
- * NOT signed); [10..41] alias (format only; the user-approved alias is
- * shown); [42..74] pubkey, must equal a loaded runtime signer. All other
- * bytes are ignored (no ClearSign root to check them). The envelope signature
- * covers only the purpose tag and Merkle root, no certificate byte. */
+/* Delegate certificate record (139 bytes, the ClearSign certificate of
+ * clearsign_root.h). Two tiers, tried in this order:
+ *
+ * METADATA_TIER_KEEPKEY (root-certified): clearsign_root_verify_cert() accepts
+ * the whole record under the compiled-in root, it carries MAY_SUPPRESS_RAW,
+ * its scope equals the header chain id, and the envelope signature verifies
+ * under its delegate pubkey. The alias shown is the certificate's.
+ *
+ * METADATA_TIER_RUNTIME, otherwise, where the record is authenticated only as:
+ *   [0]        version, must be 1 (checked, not signed);
+ *   [2..5]     scope, must equal the header chain id (checked, not signed);
+ *   [10..41]   alias, format-checked only; the alias shown to the user is the
+ *              one the user approved when loading the runtime signer;
+ *   [42..74]   delegate pubkey. It must equal a runtime signer the user
+ *              loaded, and the envelope signature must verify under it.
+ * and bytes 1, 6..9 and 75..138 are ignored.
+ *
+ * Both tiers require AdvancedMode, and neither changes the raw-data review:
+ * the tier selects only the provenance screen. The envelope signature covers
+ * only the purpose tag and the Merkle root, which commits to the program; it
+ * does not cover any certificate byte. */
 
 static inline uint16_t read_be16(const uint8_t* p) {
   return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
@@ -72,6 +88,7 @@ typedef struct {
   char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
   uint8_t kind;
   bool reads_value; /* a path reads @.value */
+  uint8_t tier;     /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
 } Erc7730CatalogIdentity;
 
 /* Incremental verifier; size independent of descriptor size. */
