@@ -1189,7 +1189,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
 
   publish-emulator:
-    # ci-gate (7.14.3 release-candidate-audit) also covers static-analysis,
+    # ci-gate also covers static-analysis,
     # which gates no build job; publishing must not bypass it.
     needs: [ci-gate, release-evidence-gate, build-emulator]
     if: >-
