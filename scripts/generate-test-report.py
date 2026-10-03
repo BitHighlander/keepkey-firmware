@@ -35,7 +35,6 @@ BASE_REQUIRED_CASES = {
     "test_p02_transport.TestP02Transport.test_mixed_entropy_pages_remain_private_and_cancel_clears_state",
     "Ethereum.StructuredEip712IsDisabledForPointRelease",
     "Recovery.DeleteKeepsTypedCipherCharactersNotTheCurrentMapping",
-    "Ripple.TruncatedBufferFailsWithoutWritingPastEnd",
     "Storage.LegacyLanguageIsBoundedAndTerminated",
     "Storage.TruncatedLegacyCacheDoesNotMutateDestination",
     "EmulatorLifecycle.OverflowPreservesUnreadFramesAndRetriesDroppedFrame",
@@ -49,6 +48,8 @@ BASE_REQUIRED_CASES = {
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
 }
+
+RIPPLE_REQUIRED_CASES = {"Ripple.TruncatedBufferFailsWithoutWritingPastEnd"}
 
 EVM_REQUIRED_CASES = {
     "Ethereum.TransferAmountUsesTheRequestsSigningChain",
@@ -287,6 +288,15 @@ CAPABILITY_SKIP_PREFIX = (
     "Staged release tree does not yet provide capability: "
 )
 
+# The only contract cases a staged block may skip, each for its own capability.
+CONTRACT_CAPABILITY = dict(
+    [(case, "erc7730-runtime-review") for case in _STACK07_EVM] +
+    [(case, "evm-unknown-token-review") for case in _STACK10_EVM] +
+    [(case, "hive-release-review") for case in _STACK12_HIVE] +
+    [(case, "session-trust-lifetime") for case in _SESSION_BOTH + _SESSION_FULL] +
+    [(case, "ripple-memo-policy") for case in _RIPPLE
+     if case.endswith(("_memo_length_prefix_boundaries", "_with_thorchain_memo"))])
+
 
 def fail(message):
     raise RuntimeError(message)
@@ -470,6 +480,8 @@ def validate_cases(cases):
         required_cases.update(HIVE_REQUIRED_CASES)
     if "evm-max-amount-review" not in missing_capabilities:
         required_cases.update(EVM_REQUIRED_CASES)
+    if "ripple-memo-policy" not in missing_capabilities:
+        required_cases.update(RIPPLE_REQUIRED_CASES)
     if "osmosis-wire-guards" not in missing_capabilities:
         if firmware_version_tuple() >= (7, 15, 0):
             required_cases.update(OSMOSIS_REQUIRED_CASES)
@@ -516,11 +528,9 @@ def read_junit_cases(path):
 def validate_contract_junit(root, missing_capabilities=frozenset()):
     """Require every dedicated contract JUnit with exact per-case statuses.
 
-    A case expected to pass may instead skip for a staged capability, but only
-    one the release ledger declares missing (see release_missing_capabilities).
+    A case in CONTRACT_CAPABILITY expected to pass may instead skip for its own
+    capability, and only while the validated ledger declares it missing.
     """
-    waived = {("skip", CAPABILITY_SKIP_PREFIX + capability)
-              for capability in missing_capabilities}
     inputs = []
     for variant, directory in sorted(CONTRACT_JUNIT_DIRS.items()):
         for filename, by_variant in sorted(CONTRACT_JUNIT.items()):
@@ -540,9 +550,11 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
                 found = [result for name, result in cases.items()
                          if name == required or name.endswith("." + required)]
                 expected_reason = CONTRACT_SKIP_REASONS[required] if expected == "skip" else ""
+                capability = CONTRACT_CAPABILITY.get(required)
                 if found != [(expected, expected_reason)] and not (
-                        expected == "pass" and len(found) == 1 and
-                        found[0] in waived):
+                        expected == "pass" and
+                        capability in missing_capabilities and
+                        found == [("skip", CAPABILITY_SKIP_PREFIX + capability)]):
                     wrong.append("%s (expected %s, found %s)" % (
                         required, expected + ":" + expected_reason, repr(found) if found else "missing"))
             if wrong:
