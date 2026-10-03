@@ -3,10 +3,89 @@
 Owner decision: 2026-09-07; tiered acceptance revision: 2026-09-21. This is the canonical firmware rehearsal procedure, covering 7.14.x hardening and later alpha extraction.
 It replaces the two whole-tree zero-finding prerequisite for staging. Historical handoffs are evidence, not executable instructions or current branch identities.
 
+## Dress rehearsal into fork develop (owner revision 2026-10-03)
+
+This supersedes every earlier statement in this file that a rehearsal does not merge into fork `develop`
+(the "Two fork PR types", "Owner correction" and "Final upstream SOP" passages). Fork `develop` is the
+rehearsal surface. It starts equal to upstream `develop` and is reset to upstream `develop` when the
+rehearsal ends, so merging into it loses nothing. The rehearsal ends with **two fork release branches for
+testing** (7.15 and 7.16), and it sends nothing upstream.
+
+The tools are in `docs/release/rehearsal-tools/` (see its README). They assume a clone with a `fork`
+remote and, in each of `deps/python-keepkey` and `deps/device-protocol`, a remote named `kk` pointing at
+the `keepkey/*` upstream.
+
+### Order of operations (no step is skipped or reordered)
+
+0. **Pin gate first.** Follow `BRANCHING-SOP.md`, "One canonical branch per dependency, never split".
+   Before any firmware PR is opened or merged: the two canonical upstream PRs are the only open ones from
+   their branches, their heads contain every pin that will be used, and **every block head, the base
+   release and `.gitmodules` pass `rehearsal-preflight.sh`**. If the canonical branch lags, bring it up
+   first (fast-forward only, owner approval for the upstream push). A rehearsal that starts with split
+   pins is invalid and is not repaired by merging on.
+1. **CI prerequisites** (below) are in place on the first block.
+2. **Base release first.** Upstream's own release PR (7.14.3, `keepkey/keepkey-firmware` #475, head
+   `e476580a0`) is merged into fork `develop` as merge #0, ahead of the blocks, because every block is
+   built on it. It is the one ref checked with `ALLOW_ANCESTOR=1`.
+3. **Blocks one at a time, in dependency order** (`merge-blocks.sh`). For block N: retarget the PR to
+   `develop` and reopen it, so a **new** `pull_request` run starts on its merge with the current `develop`
+   tip; require that run, and every other run on the head, to be green (only a run cancelled before it,
+   which it superseded, is ignored); mark the PR ready if it is a draft; run the pin gate on the head;
+   require the previous merge's `push` run on `develop` to be green; merge with a merge commit guarded by
+   the head SHA; run the pin gate on the merge commit; record the receipt row. A red or missing run stops
+   the rehearsal and nothing merges over it.
+4. **Two release branches** from `develop` (`cut-release-branches.sh`):
+   `release/7.15.0-rehearsal-<date>` at the merge of the 7.15 tip block and
+   `release/7.16.0-rehearsal-<date>` at the merge of the 7.16 tip block. The script refuses unless each
+   merge commit's **tree equals the tree of the stack tip CI verified**, so the rehearsal provably
+   reproduced the tested code. Names must not collide with existing `release/*` branches.
+5. **Full-mode CI.** Unset the rehearsal switch and run CI once on each release branch. Rehearsal runs skip
+   the OLED capture and the two evidence jobs, so they prove the merges are green; they are not release
+   evidence.
+6. **Final validation and receipt.** Pin gate on every merge commit and both release branches; the identity
+   table (merge, tree, parents, own diff, pins; `receipt-identity.sh`); the receipt in the owner's handoff.
+   Resetting fork `develop` to upstream `develop` is a separate owner action.
+
+### CI prerequisites (each cost a stopped run on 2026-10-02)
+
+* **Rehearsal switch.** The repository variable `KK_CI_REHEARSAL=1` skips the ~8 minute OLED capture and the
+  `generate-test-report` and `release-evidence-gate` jobs (a run drops from ~20 to ~7 minutes). The CI gate
+  waives exactly those two jobs, and only when they were skipped; any failure or any other skipped job still
+  fails it. Set it to `0` for step 5.
+* **Fork-only history in the secret scan.** `actions/checkout` with `fetch-depth: 0` fetches every fork ref,
+  and gitleaks scans them all, so audit manifests on fork-only branches (commit SHAs and SHA-256 hashes in
+  `docs/**/*.json`) raised ten `generic-api-key` findings that upstream's own history does not have. The
+  allowlist is an AND of path and pattern; a planted token in `docs/x.json` is still reported. The block CI
+  scans only the commits an event introduces, which is why only the base release needed the allowlist.
+* **Superseded workflows.** The 7.14.3 release added `release-candidate-audit.yml`, a full copy of the old
+  pipeline. It triggers on every pull request and push to `develop`, so once the blocks were retargeted it ran
+  7.15/7.16 code through the 7.14.3 pipeline with no capability ledger and failed. The CI block deleted it;
+  `ci.yml` is its superset. Check for duplicate workflows when the base release is merged.
+* **Stack PRs based on a non-`develop` branch get no `pull_request` CI** (the trigger filters on `master`
+  and `develop`), so their only runs were `workflow_dispatch`. The first retarget to `develop` is therefore
+  the first real PR run.
+* **Waiver authority.** Report waivers are checked against an immutable authority: the base SHA for a pull
+  request, the repository variable `KK_ACCEPTED_WAIVER_SHA` for dispatch and push. The first block's PR run
+  cannot be judged against a base that has no ledger, which the rehearsal switch avoids by skipping the
+  report; the ledger narrows block by block.
+* **Concurrency cancels.** Pushing to a PR head starts a run that the next reopen cancels. Wait for a run
+  created after the reopen; do not read the PR's check list, which also shows the cancelled leftovers.
+* **Draft PRs cannot be merged.** Mark them ready (GraphQL `markPullRequestReadyForReview`, by node id;
+  `gh pr ready` and `gh pr edit` hit a Projects-classic error on this repository).
+
+### Traps in the tooling
+
+* zsh does not word-split an unquoted variable, and `$var:refs` is parsed as the `:r` modifier. Use arrays and
+  `${var}:`; run loop scripts with `bash`.
+* After switching branches, the submodule worktree still sits on the previous branch's pin and shows as a
+  modified gitlink. Stage pins with `git update-index --cacheinfo`, never `git commit -a` or `git add -A`.
+* Never edit a running bash script in place; bash reads it incrementally.
+* Copilot is not requested during a rehearsal (see below).
+
 ## Two fork PR types: products and audit units
 
 Owner clarification: 2026-09-08. The main products are fork release branches for 7.14.2, 7.14.3 and 7.15. Small rehearsal branches harden and extract features before accepted changes update those products.
-All internal PRs live in the fork. Neither PR type is merged into fork develop.
+All internal PRs live in the fork. Outside a dress rehearsal, neither PR type is merged into fork develop; the dress rehearsal (above) is the exception.
 
 | PR type | Head and target | Purpose and acceptance |
 | --- | --- | --- |
@@ -167,7 +246,7 @@ Selection does not claim that this head has passed final acceptance.
 Create a fresh rehearsal branch from that SHA. Do not merge alpha into it.
 Existing shared develop remains preserved until the replacement is proven.
 The proposed foundation is represented by an unmerged PR into fork develop.
-Do not merge or reset develop under this rehearsal authorization. Alpha feature staging may proceed on the tested foundation PR before release acceptance; dependent units remain unmerged.
+Do not merge or reset develop under this rehearsal authorization (superseded for the dress rehearsal by the first section). Alpha feature staging may proceed on the tested foundation PR before release acceptance; dependent units remain unmerged.
 Promotion of a shared branch is a distinct recorded operation; this procedure
 does not silently reset, force-push, merge upstream, or publish a release.
 
@@ -217,7 +296,8 @@ disposition and batch assignment; they do not silently expand this batch.
 Owner revision: 2026-09-08; authorization clarification: 2026-09-21. Continue
 using Codex for implementation and local review. Copilot is not an internal
 staging acceptance gate and remains off unless the owner explicitly authorizes
-it. This supersedes earlier mandatory per-PR clean-Copilot requirements and
+it. Owner revision 2026-10-02: autonomous Copilot requests are revoked; ask the
+owner, naming the PR, before any request. This supersedes earlier mandatory per-PR clean-Copilot requirements and
 review-round ceiling blockers.
 
 “Perfect” means the frozen unit meets its written acceptance contract with no
@@ -329,7 +409,7 @@ Copilot does not waive known defects or any upstream-required review gate.
    considered complete.
 5. Create upstream PRs from the validated sequence with concise behavior, provenance
    and test evidence. Upstream merging and release publication remain separate
-   operations. Never merge the fork product PR into develop as a prerequisite.
+   operations. Never merge the fork product PR into develop as a prerequisite of an upstream submission. (This concerns upstream, not the fork dress rehearsal.)
 
 ## Evidence and invalidation
 
@@ -412,7 +492,8 @@ refresh affected evidence, and satisfy upstream dependency/merge requirements.
 Fork develop and alpha are agent-controlled staging surfaces. Do not wait for
 human approval to author, validate or stack internal PRs. Do not merge into
 develop: the foundation targets fork develop and each dependent PR targets its
-predecessor branch. Keep the new stack unmerged. A reviewer recommendation for
+predecessor branch. Keep the new stack unmerged. (Superseded for the dress rehearsal
+by the first section: there the blocks do merge into fork develop, one at a time.) A reviewer recommendation for
 human review is recorded for upstream/release consideration; it does not block
 internal staging. Specific unresolved defects still receive a disposition.
 
