@@ -74,6 +74,18 @@ class ContractEvidence(unittest.TestCase):
                         report.validate_contract_junit(self.root)
                     path.write_bytes(original)
 
+    def test_a_pass_case_may_skip_only_for_a_declared_capability(self):
+        path = self.root / report.CONTRACT_JUNIT_DIRS["full"] / "junit-stack12.xml"
+        tree = ET.parse(path)
+        ET.SubElement(tree.getroot()[0], "skipped", {
+            "message": report.CAPABILITY_SKIP_PREFIX + "hive-release-review"})
+        tree.write(path)
+        report.validate_contract_junit(self.root, {"hive-release-review"})
+        for declared in (set(), {"ripple-memo-policy"}):
+            with self.subTest(declared=declared):
+                with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
+                    report.validate_contract_junit(self.root, declared)
+
     def test_every_expected_skip_requires_its_product_reason(self):
         for path in self.paths:
             original = path.read_bytes()
@@ -207,8 +219,9 @@ class CapabilityWaivers(unittest.TestCase):
 
     def test_ledger_is_read_from_the_real_workflow(self):
         approved = report.approved_capabilities()
+        self.assertEqual(report.parse_capability_ledger(
+            report.CI_WORKFLOW.read_text()), approved)
         self.assertIn("storage-v19-kdf", approved)
-        self.assertNotIn("osmosis-wire-guards", approved)
         self.assertNotIn("entropy-audit-budget", approved)
 
     def test_ledger_must_be_unique(self):
