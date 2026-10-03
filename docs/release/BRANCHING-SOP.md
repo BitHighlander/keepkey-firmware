@@ -61,6 +61,12 @@ exact head**. Never split.
 2. **The same SHA on every PR.** Block 1 and block 15 pin the same two SHAs. Version and capability gates
    in the dependency (`requires_firmware`, `requires_release_capability`) are what let one head serve
    every block. A block that "needs an older pyk" needs a gate in the dependency, not an older pin.
+   Concretely, a test for a feature that a later block delivers calls
+   `self.requires_release_capability("<cap>")`; every earlier block lists `<cap>` in its CI ledger
+   (`KK_RELEASE_MISSING_CAPABILITIES`) and the delivering block drops it. The ledger only ever narrows
+   along the merge order, because a pull request is judged against the ledger of its base branch.
+   Found on 2026-10-03: pinning all fifteen blocks to one head failed thirteen blocks until thirteen
+   tests (Permit2 b15, certified intent b14, certified Solana review b13) carried those gates.
 3. **One branch, linear history, fast-forward only.** When a block needs a newer dependency commit, the
    commit goes onto the canonical branch and every PR re-pins to the new head. It never gets a branch of
    its own: no `staging/...`, no per-block, per-release or companion branches, and no patch-equivalent

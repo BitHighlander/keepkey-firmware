@@ -23,7 +23,10 @@ the `keepkey/*` upstream.
    release and `.gitmodules` pass `rehearsal-preflight.sh`**. If the canonical branch lags, bring it up
    first (fast-forward only, owner approval for the upstream push). A rehearsal that starts with split
    pins is invalid and is not repaired by merging on.
-1. **CI prerequisites** (below) are in place on the first block.
+1. **CI prerequisites** (below) are in place on the first block. With every block on the one canonical
+   head, run the whole stack once in rehearsal mode (`workflow_dispatch` on every block head, in parallel)
+   before the first merge. A block that fails here is missing a capability gate in the dependency or a
+   ledger entry, and is fixed in the canonical branch, never by giving that block its own pin.
 2. **Base release first.** Upstream's own release PR (7.14.3, `keepkey/keepkey-firmware` #475, head
    `e476580a0`) is merged into fork `develop` as merge #0, ahead of the blocks, because every block is
    built on it. It is the one ref checked with `ALLOW_ANCESTOR=1`.
