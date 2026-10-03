@@ -25,6 +25,7 @@ extern "C" {
 #include "keepkey/firmware/osmosis.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
+#include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
@@ -974,25 +975,6 @@ TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-#if !BITCOIN_ONLY
-TEST(Fsm, SolanaCertificateIsRejectedAtTheProductionHandler) {
-  kk_test_board_init();
-  fsm_init();
-  fsm_test_clearLastFailure();
-
-  SolanaSignTx request = {};
-  request.has_clearsign_certificate = true;
-  request.clearsign_certificate.size = 1;
-  request.clearsign_certificate.bytes[0] = 0x01;
-  receiveMessage(MessageType_MessageType_SolanaSignTx, SolanaSignTx_fields,
-                 &request);
-
-  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
-      << "a decoded certificate must not fall through to ordinary signing";
-  layoutHomeForced();
-}
-#endif
-
 TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   TxAck invalid = {};
@@ -1248,6 +1230,110 @@ TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
+
+#if !BITCOIN_ONLY
+/* A token definition only names a token in its own tier: a delegate-signed
+ * definition in a runtime request, or a runtime one in a certified request,
+ * is refused before any screen. */
+/* An initialised "all x12" device and a parseable one-transfer Solana message
+ * whose payer is not that seed's key: past every request check, signing stops
+ * at the signer check (Failure_Other) before any screen. */
+static SolanaSignTx solana_fsm_request(void) {
+  kk_test_board_init();
+  fsm_init();
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+
+  SolanaSignTx msg = {};
+  msg.address_n_count = 4;
+  const uint32_t path[4] = {0x8000002C, 0x800001F5, 0x80000000, 0x80000000};
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.has_raw_tx = true;
+  uint8_t* raw = msg.raw_tx.bytes;
+  size_t pos = 0;
+  raw[pos++] = 1; /* legacy header */
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 3; /* payer, recipient, system program (zero key) */
+  memset(raw + pos, 0x11, 64);
+  pos += 64 + 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 1; /* one system transfer */
+  raw[pos++] = 2;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 12;
+  raw[pos++] = 2;
+  pos += 11;
+  msg.raw_tx.size = pos;
+  return msg;
+}
+
+/* A request carrying certificate material is certified: incomplete material is
+ * refused, never signed through the ordinary review. */
+TEST(Fsm, SolanaIncompleteCertificateIsRefusedNotDowngraded) {
+  ScopedFlash flash;
+  const SolanaSignTx msg = solana_fsm_request();
+  for (bool certificate : {true, false}) {
+    SCOPED_TRACE(certificate ? "certificate only" : "no certificate (control)");
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    SolanaSignTx tx = msg;
+    tx.has_clearsign_certificate = certificate;
+    tx.clearsign_certificate.size = certificate ? 1 : 0;
+    fsm_msgSolanaSignTx(&tx);
+    EXPECT_EQ(certificate ? FailureType_Failure_SyntaxError
+                          : FailureType_Failure_Other,
+              fsm_test_lastFailureCode());
+    EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+  }
+}
+
+TEST(Fsm, SolanaTokenDefinitionFromAnotherTierIsRefused) {
+  ScopedFlash flash;
+  SolanaSignTx msg = solana_fsm_request();
+  msg.token_info_count = 1;
+  msg.token_info[0].has_signer_key_id = true;
+
+  struct {
+    const char* name;
+    bool certificate;
+    uint32_t token_signer;
+    bool refused;
+  } const legs[] = {
+      {"runtime request, delegate token", false, METADATA_KEYID_DELEGATE, true},
+      {"certified request, runtime token", true, 0, true},
+      {"runtime request, runtime token (control)", false, 0, false},
+  };
+  for (const auto& leg : legs) {
+    SCOPED_TRACE(leg.name);
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    SolanaSignTx tx = msg;
+    tx.has_clearsign_certificate = leg.certificate;
+    tx.clearsign_certificate.size = leg.certificate ? 139 : 0;
+    tx.token_info[0].signer_key_id = leg.token_signer;
+    fsm_msgSolanaSignTx(&tx);
+    if (leg.refused) {
+      EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+      EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+    } else {
+      /* Same bytes, past the tier check: the transaction parses and stops at
+       * the signer check (the payer is not this seed's key), so the refusals
+       * above are the tier rule's, not a malformed message. */
+      EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      EXPECT_EQ(2, kkconfirm_drain());
+    }
+  }
+}
+#endif
 
 #if !BITCOIN_ONLY
 // A signer's start renews the idle deadline; a GetFeatures poll does not.
