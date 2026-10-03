@@ -22,6 +22,7 @@
 
 #include "trezor/crypto/bip32.h"
 #include "messages-solana.pb.h"
+#include "keepkey/firmware/signed_metadata.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -211,7 +212,7 @@ typedef struct {
  *
  * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
  *   magic          8   "KKSOLSC1"
- *   version        1   1 or 2
+ *   version        1   1, 2 or 3
  *   program_id    32
  *   disc_len       1   1..8
  *   discriminator  disc_len
@@ -220,8 +221,12 @@ typedef struct {
  *   n_args         1   0..4 (v1), 0..SOL_SCHEMA_MAX_ARGS (v2)
  *     per arg:     type(1) label_len(1) label
  *     TOKEN_AMOUNT (v2) appends mint_account(1)
+ *     v3 appends role(1): amount types 1..5, all others 0
  *   n_accounts     1   0..SOL_SCHEMA_MAX_ACCOUNTS
  *     per account: index(1) label_len(1) label
+ *   v3: template   1 + 0..SOL_SCHEMA_TEMPLATE_MAX (0 = none); "{n}" is arg n,
+ *                  "{aN}" schema account N; every amount arg must appear
+ *                  (docs/security/clearsign-intent-template.md)
  * No bytes may follow. Args are laid out sequentially from the end of the
  * discriminator, in declaration order.
  */
@@ -231,6 +236,9 @@ typedef struct {
 #define SOL_SCHEMA_MAX_ARGS 8
 #define SOL_SCHEMA_MAX_ACCOUNTS 4
 #define SOL_SCHEMA_DISC_MAX 8
+#define SOL_SCHEMA_TEMPLATE_MAX 96
+/* Widest filled summary; templates that could exceed it are rejected. */
+#define SOL_INTENT_TEXT_MAX 280
 
 typedef enum {
   SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
@@ -248,6 +256,7 @@ typedef struct {
   SolanaSchemaArgType type;
   char label[SOL_SCHEMA_LABEL_MAX + 1];
   uint8_t mint_account; /* TOKEN_AMOUNT only */
+  uint8_t role;         /* METADATA_ROLE_*; v3 only, else NONE */
 } SolanaSchemaArg;
 
 typedef struct {
@@ -265,10 +274,25 @@ typedef struct {
   uint8_t num_args;
   SolanaSchemaAccount accounts[SOL_SCHEMA_MAX_ACCOUNTS];
   uint8_t num_accounts;
+  uint8_t version;
+  char intent[SOL_SCHEMA_TEMPLATE_MAX + 1]; /* v3; "" = none */
 } SolanaInstrSchema;
 
 /* Bytes one arg consumes; 0 = unknown type (rejected). */
 uint16_t solana_schemaArgWidth(SolanaSchemaArgType t);
+/* Placeholders well-formed and in range, and every amount covered. */
+bool solana_intentTemplateValid(const SolanaInstrSchema* s);
+
+/* The human review (SRS-7.16 §3.7). Each screen goes to emit: body text, or
+ * (memo / opaque bytes) a byte range to page; emit returns false to cancel.
+ * certified: summary, limits, side effects, details, provenance. Runtime: an
+ * "NOT verified by KeepKey" heading plus limits only; the caller's raw review
+ * must follow. Screen text: docs/security/clearsign-intent-template.md. */
+bool solana_buildIntentReview(const SolanaSignTx* msg, const SolanaParsedTx* tx,
+                              const SolanaInstrSchema* s, uint8_t ix_index,
+                              const uint8_t signer[SOL_PUBKEY_SIZE],
+                              const char* alias, const char* fp, bool certified,
+                              ReviewEmit emit, void* ctx);
 
 bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
                              SolanaInstrSchema* out);

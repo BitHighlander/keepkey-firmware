@@ -1078,3 +1078,57 @@ bool signed_metadata_enforce(const uint8_t hash[32]) {
 const SignedMetadata* signed_metadata_get(void) {
   return metadata_available ? &stored_metadata : NULL;
 }
+
+void intent_fill_append(IntentFill* f, const char* str, size_t n) {
+  if (f->used >= f->len || n >= f->len - f->used) {
+    f->ok = false;
+    return;
+  }
+  memcpy(f->out + f->used, str, n);
+  f->used += n;
+  f->out[f->used] = '\0';
+}
+
+bool intent_literal_ok(const char* lit, size_t len) {
+  for (size_t i = 0; i < len; i++) {
+    if (lit[i] >= '0' && lit[i] <= '9') return false;
+  }
+  return true;
+}
+
+const char* intent_role_text(uint8_t role) {
+  switch (role) {
+    case METADATA_ROLE_SPEND_MAX:
+      return "You spend at most";
+    case METADATA_ROLE_RECEIVE_MIN:
+      return "You receive at least";
+    case METADATA_ROLE_SPEND_EXACT:
+      return "You spend";
+    case METADATA_ROLE_RECEIVE_EXACT:
+      return "You receive";
+    case METADATA_ROLE_CAP:
+      return "Each use at most";
+    default:
+      return NULL;
+  }
+}
+
+bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* intent) {
+  char body[BODY_CHAR_MAX];
+  if (snprintf(body, sizeof(body), "%s (NOT verified by KeepKey) says:\n%s",
+               alias ? alias : "Unknown signer", intent) >= (int)sizeof(body)) {
+    return false;
+  }
+  return emit(ctx, "Unverified", body, NULL, 0);
+}
+
+bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* fp) {
+  char body[BODY_CHAR_MAX];
+  int n =
+      snprintf(body, sizeof(body), "Described by %s %s\ncertified by KeepKey",
+               alias ? alias : "", fp ? fp : "");
+  if (n < 0 || n >= (int)sizeof(body)) return false;
+  return emit(ctx, "KeepKey ClearSign", body, NULL, 0);
+}

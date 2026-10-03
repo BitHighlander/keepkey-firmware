@@ -38,6 +38,15 @@ typedef enum {
 /* 7.16: [0x03][cert 139][device-decoded schema]. The cert is verified and
  * DISCARDED within one message; no delegation outlives it. */
 #define METADATA_VERSION_CERTIFIED 0x03
+/* Intent roles, shared by the EVM and Solana (KKSOLSC1 v3) schemas: the
+ * device words the limits screen from these. CAP is a per-use maximum (e.g.
+ * each bet), not an outflow. */
+#define METADATA_ROLE_NONE 0
+#define METADATA_ROLE_SPEND_MAX 1
+#define METADATA_ROLE_RECEIVE_MIN 2
+#define METADATA_ROLE_SPEND_EXACT 3
+#define METADATA_ROLE_RECEIVE_EXACT 4
+#define METADATA_ROLE_CAP 5
 
 /* Delegate sentinel, >= METADATA_MAX_KEYS so it can never name a runtime slot.
  * The only key writer (signed_metadata_store_signer) rejects such ids, so a
@@ -192,5 +201,31 @@ bool signed_metadata_enforce_schema_decision(bool relied, bool available,
                                              bool decoded, int classification);
 
 const SignedMetadata* signed_metadata_get(void);
+
+/* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
+ * docs/security/clearsign-intent-template.md). One screen: body text, or a
+ * byte range to page; false cancels. */
+typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
+                           const uint8_t* bytes, uint16_t bytes_len);
+/* A filled template; src is the walker's schema context. */
+typedef struct {
+  const void* src;
+  char* out;
+  size_t len;
+  size_t used;
+  bool ok;
+} IntentFill;
+void intent_fill_append(IntentFill* f, const char* str, size_t n);
+/* Template literals carry no digits: every digit shown is the device's
+ * formatting of signed bytes, never server text. */
+bool intent_literal_ok(const char* lit, size_t len);
+/* "You spend at most" etc.; NULL for METADATA_ROLE_NONE. */
+const char* intent_role_text(uint8_t role);
+/* Runtime: "<alias> (NOT verified by KeepKey) says:" over the summary. */
+bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* intent);
+/* Certified: "Described by <alias> <fp>, certified by KeepKey". */
+bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* fp);
 
 #endif
