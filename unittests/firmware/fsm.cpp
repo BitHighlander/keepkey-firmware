@@ -10,6 +10,12 @@ extern "C" {
 #include "trezor/crypto/bip32.h"
 #include "trezor/crypto/bip39.h"
 #include "keepkey/firmware/authenticator.h"
+#include "keepkey/firmware/ctap2.h"
+#include "keepkey/firmware/ctap2/cbor.h"
+#include "trezor/crypto/aes/aes.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/hmac.h"
+#include "trezor/crypto/nist256p1.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
@@ -30,6 +36,7 @@ extern "C" {
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/storage.h"
+#include "keepkey/rand/rng_health.h"
 #include "storage.h"
 #include "keepkey/firmware/thorchain.h"
 #include "trezor/crypto/secp256k1.h"
@@ -2531,3 +2538,374 @@ TEST(Fsm, EthereumTransferRecipientMismatchWipesDerivedNode) {
   layoutHomeForced();
 }
 #endif
+
+TEST(Fsm, PasskeyResetRotatesGenerationAndClearsAllMetadata) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  PasskeyStorage original;
+  storage_getPasskeyData(&original);
+
+  PasskeyStorage populated;
+  memset(&populated, 0, sizeof(populated));
+  populated.version = 1;
+  populated.pin_set = 1;
+  populated.pin_retries = 3;
+  populated.credentials[0].occupied = 1;
+  populated.credentials[0].user_id_length = 1;
+  populated.credentials[0].user_id[0] = 0x42;
+  storage_setPasskeyData(&populated);
+
+  uint8_t before[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  bool legacy_enabled = false;
+  ASSERT_TRUE(storage_getPasskeyCredentialGeneration(before, &legacy_enabled));
+  EXPECT_TRUE(legacy_enabled);
+
+  ASSERT_TRUE(storage_resetPasskeyData());
+  PasskeyStorage reset;
+  storage_getPasskeyData(&reset);
+  EXPECT_EQ(reset.version, PASSKEY_STORAGE_VERSION);
+  EXPECT_EQ(reset.pin_set, 0);
+  EXPECT_EQ(reset.pin_retries, PASSKEY_PIN_RETRIES);
+  EXPECT_EQ(reset.credentials[0].occupied, 0);
+  EXPECT_EQ(reset.legacy_credentials_enabled, 0);
+  EXPECT_NE(memcmp(before, reset.credential_generation, sizeof(before)), 0);
+
+  storage_setPasskeyData(&original);
+}
+
+/* SRS-7.16 R-4.2: a commit cut short at any point boots into the newest
+ * complete record, never a pending or corrupt one. */
+namespace {
+int ActiveSectors() {
+  int n = 0;
+  for (int s = FLASH_STORAGE1; s <= FLASH_STORAGE3; s++)
+    n += memcmp((const void*)flash_write_helper((Allocation)s),
+                STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN) == 0;
+  return n;
+}
+char* Sector(Allocation s) { return (char*)flash_write_helper(s); }
+// The state a power cut leaves after staging: the record copied to the spare
+// sector without its magic, with its trailer, and the old record erased.
+Allocation CutAfterStaging(bool corrupt) {
+  Allocation active;
+  EXPECT_TRUE(find_active_storage(&active));
+  const Allocation pending = next_storage(next_storage(active));
+  char* dst = Sector(pending);
+  memset(dst, 0xff, STORAGE_SECTOR_LEN);
+  memcpy(dst + 4, Sector(active) + 4, 2572 - 4);
+  const uint32_t crc = calc_crc32(dst + 4, (2572 - 4) / 4);
+  memcpy(dst + 2572, "crc1", 4);
+  memcpy(dst + 2576, &crc, 4);
+  if (corrupt) dst[100] ^= 1;
+  memset(Sector(active), 0xff, STORAGE_SECTOR_LEN);
+  return pending;
+}
+}  // namespace
+
+TEST(Fsm, StorageCommitLeavesOneMarkedRecord) {
+  ScopedFlash flash;
+  storage_setLabel("one");
+  storage_commit();
+  storage_setLabel("two");
+  storage_commit();
+  EXPECT_EQ(1, ActiveSectors());
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(0, memcmp(Sector(next_storage(active)), STORAGE_PROTECT_OFF_MAGIC,
+                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
+  storage_init();
+  EXPECT_STREQ("two", storage_getLabel());
+}
+
+TEST(Fsm, StorageRecoversACommitCutAfterStaging) {
+  ScopedFlash flash;
+  storage_setLabel("kept");
+  storage_commit();
+  const Allocation pending = CutAfterStaging(false);
+  EXPECT_EQ(0, ActiveSectors());
+  storage_init();
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(pending, active);
+  EXPECT_EQ(0, memcmp(Sector(next_storage(active)), STORAGE_PROTECT_OFF_MAGIC,
+                      sizeof(STORAGE_PROTECT_OFF_MAGIC)));
+  EXPECT_STREQ("kept", storage_getLabel());
+}
+
+TEST(Fsm, StorageKeepsTheOldRecordWhenStagingIsCut) {
+  ScopedFlash flash;
+  storage_setLabel("old");
+  storage_commit();
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  char* spare = Sector(next_storage(next_storage(active)));
+  memset(spare, 0x5a, 1000);  // a half-written stage, no trailer
+  storage_init();
+  EXPECT_STREQ("old", storage_getLabel());
+}
+
+// An erase of the old sector cut short can leave its magic readable over
+// damaged data; the complete staged record must still win.
+TEST(Fsm, StorageStagedRecordWinsOverAHalfErasedOldSector) {
+  ScopedFlash flash;
+  storage_setLabel("staged");
+  storage_commit();
+  Allocation old;
+  ASSERT_TRUE(find_active_storage(&old));
+  const Allocation pending = CutAfterStaging(false);
+  memset(Sector(old), 0x5a, 2000);
+  memcpy(Sector(old), STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
+  storage_init();
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  EXPECT_EQ(pending, active);
+  EXPECT_EQ(1, ActiveSectors());
+  EXPECT_STREQ("staged", storage_getLabel());
+}
+
+// An erase of the old record cut after clearing only its magic leaves a
+// stale record that looks staged; the newer commit must win, never roll back.
+TEST(Fsm, StorageNeverRollsBackToAStaleRecordMissingItsMagic) {
+  ScopedFlash flash;
+  // Each commit moves two sectors on, so three rounds cover every placement
+  // of the stale record relative to the new one.
+  for (int round = 0; round < 3; round++) {
+    storage_setLabel("old");
+    storage_commit();
+    Allocation old_sector;
+    ASSERT_TRUE(find_active_storage(&old_sector));
+    std::vector<char> old_bytes(Sector(old_sector), Sector(old_sector) + 2580);
+    storage_setLabel("new");
+    storage_commit();
+    Allocation new_sector;
+    ASSERT_TRUE(find_active_storage(&new_sector));
+    for (int pass = 0; pass < 2; pass++) {  // new already active, then staged
+      // The old record without its magic, as an interrupted erase leaves it.
+      memcpy(Sector(old_sector), old_bytes.data(), old_bytes.size());
+      memset(Sector(old_sector), 0xff, STORAGE_MAGIC_LEN);
+      if (pass == 1) memset(Sector(new_sector), 0xff, STORAGE_MAGIC_LEN);
+      storage_init();
+      Allocation active;
+      ASSERT_TRUE(find_active_storage(&active));
+      EXPECT_EQ(new_sector, active) << "round " << round << " pass " << pass;
+      EXPECT_EQ(1, ActiveSectors());
+      EXPECT_STREQ("new", storage_getLabel());
+    }
+  }
+}
+
+TEST(Fsm, StorageNeverRecoversACorruptPendingRecord) {
+  ScopedFlash flash;
+  storage_setLabel("lost");
+  storage_commit();
+  CutAfterStaging(true);
+  storage_init();
+  EXPECT_STRNE("lost", storage_getLabel());
+}
+
+namespace {
+// A CTAP 2.0 ClientPIN host: real ECDH, AES-256-CBC (zero IV) and HMAC.
+struct PinHost {
+  uint8_t priv[32] = {0};
+  uint8_t pub[65] = {0};
+  uint8_t shared[32] = {0};
+  std::vector<uint8_t> out = std::vector<uint8_t>(1024);
+  size_t out_length = 0;
+
+  uint8_t call(const std::vector<uint8_t>& request) {
+    ctap2_handle(request.data(), request.size(), out.data(), out.size(),
+                 &out_length);
+    return out[0];
+  }
+  static void aes(const uint8_t key[32], const uint8_t* in, uint8_t* o,
+                  size_t n, bool encrypt) {
+    uint8_t iv[16] = {0};
+    if (encrypt) {
+      aes_encrypt_ctx c;
+      aes_encrypt_key256(key, &c);
+      aes_cbc_encrypt(in, o, n, iv, &c);
+    } else {
+      aes_decrypt_ctx c;
+      aes_decrypt_key256(key, &c);
+      aes_cbc_decrypt(in, o, n, iv, &c);
+    }
+  }
+  // getKeyAgreement, then derive the shared secret the device will use.
+  void agree() {
+    priv[31] = 7;
+    ecdsa_get_public_key65(&nist256p1, priv, pub);
+    ASSERT_EQ(call({CTAP2_CMD_CLIENT_PIN, 0xa2, 0x01, 0x01, 0x02, 0x02}),
+              CTAP2_OK);
+    const uint8_t* key;
+    size_t key_length;
+    CborValue v, k;
+    ASSERT_TRUE(cbor_map_find(out.data() + 1, out_length - 1, NULL, 1, &v, &key,
+                              &key_length));
+    uint8_t device[65] = {0x04};
+    CborDecoder d;
+    cbor_decoder_init(&d, key, key_length);
+    ASSERT_TRUE(cbor_decode_value(&d, &v));
+    const uint64_t pairs = v.value;
+    for (uint64_t i = 0; i < pairs; ++i) {
+      ASSERT_TRUE(cbor_decode_value(&d, &k));
+      ASSERT_TRUE(cbor_decode_value(&d, &v));
+      if (k.type == CBOR_TYPE_NEGINT && (k.value == 1 || k.value == 2))
+        memcpy(device + 1 + 32 * (k.value - 1), v.data, 32);
+    }
+    uint8_t point[65];
+    ASSERT_EQ(ecdh_multiply(&nist256p1, priv, device, point), 0);
+    sha256_Raw(point + 1, 32, shared);
+  }
+  void cose(CborEncoder* e) {
+    cbor_encode_map(e, 5);
+    cbor_encode_int(e, 1), cbor_encode_int(e, 2);
+    cbor_encode_int(e, 3), cbor_encode_int(e, -25);
+    cbor_encode_int(e, -1), cbor_encode_int(e, 1);
+    cbor_encode_int(e, -2), cbor_encode_bytes(e, pub + 1, 32);
+    cbor_encode_int(e, -3), cbor_encode_bytes(e, pub + 33, 32);
+  }
+  void pin_hash_enc(const char* pin, uint8_t o[16]) {
+    uint8_t h[32];
+    sha256_Raw((const uint8_t*)pin, strlen(pin), h);
+    aes(shared, h, o, 16, true);
+  }
+  // subcommand 3 (setPIN) or 4 (changePIN, with current_pin).
+  uint8_t set_pin(const char* pin, const char* current_pin = nullptr) {
+    agree();
+    uint8_t padded[64] = {0}, enc[64], hash_enc[16], mac[32];
+    memcpy(padded, pin, strlen(pin));
+    aes(shared, padded, enc, 64, true);
+    std::vector<uint8_t> authed(enc, enc + 64);
+    if (current_pin) {
+      pin_hash_enc(current_pin, hash_enc);
+      authed.insert(authed.end(), hash_enc, hash_enc + 16);
+    }
+    hmac_sha256(shared, 32, authed.data(), authed.size(), mac);
+    std::vector<uint8_t> r(1 + 512);
+    r[0] = CTAP2_CMD_CLIENT_PIN;
+    CborEncoder e;
+    cbor_encoder_init(&e, r.data() + 1, r.size() - 1);
+    cbor_encode_map(&e, current_pin ? 6 : 5);
+    cbor_encode_uint(&e, 1), cbor_encode_uint(&e, 1);
+    cbor_encode_uint(&e, 2), cbor_encode_uint(&e, current_pin ? 4 : 3);
+    cbor_encode_uint(&e, 3), cose(&e);
+    cbor_encode_uint(&e, 4), cbor_encode_bytes(&e, mac, 16);
+    cbor_encode_uint(&e, 5), cbor_encode_bytes(&e, enc, 64);
+    if (current_pin)
+      cbor_encode_uint(&e, 6), cbor_encode_bytes(&e, hash_enc, 16);
+    r.resize(1 + cbor_encoder_size(&e));
+    return call(r);
+  }
+  uint8_t get_token(const char* pin, uint8_t token[32]) {
+    agree();
+    uint8_t hash_enc[16];
+    pin_hash_enc(pin, hash_enc);
+    std::vector<uint8_t> r(1 + 256);
+    r[0] = CTAP2_CMD_CLIENT_PIN;
+    CborEncoder e;
+    cbor_encoder_init(&e, r.data() + 1, r.size() - 1);
+    cbor_encode_map(&e, 4);
+    cbor_encode_uint(&e, 1), cbor_encode_uint(&e, 1);
+    cbor_encode_uint(&e, 2), cbor_encode_uint(&e, 5);
+    cbor_encode_uint(&e, 3), cose(&e);
+    cbor_encode_uint(&e, 6), cbor_encode_bytes(&e, hash_enc, 16);
+    r.resize(1 + cbor_encoder_size(&e));
+    const uint8_t status = call(r);
+    CborValue v;
+    if (status == CTAP2_OK &&
+        cbor_map_find(out.data() + 1, out_length - 1, NULL, 2, &v, NULL,
+                      NULL) &&
+        v.length == 32)
+      aes(shared, v.data, token, 32, false);
+    return status;
+  }
+  // getAssertion {rp, cdh, up:false, pinAuth, pinProtocol 1}.
+  uint8_t assert_with(const uint8_t token[32]) {
+    uint8_t cdh[32], mac[32];
+    memset(cdh, 0x22, sizeof(cdh));
+    hmac_sha256(token, 32, cdh, 32, mac);
+    std::vector<uint8_t> r = {CTAP2_CMD_GET_ASSERTION,
+                              0xa5,
+                              0x01,
+                              0x64,
+                              'a',
+                              '.',
+                              'c',
+                              'o',
+                              0x02,
+                              0x58,
+                              0x20};
+    r.insert(r.end(), cdh, cdh + 32);
+    r.insert(r.end(), {0x05, 0xa1, 0x62, 'u', 'p', 0xf4, 0x06, 0x50});
+    r.insert(r.end(), mac, mac + 16);
+    r.insert(r.end(), {0x07, 0x01});
+    return call(r);
+  }
+};
+}  // namespace
+
+TEST(Fsm, Ctap2ClientPinExchangesEndToEnd) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  ctap2_init();
+  ctap2_set_transport_channel(1);
+  PinHost host;
+  uint8_t token[32] = {0}, wrong[32] = {0};
+
+  // Control: before any PIN, a token is refused and getPINToken has no PIN.
+  EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
+  EXPECT_EQ(host.set_pin("12\xc3"), CTAP2_ERR_PIN_POLICY_VIOLATION);
+  EXPECT_EQ(host.set_pin("\xc3\xa9\xc3\xa9"), CTAP2_ERR_PIN_POLICY_VIOLATION);
+
+  ASSERT_EQ(host.set_pin("1234"), CTAP2_OK);
+  PasskeyStorage stored;
+  EXPECT_EQ(host.get_token("9999", token), CTAP2_ERR_PIN_INVALID);
+  storage_getPasskeyData(&stored);
+  EXPECT_EQ(stored.pin_retries, PASSKEY_PIN_RETRIES - 1);  // spent, persisted
+  ASSERT_EQ(host.get_token("1234", token), CTAP2_OK);
+  storage_getPasskeyData(&stored);
+  EXPECT_EQ(stored.pin_retries, PASSKEY_PIN_RETRIES);            // restored
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_NO_CREDENTIALS);  // auth ok
+  EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
+
+  EXPECT_EQ(host.set_pin("5678", "0000"), CTAP2_ERR_PIN_INVALID);
+  ASSERT_EQ(host.set_pin("5678", "1234"), CTAP2_OK);
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_PIN_AUTH_INVALID);  // revoked
+  ASSERT_EQ(host.get_token("5678", token), CTAP2_OK);
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_NO_CREDENTIALS);
+
+  // A resident account is never revealed to a silent, unverified probe.
+  storage_getPasskeyData(&stored);
+  stored.credentials[0].occupied = 1;
+  sha256_Raw((const uint8_t*)"a.co", 4, stored.credentials[0].rp_id_hash);
+  stored.credentials[0].credential_id[0] = 0x42;
+  stored.credentials[0].user_id_length = 1;
+  stored.credentials[1] = stored.credentials[0];  // a second account
+  stored.credentials[1].credential_id[0] = 0x43;
+  storage_setPasskeyData(&stored);
+  const std::vector<uint8_t> next = {CTAP2_CMD_GET_NEXT_ASSERTION};
+  EXPECT_EQ(host.assert_with(wrong), CTAP2_ERR_PIN_AUTH_INVALID);
+  std::vector<uint8_t> silent = {CTAP2_CMD_GET_ASSERTION,
+                                 0xa3,
+                                 0x01,
+                                 0x64,
+                                 'a',
+                                 '.',
+                                 'c',
+                                 'o',
+                                 0x02,
+                                 0x58,
+                                 0x20};
+  silent.insert(silent.end(), 32, 0x22);
+  silent.insert(silent.end(), {0x05, 0xa1, 0x62, 'u', 'p', 0xf4});
+  EXPECT_EQ(host.call(silent), CTAP2_ERR_NO_CREDENTIALS);
+  EXPECT_EQ(host.call(next), CTAP2_ERR_NOT_ALLOWED);  // nothing was looked up
+  // Control: the verified lookup finds both accounts and arms the sequence.
+  host.assert_with(token);
+  EXPECT_NE(host.call(next), CTAP2_ERR_NOT_ALLOWED);
+
+  // A wallet wipe must not leave a usable token behind.
+  storage_wipe();
+  storage_init();
+  EXPECT_EQ(host.assert_with(token), CTAP2_ERR_PIN_AUTH_INVALID);
+}
