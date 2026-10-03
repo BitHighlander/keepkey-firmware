@@ -597,6 +597,33 @@ void layout_nano_address_notification(const char* desc, const char* address,
   layout_notification_icon(type, &sp);
 }
 
+#if ZCASH_PRIVACY
+/*
+ * layout_zcash_address_notification() - Unified address as QR only; the full
+ * text is shown on the preceding confirm step.
+ */
+void layout_zcash_address_notification(const char* desc, const char* address,
+                                       NotificationType type) {
+  DrawableParams sp;
+  Canvas* canvas = layout_get_canvas();
+
+  call_leaving_handler();
+  layout_clear();
+
+  if (strcmp(desc, "") != 0) {
+    const Font* title_font = get_title_font();
+    sp.y = TOP_MARGIN_FOR_TWO_LINES;
+    sp.x = LEFT_MARGIN + 65;
+    sp.color = BODY_COLOR;
+    draw_string(canvas, title_font, desc, &sp, TRANSACTION_WIDTH - 2,
+                font_height(title_font) + BODY_FONT_LINE_PADDING);
+  }
+
+  layout_address(address, QR_LARGE);
+  layout_notification_icon(type, &sp);
+}
+#endif  // ZCASH_PRIVACY
+
 /*
  * layout_address_notification() - Display address notification
  *
@@ -729,8 +756,7 @@ void layout_cipher(const char* current_word, const char* cipher,
   call_leaving_handler();
   layout_clear();
 
-  /* Draw previous word info at top-left -- must be x < 76 to avoid
-   * being wiped by cipher animation which clears x >= CIPHER_START_X */
+  /* x < 76: the cipher animation clears x >= CIPHER_START_X. */
   if (prev_word_info && prev_word_info[0]) {
     sp.y = 2;
     sp.x = 4;
@@ -756,8 +782,7 @@ void layout_cipher(const char* current_word, const char* cipher,
   if (animate_cipher) {
     layout_add_animation(&layout_animate_cipher, (void*)cipher, duration);
   } else {
-    /* Restore an obscured mapping immediately. Replaying its introduction
-     * lets repeated host requests keep its last letters off the display. */
+    /* No replay: repeated requests could keep letters off the display. */
     layout_animate_cipher((void*)cipher, duration, duration);
   }
   display_refresh();
