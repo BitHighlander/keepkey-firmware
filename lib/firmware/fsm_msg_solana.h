@@ -514,14 +514,6 @@ static bool solana_pathIsStandard(const uint32_t* path, size_t count) {
   return true;
 }
 
-/* Verify derived pubkey appears in tx accounts[0..num_required_sigs) */
-static bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
-  for (uint8_t i = 0; i < tx->num_required_sigs && i < tx->num_accounts; i++) {
-    if (memcmp(pubkey, tx->accounts[i], SOL_PUBKEY_SIZE) == 0) return true;
-  }
-  return false;
-}
-
 /* Render a schema-decoded instruction: who attested the schema, then the
  * program/instruction it describes, then every labelled arg and account with
  * values read from the transaction being signed. */
