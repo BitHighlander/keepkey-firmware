@@ -62,25 +62,31 @@ if [ -z "$FW_VERSION" ]; then
 fi
 export FW_VERSION
 
-echo "=== Report-required OLED capture ==="
-SCREENSHOT_TESTS=$(python3 ../scripts/generate-test-report.py \
-  --screenshot-test-list --fw-version="$FW_VERSION")
-if [ -z "$SCREENSHOT_TESTS" ]; then
-  echo "FATAL: screenshot test list is empty"
-  exit 1
-fi
-KEEPKEY_SCREENSHOT=1 \
-SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
-KEEPKEY_SCREENSHOT_TESTS="$SCREENSHOT_TESTS" \
-KK_TRANSPORT_MAIN=kkemu:11044 \
-KK_TRANSPORT_DEBUG=kkemu:11045 \
-pytest -v --tb=short \
-  --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml || RC=1
+# Rehearsal runs (repo variable KK_CI_REHEARSAL=1) skip the ~8 min OLED
+# capture: they prove each merge is green, not release evidence.
+if [ "${KK_CI_REHEARSAL:-}" = 1 ]; then
+  echo "=== REHEARSAL: OLED capture skipped, no release evidence ==="
+else
+  echo "=== Report-required OLED capture ==="
+  SCREENSHOT_TESTS=$(python3 ../scripts/generate-test-report.py \
+    --screenshot-test-list --fw-version="$FW_VERSION")
+  if [ -z "$SCREENSHOT_TESTS" ]; then
+    echo "FATAL: screenshot test list is empty"
+    exit 1
+  fi
+  KEEPKEY_SCREENSHOT=1 \
+  SCREENSHOT_DIR=/kkemu/test-reports/screenshots \
+  KEEPKEY_SCREENSHOT_TESTS="$SCREENSHOT_TESTS" \
+  KK_TRANSPORT_MAIN=kkemu:11044 \
+  KK_TRANSPORT_DEBUG=kkemu:11045 \
+  pytest -v --tb=short \
+    --junitxml=/kkemu/test-reports/python-keepkey/junit-screenshots.xml || RC=1
 
-python3 ../scripts/generate-test-report.py \
-  --screenshot-audit=/kkemu/test-reports/screenshots \
-  --audit-junit=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
-  --fw-version="$FW_VERSION" || RC=1
+  python3 ../scripts/generate-test-report.py \
+    --screenshot-audit=/kkemu/test-reports/screenshots \
+    --audit-junit=/kkemu/test-reports/python-keepkey/junit-screenshots.xml \
+    --fw-version="$FW_VERSION" || RC=1
+fi
 
 echo "=== Full Python integration suite ==="
 KK_TRANSPORT_MAIN=kkemu:11044 \
