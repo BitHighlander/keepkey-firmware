@@ -513,8 +513,14 @@ def read_junit_cases(path):
     return cases
 
 
-def validate_contract_junit(root):
-    """Require every dedicated contract JUnit with exact per-case statuses."""
+def validate_contract_junit(root, missing_capabilities=frozenset()):
+    """Require every dedicated contract JUnit with exact per-case statuses.
+
+    A case expected to pass may instead skip for a staged capability, but only
+    one the release ledger declares missing (see release_missing_capabilities).
+    """
+    waived = {("skip", CAPABILITY_SKIP_PREFIX + capability)
+              for capability in missing_capabilities}
     inputs = []
     for variant, directory in sorted(CONTRACT_JUNIT_DIRS.items()):
         for filename, by_variant in sorted(CONTRACT_JUNIT.items()):
@@ -534,7 +540,9 @@ def validate_contract_junit(root):
                 found = [result for name, result in cases.items()
                          if name == required or name.endswith("." + required)]
                 expected_reason = CONTRACT_SKIP_REASONS[required] if expected == "skip" else ""
-                if found != [(expected, expected_reason)]:
+                if found != [(expected, expected_reason)] and not (
+                        expected == "pass" and len(found) == 1 and
+                        found[0] in waived):
                     wrong.append("%s (expected %s, found %s)" % (
                         required, expected + ":" + expected_reason, repr(found) if found else "missing"))
             if wrong:
@@ -703,11 +711,11 @@ def main():
 
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
-    contract_inputs = validate_contract_junit(ROOT)
-    contract_inputs += validate_native_contract_junit(ROOT)
     # Normalize the shared staged-capability inventory plus the declarations
     # in immutable JUnit before invoking python-keepkey's report validator.
     missing_capabilities = release_missing_capabilities(cases)
+    contract_inputs = validate_contract_junit(ROOT, missing_capabilities)
+    contract_inputs += validate_native_contract_junit(ROOT)
     if missing_capabilities:
         os.environ["KK_RELEASE_MISSING_CAPABILITIES"] = ",".join(
             sorted(missing_capabilities))
