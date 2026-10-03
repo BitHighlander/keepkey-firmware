@@ -49,6 +49,16 @@ the `keepkey/*` upstream.
    table (merge, tree, parents, own diff, pins; `receipt-identity.sh`); the receipt in the owner's handoff.
    Resetting fork `develop` to upstream `develop` is a separate owner action.
 
+### Branches are never deleted
+
+Never delete a branch after it merges, is superseded, or is "contained in" another. Each block is a
+canonical piece that is re-authored in the rehearsal until it passes and stays until it has gone upstream
+as part of the release. This covers `stack/*`, `trim/*`, `fwd/*`, `caps/*`, `rehearsal/*`, `release/*`,
+the dependency repositories' branches, and PRs (do not close one to tidy up). Removal is the owner's
+decision, after upstream. Resetting fork `develop` is allowed (it is a staging surface), but first create
+`backup/develop-before-<reason>-<date>` at its tip. On 2026-10-02 forty-six branches were deleted as
+"cleanup" and had to be restored.
+
 ### CI prerequisites (each cost a stopped run on 2026-10-02)
 
 * **Rehearsal switch.** The repository variable `KK_CI_REHEARSAL=1` skips the ~8 minute OLED capture and the
