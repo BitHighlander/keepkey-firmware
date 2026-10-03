@@ -66,7 +66,7 @@ env:
   EMU_IMAGE: kkemu-ci
   # One staged-capability inventory for the integration suite and report
   # validator. Both must apply the same explicit 7.15 omissions.
-  KK_RELEASE_MISSING_CAPABILITIES: storage-v19-kdf,solana-lut-attestation,evm-max-amount-review,evm-unknown-token-review,session-trust-lifetime,erc7730-runtime-review,osmosis-wire-guards,ripple-memo-policy,hive-release-review,solana-runtime-review,maya-single-message
+  KK_RELEASE_MISSING_CAPABILITIES: storage-v19-kdf,solana-lut-attestation,evm-max-amount-review,evm-unknown-token-review,session-trust-lifetime,erc7730-runtime-review,osmosis-wire-guards,ripple-memo-policy,hive-release-review,solana-runtime-review,maya-single-message,evm-tx-metadata,tendermint-progress
 
 jobs:
   # ═══════════════════════════════════════════════════════════
