@@ -18,10 +18,15 @@ extern "C" {
 #include <string>
 #include <vector>
 
+// After the C++ headers: confirm_sm.h defines isprint() as a macro.
+extern "C" {
+#include "keepkey/board/confirm_sm.h"
+}
+
 bool kkconfirm_preload(int, int);
-int kkconfirm_drain(void);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
+int kkconfirm_drain(void);
 
 class ReviewHandlers : public ::testing::Test {
  protected:
@@ -233,6 +238,36 @@ TEST_F(ReviewHandlers, Bip85DerivationMatchesIndependentBip32Oracle) {
     for (char byte : page) EXPECT_EQ(0, byte);
   for (char byte : mnemonic_scratch_display) EXPECT_EQ(0, byte);
   for (char byte : mnemonic_scratch_word) EXPECT_EQ(0, byte);
+}
+
+// Handler-level regression for the BIP-85 pager. Index 84 of this seed is a
+// 24-word child whose last page, packed at BODY_WIDTH, needs more rows than
+// the constant-power canvas has (measured; 35 of the first 2000 24-word
+// children overflow like this). Unpaged, that page reaches the renderer as
+// one screen and its tail is never drawn; paged, every screen must fit.
+TEST_F(ReviewHandlers, Bip85SeedScreensAllFitTheConstantPowerCanvas) {
+  GetBip85Mnemonic request = {};
+  request.word_count = 24;
+  request.index = 84;
+  ASSERT_TRUE(kkconfirm_preload(40, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgGetBip85Mnemonic(&request);
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  (void)kkconfirm_drain();
+
+  size_t seed_screens = 0;
+  for (const auto& body : screens) {
+    const size_t first = body.find_first_not_of(' ');
+    if (first == std::string::npos || (body[first] < '0' || body[first] > '9'))
+      continue;  // the "BIP-85 Derive Seed" confirmation, not a seed page
+    ++seed_screens;
+    EXPECT_TRUE(confirm_body_fits_constant_power(body.c_str(),
+                                                 CONSTANT_POWER_BODY_WIDTH))
+        << "seed screen does not fit: " << body;
+  }
+  EXPECT_GE(seed_screens, 6u) << "every packed page must reach the screen";
 }
 
 static TronSignMessage message(size_t size, bool binary) {
