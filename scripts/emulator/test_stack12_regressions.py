@@ -36,6 +36,7 @@ class TestStack12Hive(common.KeepKeyTest):
                       else ("Emulator", "KeepKey"))
         if variant == "bitcoin-only":
             self.skipTest("Hive signing is unavailable in bitcoin-only firmware")
+        self.requires_release_capability("hive-release-review")
         self.setup_mnemonic_nopin_nopassphrase()
 
     def walk(self, request, cancel=None):
