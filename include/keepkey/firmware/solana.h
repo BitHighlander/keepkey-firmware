@@ -31,10 +31,8 @@
 #define SOL_PUBKEY_SIZE 32
 #define SOL_SIG_SIZE 64
 #define SOL_MAX_ACCOUNTS 32
-/* KKSOLSW1: how many lookup-table-resolved accounts a provider may attest for
-   one transaction. Bounded because the preimage and the screens are both
-   linear in it, and because a provider that needs to name more than eight
-   accounts is describing something the user cannot meaningfully review. */
+/* KKSOLSW1: max attested lookup-table accounts per tx; more than this is not
+   meaningfully reviewable. */
 #define SOL_MAX_LUT_ACCOUNTS 8
 #define SOL_MAX_INSTRUCTIONS 8
 #define SOL_LAMPORTS_DIVISOR 1000000000ULL
@@ -167,9 +165,8 @@ typedef struct {
   /* Same lifetime as `data`. */
   const uint8_t* acct_indices;
   uint8_t num_acct_indices;
-  /* True when this instruction reaches into an unresolved address-lookup
-   * table. A certified parse appends the delegate-attested canonical lookup
-   * keys before decoding, so successfully resolved instructions are false. */
+  /* Reaches into an UNRESOLVED address-lookup table (a certified parse
+   * appends attested LUT keys first). */
   bool external;
 } SolanaParsedInstruction;
 
@@ -179,17 +176,12 @@ typedef struct {
   uint8_t num_readonly_signed;
   uint8_t num_readonly_unsigned;
   uint8_t num_accounts;
-  /* How many of `accounts` are the message's own static keys. The rest, when
-   * a certified parse appended them, are lookup-table keys the signed bytes
-   * reference only by index. */
+  /* Static keys in `accounts`; any rest are appended LUT keys. */
   uint8_t num_static_accounts;
   uint8_t accounts[SOL_MAX_ACCOUNTS][SOL_PUBKEY_SIZE];
   uint8_t recent_blockhash[SOL_PUBKEY_SIZE];
-  /* True when a v0 message contains at least one serialized address lookup
-   * table entry. This remains true after certified resolution and lets the
-   * policy layer distinguish an unknown self-contained program (schema-only
-   * certification is sufficient) from an externally-resolved transaction
-   * (a transaction-bound LUT proof is mandatory). */
+  /* v0 message has any LUT entry; stays true after resolution, so policy
+   * still demands a transaction-bound LUT proof. */
   bool has_address_lookups;
   uint8_t num_instructions;
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
@@ -245,9 +237,8 @@ typedef enum {
   SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
   SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown in full over pages */
   SOL_SCHEMA_ARG_LAMPORTS = 5, /* 8 bytes, shown as decimal SOL */
-  /* v2: 8-byte raw amount of the token whose mint is instruction account
-   * mint_account. Scaled and named only by a trusted token definition for
-   * that mint; otherwise shown raw beside the full mint address. */
+  /* v2: 8 bytes; mint is ix account mint_account. Scaled only by a trusted
+   * token definition, else raw beside the full mint. */
   SOL_SCHEMA_ARG_TOKEN_AMOUNT = 6,
   SOL_SCHEMA_ARG_DURATION = 7, /* v2: 8-byte seconds, shown in exact units */
 } SolanaSchemaArgType;
@@ -255,7 +246,7 @@ typedef enum {
 typedef struct {
   SolanaSchemaArgType type;
   char label[SOL_SCHEMA_LABEL_MAX + 1];
-  uint8_t mint_account; /* TOKEN_AMOUNT only; fits the struct's padding */
+  uint8_t mint_account; /* TOKEN_AMOUNT only */
 } SolanaSchemaArg;
 
 typedef struct {
@@ -286,61 +277,39 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index);
 
-/* The same proof for a root-certified schema, of either version, which
- * additionally admits SystemProgram Transfer companions whose every account is
- * one of the message's static keys: the certified review renders each one in
- * full (funding account, amount, destination) through
- * solana_confirmInstruction, and its destination is then always a key the
- * signed bytes contain, never one a lookup-table proof resolved. */
+/* Same, for a root-certified schema; also admits SystemProgram Transfers whose
+ * accounts are all static keys (shown in full, never a LUT-resolved dest). */
 bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
                                    const SolanaParsedTx* tx,
                                    uint8_t* out_index);
 
-/* DURATION display in exact units: whole days, else whole hours, else whole
- * minutes, else seconds ("N d", "N h", "N min", "N s"). */
+/* Exact units: "N d", "N h", "N min" or "N s". */
 void solana_formatDuration(char* buf, size_t len, uint64_t seconds);
 
-/* The token definition that may name and scale a schema TOKEN_AMOUNT for
- * `mint`, or NULL. Each review tier keeps its own trust root: a certified
- * review accepts only a definition signed by the certificate's delegate
- * ("KeepKeySolanaTokenDef/2", the certified Pump token attestation, for the
- * SPL Token or Token-2022 program); a runtime review only one attested by the
- * user-loaded signer that signed the schema (solana_token_info_trusted, and
- * signer_key_id == msg->schema_signer_key_id). Either way the decimals must be
- * displayable (<= SOL_MAX_DISPLAY_DECIMALS), the symbol a bare ticker, and the
- * symbol not one the firmware's known-token table gives to another mint
- * (compared ignoring case): a "USDC" definition for any mint but Circle's is
- * not trusted, and the amount is shown raw beside its mint. */
+/* Token definition trusted to scale a TOKEN_AMOUNT for `mint`, or NULL. Each
+ * tier keeps its own trust root: certified = signed by the cert's delegate;
+ * runtime = the signer that signed the schema. Decimals must be displayable,
+ * and the symbol must not be a known-token symbol of another mint (case-
+ * insensitive), so a fake "USDC" is shown raw. */
 const SolanaTokenInfo* solana_schemaTrustedToken(
     const SolanaSignTx* msg, const uint8_t mint[SOL_PUBKEY_SIZE],
     bool certified);
 
-/* TOKEN_AMOUNT display, always ending in the full mint address on its own
- * row. With a trusted definition: the amount scaled by its decimals and
- * labelled with its symbol ("1000 SDICE\n<mint>") -- a symbol names a
- * token but does not identify one, since anyone can mint a "USDC". Without
- * one: the raw integer ("N base units of mint\n<mint>") -- never a guessed
- * scale or symbol. False only when the mint cannot be encoded, and the caller
- * must then refuse. */
+/* Always ends with the full mint (a symbol does not identify a token). No
+ * trusted definition: raw integer, never a guessed scale. False => refuse. */
 bool solana_formatSchemaTokenAmount(char* buf, size_t len, uint64_t amount,
                                     const uint8_t mint[SOL_PUBKEY_SIZE],
                                     const SolanaTokenInfo* trusted);
 
-/* The token definition resolved for the last TOKEN_AMOUNT mint of one review,
- * so each mint's definition is verified once. Zero it before the first arg. */
+/* Per-review cache of the last mint's definition. Zero before first use. */
 typedef struct {
   const uint8_t* mint;
   const SolanaTokenInfo* token;
 } SolanaSchemaTokenCache;
 
-/* The display text of schema arg `arg` of instruction `ix`, whose value
- * starts at `data` (inside ix->data; the applies check proved the whole arg
- * is there). A TOKEN_AMOUNT's mint is the tx key of the instruction's own
- * account arg->mint_account -- parsed->accounts[ix->acct_indices[...]] -- and
- * only a definition trusted in this review's tier (`certified`) may scale and
- * name it. OPAQUE32 has no text form: the caller pages its bytes instead of
- * calling this. False for OPAQUE32 and for any value that cannot be shown;
- * the caller must then refuse. */
+/* Display text of `arg` (value at `data`). Only a definition trusted in this
+ * review's tier may scale a TOKEN_AMOUNT. False for OPAQUE32 (caller pages
+ * it) or any unshowable value; the caller must then refuse. */
 bool solana_schemaArgValue(const SolanaSignTx* msg, bool certified,
                            const SolanaParsedTx* parsed,
                            const SolanaParsedInstruction* ix,
@@ -352,13 +321,9 @@ bool solana_schemaArgValue(const SolanaSignTx* msg, bool certified,
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
                                 SolanaParsedTx* tx);
 
-/* Inspect a v0 message after appending the canonical lookup-table account list
- * attested for this exact message. The account order is the Solana runtime
- * order: all writable lookup keys followed by all readonly lookup keys, across
- * the message's lookup entries. The parser proves the serialized lookup index
- * count equals `num_lut_accounts`; it never accepts extra or missing keys.
- * Trust verification is deliberately outside this parser and MUST happen
- * before a caller uses the result to suppress Advanced Mode. */
+/* Inspect with the attested LUT keys appended in runtime order (all writable,
+ * then all readonly). Count must match exactly. Does NOT verify trust: that
+ * MUST happen before the result suppresses Advanced Mode. */
 SolanaTxReview solana_inspectTxWithTrustedLut(
     const uint8_t* raw, size_t raw_len,
     const uint8_t (*lut_accounts)[SOL_PUBKEY_SIZE], size_t num_lut_accounts,
@@ -413,35 +378,20 @@ const char* solana_displaySymbol(const SolanaTokenInfo* ti,
 /* Solana per-transaction compute-unit cap; also bounds an explicit limit. */
 #define SOL_MAX_COMPUTE_UNITS 1400000u
 
-/* KKSOLSW1: is the host-supplied lookup-table account list attested by a
- * clear-sign signer FOR THIS EXACT TRANSACTION?
- *
- * A v0 message may source instruction accounts from an Address Lookup Table.
- * Those bytes are not in the message being signed, so the device cannot derive
- * them and forces the whole transaction opaque -- refused without AdvancedMode,
- * an explicit blind sign with it. A runtime provider may attest the resolved
- * list, which is shown before that blind-sign warning (annotation only); a
- * root-certified delegate's proof is what lets a certified schema clear-sign.
- *
- * Preimage, domain-tagged so a signature made for any other purpose cannot be
- * replayed as one, and bound to the message so it cannot be replayed onto a
- * different transaction:
+/* KKSOLSW1: is the LUT account list attested FOR THIS EXACT TRANSACTION?
+ * LUT keys are not in the signed bytes, so unattested they force the tx
+ * opaque. Domain-tagged and message-bound against replay:
  *
  *   "KeepKeySolanaTxAccounts/1" || sha256(message) || count(le32) || key[i](32)
  *
- * where message is raw_tx without a leading zero signature count, i.e. the
- * bytes the device signs.
- *
- * Returns false unless a signer is loaded for `key_id` and the signature
- * verifies. Annotation only: the caller still runs the unverified review. */
+ * message = the bytes the device signs. Runtime signer: annotation only, the
+ * caller still runs the unverified review. */
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,
                                  const uint8_t* sig, size_t sig_len);
 
-/* Certified KKSOLSW1 verification. Unlike the runtime helper above, this uses
- * the delegate carried by a KeepKey root certificate scoped to Solana (501),
- * so it is independent of session signer slots and Advanced Mode. */
+/* Certified KKSOLSW1: delegate from a root cert scoped to Solana (501). */
 bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
                                    const uint8_t (*accounts)[32],
                                    size_t num_accounts,

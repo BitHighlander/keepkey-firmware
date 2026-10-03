@@ -1020,12 +1020,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
-  /* SRS R-1.4: a certified (v3) claim for calldata the device does not decode
-   * natively is honoured completely or refused -- never silently downgraded to
-   * the additive review. "Completely" means the proof verified, describes this
-   * exact transaction, and may replace the raw review on this chain. Checked
-   * before any screen, so a failed claim can never show "Verified by KeepKey".
-   * Natively decoded calls and plain transfers do not need the description. */
+  /* SRS R-1.4: a certified claim is honoured completely or refused, never
+   * downgraded. Checked before any screen, so a failed claim never shows
+   * "Verified by KeepKey". */
   if (data_needs_confirm && data_total > 0 &&
       signed_metadata_certified_claimed() &&
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
@@ -1041,17 +1038,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        /* Suppression is the POSITIVE arm: only a KeepKey-certified describer
-         * for this chain may replace the raw-data screen (the check above
-         * guarantees every certified claim reaching here qualifies). Payable
-         * calls still show amount/recipient, because a v2 schema describes
-         * calldata only and cannot bind msg->value. */
+        /* Suppression is the POSITIVE arm. A v2 schema cannot bind
+         * msg->value, so payable calls still show amount/recipient. */
         if (signed_metadata_may_suppress(chain_id)) {
           needs_confirm = signed_metadata_schema_moves_value();
           data_needs_confirm = false;
         } else {
-          /* A runtime signer is an additive annotation: the ordinary amount
-           * and raw-calldata review remains mandatory after its screens. */
+          /* Runtime signer: annotation only; the raw review stays. */
           needs_confirm = true;
           data_needs_confirm = true;
         }

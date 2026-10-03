@@ -896,7 +896,7 @@ Erc7730CatalogResult erc7730_workflow_fetch_feed(
       (result == ERC7730_CATALOG_BAD_PROGRAM ||
        result == ERC7730_CATALOG_UNTRUSTED || unsourced_value)) {
     /* The device cannot clear-sign this inner call: restore the outer
-     * definition (the slot now holds nothing) and show the call blind. */
+     * definition (the slot now holds nothing) and refuse the call. */
     erc7730_catalog_clear_preload();
     if (complete) *complete = false;
     workflow->inner_refused = true;
@@ -950,8 +950,8 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
     bound =
         memcmp(identity.definition_id, workflow->outer_definition_id, 32) == 0;
     if (bound) {
-      /* Resume after the embedded field, or re-run it blind when its inner
-       * definition was refused (outer_resume >= 1: never the intent). */
+      /* Resume after the embedded field, or re-run it to refuse it when its
+       * inner definition was refused (outer_resume >= 1: never the intent). */
       workflow->display_index = workflow->inner_refused
                                     ? (uint16_t)(workflow->outer_resume - 1u)
                                     : workflow->outer_resume;

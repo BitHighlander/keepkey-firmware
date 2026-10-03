@@ -27,24 +27,12 @@
 #include "trezor/crypto/sha2.h"
 #include "trezor/crypto/sha3.h"
 
-/* ── The root public key ─────────────────────────────────────────────
- *
- * THE ALPHA ROOT, IN EVERY 7.16 BUILD. There is no build flag and no rootless
- * variant: device, emulator and dylib/DLL builds all compile in these 33
- * bytes. Vault enables certified ClearSign from the firmware version alone
- * (>= 7.16.0), so a 7.16 build without a root would refuse every certificate
- * it is sent. ClearsignRoot.SevenSixteenAlwaysShipsTheRoot fails the unit
- * suite if the version and the root ever come apart.
- *
- * ALPHA-ONLY. Generated 2026-08-21 on the marked root KeepKey (device
- * 393137350D4736341B003900, m/44'/60'/0'/0/0); the private half has never
- * left that device. It issued the public alpha delegate certificates Vault
- * serves. It must never ship in a production release. Production gets its
- * own root from a new ceremony after the 7.15 re-release, not before, and
- * those bytes replace these before any 7.16 production release
- * (docs/ClearsignRootCeremony.md 4.4). release.yml fails any release whose
- * firmware image or emulator libraries contain these bytes, so no 7.16
- * release can go out until that replacement lands. */
+/* THE ALPHA ROOT, compiled into every 7.16 build (no flag; hosts gate on the
+ * version, enforced by ClearsignRoot.SevenSixteenAlwaysShipsTheRoot).
+ * ALPHA-ONLY: device 393137350D4736341B003900, m/44'/60'/0'/0/0. It must
+ * NEVER ship in a production release; a production ceremony root replaces it
+ * (docs/ClearsignRootCeremony.md 4.4), and release.yml fails any release
+ * containing these bytes. */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
     0x02, 0xde, 0x92, 0x31, 0xb2, 0x09, 0x44, 0x33, 0x23, 0x55, 0x32,
     0xfb, 0x19, 0x32, 0xe3, 0x24, 0xa2, 0xc7, 0x30, 0x41, 0x95, 0xe1,
@@ -52,10 +40,7 @@ static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
 };
 
 #if DEBUG_LINK && defined(EMULATOR)
-/* Unit-test root. Emulator debug-link builds only, so no device image carries
- * it, and no message reaches it: only the unit suite calls the setter, to sign
- * certificate fixtures with a key it holds. NULL restores the compiled-in
- * root. */
+/* Unit-test root: emulator debug-link only, unreachable by any message. */
 static const uint8_t* test_root_pubkey;
 
 void clearsign_root_set_test_root(const uint8_t* pubkey) {
@@ -81,16 +66,12 @@ bool clearsign_root_verify_cert(const uint8_t* cert, size_t cert_len) {
 
   if (cert[CLEARSIGN_CERT_OFF_VERSION] != CLEARSIGN_CERT_VERSION) return false;
 
-  /* Reserved bits must be zero. A flag we do not understand is a capability we
-   * did not agree to, and accepting it silently is how a future format grants
-   * itself permissions this firmware never reviewed. */
+  /* Reserved bits must be zero: an unknown flag is an unreviewed capability. */
   const uint8_t flags = cert[CLEARSIGN_CERT_OFF_FLAGS];
   if ((flags & (uint8_t)~CLEARSIGN_USAGE_MAY_SUPPRESS_RAW) != 0) return false;
 
-  /* Alias is authenticated display text, so accept only the canonical format
-   * the ceremony signs: 1-31 printable ASCII bytes followed by NUL padding.
-   * A signed newline/control byte would otherwise let an issuer reshape the
-   * device's trust prompt even though callers use a safe "%s" format. */
+  /* Alias: 1-31 printable ASCII then NUL padding, so no control byte can
+   * reshape the trust prompt. */
   bool alias_ended = false;
   for (size_t i = 0; i < CLEARSIGN_ALIAS_LEN; i++) {
     const uint8_t c = cert[CLEARSIGN_CERT_OFF_ALIAS + i];
@@ -105,24 +86,18 @@ bool clearsign_root_verify_cert(const uint8_t* cert, size_t cert_len) {
   }
   if (!alias_ended) return false;
 
-  /* Chain 0 is not a chain. Requiring nonzero means a certificate is always
-   * bound to exactly one network and can never be wildcard by omission. */
+  /* Nonzero scope: never a wildcard by omission. */
   if (be32(&cert[CLEARSIGN_CERT_OFF_SCOPE]) == 0) return false;
 
-  /* The device has no clock, so this is not "is it expired now" -- it is "was
-   * this issued for a window this firmware still honours". The floor moves
-   * only when a signed firmware ships. */
+  /* No clock: this checks against the release floor, not "now". */
   if (be32(&cert[CLEARSIGN_CERT_OFF_EXPIRY]) <= KK_CLEARSIGN_MIN_EXPIRY)
     return false;
 
   const uint8_t prefix = cert[CLEARSIGN_CERT_OFF_PUBKEY];
   if (prefix != 0x02 && prefix != 0x03) return false;
 
-  /* keccak(0x19 || 0x01 || DOMAIN_SEP || keccak(cert[0..74])).
-   *
-   * Byte for byte what EthereumSignTypedHash produces, so the root can be an
-   * ordinary KeepKey. The domain separator is ours and never crosses the
-   * wire. */
+  /* keccak(0x19 || 0x01 || DOMAIN_SEP || keccak(cert[0..74])), as
+   * EthereumSignTypedHash produces. */
   static const uint8_t domain_sep[32] = CLEARSIGN_DOMAIN_SEPARATOR;
   struct SHA3_CTX ctx;
   uint8_t digest[32];

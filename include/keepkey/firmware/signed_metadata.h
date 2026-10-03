@@ -35,23 +35,13 @@ typedef enum {
 #define METADATA_VERSION_LEGACY 0x01
 #define METADATA_VERSION_SCHEMA 0x02
 
-/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][device-decoded schema].
- * The certificate is verified and DISCARDED inside one message -- nothing about
- * a delegation survives into the next transaction. */
+/* 7.16: [0x03][cert 139][device-decoded schema]. The cert is verified and
+ * DISCARDED within one message; no delegation outlives it. */
 #define METADATA_VERSION_CERTIFIED 0x03
 
-/* The delegate is addressed by a sentinel that is >= METADATA_MAX_KEYS BY
- * CONSTRUCTION, so it can never name a runtime slot.
- *
- * That is the whole promotion defence, and it is worth stating plainly: a host
- * can write a public key into exactly one array, via exactly one message
- * (LoadClearsignSigner -> signed_metadata_store_signer), and that function
- * already rejects any key_id >= METADATA_MAX_KEYS. Promotion is prevented by
- * the ABSENCE OF A WRITER, not by a check somebody could forget to add.
- *
- * metadata_pubkey_for() is deliberately left untouched by 7.16 for the same
- * reason -- it is shared with Solana, and not modifying it means the KeepKey
- * tier cannot leak there by call-graph accident. */
+/* Delegate sentinel, >= METADATA_MAX_KEYS so it can never name a runtime slot.
+ * The only key writer (signed_metadata_store_signer) rejects such ids, so a
+ * host cannot promote a key into the KeepKey tier: no writer exists. */
 #define METADATA_KEYID_DELEGATE 0x80
 
 typedef enum {
@@ -61,18 +51,15 @@ typedef enum {
       2, /* KeepKey-delegated; MAY suppress the raw review */
 } MetadataTier;
 
-/* The single suppression predicate. Positive and conjunctive: every clause must
- * hold. Written this way rather than as an else-arm so that adding a trust tier
- * later cannot silently widen it. */
+/* The single suppression predicate; conjunctive, so a new tier cannot widen
+ * it. */
 bool signed_metadata_may_suppress(uint32_t tx_chain_id);
 
-/* True when this message carried a certified (v3) envelope, verified or not.
- * A claimed certified render that cannot be honoured must be refused, never
- * silently downgraded to the additive review (SRS R-1.4). */
+/* This message carried a v3 envelope, verified or not. A failed claim must be
+ * refused, never downgraded (SRS R-1.4). */
 bool signed_metadata_certified_claimed(void);
 
-/* Display for the KeepKey tier. Empty unless the current message carried a
- * verified certificate. */
+/* Empty unless this message carried a verified certificate. */
 const char* signed_metadata_delegate_alias(void);
 
 typedef enum {
@@ -112,11 +99,8 @@ typedef struct {
 
 bool signed_metadata_available(void);
 
-/* True only for the reserved KeepKey-certified envelope shape.  This is the
- * narrow pre-verification predicate used by the FSM to let a v3 certificate
- * reach signed_metadata_process() while AdvancedMode is off.  It grants no
- * trust by itself: the compiled root, certificate, delegate signature, and
- * device-decoded schema are still verified by signed_metadata_process(). */
+/* Shape-only v3 check letting the envelope reach signed_metadata_process()
+ * with AdvancedMode off. Grants NO trust; process() verifies everything. */
 bool signed_metadata_is_certified_envelope(const uint8_t* payload,
                                            size_t payload_len, uint32_t key_id);
 

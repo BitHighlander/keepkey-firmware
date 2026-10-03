@@ -565,60 +565,28 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* An embedded call that cannot be clear-signed: 7.15 shows it under a
- * blind-sign warning. 7.16 must reject here (AdvancedMode hard gate). */
+/* Refused: an embedded call without a usable inner definition. */
 static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   workflow->inner_refused = false; /* consumed: the next call may fetch */
-  const Erc7730Field* field = &workflow->field;
-  char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  if (!field->has_inner || !field->has_address ||
-      !erc7730_format_embedded(
-          field->address, field->inner_selector, field->inner_selector_length,
-          field->inner_length, field->has_value ? field->value : NULL,
-          workflow->identity.chain_id,
-          field->has_spender ? field->spender : NULL, formatted,
-          sizeof(formatted))) {
-    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                       _("Unable to format ERC-7730 field"));
-    return;
-  }
-  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
-  if (ui != ERC7730_UI_OK) {
-    memzero(formatted, sizeof(formatted));
-    fail_erc7730_ui(workflow, ui);
-    return;
-  }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
-               "The inner call is not clear-signed")) {
-    memzero(formatted, sizeof(formatted));
-    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
-                       _("Signing cancelled by user"));
-    return;
-  }
-  show_erc7730_field(workflow, formatted);
-  memzero(formatted, sizeof(formatted));
+  fail_erc7730_field(workflow, FailureType_Failure_Other,
+                     _("Inner call cannot be clear-signed"));
 }
 
-/* A value longer than the device captures: 7.15 shows its length under a
- * blind-sign warning. 7.16 must reject here (AdvancedMode hard gate). */
+/* A raw bytes/string value longer than the device captures: refused in
+ * calldata; typed data has already shown it in full during its walk. */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
-  char formatted[48];
+  if (!workflow->typed_data) {
+    fail_erc7730_field(workflow, FailureType_Failure_Other,
+                       _("Value too long to clear-sign"));
+    return;
+  }
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
     fail_erc7730_ui(workflow, ui);
     return;
   }
-  /* Typed data: the walk that captured this value has just shown every leaf
-   * in full, this one among them, so nothing is blind. */
-  const bool typed = workflow->typed_data;
-  if (!typed && !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                         "Blind signature", "The value is too long to show")) {
-    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
-                       _("Signing cancelled by user"));
-    return;
-  }
-  snprintf(formatted, sizeof(formatted),
-           typed ? "Shown above in full: %lu bytes" : "Not shown: %lu bytes",
+  char formatted[48];
+  snprintf(formatted, sizeof(formatted), "Shown above in full: %lu bytes",
            (unsigned long)length);
   show_erc7730_field(workflow, formatted);
 }
@@ -765,7 +733,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   }
   if (field->kind == 13) {
     /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
-     * words; otherwise it is shown blind (7.15). */
+     * words; otherwise it is refused. */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
                            !workflow->inner_refused && field->has_address &&
                            field->inner_selector_length == 4 &&
@@ -1327,7 +1295,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     if (none) {
-      show_erc7730_embedded(workflow); /* no inner definition: blind */
+      show_erc7730_embedded(workflow); /* no inner definition: refused */
       return;
     }
     if (!complete) {
@@ -1710,12 +1678,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_INITIALIZED
 
-  /* Runtime/self-service signers remain behind AdvancedMode. A v3 envelope is
-   * let through only when it uses the reserved delegate key id and has room
-   * for a certificate plus inner payload. This shape check grants no trust:
-   * signed_metadata_process() verifies the root, certificate scope and flag,
-   * delegate signature and device-owned decode, and a claim that fails is
-   * refused at SignTx. */
+  /* Runtime signers need AdvancedMode. The v3 shape check grants no trust;
+   * signed_metadata_process() verifies and SignTx refuses a failed claim. */
   const bool certified =
       msg->has_signed_payload && msg->has_key_id &&
       signed_metadata_is_certified_envelope(
