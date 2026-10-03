@@ -44,6 +44,53 @@ Two legitimate shapes on develop:
 
 Say which one it is in the PR body.
 
+### One canonical branch per dependency, never split
+
+Owner rule, 2026-10-03. In a dress rehearsal, in every block PR, on every merge commit and on every
+release branch, **every PR pins exactly the same upstream canonical branch for each dependency, at its
+exact head**. Never split.
+
+| dependency | canonical branch (upstream) | its single open PR |
+|---|---|---|
+| python-keepkey | `keepkey/python-keepkey` `reconcile/upstream-sync` | #197 into `master` |
+| device-protocol | `keepkey/device-protocol` `up/release-protocol` | #112 into `master` |
+
+1. **The head, not an ancestor.** A pin is the SHA at the head of that branch on the live upstream
+   repository. An older commit on the same branch is not the dress-rehearsal pin, and neither is a
+   prepared head that exists only on a fork, even though both can be fetched by SHA.
+2. **The same SHA on every PR.** Block 1 and block 15 pin the same two SHAs. Version and capability gates
+   in the dependency (`requires_firmware`, `requires_release_capability`) are what let one head serve
+   every block. A block that "needs an older pyk" needs a gate in the dependency, not an older pin.
+   Concretely, a test for a feature that a later block delivers calls
+   `self.requires_release_capability("<cap>")`; every earlier block lists `<cap>` in its CI ledger
+   (`KK_RELEASE_MISSING_CAPABILITIES`) and the delivering block drops it. The ledger only ever narrows
+   along the merge order, because a pull request is judged against the ledger of its base branch.
+   Found on 2026-10-03: pinning all fifteen blocks to one head failed thirteen blocks until thirteen
+   tests (Permit2 b15, certified intent b14, certified Solana review b13) carried those gates.
+3. **One branch, linear history, fast-forward only.** When a block needs a newer dependency commit, the
+   commit goes onto the canonical branch and every PR re-pins to the new head. It never gets a branch of
+   its own: no `staging/...`, no per-block, per-release or companion branches, and no patch-equivalent
+   copies of a commit. Two such branches existed on 2026-10-02 (`staging/716-b13-intent-review` and
+   `staging/716-develop-20261001`) because blocks 13 and 14 pinned them; each cost a merge to put right.
+4. **`.gitmodules` is identical on every ref:** url `https://github.com/keepkey/<dep>.git`, branch = the
+   canonical branch name. Never the fork URL. (When the canonical PRs merge, one line per dependency
+   changes the branch to `master`.)
+5. **Bring the canonical branch up BEFORE any firmware PR is opened or merged, never after.** If it lags
+   the pins, build one unified head by merging, never rebasing, so every earlier pin stays an ancestor.
+   Prove it is a pure fast-forward of the upstream head. Get the owner's explicit approval, because the
+   push updates an open upstream PR and notifies its reviewers. Push fast-forward only, then re-read the
+   PR head and re-run the gate.
+6. **Gate it.** `docs/release/rehearsal-tools/rehearsal-preflight.sh <ref>...` prints PASS only when the
+   canonical PRs are the only open ones from their branches with heads equal to their branches, and every
+   ref pins both heads exactly and has the canonical `.gitmodules`. Run it on every PR head right before
+   its merge, on each resulting merge commit and on each release branch. Any FAIL stops the rehearsal.
+   The single exception is the upstream base release PR (7.14.3 #475), whose pins are upstream's own and
+   are checked with `ALLOW_ANCESTOR=1`.
+
+What went wrong on 2026-10-02: six blocks were merged into fork `develop` pinning pyk ancestors
+(`b47769e00` and others) while upstream PR #197 was 33 commits behind the pins and #112 was 10 behind. The
+rehearsal was stopped, every block was re-pinned to the two heads, and the gate above was written.
+
 ## Traps that have actually bitten
 
 **Branching from the fork's master when targeting upstream.** The fork's master
