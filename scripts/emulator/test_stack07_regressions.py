@@ -93,6 +93,7 @@ class TestStack07Regressions(Erc7730Harness, common.KeepKeyTest):
         super().setUp()
         if expected_variant(self) == "bitcoin-only":
             self.skipTest(BITCOIN_ONLY_SKIP)
+        self.requires_release_capability("erc7730-runtime-review")
         self.setup_mnemonic_nopin_nopassphrase()
         self.client.apply_policy("AdvancedMode", 1)
 
