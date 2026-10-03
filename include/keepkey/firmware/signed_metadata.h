@@ -38,6 +38,14 @@ typedef enum {
 /* 7.16: [0x03][cert 139][device-decoded schema]. The cert is verified and
  * DISCARDED within one message; no delegation outlives it. */
 #define METADATA_VERSION_CERTIFIED 0x03
+/* v2 plus roles, a native-value role, a title and a signed intent template
+ * (SRS-7.16 §3.7, docs/security/clearsign-intent-template.md). Values are
+ * still decoded from the calldata being signed. */
+#define METADATA_VERSION_SCHEMA_INTENT 0x05
+#define METADATA_INTENT_MAX 96
+/* Widest filled summary; templates that could exceed it are rejected. */
+#define METADATA_INTENT_TEXT_MAX 280
+#define METADATA_TITLE_MAX 20
 /* Intent roles, shared by the EVM and Solana (KKSOLSC1 v3) schemas: the
  * device words the limits screen from these. CAP is a per-use maximum (e.g.
  * each bet), not an outflow. */
@@ -88,6 +96,7 @@ typedef struct {
   ArgFormat format;
   uint8_t value[METADATA_MAX_ARG_VALUE_LEN];
   uint16_t value_len;
+  uint8_t role; /* v0x05: METADATA_ROLE_* on amounts, else NONE */
 } MetadataArg;
 
 typedef struct {
@@ -104,7 +113,24 @@ typedef struct {
   uint8_t key_id;
   uint8_t signature[64];
   uint8_t recovery;
+  /* v0x05 */
+  uint8_t value_role; /* NONE, SPEND_MAX or SPEND_EXACT for msg.value */
+  char title[METADATA_TITLE_MAX + 1];
+  char intent[METADATA_INTENT_MAX + 1];
+  uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
 } SignedMetadata;
+
+/* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
+ * docs/security/clearsign-intent-template.md). One screen: body text, or a
+ * byte range to page; false cancels. */
+typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
+                           const uint8_t* bytes, uint16_t bytes_len);
+/* The v0x05 review. certified: summary, limits, details, who. Runtime: a
+ * NOT-verified heading plus limits; the caller's raw review follows. */
+bool signed_metadata_build_intent_review(const SignedMetadata* md,
+                                         bool certified, const char* alias,
+                                         const char* fp, ReviewEmit emit,
+                                         void* ctx);
 
 bool signed_metadata_available(void);
 
@@ -202,11 +228,6 @@ bool signed_metadata_enforce_schema_decision(bool relied, bool available,
 
 const SignedMetadata* signed_metadata_get(void);
 
-/* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
- * docs/security/clearsign-intent-template.md). One screen: body text, or a
- * byte range to page; false cancels. */
-typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
-                           const uint8_t* bytes, uint16_t bytes_len);
 /* A filled template; src is the walker's schema context. */
 typedef struct {
   const void* src;

@@ -106,6 +106,20 @@ static bool display_text_ok(const uint8_t* text, size_t len) {
   return true;
 }
 
+/* u8 length + printable text (no '%'), 1..max_len. */
+static bool read_short_text(const uint8_t** cursor, const uint8_t* end,
+                            char* out, size_t max_len) {
+  uint8_t len = 0;
+  if (!read_u8(cursor, end, &len) || len == 0 || len > max_len ||
+      (size_t)(end - *cursor) < len || !display_text_ok(*cursor, len)) {
+    return false;
+  }
+  memcpy(out, *cursor, len);
+  out[len] = '\0';
+  *cursor += len;
+  return true;
+}
+
 static bool read_string(const uint8_t** cursor, const uint8_t* end, char* out,
                         size_t max_len) {
   uint16_t value_len = 0;
@@ -277,9 +291,21 @@ static bool parse_v2_args(const uint8_t** cursor, const uint8_t* end,
         return false;
     }
     arg->format = (ArgFormat)format;
+    if (out->version == METADATA_VERSION_SCHEMA_INTENT) {
+      const bool amount =
+          format == ARG_FORMAT_AMOUNT || format == ARG_FORMAT_TOKEN_AMOUNT;
+      if (!read_u8(cursor, end, &arg->role) ||
+          (amount ? (arg->role < METADATA_ROLE_SPEND_MAX ||
+                     arg->role > METADATA_ROLE_CAP)
+                  : arg->role != METADATA_ROLE_NONE)) {
+        return false;
+      }
+    }
   }
   return true;
 }
+
+static bool signed_metadata_intent_valid(const SignedMetadata* md);
 
 static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
                                   SignedMetadata* out) {
@@ -310,6 +336,21 @@ static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
         !read_u8(&cursor, end, &out->num_args) ||
         out->num_args > METADATA_MAX_ARGS ||
         !parse_v2_args(&cursor, end, out)) {
+      return false;
+    }
+  } else if (out->version == METADATA_VERSION_SCHEMA_INTENT) {
+    if (!parse_common_head(&cursor, end, out) ||
+        !read_string(&cursor, end, out->method_name, METADATA_MAX_METHOD_LEN) ||
+        !read_u8(&cursor, end, &out->num_args) ||
+        out->num_args > METADATA_MAX_ARGS ||
+        !parse_v2_args(&cursor, end, out) ||
+        !read_u8(&cursor, end, &out->value_role) ||
+        (out->value_role != METADATA_ROLE_NONE &&
+         out->value_role != METADATA_ROLE_SPEND_MAX &&
+         out->value_role != METADATA_ROLE_SPEND_EXACT) ||
+        !read_short_text(&cursor, end, out->title, METADATA_TITLE_MAX) ||
+        !read_short_text(&cursor, end, out->intent, METADATA_INTENT_MAX) ||
+        !signed_metadata_intent_valid(out)) {
       return false;
     }
   } else {
@@ -725,10 +766,12 @@ static MetadataClassification process_certified(const uint8_t* payload,
   if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
     return METADATA_MALFORMED;
 
-  /* LOAD-BEARING: inner MUST be v2, whose values the device decodes from the
-   * calldata it signs. v1 values are signer-supplied and could show any
-   * amount over calldata doing something else. */
-  if (stored_metadata.version != METADATA_VERSION_SCHEMA) {
+  /* LOAD-BEARING: inner MUST be a device-decoded schema (v2 or the 0x05
+   * intent schema), whose values the device decodes from the calldata it
+   * signs. v1 values are signer-supplied and could show any amount over
+   * calldata doing something else. */
+  if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
+      stored_metadata.version != METADATA_VERSION_SCHEMA_INTENT) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
@@ -804,15 +847,25 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     return false;
   }
 
-  if (stored_metadata.version == METADATA_VERSION_SCHEMA) {
+  if (stored_metadata.version == METADATA_VERSION_SCHEMA ||
+      stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT) {
     /* v2 never commits to msg->value: flag nonzero value so ethereum.c keeps
-     * the amount screen and a payable call cannot move unseen ETH. */
+     * the amount screen and a payable call cannot move unseen ETH. A v0x05
+     * schema that gives the value a role states it on its Limits screen. */
     metadata_schema_moves_value = false;
     for (uint32_t i = 0; i < msg->value.size; i++) {
       if (msg->value.bytes[i] != 0) {
         metadata_schema_moves_value = true;
         break;
       }
+    }
+    memset(stored_metadata.tx_value, 0, sizeof(stored_metadata.tx_value));
+    if (msg->value.size > sizeof(stored_metadata.tx_value)) return false;
+    memcpy(stored_metadata.tx_value + 32 - msg->value.size, msg->value.bytes,
+           msg->value.size);
+    if (stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
+        stored_metadata.value_role != METADATA_ROLE_NONE) {
+      metadata_schema_moves_value = false;
     }
     /* Decode from the calldata being signed; failure falls back to
      * blind-sign. enforce requires this flag for v2. */
@@ -823,6 +876,282 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   /* v1 gates display only; the committed tx_hash is checked against the
    * final digest in signed_metadata_enforce(). */
   return true;
+}
+
+/* One decoded argument as text, without its name. BYTES/RAW return false:
+ * the caller pages them. shorten: "0xabcd...1234" for a sentence; the full
+ * address is always shown on another screen. */
+static bool metadata_arg_text(const MetadataArg* arg, uint32_t chain_id,
+                              bool shorten, char* out, size_t len) {
+  switch (arg->format) {
+    case ARG_FORMAT_ADDRESS: {
+      char full[43] = "0x";
+      if (arg->value_len != 20) return false;
+      ethereum_address_checksum(arg->value, full + 2, false, chain_id);
+      if (shorten) {
+        snprintf(out, len, "%.6s...%s", full, full + 38);
+      } else {
+        snprintf(out, len, "%s", full);
+      }
+      return true;
+    }
+    case ARG_FORMAT_AMOUNT: {
+      bool is_max = arg->value_len == 32;
+      for (uint16_t j = 0; j < arg->value_len && is_max; j++) {
+        if (arg->value[j] != 0xFF) is_max = false;
+      }
+      if (is_max) {
+        snprintf(out, len, "UNLIMITED");
+        return true;
+      }
+      bignum256 amount;
+      bn_from_metadata_bytes(arg->value, arg->value_len, &amount);
+      return bn_format(&amount, NULL, " wei", 0, 0, false, out, len) != 0;
+    }
+    case ARG_FORMAT_STRING: {
+      /* Attested printable label, validated at parse (arg_value_ok). */
+      if (arg->value_len >= len) return false;
+      memcpy(out, arg->value, arg->value_len);
+      out[arg->value_len] = '\0';
+      return true;
+    }
+    case ARG_FORMAT_TOKEN_AMOUNT: {
+      /* decimals + symbol + BE amount, validated at parse. */
+      uint8_t decimals = arg->value[0];
+      uint8_t symlen = arg->value[1];
+      char suffix[METADATA_MAX_TOKEN_SYMBOL_LEN + 2];
+      suffix[0] = ' ';
+      memcpy(suffix + 1, arg->value + 2, symlen);
+      suffix[1 + symlen] = '\0';
+      const uint8_t* amt = arg->value + 2 + symlen;
+      uint16_t amt_len = arg->value_len - 2 - symlen;
+      bool is_max = amt_len == 32;
+      for (uint16_t j = 0; j < amt_len && is_max; j++) {
+        if (amt[j] != 0xFF) is_max = false;
+      }
+      if (is_max) {
+        snprintf(out, len, "UNLIMITED%s", suffix);
+        return true;
+      }
+      bignum256 amount;
+      bn_from_metadata_bytes(amt, amt_len, &amount);
+      return bn_format(&amount, NULL, suffix, decimals, 0, false, out, len) !=
+             0;
+    }
+    default:
+      return false;
+  }
+}
+
+/* Walk the template: literal runs and "{n}" (arg) / "{v}" (msg.value)
+ * placeholders. False on any malformed or out-of-range placeholder or a
+ * stray brace. */
+typedef bool (*IntentVisit)(void* ctx, bool placeholder, bool value,
+                            uint8_t index, const char* lit, size_t lit_len);
+
+static bool intent_walk(const SignedMetadata* md, IntentVisit visit,
+                        void* ctx) {
+  const char* t = md->intent;
+  const char* lit = t;
+  while (*t) {
+    if (*t == '}') return false;
+    if (*t != '{') {
+      t++;
+      continue;
+    }
+    if (!visit(ctx, false, false, 0, lit, (size_t)(t - lit))) return false;
+    if (t[1] == 'v' && t[2] == '}') {
+      if (md->value_role == METADATA_ROLE_NONE) return false;
+      if (!visit(ctx, true, true, 0, NULL, 0)) return false;
+      t += 3;
+    } else {
+      if (t[1] < '0' || t[1] > '9' || t[2] != '}') return false;
+      const uint8_t index = (uint8_t)(t[1] - '0');
+      if (index >= md->num_args) return false;
+      const ArgFormat f = md->args[index].format;
+      if (f != ARG_FORMAT_ADDRESS && f != ARG_FORMAT_AMOUNT &&
+          f != ARG_FORMAT_TOKEN_AMOUNT) {
+        return false; /* paged bytes cannot sit inside a sentence */
+      }
+      if (!visit(ctx, true, false, index, NULL, 0)) return false;
+      t += 3;
+    }
+    lit = t;
+  }
+  return visit(ctx, false, false, 0, lit, (size_t)(t - lit));
+}
+
+typedef struct {
+  uint8_t used[METADATA_MAX_ARGS];
+  bool value_used;
+} IntentUse;
+
+static bool intent_mark(void* ctx, bool placeholder, bool value, uint8_t index,
+                        const char* lit, size_t lit_len) {
+  (void)lit;
+  (void)lit_len;
+  IntentUse* u = (IntentUse*)ctx;
+  if (placeholder && value) u->value_used = true;
+  if (placeholder && !value) u->used[index] = 1;
+  return true;
+}
+
+typedef struct {
+  const SignedMetadata* md;
+  size_t width;
+} IntentWidth;
+
+/* Widest text each placeholder can expand to: a uint256 is 78 digits, plus
+ * point, space and a 10-char symbol = 90; a short address "0xabcd...1234"
+ * = 13. */
+static bool intent_width(void* ctx, bool placeholder, bool value, uint8_t index,
+                         const char* lit, size_t lit_len) {
+  IntentWidth* w = (IntentWidth*)ctx;
+  if (!placeholder) {
+    if (!intent_literal_ok(lit, lit_len)) return false;
+    w->width += lit_len;
+  } else if (!value && w->md->args[index].format == ARG_FORMAT_ADDRESS) {
+    w->width += 13;
+  } else {
+    w->width += 90;
+  }
+  return true;
+}
+
+/* Placeholders "{n}" (arg) / "{v}" (msg.value) well-formed and in range,
+ * every amount covered, {v} present iff the value has a role. */
+static bool signed_metadata_intent_valid(const SignedMetadata* md) {
+  if (!md || md->intent[0] == '\0') return false;
+  IntentUse u;
+  memset(&u, 0, sizeof(u));
+  if (!intent_walk(md, intent_mark, &u)) return false;
+  /* A valid template must always render in full, never be cut. */
+  IntentWidth w = {md, 0};
+  if (!intent_walk(md, intent_width, &w) ||
+      w.width > METADATA_INTENT_TEXT_MAX) {
+    return false;
+  }
+  for (uint8_t i = 0; i < md->num_args; i++) {
+    const ArgFormat f = md->args[i].format;
+    if ((f == ARG_FORMAT_AMOUNT || f == ARG_FORMAT_TOKEN_AMOUNT) &&
+        !u.used[i]) {
+      return false; /* coverage: every amount is in the sentence */
+    }
+  }
+  return u.value_used == (md->value_role != METADATA_ROLE_NONE);
+}
+
+static bool metadata_value_text(const SignedMetadata* md, char* out,
+                                size_t len) {
+  bignum256 value;
+  bn_read_be(md->tx_value, &value);
+  return ethereumFormatAmount(&value, NULL, md->chain_id, out, len);
+}
+
+static bool intent_fill(void* ctx, bool placeholder, bool value, uint8_t index,
+                        const char* lit, size_t lit_len) {
+  IntentFill* f = (IntentFill*)ctx;
+  const SignedMetadata* md = (const SignedMetadata*)f->src;
+  if (!placeholder) {
+    intent_fill_append(f, lit, lit_len);
+    return f->ok;
+  }
+  char v[100];
+  if (value ? !metadata_value_text(md, v, sizeof(v))
+            : !metadata_arg_text(&md->args[index], md->chain_id, true, v,
+                                 sizeof(v))) {
+    return false;
+  }
+  intent_fill_append(f, v, strlen(v));
+  return f->ok;
+}
+
+static bool metadata_limits(const SignedMetadata* md, ReviewEmit emit,
+                            void* ctx) {
+  char body[160], v[100];
+  if (md->value_role != METADATA_ROLE_NONE) {
+    if (!metadata_value_text(md, v, sizeof(v))) return false;
+    snprintf(body, sizeof(body), "%s\n%s", intent_role_text(md->value_role), v);
+    if (!emit(ctx, "Limits", body, NULL, 0)) return false;
+  }
+  for (uint8_t i = 0; i < md->num_args; i++) {
+    const char* role = intent_role_text(md->args[i].role);
+    if (!role) continue;
+    if (!metadata_arg_text(&md->args[i], md->chain_id, false, v, sizeof(v))) {
+      return false;
+    }
+    snprintf(body, sizeof(body), "%s\n%s", role, v);
+    if (!emit(ctx, "Limits", body, NULL, 0)) return false;
+  }
+  return true;
+}
+
+bool signed_metadata_build_intent_review(const SignedMetadata* md,
+                                         bool certified, const char* alias,
+                                         const char* fp, ReviewEmit emit,
+                                         void* ctx) {
+  if (!md || !emit || md->version != METADATA_VERSION_SCHEMA_INTENT) {
+    return false;
+  }
+  char intent[METADATA_INTENT_TEXT_MAX + 1], body[BODY_CHAR_MAX];
+  IntentFill f = {md, intent, sizeof(intent), 0, true};
+  intent[0] = '\0';
+  if (!intent_walk(md, intent_fill, &f) || !f.ok) return false;
+  if (!certified) {
+    return intent_emit_unverified(emit, ctx, alias, intent) &&
+           metadata_limits(md, emit, ctx);
+  }
+  if (!emit(ctx, md->title, intent, NULL, 0) ||
+      !metadata_limits(md, emit, ctx)) {
+    return false;
+  }
+  /* Details: the contract, then every argument the sentence does not state
+   * in full (addresses it shortened, values it omits). Nothing is hidden. */
+  char contract[43] = "0x";
+  ethereum_address_checksum(md->contract_address, contract + 2, false,
+                            md->chain_id);
+  snprintf(body, sizeof(body), "%s\n%s", md->method_name, contract);
+  if (!emit(ctx, "Contract", body, NULL, 0)) return false;
+  IntentUse u;
+  memset(&u, 0, sizeof(u));
+  if (!intent_walk(md, intent_mark, &u)) return false;
+  for (uint8_t i = 0; i < md->num_args; i++) {
+    const MetadataArg* arg = &md->args[i];
+    if (arg->role != METADATA_ROLE_NONE) continue; /* on Limits */
+    if (u.used[i] && arg->format != ARG_FORMAT_ADDRESS) continue;
+    if (arg->format == ARG_FORMAT_BYTES || arg->format == ARG_FORMAT_RAW) {
+      if (!emit(ctx, arg->name, NULL, arg->value, arg->value_len)) return false;
+      continue;
+    }
+    char v[100];
+    if (!metadata_arg_text(arg, md->chain_id, false, v, sizeof(v)) ||
+        !emit(ctx, arg->name, v, NULL, 0)) {
+      return false;
+    }
+  }
+  return intent_emit_provenance(emit, ctx, alias, fp);
+}
+
+static bool metadata_review_emit(void* ctx, const char* title, const char* body,
+                                 const uint8_t* bytes, uint16_t bytes_len) {
+  (void)ctx;
+  if (bytes) {
+    char hex[33];
+    const size_t pages = (bytes_len + 15) / 16;
+    for (size_t page = 0; page < (pages ? pages : 1); page++) {
+      size_t chunk = bytes_len - page * 16;
+      if (chunk > 16) chunk = 16;
+      data2hex(bytes + page * 16, chunk, hex);
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                   "%u/%u\n%s", (unsigned)(page + 1),
+                   (unsigned)(pages ? pages : 1), hex)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
+                 body);
 }
 
 /* The signer icon stays set for every screen; the caller clears it. */
@@ -841,6 +1170,20 @@ static bool signed_metadata_confirm_screens(void) {
   /* KeepKey tier: a positive marker, not a missing warning. Alias and
    * fingerprint are the forensic handle if a delegate key leaks; no expiry
    * is shown (the device has no clock). */
+  if (metadata_tier == METADATA_TIER_KEEPKEY &&
+      stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT) {
+    /* Summary, limits, details, who (SRS-7.16 §3.7). Root-authenticated:
+     * the short id suffices, as on Solana. */
+    char fp8[9];
+    strlcpy(fp8, delegate_fp, sizeof(fp8));
+    if (!signed_metadata_build_intent_review(&stored_metadata, true,
+                                             delegate_alias, fp8,
+                                             metadata_review_emit, NULL)) {
+      return false;
+    }
+    relied_on_metadata = true;
+    return true;
+  }
   if (metadata_tier == METADATA_TIER_KEEPKEY &&
       !confirm(ButtonRequestType_ButtonRequest_Other, _("Verified by KeepKey"),
                "%s (%s)\ndescribes this transaction.", delegate_alias,
@@ -871,6 +1214,13 @@ static bool signed_metadata_confirm_screens(void) {
                                        icon_w, icon_h, icon_len);
     }
 
+    /* A runtime template is a heading only (SRS-7.15 R-1.5). */
+    if (stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
+        !signed_metadata_build_intent_review(&stored_metadata, false, alias,
+                                             fingerprint, metadata_review_emit,
+                                             NULL)) {
+      return false;
+    }
     memset(body, 0, sizeof(body));
     snprintf(body, sizeof(body), "%s (%s)\ndescribes this tx.", alias,
              fingerprint);
@@ -912,108 +1262,37 @@ static bool signed_metadata_confirm_screens(void) {
 
   /* Screen 3..N: Each decoded argument */
   for (uint8_t i = 0; i < stored_metadata.num_args; i++) {
-    MetadataArg* arg = &stored_metadata.args[i];
+    const MetadataArg* arg = &stored_metadata.args[i];
     memset(body, 0, sizeof(body));
-
-    switch (arg->format) {
-      case ARG_FORMAT_ADDRESS: {
-        char addr_full[43] = "0x";
-        if (arg->value_len != 20) {
+    if (arg->format != ARG_FORMAT_ADDRESS && arg->format != ARG_FORMAT_AMOUNT &&
+        arg->format != ARG_FORMAT_STRING &&
+        arg->format != ARG_FORMAT_TOKEN_AMOUNT) {
+      /* Every byte affects the signed call. A prefix-only screen would
+       * hide changes in the second half of an opaque ABI word. */
+      const size_t pages = (arg->value_len + 15) / 16;
+      for (size_t page = 0; page < (pages ? pages : 1); page++) {
+        size_t offset = page * 16;
+        size_t chunk_len = arg->value_len - offset;
+        if (chunk_len > 16) chunk_len = 16;
+        char hex[33];
+        data2hex(arg->value + offset, chunk_len, hex);
+        snprintf(body, sizeof(body), "%s (%u/%u):\n%s", arg->name,
+                 (unsigned)(page + 1), (unsigned)(pages ? pages : 1), hex);
+        if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                               screen_icon, stored_metadata.method_name, "%s",
+                               body)) {
           return false;
         }
-        ethereum_address_checksum(arg->value, addr_full + 2, false,
-                                  stored_metadata.chain_id);
-        snprintf(body, sizeof(body), "%s:\n%s", arg->name, addr_full);
-        break;
       }
-      case ARG_FORMAT_AMOUNT: {
-        bignum256 amount;
-        bn_from_metadata_bytes(arg->value, arg->value_len, &amount);
-        /* Check for MAX_UINT256 (unlimited approval) */
-        bool is_max = true;
-        for (uint16_t j = 0; j < arg->value_len; j++) {
-          if (arg->value[j] != 0xFF) {
-            is_max = false;
-            break;
-          }
-        }
-        if (is_max && arg->value_len == 32) {
-          snprintf(body, sizeof(body), "%s:\nUNLIMITED", arg->name);
-        } else {
-          char formatted[96];
-          if (bn_format(&amount, NULL, " wei", 0, 0, false, formatted,
-                        sizeof(formatted)) == 0 ||
-              snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted) >=
-                  (int)sizeof(body)) {
-            return false;
-          }
-        }
-        break;
-      }
-      case ARG_FORMAT_STRING: {
-        /* Attested printable label, validated at parse (arg_value_ok). */
-        char text[33];
-        memcpy(text, arg->value, arg->value_len);
-        text[arg->value_len] = '\0';
-        snprintf(body, sizeof(body), "%s:\n%s", arg->name, text);
-        break;
-      }
-      case ARG_FORMAT_TOKEN_AMOUNT: {
-        /* decimals + symbol + BE amount, validated at parse. */
-        uint8_t decimals = arg->value[0];
-        uint8_t symlen = arg->value[1];
-        char suffix[METADATA_MAX_TOKEN_SYMBOL_LEN + 2];
-        suffix[0] = ' ';
-        memcpy(suffix + 1, arg->value + 2, symlen);
-        suffix[1 + symlen] = '\0';
-
-        const uint8_t* amt = arg->value + 2 + symlen;
-        uint16_t amt_len = arg->value_len - 2 - symlen;
-        bool is_max = amt_len == 32;
-        for (uint16_t j = 0; j < amt_len && is_max; j++) {
-          if (amt[j] != 0xFF) {
-            is_max = false;
-          }
-        }
-        if (is_max) {
-          snprintf(body, sizeof(body), "%s:\nUNLIMITED%s", arg->name, suffix);
-        } else {
-          bignum256 amount;
-          bn_from_metadata_bytes(amt, amt_len, &amount);
-          char formatted[96];
-          if (bn_format(&amount, NULL, suffix, decimals, 0, false, formatted,
-                        sizeof(formatted)) == 0 ||
-              snprintf(body, sizeof(body), "%s:\n%s", arg->name, formatted) >=
-                  (int)sizeof(body)) {
-            return false;
-          }
-        }
-        break;
-      }
-      case ARG_FORMAT_BYTES:
-      case ARG_FORMAT_RAW:
-      default: {
-        /* Every byte affects the signed call. A prefix-only screen would
-         * hide changes in the second half of an opaque ABI word. */
-        const size_t pages = (arg->value_len + 15) / 16;
-        for (size_t page = 0; page < (pages ? pages : 1); page++) {
-          size_t offset = page * 16;
-          size_t chunk_len = arg->value_len - offset;
-          if (chunk_len > 16) chunk_len = 16;
-          char hex[33];
-          data2hex(arg->value + offset, chunk_len, hex);
-          snprintf(body, sizeof(body), "%s (%u/%u):\n%s", arg->name,
-                   (unsigned)(page + 1), (unsigned)(pages ? pages : 1), hex);
-          if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                 screen_icon, stored_metadata.method_name, "%s",
-                                 body)) {
-            return false;
-          }
-        }
-        continue;
-      }
+      continue;
     }
-
+    char value[100];
+    if (!metadata_arg_text(arg, stored_metadata.chain_id, false, value,
+                           sizeof(value)) ||
+        snprintf(body, sizeof(body), "%s:\n%s", arg->name, value) >=
+            (int)sizeof(body)) {
+      return false;
+    }
     if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
                            screen_icon, stored_metadata.method_name, "%s",
                            body)) {
@@ -1057,15 +1336,16 @@ bool signed_metadata_enforce_decision(bool relied, bool available,
 
 bool signed_metadata_enforce_schema_decision(bool relied, bool available,
                                              bool decoded, int classification) {
-  /* v2 binding is structural (see decode_v2_args); `decoded` is the explicit
-   * proof, never inferred from call order. */
+  /* v2/0x05 binding is structural (see decode_v2_args); `decoded` is the
+   * explicit proof, never inferred from call order. */
   return !relied ||
          (available && decoded && classification == METADATA_VERIFIED);
 }
 
 bool signed_metadata_enforce(const uint8_t hash[32]) {
   if (metadata_available &&
-      stored_metadata.version == METADATA_VERSION_SCHEMA) {
+      (stored_metadata.version == METADATA_VERSION_SCHEMA ||
+       stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT)) {
     return signed_metadata_enforce_schema_decision(
         relied_on_metadata, metadata_available, metadata_schema_decoded,
         stored_metadata.classification);

@@ -21,6 +21,7 @@ extern "C" {
 #include "keepkey/board/draw.h"   /* draw_bitmap_mono_rle (icon decoder) */
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
+#include "trezor/crypto/address.h"   /* ethereum_address_checksum */
 #include "keepkey/firmware/solana.h" /* SolanaTokenInfo, solana_token_info_trusted */
 #include "keepkey/firmware/storage.h"
 #include "trezor/crypto/ecdsa.h"
@@ -1964,4 +1965,260 @@ TEST_F(CertifiedMetadataTest, ClearEndsTheClaimAndRuntimeNeverMakesOne) {
   signed_metadata_process(runtime.data(), runtime.size(), TEST_KEY_ID);
   EXPECT_FALSE(signed_metadata_certified_claimed());
   set_advanced_mode_for_test(false);
+}
+
+/* ---- v0x05: roles + intent (SRS-7.16 §3.7) ---- */
+
+namespace {
+struct IntentSpec {
+  V2Spec v2;
+  std::vector<uint8_t> roles; /* one per arg */
+  uint8_t value_role;
+  std::string title, intent;
+};
+
+std::vector<uint8_t> build_intent_body(const IntentSpec& s) {
+  std::vector<uint8_t> b;
+  put_u8(b, METADATA_VERSION_SCHEMA_INTENT);
+  put_be32(b, s.v2.chain_id);
+  put_bytes(b, s.v2.contract.data(), s.v2.contract.size());
+  put_bytes(b, s.v2.selector.data(), s.v2.selector.size());
+  put_be16(b, (uint16_t)s.v2.method.size());
+  put_bytes(b, (const uint8_t*)s.v2.method.data(), s.v2.method.size());
+  put_u8(b, (uint8_t)s.v2.args.size());
+  for (size_t i = 0; i < s.v2.args.size(); i++) {
+    const V2Arg& a = s.v2.args[i];
+    put_u8(b, (uint8_t)a.name.size());
+    put_bytes(b, (const uint8_t*)a.name.data(), a.name.size());
+    put_u8(b, a.format);
+    if (a.format == ARG_FORMAT_TOKEN_AMOUNT) {
+      put_u8(b, a.decimals);
+      put_u8(b, (uint8_t)a.symbol.size());
+      put_bytes(b, (const uint8_t*)a.symbol.data(), a.symbol.size());
+    }
+    put_u8(b, s.roles[i]);
+  }
+  put_u8(b, s.value_role);
+  put_u8(b, (uint8_t)s.title.size());
+  put_bytes(b, (const uint8_t*)s.title.data(), s.title.size());
+  put_u8(b, (uint8_t)s.intent.size());
+  put_bytes(b, (const uint8_t*)s.intent.data(), s.intent.size());
+  put_u8(b, s.v2.classification);
+  put_be32(b, 0);
+  put_u8(b, s.v2.key_id);
+  return b;
+}
+
+/* Relay depositNative on mainnet, as the catalog will describe it. */
+IntentSpec relay_intent() {
+  static const uint8_t ROUTER[20] = {0x4c, 0xd0, 0x0e, 0x38, 0x76, 0x22, 0xc3,
+                                     0x5b, 0xdd, 0xb9, 0xb4, 0xc9, 0x62, 0xc1,
+                                     0x36, 0x46, 0x23, 0x38, 0xbc, 0x31};
+  static const uint8_t SEL[4] = {0x49, 0x29, 0x0c, 0x1c};
+  IntentSpec s;
+  s.v2 = v2_base_spec();
+  s.v2.contract.assign(ROUTER, ROUTER + 20);
+  s.v2.selector.assign(SEL, SEL + 4);
+  s.v2.method = "bridgeDeposit";
+  s.v2.args.clear();
+  s.v2.args.push_back(v2_addr("depositor"));
+  s.v2.args.push_back(V2Arg{"orderId", ARG_FORMAT_BYTES, 0, ""});
+  s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_NONE};
+  s.value_role = METADATA_ROLE_SPEND_EXACT;
+  s.title = "Relay";
+  s.intent = "Bridge {v} through Relay for {0}; delivery is by Relay";
+  return s;
+}
+
+struct Shown {
+  std::string title, body;
+};
+bool collect_shown(void* ctx, const char* title, const char* body,
+                   const uint8_t* bytes, uint16_t bytes_len) {
+  auto* out = static_cast<std::vector<Shown>*>(ctx);
+  out->push_back({title, bytes ? std::string(bytes_len, '*') : body});
+  return true;
+}
+}  // namespace
+
+TEST_F(SignedMetadataTest, IntentSchemaRelayDepositReviewsWhoWhatWhyLimits) {
+  IntentSpec s = relay_intent();
+  std::vector<uint8_t> blob = sign_body(build_intent_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  static const uint8_t DEPOSITOR[20] = {
+      0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1, 0x2c, 0xa8, 0x6a,
+      0xa7, 0x10, 0xb5, 0x4c, 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  std::vector<uint8_t> data(s.v2.selector.begin(), s.v2.selector.end());
+  put_addr_word(data, DEPOSITOR);
+  for (int i = 0; i < 32; i++) data.push_back((uint8_t)i);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+  const uint8_t VALUE[] = {0x1c, 0x61, 0x0b, 0x2e,
+                           0x77, 0x40, 0x00};  // 0.007988 ETH
+  msg.has_value = true;
+  msg.value.size = sizeof(VALUE);
+  memcpy(msg.value.bytes, VALUE, sizeof(VALUE));
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  // The value has a role, so the Limits screen states it: no extra screen.
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+
+  const SignedMetadata* md = signed_metadata_get();
+  ASSERT_NE(md, nullptr);
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_intent_review(
+      md, true, "KeepKey Vault", "A9531B9D", collect_shown, &got));
+  char depositor[43] = "0x", router[43] = "0x";
+  ethereum_address_checksum(DEPOSITOR, depositor + 2, false, 1);
+  ethereum_address_checksum(s.v2.contract.data(), router + 2, false, 1);
+  const std::string short_dep =
+      std::string(depositor, 6) + "..." + std::string(depositor + 38);
+  ASSERT_EQ(got.size(), 6u);
+  EXPECT_EQ(got[0].title, "Relay");
+  EXPECT_EQ(got[0].body, "Bridge 0.007988 ETH through Relay for " + short_dep +
+                             "; delivery is by Relay");
+  EXPECT_EQ(got[1].title, "Limits");
+  EXPECT_EQ(got[1].body, "You spend\n0.007988 ETH");
+  EXPECT_EQ(got[2].title, "Contract");
+  EXPECT_EQ(got[2].body, std::string("bridgeDeposit\n") + router);
+  EXPECT_EQ(got[3].title, "depositor");  // shortened in the sentence
+  EXPECT_EQ(got[3].body, depositor);
+  EXPECT_EQ(got[4].title, "orderId");  // paged bytes
+  EXPECT_EQ(got[5].title, "KeepKey ClearSign");
+  EXPECT_EQ(got[5].body,
+            "Described by KeepKey Vault A9531B9D\n"
+            "certified by KeepKey");
+
+  // Runtime tier: heading + limits only; the caller's raw review follows.
+  got.clear();
+  ASSERT_TRUE(signed_metadata_build_intent_review(md, false, "Acme", "00",
+                                                  collect_shown, &got));
+  ASSERT_EQ(got.size(), 2u);
+  EXPECT_EQ(got[0].title, "Unverified");
+  EXPECT_EQ(got[0].body.rfind("Acme (NOT verified by KeepKey) says:\n", 0), 0u);
+}
+
+/* Body exactly as the ClearSign server serializes the Relay entry (Vault
+ * evm-certified-schema.test.ts pins the same hex), minus its 0x80 key id. */
+TEST_F(SignedMetadataTest, IntentSchemaParsesTheServerSerializedRelayBody) {
+  std::vector<uint8_t> body = {
+      0x05, 0x00, 0x00, 0x00, 0x01, 0x4c, 0xd0, 0x0e, 0x38, 0x76, 0x22, 0xc3,
+      0x5b, 0xdd, 0xb9, 0xb4, 0xc9, 0x62, 0xc1, 0x36, 0x46, 0x23, 0x38, 0xbc,
+      0x31, 0x49, 0x29, 0x0c, 0x1c, 0x00, 0x0d, 0x62, 0x72, 0x69, 0x64, 0x67,
+      0x65, 0x44, 0x65, 0x70, 0x6f, 0x73, 0x69, 0x74, 0x02, 0x09, 0x64, 0x65,
+      0x70, 0x6f, 0x73, 0x69, 0x74, 0x6f, 0x72, 0x01, 0x00, 0x07, 0x6f, 0x72,
+      0x64, 0x65, 0x72, 0x49, 0x64, 0x03, 0x00, 0x03, 0x05, 0x52, 0x65, 0x6c,
+      0x61, 0x79, 0x36, 0x42, 0x72, 0x69, 0x64, 0x67, 0x65, 0x20, 0x7b, 0x76,
+      0x7d, 0x20, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x20, 0x52, 0x65,
+      0x6c, 0x61, 0x79, 0x20, 0x66, 0x6f, 0x72, 0x20, 0x7b, 0x30, 0x7d, 0x3b,
+      0x20, 0x64, 0x65, 0x6c, 0x69, 0x76, 0x65, 0x72, 0x79, 0x20, 0x69, 0x73,
+      0x20, 0x62, 0x79, 0x20, 0x52, 0x65, 0x6c, 0x61, 0x79, 0x01, 0x00, 0x00,
+      0x00, 0x00};
+  std::vector<uint8_t> ours = build_intent_body(relay_intent());
+  ours.pop_back();  // key id
+  ASSERT_EQ(body, ours);
+  body.push_back(TEST_KEY_ID);
+  std::vector<uint8_t> blob = sign_body(body);
+  EXPECT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+}
+
+TEST_F(SignedMetadataTest, IntentSchemaRejectsBadRolesCoverageAndPlaceholders) {
+  auto verdict = [&](const IntentSpec& s) {
+    std::vector<uint8_t> blob = sign_body(build_intent_body(s));
+    return signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID);
+  };
+  EXPECT_EQ(verdict(relay_intent()), METADATA_VERIFIED);  // control
+  IntentSpec s = relay_intent();
+  s.intent = "Bridge through Relay for {0}";  // value has a role, {v} absent
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.value_role = METADATA_ROLE_NONE;  // {v} without a value role
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.intent = "Bridge {v} for {1}";  // BYTES cannot sit in a sentence
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.intent = "Bridge {v} for {0}, about 1 ETH";  // server-written value
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.intent = "{v}{v}{v}{v}";  // 4 x 90 > 280
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.intent = "Bridge {v} for {2}";  // out of range
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.roles = {METADATA_ROLE_SPEND_MAX, METADATA_ROLE_NONE};  // role on address
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  s = relay_intent();
+  s.value_role = METADATA_ROLE_RECEIVE_MIN;  // the value is only ever spent
+  EXPECT_EQ(verdict(s), METADATA_MALFORMED);
+  // A token amount must carry a role and appear in the sentence.
+  IntentSpec t = relay_intent();
+  t.v2.args.push_back(v2_token("amount", 6, "USDC"));
+  t.roles = {METADATA_ROLE_NONE, METADATA_ROLE_NONE, METADATA_ROLE_NONE};
+  t.intent = "Bridge {v} for {0} and {2}";
+  EXPECT_EQ(verdict(t), METADATA_MALFORMED);
+  t.roles[2] = METADATA_ROLE_SPEND_EXACT;
+  EXPECT_EQ(verdict(t), METADATA_VERIFIED);
+  t.intent = "Bridge {v} for {0}";
+  EXPECT_EQ(verdict(t), METADATA_MALFORMED);
+}
+
+/* The certified path end to end: envelope accepted, the tx matched, the
+ * certified review shown screen by screen, and the ETH amount screen skipped
+ * because Limits states msg.value. */
+TEST_F(CertifiedMetadataTest, IntentSchemaCertifiedReviewReplacesRawAndValue) {
+  IntentSpec s = relay_intent();
+  auto e = envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_intent_body(s)));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+  ASSERT_TRUE(signed_metadata_may_suppress(1));
+
+  static const uint8_t DEPOSITOR[20] = {
+      0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1, 0x2c, 0xa8, 0x6a,
+      0xa7, 0x10, 0xb5, 0x4c, 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  std::vector<uint8_t> data(s.v2.selector.begin(), s.v2.selector.end());
+  put_addr_word(data, DEPOSITOR);
+  for (int i = 0; i < 32; i++) data.push_back((uint8_t)i);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+
+  // Summary, Limits, Contract, depositor, orderId (2 pages), Who.
+  ASSERT_TRUE(kkconfirm_preload(7, 0));
+  EXPECT_TRUE(signed_metadata_confirm());
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_TRUE(signed_metadata_relied());
+}
+
+/* The ETH amount screen is skipped ONLY when Limits states msg.value: a
+ * certified 0x05 schema whose value has no role keeps it for a payable call. */
+TEST_F(CertifiedMetadataTest, IntentSchemaWithoutValueRoleKeepsTheValueScreen) {
+  IntentSpec s = relay_intent();
+  s.value_role = METADATA_ROLE_NONE;
+  s.intent = "Bridge through Relay for {0}; delivery is by Relay";
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_intent_body(s)))));
+  static const uint8_t DEPOSITOR[20] = {
+      0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1, 0x2c, 0xa8, 0x6a,
+      0xa7, 0x10, 0xb5, 0x4c, 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  std::vector<uint8_t> data(s.v2.selector.begin(), s.v2.selector.end());
+  put_addr_word(data, DEPOSITOR);
+  for (int i = 0; i < 32; i++) data.push_back((uint8_t)i);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
 }
