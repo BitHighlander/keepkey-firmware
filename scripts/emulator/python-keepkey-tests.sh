@@ -89,8 +89,8 @@ pytest -v . /kkemu/unittests/host/test_p02_transport.py \
   /kkemu/unittests/host/test_p03_recovery.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit.xml || RC=1
 
-# Legacy runtime metadata is implemented from the first block, so the later
-# ERC-7730 capability must not hide it. Every other declared capability holds.
+# Legacy runtime metadata (evm-tx-metadata) lands a block before ERC-7730, so
+# the ERC-7730 capability must not hide it. Every other declared one holds.
 KK_RELEASE_MISSING_CAPABILITIES=$(printf %s "${KK_RELEASE_MISSING_CAPABILITIES:-}" | sed s/erc7730-runtime-review//) \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
