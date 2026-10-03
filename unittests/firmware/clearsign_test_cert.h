@@ -28,7 +28,8 @@ inline std::vector<uint8_t> rootCert(
     c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
     c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(not_after >> (24 - 8 * i));
   }
-  memcpy(c.data() + CLEARSIGN_CERT_OFF_ALIAS, alias, strlen(alias));
+  memcpy(c.data() + CLEARSIGN_CERT_OFF_ALIAS, alias,
+         strnlen(alias, CLEARSIGN_ALIAS_LEN));
   memcpy(c.data() + CLEARSIGN_CERT_OFF_PUBKEY, delegate_pubkey,
          CLEARSIGN_PUBKEY_LEN);
   const uint8_t domain_sep[32] = CLEARSIGN_DOMAIN_SEPARATOR;
