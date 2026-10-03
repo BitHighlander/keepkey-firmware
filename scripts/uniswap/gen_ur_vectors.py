@@ -65,8 +65,11 @@ def fetch(d, pages=8):
             params = dict(nxt, filter='to')
 
 
-# Pinned: unittests/firmware/signed_metadata.cpp builds its end-to-end review on it.
-ALWAYS = ('0xd873988f8c2a7ef53ce52a0bc890a029e0bde5e731ad30c17e4991fb080dbbab',)
+# Pinned: signed_metadata.cpp builds its end-to-end review on the first; the
+# second is a Permit2 swap between reviewed Base tokens (USDC -> USDbC) that
+# KeepKey Desktop's certified-attach tests need.
+ALWAYS = ('0xd873988f8c2a7ef53ce52a0bc890a029e0bde5e731ad30c17e4991fb080dbbab',
+          '0x81fa9e1f87d0b269986082edbdaebbf6c0b005918f389f6762601b47139d27e1')
 
 
 def header(d, limit=80, v4_limit=10):
