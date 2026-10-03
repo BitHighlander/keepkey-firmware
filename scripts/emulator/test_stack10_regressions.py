@@ -18,6 +18,7 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
                       else ("Emulator", "KeepKey"))
         if variant == "bitcoin-only":
             self.skipTest("Stack 10 EVM signing is absent from bitcoin-only")
+        self.requires_release_capability("evm-unknown-token-review")
         self.setup_mnemonic_nopin_nopassphrase()
         self.client.apply_policy("AdvancedMode", 1)
 
