@@ -82,11 +82,15 @@ class ContractEvidence(unittest.TestCase):
                 ("hive-release-review", set(), False),
                 ("ripple-memo-policy", {"ripple-memo-policy"}, False),
                 ("storage-v19-kdf", {"storage-v19-kdf", "hive-release-review"},
-                 False)):
+                 False),
+                # A bitcoin-only product reason is never full-product evidence.
+                ("@Hive signing is unavailable in bitcoin-only firmware",
+                 {"hive-release-review"}, False)):
             with self.subTest(reason=reason, declared=declared):
                 tree = ET.parse(path)
                 ET.SubElement(tree.getroot()[0], "skipped", {
-                    "message": report.CAPABILITY_SKIP_PREFIX + reason})
+                    "message": reason[1:] if reason.startswith("@") else
+                    report.CAPABILITY_SKIP_PREFIX + reason})
                 tree.write(path)
                 if ok:
                     report.validate_contract_junit(self.root, declared)
