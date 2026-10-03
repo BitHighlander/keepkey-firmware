@@ -537,8 +537,8 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
     """Require every dedicated contract JUnit with exact per-case statuses.
 
     A case in CONTRACT_CAPABILITY expected to pass may instead skip for its own
-    capability, or for its product reason, only while the validated ledger
-    declares that capability missing.
+    capability (clearsign-additive also for its product reason, since b1 lacks
+    EthereumTxMetadata outright) only while the ledger declares it missing.
     """
     inputs = []
     for variant, directory in sorted(CONTRACT_JUNIT_DIRS.items()):
@@ -565,7 +565,8 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
                         capability in missing_capabilities and
                         len(found) == 1 and found[0] in (
                             ("skip", CAPABILITY_SKIP_PREFIX + capability),
-                            ("skip", CONTRACT_SKIP_REASONS.get(required)))):
+                            ("skip", CONTRACT_SKIP_REASONS[required]
+                             if required in _ADDITIVE else None))):
                     wrong.append("%s (expected %s, found %s)" % (
                         required, expected + ":" + expected_reason, repr(found) if found else "missing"))
             if wrong:
