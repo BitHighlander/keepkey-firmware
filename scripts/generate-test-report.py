@@ -290,12 +290,20 @@ CAPABILITY_SKIP_PREFIX = (
 
 # The only contract cases a staged block may skip, each for its own capability.
 CONTRACT_CAPABILITY = dict(
+    [(case, "evm-tx-metadata") for case in _ADDITIVE] +
     [(case, "erc7730-runtime-review") for case in _STACK07_EVM] +
     [(case, "evm-unknown-token-review") for case in _STACK10_EVM] +
     [(case, "hive-release-review") for case in _STACK12_HIVE] +
     [(case, "session-trust-lifetime") for case in _SESSION_BOTH + _SESSION_FULL] +
     [(case, "ripple-memo-policy") for case in _RIPPLE
      if case.endswith(("_memo_length_prefix_boundaries", "_with_thorchain_memo"))])
+
+# Native controls a staged block may omit entirely, each for its own capability.
+NATIVE_CAPABILITY = dict(
+    [(case, "osmosis-wire-guards") for case in _BLOCK13_NATIVE_FULL_ONLY
+     if case.startswith("Block13OsmosisWire.")] +
+    [(case, "tendermint-progress") for case in _BLOCK13_NATIVE_FULL_ONLY
+     if not case.startswith("Block13OsmosisWire.")])
 
 
 def fail(message):
@@ -529,7 +537,8 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
     """Require every dedicated contract JUnit with exact per-case statuses.
 
     A case in CONTRACT_CAPABILITY expected to pass may instead skip for its own
-    capability, and only while the validated ledger declares it missing.
+    capability, or for its product reason, only while the validated ledger
+    declares that capability missing.
     """
     inputs = []
     for variant, directory in sorted(CONTRACT_JUNIT_DIRS.items()):
@@ -554,7 +563,9 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
                 if found != [(expected, expected_reason)] and not (
                         expected == "pass" and
                         capability in missing_capabilities and
-                        found == [("skip", CAPABILITY_SKIP_PREFIX + capability)]):
+                        len(found) == 1 and found[0] in (
+                            ("skip", CAPABILITY_SKIP_PREFIX + capability),
+                            ("skip", CONTRACT_SKIP_REASONS.get(required)))):
                     wrong.append("%s (expected %s, found %s)" % (
                         required, expected + ":" + expected_reason, repr(found) if found else "missing"))
             if wrong:
@@ -568,8 +579,12 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
     return inputs
 
 
-def validate_native_contract_junit(root):
-    """Bind owned native controls to each product's actual GoogleTest run."""
+def validate_native_contract_junit(root, missing_capabilities=frozenset()):
+    """Bind owned native controls to each product's actual GoogleTest run.
+
+    A staged block may omit (never fail) a NATIVE_CAPABILITY case while the
+    validated ledger declares its capability missing.
+    """
     inputs = []
     for variant, relative in sorted(NATIVE_CONTRACT_JUNIT.items()):
         path = Path(root) / relative
@@ -591,7 +606,9 @@ def validate_native_contract_junit(root):
         }
         wrong = sorted(
             name for name in BLOCK13_NATIVE_CASES[variant]
-            if cases.get(name) != ("pass", "") or statuses.get(name) != "run")
+            if (cases.get(name) != ("pass", "") or statuses.get(name) != "run")
+            and not (name not in cases and
+                     NATIVE_CAPABILITY.get(name) in missing_capabilities))
         if wrong:
             fail("%s native contract cases missing or not passing/run: %s" %
                  (variant, ", ".join(wrong)))
@@ -727,7 +744,7 @@ def main():
     # in immutable JUnit before invoking python-keepkey's report validator.
     missing_capabilities = release_missing_capabilities(cases)
     contract_inputs = validate_contract_junit(ROOT, missing_capabilities)
-    contract_inputs += validate_native_contract_junit(ROOT)
+    contract_inputs += validate_native_contract_junit(ROOT, missing_capabilities)
     if missing_capabilities:
         os.environ["KK_RELEASE_MISSING_CAPABILITIES"] = ",".join(
             sorted(missing_capabilities))
