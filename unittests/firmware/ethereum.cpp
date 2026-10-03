@@ -10,6 +10,8 @@ extern "C" {
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
+#include "trezor/crypto/bip32.h"
+#include "trezor/crypto/curves.h"
 #include "messages-ethereum.pb.h"
 }
 
@@ -815,6 +817,36 @@ TEST(Ethereum, LiquidityCancellationFailsClosed) {
   EXPECT_FALSE(
       zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// The recipient screen labels the address against the signing node the caller
+// passes in, so a matching and a foreign recipient must render differently.
+TEST(Ethereum, LiquidityRecipientIsLabelledAgainstTheSigningNode) {
+  const uint8_t seed[32] = {1};
+  HDNode node;
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  uint8_t self[20];
+  ASSERT_TRUE(hdnode_get_ethereum_pubkeyhash(&node, self));
+
+  char self_hex[41];
+  for (int i = 0; i < 20; i++) snprintf(self_hex + 2 * i, 3, "%02x", self[i]);
+  const std::string mine = std::string("this wallet\n0x") + self_hex;
+  const std::string foreign = "NOT this wallet\n0x" + std::string(40, '1');
+
+  for (bool is_self : {true, false}) {
+    EthereumSignTx msg = liquidity_tx(true);
+    if (is_self)
+      memcpy(msg.data_initial_chunk.bytes + 4 + 5 * 32 - 20, self, 20);
+    // Accept token and token-min, then reject the recipient screen.
+    ASSERT_TRUE(kkconfirm_preload(2, 1));
+    kkconfirm_capture_start();
+    EXPECT_FALSE(
+        zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, &node));
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    ASSERT_EQ(3u, screens.size());
+    EXPECT_EQ(is_self ? mine : foreign, screens[2]);
+  }
 }
 
 TEST(Ethereum, LiquidityRejectsUnknownTokenBeforeConfirmation) {
