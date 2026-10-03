@@ -33,7 +33,6 @@ set(sources
 # multi-chain coin AND token table, not just the Bitcoin rows.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      binance.cpp
       coins.cpp
       cosmos.cpp
       eos.cpp
