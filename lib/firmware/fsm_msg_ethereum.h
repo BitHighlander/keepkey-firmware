@@ -2119,6 +2119,11 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
   layoutHome();
 }
 
+/* The name record sent ahead of THIS typed-data request; taken (and the
+ * metadata cleared) when the request begins, so no exit path can leave it
+ * to name a later one. */
+static MetadataNameRecord typed_data_name;
+
 /* Structured EIP-712: eip712_stream.c describes the next request; this one
  * pump emits it for all three handlers. */
 static void eip712_pump(void) {
@@ -2197,6 +2202,25 @@ static void eip712_pump(void) {
       /* The walk has finished; keep only its result. */
       const Eip712Next done = *next;
       eip712_stream_abort();
+      /* Permit2 in words: who may take what, until when (SRS-7.16 §3.7).
+       * A certified name record for this spender on this chain names it. */
+      if (done.permit2.valid) {
+        const bool named =
+            typed_data_name.valid &&
+            typed_data_name.chain_id == done.permit2.chain_id &&
+            memcmp(typed_data_name.address, done.permit2.spender, 20) == 0;
+        const bool ok = eip712_permit2_review(
+            &done.permit2, named ? typed_data_name.name : NULL,
+            typed_data_name.alias, typed_data_name.fp8,
+            signed_metadata_review_emit, NULL);
+        memzero(&typed_data_name, sizeof(typed_data_name));
+        if (!ok) {
+          fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                          _("Signing cancelled by user"));
+          layout_home();
+          return;
+        }
+      }
       /* sign(keccak(0x19 || 0x01 || domainSeparator || hashStruct(message))),
        * or keccak(0x19 || 0x01 || domainSeparator) for a domain-only type. */
       uint8_t preimage[66];
@@ -2290,6 +2314,8 @@ static void eip712_pump(void) {
 }
 
 void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
+  /* First, before any exit: this request owns the record sent ahead of it. */
+  signed_metadata_take_name(&typed_data_name);
   CHECK_INITIALIZED
   CHECK_PIN
 

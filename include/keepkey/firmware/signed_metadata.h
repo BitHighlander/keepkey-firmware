@@ -43,6 +43,10 @@ typedef enum {
  * still decoded from the calldata being signed. */
 #define METADATA_VERSION_SCHEMA_INTENT 0x05
 #define METADATA_INTENT_MAX 96
+/* 0x06: a vouched name for one address on one chain (certified only). It
+ * describes no transaction; typed-data reviews show it beside the address. */
+#define METADATA_VERSION_NAME 0x06
+#define METADATA_NAME_MAX 24
 /* Widest filled summary; templates that could exceed it are rejected. */
 #define METADATA_INTENT_TEXT_MAX 280
 #define METADATA_TITLE_MAX 20
@@ -117,6 +121,7 @@ typedef struct {
   uint8_t value_role; /* NONE, SPEND_MAX or SPEND_EXACT for msg.value */
   char title[METADATA_TITLE_MAX + 1];
   char intent[METADATA_INTENT_MAX + 1];
+  char vouched_name[METADATA_NAME_MAX + 1]; /* v0x06 */
   uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
 } SignedMetadata;
 
@@ -125,6 +130,22 @@ typedef struct {
  * byte range to page; false cancels. */
 typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
                            const uint8_t* bytes, uint16_t bytes_len);
+/* ReviewEmit on the device: text as one screen, bytes as hex pages. */
+bool signed_metadata_review_emit(void* ctx, const char* title, const char* body,
+                                 const uint8_t* bytes, uint16_t bytes_len);
+/* A KeepKey-certified name record, taken by the request it rides ahead of. */
+typedef struct {
+  bool valid;
+  uint32_t chain_id;
+  uint8_t address[20];
+  char name[METADATA_NAME_MAX + 1];
+  char alias[METADATA_ALIAS_MAX_LEN + 2]; /* certificate alias, <= 32 */
+  char fp8[9];
+} MetadataNameRecord;
+
+/* Copies out the loaded certified name record (if any) and clears all
+ * metadata, so a record can only ever name the one request that follows it. */
+void signed_metadata_take_name(MetadataNameRecord* out);
 /* The v0x05 review. certified: summary, limits, details, who. Runtime: a
  * NOT-verified heading plus limits; the caller's raw review follows. */
 bool signed_metadata_build_intent_review(const SignedMetadata* md,
