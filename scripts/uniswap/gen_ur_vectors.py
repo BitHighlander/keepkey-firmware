@@ -48,20 +48,34 @@ def decode(raw):
     return out
 
 
-def fetch(d):
+def fetch(d, pages=8):
+    """Save `pages` explorer pages (50 txs each) per router as DIR/<router>-<n>.json."""
+    import urllib.parse
     os.makedirs(d, exist_ok=True)
     for r in ROUTERS:
-        url = 'https://base.blockscout.com/api/v2/addresses/%s/transactions?filter=to' % r
-        req = urllib.request.Request(url, headers={'user-agent': 'keepkey-ur-vectors/1'})
-        open(os.path.join(d, r + '.json'), 'wb').write(urllib.request.urlopen(req, timeout=30).read())
+        params = {'filter': 'to'}
+        for n in range(pages):
+            url = 'https://base.blockscout.com/api/v2/addresses/%s/transactions?%s' % (r, urllib.parse.urlencode(params))
+            req = urllib.request.Request(url, headers={'user-agent': 'keepkey-ur-vectors/1'})
+            body = urllib.request.urlopen(req, timeout=30).read()
+            open(os.path.join(d, '%s-%d.json' % (r, n)), 'wb').write(body)
+            nxt = json.loads(body).get('next_page_params')
+            if not nxt:
+                break
+            params = dict(nxt, filter='to')
 
 
-def header(d):
+# Pinned: unittests/firmware/signed_metadata.cpp builds its end-to-end review on it.
+ALWAYS = ('0xd873988f8c2a7ef53ce52a0bc890a029e0bde5e731ad30c17e4991fb080dbbab',)
+
+
+def header(d, limit=80, v4_limit=10):
+    """Deterministic subset: pinned calls, then app-shaped (permit/wrap), then the rest."""
     ok, v4, seen = [], [], set()
     for f in sorted(glob.glob(os.path.join(d, '0x*.json'))):
         for it in json.load(open(f)).get('items', []):
             raw, h = it.get('raw_input') or '', it.get('hash')
-            if not raw.startswith('0x3593564c') or h in seen:
+            if not raw.startswith(('0x3593564c', '0x24856bc3')) or h in seen:
                 continue
             seen.add(h)
             steps = decode(raw)
@@ -69,6 +83,11 @@ def header(d):
                 v4.append(raw)
             elif all(s[0] in KIND for s in steps):
                 ok.append((h, (it.get('to') or {}).get('hash', '').lower()[2:], int(it.get('value') or 0), raw, steps))
+    def rank(v):
+        app = any(st[0] in (0x0a, 0x0b) for st in v[4])
+        return (v[0] not in ALWAYS, not app, v[0])
+    ok = sorted(ok, key=rank)[:limit]
+    v4 = sorted(v4)[:v4_limit]
     p = print
     p('// Generated from real Base Universal Router calls (base.blockscout.com, 2026-10-03)')
     p('// by an independent Python decoder (scripts/uniswap/gen_ur_vectors.py). Do not regenerate')

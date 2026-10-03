@@ -250,6 +250,13 @@ static bool is_zero32(const uint8_t a[32]) {
   return true;
 }
 
+/* The router itself, by placeholder or by its own address: either way it
+ * holds the funds for a later step. Apps encode both. */
+static bool is_router(const uint8_t r[20], const uint8_t router[20]) {
+  return ur_recipient_is_constant(r, UR_RECIPIENT_ADDRESS_THIS) ||
+         memcmp(r, router, 20) == 0;
+}
+
 static bool is_swap(UrKind k) {
   return k == UR_V3_SWAP_EXACT_IN || k == UR_V3_SWAP_EXACT_OUT ||
          k == UR_V2_SWAP_EXACT_IN || k == UR_V2_SWAP_EXACT_OUT;
@@ -290,7 +297,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   if (wrap) {
     /* ETH in: the router wraps msg.value and pays from its own balance. */
     if (!out->exact_in || swap->payer_is_user || is_zero32(value) ||
-        !ur_recipient_is_constant(wrap->recipient, UR_RECIPIENT_ADDRESS_THIS) ||
+        !is_router(wrap->recipient, router) ||
         (memcmp(wrap->amount, value, 32) != 0 &&
          !is_contract_balance(wrap->amount)) ||
         (memcmp(swap->amount, value, 32) != 0 &&
@@ -320,8 +327,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
 
   /* Output side. */
   memcpy(out->amount_out, out->exact_in ? swap->limit : swap->amount, 32);
-  const bool to_router =
-      ur_recipient_is_constant(swap->recipient, UR_RECIPIENT_ADDRESS_THIS);
+  const bool to_router = is_router(swap->recipient, router);
   if (!to_router) {
     /* Delivered by the swap itself: nothing may follow. */
     if (fee || final) return false;
@@ -344,7 +350,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
     }
     if (bips == 0 || bips > 10000 ||
         memcmp(fee->token_in, swap->token_out, 20) != 0 ||
-        ur_recipient_is_constant(fee->recipient, UR_RECIPIENT_ADDRESS_THIS)) {
+        is_router(fee->recipient, router)) {
       return false;
     }
     out->has_fee = true;
@@ -353,7 +359,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
     /* The user's floor is what the final step guarantees after the fee. */
     if (out->exact_in) memcpy(out->amount_out, final->amount, 32);
   }
-  if (ur_recipient_is_constant(final->recipient, UR_RECIPIENT_ADDRESS_THIS)) {
+  if (is_router(final->recipient, router)) {
     return false;
   }
   out->out_is_eth = final->kind == UR_UNWRAP_WETH;
