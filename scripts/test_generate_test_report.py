@@ -97,13 +97,24 @@ class ContractEvidence(unittest.TestCase):
 
     def test_cases_without_a_capability_can_never_be_waived(self):
         path = (self.root / report.CONTRACT_JUNIT_DIRS["full"] /
+                "junit-stack09-integration.xml")
+        tree = ET.parse(path)
+        ET.SubElement(tree.getroot()[0], "skipped", {
+            "message": report.CAPABILITY_SKIP_PREFIX + "erc7730-runtime-review"})
+        tree.write(path)
+        with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
+            report.validate_contract_junit(self.root, {"erc7730-runtime-review"})
+
+    def test_metadata_absence_is_waived_only_while_declared(self):
+        path = (self.root / report.CONTRACT_JUNIT_DIRS["full"] /
                 "junit-stack06-contracts.xml")
         tree = ET.parse(path)
         additive = next(case for case in tree.getroot()
                         if "clearsign_additive" in case.get("classname"))
         ET.SubElement(additive, "skipped", {
-            "message": report.CAPABILITY_SKIP_PREFIX + "erc7730-runtime-review"})
+            "message": "EthereumTxMetadata not supported by this firmware build"})
         tree.write(path)
+        report.validate_contract_junit(self.root, {"evm-tx-metadata"})
         with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
             report.validate_contract_junit(self.root, {"erc7730-runtime-review"})
 
@@ -156,6 +167,31 @@ class NativeContractEvidence(unittest.TestCase):
             path = self.paths[item["variant"]]
             self.assertEqual(str(path.relative_to(self.root)), item["path"])
             self.assertEqual(report.sha256_file(path), item["sha256"])
+
+    def test_a_staged_block_may_omit_only_its_own_native_controls(self):
+        path = self.paths["full"]
+        original = path.read_bytes()
+        osmosis = "Block13OsmosisWire.SendAcceptsCanonicalUint64BoundaryAndZero"
+        for mutation, declared, ok in (
+                ("remove", {"osmosis-wire-guards"}, True),
+                ("remove", set(), False),
+                ("remove", {"tendermint-progress"}, False),
+                ("failure", {"osmosis-wire-guards"}, False)):
+            with self.subTest(mutation=mutation, declared=declared):
+                tree = ET.parse(path)
+                case = next(c for c in tree.getroot() if "%s.%s" % (
+                    c.get("classname"), c.get("name")) == osmosis)
+                if mutation == "remove":
+                    tree.getroot().remove(case)
+                else:
+                    ET.SubElement(case, "failure")
+                tree.write(path)
+                if ok:
+                    report.validate_native_contract_junit(self.root, declared)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        report.validate_native_contract_junit(self.root, declared)
+                path.write_bytes(original)
 
     def test_each_missing_native_product_file_is_refused(self):
         for variant, path in self.paths.items():
