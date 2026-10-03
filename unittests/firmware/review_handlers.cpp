@@ -6,6 +6,7 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/bip85.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "storage.h"
 }
 #include "gtest/gtest.h"
@@ -35,6 +36,9 @@ class ReviewHandlers : public ::testing::Test {
   void TearDown() override {
     fsm_abort_workflows();
     kkconfirm_drain();
+#if !BITCOIN_ONLY
+    signed_metadata_clear_signers();
+#endif
     storage_wipe();
     storage_reset();
     emulator_flash_base = previous;
@@ -130,6 +134,53 @@ TEST_F(ReviewHandlers, ResetBackupCommitsAllStrengthsAndClearsScratch) {
 }
 
 #if !BITCOIN_ONLY
+static const uint8_t review_pubkey[33] = {
+    0x02, 0xe3, 0xb3, 0x01, 0x5c, 0x47, 0xdd, 0xca, 0xab, 0xe4, 0xf8,
+    0xe8, 0x72, 0xf1, 0xed, 0x8f, 0x09, 0xca, 0x14, 0x5a, 0x8d, 0x81,
+    0x77, 0x0d, 0x92, 0x21, 0x3d, 0x56, 0xda, 0x31, 0xab, 0x51, 0x07};
+
+TEST_F(ReviewHandlers, SessionEndClearsRuntimeSignerAndAlias) {
+  ASSERT_TRUE(signed_metadata_store_signer(3, review_pubkey, "Session signer",
+                                           nullptr, 0, 0, 0, false));
+  ASSERT_TRUE(signed_metadata_signer_is_runtime(3));
+  ASSERT_NE(nullptr, signed_metadata_signer_alias(3));
+  ClearSession clear = {};
+  fsm_msgClearSession(&clear);
+  EXPECT_FALSE(signed_metadata_signer_is_runtime(3));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(3));
+
+  ASSERT_TRUE(signed_metadata_store_signer(3, review_pubkey, "Next session",
+                                           nullptr, 0, 0, 0, false));
+  Initialize initialize = {};
+  fsm_msgInitialize(&initialize);
+  EXPECT_FALSE(signed_metadata_signer_is_runtime(3));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(3));
+}
+
+TEST_F(ReviewHandlers, ReopeningFlashClearsRuntimeSigner) {
+  ASSERT_TRUE(signed_metadata_store_signer(3, review_pubkey, "Old wallet",
+                                           nullptr, 0, 0, 0, false));
+  ASSERT_TRUE(signed_metadata_signer_is_runtime(3));
+  storage_init();
+  EXPECT_FALSE(signed_metadata_signer_is_runtime(3));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(3));
+}
+
+TEST_F(ReviewHandlers, MetadataKeyIdRefusesNarrowingBeforeAck) {
+  // The handler's AdvancedMode gate (added after 00b's version of this test)
+  // answers ActionCancelled first; enable it so the key_id check is reached.
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  for (uint32_t key_id :
+       {static_cast<uint32_t>(METADATA_MAX_KEYS), 256u, 0xffffffffu}) {
+    EthereumTxMetadata msg = {};
+    msg.has_key_id = true;
+    msg.key_id = key_id;
+    fsm_test_clearLastFailure();
+    fsm_msgEthereumTxMetadata(&msg);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  }
+}
+
 TEST_F(ReviewHandlers, Bip85DerivationMatchesIndependentBip32Oracle) {
   char child[241] = {};
   ASSERT_TRUE(bip85_derive_mnemonic(12, 0, child, sizeof(child)));

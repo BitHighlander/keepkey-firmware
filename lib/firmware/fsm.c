@@ -43,6 +43,7 @@
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts.h"
+#include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
@@ -58,6 +59,7 @@
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
@@ -468,6 +470,14 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
       if (!ethereum_signing_isInProgress())
         return reject_stale_continuation("Signing not in progress");
       return true;
+    case MessageType_MessageType_EthereumTypedDataStructAck:
+      if (eip712_stream_waiting() != EIP712_WANT_STRUCT)
+        return reject_stale_continuation("No EIP-712 schema requested");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataValueAck:
+      if (eip712_stream_waiting() != EIP712_WANT_VALUE)
+        return reject_stale_continuation("No EIP-712 value requested");
+      return true;
     case MessageType_MessageType_CosmosMsgAck:
       if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
         return reject_stale_continuation("Cosmos signing not in progress");
@@ -509,6 +519,7 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignMessage:
         case MessageType_MessageType_EthereumSignTypedHash:
+        case MessageType_MessageType_EthereumSignTypedData:
         case MessageType_MessageType_NanoSignTx:
         case MessageType_MessageType_CosmosSignTx:
         case MessageType_MessageType_OsmosisSignTx:
@@ -607,6 +618,7 @@ void fsm_abort_signing_workflows(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
+  eip712_stream_abort();
   nano_signingAbort();
   binance_signAbort();
   tendermint_signAbort();
@@ -657,12 +669,13 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #else
-// The coin engines above are compiled out, but the always-on
-// Initialize/Cancel handlers still call each engine's abort hook. With no
-// engine state to roll back, no-ops are the correct definitions -- and
-// defining them here keeps those handlers free of build-variant branches.
+// Bitcoin-only: the coin engines above are compiled out, but the always-on
+// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
+// and factory-reset calls signed_metadata_clear_signers() (EVM clearsign).
+// With no state to reset, no-ops are correct.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
+void signed_metadata_clear_signers(void) {}
 #endif  // !BITCOIN_ONLY
 #include "fsm_msg_bip85.h"
