@@ -61,6 +61,15 @@ void draw_char_simple(Canvas* canvas, const Font* font, char c, uint8_t color,
 void draw_box(Canvas* canvas, BoxDrawableParams* p);
 void draw_box_simple(Canvas* canvas, uint8_t color, uint16_t x, uint16_t y,
                      uint16_t width, uint16_t height);
+/*
+ * draw_bitmap_mono_rle_valid() - Side-effect-free check that an RLE stream is
+ * EXACTLY w*h pixels: no 0 or 0x80 count, no run past the end, no trailing
+ * bytes. The draw path is lenient, so host-supplied streams MUST be checked
+ * here at the trust boundary.
+ */
+bool draw_bitmap_mono_rle_valid(const uint8_t* data, uint32_t length,
+                                uint16_t w, uint16_t h);
+
 bool draw_bitmap_mono_rle(Canvas* canvas, const AnimationFrame* frame,
                           bool erase);
 
