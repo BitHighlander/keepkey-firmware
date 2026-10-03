@@ -74,17 +74,38 @@ class ContractEvidence(unittest.TestCase):
                         report.validate_contract_junit(self.root)
                     path.write_bytes(original)
 
-    def test_a_pass_case_may_skip_only_for_a_declared_capability(self):
+    def test_a_pass_case_may_skip_only_for_its_own_declared_capability(self):
         path = self.root / report.CONTRACT_JUNIT_DIRS["full"] / "junit-stack12.xml"
-        tree = ET.parse(path)
-        ET.SubElement(tree.getroot()[0], "skipped", {
-            "message": report.CAPABILITY_SKIP_PREFIX + "hive-release-review"})
-        tree.write(path)
-        report.validate_contract_junit(self.root, {"hive-release-review"})
-        for declared in (set(), {"ripple-memo-policy"}):
-            with self.subTest(declared=declared):
-                with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
+        original = path.read_bytes()
+        for reason, declared, ok in (
+                ("hive-release-review", {"hive-release-review"}, True),
+                ("hive-release-review", set(), False),
+                ("ripple-memo-policy", {"ripple-memo-policy"}, False),
+                ("storage-v19-kdf", {"storage-v19-kdf", "hive-release-review"},
+                 False)):
+            with self.subTest(reason=reason, declared=declared):
+                tree = ET.parse(path)
+                ET.SubElement(tree.getroot()[0], "skipped", {
+                    "message": report.CAPABILITY_SKIP_PREFIX + reason})
+                tree.write(path)
+                if ok:
                     report.validate_contract_junit(self.root, declared)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
+                        report.validate_contract_junit(self.root, declared)
+                path.write_bytes(original)
+
+    def test_cases_without_a_capability_can_never_be_waived(self):
+        path = (self.root / report.CONTRACT_JUNIT_DIRS["full"] /
+                "junit-stack06-contracts.xml")
+        tree = ET.parse(path)
+        additive = next(case for case in tree.getroot()
+                        if "clearsign_additive" in case.get("classname"))
+        ET.SubElement(additive, "skipped", {
+            "message": report.CAPABILITY_SKIP_PREFIX + "erc7730-runtime-review"})
+        tree.write(path)
+        with self.assertRaisesRegex(RuntimeError, "contract cases wrong"):
+            report.validate_contract_junit(self.root, {"erc7730-runtime-review"})
 
     def test_every_expected_skip_requires_its_product_reason(self):
         for path in self.paths:
@@ -346,7 +367,8 @@ class RequiredCaseMatching(unittest.TestCase):
             with unittest.mock.patch.object(
                     report, "release_missing_capabilities",
                     return_value={"evm-max-amount-review",
-                                  "osmosis-wire-guards"}):
+                                  "osmosis-wire-guards",
+                                  "ripple-memo-policy"}):
                 report.validate_cases(cases)
         finally:
             report.BASE_REQUIRED_CASES = original
@@ -363,7 +385,8 @@ class RequiredCaseMatching(unittest.TestCase):
 
 class HiveNativeEvidence(unittest.TestCase):
     def test_every_owned_native_identity_is_required(self):
-        names = report.BASE_REQUIRED_CASES | report.HIVE_REQUIRED_CASES
+        names = (report.BASE_REQUIRED_CASES | report.HIVE_REQUIRED_CASES |
+                 report.RIPPLE_REQUIRED_CASES)
         cases = [{"classname": n.rsplit(".", 1)[0],
                   "name": n.rsplit(".", 1)[1], "status": "pass", "skip_reason": ""}
                  for n in sorted(names)]
@@ -382,7 +405,8 @@ class HiveNativeEvidence(unittest.TestCase):
                             report.validate_cases(altered)
 
     def test_a_duplicated_native_identity_cannot_hide_behind_a_pass(self):
-        names = report.BASE_REQUIRED_CASES | report.HIVE_REQUIRED_CASES
+        names = (report.BASE_REQUIRED_CASES | report.HIVE_REQUIRED_CASES |
+                 report.RIPPLE_REQUIRED_CASES)
         cases = [{"classname": n.rsplit(".", 1)[0],
                   "name": n.rsplit(".", 1)[1], "status": "pass", "skip_reason": ""}
                  for n in sorted(names)]
