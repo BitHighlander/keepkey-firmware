@@ -29,15 +29,17 @@ paths = [
 
 # Release/security docs record the exact submodule commits a build pins, e.g.
 #   - python-keepkey: `c406a1ba9120da410c356dbff7f4d4bd1e1758fa`;
-# A 40-char lowercase hex git SHA has enough entropy to trip generic-api-key.
+# A 40-char lowercase hex git SHA (or a 64-char SHA-256 file hash) has enough
+# entropy to trip generic-api-key.
 # Scoped with condition = "AND" so this only exempts SHA-shaped strings inside
-# markdown docs — a real credential in docs/ is still reported.
+# docs (markdown and JSON audit manifests) — a real credential in docs/ is
+# still reported.
 #
 # This supersedes an earlier, narrower rule on the release branch that matched
 # only python-keepkey pins under generic-api-key; every string that one
 # exempted is a subset of this one.
 [[allowlists]]
-description = "Git commit SHAs quoted in markdown docs"
+description = "Git commit SHAs quoted in markdown docs and JSON manifests"
 condition = "AND"
-paths = ['''(^|/)docs/.*\.md$''']
-regexes = ['''\b[0-9a-f]{40}\b''']
+paths = ['''(^|/)docs/.*\.(md|json)$''']
+regexes = ['''\b[0-9a-f]{40}([0-9a-f]{24})?\b''']
