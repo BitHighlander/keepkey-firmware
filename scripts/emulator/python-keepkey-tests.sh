@@ -89,9 +89,9 @@ pytest -v . /kkemu/unittests/host/test_p02_transport.py \
   /kkemu/unittests/host/test_p03_recovery.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit.xml || RC=1
 
-# Stack 06 owns legacy runtime metadata and session trust. The later ERC-7730
-# capability must not hide these already implemented contracts.
-KK_RELEASE_MISSING_CAPABILITIES= \
+# Legacy runtime metadata is implemented from the first block, so the later
+# ERC-7730 capability must not hide it. Every other declared capability holds.
+KK_RELEASE_MISSING_CAPABILITIES=$(printf %s "${KK_RELEASE_MISSING_CAPABILITIES:-}" | sed s/erc7730-runtime-review//) \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \
