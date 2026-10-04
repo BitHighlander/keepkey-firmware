@@ -1996,31 +1996,10 @@ TEST_F(CertifiedMetadataTest, DescriptionSignedByAnotherKeyIsRefused) {
       v2_base_blob()));
 }
 
-/* Owner decision 2026-10-04: a per-transaction description (v1) is
- * KeepKey-certified inside the envelope. Its binding is the tx_hash, checked
- * at signing; any ETH the tx moves keeps the device's own amount screen. */
-TEST_F(CertifiedMetadataTest, PerTransactionDescriptionIsCertified) {
-  ASSERT_EQ(METADATA_VERIFIED,
-            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
-                                       EXPECTED_SLOT3_PUB),
-                             base_blob())));
-  EXPECT_TRUE(signed_metadata_may_suppress(1));
-  EXPECT_FALSE(signed_metadata_may_suppress(8453));  // the chain it names
-
-  EthereumSignTx msg;
-  make_matching_msg(&msg);
-  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
-  EXPECT_FALSE(signed_metadata_schema_moves_value());
-  msg.value.size = 1;
-  msg.value.bytes[0] = 1;  // 1 wei the description need not mention
-  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
-  EXPECT_TRUE(signed_metadata_schema_moves_value());
-}
-
-TEST_F(CertifiedMetadataTest, PerTransactionDescriptionNeedsTheChainCertificate) {
+TEST_F(CertifiedMetadataTest, SignerSuppliedV1ValuesAreRefused) {
   ExpectRefusedButClaimed(envelope(
-      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
-      base_blob()));  // base_blob() describes chain 1
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      base_blob()));
 }
 
 TEST_F(CertifiedMetadataTest, ClearEndsTheClaimAndRuntimeNeverMakesOne) {

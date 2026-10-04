@@ -797,14 +797,11 @@ static MetadataClassification process_certified(const uint8_t* payload,
   if (!parse_metadata_binary(inner, inner_len, &stored_metadata))
     return METADATA_MALFORMED;
 
-  /* LOAD-BEARING: the inner is a device-decoded schema (v2, 0x05 intent),
-   * a vouched name (0x06), or a per-transaction description (v1) whose
-   * tx_hash signed_metadata_enforce() checks against the digest it signs.
-   * v1 values are the delegate's words, not decoded facts (owner decision
-   * 2026-10-04: dapp descriptions are authored off-device); any ETH the tx
-   * moves is still shown from the tx itself (matches_tx). */
-  if (stored_metadata.version != METADATA_VERSION_LEGACY &&
-      stored_metadata.version != METADATA_VERSION_SCHEMA &&
+  /* LOAD-BEARING: inner MUST be a device-decoded schema (v2 or the 0x05
+   * intent schema), whose values the device decodes from the calldata it
+   * signs. v1 values are signer-supplied and could show any amount over
+   * calldata doing something else. */
+  if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
       stored_metadata.version != METADATA_VERSION_SCHEMA_INTENT &&
       stored_metadata.version != METADATA_VERSION_NAME) {
     signed_metadata_clear();
@@ -910,11 +907,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   }
 
   /* v1 gates display only; the committed tx_hash is checked against the
-   * final digest in signed_metadata_enforce(). Its values are the signer's
-   * words, so ETH the tx moves keeps the device's own amount screen. */
-  for (uint32_t i = 0; i < msg->value.size; i++) {
-    if (msg->value.bytes[i] != 0) metadata_schema_moves_value = true;
-  }
+   * final digest in signed_metadata_enforce(). */
   return true;
 }
 
