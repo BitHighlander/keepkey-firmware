@@ -2562,6 +2562,110 @@ TEST_F(CertifiedMetadataTest, UniswapDecoderEntryIsCertifiedOrNothing) {
   EXPECT_EQ(METADATA_MALFORMED, Process(e));
 }
 
+/* Token -> ETH (permit, swap, unwrap) is 1,028-1,178 B on Base: past the
+ * first chunk. The device holds every byte and reviews only after the last
+ * one; a prefix never matches. */
+namespace {
+const urv::Vec* token_to_eth_over_first_chunk() {
+  for (const auto& v : urv::accepted()) {
+    if (v.calldata.size() / 2 > 1024 && v.steps.size() == 3 &&
+        v.steps[0].kind == UR_PERMIT2_PERMIT &&
+        v.steps[1].kind == UR_V3_SWAP_EXACT_IN &&
+        v.steps[2].kind == UR_UNWRAP_WETH)
+      return &v;
+  }
+  return nullptr;
+}
+
+/* SignTx's first chunk: never a match from a prefix, only pending. */
+bool defer_first_chunk(const urv::Vec& v, const std::vector<uint8_t>& data,
+                       EthereumSignTx* msg) {
+  std::vector<uint8_t> router = ur_unhex(v.router);
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(msg, router, first);
+  msg->data_length = (uint32_t)data.size();
+  return !signed_metadata_matches_tx(msg) && signed_metadata_ur_pending();
+}
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, UniswapTokenToEthIsReviewedAfterTheLastByte) {
+  const urv::Vec* v = token_to_eth_over_first_chunk();
+  ASSERT_NE(v, nullptr);
+  std::vector<uint8_t> data = ur_unhex(v->calldata);
+  ASSERT_LE(data.size(), (size_t)SIGNED_METADATA_UR_MAX_CALLDATA);
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(ur_unhex(v->router), 8453,
+                                   {{v->steps[0].token_in, "TOKA", 6}})));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+
+  EthereumSignTx msg;
+  ASSERT_TRUE(defer_first_chunk(*v, data, &msg));
+  EXPECT_FALSE(signed_metadata_relied());
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + 1024,
+                                      (uint32_t)data.size() - 1024));
+  EXPECT_FALSE(signed_metadata_ur_pending());
+
+  const SignedMetadata* md = signed_metadata_get();
+  EXPECT_TRUE(md->ur.out_is_eth);
+  EXPECT_FALSE(md->ur.in_is_eth);
+  EXPECT_EQ(0, memcmp(md->ur.amount_in, ur_unhex(v->steps[1].amount).data(), 32));
+  // The floor is the unwrap's minimum, which sits past byte 1024.
+  EXPECT_EQ(0, memcmp(md->ur.amount_out, ur_unhex(v->steps[2].amount).data(), 32));
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate", "A9531B9D",
+                                              collect_shown, &got));
+  ASSERT_FALSE(got.empty());
+  EXPECT_EQ(got[0].title, "Uniswap");
+  EXPECT_NE(got[0].body.find(" ETH"), std::string::npos) << got[0].body;
+}
+
+TEST_F(CertifiedMetadataTest, UniswapDeferredReviewRefusesShortLongOrTamperedCalls) {
+  const urv::Vec* v = token_to_eth_over_first_chunk();
+  ASSERT_NE(v, nullptr);
+  std::vector<uint8_t> data = ur_unhex(v->calldata);
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(ur_unhex(v->router), 8453,
+                                   {{v->steps[0].token_in, "TOKA", 6}})));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+  EthereumSignTx msg;
+  const uint32_t tail = (uint32_t)data.size() - 1024;
+
+  // A byte short: still pending, nothing decoded (SignTx needs every byte).
+  ASSERT_TRUE(defer_first_chunk(*v, data, &msg));
+  EXPECT_TRUE(signed_metadata_ur_feed(data.data() + 1024, tail - 1));
+  EXPECT_TRUE(signed_metadata_ur_pending());
+  EXPECT_FALSE(signed_metadata_relied());
+
+  // A byte over.
+  ASSERT_TRUE(defer_first_chunk(*v, data, &msg));
+  std::vector<uint8_t> more(data.begin() + 1024, data.end());
+  more.push_back(0);
+  EXPECT_FALSE(signed_metadata_ur_feed(more.data(), (uint32_t)more.size()));
+  EXPECT_FALSE(signed_metadata_ur_pending());
+
+  // The tail decides what is shown: a changed unwrap minimum is shown as is.
+  std::vector<uint8_t> other = data;
+  other[other.size() - 33] ^= 0x01;  // inside the unwrap's amountMin word
+  ASSERT_TRUE(defer_first_chunk(*v, other, &msg));
+  ASSERT_TRUE(signed_metadata_ur_feed(other.data() + 1024, tail));
+  EXPECT_NE(0, memcmp(signed_metadata_get()->ur.amount_out,
+                      ur_unhex(v->steps[2].amount).data(), 32));
+
+  // Over the buffer: not pending, so SignTx refuses the certified claim.
+  std::vector<uint8_t> big = data;
+  big.resize(SIGNED_METADATA_UR_MAX_CALLDATA + 1);
+  EXPECT_FALSE(defer_first_chunk(*v, big, &msg));
+  EXPECT_TRUE(signed_metadata_certified_claimed());
+
+  // A call that fits the first chunk is decoded at once, never pending.
+  std::vector<uint8_t> small(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, ur_unhex(v->router), small);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));  // truncated: no decode
+  EXPECT_FALSE(signed_metadata_ur_pending());
+}
+
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,
  * under the compiled-in alpha root, accepts each certificate for its chain
  * only. Certificates are public; the root's private key never left the root

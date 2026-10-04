@@ -186,6 +186,13 @@ TEST(UniswapUr, AppShapedSwapsSummarize) {
     const bool permit = has_kind(v, UR_PERMIT2_PERMIT);
     const bool wrap = has_kind(v, UR_WRAP_ETH);
     if (!permit && !wrap) continue;
+    size_t swaps = 0;
+    for (const auto& st : v.steps)
+      if (st.kind <= UR_V2_SWAP_EXACT_OUT) swaps++;
+    if (swaps != 1) {  // split routes are refused by design (ExtraStepDoesNotSummarize)
+      EXPECT_FALSE(summarize_vec(v, &s, &plan)) << v.tx;
+      continue;
+    }
     ASSERT_TRUE(summarize_vec(v, &s, &plan)) << v.tx;
     const urv::Step* swap = nullptr;
     for (const auto& st : v.steps)
@@ -201,7 +208,14 @@ TEST(UniswapUr, AppShapedSwapsSummarize) {
       wrap_swaps++;
     } else if (s.exact_in) {
       EXPECT_EQ(hex(s.amount_in, 32), swap->amount) << v.tx;
-      EXPECT_EQ(hex(s.amount_out, 32), swap->limit) << v.tx;
+      // Delivered by a final unwrap/sweep: the larger of the two minimums
+      // (hex strings of equal width compare as numbers).
+      const urv::Step& last = v.steps.back();
+      std::string floor = swap->limit;
+      if ((last.kind == UR_UNWRAP_WETH || last.kind == UR_SWEEP) &&
+          !has_kind(v, UR_PAY_PORTION) && last.amount > floor)
+        floor = last.amount;
+      EXPECT_EQ(hex(s.amount_out, 32), floor) << v.tx;
     }
     if (permit) permit_swaps++;
   }
@@ -236,6 +250,35 @@ TEST(UniswapUr, EthWithoutWrapDoesNotSummarize) {
   uint8_t value[32] = {0};
   value[31] = 1;  // 1 wei the screens would never mention
   EXPECT_FALSE(ur_summarize(&plan, router.data(), value, &s));
+}
+
+/* Exact-out ETH in refunds the unspent ETH: only to the swap's recipient,
+ * and the swap may not be allowed to spend more than was sent. */
+TEST(UniswapUr, ExactOutEthRefundsOnlyToTheRecipient) {
+  const urv::Vec* v = nullptr;
+  for (const auto& c : urv::accepted())
+    if (c.steps.size() == 3 && c.steps[0].kind == UR_WRAP_ETH &&
+        (c.steps[1].kind == UR_V3_SWAP_EXACT_OUT ||
+         c.steps[1].kind == UR_V2_SWAP_EXACT_OUT) &&
+        c.steps[2].kind == UR_UNWRAP_WETH)
+      v = &c;
+  ASSERT_NE(v, nullptr);
+  UrPlan plan;
+  UrSummary s;
+  ASSERT_TRUE(summarize_vec(*v, &s, &plan)) << v->tx;
+  EXPECT_TRUE(s.in_is_eth);
+  EXPECT_FALSE(s.exact_in);
+  EXPECT_EQ(hex(s.amount_in, 32), v->value);  // at most what was sent
+  std::vector<uint8_t> router = unhex(v->router);
+  std::vector<uint8_t> value = unhex(v->value);
+
+  UrPlan other = plan;
+  other.steps[2].recipient[0] ^= 1;  // refund elsewhere
+  EXPECT_FALSE(ur_summarize(&other, router.data(), value.data(), &s));
+
+  other = plan;
+  memset(other.steps[1].limit, 0xff, 32);  // may spend more than was sent
+  EXPECT_FALSE(ur_summarize(&other, router.data(), value.data(), &s));
 }
 
 TEST(UniswapUr, ExtraStepDoesNotSummarize) {

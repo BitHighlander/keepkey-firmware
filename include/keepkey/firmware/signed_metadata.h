@@ -265,6 +265,15 @@ bool signed_metadata_signer_fingerprint(uint8_t key_id,
 bool signed_metadata_matches_tx(const EthereumSignTx* msg);
 bool signed_metadata_confirm(void);
 
+/* A certified Uniswap call longer than the first chunk (token -> ETH swaps
+ * are 1,028-1,178 B on Base). matches_tx() holds the first chunk and returns
+ * false with ur_pending() true; feed() appends each later chunk and, at the
+ * last byte, decodes the whole call: true then means it matched. The caller
+ * shows signed_metadata_confirm() only after that. */
+#define SIGNED_METADATA_UR_MAX_CALLDATA 1280
+bool signed_metadata_ur_pending(void);
+bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len);
+
 /* True once a verified confirm suppressed the raw-data screen, so signing is
  * gated on the metadata matching the final tx hash. */
 bool signed_metadata_relied(void);

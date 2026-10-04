@@ -295,13 +295,16 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
 
   /* Input side. */
   if (wrap) {
-    /* ETH in: the router wraps msg.value and pays from its own balance. */
-    if (!out->exact_in || swap->payer_is_user || is_zero32(value) ||
+    /* ETH in: the router wraps msg.value and pays from its own balance.
+     * Exact in spends all of it; exact out spends at most its limit, which
+     * may not exceed what was sent (the rest is refunded, below). */
+    if (swap->payer_is_user || is_zero32(value) ||
         !is_router(wrap->recipient, router) ||
         (memcmp(wrap->amount, value, 32) != 0 &&
          !is_contract_balance(wrap->amount)) ||
-        (memcmp(swap->amount, value, 32) != 0 &&
-         !is_contract_balance(swap->amount))) {
+        (out->exact_in && memcmp(swap->amount, value, 32) != 0 &&
+         !is_contract_balance(swap->amount)) ||
+        (!out->exact_in && memcmp(swap->limit, value, 32) > 0)) {
       return false;
     }
     out->in_is_eth = true;
@@ -329,8 +332,14 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   memcpy(out->amount_out, out->exact_in ? swap->limit : swap->amount, 32);
   const bool to_router = is_router(swap->recipient, router);
   if (!to_router) {
-    /* Delivered by the swap itself: nothing may follow. */
-    if (fee || final) return false;
+    /* Delivered by the swap itself. Only an exact-out ETH swap may follow
+     * it, unwrapping the unspent ETH back to the same recipient. */
+    if (fee) return false;
+    if (final && !(out->in_is_eth && !out->exact_in &&
+                   final->kind == UR_UNWRAP_WETH &&
+                   memcmp(final->recipient, swap->recipient, 20) == 0)) {
+      return false;
+    }
     out->recipient_is_sender =
         ur_recipient_is_constant(swap->recipient, UR_RECIPIENT_MSG_SENDER);
     memcpy(out->recipient, swap->recipient, 20);
@@ -361,6 +370,12 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   }
   if (is_router(final->recipient, router)) {
     return false;
+  }
+  /* Apps put the floor on the final step and leave the swap's limit at 0:
+   * the user is guaranteed the larger of the two. */
+  if (out->exact_in && !fee &&
+      memcmp(final->amount, out->amount_out, 32) > 0) {
+    memcpy(out->amount_out, final->amount, 32);
   }
   out->out_is_eth = final->kind == UR_UNWRAP_WETH;
   out->recipient_is_sender =

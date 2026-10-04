@@ -35,6 +35,9 @@ static bool certified_claimed;
 static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
+/* A v0x07 call, held whole until its last byte (signed_metadata_ur_pending). */
+static uint8_t ur_calldata[SIGNED_METADATA_UR_MAX_CALLDATA];
+static uint32_t ur_len, ur_total;
 
 /* No built-in verification keys: runtime signers come only from
  * LoadClearsignSigner. A v3 delegate is never written into the ring below. */
@@ -495,6 +498,7 @@ void signed_metadata_clear(void) {
   certified_claimed = false;
   metadata_schema_decoded = false;
   metadata_schema_moves_value = false;
+  ur_len = ur_total = 0;
 }
 
 void signed_metadata_clear_signers(void) {
@@ -892,19 +896,25 @@ static const MetadataToken* metadata_token(const SignedMetadata* md,
   return NULL;
 }
 
-static bool decoder_matches(SignedMetadata* md, const EthereumSignTx* msg) {
-  UrPlan* plan = &md->ur_plan; /* shares RAM with the unused schema args */
-  const uint32_t initsz = msg->data_initial_chunk.size;
-  const uint32_t total = msg->has_data_length ? msg->data_length : initsz;
-  bool ok = false;
-  memset(&md->ur, 0, sizeof(md->ur));
-  if (total != initsz || msg->value.size > sizeof(md->tx_value)) return false;
+/* msg->value into md->tx_value, big-endian. */
+static bool store_tx_value(SignedMetadata* md, const EthereumSignTx* msg) {
   memset(md->tx_value, 0, sizeof(md->tx_value));
+  if (msg->value.size > sizeof(md->tx_value)) return false;
   memcpy(md->tx_value + 32 - msg->value.size, msg->value.bytes,
          msg->value.size);
+  return true;
+}
+
+/* Decodes the complete call; md->tx_value must already hold msg.value, and
+ * the router is the entry's contract (equal to `to` once matched). */
+static bool decoder_matches(SignedMetadata* md, const uint8_t* data,
+                            uint32_t len) {
+  UrPlan* plan = &md->ur_plan; /* shares RAM with the unused schema args */
+  bool ok = false;
+  memset(&md->ur, 0, sizeof(md->ur));
   if (md->decoder == METADATA_DECODER_UNISWAP_UR &&
-      ur_decode(msg->data_initial_chunk.bytes, initsz, plan) &&
-      ur_summarize(plan, msg->to.bytes, md->tx_value, &md->ur)) {
+      ur_decode(data, len, plan) &&
+      ur_summarize(plan, md->contract_address, md->tx_value, &md->ur)) {
     /* Every token the review names must carry a certified identity. */
     ok = (md->ur.in_is_eth || metadata_token(md, md->ur.token_in)) &&
          (md->ur.out_is_eth || metadata_token(md, md->ur.token_out)) &&
@@ -916,12 +926,9 @@ static bool decoder_matches(SignedMetadata* md, const EthereumSignTx* msg) {
   return ok;
 }
 
-bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
-  /* Reset first: a stale `true` from a prior match must never let enforce
-   * pass for a v2 blob that did not decode this tx. */
-  metadata_schema_decoded = false;
-  metadata_schema_moves_value = false;
-
+/* The stored entry is a verified description of this contract, selector and
+ * chain. Says nothing yet about the arguments. */
+static bool entry_is_for(const EthereumSignTx* msg) {
   if (!metadata_available || !msg ||
       stored_metadata.version == METADATA_VERSION_NAME ||
       stored_metadata.classification != METADATA_VERIFIED ||
@@ -940,9 +947,17 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     return false;
   }
 
-  if ((msg->has_chain_id ? msg->chain_id : 0) != stored_metadata.chain_id) {
-    return false;
-  }
+  return (msg->has_chain_id ? msg->chain_id : 0) == stored_metadata.chain_id;
+}
+
+bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
+  /* Reset first: a stale `true` from a prior match must never let enforce
+   * pass for a v2 blob that did not decode this tx. */
+  metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
+  ur_len = ur_total = 0;
+
+  if (!entry_is_for(msg)) return false;
 
   if (stored_metadata.version == METADATA_VERSION_SCHEMA ||
       stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT) {
@@ -956,10 +971,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
         break;
       }
     }
-    memset(stored_metadata.tx_value, 0, sizeof(stored_metadata.tx_value));
-    if (msg->value.size > sizeof(stored_metadata.tx_value)) return false;
-    memcpy(stored_metadata.tx_value + 32 - msg->value.size, msg->value.bytes,
-           msg->value.size);
+    if (!store_tx_value(&stored_metadata, msg)) return false;
     if (stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
         stored_metadata.value_role != METADATA_ROLE_NONE) {
       metadata_schema_moves_value = false;
@@ -973,14 +985,39 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   if (stored_metadata.version == METADATA_VERSION_DECODER) {
     /* Certified only, and the whole call in the first chunk: the decoder
      * reads every byte that will be signed (structural binding, as v2). */
-    if (metadata_tier != METADATA_TIER_KEEPKEY) return false;
-    metadata_schema_decoded = decoder_matches(&stored_metadata, msg);
-    return metadata_schema_decoded;
+    /* Certified only. The decoder reads every byte that will be signed: a
+     * call past the first chunk stays pending until its last byte. */
+    const uint32_t initsz = msg->data_initial_chunk.size;
+    const uint32_t total = msg->has_data_length ? msg->data_length : initsz;
+    if (metadata_tier != METADATA_TIER_KEEPKEY ||
+        !store_tx_value(&stored_metadata, msg)) {
+      return false;
+    }
+    ur_total = total;
+    return signed_metadata_ur_feed(msg->data_initial_chunk.bytes, initsz) &&
+           metadata_schema_decoded;
   }
 
   /* v1 gates display only; the committed tx_hash is checked against the
    * final digest in signed_metadata_enforce(). */
   return true;
+}
+
+bool signed_metadata_ur_pending(void) { return ur_len < ur_total; }
+
+bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len) {
+  if (ur_total > sizeof(ur_calldata) || len > ur_total - ur_len) {
+    ur_len = ur_total = 0;
+    return false;
+  }
+  memcpy(ur_calldata + ur_len, bytes, len);
+  ur_len += len;
+  if (ur_len < ur_total) return true;
+  /* Calldata is public: no wipe needed, only the state reset. */
+  metadata_schema_decoded =
+      decoder_matches(&stored_metadata, ur_calldata, ur_len);
+  ur_len = ur_total = 0;
+  return metadata_schema_decoded;
 }
 
 /* One decoded argument as text, without its name. BYTES/RAW return false:

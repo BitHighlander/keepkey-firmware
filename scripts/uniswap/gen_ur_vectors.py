@@ -9,7 +9,9 @@ C unit tests pass only when the two implementations agree on real calldata.
 """
 import glob, json, os, sys, urllib.request
 
-ROUTERS = ["0x6fF5693b99212Da76ad316178A184AB56D299b43", "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"]
+# UR 2.0, UR 1.2, and UR 2.1.2 (the router the Uniswap app sends to on Base).
+ROUTERS = ["0x6fF5693b99212Da76ad316178A184AB56D299b43", "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
+           "0xd6145b2D3F379919E8CdEda7B97e37c4b2Ca9c40"]
 KIND = {0x00: 'UR_V3_SWAP_EXACT_IN', 0x01: 'UR_V3_SWAP_EXACT_OUT', 0x0a: 'UR_PERMIT2_PERMIT',
         0x0b: 'UR_WRAP_ETH', 0x0c: 'UR_UNWRAP_WETH'}
 
@@ -72,7 +74,7 @@ ALWAYS = ('0xd873988f8c2a7ef53ce52a0bc890a029e0bde5e731ad30c17e4991fb080dbbab',
           '0x81fa9e1f87d0b269986082edbdaebbf6c0b005918f389f6762601b47139d27e1')
 
 
-def header(d, limit=80, v4_limit=10):
+def header(d, limit=160, v4_limit=10):
     """Deterministic subset: pinned calls, then app-shaped (permit/wrap), then the rest."""
     ok, v4, seen = [], [], set()
     for f in sorted(glob.glob(os.path.join(d, '0x*.json'))):
