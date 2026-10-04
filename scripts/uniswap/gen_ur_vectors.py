@@ -13,7 +13,8 @@ import glob, json, os, sys, urllib.request
 ROUTERS = ["0x6fF5693b99212Da76ad316178A184AB56D299b43", "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
            "0xd6145b2D3F379919E8CdEda7B97e37c4b2Ca9c40"]
 KIND = {0x00: 'UR_V3_SWAP_EXACT_IN', 0x01: 'UR_V3_SWAP_EXACT_OUT', 0x0a: 'UR_PERMIT2_PERMIT',
-        0x0b: 'UR_WRAP_ETH', 0x0c: 'UR_UNWRAP_WETH'}
+        0x0b: 'UR_WRAP_ETH', 0x0c: 'UR_UNWRAP_WETH', 0x04: 'UR_SWEEP',
+        0x06: 'UR_PAY_PORTION', 0x08: 'UR_V2_SWAP_EXACT_IN', 0x09: 'UR_V2_SWAP_EXACT_OUT'}
 
 
 def w(b, i):
@@ -45,6 +46,16 @@ def decode(raw):
             out.append((c, inp[12:32].hex(), '', w(inp, 32), None))
         elif c in (0x0b, 0x0c):
             out.append((c, '', '', w(inp, 32), None))
+        elif c in (0x08, 0x09):
+            # (recipient, amount, limit, address[] path, payerIsUser); the V2
+            # path runs input -> output for both directions.
+            o = w(inp, 96)
+            n = w(inp, o)
+            path = [inp[o + 32 + 32 * j + 12:o + 64 + 32 * j].hex() for j in range(n)]
+            out.append((c, path[0], path[-1], w(inp, 32), w(inp, 64)))
+        elif c in (0x04, 0x06):
+            # SWEEP (token, recipient, amountMin); PAY_PORTION (token, recipient, bips)
+            out.append((c, inp[12:32].hex(), '', w(inp, 64), None))
         else:
             out.append((c,))
     return out
@@ -74,7 +85,7 @@ ALWAYS = ('0xd873988f8c2a7ef53ce52a0bc890a029e0bde5e731ad30c17e4991fb080dbbab',
           '0x81fa9e1f87d0b269986082edbdaebbf6c0b005918f389f6762601b47139d27e1')
 
 
-def header(d, limit=160, v4_limit=10):
+def header(d, limit=250, v4_limit=10):
     """Deterministic subset: pinned calls, then app-shaped (permit/wrap), then the rest."""
     ok, v4, seen = [], [], set()
     for f in sorted(glob.glob(os.path.join(d, '0x*.json'))):
@@ -90,7 +101,8 @@ def header(d, limit=160, v4_limit=10):
                 ok.append((h, (it.get('to') or {}).get('hash', '').lower()[2:], int(it.get('value') or 0), raw, steps))
     def rank(v):
         app = any(st[0] in (0x0a, 0x0b) for st in v[4])
-        return (v[0] not in ALWAYS, not app, v[0])
+        rare = any(st[0] in (0x04, 0x06, 0x08, 0x09) for st in v[4])
+        return (v[0] not in ALWAYS, not rare, not app, v[0])
     ok = sorted(ok, key=rank)[:limit]
     v4 = sorted(v4)[:v4_limit]
     p = print

@@ -92,8 +92,10 @@ typedef struct {
   uint8_t fee_recipient[20];
 } UrSummary;
 
-/* Accepts only [PERMIT2_PERMIT | WRAP_ETH] -> one swap -> [PAY_PORTION] ->
- * [SWEEP | UNWRAP_WETH]. `router` is the contract being called (a permit must
+/* Accepts only [PERMIT2_PERMIT | WRAP_ETH] -> one swap (or a split of two
+ * exact-in swaps of the same pair) -> [PAY_PORTION] ->
+ * [SWEEP | UNWRAP_WETH] -> [clean-up: ETH back to the same recipient].
+ * `router` is the contract being called (a permit must
  * name it as spender); `value` is msg.value, big-endian. False for any other
  * shape, so nothing partial is ever shown. */
 bool ur_summarize(const UrPlan* plan, const uint8_t router[20],

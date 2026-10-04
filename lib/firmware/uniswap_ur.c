@@ -257,6 +257,17 @@ static bool is_router(const uint8_t r[20], const uint8_t router[20]) {
          memcmp(r, router, 20) == 0;
 }
 
+/* a += b, big-endian; false on overflow. */
+static bool add32(uint8_t a[32], const uint8_t b[32]) {
+  unsigned carry = 0;
+  for (int i = 31; i >= 0; i--) {
+    carry += (unsigned)a[i] + b[i];
+    a[i] = (uint8_t)carry;
+    carry >>= 8;
+  }
+  return carry == 0;
+}
+
 static bool is_swap(UrKind k) {
   return k == UR_V3_SWAP_EXACT_IN || k == UR_V3_SWAP_EXACT_OUT ||
          k == UR_V2_SWAP_EXACT_IN || k == UR_V2_SWAP_EXACT_OUT;
@@ -277,16 +288,41 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   }
   if (i >= plan->n || !is_swap(plan->steps[i].kind)) return false;
   const UrStep* swap = &plan->steps[i++];
+  /* A split route: a second exact-in swap of the same pair, paid and
+   * delivered the same way. Its totals are what the user spends and is
+   * guaranteed (each swap enforces its own minimum). */
+  UrStep split;
+  if (i < plan->n && is_swap(plan->steps[i].kind)) {
+    const UrStep* b = &plan->steps[i++];
+    const bool in_a = swap->kind == UR_V3_SWAP_EXACT_IN ||
+                      swap->kind == UR_V2_SWAP_EXACT_IN;
+    const bool in_b =
+        b->kind == UR_V3_SWAP_EXACT_IN || b->kind == UR_V2_SWAP_EXACT_IN;
+    split = *swap;
+    if (!in_a || !in_b || memcmp(b->token_in, swap->token_in, 20) != 0 ||
+        memcmp(b->token_out, swap->token_out, 20) != 0 ||
+        memcmp(b->recipient, swap->recipient, 20) != 0 ||
+        b->payer_is_user != swap->payer_is_user ||
+        is_contract_balance(swap->amount) || is_contract_balance(b->amount) ||
+        !add32(split.amount, b->amount) || !add32(split.limit, b->limit)) {
+      return false;
+    }
+    swap = &split;
+  }
   const UrStep* fee = NULL;
-  const UrStep* final = NULL;
+  const UrStep* tail[2] = {NULL, NULL}; /* final, then clean-up */
   if (i < plan->n && plan->steps[i].kind == UR_PAY_PORTION) {
     fee = &plan->steps[i++];
   }
-  if (i < plan->n && (plan->steps[i].kind == UR_SWEEP ||
-                      plan->steps[i].kind == UR_UNWRAP_WETH)) {
-    final = &plan->steps[i++];
+  for (int t = 0; t < 2 && i < plan->n &&
+                  (plan->steps[i].kind == UR_SWEEP ||
+                   plan->steps[i].kind == UR_UNWRAP_WETH);
+       t++) {
+    tail[t] = &plan->steps[i++];
   }
   if (i != plan->n) return false;
+  const UrStep* final = tail[0];
+  const UrStep* cleanup = tail[1];
 
   out->exact_in = swap->kind == UR_V3_SWAP_EXACT_IN ||
                   swap->kind == UR_V2_SWAP_EXACT_IN;
@@ -330,20 +366,12 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
 
   /* Output side. */
   memcpy(out->amount_out, out->exact_in ? swap->limit : swap->amount, 32);
-  const bool to_router = is_router(swap->recipient, router);
-  if (!to_router) {
-    /* Delivered by the swap itself. Only an exact-out ETH swap may follow
-     * it, unwrapping the unspent ETH back to the same recipient. */
-    if (fee) return false;
-    if (final && !(out->in_is_eth && !out->exact_in &&
-                   final->kind == UR_UNWRAP_WETH &&
-                   memcmp(final->recipient, swap->recipient, 20) == 0)) {
-      return false;
-    }
-    out->recipient_is_sender =
-        ur_recipient_is_constant(swap->recipient, UR_RECIPIENT_MSG_SENDER);
-    memcpy(out->recipient, swap->recipient, 20);
-    return true;
+  const UrStep* deliver = swap;
+  if (!is_router(swap->recipient, router)) {
+    /* Delivered by the swap itself: what follows is clean-up. */
+    if (fee || cleanup) return false;
+    cleanup = final;
+    goto delivered;
   }
   /* Held by the router: a final step must deliver it, after any fee. */
   if (!final || is_contract_balance(final->amount)) return false;
@@ -378,8 +406,17 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
     memcpy(out->amount_out, final->amount, 32);
   }
   out->out_is_eth = final->kind == UR_UNWRAP_WETH;
+  deliver = final;
+delivered:
+  /* Apps add one clean-up step returning leftover ETH (unwrapped, or swept
+   * as address 0). Allowed only to the recipient the review names. */
+  if (cleanup && (memcmp(cleanup->recipient, deliver->recipient, 20) != 0 ||
+                  (cleanup->kind == UR_SWEEP &&
+                   !ur_recipient_is_constant(cleanup->token_in, 0)))) {
+    return false;
+  }
   out->recipient_is_sender =
-      ur_recipient_is_constant(final->recipient, UR_RECIPIENT_MSG_SENDER);
-  memcpy(out->recipient, final->recipient, 20);
+      ur_recipient_is_constant(deliver->recipient, UR_RECIPIENT_MSG_SENDER);
+  memcpy(out->recipient, deliver->recipient, 20);
   return true;
 }

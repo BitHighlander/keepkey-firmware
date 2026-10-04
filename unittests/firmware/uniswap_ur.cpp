@@ -176,51 +176,130 @@ bool has_kind(const urv::Vec& v, int kind) {
 }
 }  // namespace
 
-/* Every swap shaped like the Uniswap app's (permit or wrap, one swap, the
- * user pays) must summarize, with amounts read from the swap step. */
+/* Sum of two equal-width big-endian hex strings (test-side, independent of
+ * the decoder's add32). */
+std::string hex_add(const std::string& x, const std::string& y) {
+  std::vector<uint8_t> a = unhex(x), b = unhex(y), r(a.size());
+  unsigned carry = 0;
+  for (size_t i = a.size(); i-- > 0;) {
+    carry += (unsigned)a[i] + b[i];
+    r[i] = (uint8_t)carry;
+    carry >>= 8;
+  }
+  return hex(r.data(), r.size());
+}
+
+bool is_exact_in(int kind) {
+  return kind == UR_V3_SWAP_EXACT_IN || kind == UR_V2_SWAP_EXACT_IN;
+}
+
+/* Every app-shaped call (permit or wrap first) with one swap, or a split of
+ * two exact-in swaps of the same pair, summarizes: totals from the swaps,
+ * and the floor raised to a later unwrap/sweep minimum when there is no fee.
+ * A second swap of a different pair (a multi-hop through two pool versions)
+ * is refused. */
 TEST(UniswapUr, AppShapedSwapsSummarize) {
-  size_t permit_swaps = 0, wrap_swaps = 0;
+  size_t permit_swaps = 0, wrap_swaps = 0, splits = 0, cleanups = 0;
   for (const auto& v : urv::accepted()) {
     UrPlan plan;
     UrSummary s;
     const bool permit = has_kind(v, UR_PERMIT2_PERMIT);
     const bool wrap = has_kind(v, UR_WRAP_ETH);
     if (!permit && !wrap) continue;
-    size_t swaps = 0;
+    std::vector<const urv::Step*> swaps;
     for (const auto& st : v.steps)
-      if (st.kind <= UR_V2_SWAP_EXACT_OUT) swaps++;
-    if (swaps != 1) {  // split routes are refused by design (ExtraStepDoesNotSummarize)
+      if (st.kind <= UR_V2_SWAP_EXACT_OUT) swaps.push_back(&st);
+    const bool same_pair =
+        swaps.size() == 2 && is_exact_in(swaps[0]->kind) &&
+        is_exact_in(swaps[1]->kind) &&
+        swaps[0]->token_in == swaps[1]->token_in &&
+        swaps[0]->token_out == swaps[1]->token_out;
+    if (swaps.size() > 2 || (swaps.size() == 2 && !same_pair)) {
       EXPECT_FALSE(summarize_vec(v, &s, &plan)) << v.tx;
       continue;
     }
     ASSERT_TRUE(summarize_vec(v, &s, &plan)) << v.tx;
-    const urv::Step* swap = nullptr;
-    for (const auto& st : v.steps)
-      if (st.kind == UR_V3_SWAP_EXACT_IN || st.kind == UR_V3_SWAP_EXACT_OUT)
-        swap = &st;
-    ASSERT_NE(swap, nullptr);
+    const urv::Step* swap = swaps[0];
+    std::string amount = swap->amount, limit = swap->limit;
+    if (swaps.size() == 2) {
+      amount = hex_add(amount, swaps[1]->amount);
+      limit = hex_add(limit, swaps[1]->limit);
+      splits++;
+    }
     EXPECT_EQ(hex(s.token_in, 20), swap->token_in) << v.tx;
     EXPECT_EQ(hex(s.token_out, 20), swap->token_out) << v.tx;
     EXPECT_EQ(s.has_permit, permit) << v.tx;
     EXPECT_EQ(s.in_is_eth, wrap) << v.tx;
+    size_t tail = 0;
+    std::string floor = limit;
+    for (const auto& st : v.steps) {
+      if (st.kind != UR_UNWRAP_WETH && st.kind != UR_SWEEP) continue;
+      tail++;
+      if (!has_kind(v, UR_PAY_PORTION) && st.amount > floor) floor = st.amount;
+    }
+    if (tail == 2 || (tail == 1 && !s.out_is_eth && has_kind(v, UR_UNWRAP_WETH)))
+      cleanups++;
     if (wrap) {
       EXPECT_EQ(hex(s.amount_in, 32), v.value) << v.tx;  // spends msg.value
       wrap_swaps++;
     } else if (s.exact_in) {
-      EXPECT_EQ(hex(s.amount_in, 32), swap->amount) << v.tx;
-      // Delivered by a final unwrap/sweep: the larger of the two minimums
-      // (hex strings of equal width compare as numbers).
-      const urv::Step& last = v.steps.back();
-      std::string floor = swap->limit;
-      if ((last.kind == UR_UNWRAP_WETH || last.kind == UR_SWEEP) &&
-          !has_kind(v, UR_PAY_PORTION) && last.amount > floor)
-        floor = last.amount;
+      EXPECT_EQ(hex(s.amount_in, 32), amount) << v.tx;
       EXPECT_EQ(hex(s.amount_out, 32), floor) << v.tx;
     }
     if (permit) permit_swaps++;
   }
   EXPECT_GE(permit_swaps, 30u);
   EXPECT_GE(wrap_swaps, 1u);  // the case is covered; counts vary by sample
+  EXPECT_GE(splits, 1u);
+  EXPECT_GE(cleanups, 1u);
+}
+
+/* The clean-up step returns ETH only to the recipient the review names. */
+TEST(UniswapUr, CleanupGoesOnlyToTheShownRecipient) {
+  const urv::Vec* v = nullptr;
+  for (const auto& c : urv::accepted())
+    if (c.steps.size() >= 3 && c.steps.back().kind == UR_SWEEP &&
+        (has_kind(c, UR_PERMIT2_PERMIT) || has_kind(c, UR_WRAP_ETH)))
+      v = &c;
+  ASSERT_NE(v, nullptr);
+  UrPlan plan;
+  UrSummary s;
+  ASSERT_TRUE(summarize_vec(*v, &s, &plan)) << v->tx;
+  std::vector<uint8_t> router = unhex(v->router);
+  std::vector<uint8_t> value = unhex(v->value);
+  UrPlan other = plan;
+  other.steps[other.n - 1].recipient[0] ^= 1;
+  EXPECT_FALSE(ur_summarize(&other, router.data(), value.data(), &s));
+  other = plan;
+  other.steps[other.n - 1].token_in[19] ^= 1;  // sweeping a token, not ETH
+  EXPECT_FALSE(ur_summarize(&other, router.data(), value.data(), &s));
+}
+
+/* A split's second swap must match the first: same pair, same recipient. */
+TEST(UniswapUr, SplitRouteMustBeTheSamePair) {
+  const urv::Vec* v = nullptr;
+  UrPlan plan;
+  UrSummary s;
+  for (const auto& c : urv::accepted()) {
+    size_t n = 0;
+    for (const auto& st : c.steps) n += st.kind <= UR_V2_SWAP_EXACT_OUT;
+    if (n == 2 && summarize_vec(c, &s, &plan)) {
+      v = &c;
+      break;
+    }
+  }
+  ASSERT_NE(v, nullptr) << "no same-pair split in the vectors";
+  std::vector<uint8_t> router = unhex(v->router);
+  std::vector<uint8_t> value = unhex(v->value);
+  size_t second = 0;
+  for (size_t k = 0; k < plan.n; k++)
+    if (plan.steps[k].kind <= UR_V2_SWAP_EXACT_OUT) second = k;
+  UrPlan other = plan;
+  other.steps[second].token_out[19] ^= 1;
+  EXPECT_FALSE(ur_summarize(&other, router.data(), value.data(), &s));
+  other = plan;
+  other.steps[second].recipient[0] ^= 1;
+  EXPECT_FALSE(ur_summarize(&other, router.data(), value.data(), &s));
 }
 
 const urv::Vec* first_with(int kind) {
@@ -289,7 +368,8 @@ TEST(UniswapUr, ExtraStepDoesNotSummarize) {
   std::vector<uint8_t> router = unhex(v->router);
   std::vector<uint8_t> value = unhex(v->value);
   ASSERT_LT(plan.n, UR_MAX_STEPS);
-  plan.steps[plan.n] = plan.steps[plan.n - 1];  // a second swap
+  plan.steps[plan.n] = plan.steps[plan.n - 1];
+  plan.steps[plan.n].kind = UR_TRANSFER;  // a step no reviewed shape has
   plan.n++;
   EXPECT_FALSE(ur_summarize(&plan, router.data(), value.data(), &s));
 }
