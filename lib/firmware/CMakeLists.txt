@@ -51,6 +51,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_tokens.c
       clearsign_root.c
       signed_metadata.c
+      uniswap_ur.c
       mayachain.c
       nano.c
       osmosis.c
