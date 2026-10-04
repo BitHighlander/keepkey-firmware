@@ -5,8 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "keepkey/firmware/uniswap_ur.h"
-
 typedef struct _EthereumSignTx EthereumSignTx;
 
 #define METADATA_MAX_ARGS 8
@@ -48,12 +46,6 @@ typedef enum {
 /* 0x06: a vouched name for one address on one chain (certified only). It
  * describes no transaction; typed-data reviews show it beside the address. */
 #define METADATA_VERSION_NAME 0x06
-/* Certified only: selects a reviewed firmware decoder for one contract on one
- * chain and carries the token identities the review needs. The device decodes
- * every value from the calldata it signs. */
-#define METADATA_VERSION_DECODER 0x07
-#define METADATA_DECODER_UNISWAP_UR 1
-#define METADATA_MAX_TOKENS 4
 #define METADATA_NAME_MAX 24
 /* Widest filled summary; templates that could exceed it are rejected. */
 #define METADATA_INTENT_TEXT_MAX 280
@@ -117,12 +109,6 @@ typedef struct {
 } MetadataArg;
 
 typedef struct {
-  uint8_t address[20];
-  uint8_t decimals;
-  char symbol[METADATA_MAX_TOKEN_SYMBOL_LEN + 1];
-} MetadataToken;
-
-typedef struct {
   uint8_t version;
   uint32_t chain_id;
   uint8_t contract_address[20];
@@ -130,19 +116,7 @@ typedef struct {
   uint8_t tx_hash[32];
   char method_name[METADATA_MAX_METHOD_LEN + 1];
   uint8_t num_args;
-  /* A decoder entry (v0x07) has no schema arguments or intent: it shares
-   * their RAM with its plan, token identities and summary. */
-  union {
-    struct {
-      MetadataArg args[METADATA_MAX_ARGS];
-      char intent[METADATA_INTENT_MAX + 1];
-    };
-    struct {
-      UrPlan ur_plan; /* scratch while matching */
-      MetadataToken tokens[METADATA_MAX_TOKENS];
-      UrSummary ur; /* filled when the tx matches */
-    };
-  };
+  MetadataArg args[METADATA_MAX_ARGS];
   MetadataClassification classification;
   uint32_t timestamp;
   uint8_t key_id;
@@ -151,11 +125,9 @@ typedef struct {
   /* v0x05 */
   uint8_t value_role; /* NONE, SPEND_MAX or SPEND_EXACT for msg.value */
   char title[METADATA_TITLE_MAX + 1];
+  char intent[METADATA_INTENT_MAX + 1];
   char vouched_name[METADATA_NAME_MAX + 1]; /* v0x06 */
   uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
-  /* v0x07 */
-  uint8_t decoder;
-  uint8_t num_tokens;
 } SignedMetadata;
 
 /* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
@@ -181,11 +153,6 @@ typedef struct {
 void signed_metadata_take_name(MetadataNameRecord* out);
 /* The v0x05 review. certified: summary, limits, details, who. Runtime: a
  * NOT-verified heading plus limits; the caller's raw review follows. */
-/* v0x07 Uniswap review: summary, limits, recipient, permit, fee, contract,
- * provenance. Emits nothing partial: false if any line cannot be built. */
-bool signed_metadata_build_ur_review(const SignedMetadata* md,
-                                     const char* alias, const char* fp,
-                                     ReviewEmit emit, void* ctx);
 bool signed_metadata_build_intent_review(const SignedMetadata* md,
                                          bool certified, const char* alias,
                                          const char* fp, ReviewEmit emit,
@@ -264,15 +231,6 @@ bool signed_metadata_signer_fingerprint(uint8_t key_id,
  * is signed_metadata_enforce(). */
 bool signed_metadata_matches_tx(const EthereumSignTx* msg);
 bool signed_metadata_confirm(void);
-
-/* A certified Uniswap call longer than the first chunk (token -> ETH swaps
- * are 1,028-1,178 B on Base). matches_tx() holds the first chunk and returns
- * false with ur_pending() true; feed() appends each later chunk and, at the
- * last byte, decodes the whole call: true then means it matched. The caller
- * shows signed_metadata_confirm() only after that. */
-#define SIGNED_METADATA_UR_MAX_CALLDATA 1280
-bool signed_metadata_ur_pending(void);
-bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len);
 
 /* True once a verified confirm suppressed the raw-data screen, so signing is
  * gated on the metadata matching the final tx hash. */

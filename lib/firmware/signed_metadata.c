@@ -35,9 +35,6 @@ static bool certified_claimed;
 static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
-/* A v0x07 call, held whole until its last byte (signed_metadata_ur_pending). */
-static uint8_t ur_calldata[SIGNED_METADATA_UR_MAX_CALLDATA];
-static uint32_t ur_len, ur_total;
 
 /* No built-in verification keys: runtime signers come only from
  * LoadClearsignSigner. A v3 delegate is never written into the ring below. */
@@ -374,35 +371,6 @@ static bool parse_metadata_binary(const uint8_t* payload, size_t payload_len,
         !signed_metadata_intent_valid(out)) {
       return false;
     }
-  } else if (out->version == METADATA_VERSION_DECODER) {
-    if (!parse_common_head(&cursor, end, out) ||
-        !read_string(&cursor, end, out->method_name, METADATA_MAX_METHOD_LEN) ||
-        !read_u8(&cursor, end, &out->decoder) ||
-        out->decoder != METADATA_DECODER_UNISWAP_UR ||
-        !read_short_text(&cursor, end, out->title, METADATA_TITLE_MAX) ||
-        !read_u8(&cursor, end, &out->num_tokens) || out->num_tokens == 0 ||
-        out->num_tokens > METADATA_MAX_TOKENS) {
-      return false;
-    }
-    for (uint8_t i = 0; i < out->num_tokens; i++) {
-      MetadataToken* t = &out->tokens[i];
-      uint8_t symlen = 0;
-      if (!read_bytes(&cursor, end, t->address, sizeof(t->address)) ||
-          !read_u8(&cursor, end, &t->decimals) || t->decimals > 36 ||
-          !read_u8(&cursor, end, &symlen) || symlen == 0 ||
-          symlen > METADATA_MAX_TOKEN_SYMBOL_LEN ||
-          !read_bytes(&cursor, end, (uint8_t*)t->symbol, symlen)) {
-        return false;
-      }
-      t->symbol[symlen] = '\0';
-      for (uint8_t j = 0; j < symlen; j++) {
-        char ch = t->symbol[j];
-        if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-              (ch >= '0' && ch <= '9'))) {
-          return false;
-        }
-      }
-    }
   } else {
     return false;
   }
@@ -498,7 +466,6 @@ void signed_metadata_clear(void) {
   certified_claimed = false;
   metadata_schema_decoded = false;
   metadata_schema_moves_value = false;
-  ur_len = ur_total = 0;
 }
 
 void signed_metadata_clear_signers(void) {
@@ -796,9 +763,7 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
   }
 
   if (!parse_metadata_binary(payload, payload_len, &stored_metadata) ||
-      stored_metadata.key_id != key_id ||
-      /* A decoder entry is KeepKey-certified or nothing. */
-      stored_metadata.version == METADATA_VERSION_DECODER) {
+      stored_metadata.key_id != key_id) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
@@ -838,8 +803,7 @@ static MetadataClassification process_certified(const uint8_t* payload,
    * calldata doing something else. */
   if (stored_metadata.version != METADATA_VERSION_SCHEMA &&
       stored_metadata.version != METADATA_VERSION_SCHEMA_INTENT &&
-      stored_metadata.version != METADATA_VERSION_NAME &&
-      stored_metadata.version != METADATA_VERSION_DECODER) {
+      stored_metadata.version != METADATA_VERSION_NAME) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }
@@ -888,47 +852,12 @@ const char* signed_metadata_delegate_alias(void) {
   return (metadata_tier == METADATA_TIER_KEEPKEY) ? delegate_alias : "";
 }
 
-static const MetadataToken* metadata_token(const SignedMetadata* md,
-                                           const uint8_t address[20]) {
-  for (uint8_t i = 0; i < md->num_tokens; i++) {
-    if (memcmp(md->tokens[i].address, address, 20) == 0) return &md->tokens[i];
-  }
-  return NULL;
-}
+bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
+  /* Reset first: a stale `true` from a prior match must never let enforce
+   * pass for a v2 blob that did not decode this tx. */
+  metadata_schema_decoded = false;
+  metadata_schema_moves_value = false;
 
-/* msg->value into md->tx_value, big-endian. */
-static bool store_tx_value(SignedMetadata* md, const EthereumSignTx* msg) {
-  memset(md->tx_value, 0, sizeof(md->tx_value));
-  if (msg->value.size > sizeof(md->tx_value)) return false;
-  memcpy(md->tx_value + 32 - msg->value.size, msg->value.bytes,
-         msg->value.size);
-  return true;
-}
-
-/* Decodes the complete call; md->tx_value must already hold msg.value, and
- * the router is the entry's contract (equal to `to` once matched). */
-static bool decoder_matches(SignedMetadata* md, const uint8_t* data,
-                            uint32_t len) {
-  UrPlan* plan = &md->ur_plan; /* shares RAM with the unused schema args */
-  bool ok = false;
-  memset(&md->ur, 0, sizeof(md->ur));
-  if (md->decoder == METADATA_DECODER_UNISWAP_UR &&
-      ur_decode(data, len, plan) &&
-      ur_summarize(plan, md->contract_address, md->tx_value, &md->ur)) {
-    /* Every token the review names must carry a certified identity. */
-    ok = (md->ur.in_is_eth || metadata_token(md, md->ur.token_in)) &&
-         (md->ur.out_is_eth || metadata_token(md, md->ur.token_out)) &&
-         (!md->ur.has_permit || metadata_token(md, md->ur.permit_token));
-  }
-  memzero(plan, sizeof(*plan));
-  if (!ok) memset(&md->ur, 0, sizeof(md->ur));
-  /* ETH in is stated on the Limits screen; any other value was refused. */
-  return ok;
-}
-
-/* The stored entry is a verified description of this contract, selector and
- * chain. Says nothing yet about the arguments. */
-static bool entry_is_for(const EthereumSignTx* msg) {
   if (!metadata_available || !msg ||
       stored_metadata.version == METADATA_VERSION_NAME ||
       stored_metadata.classification != METADATA_VERIFIED ||
@@ -947,17 +876,9 @@ static bool entry_is_for(const EthereumSignTx* msg) {
     return false;
   }
 
-  return (msg->has_chain_id ? msg->chain_id : 0) == stored_metadata.chain_id;
-}
-
-bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
-  /* Reset first: a stale `true` from a prior match must never let enforce
-   * pass for a v2 blob that did not decode this tx. */
-  metadata_schema_decoded = false;
-  metadata_schema_moves_value = false;
-  ur_len = ur_total = 0;
-
-  if (!entry_is_for(msg)) return false;
+  if ((msg->has_chain_id ? msg->chain_id : 0) != stored_metadata.chain_id) {
+    return false;
+  }
 
   if (stored_metadata.version == METADATA_VERSION_SCHEMA ||
       stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT) {
@@ -971,7 +892,10 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
         break;
       }
     }
-    if (!store_tx_value(&stored_metadata, msg)) return false;
+    memset(stored_metadata.tx_value, 0, sizeof(stored_metadata.tx_value));
+    if (msg->value.size > sizeof(stored_metadata.tx_value)) return false;
+    memcpy(stored_metadata.tx_value + 32 - msg->value.size, msg->value.bytes,
+           msg->value.size);
     if (stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
         stored_metadata.value_role != METADATA_ROLE_NONE) {
       metadata_schema_moves_value = false;
@@ -982,42 +906,9 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     return metadata_schema_decoded;
   }
 
-  if (stored_metadata.version == METADATA_VERSION_DECODER) {
-    /* Certified only, and the whole call in the first chunk: the decoder
-     * reads every byte that will be signed (structural binding, as v2). */
-    /* Certified only. The decoder reads every byte that will be signed: a
-     * call past the first chunk stays pending until its last byte. */
-    const uint32_t initsz = msg->data_initial_chunk.size;
-    const uint32_t total = msg->has_data_length ? msg->data_length : initsz;
-    if (metadata_tier != METADATA_TIER_KEEPKEY ||
-        total > sizeof(ur_calldata) || !store_tx_value(&stored_metadata, msg)) {
-      return false;
-    }
-    ur_total = total; /* feed() relies on ur_total <= sizeof(ur_calldata) */
-    return signed_metadata_ur_feed(msg->data_initial_chunk.bytes, initsz) &&
-           metadata_schema_decoded;
-  }
-
   /* v1 gates display only; the committed tx_hash is checked against the
    * final digest in signed_metadata_enforce(). */
   return true;
-}
-
-bool signed_metadata_ur_pending(void) { return ur_len < ur_total; }
-
-bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len) {
-  if (len > ur_total - ur_len) {
-    ur_len = ur_total = 0;
-    return false;
-  }
-  memcpy(ur_calldata + ur_len, bytes, len);
-  ur_len += len;
-  if (ur_len < ur_total) return true;
-  /* Calldata is public: no wipe needed, only the state reset. */
-  metadata_schema_decoded =
-      decoder_matches(&stored_metadata, ur_calldata, ur_len);
-  ur_len = ur_total = 0;
-  return metadata_schema_decoded;
 }
 
 /* One decoded argument as text, without its name. BYTES/RAW return false:
@@ -1290,106 +1181,6 @@ bool signed_metadata_build_intent_review(const SignedMetadata* md,
   return intent_emit_provenance(emit, ctx, alias, fp);
 }
 
-/* Amount with symbol; a token's all-ones maximum reads as UNLIMITED. */
-static bool ur_amount_text(const SignedMetadata* md, bool eth,
-                           const uint8_t address[20], const uint8_t amount[32],
-                           size_t width_bytes, char* out, size_t len) {
-  uint8_t decimals = 18;
-  const char* symbol = "ETH";
-  if (!eth) {
-    const MetadataToken* t = metadata_token(md, address);
-    if (!t) return false;
-    decimals = t->decimals;
-    symbol = t->symbol;
-  }
-  char suffix[METADATA_MAX_TOKEN_SYMBOL_LEN + 2];
-  snprintf(suffix, sizeof(suffix), " %s", symbol);
-  bool is_max = width_bytes <= 32;
-  for (size_t i = 32 - width_bytes; i < 32 && is_max; i++) {
-    if (amount[i] != 0xFF) is_max = false;
-  }
-  if (is_max) {
-    snprintf(out, len, "UNLIMITED%s", suffix);
-    return true;
-  }
-  bignum256 bn;
-  bn_from_metadata_bytes(amount, 32, &bn);
-  return bn_format(&bn, NULL, suffix, decimals, 0, false, out, len) != 0;
-}
-
-/* Civil date (UTC) from a Unix time, for the Permit2 expiration. */
-static void ur_date_text(uint64_t t, char* out, size_t len) {
-  int64_t z = (int64_t)(t / 86400) + 719468;
-  int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-  uint64_t doe = (uint64_t)(z - era * 146097);
-  uint64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-  int64_t y = (int64_t)yoe + era * 400;
-  uint64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-  uint64_t mp = (5 * doy + 2) / 153;
-  unsigned d = (unsigned)(doy - (153 * mp + 2) / 5 + 1);
-  unsigned m = (unsigned)(mp < 10 ? mp + 3 : mp - 9);
-  if (m <= 2) y++;
-  snprintf(out, len, "%04d-%02u-%02u UTC", (int)y, m, d);
-}
-
-bool signed_metadata_build_ur_review(const SignedMetadata* md,
-                                     const char* alias, const char* fp,
-                                     ReviewEmit emit, void* ctx) {
-  if (!md || !emit || md->version != METADATA_VERSION_DECODER) return false;
-  const UrSummary* u = &md->ur;
-  char in[100], out[100], body[BODY_CHAR_MAX], who[43] = "0x";
-  if (!ur_amount_text(md, u->in_is_eth, u->token_in, u->amount_in, 32, in,
-                      sizeof(in)) ||
-      !ur_amount_text(md, u->out_is_eth, u->token_out, u->amount_out, 32, out,
-                      sizeof(out))) {
-    return false;
-  }
-  /* Who, what, limit: one sentence; the full recipient is never hidden. */
-  if (u->exact_in) {
-    snprintf(body, sizeof(body), "Swap %s for at least %s", in, out);
-  } else {
-    snprintf(body, sizeof(body), "Swap at most %s for %s", in, out);
-  }
-  if (!emit(ctx, md->title, body, NULL, 0)) return false;
-  snprintf(body, sizeof(body), "%s\n%s",
-           u->exact_in ? "You spend" : "You spend at most", in);
-  if (!emit(ctx, "Limits", body, NULL, 0)) return false;
-  snprintf(body, sizeof(body), "%s\n%s",
-           u->exact_in ? "You receive at least" : "You receive", out);
-  if (!emit(ctx, "Limits", body, NULL, 0)) return false;
-  if (!u->recipient_is_sender) {
-    ethereum_address_checksum(u->recipient, who + 2, false, md->chain_id);
-    snprintf(body, sizeof(body), "Output goes to\n%s", who);
-    if (!emit(ctx, "Recipient", body, NULL, 0)) return false;
-  }
-  if (u->has_permit) {
-    char amt[100], date[24];
-    if (!ur_amount_text(md, false, u->permit_token, u->permit_amount, 20, amt,
-                        sizeof(amt))) {
-      return false;
-    }
-    ur_date_text(u->permit_expiration, date, sizeof(date));
-    snprintf(body, sizeof(body), "This router may spend up to %s until %s",
-             amt, date);
-    if (!emit(ctx, "Allowance", body, NULL, 0)) return false;
-  }
-  if (u->has_fee) {
-    char fee_to[43] = "0x";
-    ethereum_address_checksum(u->fee_recipient, fee_to + 2, false,
-                              md->chain_id);
-    snprintf(body, sizeof(body), "%u.%02u%% of the output to\n%s",
-             (unsigned)(u->fee_bips / 100), (unsigned)(u->fee_bips % 100),
-             fee_to);
-    if (!emit(ctx, "Fee", body, NULL, 0)) return false;
-  }
-  char router[43] = "0x";
-  ethereum_address_checksum(md->contract_address, router + 2, false,
-                            md->chain_id);
-  snprintf(body, sizeof(body), "%s\n%s", md->method_name, router);
-  if (!emit(ctx, "Contract", body, NULL, 0)) return false;
-  return intent_emit_provenance(emit, ctx, alias, fp);
-}
-
 bool signed_metadata_review_emit(void* ctx, const char* title, const char* body,
                                  const uint8_t* bytes, uint16_t bytes_len) {
   (void)ctx;
@@ -1437,17 +1228,6 @@ static bool signed_metadata_confirm_screens(void) {
     if (!signed_metadata_build_intent_review(
             &stored_metadata, true, delegate_alias, fp8,
             signed_metadata_review_emit, NULL)) {
-      return false;
-    }
-    relied_on_metadata = true;
-    return true;
-  }
-  if (metadata_tier == METADATA_TIER_KEEPKEY &&
-      stored_metadata.version == METADATA_VERSION_DECODER) {
-    char fp8[9];
-    strlcpy(fp8, delegate_fp, sizeof(fp8));
-    if (!signed_metadata_build_ur_review(&stored_metadata, delegate_alias, fp8,
-                                         signed_metadata_review_emit, NULL)) {
       return false;
     }
     relied_on_metadata = true;
@@ -1614,8 +1394,7 @@ bool signed_metadata_enforce_schema_decision(bool relied, bool available,
 bool signed_metadata_enforce(const uint8_t hash[32]) {
   if (metadata_available &&
       (stored_metadata.version == METADATA_VERSION_SCHEMA ||
-       stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT ||
-       stored_metadata.version == METADATA_VERSION_DECODER)) {
+       stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT)) {
     return signed_metadata_enforce_schema_decision(
         relied_on_metadata, metadata_available, metadata_schema_decoded,
         stored_metadata.classification);
