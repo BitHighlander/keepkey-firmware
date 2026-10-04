@@ -1025,9 +1025,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
         signed_metadata_may_suppress(chain_id))) {
     /* A certified Uniswap swap past the first chunk: nothing is shown from
-     * a prefix. Its review follows the fee screen, once every byte is in. */
-    if (!signed_metadata_ur_pending() ||
-        !signed_metadata_may_suppress(chain_id)) {
+     * a prefix. Its review follows the fee screen, once every byte is in.
+     * Pending implies a KeepKey-certified entry for this chain. */
+    if (!signed_metadata_ur_pending()) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Certified description invalid or not for this tx"));
       ethereum_signing_abort();  // clears metadata

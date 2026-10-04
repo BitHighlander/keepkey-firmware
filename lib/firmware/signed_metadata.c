@@ -990,10 +990,10 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     const uint32_t initsz = msg->data_initial_chunk.size;
     const uint32_t total = msg->has_data_length ? msg->data_length : initsz;
     if (metadata_tier != METADATA_TIER_KEEPKEY ||
-        !store_tx_value(&stored_metadata, msg)) {
+        total > sizeof(ur_calldata) || !store_tx_value(&stored_metadata, msg)) {
       return false;
     }
-    ur_total = total;
+    ur_total = total; /* feed() relies on ur_total <= sizeof(ur_calldata) */
     return signed_metadata_ur_feed(msg->data_initial_chunk.bytes, initsz) &&
            metadata_schema_decoded;
   }
@@ -1006,7 +1006,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
 bool signed_metadata_ur_pending(void) { return ur_len < ur_total; }
 
 bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len) {
-  if (ur_total > sizeof(ur_calldata) || len > ur_total - ur_len) {
+  if (len > ur_total - ur_len) {
     ur_len = ur_total = 0;
     return false;
   }
