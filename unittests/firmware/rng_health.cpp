@@ -6,6 +6,9 @@ extern "C" {
 }
 
 #include "kkconfirm_driver.h"
+bool kkconfirm_sendCancel(void);
+bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
+                            void* result);
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -385,10 +388,29 @@ TEST_F(RngBootGate, FaultDuringCheckedDrawWipesOutput) {
 // The PIN matrix call site, not just the helper: a failed verdict must halt
 // before the matrix is shown or any PinMatrixRequest reaches the host, rather
 // than return a false that callers would report as a second Failure.
+// The death-test child shares the emulator's sockets, so the parent reads
+// whatever it wrote to the host after it has exited.
 TEST(RngHealth, PinMatrixHaltsOnFailedVerdict) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));  // board bootstrap for the warning
+  (void)kkconfirm_drain();
+  PinMatrixRequest request = {};
+
+  // Control: with a sound verdict the same flow does reach the host.
+  ASSERT_TRUE(kkconfirm_sendCancel());
+  EXPECT_EXIT(
+      {
+        change_pin();
+        exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+  EXPECT_TRUE(kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                     PinMatrixRequest_fields, &request));
+
+  ASSERT_TRUE(kkconfirm_preload(0, 0));  // also discards earlier host output
+  (void)kkconfirm_drain();
   rng_health_force_verdict(false);
   EXPECT_EXIT(change_pin(), ::testing::ExitedWithCode(1), "");
   rng_health_force_verdict(true);
-  (void)kkconfirm_drain();
+  EXPECT_FALSE(kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                      PinMatrixRequest_fields, &request));
 }
