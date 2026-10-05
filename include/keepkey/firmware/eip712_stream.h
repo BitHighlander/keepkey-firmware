@@ -165,7 +165,8 @@ bool eip712_stream_definition_accepted(void);
 /* Next certified pass; the reviewed domain and path stay fixed. */
 bool eip712_stream_resume_for_field(void);
 
-/* False = session torn down and Failure already sent. */
+/* False = session torn down and EIP712_REQ_FAIL or EIP712_REQ_CANCELLED
+ * staged; the caller must still pump it to send the terminal response. */
 bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack);
 bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack);
 
