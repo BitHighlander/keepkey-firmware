@@ -4,9 +4,14 @@ extern "C" {
 #include "keepkey/firmware/uniswap_ur.h"
 }
 
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
+#include "uniswap_ur_oracle.h"
+#include "uniswap_ur_sample.h"
 #include "uniswap_ur_vectors.h"
 
 namespace {
@@ -382,4 +387,278 @@ TEST(UniswapUr, OffsetsWiderThan32BitsAreNotDecoded) {
   ASSERT_TRUE(ur_decode(cd.data(), cd.size(), &plan));
   cd[4 + 27] = 0x01;  // commands offset word: 2^32 + original
   EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+}
+
+/* ---- Streaming decoder vs the buffered decoder it replaced (D-021) ----
+ * uniswap_ur_oracle.c is the 162bc884f ur_decode(), kept as a test oracle.
+ * Every real call, cut into chunks the way SignTx delivers them (a first
+ * chunk of up to 1,024 B, then data chunks of any size), must give the same
+ * plan, byte for byte, or the same refusal. */
+namespace {
+
+struct Outcome {
+  bool ok;
+  UrPlan plan;
+};
+
+Outcome stream_decode(const std::vector<uint8_t>& cd,
+                      const std::vector<size_t>& chunks) {
+  Outcome o;
+  memset(&o.plan, 0xa5, sizeof(o.plan));  // begin must clear it
+  UrStream s;
+  ur_stream_begin(&s, &o.plan, cd.size());
+  size_t off = 0;
+  for (size_t c : chunks) {
+    c = std::min(c, cd.size() - off);
+    if (c == 0) break;
+    ur_stream_feed(&s, cd.data() + off, c);  // refusals latch; keep feeding
+    off += c;
+  }
+  o.ok = ur_stream_finish(&s);
+  return o;
+}
+
+uint32_t xorshift(uint32_t* x) {
+  *x ^= *x << 13;
+  *x ^= *x >> 17;
+  *x ^= *x << 5;
+  return *x;
+}
+
+/* Single shot; 1024 + 64s; 1024 + 1s; 1024 + random; random first chunk
+ * (<= 1024) + random; every byte alone. Seeded: the same cuts every run. */
+std::vector<std::vector<size_t>> chunkings(size_t len, uint32_t seed) {
+  std::vector<std::vector<size_t>> out;
+  out.push_back({len});
+  const size_t first = std::min<size_t>(len, 1024);
+  std::vector<size_t> c64{first}, c1{first}, crand{first};
+  for (size_t at = first; at < len; at += 64) c64.push_back(64);
+  for (size_t at = first; at < len; at++) c1.push_back(1);
+  uint32_t x = seed * 2654435761u + 1;
+  for (size_t at = first; at < len;) {
+    size_t c = 1 + xorshift(&x) % 300;
+    crand.push_back(c);
+    at += c;
+  }
+  std::vector<size_t> rfirst{1 + xorshift(&x) % first};
+  for (size_t at = rfirst[0]; at < len;) {
+    size_t c = 1 + xorshift(&x) % 97;
+    rfirst.push_back(c);
+    at += c;
+  }
+  out.push_back(c64);
+  out.push_back(c1);
+  out.push_back(crand);
+  out.push_back(rfirst);
+  out.push_back(std::vector<size_t>(len, 1));
+  return out;
+}
+
+/* Number of chunkings whose result differs from the oracle's. */
+size_t differs_from_oracle(const std::vector<uint8_t>& cd, uint32_t seed,
+                           bool* oracle_ok) {
+  UrPlan want, zero;
+  memset(&zero, 0, sizeof(zero));
+  *oracle_ok = ur_oracle_decode(cd.data(), cd.size(), &want);
+  size_t bad = 0;
+  for (const auto& ch : chunkings(cd.size(), seed)) {
+    Outcome got = stream_decode(cd, ch);
+    if (got.ok != *oracle_ok) {
+      bad++;
+    } else if (*oracle_ok) {
+      bad += memcmp(&got.plan, &want, sizeof(want)) != 0;
+    } else {
+      /* The oracle can leave has_deadline/deadline behind on a refusal; the
+       * stream always clears the plan. Nothing reads a refused plan. */
+      bad += want.n != 0 || memcmp(&got.plan, &zero, sizeof(zero)) != 0;
+    }
+  }
+  return bad;
+}
+
+size_t command_count(const std::vector<uint8_t>& cd) {
+  return cd.size() < 4 + 64 ? 0 : word(cd, 4 + word(cd, 4));
+}
+
+}  // namespace
+
+TEST(UniswapUrStream, MatchesTheBufferedDecoderOnEveryVector) {
+  size_t calls = 0, decoded = 0;
+  uint32_t seed = 1;
+  for (const auto& v : urv::accepted()) {
+    bool ok;
+    EXPECT_EQ(differs_from_oracle(unhex(v.calldata), seed++, &ok), 0u) << v.tx;
+    EXPECT_TRUE(ok) << v.tx;
+    calls++;
+    decoded += ok;
+  }
+  for (const auto& h : urv::v4_rejected()) {
+    bool ok;
+    EXPECT_EQ(differs_from_oracle(unhex(h), seed++, &ok), 0u);
+    EXPECT_FALSE(ok);
+    calls++;
+  }
+  printf("vectors: %zu calls x 6 chunkings, %zu decoded, all identical\n",
+         calls, decoded);
+  EXPECT_EQ(calls, urv::accepted().size() + urv::v4_rejected().size());
+}
+
+/* The D-021 sample: 1,000 consecutive calls to the app's Base router. */
+TEST(UniswapUrStream, MatchesTheBufferedDecoderOnTheD021Sample) {
+  const auto& calls = urs::calls();
+  ASSERT_EQ(calls.size(), 1000u) << "missing " UR_SAMPLE_PATH;
+  size_t decoded = 0, mismatched = 0, long_decoded = 0;
+  uint32_t seed = 1000;
+  for (const auto& c : calls) {
+    bool ok;
+    const size_t bad = differs_from_oracle(c.calldata, seed++, &ok);
+    EXPECT_EQ(bad, 0u) << c.tx;
+    mismatched += bad != 0;
+    decoded += ok;
+    long_decoded += ok && c.calldata.size() > 1472;
+  }
+  printf("sample: %zu calls x 6 chunkings, %zu decoded (%zu over 1,472 B), "
+         "%zu mismatched\n",
+         calls.size(), decoded, long_decoded, mismatched);
+  EXPECT_EQ(mismatched, 0u);
+  /* D-021's count of calls whose commands are all in the V2/V3 subset is
+   * 740 (one sets an allow-revert flag, which is refused). */
+  EXPECT_GE(decoded, 739u);
+  /* The 1,472-byte buffer refused these; streaming decodes them. */
+  EXPECT_GT(long_decoded, 0u);
+}
+
+/* Long calls that decode are not just accepted: their summary is what the
+ * buffered decoder would have shown with an unlimited buffer. */
+TEST(UniswapUrStream, CallsPastTheOldBufferDecodeInChunks) {
+  size_t n = 0;
+  for (const auto& c : urs::calls()) {
+    if (c.calldata.size() <= 1472) continue;
+    UrPlan want;
+    if (!ur_oracle_decode(c.calldata.data(), c.calldata.size(), &want))
+      continue;
+    std::vector<size_t> ch{1024};
+    for (size_t at = 1024; at < c.calldata.size(); at += 128) ch.push_back(128);
+    Outcome got = stream_decode(c.calldata, ch);
+    ASSERT_TRUE(got.ok) << c.tx;
+    EXPECT_EQ(0, memcmp(&got.plan, &want, sizeof(want))) << c.tx;
+    EXPECT_GE(got.plan.n, 1u);
+    n++;
+  }
+  printf("calls over 1,472 B decoded: %zu\n", n);
+  EXPECT_GT(n, 0u);
+}
+
+/* Never looser: whatever the stream accepts, the buffered decoder accepts
+ * with the same plan. Random byte changes to real calls; the stream may
+ * refuse more (an offset pointing backwards), never less. */
+TEST(UniswapUrStream, NeverAcceptsWhatTheBufferedDecoderRefuses) {
+  uint32_t x = 0x7730u;
+  size_t tried = 0, both = 0, stricter = 0;
+  for (const auto& v : urv::accepted()) {
+    const std::vector<uint8_t> cd = unhex(v.calldata);
+    for (int m = 0; m < 40; m++) {
+      std::vector<uint8_t> t = cd;
+      /* Mostly the low bytes of words (offsets, lengths, counts). */
+      const int edits = 1 + xorshift(&x) % 3;
+      for (int e = 0; e < edits; e++) {
+        size_t at = 4 + 32 * (xorshift(&x) % ((t.size() - 4) / 32)) + 31;
+        if (xorshift(&x) % 4 == 0) at = xorshift(&x) % t.size();
+        t[at] = (uint8_t)(xorshift(&x) % 4 == 0 ? xorshift(&x)
+                                                 : t[at] + 32 * (int)(xorshift(&x) % 5) - 64);
+      }
+      UrPlan want;
+      const bool oracle = ur_oracle_decode(t.data(), t.size(), &want);
+      Outcome got = stream_decode(t, chunkings(t.size(), m)[3]);
+      tried++;
+      if (got.ok) {
+        ASSERT_TRUE(oracle) << v.tx << " mutation " << m;
+        ASSERT_EQ(0, memcmp(&got.plan, &want, sizeof(want))) << v.tx;
+        both++;
+      } else if (oracle) {
+        stricter++;
+      }
+    }
+  }
+  printf("mutations: %zu tried, %zu accepted by both, %zu refused only by "
+         "the stream\n", tried, both, stricter);
+}
+
+namespace {
+void put_word(std::vector<uint8_t>* b, size_t off, size_t v) {
+  for (int i = 31; i >= 0; i--, v >>= 8) (*b)[off + i] = (uint8_t)(i >= 24 ? v : 0);
+}
+
+/* The same call with its bytes[] elements laid out in reverse order, heads
+ * pointing at them: valid for abi.decode, refused by a forward-only reader. */
+std::vector<uint8_t> reverse_inputs(const std::vector<uint8_t>& cd) {
+  const size_t arr = 4 + word(cd, 4 + 32);
+  const size_t n = word(cd, arr), heads = arr + 32;
+  std::vector<std::vector<uint8_t>> el;
+  size_t end = heads + 32 * n;
+  for (size_t i = 0; i < n; i++) {
+    const size_t off = heads + word(cd, heads + 32 * i);
+    const size_t size = 32 + (word(cd, off) + 31) / 32 * 32;
+    el.emplace_back(cd.begin() + off, cd.begin() + off + size);
+    end = std::max(end, off + size);
+  }
+  std::vector<uint8_t> out(cd.begin(), cd.begin() + heads + 32 * n);
+  size_t rel = 32 * n;
+  for (size_t i = n; i-- > 0;) {
+    put_word(&out, heads + 32 * i, rel);
+    out.insert(out.end(), el[i].begin(), el[i].end());
+    rel += el[i].size();
+  }
+  out.insert(out.end(), cd.begin() + end, cd.end());
+  return out;
+}
+}  // namespace
+
+TEST(UniswapUrStream, InputsOutOfOrderAreRefused) {
+  const urv::Vec* v = first_with(UR_PERMIT2_PERMIT);
+  ASSERT_NE(v, nullptr);
+  std::vector<uint8_t> cd = reverse_inputs(unhex(v->calldata));
+  UrPlan plan;
+  ASSERT_TRUE(ur_oracle_decode(cd.data(), cd.size(), &plan));  // abi-valid
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_EQ(plan.n, 0);
+  // The layout as sent decodes.
+  std::vector<uint8_t> same = unhex(v->calldata);
+  EXPECT_TRUE(ur_decode(same.data(), same.size(), &plan));
+}
+
+TEST(UniswapUrStream, OffsetIntoTheCommandsIsRefused) {
+  // The inputs array offset pointing back at the commands' length word: the
+  // stream has read past it.
+  std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
+  put_word(&cd, 4 + 32, word(cd, 4));
+  UrPlan plan;
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+}
+
+TEST(UniswapUrStream, MoreBytesThanDeclaredAreRefused) {
+  std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
+  UrPlan plan;
+  UrStream s;
+  ur_stream_begin(&s, &plan, cd.size() - 1);
+  EXPECT_FALSE(ur_stream_feed(&s, cd.data(), cd.size()));
+  EXPECT_FALSE(ur_stream_finish(&s));
+  EXPECT_EQ(plan.n, 0);
+  // A refusal is final: the right bytes afterwards do not revive it.
+  ur_stream_begin(&s, &plan, cd.size());
+  std::vector<uint8_t> bad = cd;
+  bad[0] ^= 1;  // selector
+  EXPECT_FALSE(ur_stream_feed(&s, bad.data(), 4));
+  EXPECT_FALSE(ur_stream_feed(&s, cd.data() + 4, cd.size() - 4));
+  EXPECT_FALSE(ur_stream_finish(&s));
+}
+
+TEST(UniswapUrStream, ShortCallIsRefusedAtFinish) {
+  std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
+  UrPlan plan;
+  UrStream s;
+  ur_stream_begin(&s, &plan, cd.size());
+  EXPECT_TRUE(ur_stream_feed(&s, cd.data(), cd.size() - 1));
+  EXPECT_FALSE(ur_stream_finish(&s));
+  EXPECT_EQ(plan.n, 0);
 }

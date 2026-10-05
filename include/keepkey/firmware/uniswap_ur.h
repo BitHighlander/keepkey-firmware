@@ -60,9 +60,49 @@ typedef struct {
   uint64_t deadline;
 } UrPlan;
 
-/* execute(bytes,bytes[],uint256) and execute(bytes,bytes[]). Returns false on
- * any command or encoding it does not fully understand, so a caller never
- * shows a partial decode. */
+/* Streaming decode of execute(bytes,bytes[],uint256) and execute(bytes,bytes[])
+ * as the calldata arrives, in chunks of any size: no copy of the call is held,
+ * only the plan being built and the offsets still to be reached.
+ *
+ * The encoding must be laid out in order: the commands, then the inputs
+ * array, its elements in index order, and inside each element its dynamic
+ * tail after its head words. Every offset points at or past the byte the
+ * decoder has reached, and an element starts at or past the previous
+ * element's end. Bytes in between, and after the last element, are not read
+ * (Solidity's abi.decode ignores them too). An offset pointing backwards or
+ * into a previous element is refused. */
+typedef struct {
+  UrPlan* plan;
+  uint32_t total; /* calldata length */
+  uint32_t pos;   /* calldata bytes received */
+  uint32_t at;    /* where the next field starts; bytes before it are skipped */
+  uint32_t base;  /* the current input's payload (or the commands offset) */
+  uint32_t len;   /* the current input's payload length */
+  uint32_t heads; /* inputs: the first element head (or the inputs offset) */
+  uint32_t elem[UR_MAX_STEPS]; /* element offsets, relative to `heads` */
+  uint32_t n;                  /* dynamic tail: path bytes or path addresses */
+  uint32_t k;                  /* index into the commands or the dynamic tail */
+  uint8_t word[32];
+  uint8_t got;
+  uint8_t state;
+  uint8_t field; /* head word of the current input */
+  uint8_t step;  /* current input */
+  uint8_t ncmds;
+  uint8_t cmds[UR_MAX_STEPS];
+  bool failed;
+} UrStream;
+
+/* Starts a decode of a `total`-byte call into `out` (cleared now). */
+void ur_stream_begin(UrStream* s, UrPlan* out, size_t total);
+/* The next bytes of the call. False once anything was refused; a refusal is
+ * final, and more bytes than `total` are refused. */
+bool ur_stream_feed(UrStream* s, const uint8_t* data, size_t len);
+/* True only when every byte arrived and the whole call decoded; otherwise
+ * the plan is cleared, so a caller never shows a partial decode. Returns
+ * false on any command or encoding it does not fully understand. */
+bool ur_stream_finish(UrStream* s);
+
+/* The whole call at once: begin, one feed, finish. */
 bool ur_decode(const uint8_t* calldata, size_t len, UrPlan* out);
 
 /* True for the router's MSG_SENDER / ADDRESS_THIS placeholders. */
