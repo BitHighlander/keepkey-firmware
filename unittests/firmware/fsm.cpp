@@ -2365,6 +2365,42 @@ TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
   erc7730_catalog_clear_preload();
 }
 
+// A definition refused for AdvancedMode discards the partial preload too, so
+// a later chunk cannot continue it.
+TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  LoadDevice load = allLoad();
+  storage_loadDevice(&load);
+  ASSERT_TRUE(storage_isInitialized());
+  const uint8_t head[6] = {'K', '7', '7', '3', 1, 1};
+  const uint8_t length[4] = {0, 0, 1, 0};
+  uint8_t id[32] = {7};
+  uint32_t next = 0;
+  bool complete = false;
+  erc7730_catalog_clear_preload();
+  ASSERT_EQ(erc7730_catalog_preload_chunk(id, 0, 300, head, sizeof(head), &next,
+                                          &complete),
+            ERC7730_CATALOG_MORE);
+
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  EthereumClearSignDefinition definition{};
+  definition.definition_id.size = sizeof(id);
+  std::memcpy(definition.definition_id.bytes, id, sizeof(id));
+  definition.offset = sizeof(head);
+  definition.total_length = 300;
+  definition.data.size = sizeof(length);
+  std::memcpy(definition.data.bytes, length, sizeof(length));
+  fsm_test_clearLastFailure();
+  fsm_msgEthereumClearSignDefinition(&definition);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_EQ(erc7730_catalog_preload_chunk(id, sizeof(head), 300, length,
+                                          sizeof(length), &next, &complete),
+            ERC7730_CATALOG_BAD_SEQUENCE);
+  erc7730_catalog_clear_preload();
+}
+
 // Pre-0.8 Solidity masks an address argument's high bytes, so a dirty spender
 // word still grants the allowance. It must not slip past the approval policy
 // into generic signing.
