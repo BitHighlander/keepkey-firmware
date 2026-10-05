@@ -547,6 +547,12 @@ static IconType stage_runtime_icon(Image* img, AnimationFrame* frame,
 bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
                                   const uint8_t* icon, uint8_t icon_w,
                                   uint8_t icon_h, uint16_t icon_len) {
+#if ZCASH_PRIVACY
+  /* This build keeps no session icons (SRAM), so every per-transaction
+   * identity screen is text-only. The consent screen shows the identity
+   * exactly as it will reappear, so it is text-only too. */
+  icon_len = 0;
+#endif
   Image icon_img;
   AnimationFrame icon_frame;
   IconType id_icon = stage_runtime_icon(&icon_img, &icon_frame, icon, icon_w,
