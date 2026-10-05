@@ -1377,8 +1377,8 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
       return false;
     }
     ur_date_text(u->permit_expiration, date, sizeof(date));
-    snprintf(body, sizeof(body), "This router may spend up to %s until %s",
-             amt, date);
+    snprintf(body, sizeof(body), "This router may spend up to %s until %s", amt,
+             date);
     if (!emit(ctx, "Allowance", body, NULL, 0)) return false;
   }
   if (u->has_fee) {
