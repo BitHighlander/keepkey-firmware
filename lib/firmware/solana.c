@@ -219,6 +219,41 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
 
     /* Classify and decode */
+    /* Every fixed-layout decoder below matches its data length EXACTLY, never
+     * `>=`.
+     *
+     * A `>=` gate decodes the prefix it understands and lets the rest through:
+     * solana_signTx() signs the whole raw_tx, so trailing bytes on a recognised
+     * instruction were covered by the signature, shown on no screen, and -- the
+     * part that matters -- did NOT set *has_unknown, so the transaction was
+     * never classified opaque and never met the blind-sign gate. The runtime
+     * ignoring those bytes (SPL's unpack reads its fields and drops the tail)
+     * is what makes them attractive rather than harmless: free to append, and
+     * the device vouches for them.
+     *
+     * So the rule is: decode only an encoding this device can account for
+     * byte-for-byte. Anything else is UNKNOWN, which is not a refusal -- it
+     * routes to the opaque path, where the user is told the contents cannot be
+     * verified. An encoder that pads therefore loses clear-signing, not the
+     * ability to sign.
+     *
+     * Each gate is the exact number of bytes that decoder reads and can account
+     * for. Three of them are not merely the old bound tightened, so they are
+     * worth naming:
+     *
+     *   System CreateAccount is 52 (u32 tag + u64 lamports + u64 space +
+     *   Pubkey owner). This code accepted 12 while reading only lamports, so
+     *   the space and owner it never looked at were signed unseen.
+     *
+     *   SPL SetAuthority is 3 or 35, and which one is fixed by its COption
+     *   discriminant: a `Some` with no key, or a `None` carrying 32 bytes, is
+     *   not an encoding this device can claim to have read.
+     *
+     *   Stake Authorize is 40. The old `>= 36` let read_le32(instr_data + 36)
+     *   run off the end of a 36..39-byte field and report whatever followed it
+     *   in the buffer as the authorization type.
+     *
+     * The ATA branch below already worked this way. */
     if (memcmp(pi->program_id, SOL_SYSTEM_PROGRAM, SOL_PUBKEY_SIZE) == 0) {
       /* System program */
       if (data_len >= 4) {
@@ -295,8 +330,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-          /* No signed mint: the token is unprovable. Only *Checked
-           * clear-signs. */
+          /* Unchecked Transfer carries no signed mint or decimals. The device
+           * cannot identify what asset the amount moves. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
                    data_len == 10 && num_acct_indices >= 4) {
@@ -309,6 +344,12 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           pi->has_mint = true;
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 2);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
+          /* Decimals live in the signed instruction bytes and are the only
+           * authoritative scale for this transfer, so they must never be
+           * fabricated. A real TransferChecked data field is exactly 10 bytes
+           * (tag + u64 amount + decimals); anything else -- short OR long --
+           * falls through to SOL_INSTR_UNKNOWN and the transaction is treated
+           * as opaque. */
           pi->extra_u8 = instr_data[9];
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
@@ -317,7 +358,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-          /* Unchecked Approve hides the mint: AdvancedMode. */
+          /* Unchecked Approve likewise carries no mint. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_REVOKE_IX && data_len == 1 &&
                    num_acct_indices >= 2) {
@@ -339,8 +380,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           if (instr_data[2] == 1) {
             memcpy(pi->extra, instr_data + 3, SOL_PUBKEY_SIZE);
           }
-          /* Authority handover is an account-takeover vector and None is not
-           * distinguished from all-zero: AdvancedMode. */
+          /* The authority role, target and permanent None revocation require a
+           * dedicated complete UX. Until then this is opaque-only. */
           *force_opaque = true;
         } else if (((token_instr == SOL_TOKEN_MINT_TO_IX && data_len == 9) ||
                     (token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX &&
@@ -354,6 +395,9 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
           pi->extra_u8 =
               (token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX) ? instr_data[9] : 0;
+          /* The shared confirmation does not distinguish checked from
+           * unchecked minting. Until it does, raw review is the only honest
+           * representation of the signed opcode and scale. */
           *force_opaque = true;
         } else if (((token_instr == SOL_TOKEN_BURN_IX && data_len == 9) ||
                     (token_instr == SOL_TOKEN_BURN_CHECKED_IX &&
@@ -367,6 +411,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
           pi->extra_u8 =
               (token_instr == SOL_TOKEN_BURN_CHECKED_IX) ? instr_data[9] : 0;
+          /* As with minting, do not clear-sign an opcode whose signed decimals
+           * are not represented by the confirmation path. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_CLOSE_ACCOUNT_IX && data_len == 1 &&
                    num_acct_indices >= 3) {
@@ -999,8 +1045,18 @@ void solana_formatTokenAmount(char* buf, size_t len, uint64_t amount,
   uint64_t whole = amount / divisor;
   uint64_t frac = amount % divisor;
 
-  /* Max 9 decimals; truncate only zero digits, else show exact base units
-   * (a nonzero amount must never render as zero). */
+  /* Format with appropriate decimal places (max 9 shown).
+   *
+   * Truncating to nine places used to be silent, which meant a real transfer
+   * could render as zero: amount=1 with decimals=18 divided down to
+   * show_frac=0 and the screen read "0.000000000 tokens" while the signed
+   * instruction moved one base unit. A screen that says zero for a nonzero
+   * transfer is worse than one that says nothing.
+   *
+   * So truncate only when the digits being dropped are all zero. If any of
+   * them is nonzero, the decimal form cannot be shown honestly at this width
+   * -- fall back to the exact base-unit count, which is the number actually
+   * present in the instruction being signed. */
   uint8_t show_dec =
       decimals > SOL_MAX_DISPLAY_DECIMALS ? SOL_MAX_DISPLAY_DECIMALS : decimals;
   uint64_t show_frac = frac;

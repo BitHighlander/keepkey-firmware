@@ -459,6 +459,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
   }
 }
 
+/* Off-chain message format 0: restricted ASCII -- printable, space included. */
 static bool solana_offchain_payload_is_ascii(const uint8_t* data, size_t size) {
   for (size_t i = 0; i < size; i++) {
     if (data[i] < 0x20 || data[i] > 0x7e) return false;
@@ -1091,6 +1092,9 @@ void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
+  /* The envelope signs both fields below and every message byte. Show the
+   * fields explicitly, then page the complete payload; never substitute a
+   * prefix-plus-length preview for signed content. */
   const char* format_label = format == 0 ? "ASCII" : "UTF-8 limited";
   if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Off-chain",
                "Version: 0. Format: %s.", format_label) ||
