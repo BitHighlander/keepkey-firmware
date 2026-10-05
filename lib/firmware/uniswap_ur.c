@@ -134,7 +134,7 @@ static bool decode_v2(Span in, bool exact_in, UrStep* st) {
       !uint_at(in, (size_t)off, 4, &n) || n < 2 || n > 8) {
     return false;
   }
-  uint8_t ignored[20];
+  uint8_t ignored[20] = {0};
   for (uint64_t i = 0; i < n; i++) {
     uint8_t* dst =
         i == 0 ? st->token_in : (i == n - 1 ? st->token_out : ignored);
@@ -282,9 +282,10 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   const UrStep* permit = NULL;
   const UrStep* wrap = NULL;
   /* Before the swap: at most one permit or one wrap. */
-  if (i < plan->n && plan->steps[i].kind == UR_PERMIT2_PERMIT) {
+  /* plan->n >= 1 here, so steps[0] exists. */
+  if (plan->steps[i].kind == UR_PERMIT2_PERMIT) {
     permit = &plan->steps[i++];
-  } else if (i < plan->n && plan->steps[i].kind == UR_WRAP_ETH) {
+  } else if (plan->steps[i].kind == UR_WRAP_ETH) {
     wrap = &plan->steps[i++];
   }
   if (i >= plan->n || !is_swap(plan->steps[i].kind)) return false;

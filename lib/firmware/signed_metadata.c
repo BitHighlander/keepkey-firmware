@@ -1337,7 +1337,7 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
                                      ReviewEmit emit, void* ctx) {
   if (!md || !emit || md->version != METADATA_VERSION_DECODER) return false;
   const UrSummary* u = &md->ur;
-  char in[100], out[100], body[BODY_CHAR_MAX], who[43] = "0x";
+  char in[100], out[100], body[BODY_CHAR_MAX];
   if (!ur_amount_text(md, u->in_is_eth, u->token_in, u->amount_in, 32, in,
                       sizeof(in)) ||
       !ur_amount_text(md, u->out_is_eth, u->token_out, u->amount_out, 32, out,
@@ -1358,6 +1358,7 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
            u->exact_in ? "You receive at least" : "You receive", out);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   if (!u->recipient_is_sender) {
+    char who[43] = "0x";
     ethereum_address_checksum(u->recipient, who + 2, false, md->chain_id);
     snprintf(body, sizeof(body), "Output goes to\n%s", who);
     if (!emit(ctx, "Recipient", body, NULL, 0)) return false;
