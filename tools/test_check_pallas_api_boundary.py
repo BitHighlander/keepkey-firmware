@@ -48,5 +48,24 @@ class DefinitionAnchoring(unittest.TestCase):
             function_body("void f(void) {\n  if (sign(x)) {\n  }\n}\n", "sign")
 
 
+class EnclosingConditionals(unittest.TestCase):
+    def test_definition_inside_if_0_is_refused(self):
+        source = ("#if 0\nvoid sign(void) {\n  pallas_ct_add_mod_q();\n}\n"
+                  "#endif\n")
+        with self.assertRaisesRegex(AssertionError, "cannot tell"):
+            function_body(source, "sign")
+
+    def test_else_branch_of_a_production_guard_is_refused(self):
+        source = ("#if ZCASH_PRIVACY\n#else\nvoid sign(void) {\n  g();\n}\n"
+                  "#endif\n")
+        with self.assertRaisesRegex(AssertionError, "else branch"):
+            function_body(source, "sign")
+
+    def test_production_guard_and_closed_blocks_are_accepted(self):
+        source = ("#if 0\nvoid old(void) {}\n#endif\n#if ZCASH_PRIVACY\n"
+                  "void sign(void) {\n  g();\n}\n#endif\n")
+        require(function_body(source, "sign"), "g()", "sign")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,32 @@ CONDITIONAL = re.compile(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif)\b",
                          re.M)
 
 
+# Conditionals a checked definition may sit under: on in every production
+# image that contains the checked code. Anything else (#if 0, a debug-only
+# guard, an #else branch) is refused rather than evaluated.
+PRODUCTION_CONDITIONALS = {"#if ZCASH_PRIVACY"}
+
+
+def enclosing_conditionals(text):
+    """(directive, branch) for each conditional open at the end of text."""
+    stack = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        words = stripped[1:].split()
+        if not words:
+            continue
+        keyword = words[0]
+        if keyword in ("if", "ifdef", "ifndef"):
+            stack.append(["#" + " ".join(words), "if"])
+        elif keyword in ("elif", "else") and stack:
+            stack[-1][1] = "else"
+        elif keyword == "endif" and stack:
+            stack.pop()
+    return [tuple(entry) for entry in stack]
+
+
 def function_body(text, name):
     text = code_only(text)
     # A definition: the name starts a line or follows its return type there,
@@ -30,6 +56,11 @@ def function_body(text, name):
                       r"\s*\([^;{}]*\)\s*\{", text, re.M)
     if not match:
         raise AssertionError("function not found: " + name)
+    for directive, branch in enclosing_conditionals(text[:match.start()]):
+        if directive not in PRODUCTION_CONDITIONALS or branch != "if":
+            raise AssertionError(
+                "{} is defined under '{}' ({} branch); this gate cannot tell "
+                "whether that is compiled".format(name, directive, branch))
     start = match.end() - 1
     depth = 0
     for index in range(start, len(text)):
