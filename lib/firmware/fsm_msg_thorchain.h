@@ -143,9 +143,13 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   const ThorchainSignTx* sign_tx = thorchain_getThorchainSignTx();
 
+  // Validated before any display or signing JSON (default "rune").
+  const char* coin_denom =
+      (msg->has_send && msg->send.has_denom && msg->send.denom[0])
+          ? msg->send.denom
+          : "rune";
+
   if (msg->has_send) {
-    const char* coin_denom =
-        (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
     if (!tendermint_isValidDenom(coin_denom)) {
       thorchain_signAbort();
       fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid denom");
@@ -350,7 +354,9 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
   }
 
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign RUNE on %s? Fee: %" PRIu32 " rune. Gas: %" PRIu32 ".",
+               "Sign %s on %s? Fee: %" PRIu32 " rune. Gas: %" PRIu32 ".",
+               (msg->has_send && strcmp(coin_denom, "rune") != 0) ? coin_denom
+                                                                  : "RUNE",
                sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
