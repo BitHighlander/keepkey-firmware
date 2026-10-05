@@ -30,5 +30,23 @@ class ConditionalCompilation(unittest.TestCase):
         require(body, "g(N)", "f")
 
 
+class DefinitionAnchoring(unittest.TestCase):
+    def test_caller_cannot_stand_in_for_the_definition(self):
+        source = ("void caller(void) {\n  if (sign(x)) {\n    pallas_ct_add_mod_q();\n"
+                  "  }\n}\n\nstatic bool sign(int x) {\n  pallas_add_mod_q();\n}\n")
+        body = function_body(source, "sign")
+        self.assertIn("pallas_add_mod_q", body)
+        self.assertNotIn("pallas_ct_add_mod_q", body)
+
+    def test_return_type_on_its_own_line(self):
+        body = function_body("static bool\nsign(int x,\n     int y) {\n  g();\n}\n",
+                             "sign")
+        require(body, "g()", "sign")
+
+    def test_call_only_is_not_a_definition(self):
+        with self.assertRaisesRegex(AssertionError, "function not found"):
+            function_body("void f(void) {\n  if (sign(x)) {\n  }\n}\n", "sign")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,11 @@ CONDITIONAL = re.compile(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif)\b",
 
 def function_body(text, name):
     text = code_only(text)
-    match = re.search(r"\b" + re.escape(name) + r"\s*\([^;]*?\)\s*\{", text, re.S)
+    # A definition: the name starts a line or follows its return type there,
+    # and the parameter list holds no ';' or brace. An indented caller such
+    # as `if (name(x)) {` can therefore never stand in for the definition.
+    match = re.search(r"^(?:[A-Za-z_][\w \t*]*[ \t*])?" + re.escape(name) +
+                      r"\s*\([^;{}]*\)\s*\{", text, re.M)
     if not match:
         raise AssertionError("function not found: " + name)
     start = match.end() - 1
