@@ -424,6 +424,13 @@ static bool fsm_dispatchGate(MessageType msg_id) {
       return fsm_continuation(mayachain_signingIsInited(),
                               "Signing not in progress");
 #endif
+#if defined(ZCASH_PRIVACY) && ZCASH_PRIVACY
+    case MessageType_MessageType_ZcashPCZTAction:
+    case MessageType_MessageType_ZcashTransparentOutput:
+    case MessageType_MessageType_ZcashTransparentInput:
+      fsm_abort_signing_workflows();
+      return;
+#endif
     default:
       /* A new signing operation may replace an old signer, but it must never
        * coexist with recovery/reset and borrow that ceremony's progress or
@@ -448,6 +455,7 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_RippleSignTx:
         case MessageType_MessageType_ThorchainSignTx:
         case MessageType_MessageType_MayachainSignTx:
+        case MessageType_MessageType_GetBip85Mnemonic:
         case MessageType_MessageType_TronSignTx:
         case MessageType_MessageType_TronSignMessage:
         case MessageType_MessageType_TronSignTypedHash:
@@ -456,6 +464,15 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_SolanaSignTx:
         case MessageType_MessageType_SolanaSignMessage:
         case MessageType_MessageType_SolanaSignOffchainMessage:
+        case MessageType_MessageType_HiveSignTx:
+        case MessageType_MessageType_HiveSignAccountCreate:
+        case MessageType_MessageType_HiveSignAccountUpdate:
+        case MessageType_MessageType_HiveSignMessage:
+        case MessageType_MessageType_HiveSignOperations:
+        case MessageType_MessageType_ClearsignAttestorSign:
+#endif
+#if defined(ZCASH_PRIVACY) && ZCASH_PRIVACY
+        case MessageType_MessageType_ZcashSignPCZT:
 #endif
           setup_abort();
           break;
