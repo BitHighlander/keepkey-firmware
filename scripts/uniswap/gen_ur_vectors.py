@@ -6,6 +6,7 @@ C unit tests pass only when the two implementations agree on real calldata.
 
   gen_ur_vectors.py fetch DIR        # save recent Base router txs (base.blockscout.com) into DIR
   gen_ur_vectors.py header DIR > unittests/firmware/uniswap_ur_vectors.h
+  gen_ur_vectors.py pack DIR > unittests/firmware/uniswap_ur_sample.bin
 """
 import glob, json, os, sys, urllib.request
 
@@ -126,5 +127,21 @@ def header(d, limit=250, v4_limit=10):
     p('}; return v; }\n}  // namespace urv')
 
 
+def pack(d):
+    """Every execute() call in DIR as compact binary records, sorted by tx hash:
+    hash(32) | status(1: 1 ok, 0 reverted) | length(4, big-endian) | calldata.
+    The differential test (uniswap_ur.cpp) and v4_classify.py read it."""
+    recs = {}
+    for f in glob.glob(os.path.join(d, '0x*.json')):
+        for it in json.load(open(f)).get('items', []):
+            raw = it.get('raw_input') or ''
+            if raw.startswith(('0x3593564c', '0x24856bc3')):
+                recs[it['hash'].lower()] = (it.get('status') == 'ok', bytes.fromhex(raw[2:]))
+    out = sys.stdout.buffer
+    for h in sorted(recs):
+        ok, cd = recs[h]
+        out.write(bytes.fromhex(h[2:]) + bytes([ok]) + len(cd).to_bytes(4, 'big') + cd)
+
+
 if __name__ == '__main__':
-    {'fetch': fetch, 'header': header}[sys.argv[1]](sys.argv[2])
+    {'fetch': fetch, 'header': header, 'pack': pack}[sys.argv[1]](sys.argv[2])
