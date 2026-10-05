@@ -49,6 +49,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       ripple.cpp
       clearsign_root.cpp
       signed_metadata.cpp
+      contact_book.cpp
       uniswap_ur.cpp
       uniswap_ur_oracle.c
       erc7730_abi.cpp

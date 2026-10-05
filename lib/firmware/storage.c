@@ -49,6 +49,7 @@
 #include "keepkey/firmware/reset.h"
 #if !BITCOIN_ONLY
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #endif
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
@@ -1835,6 +1836,7 @@ void session_clear(bool clear_pin) {
    * setup/authenticator state before the caller can report success. */
 #if !BITCOIN_ONLY
   signed_metadata_clear_signers();
+  contact_book_clear(); /* verified against this session's attestor key */
 #endif
   signing_abort();
   setup_abort();

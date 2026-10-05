@@ -35,6 +35,7 @@
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/thorchain.h"
@@ -619,7 +620,8 @@ bool ethereumFormatNativeAmount(const bignum256* amnt, uint32_t cid, char* buf,
 static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
-                                    size_t out_str_len, bool approve) {
+                                    size_t out_str_len, bool approve,
+                                    bool* contact) {
   bignum256 val;
   uint8_t pad_val[32];
   memset(pad_val, 0, sizeof(pad_val));
@@ -653,7 +655,16 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
       memcmp(value + 24, "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0;
 
   const char* address = addr;
-  if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
+  if (contact && *contact) {
+    char network[20];
+    snprintf(network, sizeof(network), "eip155:%lu", (unsigned long)chain_id);
+    *contact =
+        !approve && to_len == 20 &&
+        contact_book_match(network, CONTACT_BOOK_DEST_EVM_ADDRESS, to, 20);
+  }
+  if (contact && *contact) {
+    address = contact_book_label();
+  } else if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
     address = "OasisDEX";
   }
 
@@ -1076,6 +1087,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     is_approve = true;
   }
 
+  /* A certified contact labels only a plain recipient (a native send with no
+   * calldata, or a known-token transfer) and never sits beside a contract
+   * description: none may be loaded, signed metadata or ERC-7730. */
+  bool contact = !is_approve && !signed_metadata_available() &&
+                 erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE &&
+                 (token == NULL ? data_total == 0 : token != UnknownToken);
+  const uint8_t* recipient = NULL;
   if (needs_confirm) {
     if (token == UnknownToken) {
       if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
@@ -1086,21 +1104,22 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         return;
       }
     } else if (token != NULL) {
-      if (!layoutEthereumConfirmTx(msg->data_initial_chunk.bytes + 16, 20,
-                                   msg->data_initial_chunk.bytes + 36, 32,
-                                   token, confirm_body_message,
-                                   sizeof(confirm_body_message),
-                                   /*approve=*/is_approve)) {
+      recipient = msg->data_initial_chunk.bytes + 16;
+      if (!layoutEthereumConfirmTx(
+              recipient, 20, msg->data_initial_chunk.bytes + 36, 32, token,
+              confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/is_approve, &contact)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
         return;
       }
     } else {
-      if (!layoutEthereumConfirmTx(
-              msg->to.bytes, msg->to.size, msg->value.bytes, msg->value.size,
-              NULL, confirm_body_message, sizeof(confirm_body_message),
-              /*approve=*/false)) {
+      recipient = msg->to.bytes;
+      if (!layoutEthereumConfirmTx(recipient, msg->to.size, msg->value.bytes,
+                                   msg->value.size, NULL, confirm_body_message,
+                                   sizeof(confirm_body_message),
+                                   /*approve=*/false, &contact)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
@@ -1126,7 +1145,21 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       ethereum_signing_abort();
       return;
     }
+    /* The label replaced the address on the screen above: show it too. */
+    if (contact && recipient) {
+      char raw[43] = "0x";
+      ethereum_address_checksum(recipient, raw + 2, false, chain_id);
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Contact Address", "%s", raw)) {
+        fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                        "Signing cancelled by user");
+        ethereum_signing_abort();
+        return;
+      }
+    }
   }
+  /* A proof labels exactly one signing request. */
+  contact_book_clear();
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
   // A contract that is not in the token table yields the UnknownToken
@@ -1380,6 +1413,7 @@ void ethereum_signing_abort(void) {
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     signed_metadata_clear();
+    contact_book_clear();
     layoutHome();
     ethereum_signing = false;
   }

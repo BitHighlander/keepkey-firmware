@@ -22,7 +22,14 @@
  * NEVER signs arbitrary bytes: only payloads the verifier's own parser accepts
  * and the user confirmed, so a compromised host gets no signing oracle. Do not
  * add a "raw" mode. ponytail: KKSOLSC1 only; EVM v2 needs its own branch.
+ *
+ * Also certifies KKABREQ1 address books (no AdvancedMode: a fully parsed,
+ * user-reviewed list of the user's own contacts). The device recomputes the
+ * Merkle root, shows every label, network and address, and signs only the
+ * 46-byte KKABRT01 root manifest. EVM addresses only for now.
  */
+
+#include "keepkey/firmware/contact_book.h"
 
 /* m/'KK'/'CS'/0', all hardened and outside SLIP-44 space: never a funds key. */
 #define ATTESTOR_PATH_LEN 3
@@ -85,13 +92,100 @@ void fsm_msgClearsignAttestorGetPublicKey(
   layoutHome();
 }
 
-void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
+/* ECDSA over SHA256(bytes) with the attestor key, as
+ * signed_metadata_verify_attestation() and contact_book_process_proof()
+ * check it. Sends the reply or the failure. */
+static void attestor_signAndReply(const uint8_t* bytes, size_t len) {
   RESP_INIT(ClearsignAttestorSignature);
 
+  HDNode* node = attestor_getNode();
+  if (!node) return;
+
+  uint8_t digest[32];
+  sha256_Raw(bytes, len, digest);
+
+  uint8_t sig[64];
+  int ret =
+      ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig, NULL, NULL);
+  memzero(digest, sizeof(digest));
+  if (ret != 0) {
+    memzero(node, sizeof(*node));
+    memzero(sig, sizeof(sig));
+    fsm_sendFailure(FailureType_Failure_Other, "Attestation failed");
+    layoutHome();
+    return;
+  }
+
+  resp->has_signature = true;
+  resp->signature.size = sizeof(sig);
+  memcpy(resp->signature.bytes, sig, sizeof(sig));
+  resp->has_public_key = true;
+  resp->public_key.size = 33;
+  memcpy(resp->public_key.bytes, node->public_key, 33);
+
+  memzero(sig, sizeof(sig));
+  memzero(node, sizeof(*node));
+
+  msg_write(MessageType_MessageType_ClearsignAttestorSignature, resp);
+  layoutHome();
+}
+
+/* Every entry is reviewed before the root is signed: a label nobody saw is a
+ * label nobody checked. */
+static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
+  ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES];
+  ContactBookManifest manifest;
+  bool ok = contact_book_parse_request(msg->payload.bytes, msg->payload.size,
+                                       &manifest, entries, NULL);
+  for (uint8_t i = 0; ok && i < manifest.count; i++) {
+    ok = entries[i].destination_type == CONTACT_BOOK_DEST_EVM_ADDRESS &&
+         entries[i].destination_len == 20 &&
+         strncmp(entries[i].network, "eip155:", 7) == 0;
+  }
+  if (!ok) {
+    memzero(entries, sizeof(entries));
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid address book");
+    layoutHome();
+    return;
+  }
+
+  bool confirmed =
+      confirm(ButtonRequestType_ButtonRequest_SignTx, "Address Book",
+              "Approve %u contacts?\nRevision %lu", (unsigned)manifest.count,
+              (unsigned long)manifest.revision);
+  for (uint8_t i = 0; confirmed && i < manifest.count; i++) {
+    char address[43] = "0x";
+    ethereum_address_checksum(entries[i].destination, address + 2, false, 0);
+    confirmed =
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Certify Contact",
+                "%s\n%s", entries[i].label, entries[i].network) &&
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Destination", "%s",
+                address);
+  }
+  memzero(entries, sizeof(entries));
+  if (!confirmed) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  uint8_t signed_bytes[46];
+  contact_book_manifest_bytes(&manifest, signed_bytes);
+  attestor_signAndReply(signed_bytes, sizeof(signed_bytes));
+  memzero(signed_bytes, sizeof(signed_bytes));
+}
+
+void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
   CHECK_PARAM(msg->has_payload && msg->payload.size > 0, "Missing payload");
+
+  if (msg->payload.size >= 8 &&
+      memcmp(msg->payload.bytes, "KKABREQ1", 8) == 0) {
+    attestor_certifyContacts(msg);
+    return;
+  }
 
   /* Validate with the verifier's own parser: no raw signing oracle. */
   SolanaInstrSchema schema;
@@ -159,35 +253,5 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
     return;
   }
 
-  HDNode* node = attestor_getNode();
-  if (!node) return;
-
-  /* ECDSA over SHA256(payload), as signed_metadata_verify_attestation(). */
-  uint8_t digest[32];
-  sha256_Raw(msg->payload.bytes, msg->payload.size, digest);
-
-  uint8_t sig[64];
-  int ret =
-      ecdsa_sign_digest(&secp256k1, node->private_key, digest, sig, NULL, NULL);
-  memzero(digest, sizeof(digest));
-  if (ret != 0) {
-    memzero(node, sizeof(*node));
-    memzero(sig, sizeof(sig));
-    fsm_sendFailure(FailureType_Failure_Other, "Attestation failed");
-    layoutHome();
-    return;
-  }
-
-  resp->has_signature = true;
-  resp->signature.size = sizeof(sig);
-  memcpy(resp->signature.bytes, sig, sizeof(sig));
-  resp->has_public_key = true;
-  resp->public_key.size = 33;
-  memcpy(resp->public_key.bytes, node->public_key, 33);
-
-  memzero(sig, sizeof(sig));
-  memzero(node, sizeof(*node));
-
-  msg_write(MessageType_MessageType_ClearsignAttestorSignature, resp);
-  layoutHome();
+  attestor_signAndReply(msg->payload.bytes, msg->payload.size);
 }
