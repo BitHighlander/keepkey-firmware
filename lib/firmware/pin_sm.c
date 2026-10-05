@@ -23,6 +23,7 @@
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/pin_sm.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng.h"
@@ -270,6 +271,7 @@ bool pin_protect(const char* prompt) {
   }
 
   storage_resetPinFails();
+  note_pin_accepted();
   ret = true;
 
 done:
