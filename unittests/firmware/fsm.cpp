@@ -54,6 +54,8 @@ extern "C" {
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
+bool kkconfirm_openDebugPeer(void);
+bool kkconfirm_readDebugFrame(uint8_t frame[64]);
 extern "C" void keepkey_user_activity(void);  // lib/firmware/home_sm.c
 
 // Auto-lock reads home_clock_ms(). The real 1 ms tick would make the deadline
@@ -2398,6 +2400,31 @@ TEST(Fsm, DebugLinkGetStateLeavesPendingResponseIntact) {
   DebugLinkGetState get = {};
   fsm_msgDebugLinkGetState(&get);
   for (size_t i = 0; i < size; ++i) ASSERT_EQ(0x5a, arena[i]) << "offset " << i;
+}
+
+// FlashDump arrives on the debug endpoint, so its private-display refusal must
+// be answered there, without memory; a normal-channel Failure leaves the debug
+// caller waiting.
+TEST(Fsm, PrivateDisplayFlashDumpRefusalAnswersOnDebugChannel) {
+  ASSERT_TRUE(kkconfirm_openDebugPeer());
+  DebugLinkFlashDump dump = {};
+  dump.has_address = dump.has_length = true;
+  dump.address = 0x20000000;
+  dump.length = 32;
+  bip85_set_private_display(true);
+  fsm_test_clearLastFailure();
+  fsm_msgDebugLinkFlashDump(&dump);
+  bip85_set_private_display(false);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+
+  // One frame: an empty DebugLinkFlashDumpResponse, i.e. no memory bytes.
+  uint8_t frame[64] = {};
+  ASSERT_TRUE(kkconfirm_readDebugFrame(frame));
+  EXPECT_EQ('#', frame[1]);
+  EXPECT_EQ('#', frame[2]);
+  EXPECT_EQ(MessageType_MessageType_DebugLinkFlashDumpResponse,
+            (frame[3] << 8) | frame[4]);
+  EXPECT_EQ(0, frame[5] | frame[6] | frame[7] | frame[8]);
 }
 
 TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
