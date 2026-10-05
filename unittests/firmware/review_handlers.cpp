@@ -420,7 +420,7 @@ TEST_F(ReviewHandlers, ZcashV5RefusesAnIronwoodDigest) {
 // Handler-level walk of a whole shielded-only session: summary, one streamed
 // output action (the cmx is the device's own known-answer vector, see
 // OrchardNoteCommitment_KnownVectorAndProgress), the recomputed bundle digest,
-// then the final fee gate. A bundle digest the device does not recompute, or a
+// then the final fee gate. A legacy host action sighash is refused outright. A bundle digest the device does not recompute, or a
 // host fee other than the verified one (here orchard_value_balance, 0), aborts
 // before the fee screen and releases nothing; the matching request reaches the
 // fee screen and completes.
@@ -485,8 +485,8 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
   data.insert(data.end(), anchor.begin(), anchor.end());
   zcashPersonal("ZTxIdOrchardHash", data, digest);
 
-  enum Case { kTamperedDigest, kFeeMismatch, kAccepted };
-  for (Case c : {kTamperedDigest, kFeeMismatch, kAccepted}) {
+  enum Case { kHostSighash, kTamperedDigest, kFeeMismatch, kAccepted };
+  for (Case c : {kHostSighash, kTamperedDigest, kFeeMismatch, kAccepted}) {
     SCOPED_TRACE(c);
     ZcashSignPCZT msg = {};
     msg.has_n_actions = true;
@@ -542,13 +542,24 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
     action.has_recipient = action.has_rseed = true;
     zcashSet(action.recipient, recipient);
     zcashSet(action.rseed, rseed);
+    if (c == kHostSighash) {
+      action.has_sighash = true;
+      zcashSet(action.sighash, std::vector<uint8_t>(32, 9));
+    }
     fsm_msgZcashPCZTAction(&action);
     const auto screens = kkconfirm_capture_finish();
     const bool fee_screen =
         std::any_of(screens.begin(), screens.end(), [](const std::string& s) {
           return s.find("Confirm transaction fee?") != std::string::npos;
         });
-    if (c != kAccepted) {
+    if (c == kHostSighash) {
+      // Refused before the output screens: only the summary was shown.
+      EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+      EXPECT_STREQ("Host action sighash rejected",
+                   fsm_test_lastFailureMessage());
+      EXPECT_EQ(1u, screens.size());
+      EXPECT_EQ(6, kkconfirm_drain());  // three unused screens' pairs
+    } else if (c != kAccepted) {
       EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
       EXPECT_EQ(c == kFeeMismatch,
                 std::string("Fee mismatch") == fsm_test_lastFailureMessage());

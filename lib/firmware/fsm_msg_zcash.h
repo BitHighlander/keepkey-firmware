@@ -1070,6 +1070,14 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
+  /* The device signs only the sighash it assembles itself; refuse, never
+   * ignore, a legacy host-supplied one (as for transparent inputs). */
+  if (msg->has_sighash) {
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Host action sighash rejected"));
+    return;
+  }
+
   if (!msg->has_alpha || msg->alpha.size != 32) {
     zcash_fail(FailureType_Failure_SyntaxError,
                _("Missing or invalid alpha randomizer"));
