@@ -720,6 +720,18 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
+  /* Shielded-only: the transparent component is the empty one. Refuse, not
+   * replace, a different supplied digest, as for the inactive pool above. */
+  if (n_tinputs == 0 && n_toutputs == 0 && msg->has_transparent_digest &&
+      memcmp(msg->transparent_digest.bytes, EMPTY_TRANSPARENT_DIGEST, 32) !=
+          0) {
+    fsm_sendFailure(
+        FailureType_Failure_SyntaxError,
+        _("Shielded transaction must have an empty transparent bundle"));
+    layoutHome();
+    return;
+  }
+
   uint8_t header_digest[32];
   if (!zcash_compute_header_digest(msg->tx_version, msg->version_group_id,
                                    branch_id, msg->lock_time,

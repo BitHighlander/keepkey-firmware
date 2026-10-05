@@ -325,6 +325,52 @@ TEST_F(ReviewHandlers, ZcashSummaryNeverShowsTheHostTotalAmount) {
   EXPECT_EQ(std::string::npos, screens[0].find("Amount"));
   EXPECT_EQ(std::string::npos, screens[0].find("12345678"));
 }
+
+// A shielded-only request signs over the empty transparent digest, so a
+// different supplied digest is refused before the summary, never replaced.
+TEST_F(ReviewHandlers, ZcashShieldedOnlyRefusesANonEmptyTransparentDigest) {
+  ZcashSignPCZT msg = {};
+  msg.has_n_actions = true;
+  msg.n_actions = 1;
+  msg.has_account = true;
+  msg.has_tx_version = msg.has_version_group_id = msg.has_branch_id =
+      msg.has_lock_time = msg.has_expiry_height = true;
+  msg.tx_version = 5;
+  msg.version_group_id = 0x26a7270a;
+  msg.branch_id = 0xc2d6d0b4;
+  msg.has_header_digest = true;
+  msg.header_digest.size = 32;
+  ASSERT_TRUE(zcash_compute_header_digest(
+      msg.tx_version, msg.version_group_id, msg.branch_id, msg.lock_time,
+      msg.expiry_height, msg.header_digest.bytes));
+  msg.has_orchard_digest = true;
+  msg.orchard_digest.size = 32;
+  msg.has_orchard_flags = msg.has_orchard_value_balance = true;
+  msg.has_orchard_anchor = true;
+  msg.orchard_anchor.size = 32;
+  msg.has_transparent_digest = true;
+  msg.transparent_digest.size = 32;
+
+  std::memset(msg.transparent_digest.bytes, 0x11, 32);
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
+  fsm_msgZcashSignPCZT(&msg);
+  EXPECT_TRUE(kkconfirm_capture_finish().empty());
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain());  // the summary's ack + decision, unused
+
+  // The canonical empty digest is accepted and reaches the summary.
+  ASSERT_TRUE(zcash_compute_transparent_digest(NULL, 0, NULL, 0,
+                                               msg.transparent_digest.bytes));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));  // reject the summary
+  fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
+  fsm_msgZcashSignPCZT(&msg);
+  EXPECT_EQ(1u, kkconfirm_capture_finish().size());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
 #endif
 
 // Handler-level regression for the BIP-85 pager. Index 84 of this seed is a
